@@ -450,8 +450,31 @@ deploy_custom_integration() {
     else
         cp -r "$src" "$dest"
         bashio::log.info "BRUH Claude integration installed to $dest"
-        bashio::log.info "The integration will be auto-discovered by Home Assistant"
         bashio::log.info "Check Settings > Devices & Services for the setup notification"
+    fi
+
+    # Send discovery message to the Supervisor so HA Core auto-discovers the integration.
+    # The 'discovery' field in config.yaml only authorizes the add-on to use this service
+    # name; the add-on must explicitly POST to trigger the actual discovery flow.
+    send_discovery_message
+}
+
+send_discovery_message() {
+    bashio::log.info "Sending discovery message to Home Assistant..."
+
+    local response
+    response=$(curl -s -o /dev/null -w "%{http_code}" \
+        -X POST \
+        -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
+        -H "Content-Type: application/json" \
+        -d '{"service": "bruh_claude", "config": {}}' \
+        "http://supervisor/discovery" 2>/dev/null) || true
+
+    if [ "$response" = "200" ] || [ "$response" = "201" ]; then
+        bashio::log.info "Discovery message sent - integration will appear in Settings > Devices & Services"
+    else
+        bashio::log.warning "Discovery API returned HTTP ${response} - auto-discovery may not trigger"
+        bashio::log.info "You can still set up the integration manually via Settings > Devices & Services > Add Integration > BRUH Claude"
     fi
 }
 
@@ -461,7 +484,7 @@ deploy_custom_integration() {
 
 setup_assist_integration() {
     local enable_assist
-    enable_assist=$(bashio::config 'enable_assist_integration' 'false')
+    enable_assist=$(bashio::config 'enable_assist_integration' 'true')
 
     if [ "$enable_assist" != "true" ]; then
         bashio::log.info "Assist integration disabled (enable in add-on config)"
@@ -479,7 +502,7 @@ setup_assist_integration() {
 
 setup_automation_integration() {
     local enable_auto
-    enable_auto=$(bashio::config 'enable_automation_integration' 'false')
+    enable_auto=$(bashio::config 'enable_automation_integration' 'true')
 
     if [ "$enable_auto" != "true" ]; then
         bashio::log.info "Automation integration disabled (enable in add-on config)"
