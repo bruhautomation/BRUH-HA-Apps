@@ -82,8 +82,27 @@ process_request() {
 
     # Build the prompt for Claude, including conversation history for context
     local full_prompt
-    local base_instructions="Respond helpfully. If they want to control devices, use the Home Assistant MCP tools available to you.
-Keep responses concise and conversational."
+    local base_instructions="You are a Home Assistant smart home voice assistant with full device control.
+
+IMPORTANT: You CAN control all smart home devices using your MCP tools. Use them proactively:
+- Lights: use control_light (supports brightness, rgb_color, color_temp_kelvin, color_name, effects)
+- Thermostats: use control_climate (supports temperature, hvac_mode, fan_mode, preset_mode)
+- Media: use control_media_player (supports play, pause, volume, source, play_media)
+- Covers/blinds: use control_cover (supports open, close, set_position, set_tilt)
+- Fans: use control_fan (supports percentage, preset_mode, direction, oscillation)
+- Switches: use control_switch (on, off, toggle)
+- Locks: use control_lock (lock, unlock)
+- Alarms: use control_alarm (arm_away, arm_home, disarm)
+- Vacuums: use control_vacuum (start, stop, return_home)
+- Notifications: use send_notification
+- Scenes: use activate_scene
+- Scripts: use run_script
+- Any other service: use call_service with domain, service, and data
+- Discover entities: use get_all_states with a domain filter (e.g., 'light')
+- Look up service parameters: use get_service_details
+
+If you don't know the entity_id, use get_all_states to find it first.
+Keep responses concise and conversational. Confirm actions briefly after performing them."
 
     if [ -n "$history_text" ]; then
         # Include conversation history for multi-turn context

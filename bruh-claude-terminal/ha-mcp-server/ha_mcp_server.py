@@ -58,7 +58,7 @@ def ha_api_request(endpoint, method="GET", data=None):
 
 
 # ============================================================================
-# MCP Tool Implementations
+# MCP Tool Implementations — Core
 # ============================================================================
 
 def get_entity_state(entity_id):
@@ -98,6 +98,340 @@ def call_service(domain, service, data=None):
     result = ha_api_request(f"/api/services/{domain}/{service}", method="POST", data=payload)
     return result
 
+
+def get_service_details(domain):
+    """Get detailed service schemas for a domain."""
+    result = ha_api_request("/api/services")
+    if isinstance(result, list):
+        for svc in result:
+            if svc.get("domain") == domain:
+                return svc
+        return {"error": f"Domain '{domain}' not found"}
+    return result
+
+
+# ============================================================================
+# MCP Tool Implementations — Domain-Specific Device Control
+# ============================================================================
+
+def control_light(entity_id, action, brightness=None, brightness_pct=None,
+                  rgb_color=None, hs_color=None, xy_color=None, color_temp_kelvin=None,
+                  color_name=None, effect=None, transition=None, flash=None,
+                  white=None):
+    """Control a light entity."""
+    if action == "turn_off":
+        data = {"entity_id": entity_id}
+        if transition is not None:
+            data["transition"] = transition
+        return call_service("light", "turn_off", data)
+
+    if action == "toggle":
+        return call_service("light", "toggle", {"entity_id": entity_id})
+
+    # turn_on
+    data = {"entity_id": entity_id}
+    if brightness is not None:
+        data["brightness"] = brightness
+    if brightness_pct is not None:
+        data["brightness_pct"] = brightness_pct
+    if rgb_color is not None:
+        data["rgb_color"] = rgb_color
+    if hs_color is not None:
+        data["hs_color"] = hs_color
+    if xy_color is not None:
+        data["xy_color"] = xy_color
+    if color_temp_kelvin is not None:
+        data["color_temp_kelvin"] = color_temp_kelvin
+    if color_name is not None:
+        data["color_name"] = color_name
+    if effect is not None:
+        data["effect"] = effect
+    if transition is not None:
+        data["transition"] = transition
+    if flash is not None:
+        data["flash"] = flash
+    if white is not None:
+        data["white"] = white
+    return call_service("light", "turn_on", data)
+
+
+def control_climate(entity_id, action, temperature=None, target_temp_high=None,
+                    target_temp_low=None, hvac_mode=None, fan_mode=None,
+                    preset_mode=None, humidity=None, swing_mode=None):
+    """Control a climate entity."""
+    if action == "turn_off":
+        return call_service("climate", "turn_off", {"entity_id": entity_id})
+    if action == "turn_on":
+        return call_service("climate", "turn_on", {"entity_id": entity_id})
+
+    if action == "set_hvac_mode" and hvac_mode:
+        return call_service("climate", "set_hvac_mode", {
+            "entity_id": entity_id, "hvac_mode": hvac_mode
+        })
+
+    if action == "set_fan_mode" and fan_mode:
+        return call_service("climate", "set_fan_mode", {
+            "entity_id": entity_id, "fan_mode": fan_mode
+        })
+
+    if action == "set_preset_mode" and preset_mode:
+        return call_service("climate", "set_preset_mode", {
+            "entity_id": entity_id, "preset_mode": preset_mode
+        })
+
+    if action == "set_humidity" and humidity is not None:
+        return call_service("climate", "set_humidity", {
+            "entity_id": entity_id, "humidity": humidity
+        })
+
+    if action == "set_swing_mode" and swing_mode:
+        return call_service("climate", "set_swing_mode", {
+            "entity_id": entity_id, "swing_mode": swing_mode
+        })
+
+    # Default: set_temperature
+    data = {"entity_id": entity_id}
+    if temperature is not None:
+        data["temperature"] = temperature
+    if target_temp_high is not None:
+        data["target_temp_high"] = target_temp_high
+    if target_temp_low is not None:
+        data["target_temp_low"] = target_temp_low
+    if hvac_mode:
+        data["hvac_mode"] = hvac_mode
+    return call_service("climate", "set_temperature", data)
+
+
+def control_media_player(entity_id, action, volume_level=None, source=None,
+                         media_content_id=None, media_content_type=None,
+                         seek_position=None, shuffle=None, repeat=None):
+    """Control a media player entity."""
+    action_map = {
+        "turn_on": "turn_on",
+        "turn_off": "turn_off",
+        "toggle": "toggle",
+        "play": "media_play",
+        "pause": "media_pause",
+        "stop": "media_stop",
+        "play_pause": "media_play_pause",
+        "next": "media_next_track",
+        "previous": "media_previous_track",
+        "volume_up": "volume_up",
+        "volume_down": "volume_down",
+        "volume_mute": "volume_mute",
+        "clear_playlist": "clear_playlist",
+    }
+
+    # Simple actions
+    if action in action_map:
+        data = {"entity_id": entity_id}
+        if action == "volume_mute":
+            data["is_volume_muted"] = True
+        return call_service("media_player", action_map[action], data)
+
+    if action == "volume_unmute":
+        return call_service("media_player", "volume_mute", {
+            "entity_id": entity_id, "is_volume_muted": False
+        })
+
+    if action == "set_volume" and volume_level is not None:
+        return call_service("media_player", "volume_set", {
+            "entity_id": entity_id, "volume_level": volume_level
+        })
+
+    if action == "select_source" and source:
+        return call_service("media_player", "select_source", {
+            "entity_id": entity_id, "source": source
+        })
+
+    if action == "play_media" and media_content_id:
+        data = {
+            "entity_id": entity_id,
+            "media_content_id": media_content_id,
+            "media_content_type": media_content_type or "music",
+        }
+        return call_service("media_player", "play_media", data)
+
+    if action == "seek" and seek_position is not None:
+        return call_service("media_player", "media_seek", {
+            "entity_id": entity_id, "seek_position": seek_position
+        })
+
+    if action == "set_shuffle" and shuffle is not None:
+        return call_service("media_player", "shuffle_set", {
+            "entity_id": entity_id, "shuffle": shuffle
+        })
+
+    if action == "set_repeat" and repeat:
+        return call_service("media_player", "repeat_set", {
+            "entity_id": entity_id, "repeat": repeat
+        })
+
+    return {"error": f"Unknown media_player action: {action}"}
+
+
+def control_cover(entity_id, action, position=None, tilt_position=None):
+    """Control a cover entity."""
+    if action == "open":
+        return call_service("cover", "open_cover", {"entity_id": entity_id})
+    if action == "close":
+        return call_service("cover", "close_cover", {"entity_id": entity_id})
+    if action == "stop":
+        return call_service("cover", "stop_cover", {"entity_id": entity_id})
+    if action == "toggle":
+        return call_service("cover", "toggle", {"entity_id": entity_id})
+    if action == "set_position" and position is not None:
+        return call_service("cover", "set_cover_position", {
+            "entity_id": entity_id, "position": position
+        })
+    if action == "set_tilt" and tilt_position is not None:
+        return call_service("cover", "set_cover_tilt_position", {
+            "entity_id": entity_id, "tilt_position": tilt_position
+        })
+    return {"error": f"Unknown cover action: {action}"}
+
+
+def control_fan(entity_id, action, percentage=None, preset_mode=None,
+                direction=None, oscillating=None):
+    """Control a fan entity."""
+    if action == "turn_on":
+        data = {"entity_id": entity_id}
+        if percentage is not None:
+            data["percentage"] = percentage
+        if preset_mode:
+            data["preset_mode"] = preset_mode
+        return call_service("fan", "turn_on", data)
+    if action == "turn_off":
+        return call_service("fan", "turn_off", {"entity_id": entity_id})
+    if action == "toggle":
+        return call_service("fan", "toggle", {"entity_id": entity_id})
+    if action == "set_percentage" and percentage is not None:
+        return call_service("fan", "set_percentage", {
+            "entity_id": entity_id, "percentage": percentage
+        })
+    if action == "set_preset_mode" and preset_mode:
+        return call_service("fan", "set_preset_mode", {
+            "entity_id": entity_id, "preset_mode": preset_mode
+        })
+    if action == "set_direction" and direction:
+        return call_service("fan", "set_direction", {
+            "entity_id": entity_id, "direction": direction
+        })
+    if action == "oscillate" and oscillating is not None:
+        return call_service("fan", "oscillate", {
+            "entity_id": entity_id, "oscillating": oscillating
+        })
+    return {"error": f"Unknown fan action: {action}"}
+
+
+def control_switch(entity_id, action):
+    """Control a switch, input_boolean, or similar toggle entity."""
+    domain = entity_id.split(".")[0] if "." in entity_id else "switch"
+    if action == "turn_on":
+        return call_service(domain, "turn_on", {"entity_id": entity_id})
+    if action == "turn_off":
+        return call_service(domain, "turn_off", {"entity_id": entity_id})
+    if action == "toggle":
+        return call_service(domain, "toggle", {"entity_id": entity_id})
+    return {"error": f"Unknown switch action: {action}"}
+
+
+def control_lock(entity_id, action, code=None):
+    """Control a lock entity."""
+    data = {"entity_id": entity_id}
+    if code:
+        data["code"] = code
+    if action == "lock":
+        return call_service("lock", "lock", data)
+    if action == "unlock":
+        return call_service("lock", "unlock", data)
+    if action == "open":
+        return call_service("lock", "open", data)
+    return {"error": f"Unknown lock action: {action}"}
+
+
+def control_alarm(entity_id, action, code=None):
+    """Control an alarm panel entity."""
+    data = {"entity_id": entity_id}
+    if code:
+        data["code"] = code
+    action_map = {
+        "arm_away": "alarm_arm_away",
+        "arm_home": "alarm_arm_home",
+        "arm_night": "alarm_arm_night",
+        "arm_vacation": "alarm_arm_vacation",
+        "arm_custom": "alarm_arm_custom_bypass",
+        "disarm": "alarm_disarm",
+        "trigger": "alarm_trigger",
+    }
+    svc = action_map.get(action)
+    if svc:
+        return call_service("alarm_control_panel", svc, data)
+    return {"error": f"Unknown alarm action: {action}"}
+
+
+def control_vacuum(entity_id, action, command=None, params=None):
+    """Control a vacuum entity."""
+    simple_actions = {
+        "start": "start",
+        "stop": "stop",
+        "pause": "pause",
+        "return_home": "return_to_base",
+        "locate": "locate",
+        "clean_spot": "clean_spot",
+    }
+    svc = simple_actions.get(action)
+    if svc:
+        return call_service("vacuum", svc, {"entity_id": entity_id})
+    if action == "send_command" and command:
+        data = {"entity_id": entity_id, "command": command}
+        if params:
+            data["params"] = params
+        return call_service("vacuum", "send_command", data)
+    if action == "set_fan_speed" and command:
+        return call_service("vacuum", "set_fan_speed", {
+            "entity_id": entity_id, "fan_speed": command
+        })
+    return {"error": f"Unknown vacuum action: {action}"}
+
+
+def send_notification(message, title=None, target=None, data=None):
+    """Send a notification through Home Assistant."""
+    payload = {"message": message}
+    if title:
+        payload["title"] = title
+    if data:
+        payload["data"] = data
+
+    if target:
+        # target = "mobile_app_phone" -> notify.mobile_app_phone
+        return call_service("notify", target, payload)
+
+    # Default: persistent notification
+    if title:
+        payload["notification_id"] = title.lower().replace(" ", "_")
+    return call_service("persistent_notification", "create", payload)
+
+
+def activate_scene(entity_id, transition=None):
+    """Activate a scene."""
+    data = {"entity_id": entity_id}
+    if transition is not None:
+        data["transition"] = transition
+    return call_service("scene", "turn_on", data)
+
+
+def run_script(entity_id, variables=None):
+    """Run a script with optional variables."""
+    data = {"entity_id": entity_id}
+    if variables:
+        data["variables"] = variables
+    return call_service("script", "turn_on", data)
+
+
+# ============================================================================
+# MCP Tool Implementations — System
+# ============================================================================
 
 def get_automations():
     """List all automations with their states."""
@@ -242,10 +576,13 @@ def reload_config(target):
 
 
 # ============================================================================
-# MCP Protocol Implementation
+# MCP Tool Definitions
 # ============================================================================
 
 TOOLS = [
+    # ------------------------------------------------------------------
+    # Entity & State Tools
+    # ------------------------------------------------------------------
     {
         "name": "get_entity_state",
         "description": "Get the current state and attributes of a specific Home Assistant entity. Returns state, attributes, last_changed, and last_updated.",
@@ -273,28 +610,502 @@ TOOLS = [
             }
         }
     },
+    # ------------------------------------------------------------------
+    # Generic Service Call
+    # ------------------------------------------------------------------
     {
         "name": "call_service",
-        "description": "Call a Home Assistant service. Use this to control devices, trigger automations, and more. Examples: light/turn_on, automation/trigger, switch/toggle.",
+        "description": (
+            "Call any Home Assistant service. Use this for services not covered by "
+            "the dedicated tools (control_light, control_climate, etc.). "
+            "Pass domain, service name, and a data object with required fields.\n\n"
+            "Common examples:\n"
+            "- switch/turn_on: {\"entity_id\": \"switch.heater\"}\n"
+            "- input_boolean/toggle: {\"entity_id\": \"input_boolean.guest_mode\"}\n"
+            "- input_number/set_value: {\"entity_id\": \"input_number.target\", \"value\": 42}\n"
+            "- input_select/select_option: {\"entity_id\": \"input_select.mode\", \"option\": \"away\"}\n"
+            "- tts/speak: {\"entity_id\": \"tts.google\", \"media_player_entity_id\": \"media_player.kitchen\", \"message\": \"Hello\"}\n"
+            "- number/set_value: {\"entity_id\": \"number.volume\", \"value\": 50}\n"
+            "- button/press: {\"entity_id\": \"button.restart\"}\n"
+            "- select/select_option: {\"entity_id\": \"select.mode\", \"option\": \"eco\"}\n"
+            "- automation/trigger: {\"entity_id\": \"automation.morning_routine\"}\n"
+            "\nUse get_service_details to look up all available fields for any service."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "domain": {
                     "type": "string",
-                    "description": "Service domain (e.g., 'light', 'switch', 'automation', 'climate')"
+                    "description": "Service domain (e.g., 'light', 'switch', 'automation', 'climate', 'tts', 'input_boolean')"
                 },
                 "service": {
                     "type": "string",
-                    "description": "Service name (e.g., 'turn_on', 'turn_off', 'toggle', 'trigger')"
+                    "description": "Service name (e.g., 'turn_on', 'turn_off', 'toggle', 'trigger', 'set_value')"
                 },
                 "data": {
                     "type": "object",
-                    "description": "Optional service data (e.g., {\"entity_id\": \"light.living_room\", \"brightness\": 255})"
+                    "description": "Service data payload including entity_id and service-specific fields"
                 }
             },
             "required": ["domain", "service"]
         }
     },
+    {
+        "name": "get_service_details",
+        "description": "Get the full service schema for a domain, showing all available services and their fields/parameters. Use this to discover what parameters a service accepts before calling it.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "domain": {
+                    "type": "string",
+                    "description": "The service domain to look up (e.g., 'light', 'climate', 'media_player', 'vacuum', 'notify')"
+                }
+            },
+            "required": ["domain"]
+        }
+    },
+    # ------------------------------------------------------------------
+    # Light Control
+    # ------------------------------------------------------------------
+    {
+        "name": "control_light",
+        "description": (
+            "Control a light — turn on/off, set brightness, color, color temperature, and effects. "
+            "Supports RGB, HS, XY, named colors, and Kelvin color temperature."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "entity_id": {
+                    "type": "string",
+                    "description": "The light entity ID (e.g., 'light.living_room', 'light.bedroom_strip')"
+                },
+                "action": {
+                    "type": "string",
+                    "enum": ["turn_on", "turn_off", "toggle"],
+                    "description": "Action to perform"
+                },
+                "brightness": {
+                    "type": "integer",
+                    "description": "Brightness 0-255 (0=off, 255=max)"
+                },
+                "brightness_pct": {
+                    "type": "integer",
+                    "description": "Brightness as percentage 0-100"
+                },
+                "rgb_color": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "description": "RGB color as [R, G, B] (0-255 each). Examples: [255,0,0]=red, [0,255,0]=green, [0,0,255]=blue, [255,165,0]=orange, [128,0,128]=purple"
+                },
+                "hs_color": {
+                    "type": "array",
+                    "items": {"type": "number"},
+                    "description": "Hue/Saturation as [hue, saturation]. Hue: 0-360, Saturation: 0-100"
+                },
+                "xy_color": {
+                    "type": "array",
+                    "items": {"type": "number"},
+                    "description": "CIE xy color as [x, y] (0.0-1.0 each)"
+                },
+                "color_temp_kelvin": {
+                    "type": "integer",
+                    "description": "Color temperature in Kelvin (2000=warm/candlelight, 3000=soft white, 4000=neutral, 5000=daylight, 6500=cool)"
+                },
+                "color_name": {
+                    "type": "string",
+                    "description": "CSS3 color name (e.g., 'red', 'blue', 'green', 'purple', 'orange', 'pink', 'white', 'coral', 'gold')"
+                },
+                "effect": {
+                    "type": "string",
+                    "description": "Light effect name (device-specific, e.g., 'colorloop', 'random', 'rainbow', 'breathe', 'strobe')"
+                },
+                "transition": {
+                    "type": "number",
+                    "description": "Transition duration in seconds for the change"
+                },
+                "flash": {
+                    "type": "string",
+                    "enum": ["short", "long"],
+                    "description": "Flash the light briefly"
+                },
+                "white": {
+                    "type": "integer",
+                    "description": "Set white channel value 0-255 (for RGBW lights)"
+                }
+            },
+            "required": ["entity_id", "action"]
+        }
+    },
+    # ------------------------------------------------------------------
+    # Climate / Thermostat Control
+    # ------------------------------------------------------------------
+    {
+        "name": "control_climate",
+        "description": (
+            "Control a thermostat or HVAC system — set temperature, mode, fan, preset, humidity, and swing."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "entity_id": {
+                    "type": "string",
+                    "description": "The climate entity ID (e.g., 'climate.living_room', 'climate.ecobee')"
+                },
+                "action": {
+                    "type": "string",
+                    "enum": ["set_temperature", "set_hvac_mode", "set_fan_mode", "set_preset_mode", "set_humidity", "set_swing_mode", "turn_on", "turn_off"],
+                    "description": "Action to perform"
+                },
+                "temperature": {
+                    "type": "number",
+                    "description": "Target temperature (in system units — °F or °C)"
+                },
+                "target_temp_high": {
+                    "type": "number",
+                    "description": "Upper target for auto/heat_cool mode"
+                },
+                "target_temp_low": {
+                    "type": "number",
+                    "description": "Lower target for auto/heat_cool mode"
+                },
+                "hvac_mode": {
+                    "type": "string",
+                    "enum": ["off", "heat", "cool", "heat_cool", "auto", "dry", "fan_only"],
+                    "description": "HVAC operating mode"
+                },
+                "fan_mode": {
+                    "type": "string",
+                    "description": "Fan mode (e.g., 'auto', 'low', 'medium', 'high', 'on', 'off')"
+                },
+                "preset_mode": {
+                    "type": "string",
+                    "description": "Preset mode (e.g., 'away', 'home', 'sleep', 'eco', 'boost', 'comfort')"
+                },
+                "humidity": {
+                    "type": "integer",
+                    "description": "Target humidity percentage (0-100)"
+                },
+                "swing_mode": {
+                    "type": "string",
+                    "description": "Swing mode (e.g., 'off', 'on', 'vertical', 'horizontal', 'both')"
+                }
+            },
+            "required": ["entity_id", "action"]
+        }
+    },
+    # ------------------------------------------------------------------
+    # Media Player Control
+    # ------------------------------------------------------------------
+    {
+        "name": "control_media_player",
+        "description": (
+            "Control a media player — play, pause, volume, source, play specific media, shuffle, repeat."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "entity_id": {
+                    "type": "string",
+                    "description": "The media player entity ID (e.g., 'media_player.living_room', 'media_player.sonos')"
+                },
+                "action": {
+                    "type": "string",
+                    "enum": [
+                        "turn_on", "turn_off", "toggle",
+                        "play", "pause", "stop", "play_pause",
+                        "next", "previous",
+                        "set_volume", "volume_up", "volume_down",
+                        "volume_mute", "volume_unmute",
+                        "select_source", "play_media", "seek",
+                        "set_shuffle", "set_repeat", "clear_playlist"
+                    ],
+                    "description": "Action to perform"
+                },
+                "volume_level": {
+                    "type": "number",
+                    "description": "Volume level 0.0-1.0 (for set_volume)"
+                },
+                "source": {
+                    "type": "string",
+                    "description": "Input source name (for select_source, e.g., 'Spotify', 'TV', 'Bluetooth')"
+                },
+                "media_content_id": {
+                    "type": "string",
+                    "description": "Media content ID/URL (for play_media)"
+                },
+                "media_content_type": {
+                    "type": "string",
+                    "description": "Media type (for play_media: 'music', 'video', 'playlist', 'channel', 'tvshow', 'image')"
+                },
+                "seek_position": {
+                    "type": "number",
+                    "description": "Seek position in seconds (for seek)"
+                },
+                "shuffle": {
+                    "type": "boolean",
+                    "description": "Enable/disable shuffle (for set_shuffle)"
+                },
+                "repeat": {
+                    "type": "string",
+                    "enum": ["off", "all", "one"],
+                    "description": "Repeat mode (for set_repeat)"
+                }
+            },
+            "required": ["entity_id", "action"]
+        }
+    },
+    # ------------------------------------------------------------------
+    # Cover / Blind Control
+    # ------------------------------------------------------------------
+    {
+        "name": "control_cover",
+        "description": (
+            "Control a cover, blind, shade, or garage door — open, close, stop, "
+            "set position (0=closed, 100=open), and set tilt."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "entity_id": {
+                    "type": "string",
+                    "description": "The cover entity ID (e.g., 'cover.garage_door', 'cover.living_room_blinds')"
+                },
+                "action": {
+                    "type": "string",
+                    "enum": ["open", "close", "stop", "toggle", "set_position", "set_tilt"],
+                    "description": "Action to perform"
+                },
+                "position": {
+                    "type": "integer",
+                    "description": "Cover position 0-100 (0=fully closed, 100=fully open)"
+                },
+                "tilt_position": {
+                    "type": "integer",
+                    "description": "Tilt position 0-100 (0=closed, 100=fully open)"
+                }
+            },
+            "required": ["entity_id", "action"]
+        }
+    },
+    # ------------------------------------------------------------------
+    # Fan Control
+    # ------------------------------------------------------------------
+    {
+        "name": "control_fan",
+        "description": "Control a fan — on/off, speed percentage, preset mode, direction, and oscillation.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "entity_id": {
+                    "type": "string",
+                    "description": "The fan entity ID (e.g., 'fan.bedroom', 'fan.ceiling')"
+                },
+                "action": {
+                    "type": "string",
+                    "enum": ["turn_on", "turn_off", "toggle", "set_percentage", "set_preset_mode", "set_direction", "oscillate"],
+                    "description": "Action to perform"
+                },
+                "percentage": {
+                    "type": "integer",
+                    "description": "Fan speed percentage 0-100 (for turn_on or set_percentage)"
+                },
+                "preset_mode": {
+                    "type": "string",
+                    "description": "Preset mode (e.g., 'auto', 'nature', 'sleep', 'baby')"
+                },
+                "direction": {
+                    "type": "string",
+                    "enum": ["forward", "reverse"],
+                    "description": "Fan direction"
+                },
+                "oscillating": {
+                    "type": "boolean",
+                    "description": "Enable or disable oscillation"
+                }
+            },
+            "required": ["entity_id", "action"]
+        }
+    },
+    # ------------------------------------------------------------------
+    # Switch / Toggle Control
+    # ------------------------------------------------------------------
+    {
+        "name": "control_switch",
+        "description": "Control a switch, input_boolean, or similar on/off entity.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "entity_id": {
+                    "type": "string",
+                    "description": "The entity ID (e.g., 'switch.heater', 'input_boolean.guest_mode')"
+                },
+                "action": {
+                    "type": "string",
+                    "enum": ["turn_on", "turn_off", "toggle"],
+                    "description": "Action to perform"
+                }
+            },
+            "required": ["entity_id", "action"]
+        }
+    },
+    # ------------------------------------------------------------------
+    # Lock Control
+    # ------------------------------------------------------------------
+    {
+        "name": "control_lock",
+        "description": "Control a smart lock — lock, unlock, or open (if supported). Optionally provide an access code.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "entity_id": {
+                    "type": "string",
+                    "description": "The lock entity ID (e.g., 'lock.front_door')"
+                },
+                "action": {
+                    "type": "string",
+                    "enum": ["lock", "unlock", "open"],
+                    "description": "Action to perform"
+                },
+                "code": {
+                    "type": "string",
+                    "description": "Optional access code"
+                }
+            },
+            "required": ["entity_id", "action"]
+        }
+    },
+    # ------------------------------------------------------------------
+    # Alarm Control
+    # ------------------------------------------------------------------
+    {
+        "name": "control_alarm",
+        "description": "Control an alarm panel — arm (away/home/night/vacation), disarm, or trigger.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "entity_id": {
+                    "type": "string",
+                    "description": "The alarm entity ID (e.g., 'alarm_control_panel.home')"
+                },
+                "action": {
+                    "type": "string",
+                    "enum": ["arm_away", "arm_home", "arm_night", "arm_vacation", "arm_custom", "disarm", "trigger"],
+                    "description": "Action to perform"
+                },
+                "code": {
+                    "type": "string",
+                    "description": "Alarm code (required for most arm/disarm actions)"
+                }
+            },
+            "required": ["entity_id", "action"]
+        }
+    },
+    # ------------------------------------------------------------------
+    # Vacuum Control
+    # ------------------------------------------------------------------
+    {
+        "name": "control_vacuum",
+        "description": "Control a robot vacuum — start, stop, pause, return home, locate, spot clean, set fan speed.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "entity_id": {
+                    "type": "string",
+                    "description": "The vacuum entity ID (e.g., 'vacuum.roborock')"
+                },
+                "action": {
+                    "type": "string",
+                    "enum": ["start", "stop", "pause", "return_home", "locate", "clean_spot", "send_command", "set_fan_speed"],
+                    "description": "Action to perform"
+                },
+                "command": {
+                    "type": "string",
+                    "description": "For send_command: the command name. For set_fan_speed: the speed (e.g., 'quiet', 'standard', 'turbo', 'max')"
+                },
+                "params": {
+                    "type": "object",
+                    "description": "For send_command: optional command parameters"
+                }
+            },
+            "required": ["entity_id", "action"]
+        }
+    },
+    # ------------------------------------------------------------------
+    # Notification
+    # ------------------------------------------------------------------
+    {
+        "name": "send_notification",
+        "description": (
+            "Send a notification via Home Assistant. "
+            "Without a target, creates a persistent notification in the HA UI. "
+            "With a target, sends to that notify service (e.g., mobile app, Slack, email)."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "description": "The notification message"
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Optional notification title"
+                },
+                "target": {
+                    "type": "string",
+                    "description": "Notify service target (e.g., 'mobile_app_phone', 'slack', 'email'). Omit for persistent notification."
+                },
+                "data": {
+                    "type": "object",
+                    "description": "Extra data (e.g., {\"image\": \"/local/cam.jpg\"}, {\"push\": {\"sound\": \"default\"}})"
+                }
+            },
+            "required": ["message"]
+        }
+    },
+    # ------------------------------------------------------------------
+    # Scene & Script
+    # ------------------------------------------------------------------
+    {
+        "name": "activate_scene",
+        "description": "Activate a scene in Home Assistant. Scenes apply a saved set of states to multiple entities at once.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "entity_id": {
+                    "type": "string",
+                    "description": "The scene entity ID (e.g., 'scene.movie_night', 'scene.goodnight')"
+                },
+                "transition": {
+                    "type": "number",
+                    "description": "Transition time in seconds for the scene change"
+                }
+            },
+            "required": ["entity_id"]
+        }
+    },
+    {
+        "name": "run_script",
+        "description": "Run a Home Assistant script with optional input variables.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "entity_id": {
+                    "type": "string",
+                    "description": "The script entity ID (e.g., 'script.morning_routine')"
+                },
+                "variables": {
+                    "type": "object",
+                    "description": "Optional variables to pass to the script (e.g., {\"room\": \"bedroom\", \"brightness\": 80})"
+                }
+            },
+            "required": ["entity_id"]
+        }
+    },
+    # ------------------------------------------------------------------
+    # Automation Tools
+    # ------------------------------------------------------------------
     {
         "name": "get_automations",
         "description": "List all automations with their current state (on/off), friendly name, and last triggered time.",
@@ -317,6 +1128,9 @@ TOOLS = [
             "required": ["automation_id"]
         }
     },
+    # ------------------------------------------------------------------
+    # System Tools
+    # ------------------------------------------------------------------
     {
         "name": "get_ha_config",
         "description": "Get Home Assistant configuration including location, unit system, timezone, version, and component list.",
@@ -423,15 +1237,124 @@ TOOLS = [
 ]
 
 
+# ============================================================================
+# Tool Call Router
+# ============================================================================
+
 def handle_tool_call(name, arguments):
     """Route a tool call to the appropriate function."""
     try:
+        # Core tools
         if name == "get_entity_state":
             return get_entity_state(arguments["entity_id"])
         elif name == "get_all_states":
             return get_all_states(arguments.get("domain"))
         elif name == "call_service":
             return call_service(arguments["domain"], arguments["service"], arguments.get("data"))
+        elif name == "get_service_details":
+            return get_service_details(arguments["domain"])
+
+        # Domain-specific device control
+        elif name == "control_light":
+            return control_light(
+                entity_id=arguments["entity_id"],
+                action=arguments["action"],
+                brightness=arguments.get("brightness"),
+                brightness_pct=arguments.get("brightness_pct"),
+                rgb_color=arguments.get("rgb_color"),
+                hs_color=arguments.get("hs_color"),
+                xy_color=arguments.get("xy_color"),
+                color_temp_kelvin=arguments.get("color_temp_kelvin"),
+                color_name=arguments.get("color_name"),
+                effect=arguments.get("effect"),
+                transition=arguments.get("transition"),
+                flash=arguments.get("flash"),
+                white=arguments.get("white"),
+            )
+        elif name == "control_climate":
+            return control_climate(
+                entity_id=arguments["entity_id"],
+                action=arguments["action"],
+                temperature=arguments.get("temperature"),
+                target_temp_high=arguments.get("target_temp_high"),
+                target_temp_low=arguments.get("target_temp_low"),
+                hvac_mode=arguments.get("hvac_mode"),
+                fan_mode=arguments.get("fan_mode"),
+                preset_mode=arguments.get("preset_mode"),
+                humidity=arguments.get("humidity"),
+                swing_mode=arguments.get("swing_mode"),
+            )
+        elif name == "control_media_player":
+            return control_media_player(
+                entity_id=arguments["entity_id"],
+                action=arguments["action"],
+                volume_level=arguments.get("volume_level"),
+                source=arguments.get("source"),
+                media_content_id=arguments.get("media_content_id"),
+                media_content_type=arguments.get("media_content_type"),
+                seek_position=arguments.get("seek_position"),
+                shuffle=arguments.get("shuffle"),
+                repeat=arguments.get("repeat"),
+            )
+        elif name == "control_cover":
+            return control_cover(
+                entity_id=arguments["entity_id"],
+                action=arguments["action"],
+                position=arguments.get("position"),
+                tilt_position=arguments.get("tilt_position"),
+            )
+        elif name == "control_fan":
+            return control_fan(
+                entity_id=arguments["entity_id"],
+                action=arguments["action"],
+                percentage=arguments.get("percentage"),
+                preset_mode=arguments.get("preset_mode"),
+                direction=arguments.get("direction"),
+                oscillating=arguments.get("oscillating"),
+            )
+        elif name == "control_switch":
+            return control_switch(
+                entity_id=arguments["entity_id"],
+                action=arguments["action"],
+            )
+        elif name == "control_lock":
+            return control_lock(
+                entity_id=arguments["entity_id"],
+                action=arguments["action"],
+                code=arguments.get("code"),
+            )
+        elif name == "control_alarm":
+            return control_alarm(
+                entity_id=arguments["entity_id"],
+                action=arguments["action"],
+                code=arguments.get("code"),
+            )
+        elif name == "control_vacuum":
+            return control_vacuum(
+                entity_id=arguments["entity_id"],
+                action=arguments["action"],
+                command=arguments.get("command"),
+                params=arguments.get("params"),
+            )
+        elif name == "send_notification":
+            return send_notification(
+                message=arguments["message"],
+                title=arguments.get("title"),
+                target=arguments.get("target"),
+                data=arguments.get("data"),
+            )
+        elif name == "activate_scene":
+            return activate_scene(
+                entity_id=arguments["entity_id"],
+                transition=arguments.get("transition"),
+            )
+        elif name == "run_script":
+            return run_script(
+                entity_id=arguments["entity_id"],
+                variables=arguments.get("variables"),
+            )
+
+        # System tools
         elif name == "get_automations":
             return get_automations()
         elif name == "get_automation_trace":
@@ -459,6 +1382,10 @@ def handle_tool_call(name, arguments):
     except Exception as e:
         return {"error": str(e)}
 
+
+# ============================================================================
+# MCP Protocol Implementation
+# ============================================================================
 
 def send_response(response_id, result):
     """Send a JSON-RPC response to stdout."""
