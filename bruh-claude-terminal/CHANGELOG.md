@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.5.0
+
+### HA Repairs Flow, OAuth Persistence & Conversation Memory
+
+**HA Repairs Integration**
+- Replaced persistent notification with HA repairs flow for integration updates
+- On update, the integration creates a fixable repair issue in Settings > System > Repairs with a "Restart" button
+- First installs still use a persistent notification as fallback since no integration is loaded yet
+- Added `repairs.py` with `RestartRequiredRepairFlow` that triggers HA restart
+
+**OAuth Persistence**
+- OAuth auth symlinks are now recreated on every add-on startup
+- Credentials persist across add-on updates and container rebuilds
+
+**Conversation Memory**
+- Added conversation memory to the Assist conversation agent
+- The bridge tracks per-session history (up to 20 turns) and sends it with each request
+- The assist-listener formats history as context for Claude
+
 ## 1.4.0
 
 ### Permissions Toggle, Restart Documentation & Version Bump
