@@ -9,6 +9,11 @@ import voluptuous as vol
 
 from homeassistant.config_entries import ConfigFlow
 
+try:
+    from homeassistant.components.hassio import HassioServiceInfo
+except ImportError:
+    HassioServiceInfo = None  # type: ignore[assignment,misc]
+
 from .const import DEFAULT_TIMEOUT, DOMAIN
 
 
@@ -24,7 +29,7 @@ class BruhClaudeConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            # Check that the shared directory exists (add-on is running)
+            # Check that the shared directory exists (app is running)
             shared_path = self.hass.config.path(".bruh_claude")
             if not os.path.isdir(shared_path):
                 errors["base"] = "addon_not_running"
@@ -49,20 +54,30 @@ class BruhClaudeConfigFlow(ConfigFlow, domain=DOMAIN):
         )
 
     async def async_step_hassio(
-        self, discovery_info: dict[str, Any]
+        self, discovery_info: Any
     ):
-        """Handle discovery from the BRUH Claude Terminal add-on."""
+        """Handle discovery from the BRUH Claude Terminal app.
+
+        Triggered automatically by the Supervisor when the add-on posts
+        to the /discovery API with service name 'bruh_claude'.
+        """
         await self.async_set_unique_id(DOMAIN)
         self._abort_if_unique_id_configured()
 
-        # Store discovery info for the confirm step
-        self._discovery_info = discovery_info
+        # Extract config from discovery info (supports both dict and HassioServiceInfo)
+        if HassioServiceInfo is not None and isinstance(discovery_info, HassioServiceInfo):
+            self._discovery_info = discovery_info.config
+        elif isinstance(discovery_info, dict):
+            self._discovery_info = discovery_info
+        else:
+            self._discovery_info = {}
+
         return await self.async_step_hassio_confirm()
 
     async def async_step_hassio_confirm(
         self, user_input: dict[str, Any] | None = None
     ):
-        """Confirm the add-on discovery and set up the integration."""
+        """Confirm the app discovery and set up the integration."""
         if user_input is not None:
             return self.async_create_entry(
                 title="BRUH Claude",

@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.2.0
+
+### Discovery Fix, Version Updates & App Terminology
+
+**Fixed Integration Auto-Discovery**
+- Fixed the integration not being auto-discovered on first install
+- The app now triggers an HA Core restart after first-time custom component deployment,
+  ensuring the integration is loaded before discovery fires
+- Uses bashio::discovery for reliable Supervisor API communication with curl fallback
+- Discovery payload now includes add-on metadata (slug, name, version)
+- Config flow updated to handle both legacy dict and new HassioServiceInfo discovery formats
+
+**Version Update Detection**
+- Bumped version to 1.2.0 across all files (config.yaml, manifest.json, run.sh)
+- Versions are now kept in sync so the update button appears correctly in Settings > Apps
+- When pulling repository updates, HA will detect the new version and show the update button
+
+**Updated to HA 2026.2 Standards**
+- Renamed "Add-On" references to "App" throughout (matching HA 2026.2 terminology)
+- Added `integration_type: "service"` to manifest.json per latest HA integration standards
+- Updated all user-facing strings (config flow, error messages) to use "app" terminology
+
 ## 1.1.0
 
 ### Auto-Discovery & Versioning
