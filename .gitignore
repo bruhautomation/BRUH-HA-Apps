@@ -12,6 +12,10 @@ yarn.lock
 build/
 dist/
 
+# Python
+__pycache__/
+*.pyc
+
 # Temporary files
 .tmp/
 .temp/
