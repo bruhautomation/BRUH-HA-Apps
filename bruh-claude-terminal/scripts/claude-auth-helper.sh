@@ -32,12 +32,15 @@ manual_auth_input() {
         return 1
     fi
 
-    echo "$auth_code" > /tmp/claude-auth-code
+    # Save temporarily with restricted permissions, clean up after
+echo "$auth_code" > /tmp/claude-auth-code
+chmod 600 /tmp/claude-auth-code
+trap 'rm -f /tmp/claude-auth-code' EXIT
     echo ""
     echo "Code saved. Starting Claude authentication..."
     sleep 1
 
-    echo "$auth_code" | node "$(which claude)"
+    echo "$auth_code" | claude
 }
 
 read_auth_from_file() {
@@ -56,7 +59,7 @@ read_auth_from_file() {
         echo "Code found. Starting Claude authentication..."
         sleep 1
 
-        echo "$auth_code" | node "$(which claude)"
+        echo "$auth_code" | claude
 
         rm -f "$auth_file"
         echo "Cleaned up auth code file"
@@ -82,7 +85,7 @@ retry_standard_auth() {
     echo "  - On mobile, long-press may show paste option"
     echo ""
     sleep 2
-    exec node "$(which claude)"
+    exec claude
 }
 
 main() {

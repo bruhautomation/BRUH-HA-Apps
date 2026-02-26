@@ -24,14 +24,18 @@ RUN apk add --no-cache \
     ttyd \
     openssh-client \
     inotify-tools \
-    socat \
-    websocat
+    socat
 
-# Install Python packages for HA MCP server and integrations
+# Install websocat from community repo (may not be in all base images)
+RUN apk add --no-cache --repository=https://dl-cdn.alpinelinux.org/alpine/edge/community \
+    websocat 2>/dev/null || true
+
+# Install Python packages for HA MCP server, integrations, and YAML validation
 RUN pip3 install --break-system-packages --no-cache-dir \
     websockets \
     aiohttp \
-    pyyaml
+    pyyaml \
+    yamllint
 
 # Install Claude Code CLI using native installer
 RUN curl -fsSL https://claude.ai/install.sh | bash \

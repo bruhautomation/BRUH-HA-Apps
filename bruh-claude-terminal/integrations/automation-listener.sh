@@ -42,8 +42,8 @@ process_automation_task() {
 
     local output_file="$AUTOMATION_DIR/${task_name}.output"
 
-    # Run Claude
-    claude -p "$prompt" > "$output_file" 2>&1 || true
+    # Run Claude - pipe prompt via stdin to avoid shell injection
+    printf '%s' "$prompt" | claude -p > "$output_file" 2>&1 || true
 
     local result
     result=$(cat "$output_file" 2>/dev/null || echo "Task failed")
@@ -51,19 +51,31 @@ process_automation_task() {
     # Send notification if requested
     if [ "$notify" = "true" ] && [ -n "$entity_id" ]; then
         local message
-        message=$(echo "$result" | head -10 | sed 's/"/\\"/g' | tr '\n' ' ')
+        message=$(head -10 "$output_file" 2>/dev/null | tr '\n' ' ')
+        # Use jq to safely construct JSON (prevents injection from task output)
+        local notify_payload
+        notify_payload=$(jq -n \
+            --arg entity "$entity_id" \
+            --arg msg "Claude task '${task_name}' completed: ${message}" \
+            '{"entity_id": $entity, "message": $msg}')
         curl -s -X POST \
             -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
             -H "Content-Type: application/json" \
-            -d "{\"entity_id\": \"$entity_id\", \"message\": \"Claude task '$task_name' completed: $message\"}" \
+            -d "$notify_payload" \
             "http://supervisor/core/api/services/notify/persistent_notification" 2>/dev/null || true
     fi
 
     # Fire completion event
+    # Use jq to safely construct JSON
+    local event_payload
+    event_payload=$(jq -n \
+        --arg name "$task_name" \
+        --arg status "completed" \
+        '{"task_name": $name, "status": $status}')
     curl -s -X POST \
         -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
         -H "Content-Type: application/json" \
-        -d "{\"task_name\": \"$task_name\", \"status\": \"completed\"}" \
+        -d "$event_payload" \
         "http://supervisor/core/api/events/bruh_claude_task_complete" 2>/dev/null || true
 
     # Clean up

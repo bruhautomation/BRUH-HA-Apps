@@ -38,18 +38,22 @@ process_conversation() {
     local output_file="$RESPONSE_DIR/${conversation_id}.txt"
 
     # Use Claude in print mode for one-shot responses
-    claude -p "You are a Home Assistant assistant. The user said: '$text'.
+    # Pipe prompt via stdin to avoid shell injection from user text
+    printf '%s' "You are a Home Assistant assistant. The user said: ${text}
 Respond helpfully. If they want to control devices, use the Home Assistant MCP tools available to you.
-Keep responses concise and conversational." > "$output_file" 2>&1 || true
+Keep responses concise and conversational." | claude -p > "$output_file" 2>&1 || true
 
     local response
-    response=$(cat "$output_file" 2>/dev/null || echo "I had trouble processing that request.")
+    response=$(head -5 "$output_file" 2>/dev/null || echo "I had trouble processing that request.")
 
     # Send response back to HA via the REST API
+    # Use jq to safely construct JSON (prevents injection from response content)
+    local json_payload
+    json_payload=$(jq -n --arg text "$response" '{"text": $text}')
     curl -s -X POST \
         -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
         -H "Content-Type: application/json" \
-        -d "{\"text\": \"$(echo "$response" | head -5 | sed 's/"/\\"/g' | tr '\n' ' ')\"}" \
+        -d "$json_payload" \
         "http://supervisor/core/api/events/bruh_claude_response" 2>/dev/null || true
 
     bashio::log.info "Assist response sent for conversation: $conversation_id"

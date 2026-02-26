@@ -10,7 +10,6 @@ and log access as MCP tools.
 Runs as a stdio-based MCP server that Claude Code launches automatically.
 """
 
-import asyncio
 import json
 import os
 import sys
@@ -45,7 +44,12 @@ def ha_api_request(endpoint, method="GET", data=None):
 
     try:
         with urllib.request.urlopen(req, timeout=30) as response:
-            return json.loads(response.read().decode())
+            raw = response.read().decode()
+            try:
+                return json.loads(raw)
+            except json.JSONDecodeError:
+                # Some endpoints (e.g., error_log) return plain text
+                return raw
     except urllib.error.HTTPError as e:
         error_body = e.read().decode() if e.fp else ""
         return {"error": f"HTTP {e.code}: {e.reason}", "details": error_body}
@@ -137,14 +141,7 @@ def get_services():
 
 
 def get_device_registry():
-    """Get device registry via websocket-compatible endpoint."""
-    # Use the template endpoint to extract device info
-    result = ha_api_request(
-        "/api/template",
-        method="POST",
-        data={"template": "{{ states | map(attribute='entity_id') | list | length }} entities total"}
-    )
-    # Fallback: get areas and devices from states
+    """Get device registry summary from entity states."""
     states = ha_api_request("/api/states")
     if isinstance(states, list):
         domains = {}
@@ -164,6 +161,7 @@ def get_device_registry():
 def get_logbook(hours=1, entity_id=None):
     """Get logbook entries."""
     from datetime import datetime, timedelta, timezone
+    hours = max(0.1, min(hours or 1, 24))  # Clamp between 0.1 and 24
     start = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
     endpoint = f"/api/logbook/{start}"
     if entity_id:
@@ -519,6 +517,12 @@ def main():
             # No response needed for notifications
             pass
 
+        elif method == "resources/list":
+            send_response(req_id, {"resources": []})
+
+        elif method == "prompts/list":
+            send_response(req_id, {"prompts": []})
+
         elif method == "tools/list":
             send_response(req_id, {"tools": TOOLS})
 
@@ -527,9 +531,13 @@ def main():
             arguments = params.get("arguments", {})
             result = handle_tool_call(tool_name, arguments)
             result_text = json.dumps(result, indent=2, default=str)
-            send_response(req_id, {
+            is_error = isinstance(result, dict) and "error" in result
+            response_obj = {
                 "content": [{"type": "text", "text": result_text}],
-            })
+            }
+            if is_error:
+                response_obj["isError"] = True
+            send_response(req_id, response_obj)
 
         elif method == "ping":
             send_response(req_id, {})

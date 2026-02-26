@@ -88,18 +88,22 @@ reload_target() {
 
     echo -e "${BLUE}Reloading ${target}...${NC}"
 
-    local result
-    result=$(curl -s -X POST \
+    local http_code
+    local body
+    body=$(curl -s -w "\n%{http_code}" -X POST \
         -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
         -H "Content-Type: application/json" \
         "http://supervisor/core/api/services/${domain}/${service}" \
         -d '{}')
 
-    if [ $? -eq 0 ]; then
+    http_code=$(echo "$body" | tail -1)
+    body=$(echo "$body" | sed '$d')
+
+    if [ "$http_code" -ge 200 ] 2>/dev/null && [ "$http_code" -lt 300 ] 2>/dev/null; then
         echo -e "${GREEN}Successfully reloaded ${target}${NC}"
     else
-        echo -e "${RED}Failed to reload ${target}${NC}"
-        echo "$result"
+        echo -e "${RED}Failed to reload ${target} (HTTP ${http_code})${NC}"
+        echo "$body"
         exit 1
     fi
 }

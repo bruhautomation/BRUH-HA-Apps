@@ -104,7 +104,7 @@ follow_logs() {
     echo -e "${CYAN}Following ${target} logs (Ctrl+C to stop)...${NC}"
     echo ""
 
-    local last_size=0
+    local last_line_count=0
     while true; do
         local log_content
         case "$target" in
@@ -120,21 +120,18 @@ follow_logs() {
         esac
 
         if [ -n "$log_content" ]; then
-            local current_size
-            current_size=$(echo "$log_content" | wc -c)
-            if [ "$current_size" -ne "$last_size" ]; then
-                # Show only new content
-                if [ "$last_size" -eq 0 ]; then
+            local current_line_count
+            current_line_count=$(echo "$log_content" | wc -l)
+            if [ "$current_line_count" -gt "$last_line_count" ]; then
+                if [ "$last_line_count" -eq 0 ]; then
+                    # First fetch: show last 20 lines
                     echo "$log_content" | tail -20
                 else
-                    local new_lines
-                    new_lines=$(echo "$log_content" | wc -l)
-                    local old_lines=$((new_lines - 5))
-                    if [ "$old_lines" -gt 0 ]; then
-                        echo "$log_content" | tail -5
-                    fi
+                    # Show only new lines since last fetch
+                    local new_lines=$((current_line_count - last_line_count))
+                    echo "$log_content" | tail -"$new_lines"
                 fi
-                last_size=$current_size
+                last_line_count=$current_line_count
             fi
         fi
         sleep 5

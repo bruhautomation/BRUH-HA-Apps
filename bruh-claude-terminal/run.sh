@@ -177,13 +177,19 @@ install_cli_tools() {
         chmod +x /opt/scripts/claude-auth-helper.sh
     fi
 
+    # ha-yaml-check - YAML validation
+    if [ -f "/opt/scripts/ha-yaml-check.sh" ]; then
+        cp /opt/scripts/ha-yaml-check.sh /usr/local/bin/ha-yaml-check
+        chmod +x /usr/local/bin/ha-yaml-check
+    fi
+
     # Persist-install
     if [ -f "/opt/scripts/persist-install.sh" ]; then
         cp /opt/scripts/persist-install.sh /usr/local/bin/persist-install
         chmod +x /usr/local/bin/persist-install
     fi
 
-    bashio::log.info "CLI tools installed: ha-reload, ha-log, ha-context-gen, ha-backup"
+    bashio::log.info "CLI tools installed: ha-reload, ha-log, ha-context-gen, ha-backup, ha-yaml-check"
 }
 
 # ============================================================================
@@ -197,11 +203,17 @@ install_persistent_packages() {
     local apk_packages=""
     local pip_packages=""
 
+    # bashio::config returns JSON arrays for list options - parse with jq
     if bashio::config.has_value 'persistent_apk_packages'; then
         local config_apk
         config_apk=$(bashio::config 'persistent_apk_packages')
         if [ -n "$config_apk" ] && [ "$config_apk" != "null" ]; then
-            apk_packages="$config_apk"
+            # Parse JSON array to space-separated string
+            apk_packages=$(echo "$config_apk" | jq -r '.[]? // empty' 2>/dev/null | tr '\n' ' ')
+            # Fallback: if not a JSON array, use as-is
+            if [ -z "$apk_packages" ]; then
+                apk_packages="$config_apk"
+            fi
         fi
     fi
 
@@ -209,7 +221,12 @@ install_persistent_packages() {
         local config_pip
         config_pip=$(bashio::config 'persistent_pip_packages')
         if [ -n "$config_pip" ] && [ "$config_pip" != "null" ]; then
-            pip_packages="$config_pip"
+            # Parse JSON array to space-separated string
+            pip_packages=$(echo "$config_pip" | jq -r '.[]? // empty' 2>/dev/null | tr '\n' ' ')
+            # Fallback: if not a JSON array, use as-is
+            if [ -z "$pip_packages" ]; then
+                pip_packages="$config_pip"
+            fi
         fi
     fi
 
@@ -265,10 +282,9 @@ setup_auto_backup() {
     # Initialize git repo in /config if not present
     if [ ! -d "/config/.git" ]; then
         bashio::log.info "Initializing git repository in /config..."
-        cd /config
-        git init
-        git config user.email "bruh-claude@homeassistant.local"
-        git config user.name "BRUH Claude Terminal"
+        git -C /config init
+        git -C /config config user.email "bruh-claude@homeassistant.local"
+        git -C /config config user.name "BRUH Claude Terminal"
 
         # Create .gitignore for HA config
         if [ ! -f "/config/.gitignore" ]; then
@@ -276,8 +292,8 @@ setup_auto_backup() {
 # BRUH Claude Terminal auto-backup gitignore
 # Secrets and sensitive files
 secrets.yaml
-.storage/auth*
-.storage/onboarding*
+.storage/
+.cloud/
 
 # Large/binary files
 *.db
@@ -294,19 +310,22 @@ __pycache__/
 tts/
 *.tmp
 
-# Add-on data
+# Add-on data and Claude config (contains tokens)
 claude-config/
 .claude/
+.claude.json
+.mcp.json
 
-# Media files
+# Media and large directories
 www/
 media/
 custom_components/__pycache__/
+deps/
 GITIGNORE
         fi
 
-        git add -A
-        git commit -m "Initial BRUH Claude Terminal backup" --allow-empty || true
+        git -C /config add -A
+        git -C /config commit -m "Initial BRUH Claude Terminal backup" --allow-empty || true
         bashio::log.info "Git repository initialized in /config"
     fi
 
@@ -350,73 +369,36 @@ setup_mcp_server() {
 
     bashio::log.info "Configuring HA MCP server for Claude Code..."
 
-    # Write MCP server config for Claude Code
-    local claude_config_dir="/data/.config/claude"
-    mkdir -p "$claude_config_dir"
+    # SECURITY: Do NOT write SUPERVISOR_TOKEN to disk.
+    # The MCP server reads it from the environment at runtime.
+    # SUPERVISOR_TOKEN is already exported and inherited by child processes.
 
-    # Create the MCP server configuration that Claude Code will use
-    local mcp_config_file="$claude_config_dir/claude_mcp_config.json"
-    cat > "$mcp_config_file" << MCPEOF
-{
+    # Write MCP config to .mcp.json (Claude Code's project-level MCP config)
+    # No tokens in the file - the server inherits SUPERVISOR_TOKEN from the environment
+    local project_config="/config/.mcp.json"
+    local mcp_entry='{
   "mcpServers": {
     "home-assistant": {
       "command": "python3",
-      "args": ["/opt/ha-mcp-server/ha_mcp_server.py"],
-      "env": {
-        "SUPERVISOR_TOKEN": "${SUPERVISOR_TOKEN}",
-        "HA_BASE_URL": "http://supervisor/core/api"
-      }
+      "args": ["/opt/ha-mcp-server/ha_mcp_server.py"]
     }
   }
-}
-MCPEOF
+}'
 
-    # Ensure Claude Code picks up the MCP config
-    # Write to the project-level .claude.json in /config
-    local project_config="/config/.claude.json"
     if [ ! -f "$project_config" ]; then
-        cat > "$project_config" << PROJEOF
-{
-  "mcpServers": {
-    "home-assistant": {
-      "command": "python3",
-      "args": ["/opt/ha-mcp-server/ha_mcp_server.py"],
-      "env": {
-        "SUPERVISOR_TOKEN": "${SUPERVISOR_TOKEN}",
-        "HA_BASE_URL": "http://supervisor/core/api"
-      }
-    }
-  }
-}
-PROJEOF
+        echo "$mcp_entry" > "$project_config"
         bashio::log.info "MCP server config written to $project_config"
     else
-        # Merge MCP config into existing .claude.json
-        local tmp_config=$(mktemp)
-        jq --arg token "$SUPERVISOR_TOKEN" '.mcpServers["home-assistant"] = {
+        # Merge MCP config into existing file, preserving other servers
+        local tmp_config
+        tmp_config=$(mktemp)
+        jq '.mcpServers["home-assistant"] = {
           "command": "python3",
-          "args": ["/opt/ha-mcp-server/ha_mcp_server.py"],
-          "env": {
-            "SUPERVISOR_TOKEN": $token,
-            "HA_BASE_URL": "http://supervisor/core/api"
-          }
+          "args": ["/opt/ha-mcp-server/ha_mcp_server.py"]
         }' "$project_config" > "$tmp_config" 2>/dev/null && mv "$tmp_config" "$project_config" || {
             bashio::log.warning "Could not merge MCP config, writing fresh config"
             rm -f "$tmp_config"
-            cat > "$project_config" << PROJEOF2
-{
-  "mcpServers": {
-    "home-assistant": {
-      "command": "python3",
-      "args": ["/opt/ha-mcp-server/ha_mcp_server.py"],
-      "env": {
-        "SUPERVISOR_TOKEN": "${SUPERVISOR_TOKEN}",
-        "HA_BASE_URL": "http://supervisor/core/api"
-      }
-    }
-  }
-}
-PROJEOF2
+            echo "$mcp_entry" > "$project_config"
         }
         bashio::log.info "MCP server config merged into $project_config"
     fi
@@ -529,6 +511,17 @@ run_health_check() {
 # ============================================================================
 # Main
 # ============================================================================
+
+# Clean up background processes on exit
+cleanup() {
+    bashio::log.info "Shutting down background processes..."
+    # Kill all child processes
+    kill $(jobs -p) 2>/dev/null || true
+    wait 2>/dev/null || true
+    bashio::log.info "Cleanup complete"
+}
+
+trap cleanup SIGTERM SIGINT EXIT
 
 main() {
     bashio::log.info "============================================"

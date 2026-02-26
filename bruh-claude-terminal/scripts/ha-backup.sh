@@ -20,17 +20,16 @@ do_backup() {
         echo -e "${YELLOW}Git repository not initialized in /config${NC}"
         echo -e "Initializing now..."
 
-        cd "$CONFIG_DIR"
-        git init
-        git config user.email "bruh-claude@homeassistant.local"
-        git config user.name "BRUH Claude Terminal"
+        git -C "$CONFIG_DIR" init
+        git -C "$CONFIG_DIR" config user.email "bruh-claude@homeassistant.local"
+        git -C "$CONFIG_DIR" config user.name "BRUH Claude Terminal"
 
         if [ ! -f "$CONFIG_DIR/.gitignore" ]; then
             cat > "$CONFIG_DIR/.gitignore" << 'GITIGNORE'
 # BRUH Claude Terminal auto-backup gitignore
 secrets.yaml
-.storage/auth*
-.storage/onboarding*
+.storage/
+.cloud/
 *.db
 *.db-shm
 *.db-wal
@@ -44,22 +43,23 @@ tts/
 *.tmp
 claude-config/
 .claude/
+.claude.json
+.mcp.json
 www/
 media/
 custom_components/__pycache__/
+deps/
 GITIGNORE
         fi
 
-        git add -A
-        git commit -m "Initial backup" --allow-empty || true
+        git -C "$CONFIG_DIR" add -A
+        git -C "$CONFIG_DIR" commit -m "Initial backup" --allow-empty || true
         echo -e "${GREEN}Git repository initialized${NC}"
     fi
 
-    cd "$CONFIG_DIR"
-
     # Check for changes
     local changes
-    changes=$(git status --porcelain 2>/dev/null || echo "")
+    changes=$(git -C "$CONFIG_DIR" status --porcelain 2>/dev/null || echo "")
 
     if [ -z "$changes" ]; then
         echo -e "${BLUE}No changes to back up${NC}"
@@ -77,10 +77,10 @@ GITIGNORE
     echo ""
 
     # Stage and commit
-    git add -A
+    git -C "$CONFIG_DIR" add -A
     local timestamp
     timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    git commit -m "${COMMIT_MSG} (${timestamp})" || {
+    git -C "$CONFIG_DIR" commit -m "${COMMIT_MSG} (${timestamp})" || {
         echo -e "${RED}Commit failed${NC}"
         return 1
     }
@@ -90,7 +90,7 @@ GITIGNORE
     # Show recent backups
     echo ""
     echo -e "${BLUE}Recent backups:${NC}"
-    git log --oneline -5
+    git -C "$CONFIG_DIR" log --oneline -5
 }
 
 show_history() {
@@ -99,9 +99,8 @@ show_history() {
         return 1
     fi
 
-    cd "$CONFIG_DIR"
     echo -e "${BLUE}Backup history:${NC}"
-    git log --oneline -20
+    git -C "$CONFIG_DIR" log --oneline -20
 }
 
 show_diff() {
@@ -110,10 +109,9 @@ show_diff() {
         return 1
     fi
 
-    cd "$CONFIG_DIR"
     local ref="${1:-HEAD~1}"
     echo -e "${BLUE}Changes since ${ref}:${NC}"
-    git diff "$ref" --stat
+    git -C "$CONFIG_DIR" diff "$ref" --stat
 }
 
 restore_file() {
@@ -130,9 +128,8 @@ restore_file() {
         return 1
     fi
 
-    cd "$CONFIG_DIR"
     echo -e "${YELLOW}Restoring ${file} from ${ref}...${NC}"
-    git checkout "$ref" -- "$file"
+    git -C "$CONFIG_DIR" checkout "$ref" -- "$file"
     echo -e "${GREEN}Restored ${file}${NC}"
 }
 
