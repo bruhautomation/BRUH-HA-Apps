@@ -61,17 +61,23 @@ class ClaudeBridge:
         return os.path.isdir(self._base)
 
     async def async_send_conversation(
-        self, text: str, conversation_id: str | None = None, timeout: int | None = None
+        self,
+        text: str,
+        conversation_id: str | None = None,
+        timeout: int | None = None,
+        system_prompt: str | None = None,
     ) -> str:
         """Send a conversation request and wait for the response."""
         req_id = conversation_id or uuid.uuid4().hex
         timeout = timeout or self._timeout
 
-        request = {
+        request: dict = {
             "id": req_id,
             "text": text,
             "type": "conversation",
         }
+        if system_prompt:
+            request["system_prompt"] = system_prompt
 
         req_file = os.path.join(self.requests_dir, f"{req_id}.json")
         resp_file = os.path.join(self.responses_dir, f"{req_id}.json")

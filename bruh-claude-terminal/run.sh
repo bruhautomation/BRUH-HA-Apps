@@ -68,10 +68,27 @@ init_environment() {
         chmod 644 "$data_home/.tmux.conf"
     fi
 
+    # Write environment file for background processes (listeners, etc.)
+    # These processes may lose env vars due to with-contenv shebang reloading
+    # the s6 container environment, so we persist the critical vars to a file.
+    local env_file="/data/.bruh_claude_env"
+    cat > "$env_file" << ENVEOF
+export HOME="${data_home}"
+export XDG_CONFIG_HOME="${config_dir}"
+export XDG_CACHE_HOME="${cache_dir}"
+export XDG_STATE_HOME="${state_dir}"
+export XDG_DATA_HOME="/data/.local/share"
+export ANTHROPIC_CONFIG_DIR="${claude_config_dir}"
+export ANTHROPIC_HOME="/data"
+export PATH="${data_home}/.local/bin:\${PATH}"
+ENVEOF
+    chmod 600 "$env_file"
+
     bashio::log.info "Environment initialized:"
     bashio::log.info "  - Home: $HOME"
     bashio::log.info "  - Config: $XDG_CONFIG_HOME"
     bashio::log.info "  - Claude config: $ANTHROPIC_CONFIG_DIR"
+    bashio::log.info "  - Env file: $env_file"
 }
 
 # ============================================================================
@@ -655,7 +672,7 @@ trap cleanup SIGTERM SIGINT EXIT
 
 main() {
     bashio::log.info "============================================"
-    bashio::log.info "  BRUH Claude Terminal v1.2.0"
+    bashio::log.info "  BRUH Claude Terminal v1.3.0"
     bashio::log.info "  Enhanced Claude Code for Home Assistant"
     bashio::log.info "============================================"
 

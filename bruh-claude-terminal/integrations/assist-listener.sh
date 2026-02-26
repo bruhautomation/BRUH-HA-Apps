@@ -7,7 +7,7 @@
 #   /config/.bruh_claude/requests/   - incoming conversation requests (JSON)
 #   /config/.bruh_claude/responses/  - outgoing conversation responses (JSON)
 #
-# Request format:  {"id": "<uuid>", "text": "user message", "type": "conversation"}
+# Request format:  {"id": "<uuid>", "text": "user message", "type": "conversation", "system_prompt": "optional"}
 # Response format: {"id": "<uuid>", "text": "claude response"}
 
 set -e
@@ -19,17 +19,38 @@ RESPONSES_DIR="$SHARED_DIR/responses"
 
 mkdir -p "$REQUESTS_DIR" "$RESPONSES_DIR"
 
+# Source the Claude environment written by run.sh
+# This ensures HOME, ANTHROPIC_CONFIG_DIR, etc. are set correctly
+# even when with-contenv shebang reloads the s6 container environment.
+if [ -f /data/.bruh_claude_env ]; then
+    # shellcheck disable=SC1091
+    source /data/.bruh_claude_env
+fi
+
 bashio::log.info "Assist listener starting..."
 bashio::log.info "Watching $REQUESTS_DIR for conversation requests"
+
+# Check if Claude is authenticated
+check_claude_auth() {
+    # Try a quick claude command to see if auth is available
+    local auth_check
+    auth_check=$(claude -p "hello" 2>&1 | head -5) || true
+    if echo "$auth_check" | grep -qi "not logged in\|please log in\|authentication\|unauthorized"; then
+        return 1
+    fi
+    return 0
+}
 
 # Process a conversation request file
 process_request() {
     local req_file="$1"
     local req_id
     local text
+    local system_prompt
 
     req_id=$(jq -r '.id // empty' "$req_file" 2>/dev/null)
     text=$(jq -r '.text // empty' "$req_file" 2>/dev/null)
+    system_prompt=$(jq -r '.system_prompt // empty' "$req_file" 2>/dev/null)
 
     if [ -z "$req_id" ] || [ -z "$text" ]; then
         bashio::log.warning "Invalid request file: $req_file"
@@ -42,20 +63,35 @@ process_request() {
     # Remove request file immediately so we don't re-process it
     rm -f "$req_file"
 
-    # Build the system prompt for Claude
-    local system_prompt="You are a Home Assistant voice assistant. The user said: ${text}
+    # Build the prompt for Claude
+    local full_prompt
+    if [ -n "$system_prompt" ]; then
+        full_prompt="${system_prompt}
+
+User said: ${text}
 Respond helpfully. If they want to control devices, use the Home Assistant MCP tools available to you.
 Keep responses concise and conversational."
+    else
+        full_prompt="You are a Home Assistant voice assistant. The user said: ${text}
+Respond helpfully. If they want to control devices, use the Home Assistant MCP tools available to you.
+Keep responses concise and conversational."
+    fi
 
     local output_file
     output_file=$(mktemp)
 
-    # Run Claude in print mode for a one-shot response
-    printf '%s' "$system_prompt" | claude -p > "$output_file" 2>&1 || true
+    # Run Claude in print mode with --dangerously-skip-permissions for non-interactive use
+    printf '%s' "$full_prompt" | claude -p --dangerously-skip-permissions > "$output_file" 2>&1 || true
 
     local response
     response=$(cat "$output_file" 2>/dev/null || echo "I had trouble processing that request.")
     rm -f "$output_file"
+
+    # Check for auth errors and return a helpful message
+    if echo "$response" | grep -qi "not logged in\|please log in\|authentication required"; then
+        response="Claude is not logged in. Please open the BRUH Claude Terminal sidebar and complete the OAuth login first."
+        bashio::log.error "Claude auth error - user needs to log in via the terminal"
+    fi
 
     # Write response file (atomic via tmp + rename)
     local resp_file="$RESPONSES_DIR/${req_id}.json"
