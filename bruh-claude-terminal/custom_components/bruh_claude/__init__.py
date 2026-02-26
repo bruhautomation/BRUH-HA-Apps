@@ -14,7 +14,12 @@ import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse
+from homeassistant.core import HomeAssistant, ServiceCall
+
+try:
+    from homeassistant.core import SupportsResponse
+except ImportError:
+    SupportsResponse = None  # type: ignore[assignment,misc]
 
 from .bridge import ClaudeBridge
 from .const import CONF_TIMEOUT, DEFAULT_TIMEOUT, DOMAIN
@@ -76,7 +81,7 @@ def _get_bridge(hass: HomeAssistant) -> ClaudeBridge:
 def _register_services(hass: HomeAssistant) -> None:
     """Register bruh_claude services."""
 
-    async def handle_send_prompt(call: ServiceCall) -> ServiceResponse:
+    async def handle_send_prompt(call: ServiceCall):
         bridge = _get_bridge(hass)
         prompt = call.data["prompt"]
         timeout = call.data.get("timeout")
@@ -90,7 +95,7 @@ def _register_services(hass: HomeAssistant) -> None:
 
         return {"response": result}
 
-    async def handle_run_task(call: ServiceCall) -> ServiceResponse:
+    async def handle_run_task(call: ServiceCall):
         bridge = _get_bridge(hass)
         prompt = call.data["prompt"]
         notify = call.data.get("notify", False)
@@ -109,12 +114,16 @@ def _register_services(hass: HomeAssistant) -> None:
 
         return {"response": result}
 
+    extra_kwargs: dict = {}
+    if SupportsResponse is not None:
+        extra_kwargs["supports_response"] = SupportsResponse.OPTIONAL
+
     hass.services.async_register(
         DOMAIN,
         "send_prompt",
         handle_send_prompt,
         schema=SEND_PROMPT_SCHEMA,
-        supports_response=SupportsResponse.OPTIONAL,
+        **extra_kwargs,
     )
 
     hass.services.async_register(
@@ -122,5 +131,5 @@ def _register_services(hass: HomeAssistant) -> None:
         "run_task",
         handle_run_task,
         schema=RUN_TASK_SCHEMA,
-        supports_response=SupportsResponse.OPTIONAL,
+        **extra_kwargs,
     )
