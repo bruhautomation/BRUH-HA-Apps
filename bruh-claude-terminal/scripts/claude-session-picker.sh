@@ -102,7 +102,7 @@ launch_claude_new() {
     fi
 
     sleep 1
-    exec tmux new-session -s "$TMUX_SESSION_NAME" 'claude'
+    exec tmux new-session -s "$TMUX_SESSION_NAME" 'claude --dangerously-skip-permissions'
 }
 
 launch_claude_continue() {
@@ -113,7 +113,7 @@ launch_claude_continue() {
     fi
 
     sleep 1
-    exec tmux new-session -s "$TMUX_SESSION_NAME" 'claude -c'
+    exec tmux new-session -s "$TMUX_SESSION_NAME" 'claude --dangerously-skip-permissions -c'
 }
 
 launch_claude_resume() {
@@ -124,7 +124,7 @@ launch_claude_resume() {
     fi
 
     sleep 1
-    exec tmux new-session -s "$TMUX_SESSION_NAME" 'claude -r'
+    exec tmux new-session -s "$TMUX_SESSION_NAME" 'claude --dangerously-skip-permissions -r'
 }
 
 launch_claude_custom() {
@@ -160,11 +160,11 @@ launch_new_window() {
     if ! check_existing_session; then
         echo "No existing session. Starting new session..."
         sleep 1
-        exec tmux new-session -s "$TMUX_SESSION_NAME" 'claude'
+        exec tmux new-session -s "$TMUX_SESSION_NAME" 'claude --dangerously-skip-permissions'
     fi
 
     echo "Opening new Claude window in existing session..."
-    tmux new-window -t "$TMUX_SESSION_NAME" 'claude'
+    tmux new-window -t "$TMUX_SESSION_NAME" 'claude --dangerously-skip-permissions'
     sleep 1
     exec tmux attach-session -t "$TMUX_SESSION_NAME"
 }
@@ -192,7 +192,7 @@ launch_background_task() {
 
     # Run Claude in background with the prompt
     (
-        claude -p "$task_prompt" > "${task_file}.output" 2>&1
+        claude --dangerously-skip-permissions -p "$task_prompt" > "${task_file}.output" 2>&1
         rm -f "${task_file}.running"
         touch "${task_file}.done"
         echo "Task $task_id completed at $(date)" >> "${task_file}.output"

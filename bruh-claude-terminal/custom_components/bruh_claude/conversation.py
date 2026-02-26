@@ -18,6 +18,13 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import intent
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+try:
+    from homeassistant.components.conversation import ConversationEntityFeature
+
+    SUPPORTS_CONTROL = ConversationEntityFeature.CONTROL
+except (ImportError, AttributeError):
+    SUPPORTS_CONTROL = 0
+
 from .const import CONF_NAME, CONF_SYSTEM_PROMPT, DEFAULT_NAME, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -42,6 +49,8 @@ class BruhClaudeConversationEntity(ConversationEntity):
 
     _attr_has_entity_name = True
     _attr_should_poll = False
+    _attr_supported_features = SUPPORTS_CONTROL
+    _attr_icon = "mdi:robot"
 
     def __init__(self, config_entry: ConfigEntry, bridge) -> None:
         self._bridge = bridge
