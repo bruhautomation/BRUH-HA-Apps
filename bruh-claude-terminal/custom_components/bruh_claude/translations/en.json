@@ -1,0 +1,19 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "BRUH Claude",
+        "description": "Connect to the BRUH Claude Terminal add-on. Make sure the add-on is installed and running before continuing.",
+        "data": {
+          "timeout": "Response timeout (seconds)"
+        }
+      }
+    },
+    "error": {
+      "addon_not_running": "The BRUH Claude Terminal add-on does not appear to be running. Start the add-on and try again."
+    },
+    "abort": {
+      "already_configured": "BRUH Claude is already configured."
+    }
+  }
+}

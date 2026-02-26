@@ -1,0 +1,50 @@
+send_prompt:
+  name: Send prompt
+  description: Send a one-shot prompt to Claude and get a response.
+  fields:
+    prompt:
+      name: Prompt
+      description: The prompt text to send to Claude.
+      required: true
+      selector:
+        text:
+          multiline: true
+    timeout:
+      name: Timeout
+      description: Maximum seconds to wait for a response (default 120).
+      selector:
+        number:
+          min: 10
+          max: 600
+          unit_of_measurement: seconds
+
+run_task:
+  name: Run task
+  description: Run a Claude task with optional completion notification.
+  fields:
+    prompt:
+      name: Prompt
+      description: The task prompt for Claude.
+      required: true
+      selector:
+        text:
+          multiline: true
+    notify:
+      name: Notify on completion
+      description: Send a persistent notification when the task completes.
+      default: false
+      selector:
+        boolean:
+    notify_entity:
+      name: Notification entity
+      description: The notify entity to use (e.g. notify.mobile_app_phone).
+      selector:
+        text:
+    timeout:
+      name: Timeout
+      description: Maximum seconds to wait for the task to complete (default 120).
+      selector:
+        number:
+          min: 10
+          max: 600
+          unit_of_measurement: seconds

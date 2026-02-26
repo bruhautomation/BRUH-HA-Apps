@@ -1,90 +1,103 @@
 #!/usr/bin/with-contenv bashio
 
 # Assist Integration Listener
-# Bridges Home Assistant Assist (conversation agent) to Claude Code
-# Listens for conversation intents and routes them to Claude
+# Bridges Home Assistant conversation agent to Claude Code
+#
+# Communication with the HA custom integration uses a shared file directory:
+#   /config/.bruh_claude/requests/   - incoming conversation requests (JSON)
+#   /config/.bruh_claude/responses/  - outgoing conversation responses (JSON)
+#
+# Request format:  {"id": "<uuid>", "text": "user message", "type": "conversation"}
+# Response format: {"id": "<uuid>", "text": "claude response"}
 
 set -e
 
 SUPERVISOR_TOKEN="${SUPERVISOR_TOKEN:-}"
-HA_WS_URL="ws://supervisor/core/websocket"
-TASK_DIR="/data/tasks"
-RESPONSE_DIR="/data/assist-responses"
+SHARED_DIR="/config/.bruh_claude"
+REQUESTS_DIR="$SHARED_DIR/requests"
+RESPONSES_DIR="$SHARED_DIR/responses"
 
-mkdir -p "$TASK_DIR" "$RESPONSE_DIR"
+mkdir -p "$REQUESTS_DIR" "$RESPONSES_DIR"
 
 bashio::log.info "Assist listener starting..."
+bashio::log.info "Watching $REQUESTS_DIR for conversation requests"
 
-# Register as a conversation agent via the HA API
-register_conversation_agent() {
-    bashio::log.info "Registering BRUH Claude as conversation agent..."
+# Process a conversation request file
+process_request() {
+    local req_file="$1"
+    local req_id
+    local text
 
-    # Create a webhook for receiving conversation requests
-    # The webhook URL will be: http://supervisor/core/api/webhook/bruh_claude_conversation
-    local webhook_id="bruh_claude_conversation"
+    req_id=$(jq -r '.id // empty' "$req_file" 2>/dev/null)
+    text=$(jq -r '.text // empty' "$req_file" 2>/dev/null)
 
-    bashio::log.info "Conversation webhook ready: $webhook_id"
-    bashio::log.info "To use: Set up an automation that forwards assist intents to this webhook"
-}
+    if [ -z "$req_id" ] || [ -z "$text" ]; then
+        bashio::log.warning "Invalid request file: $req_file"
+        rm -f "$req_file"
+        return
+    fi
 
-# Process a conversation request
-process_conversation() {
-    local text="$1"
-    local conversation_id="${2:-$(date +%s)}"
+    bashio::log.info "Assist request [$req_id]: $text"
 
-    bashio::log.info "Assist request: $text"
+    # Remove request file immediately so we don't re-process it
+    rm -f "$req_file"
 
-    # Run Claude with the prompt and capture output
-    local output_file="$RESPONSE_DIR/${conversation_id}.txt"
-
-    # Use Claude in print mode for one-shot responses
-    # Pipe prompt via stdin to avoid shell injection from user text
-    printf '%s' "You are a Home Assistant assistant. The user said: ${text}
+    # Build the system prompt for Claude
+    local system_prompt="You are a Home Assistant voice assistant. The user said: ${text}
 Respond helpfully. If they want to control devices, use the Home Assistant MCP tools available to you.
-Keep responses concise and conversational." | claude -p > "$output_file" 2>&1 || true
+Keep responses concise and conversational."
+
+    local output_file
+    output_file=$(mktemp)
+
+    # Run Claude in print mode for a one-shot response
+    printf '%s' "$system_prompt" | claude -p > "$output_file" 2>&1 || true
 
     local response
-    response=$(head -5 "$output_file" 2>/dev/null || echo "I had trouble processing that request.")
+    response=$(cat "$output_file" 2>/dev/null || echo "I had trouble processing that request.")
+    rm -f "$output_file"
 
-    # Send response back to HA via the REST API
-    # Use jq to safely construct JSON (prevents injection from response content)
-    local json_payload
-    json_payload=$(jq -n --arg text "$response" '{"text": $text}')
-    curl -s -X POST \
-        -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
-        -H "Content-Type: application/json" \
-        -d "$json_payload" \
-        "http://supervisor/core/api/events/bruh_claude_response" 2>/dev/null || true
+    # Write response file (atomic via tmp + rename)
+    local resp_file="$RESPONSES_DIR/${req_id}.json"
+    local tmp_file="${resp_file}.tmp"
+    jq -n --arg id "$req_id" --arg text "$response" \
+        '{"id": $id, "text": $text}' > "$tmp_file"
+    mv "$tmp_file" "$resp_file"
 
-    bashio::log.info "Assist response sent for conversation: $conversation_id"
+    bashio::log.info "Assist response sent [$req_id]"
 }
 
-# Listen for conversation events via polling
-# In production, this would use WebSocket, but for simplicity we poll
+# Watch for new request files using inotifywait if available, fall back to polling
 listen_for_requests() {
-    bashio::log.info "Listening for Assist conversation requests..."
-    bashio::log.info "Fire event 'bruh_claude_request' with data {\"text\": \"your question\"}"
+    if command -v inotifywait >/dev/null 2>&1; then
+        bashio::log.info "Using inotifywait for efficient file watching"
 
-    local last_check
-    last_check=$(date +%s)
-
-    while true; do
-        # Check for pending request files
-        for req_file in "$TASK_DIR"/assist_*.pending 2>/dev/null; do
-            if [ -f "$req_file" ]; then
-                local text
-                text=$(cat "$req_file")
-                local conv_id
-                conv_id=$(basename "$req_file" .pending | sed 's/assist_//')
-                rm -f "$req_file"
-                process_conversation "$text" "$conv_id" &
-            fi
+        # Process any files that arrived before we started watching
+        for req_file in "$REQUESTS_DIR"/*.json; do
+            [ -f "$req_file" ] || continue
+            process_request "$req_file" &
         done
 
-        sleep 2
-    done
+        # Watch for new files
+        inotifywait -m -e close_write -e moved_to --format '%w%f' "$REQUESTS_DIR" 2>/dev/null | while read -r filepath; do
+            case "$filepath" in
+                *.json)
+                    process_request "$filepath" &
+                    ;;
+            esac
+        done
+    else
+        bashio::log.info "inotifywait not available, falling back to polling (2s)"
+
+        while true; do
+            for req_file in "$REQUESTS_DIR"/*.json; do
+                [ -f "$req_file" ] || continue
+                process_request "$req_file" &
+            done
+            sleep 2
+        done
+    fi
 }
 
 # Main
-register_conversation_agent
 listen_for_requests
