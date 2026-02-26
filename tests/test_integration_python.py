@@ -189,6 +189,36 @@ class TestStringsJson(unittest.TestCase):
         data = self.strings["config"]["step"]["user"].get("data", {})
         self.assertIn("timeout", data)
 
+    def test_has_options_strings(self):
+        """strings.json should have options step definitions."""
+        options = self.strings.get("options", {})
+        self.assertIn("step", options)
+        self.assertIn("init", options["step"])
+        init_step = options["step"]["init"]
+        self.assertIn("data", init_step)
+        self.assertIn("system_prompt", init_step["data"])
+        self.assertIn("timeout", init_step["data"])
+
+    def test_has_issues_with_fix_flow(self):
+        """Issues should use fix_flow (not a separate repairs key) for fixable issues."""
+        issues = self.strings.get("issues", {})
+        self.assertIn("restart_required", issues)
+        restart = issues["restart_required"]
+        self.assertIn("fix_flow", restart,
+                       "Fixable issue should use 'fix_flow', not a separate 'repairs' key")
+        self.assertNotIn("description", restart,
+                         "Fixable issues use 'fix_flow', not 'description' (they are mutually exclusive)")
+        # Verify fix_flow has the confirm step
+        steps = restart["fix_flow"]["step"]
+        self.assertIn("confirm", steps)
+        self.assertIn("title", steps["confirm"])
+        self.assertIn("description", steps["confirm"])
+
+    def test_no_separate_repairs_key(self):
+        """strings.json should NOT have a top-level 'repairs' key."""
+        self.assertNotIn("repairs", self.strings,
+                         "Repair flow strings should be under issues.fix_flow, not a separate 'repairs' key")
+
 
 class TestInitPy(unittest.TestCase):
     """Test __init__.py patterns."""
@@ -230,6 +260,30 @@ class TestInitPy(unittest.TestCase):
     def test_handles_timeout_error(self):
         """Service handlers should catch TimeoutError."""
         self.assertIn("except TimeoutError", self.content)
+
+    def test_loaded_version_captured_at_import_time(self):
+        """_LOADED_VERSION should be set at module level, not read from disk later."""
+        self.assertIn("_LOADED_VERSION", self.content)
+        # Should NOT read manifest from disk inside _check_restart_required
+        self.assertNotIn(
+            'await hass.async_add_executor_job(_read_json, manifest_path)',
+            self.content,
+            "_check_restart_required should use _LOADED_VERSION, not re-read manifest from disk"
+        )
+
+    def test_uses_loaded_version_for_comparison(self):
+        """_check_restart_required should compare against _LOADED_VERSION."""
+        # Find the _check_restart_required function and verify it uses _LOADED_VERSION
+        self.assertIn("loaded_version = _LOADED_VERSION", self.content)
+
+    def test_has_options_update_listener(self):
+        """async_setup_entry should register an options update listener."""
+        self.assertIn("add_update_listener", self.content)
+        self.assertIn("_async_options_updated", self.content)
+
+    def test_options_merged_with_data(self):
+        """Entry options should be merged with entry.data for timeout."""
+        self.assertIn("{**entry.data, **entry.options}", self.content)
 
 
 class TestConfigFlowPy(unittest.TestCase):
@@ -289,6 +343,23 @@ class TestConfigFlowPy(unittest.TestCase):
         self.assertIn("HassioServiceInfo", self.content)
         self.assertIn("isinstance(discovery_info", self.content)
 
+    def test_has_options_flow_handler(self):
+        """Should define an OptionsFlow handler class."""
+        self.assertIn("class BruhClaudeOptionsFlowHandler", self.content)
+
+    def test_options_flow_registered(self):
+        """ConfigFlow should register the options flow via async_get_options_flow."""
+        self.assertIn("async_get_options_flow", self.content)
+        self.assertIn("BruhClaudeOptionsFlowHandler", self.content)
+
+    def test_options_flow_has_init_step(self):
+        """Options flow should have async_step_init."""
+        self.assertIn("async_step_init", self.content)
+
+    def test_options_flow_merges_data_and_options(self):
+        """Options flow should merge entry.data with entry.options for defaults."""
+        self.assertIn("{**self._config_entry.data, **self._config_entry.options}", self.content)
+
 
 class TestConversationPy(unittest.TestCase):
     """Test conversation.py patterns."""
@@ -329,6 +400,10 @@ class TestConversationPy(unittest.TestCase):
         """conversation_id should not be converted empty->None redundantly."""
         # After fix: should use user_input.conversation_id directly
         self.assertNotIn('conversation_id or ""', self.content)
+
+    def test_reads_system_prompt_from_options(self):
+        """Conversation entity should merge entry.options with entry.data for system_prompt."""
+        self.assertIn("{**config_entry.data, **config_entry.options}", self.content)
 
 
 class TestBridgePy(unittest.TestCase):
