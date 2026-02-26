@@ -61,8 +61,11 @@ Trigger Claude tasks from HA automations via file-based task queue.
 
 1. Add this repository to your Home Assistant add-on store
 2. Install "BRUH Claude Terminal"
-3. Configure your Anthropic API key or OAuth authentication
-4. Start the add-on
+3. Start the add-on
+4. Home Assistant will automatically discover the BRUH Claude integration and prompt you to set it up
+5. Authenticate with your Anthropic account in the terminal
+
+The integration can also be added manually via Settings > Devices & Services > Add Integration > BRUH Claude.
 
 ## Configuration
 

@@ -4,8 +4,11 @@
 
 1. Install the add-on from the BRUH HA Apps repository
 2. Start the add-on - it will open a web terminal
-3. Authenticate with your Anthropic account
-4. Claude Code now has full access to your HA config and live API
+3. Home Assistant will automatically discover the BRUH Claude integration and prompt you to set it up via a notification in Settings > Devices & Services
+4. Authenticate with your Anthropic account
+5. Claude Code now has full access to your HA config and live API
+
+> **Note:** The BRUH Claude integration is discovered automatically when the add-on starts. If you prefer manual setup, go to Settings > Devices & Services > Add Integration > BRUH Claude.
 
 ## CLI Tools Reference
 
@@ -113,6 +116,31 @@ shell_command:
   create_claude_task: "cp /config/claude-tasks/{{ task }}.json /data/automation-tasks/"
 ```
 
-## Assist Integration
+## BRUH Claude Integration
 
-When enabled, Claude can act as a conversation agent. Fire the event `bruh_claude_request` with `{"text": "your question"}` to get responses via the `bruh_claude_response` event.
+The BRUH Claude integration is automatically discovered when the add-on starts. It provides:
+
+- **Conversation Agent** - Select "BRUH Claude" as a conversation agent in Settings > Voice Assistants
+- **`bruh_claude.send_prompt`** service - Send a one-shot prompt to Claude and get a response
+- **`bruh_claude.run_task`** service - Run a Claude task with optional completion notification
+
+### Assist Integration
+
+When the integration is set up, "BRUH Claude" appears as a conversation agent in Settings > Voice Assistants. Select it as your default assistant to route voice/text queries through Claude.
+
+### Services
+
+```yaml
+# Send a prompt and get a response
+service: bruh_claude.send_prompt
+data:
+  prompt: "What entities are offline?"
+  timeout: 120
+
+# Run a background task with notification
+service: bruh_claude.run_task
+data:
+  prompt: "Check my error log and summarize issues"
+  notify: true
+  timeout: 300
+```

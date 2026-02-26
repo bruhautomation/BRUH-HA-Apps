@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.1.0
+
+### Auto-Discovery & Versioning
+
+**Automatic Integration Discovery**
+- The BRUH Claude integration is now automatically discovered when the add-on starts
+- Home Assistant will show a notification prompting you to set up the integration
+- No more manual navigation to Settings > Devices & Services to add it
+- Manual setup via Settings > Devices & Services still works as a fallback
+
+**Version Display & Update Support**
+- Fixed version number not appearing on the add-on store page
+- Fixed update button not showing when a new version is available
+- Synced version numbers across add-on config, integration manifest, and startup banner
+
 ## 1.0.0
 
 ### Initial Release

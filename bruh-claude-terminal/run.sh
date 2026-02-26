@@ -450,7 +450,8 @@ deploy_custom_integration() {
     else
         cp -r "$src" "$dest"
         bashio::log.info "BRUH Claude integration installed to $dest"
-        bashio::log.info "Restart Home Assistant, then add the integration via Settings > Devices & Services"
+        bashio::log.info "The integration will be auto-discovered by Home Assistant"
+        bashio::log.info "Check Settings > Devices & Services for the setup notification"
     fi
 }
 
@@ -573,7 +574,7 @@ trap cleanup SIGTERM SIGINT EXIT
 
 main() {
     bashio::log.info "============================================"
-    bashio::log.info "  BRUH Claude Terminal v1.0.0"
+    bashio::log.info "  BRUH Claude Terminal v1.1.0"
     bashio::log.info "  Enhanced Claude Code for Home Assistant"
     bashio::log.info "============================================"
 
