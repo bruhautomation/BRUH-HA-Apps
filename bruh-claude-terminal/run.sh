@@ -416,6 +416,7 @@ setup_mcp_server() {
 deploy_custom_integration() {
     local src="/opt/custom_components/bruh_claude"
     local dest="/config/custom_components/bruh_claude"
+    local first_install=false
 
     bashio::log.info "Deploying BRUH Claude custom integration..."
 
@@ -443,38 +444,89 @@ deploy_custom_integration() {
             bashio::log.info "Updating BRUH Claude integration: $dest_version -> $src_version"
             rm -rf "$dest"
             cp -r "$src" "$dest"
-            bashio::log.info "Integration updated - restart Home Assistant to apply"
+            bashio::log.info "Integration updated - Home Assistant will need to restart to apply"
+            first_install=true
         else
             bashio::log.info "BRUH Claude integration is up to date (v${dest_version})"
         fi
     else
         cp -r "$src" "$dest"
         bashio::log.info "BRUH Claude integration installed to $dest"
-        bashio::log.info "Check Settings > Devices & Services for the setup notification"
+        first_install=true
     fi
 
-    # Send discovery message to the Supervisor so HA Core auto-discovers the integration.
-    # The 'discovery' field in config.yaml only authorizes the add-on to use this service
+    # Send discovery via the Supervisor API using bashio.
+    # The 'discovery' field in config.yaml authorizes the add-on to use this service
     # name; the add-on must explicitly POST to trigger the actual discovery flow.
     send_discovery_message
+
+    # On first install or update, HA Core needs to restart to load the custom component
+    # before it can process the discovery. Trigger a restart and log clearly.
+    if [ "$first_install" = "true" ]; then
+        restart_ha_for_integration
+    fi
 }
 
 send_discovery_message() {
     bashio::log.info "Sending discovery message to Home Assistant..."
+
+    # Build the discovery config payload with add-on metadata
+    local config
+    config=$(bashio::var.json \
+        addon "bruh_claude_terminal" \
+        addon_name "BRUH Claude Terminal" \
+        version "1.2.0" \
+    )
+
+    # Use bashio::discovery to POST to the Supervisor discovery API
+    if bashio::discovery "bruh_claude" "$config" 2>/dev/null; then
+        bashio::log.info "Discovery message sent - integration will appear in Settings > Devices & Services"
+    else
+        # Fallback: direct curl to Supervisor API
+        bashio::log.info "Retrying discovery via direct API call..."
+        local payload
+        payload=$(bashio::var.json \
+            service "bruh_claude" \
+            config "^${config}" \
+        )
+
+        local response
+        response=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST \
+            -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "${payload}" \
+            "http://supervisor/discovery" 2>/dev/null) || true
+
+        if [ "$response" = "200" ] || [ "$response" = "201" ]; then
+            bashio::log.info "Discovery message sent via fallback"
+        else
+            bashio::log.warning "Discovery API returned HTTP ${response} - auto-discovery may not trigger"
+            bashio::log.info "You can set up the integration manually: Settings > Devices & Services > Add Integration > BRUH Claude"
+        fi
+    fi
+}
+
+restart_ha_for_integration() {
+    bashio::log.info "============================================"
+    bashio::log.info "  New integration files deployed!"
+    bashio::log.info "  Requesting Home Assistant restart so"
+    bashio::log.info "  the BRUH Claude integration can load."
+    bashio::log.info "============================================"
 
     local response
     response=$(curl -s -o /dev/null -w "%{http_code}" \
         -X POST \
         -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
         -H "Content-Type: application/json" \
-        -d '{"service": "bruh_claude", "config": {}}' \
-        "http://supervisor/discovery" 2>/dev/null) || true
+        "http://supervisor/homeassistant/restart" 2>/dev/null) || true
 
-    if [ "$response" = "200" ] || [ "$response" = "201" ]; then
-        bashio::log.info "Discovery message sent - integration will appear in Settings > Devices & Services"
+    if [ "$response" = "200" ]; then
+        bashio::log.info "Home Assistant restart requested"
+        bashio::log.info "After restart, check Settings > Devices & Services for BRUH Claude discovery"
     else
-        bashio::log.warning "Discovery API returned HTTP ${response} - auto-discovery may not trigger"
-        bashio::log.info "You can still set up the integration manually via Settings > Devices & Services > Add Integration > BRUH Claude"
+        bashio::log.warning "Could not restart Home Assistant automatically (HTTP ${response})"
+        bashio::log.info "Please restart Home Assistant manually, then check Settings > Devices & Services"
     fi
 }
 
@@ -487,7 +539,7 @@ setup_assist_integration() {
     enable_assist=$(bashio::config 'enable_assist_integration' 'true')
 
     if [ "$enable_assist" != "true" ]; then
-        bashio::log.info "Assist integration disabled (enable in add-on config)"
+        bashio::log.info "Assist integration disabled (enable in app config)"
         return
     fi
 
@@ -505,7 +557,7 @@ setup_automation_integration() {
     enable_auto=$(bashio::config 'enable_automation_integration' 'true')
 
     if [ "$enable_auto" != "true" ]; then
-        bashio::log.info "Automation integration disabled (enable in add-on config)"
+        bashio::log.info "Automation integration disabled (enable in app config)"
         return
     fi
 
@@ -597,7 +649,7 @@ trap cleanup SIGTERM SIGINT EXIT
 
 main() {
     bashio::log.info "============================================"
-    bashio::log.info "  BRUH Claude Terminal v1.1.0"
+    bashio::log.info "  BRUH Claude Terminal v1.2.0"
     bashio::log.info "  Enhanced Claude Code for Home Assistant"
     bashio::log.info "============================================"
 

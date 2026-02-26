@@ -34,7 +34,7 @@ async def async_setup_entry(
 
 
 class BruhClaudeConversationEntity(ConversationEntity):
-    """Conversation agent that routes requests to the Claude Terminal add-on."""
+    """Conversation agent that routes requests to the Claude Terminal app."""
 
     _attr_has_entity_name = True
     _attr_name = "BRUH Claude"
@@ -52,7 +52,7 @@ class BruhClaudeConversationEntity(ConversationEntity):
     async def async_process(
         self, user_input: ConversationInput
     ) -> ConversationResult:
-        """Process a conversation turn by forwarding to the Claude add-on."""
+        """Process a conversation turn by forwarding to the Claude app."""
         conversation_id = user_input.conversation_id or ""
 
         _LOGGER.debug(
@@ -69,13 +69,13 @@ class BruhClaudeConversationEntity(ConversationEntity):
         except TimeoutError:
             response_text = (
                 "Sorry, Claude didn't respond in time. "
-                "Make sure the BRUH Claude Terminal add-on is running."
+                "Make sure the BRUH Claude Terminal app is running."
             )
         except Exception:
-            _LOGGER.exception("Error communicating with Claude add-on")
+            _LOGGER.exception("Error communicating with Claude app")
             response_text = (
                 "Sorry, something went wrong communicating with the "
-                "Claude Terminal add-on."
+                "Claude Terminal app."
             )
 
         response = intent.IntentResponse(language=user_input.language)

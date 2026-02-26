@@ -1,7 +1,7 @@
 ---
 name: "BRUH Claude Terminal"
 description: "Enhanced Claude Code terminal for Home Assistant with native HA API access, auto-backup, context generation, and Assist integration"
-version: "1.1.0"
+version: "1.2.0"
 slug: "bruh_claude_terminal"
 init: false
 
@@ -26,7 +26,7 @@ ports:
 ports_description:
   7681/tcp: "Web terminal (not required for ingress)"
 
-# Add-on configuration options
+# App configuration options
 options:
   auto_launch_claude: true
   auto_backup: true
@@ -62,7 +62,8 @@ hassio_role: manager
 homeassistant_api: true
 auth_api: true
 
-# Auto-discovery: automatically offer to set up the BRUH Claude integration
+# Auto-discovery: registers "bruh_claude" service with the Supervisor
+# so HA Core can auto-discover and offer to set up the companion integration
 discovery:
   - bruh_claude
 

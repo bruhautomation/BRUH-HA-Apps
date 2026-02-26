@@ -6,6 +6,7 @@
   "config_flow": true,
   "dependencies": ["conversation"],
   "documentation": "https://github.com/bruhautomation/BRUH-HA-Apps",
+  "integration_type": "service",
   "iot_class": "local_polling",
-  "version": "1.1.0"
+  "version": "1.2.0"
 }
