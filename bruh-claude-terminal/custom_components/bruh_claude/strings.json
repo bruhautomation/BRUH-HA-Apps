@@ -7,6 +7,10 @@
         "data": {
           "timeout": "Response timeout (seconds)"
         }
+      },
+      "hassio_confirm": {
+        "title": "BRUH Claude",
+        "description": "The BRUH Claude Terminal add-on has been detected. Do you want to set up the BRUH Claude integration?"
       }
     },
     "error": {

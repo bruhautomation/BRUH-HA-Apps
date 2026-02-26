@@ -20,7 +20,7 @@ class BruhClaudeConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ):
-        """Handle the initial step."""
+        """Handle the initial step (manual setup)."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
@@ -46,4 +46,30 @@ class BruhClaudeConfigFlow(ConfigFlow, domain=DOMAIN):
                 }
             ),
             errors=errors,
+        )
+
+    async def async_step_hassio(
+        self, discovery_info: dict[str, Any]
+    ):
+        """Handle discovery from the BRUH Claude Terminal add-on."""
+        await self.async_set_unique_id(DOMAIN)
+        self._abort_if_unique_id_configured()
+
+        # Store discovery info for the confirm step
+        self._discovery_info = discovery_info
+        return await self.async_step_hassio_confirm()
+
+    async def async_step_hassio_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ):
+        """Confirm the add-on discovery and set up the integration."""
+        if user_input is not None:
+            return self.async_create_entry(
+                title="BRUH Claude",
+                data={"timeout": DEFAULT_TIMEOUT},
+            )
+
+        return self.async_show_form(
+            step_id="hassio_confirm",
+            description_placeholders={"addon": "BRUH Claude Terminal"},
         )
