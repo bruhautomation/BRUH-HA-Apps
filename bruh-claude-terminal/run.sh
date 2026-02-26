@@ -471,11 +471,13 @@ send_discovery_message() {
     bashio::log.info "Sending discovery message to Home Assistant..."
 
     # Build the discovery config payload with add-on metadata
+    local addon_version
+    addon_version=$(bashio::addon.version 2>/dev/null || echo "1.2.0")
     local config
     config=$(bashio::var.json \
         addon "bruh_claude_terminal" \
         addon_name "BRUH Claude Terminal" \
-        version "1.2.0" \
+        version "${addon_version}" \
     )
 
     # Use bashio::discovery to POST to the Supervisor discovery API
@@ -609,7 +611,9 @@ start_web_terminal() {
 
     export TTYD=1
 
-    exec ttyd \
+    # Use wait instead of exec so the cleanup trap can fire on SIGTERM
+    # and properly terminate background processes (backup watcher, listeners)
+    ttyd \
         --port "${port}" \
         --interface 0.0.0.0 \
         --writable \
@@ -617,7 +621,9 @@ start_web_terminal() {
         --client-option enableReconnect=true \
         --client-option reconnect=10 \
         --client-option reconnectInterval=5 \
-        bash -c "$launch_command"
+        bash -c "$launch_command" &
+
+    wait $!
 }
 
 # ============================================================================

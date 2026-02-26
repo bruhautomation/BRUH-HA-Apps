@@ -30,8 +30,12 @@ class BruhClaudeConfigFlow(ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             # Check that the shared directory exists (app is running)
+            # Use executor to avoid blocking I/O in the event loop
             shared_path = self.hass.config.path(".bruh_claude")
-            if not os.path.isdir(shared_path):
+            dir_exists = await self.hass.async_add_executor_job(
+                os.path.isdir, shared_path
+            )
+            if not dir_exists:
                 errors["base"] = "addon_not_running"
             else:
                 await self.async_set_unique_id(DOMAIN)
