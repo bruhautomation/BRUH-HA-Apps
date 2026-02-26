@@ -7,7 +7,7 @@ from typing import Any
 
 import voluptuous as vol
 
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import ConfigFlow
 
 from .const import DEFAULT_TIMEOUT, DOMAIN
 
@@ -19,7 +19,7 @@ class BruhClaudeConfigFlow(ConfigFlow, domain=DOMAIN):
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    ):
         """Handle the initial step."""
         errors: dict[str, str] = {}
 
