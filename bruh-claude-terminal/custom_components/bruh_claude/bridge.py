@@ -72,6 +72,7 @@ class ClaudeBridge:
         conversation_id: str | None = None,
         timeout: int | None = None,
         system_prompt: str | None = None,
+        model: str | None = None,
     ) -> str:
         """Send a conversation request and wait for the response."""
         req_id = conversation_id or uuid.uuid4().hex
@@ -88,6 +89,8 @@ class ClaudeBridge:
         }
         if system_prompt:
             request["system_prompt"] = system_prompt
+        if model:
+            request["model"] = model
 
         req_file = os.path.join(self.requests_dir, f"{req_id}.json")
         resp_file = os.path.join(self.responses_dir, f"{req_id}.json")

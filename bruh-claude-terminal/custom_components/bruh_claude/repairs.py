@@ -12,12 +12,16 @@ import os
 import voluptuous as vol
 
 from homeassistant import data_entry_flow
-from homeassistant.components.repairs import RepairsFlow
 from homeassistant.core import HomeAssistant
 
-from .const import DOMAIN
-
 _LOGGER = logging.getLogger(__name__)
+
+try:
+    from homeassistant.components.repairs import RepairsFlow
+except ImportError:
+    # HA versions before 2022.9 don't have the repairs module.
+    # Provide a stub so the module can still be imported without errors.
+    from homeassistant.data_entry_flow import FlowHandler as RepairsFlow  # type: ignore[assignment]
 
 
 class RestartRequiredRepairFlow(RepairsFlow):
@@ -39,7 +43,10 @@ class RestartRequiredRepairFlow(RepairsFlow):
             await self.hass.async_add_executor_job(_remove_file, marker)
 
             # Trigger the restart
-            await self.hass.services.async_call("homeassistant", "restart")
+            try:
+                await self.hass.services.async_call("homeassistant", "restart")
+            except Exception:
+                _LOGGER.exception("Failed to restart Home Assistant")
             return self.async_create_entry(title="", data={})
 
         return self.async_show_form(

@@ -19,9 +19,12 @@ except ImportError:
     HassioServiceInfo = None  # type: ignore[assignment,misc]
 
 from .const import (
+    AVAILABLE_MODELS,
+    CONF_MODEL,
     CONF_NAME,
     CONF_SYSTEM_PROMPT,
     CONF_TIMEOUT,
+    DEFAULT_MODEL,
     DEFAULT_NAME,
     DEFAULT_SYSTEM_PROMPT,
     DEFAULT_TIMEOUT,
@@ -75,6 +78,9 @@ class BruhClaudeConfigFlow(ConfigFlow, domain=DOMAIN):
                 {
                     vol.Optional(CONF_NAME, default=DEFAULT_NAME): str,
                     vol.Optional(
+                        CONF_MODEL, default=DEFAULT_MODEL
+                    ): vol.In(AVAILABLE_MODELS),
+                    vol.Optional(
                         CONF_SYSTEM_PROMPT, default=DEFAULT_SYSTEM_PROMPT
                     ): str,
                     vol.Optional(CONF_TIMEOUT, default=DEFAULT_TIMEOUT): vol.All(
@@ -93,6 +99,14 @@ class BruhClaudeConfigFlow(ConfigFlow, domain=DOMAIN):
         Triggered automatically by the Supervisor when the add-on posts
         to the /discovery API with service name 'bruh_claude'.
         """
+        # Abort if ANY config entry already exists for this domain,
+        # regardless of unique_id. Manual entries use a name-based unique_id
+        # (e.g. bruh_claude_bruh_claude) while discovery uses bruh_claude_default,
+        # so checking unique_id alone would miss manual entries and re-trigger
+        # the discovery flow on every add-on restart.
+        if self._async_current_entries():
+            return self.async_abort(reason="already_configured")
+
         await self.async_set_unique_id(f"{DOMAIN}_default")
         self._abort_if_unique_id_configured()
 
@@ -115,6 +129,7 @@ class BruhClaudeConfigFlow(ConfigFlow, domain=DOMAIN):
                 title=DEFAULT_NAME,
                 data={
                     CONF_NAME: DEFAULT_NAME,
+                    CONF_MODEL: DEFAULT_MODEL,
                     CONF_TIMEOUT: DEFAULT_TIMEOUT,
                     CONF_SYSTEM_PROMPT: DEFAULT_SYSTEM_PROMPT,
                 },
@@ -145,6 +160,10 @@ class BruhClaudeOptionsFlowHandler(OptionsFlow):
             step_id="init",
             data_schema=vol.Schema(
                 {
+                    vol.Optional(
+                        CONF_MODEL,
+                        default=current.get(CONF_MODEL, DEFAULT_MODEL),
+                    ): vol.In(AVAILABLE_MODELS),
                     vol.Optional(
                         CONF_SYSTEM_PROMPT,
                         default=current.get(CONF_SYSTEM_PROMPT, DEFAULT_SYSTEM_PROMPT),

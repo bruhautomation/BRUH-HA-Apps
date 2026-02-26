@@ -6,11 +6,13 @@
         "description": "Connect to the BRUH Claude Terminal app. Make sure the app is installed and running before continuing.\n\nYou can add multiple entries with different names and system prompts to create different personalities.",
         "data": {
           "name": "Agent name",
+          "model": "Claude model",
           "system_prompt": "System prompt (personality)",
           "timeout": "Response timeout (seconds)"
         },
         "data_description": {
           "name": "The name shown in Settings > Voice Assistants (e.g. 'BRUH Claude', 'Sarcastic Assistant').",
+          "model": "Which Claude model this agent uses. Sonnet is fast and balanced, Opus is the most capable, Haiku is the fastest and cheapest.",
           "system_prompt": "Optional system prompt that defines this agent's personality. Leave blank for the default assistant behavior.",
           "timeout": "Maximum time in seconds to wait for Claude to respond."
         }
@@ -24,19 +26,21 @@
       "addon_not_running": "The BRUH Claude Terminal app does not appear to be running. Start the app and try again."
     },
     "abort": {
-      "already_configured": "An agent with this name is already configured. Choose a different name."
+      "already_configured": "BRUH Claude is already configured."
     }
   },
   "options": {
     "step": {
       "init": {
         "title": "BRUH Claude Options",
-        "description": "Adjust the system prompt and timeout for this conversation agent.",
+        "description": "Adjust the model, system prompt, and timeout for this conversation agent.",
         "data": {
+          "model": "Claude model",
           "system_prompt": "System prompt (personality)",
           "timeout": "Response timeout (seconds)"
         },
         "data_description": {
+          "model": "Which Claude model this agent uses. Sonnet is fast and balanced, Opus is the most capable, Haiku is the fastest and cheapest.",
           "system_prompt": "Optional system prompt that defines this agent's personality. Leave blank for the default assistant behavior.",
           "timeout": "Maximum time in seconds to wait for Claude to respond."
         }

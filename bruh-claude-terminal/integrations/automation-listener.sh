@@ -57,10 +57,11 @@ process_task() {
     local output_file
     output_file=$(mktemp)
 
-    # Run Claude in print mode. The permissions flag is controlled by the
-    # dangerously_skip_permissions app config option (persisted in the env file).
+    # Run Claude in print mode from /config so it finds .mcp.json for HA tools.
+    # The permissions flag is controlled by the dangerously_skip_permissions
+    # app config option (persisted in the env file).
     # shellcheck disable=SC2086
-    printf '%s' "$prompt" | claude -p ${BRUH_CLAUDE_PERMS_FLAG:-} > "$output_file" 2>&1 || true
+    (cd /config && printf '%s' "$prompt" | claude -p ${BRUH_CLAUDE_PERMS_FLAG:-} > "$output_file" 2>&1) || true
 
     local result
     result=$(cat "$output_file" 2>/dev/null || echo "Task failed")
