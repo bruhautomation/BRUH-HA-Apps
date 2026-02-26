@@ -31,6 +31,10 @@ _LOGGER = logging.getLogger(__name__)
 POLL_INTERVAL = 0.5  # seconds
 
 
+# Maximum number of conversation turns (user+assistant pairs) to retain per session
+MAX_HISTORY_TURNS = 20
+
+
 class ClaudeBridge:
     """Handles file-based communication with the Claude Terminal add-on."""
 
@@ -38,6 +42,8 @@ class ClaudeBridge:
         self._hass = hass
         self._timeout = timeout
         self._base = hass.config.path(SHARED_DIR)
+        # In-memory conversation history keyed by conversation_id
+        self._conversation_history: dict[str, list[dict[str, str]]] = {}
 
     @property
     def requests_dir(self) -> str:
@@ -71,10 +77,14 @@ class ClaudeBridge:
         req_id = conversation_id or uuid.uuid4().hex
         timeout = timeout or self._timeout
 
+        # Retrieve existing conversation history for this session
+        history = self._conversation_history.get(req_id, [])
+
         request: dict = {
             "id": req_id,
             "text": text,
             "type": "conversation",
+            "conversation_history": history,
         }
         if system_prompt:
             request["system_prompt"] = system_prompt
@@ -87,10 +97,21 @@ class ClaudeBridge:
             self._write_json, req_file, request
         )
 
-        _LOGGER.debug("Conversation request %s written", req_id)
+        _LOGGER.debug("Conversation request %s written (history: %d turns)", req_id, len(history) // 2)
 
         # Poll for response
         response_text = await self._poll_for_response(resp_file, timeout)
+
+        # Append this exchange to the conversation history
+        history.append({"role": "user", "content": text})
+        history.append({"role": "assistant", "content": response_text})
+
+        # Trim to the most recent turns to avoid unbounded growth
+        if len(history) > MAX_HISTORY_TURNS * 2:
+            history = history[-(MAX_HISTORY_TURNS * 2):]
+
+        self._conversation_history[req_id] = history
+
         return response_text
 
     async def async_send_task(

@@ -41,16 +41,29 @@ check_claude_auth() {
     return 0
 }
 
+# Format conversation history from JSON array into a readable transcript
+format_history() {
+    local history_json="$1"
+    if [ -z "$history_json" ] || [ "$history_json" = "null" ] || [ "$history_json" = "[]" ]; then
+        echo ""
+        return
+    fi
+    # Convert each entry to "Role: content" format
+    echo "$history_json" | jq -r '.[] | "\(.role | ascii_upcase): \(.content)"' 2>/dev/null || echo ""
+}
+
 # Process a conversation request file
 process_request() {
     local req_file="$1"
     local req_id
     local text
     local system_prompt
+    local history_json
 
     req_id=$(jq -r '.id // empty' "$req_file" 2>/dev/null)
     text=$(jq -r '.text // empty' "$req_file" 2>/dev/null)
     system_prompt=$(jq -r '.system_prompt // empty' "$req_file" 2>/dev/null)
+    history_json=$(jq -c '.conversation_history // []' "$req_file" 2>/dev/null)
 
     if [ -z "$req_id" ] || [ -z "$text" ]; then
         bashio::log.warning "Invalid request file: $req_file"
@@ -63,18 +76,47 @@ process_request() {
     # Remove request file immediately so we don't re-process it
     rm -f "$req_file"
 
-    # Build the prompt for Claude
+    # Format conversation history if present
+    local history_text
+    history_text=$(format_history "$history_json")
+
+    # Build the prompt for Claude, including conversation history for context
     local full_prompt
-    if [ -n "$system_prompt" ]; then
-        full_prompt="${system_prompt}
+    local base_instructions="Respond helpfully. If they want to control devices, use the Home Assistant MCP tools available to you.
+Keep responses concise and conversational."
+
+    if [ -n "$history_text" ]; then
+        # Include conversation history for multi-turn context
+        if [ -n "$system_prompt" ]; then
+            full_prompt="${system_prompt}
+
+Previous conversation:
+${history_text}
+
+USER: ${text}
+
+${base_instructions}"
+        else
+            full_prompt="You are a Home Assistant voice assistant.
+
+Previous conversation:
+${history_text}
+
+USER: ${text}
+
+${base_instructions}"
+        fi
+    else
+        # No history - first message in conversation
+        if [ -n "$system_prompt" ]; then
+            full_prompt="${system_prompt}
 
 User said: ${text}
-Respond helpfully. If they want to control devices, use the Home Assistant MCP tools available to you.
-Keep responses concise and conversational."
-    else
-        full_prompt="You are a Home Assistant voice assistant. The user said: ${text}
-Respond helpfully. If they want to control devices, use the Home Assistant MCP tools available to you.
-Keep responses concise and conversational."
+${base_instructions}"
+        else
+            full_prompt="You are a Home Assistant voice assistant. The user said: ${text}
+${base_instructions}"
+        fi
     fi
 
     local output_file

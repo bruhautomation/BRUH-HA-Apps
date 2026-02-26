@@ -62,6 +62,21 @@ init_environment() {
     # Migrate any existing authentication files from legacy locations
     migrate_legacy_auth_files "$claude_config_dir"
 
+    # Ensure auth symlinks always point to persistent storage.
+    # On add-on updates the container is rebuilt fresh, so any symlinks from the
+    # previous container are gone. Re-create them every startup so Claude Code
+    # can find auth credentials regardless of which path it checks.
+    mkdir -p /root/.config "$data_home/.config"
+    ln -sfn "$claude_config_dir" /root/.config/claude
+    ln -sfn "$claude_config_dir" /root/.config/anthropic
+    ln -sfn "$claude_config_dir" "$data_home/.config/claude"
+    ln -sfn "$claude_config_dir" "$data_home/.config/anthropic"
+
+    # Claude Code also checks $HOME/.claude/ for settings and credentials
+    mkdir -p "$data_home/.claude"
+
+    bashio::log.info "  - Auth symlinks refreshed for persistent OAuth"
+
     # Install tmux configuration
     if [ -f "/opt/scripts/tmux.conf" ]; then
         cp /opt/scripts/tmux.conf "$data_home/.tmux.conf"
@@ -491,6 +506,8 @@ deploy_custom_integration() {
     local src="/opt/custom_components/bruh_claude"
     local dest="/config/custom_components/bruh_claude"
     local first_install=false
+    local is_fresh_install=false
+    local src_version
 
     bashio::log.info "Deploying BRUH Claude custom integration..."
 
@@ -505,13 +522,12 @@ deploy_custom_integration() {
         return
     fi
 
+    src_version=$(jq -r '.version // "0"' "$src/manifest.json" 2>/dev/null || echo "0")
     mkdir -p /config/custom_components
 
     # Deploy or update the integration files
     if [ -d "$dest" ]; then
-        local src_version
         local dest_version
-        src_version=$(jq -r '.version // "0"' "$src/manifest.json" 2>/dev/null || echo "0")
         dest_version=$(jq -r '.version // "0"' "$dest/manifest.json" 2>/dev/null || echo "0")
 
         if [ "$src_version" != "$dest_version" ]; then
@@ -527,6 +543,7 @@ deploy_custom_integration() {
         cp -r "$src" "$dest"
         bashio::log.info "BRUH Claude integration installed to $dest"
         first_install=true
+        is_fresh_install=true
     fi
 
     # Send discovery via the Supervisor API using bashio.
@@ -534,10 +551,9 @@ deploy_custom_integration() {
     # name; the add-on must explicitly POST to trigger the actual discovery flow.
     send_discovery_message
 
-    # On first install or update, HA Core needs to restart to load the custom component
-    # before it can process the discovery. Trigger a restart and log clearly.
+    # On first install or update, HA Core needs to restart to load the custom component.
     if [ "$first_install" = "true" ]; then
-        restart_ha_for_integration
+        notify_restart_required "$src_version" "$is_fresh_install"
     fi
 }
 
@@ -583,28 +599,50 @@ send_discovery_message() {
     fi
 }
 
-restart_ha_for_integration() {
+notify_restart_required() {
+    local version="${1:-unknown}"
+    local fresh_install="${2:-false}"
+
     bashio::log.info "============================================"
-    bashio::log.info "  New integration files deployed!"
+    bashio::log.info "  New integration files deployed (v${version})!"
     bashio::log.info "  Home Assistant needs a restart to load"
     bashio::log.info "  the BRUH Claude integration."
     bashio::log.info "============================================"
-    bashio::log.info "Please restart Home Assistant from:"
-    bashio::log.info "  Settings > System > Restart"
-    bashio::log.info "Then check Settings > Devices & Services for BRUH Claude"
 
-    # Send a persistent notification so the user sees the restart prompt in the HA UI
-    local notify_payload
-    notify_payload=$(jq -n \
-        --arg title "BRUH Claude: Restart Required" \
-        --arg msg "The BRUH Claude integration files have been updated. Please restart Home Assistant to load the new integration.\n\nGo to **Settings > System > Restart**, then check **Settings > Devices & Services** for BRUH Claude." \
-        --arg nid "bruh_claude_restart_needed" \
-        '{"title": $title, "message": $msg, "notification_id": $nid}')
+    # Write a marker file so the integration can detect the pending restart
+    local marker_payload
+    marker_payload=$(jq -n --arg v "$version" '{"required_version": $v}')
+    echo "$marker_payload" > /config/.bruh_claude/restart_required
+
+    # Fire an event so the running integration (if loaded) can create a repair issue
     curl -s -X POST \
         -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
         -H "Content-Type: application/json" \
-        -d "$notify_payload" \
-        "http://supervisor/core/api/services/persistent_notification/create" 2>/dev/null || true
+        -d '{}' \
+        "http://supervisor/core/api/events/bruh_claude_restart_required" 2>/dev/null || true
+
+    if [ "$fresh_install" = "true" ]; then
+        # First install: no integration loaded yet, use persistent notification as fallback
+        bashio::log.info "First install - sending persistent notification"
+        bashio::log.info "Please restart Home Assistant from:"
+        bashio::log.info "  Settings > System > Restart"
+        bashio::log.info "Then check Settings > Devices & Services for BRUH Claude"
+
+        local notify_payload
+        notify_payload=$(jq -n \
+            --arg title "BRUH Claude: Restart Required" \
+            --arg msg "The BRUH Claude integration has been installed. Please restart Home Assistant to load it.\n\nGo to **Settings > System > Restart**, then check **Settings > Devices & Services** for BRUH Claude." \
+            --arg nid "bruh_claude_restart_needed" \
+            '{"title": $title, "message": $msg, "notification_id": $nid}')
+        curl -s -X POST \
+            -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "$notify_payload" \
+            "http://supervisor/core/api/services/persistent_notification/create" 2>/dev/null || true
+    else
+        # Update: integration is loaded, it will show the repair in Settings > System > Repairs
+        bashio::log.info "Update detected - repair issue will appear in Settings > System > Repairs"
+    fi
 }
 
 # ============================================================================
