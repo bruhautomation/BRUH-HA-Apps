@@ -24,7 +24,8 @@ RUN apk add --no-cache \
     ttyd \
     openssh-client \
     inotify-tools \
-    socat
+    socat \
+    su-exec
 
 # Install websocat from community repo (may not be in all base images)
 RUN apk add --no-cache --repository=https://dl-cdn.alpinelinux.org/alpine/edge/community \
@@ -39,7 +40,12 @@ RUN pip3 install --break-system-packages --no-cache-dir \
 
 # Install Claude Code CLI using native installer
 RUN curl -fsSL https://claude.ai/install.sh | bash \
-    && ln -sf /root/.local/bin/claude /usr/local/bin/claude
+    && ln -sf /root/.local/bin/claude /usr/local/bin/claude \
+    && chmod 755 /root /root/.local /root/.local/bin
+
+# Create non-root user for Claude Code
+# --dangerously-skip-permissions requires non-root execution
+RUN adduser -D -s /bin/bash -u 1000 claude
 
 # Create directory structure
 RUN mkdir -p /config/claude-config \

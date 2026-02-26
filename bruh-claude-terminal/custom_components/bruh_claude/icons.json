@@ -1,0 +1,17 @@
+{
+  "entity": {
+    "conversation": {
+      "_": {
+        "default": "mdi:robot"
+      }
+    }
+  },
+  "services": {
+    "send_prompt": {
+      "service": "mdi:message-text"
+    },
+    "run_task": {
+      "service": "mdi:robot-outline"
+    }
+  }
+}

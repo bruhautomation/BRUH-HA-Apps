@@ -92,6 +92,53 @@ ENVEOF
 }
 
 # ============================================================================
+# Non-root User Setup (for --dangerously-skip-permissions)
+# ============================================================================
+
+setup_claude_user() {
+    bashio::log.info "Setting up non-root Claude user..."
+
+    # Create user if not present (may already exist from Dockerfile)
+    if ! id -u claude >/dev/null 2>&1; then
+        adduser -D -s /bin/bash -u 1000 claude
+    fi
+
+    # Ensure Claude binary is accessible to non-root user
+    chmod 755 /root /root/.local /root/.local/bin 2>/dev/null || true
+
+    # Give claude user ownership of persistent data directories
+    chown -R claude:claude \
+        /data/home \
+        /data/.config \
+        /data/.cache \
+        /data/.local \
+        /data/backups \
+        /data/tasks 2>/dev/null || true
+
+    # Claude Code needs write access to /config for editing HA configuration.
+    # This is safe within the add-on container; HA Core runs in its own container.
+    chown claude:claude /config 2>/dev/null || true
+    chown -R claude:claude /config/.bruh_claude 2>/dev/null || true
+    chown -R claude:claude /config/custom_components 2>/dev/null || true
+
+    # Create a wrapper script so `claude` always runs as the non-root user.
+    # This satisfies Claude Code's security requirement that
+    # --dangerously-skip-permissions cannot be used as root (UID 0).
+    rm -f /usr/local/bin/claude
+    cat > /usr/local/bin/claude << 'WRAPPER'
+#!/bin/bash
+if [ "$(id -u)" = "0" ]; then
+    exec su-exec claude /root/.local/bin/claude "$@"
+else
+    exec /root/.local/bin/claude "$@"
+fi
+WRAPPER
+    chmod +x /usr/local/bin/claude
+
+    bashio::log.info "Claude user configured - claude commands run as non-root (UID 1000)"
+}
+
+# ============================================================================
 # Legacy Auth Migration
 # ============================================================================
 
@@ -529,24 +576,25 @@ send_discovery_message() {
 restart_ha_for_integration() {
     bashio::log.info "============================================"
     bashio::log.info "  New integration files deployed!"
-    bashio::log.info "  Requesting Home Assistant restart so"
-    bashio::log.info "  the BRUH Claude integration can load."
+    bashio::log.info "  Home Assistant needs a restart to load"
+    bashio::log.info "  the BRUH Claude integration."
     bashio::log.info "============================================"
+    bashio::log.info "Please restart Home Assistant from:"
+    bashio::log.info "  Settings > System > Restart"
+    bashio::log.info "Then check Settings > Devices & Services for BRUH Claude"
 
-    local response
-    response=$(curl -s -o /dev/null -w "%{http_code}" \
-        -X POST \
+    # Send a persistent notification so the user sees the restart prompt in the HA UI
+    local notify_payload
+    notify_payload=$(jq -n \
+        --arg title "BRUH Claude: Restart Required" \
+        --arg msg "The BRUH Claude integration files have been updated. Please restart Home Assistant to load the new integration.\n\nGo to **Settings > System > Restart**, then check **Settings > Devices & Services** for BRUH Claude." \
+        --arg nid "bruh_claude_restart_needed" \
+        '{"title": $title, "message": $msg, "notification_id": $nid}')
+    curl -s -X POST \
         -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
         -H "Content-Type: application/json" \
-        "http://supervisor/homeassistant/restart" 2>/dev/null) || true
-
-    if [ "$response" = "200" ]; then
-        bashio::log.info "Home Assistant restart requested"
-        bashio::log.info "After restart, check Settings > Devices & Services for BRUH Claude discovery"
-    else
-        bashio::log.warning "Could not restart Home Assistant automatically (HTTP ${response})"
-        bashio::log.info "Please restart Home Assistant manually, then check Settings > Devices & Services"
-    fi
+        -d "$notify_payload" \
+        "http://supervisor/core/api/services/persistent_notification/create" 2>/dev/null || true
 }
 
 # ============================================================================
@@ -594,13 +642,13 @@ get_claude_launch_command() {
     auto_launch_claude=$(bashio::config 'auto_launch_claude' 'true')
 
     if [ "$auto_launch_claude" = "true" ]; then
-        echo "tmux new-session -A -s claude 'claude'"
+        echo "tmux new-session -A -s claude 'claude --dangerously-skip-permissions'"
     else
         if [ -f /usr/local/bin/claude-session-picker ]; then
             echo "tmux new-session -A -s claude-picker '/usr/local/bin/claude-session-picker'"
         else
             bashio::log.warning "Session picker not found, falling back to auto-launch"
-            echo "tmux new-session -A -s claude 'claude'"
+            echo "tmux new-session -A -s claude 'claude --dangerously-skip-permissions'"
         fi
     fi
 }
@@ -678,6 +726,7 @@ main() {
 
     run_health_check
     init_environment
+    setup_claude_user
     install_tools
     install_cli_tools
     install_persistent_packages
