@@ -26,5 +26,21 @@
     "abort": {
       "already_configured": "An agent with this name is already configured. Choose a different name."
     }
+  },
+  "issues": {
+    "restart_required": {
+      "title": "BRUH Claude: Restart required",
+      "description": "The BRUH Claude integration has been updated to version {version}. Home Assistant needs to restart to load the new version."
+    }
+  },
+  "repairs": {
+    "restart_required": {
+      "step": {
+        "confirm": {
+          "title": "Restart Home Assistant",
+          "description": "Home Assistant will restart to load the updated BRUH Claude integration. This will briefly interrupt all automations and connections."
+        }
+      }
+    }
   }
 }

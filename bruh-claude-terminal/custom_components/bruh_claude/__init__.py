@@ -8,13 +8,16 @@ Provides:
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import Event, HomeAssistant, ServiceCall
+from homeassistant.helpers import issue_registry as ir
 
 try:
     from homeassistant.core import SupportsResponse
@@ -59,6 +62,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if not hass.services.has_service(DOMAIN, "send_prompt"):
         _register_services(hass)
 
+    # Check if the add-on deployed newer integration files that need a restart
+    await _check_restart_required(hass)
+
+    # Listen for the add-on signalling that new files were deployed while HA is running
+    async def _on_restart_required(event: Event) -> None:
+        await _check_restart_required(hass)
+
+    hass.bus.async_listen("bruh_claude_restart_required", _on_restart_required)
+
     return True
 
 
@@ -68,6 +80,74 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if unload_ok:
         hass.data[DOMAIN].pop(entry.entry_id, None)
     return unload_ok
+
+
+async def _check_restart_required(hass: HomeAssistant) -> None:
+    """Check if the add-on deployed newer files and create/clear a repair issue."""
+    marker_path = hass.config.path(".bruh_claude", "restart_required")
+    marker = await hass.async_add_executor_job(_read_marker, marker_path)
+
+    if marker is None:
+        # No marker file — nothing to do, clear any stale repair
+        ir.async_delete_issue(hass, DOMAIN, "restart_required")
+        return
+
+    required_version = marker.get("required_version", "")
+
+    # Compare the required version with our currently loaded version
+    manifest_path = os.path.join(os.path.dirname(__file__), "manifest.json")
+    loaded_manifest = await hass.async_add_executor_job(_read_json, manifest_path)
+    loaded_version = (loaded_manifest or {}).get("version", "")
+
+    if required_version and required_version == loaded_version:
+        # The restart already happened — we're running the new version
+        await hass.async_add_executor_job(_remove_file, marker_path)
+        ir.async_delete_issue(hass, DOMAIN, "restart_required")
+        # Also dismiss any leftover persistent notification from older versions
+        await hass.services.async_call(
+            "persistent_notification",
+            "dismiss",
+            {"notification_id": "bruh_claude_restart_needed"},
+        )
+        return
+
+    # Files on disk are newer than what's loaded — prompt user to restart
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        "restart_required",
+        is_fixable=True,
+        is_persistent=True,
+        severity=ir.IssueSeverity.WARNING,
+        translation_key="restart_required",
+        translation_placeholders={"version": required_version},
+    )
+
+
+def _read_marker(path: str) -> dict | None:
+    """Read the restart marker JSON file, return None if missing."""
+    try:
+        with open(path) as fh:
+            return json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _read_json(path: str) -> dict | None:
+    """Read a JSON file, return None on error."""
+    try:
+        with open(path) as fh:
+            return json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _remove_file(path: str) -> None:
+    """Remove a file if it exists."""
+    try:
+        os.remove(path)
+    except OSError:
+        pass
 
 
 def _get_bridge(hass: HomeAssistant) -> ClaudeBridge:
