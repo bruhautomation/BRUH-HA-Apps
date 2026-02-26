@@ -1,7 +1,7 @@
 ---
 name: "BRUH Claude Terminal"
 description: "Enhanced Claude Code terminal for Home Assistant with native HA API access, auto-backup, context generation, and Assist integration"
-version: "1.3.0"
+version: "1.4.0"
 slug: "bruh_claude_terminal"
 init: false
 
@@ -35,6 +35,7 @@ options:
   enable_ha_mcp_server: true
   enable_assist_integration: true
   enable_automation_integration: true
+  dangerously_skip_permissions: true
   persistent_apk_packages: []
   persistent_pip_packages: []
   log_level: info
@@ -46,6 +47,7 @@ schema:
   enable_ha_mcp_server: bool?
   enable_assist_integration: bool?
   enable_automation_integration: bool?
+  dangerously_skip_permissions: bool?
   persistent_apk_packages:
     - str
   persistent_pip_packages:

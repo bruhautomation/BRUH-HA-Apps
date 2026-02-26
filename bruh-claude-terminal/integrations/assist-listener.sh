@@ -80,8 +80,10 @@ Keep responses concise and conversational."
     local output_file
     output_file=$(mktemp)
 
-    # Run Claude in print mode with --dangerously-skip-permissions for non-interactive use
-    printf '%s' "$full_prompt" | claude -p --dangerously-skip-permissions > "$output_file" 2>&1 || true
+    # Run Claude in print mode. The permissions flag is controlled by the
+    # dangerously_skip_permissions app config option (persisted in the env file).
+    # shellcheck disable=SC2086
+    printf '%s' "$full_prompt" | claude -p ${BRUH_CLAUDE_PERMS_FLAG:-} > "$output_file" 2>&1 || true
 
     local response
     response=$(cat "$output_file" 2>/dev/null || echo "I had trouble processing that request.")

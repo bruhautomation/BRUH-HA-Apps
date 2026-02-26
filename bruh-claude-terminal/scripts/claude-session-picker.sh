@@ -7,6 +7,16 @@ TMUX_SESSION_NAME="claude"
 TASK_DIR="/data/tasks"
 mkdir -p "$TASK_DIR"
 
+# Read the permissions flag from the shared env file written by run.sh.
+# Defaults to --dangerously-skip-permissions if the env file is missing
+# (backwards compatibility with older run.sh versions).
+PERMS_FLAG="--dangerously-skip-permissions"
+if [ -f /data/.bruh_claude_env ]; then
+    # shellcheck disable=SC1091
+    source /data/.bruh_claude_env
+    PERMS_FLAG="${BRUH_CLAUDE_PERMS_FLAG:-$PERMS_FLAG}"
+fi
+
 show_banner() {
     clear
     echo "╔══════════════════════════════════════════════════════════════╗"
@@ -102,7 +112,7 @@ launch_claude_new() {
     fi
 
     sleep 1
-    exec tmux new-session -s "$TMUX_SESSION_NAME" 'claude --dangerously-skip-permissions'
+    exec tmux new-session -s "$TMUX_SESSION_NAME" "claude ${PERMS_FLAG}"
 }
 
 launch_claude_continue() {
@@ -113,7 +123,7 @@ launch_claude_continue() {
     fi
 
     sleep 1
-    exec tmux new-session -s "$TMUX_SESSION_NAME" 'claude --dangerously-skip-permissions -c'
+    exec tmux new-session -s "$TMUX_SESSION_NAME" "claude ${PERMS_FLAG} -c"
 }
 
 launch_claude_resume() {
@@ -124,7 +134,7 @@ launch_claude_resume() {
     fi
 
     sleep 1
-    exec tmux new-session -s "$TMUX_SESSION_NAME" 'claude --dangerously-skip-permissions -r'
+    exec tmux new-session -s "$TMUX_SESSION_NAME" "claude ${PERMS_FLAG} -r"
 }
 
 launch_claude_custom() {
@@ -160,11 +170,11 @@ launch_new_window() {
     if ! check_existing_session; then
         echo "No existing session. Starting new session..."
         sleep 1
-        exec tmux new-session -s "$TMUX_SESSION_NAME" 'claude --dangerously-skip-permissions'
+        exec tmux new-session -s "$TMUX_SESSION_NAME" "claude ${PERMS_FLAG}"
     fi
 
     echo "Opening new Claude window in existing session..."
-    tmux new-window -t "$TMUX_SESSION_NAME" 'claude --dangerously-skip-permissions'
+    tmux new-window -t "$TMUX_SESSION_NAME" "claude ${PERMS_FLAG}"
     sleep 1
     exec tmux attach-session -t "$TMUX_SESSION_NAME"
 }
@@ -192,7 +202,7 @@ launch_background_task() {
 
     # Run Claude in background with the prompt
     (
-        claude --dangerously-skip-permissions -p "$task_prompt" > "${task_file}.output" 2>&1
+        claude ${PERMS_FLAG} -p "$task_prompt" > "${task_file}.output" 2>&1
         rm -f "${task_file}.running"
         touch "${task_file}.done"
         echo "Task $task_id completed at $(date)" >> "${task_file}.output"
