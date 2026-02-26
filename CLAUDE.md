@@ -1,0 +1,83 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code when working with code in this repository.
+
+## Project Overview
+
+This repository contains Home Assistant add-ons by BRUH Automation. The primary add-on is **BRUH Claude Terminal** - an enhanced Claude Code terminal for Home Assistant with native HA API access, auto-backup, context generation, and deep HA integration.
+
+## Repository Structure
+
+```
+BRUH-HA-Apps/
+├── repository.yaml              # HA add-on repository metadata
+├── bruh-claude-terminal/        # Main add-on
+│   ├── config.yaml              # HA add-on configuration manifest
+│   ├── build.yaml               # Multi-arch build config
+│   ├── Dockerfile               # Container build definition
+│   ├── run.sh                   # Main startup/entrypoint script
+│   ├── ha-mcp-server/           # MCP server for HA API access
+│   │   └── ha_mcp_server.py     # Python MCP server (stdio-based)
+│   ├── scripts/                 # Shell scripts and tools
+│   │   ├── ha-reload.sh         # Config reload CLI tool
+│   │   ├── ha-log.sh            # Log viewer CLI tool
+│   │   ├── ha-context-gen.sh    # CLAUDE.md context generator
+│   │   ├── ha-backup.sh         # Manual backup tool
+│   │   ├── ha-backup-watcher.sh # Background auto-backup daemon
+│   │   ├── claude-session-picker.sh  # Enhanced session picker
+│   │   ├── claude-auth-helper.sh     # Auth workaround helper
+│   │   ├── health-check.sh      # Startup diagnostics
+│   │   ├── persist-install.sh   # Persistent package manager
+│   │   ├── ha-api-examples.sh   # API usage examples
+│   │   └── tmux.conf            # tmux configuration
+│   └── integrations/            # HA integrations
+│       ├── assist-listener.sh   # Assist conversation agent bridge
+│       └── automation-listener.sh # Automation task queue
+├── .gitignore
+├── LICENSE
+└── CLAUDE.md                    # This file
+```
+
+## Key Architecture
+
+### MCP Server (`ha-mcp-server/ha_mcp_server.py`)
+- Stdio-based MCP server that Claude Code launches automatically
+- Uses `SUPERVISOR_TOKEN` for HA API authentication
+- Provides tools for entity states, service calls, logs, template rendering, config reload
+
+### Startup Flow (`run.sh`)
+1. Health check
+2. Environment initialization (`/data` for persistence)
+3. Tool installation
+4. CLI tools setup (ha-reload, ha-log, ha-backup, etc.)
+5. Persistent packages
+6. Auto-backup (git init + background watcher)
+7. Context generation (CLAUDE.md)
+8. MCP server configuration
+9. Optional: Assist + Automation integrations
+10. ttyd web terminal launch
+
+### Container Environment
+- Base: Home Assistant Alpine Linux 3.19
+- HOME: `/data/home` (persistent across restarts)
+- Config: `/data/.config/claude`
+- HA config: `/config` (read-write)
+- Tools live in `/opt/scripts/` and get copied to `/usr/local/bin/`
+
+## Development
+
+### Build locally
+```bash
+podman build --build-arg BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.19 -t local/bruh-claude-terminal ./bruh-claude-terminal
+```
+
+### Run locally
+```bash
+podman run -p 7681:7681 -v $(pwd)/config:/config local/bruh-claude-terminal
+```
+
+### File Conventions
+- Shell scripts: `#!/usr/bin/with-contenv bashio` for HA scripts, `#!/bin/bash` for standalone
+- YAML: 2-space indentation
+- Shell: 4-space indentation
+- Error handling: `bashio::log.error` for HA scripts, colored output for user-facing tools

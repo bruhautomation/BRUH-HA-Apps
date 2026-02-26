@@ -1,0 +1,71 @@
+---
+name: "BRUH Claude Terminal"
+description: "Enhanced Claude Code terminal for Home Assistant with native HA API access, auto-backup, context generation, and Assist integration"
+version: "1.0.0"
+slug: "bruh_claude_terminal"
+init: false
+
+# Supported architectures
+arch:
+  - aarch64
+  - amd64
+
+# External resources
+url: "https://github.com/bruhautomation/BRUH-HA-Apps"
+
+# Web interface configuration
+ingress: true
+ingress_port: 7681
+panel_icon: mdi:robot
+panel_title: "BRUH Claude"
+panel_admin: true
+
+# Port configuration
+ports:
+  7681/tcp: 7681
+ports_description:
+  7681/tcp: "Web terminal (not required for ingress)"
+
+# Add-on configuration options
+options:
+  auto_launch_claude: true
+  auto_backup: true
+  auto_generate_context: true
+  backup_interval_minutes: 30
+  enable_ha_mcp_server: true
+  enable_assist_integration: false
+  enable_automation_integration: false
+  persistent_apk_packages: []
+  persistent_pip_packages: []
+  log_level: info
+schema:
+  auto_launch_claude: bool?
+  auto_backup: bool?
+  auto_generate_context: bool?
+  backup_interval_minutes: "int(5,1440)?"
+  enable_ha_mcp_server: bool?
+  enable_assist_integration: bool?
+  enable_automation_integration: bool?
+  persistent_apk_packages:
+    - str
+  persistent_pip_packages:
+    - str
+  log_level: "list(trace|debug|info|notice|warning|error|fatal)?"
+
+# Volume mappings for file access
+map:
+  - config:rw
+  - backup:rw
+  - media:rw
+
+# API access for Home Assistant integration
+hassio_api: true
+hassio_role: manager
+homeassistant_api: true
+auth_api: true
+
+# Service startup configuration
+startup: services
+
+# Web UI access URL
+webui: http://[HOST]:[PORT:7681]/

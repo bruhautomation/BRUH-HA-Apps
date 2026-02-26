@@ -1,0 +1,228 @@
+#!/usr/bin/with-contenv bashio
+
+# ha-context-gen - Generate CLAUDE.md with Home Assistant system context
+# This gives Claude Code immediate knowledge of your HA installation
+
+set -e
+
+SUPERVISOR_TOKEN="${SUPERVISOR_TOKEN:-}"
+HA_API="http://supervisor/core/api"
+SUPERVISOR_API="http://supervisor"
+OUTPUT_FILE="/config/CLAUDE.md"
+
+# API helper
+api_get() {
+    local endpoint="$1"
+    local url
+
+    if [[ "$endpoint" == /api/* ]]; then
+        url="${HA_API}${endpoint#/api}"
+    else
+        url="${SUPERVISOR_API}${endpoint}"
+    fi
+
+    curl -s -X GET \
+        -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
+        -H "Content-Type: application/json" \
+        "$url" 2>/dev/null
+}
+
+generate_context() {
+    bashio::log.info "Generating Home Assistant context for Claude Code..."
+
+    # Gather system information
+    local ha_config
+    ha_config=$(api_get "/api/config" 2>/dev/null || echo '{}')
+
+    local ha_version
+    ha_version=$(echo "$ha_config" | jq -r '.version // "unknown"')
+
+    local ha_name
+    ha_name=$(echo "$ha_config" | jq -r '.location_name // "Home"')
+
+    local ha_timezone
+    ha_timezone=$(echo "$ha_config" | jq -r '.time_zone // "UTC"')
+
+    local ha_unit_system
+    ha_unit_system=$(echo "$ha_config" | jq -r '.unit_system.temperature // "unknown"')
+
+    local ha_elevation
+    ha_elevation=$(echo "$ha_config" | jq -r '.elevation // "unknown"')
+
+    # Get components/integrations
+    local components
+    components=$(echo "$ha_config" | jq -r '.components[]? // empty' 2>/dev/null | sort)
+
+    # Get all entity states
+    local all_states
+    all_states=$(api_get "/api/states" 2>/dev/null || echo '[]')
+
+    # Count entities by domain
+    local domain_counts
+    domain_counts=$(echo "$all_states" | jq -r '
+        [.[].entity_id] |
+        map(split(".")[0]) |
+        group_by(.) |
+        map({domain: .[0], count: length}) |
+        sort_by(-.count) |
+        .[] |
+        "  - \(.domain): \(.count) entities"
+    ' 2>/dev/null || echo "  - Unable to retrieve entity counts")
+
+    # Get areas (via template rendering)
+    local areas
+    areas=$(api_get "/api/states" 2>/dev/null | jq -r '
+        [.[].attributes.friendly_name // empty] | unique | length
+    ' 2>/dev/null || echo "unknown")
+
+    # Get automations summary
+    local automations
+    automations=$(echo "$all_states" | jq -r '
+        [.[] | select(.entity_id | startswith("automation."))] |
+        map({
+            id: .entity_id,
+            name: (.attributes.friendly_name // .entity_id),
+            state: .state,
+            last_triggered: (.attributes.last_triggered // "never")
+        })
+    ' 2>/dev/null || echo '[]')
+
+    local automation_count
+    automation_count=$(echo "$automations" | jq 'length' 2>/dev/null || echo "0")
+
+    local automation_list
+    automation_list=$(echo "$automations" | jq -r '
+        .[:20] | .[] | "  - \(.name) [\(.state)] (last: \(.last_triggered))"
+    ' 2>/dev/null || echo "  - Unable to retrieve automations")
+
+    # Get scripts summary
+    local script_count
+    script_count=$(echo "$all_states" | jq '[.[] | select(.entity_id | startswith("script."))] | length' 2>/dev/null || echo "0")
+
+    # Get scenes summary
+    local scene_count
+    scene_count=$(echo "$all_states" | jq '[.[] | select(.entity_id | startswith("scene."))] | length' 2>/dev/null || echo "0")
+
+    # Get input helpers
+    local input_boolean_count
+    input_boolean_count=$(echo "$all_states" | jq '[.[] | select(.entity_id | startswith("input_boolean."))] | length' 2>/dev/null || echo "0")
+
+    local input_number_count
+    input_number_count=$(echo "$all_states" | jq '[.[] | select(.entity_id | startswith("input_number."))] | length' 2>/dev/null || echo "0")
+
+    local input_select_count
+    input_select_count=$(echo "$all_states" | jq '[.[] | select(.entity_id | startswith("input_select."))] | length' 2>/dev/null || echo "0")
+
+    # Get supervisor info
+    local supervisor_info
+    supervisor_info=$(api_get "/core/info" 2>/dev/null || echo '{}')
+
+    local ha_os
+    ha_os=$(echo "$supervisor_info" | jq -r '.data.operating_system // "unknown"')
+
+    local ha_machine
+    ha_machine=$(echo "$supervisor_info" | jq -r '.data.machine // "unknown"')
+
+    # Get installed add-ons
+    local addons_info
+    addons_info=$(api_get "/addons" 2>/dev/null || echo '{}')
+
+    local addon_list
+    addon_list=$(echo "$addons_info" | jq -r '
+        .data.addons[]? |
+        select(.installed == true or .state == "started") |
+        "  - \(.name) v\(.version) [\(.state)]"
+    ' 2>/dev/null || echo "  - Unable to retrieve add-on list")
+
+    # Get important integration info
+    local integration_list
+    integration_list=$(echo "$components" | head -50 | while read -r comp; do
+        echo "  - $comp"
+    done)
+
+    # Generate the CLAUDE.md file
+    cat > "$OUTPUT_FILE" << CLAUDEMD
+# CLAUDE.md - Auto-generated Home Assistant Context
+
+> This file is auto-generated by BRUH Claude Terminal on startup.
+> It provides Claude Code with context about your Home Assistant installation.
+> Last updated: $(date -u '+%Y-%m-%d %H:%M:%S UTC')
+
+## System Overview
+
+- **Home name**: ${ha_name}
+- **HA version**: ${ha_version}
+- **OS**: ${ha_os}
+- **Machine**: ${ha_machine}
+- **Timezone**: ${ha_timezone}
+- **Unit system**: ${ha_unit_system}
+- **Elevation**: ${ha_elevation}m
+
+## Entity Summary
+
+${domain_counts}
+
+## Automations (${automation_count} total)
+
+${automation_list}
+$(if [ "$automation_count" -gt 20 ]; then echo "  ... and $((automation_count - 20)) more"; fi)
+
+## Scripts: ${script_count} | Scenes: ${scene_count}
+
+## Input Helpers
+
+- Input booleans: ${input_boolean_count}
+- Input numbers: ${input_number_count}
+- Input selects: ${input_select_count}
+
+## Installed Add-ons
+
+${addon_list}
+
+## Active Integrations (first 50)
+
+${integration_list}
+
+## File Structure
+
+The Home Assistant configuration lives in \`/config/\`. Key files:
+- \`/config/configuration.yaml\` - Main configuration
+- \`/config/automations.yaml\` - Automations
+- \`/config/scripts.yaml\` - Scripts
+- \`/config/scenes.yaml\` - Scenes
+- \`/config/secrets.yaml\` - Secrets (DO NOT read or modify)
+- \`/config/customize.yaml\` - Entity customizations
+
+## BRUH Claude Terminal Tools
+
+You have access to these CLI tools:
+- \`ha-reload <target>\` - Reload HA config (automations, scripts, scenes, groups, core, all)
+- \`ha-log [core|supervisor|addons]\` - View HA logs in real-time
+- \`ha-backup [commit-message]\` - Manually trigger a config backup
+- \`ha-context-gen\` - Regenerate this context file
+- \`persist-install apk|pip <packages>\` - Install persistent packages
+
+## MCP Server
+
+The Home Assistant MCP server is active. You can use it to:
+- Get entity states in real-time
+- Call HA services (turn on/off lights, trigger automations, etc.)
+- View automation traces for debugging
+- Check error logs
+- Render Jinja2 templates
+- Reload configurations after YAML edits
+
+## Important Notes
+
+- **Always run \`ha-reload automations\` after editing automations.yaml**
+- **Always run \`ha-reload scripts\` after editing scripts.yaml**
+- **Never modify secrets.yaml directly**
+- **YAML edits are auto-backed up via git** (if auto_backup is enabled)
+- **Test templates** using the \`render_template\` MCP tool before using them in automations
+CLAUDEMD
+
+    bashio::log.info "Context file generated: $OUTPUT_FILE"
+}
+
+# Run generation
+generate_context
