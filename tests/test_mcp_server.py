@@ -452,11 +452,19 @@ class TestMCPProtocol(unittest.TestCase):
         # Verify all expected tools are present
         tool_names = {t["name"] for t in tools}
         expected_tools = {
+            # Core tools
             "get_entity_state", "get_all_states", "call_service",
+            "get_service_details",
+            # Domain-specific device control
+            "control_light", "control_climate", "control_media_player",
+            "control_cover", "control_fan", "control_switch",
+            "control_lock", "control_alarm", "control_vacuum",
+            "send_notification", "activate_scene", "run_script",
+            # System tools
             "get_automations", "get_automation_trace", "get_ha_config",
             "get_services", "get_device_registry", "get_logbook",
             "get_error_log", "render_template", "fire_event",
-            "get_supervisor_info", "reload_config"
+            "get_supervisor_info", "reload_config",
         }
         self.assertEqual(tool_names, expected_tools)
 

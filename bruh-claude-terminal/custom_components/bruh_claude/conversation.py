@@ -54,7 +54,9 @@ class BruhClaudeConversationEntity(ConversationEntity):
 
     def __init__(self, config_entry: ConfigEntry, bridge) -> None:
         self._bridge = bridge
-        self._system_prompt = config_entry.data.get(CONF_SYSTEM_PROMPT, "")
+        # Options (from the options flow) override the original data values
+        opts = {**config_entry.data, **config_entry.options}
+        self._system_prompt = opts.get(CONF_SYSTEM_PROMPT, "")
         self._attr_name = config_entry.data.get(CONF_NAME, DEFAULT_NAME)
         self._attr_unique_id = f"{config_entry.entry_id}_conversation"
 

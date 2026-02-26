@@ -1,5 +1,41 @@
 # Changelog
 
+## 1.5.1
+
+### Repair Flow Fix, Expanded Device Control & Options Flow
+
+**Fixed Repair Flow Not Triggering**
+- Fixed the repair issue never appearing after an add-on update
+- Root cause: the version comparison read the already-overwritten manifest.json from disk instead of using the in-memory version, so it always thought the restart had already happened
+- The loaded version is now captured at module import time, before the add-on can overwrite it
+- Fixed repair flow translation strings to use the correct `fix_flow` structure per HA conventions (was incorrectly using a separate top-level `repairs` key)
+
+**Expanded MCP Service Tools**
+- Added dedicated tools for controlling all major device types with fully typed parameters:
+  - `control_light` — brightness, RGB/HS/XY color, color temperature (Kelvin), color name, effects, transitions, flash
+  - `control_climate` — temperature, HVAC mode, fan mode, preset mode, humidity, swing mode
+  - `control_media_player` — play/pause/stop, volume, source selection, play media, seek, shuffle, repeat
+  - `control_cover` — open/close/stop, set position, set tilt
+  - `control_fan` — speed percentage, preset mode, direction, oscillation
+  - `control_switch` — on/off/toggle for switches and input_booleans
+  - `control_lock` — lock/unlock/open with optional access code
+  - `control_alarm` — arm (away/home/night/vacation), disarm, trigger with code
+  - `control_vacuum` — start/stop/pause, return home, locate, spot clean, fan speed
+  - `send_notification` — persistent notifications or targeted (mobile app, Slack, etc.)
+  - `activate_scene` — activate scenes with optional transition
+  - `run_script` — run scripts with optional variables
+- Added `get_service_details` tool for dynamic service schema lookup
+- Improved `call_service` description with comprehensive examples
+- Enhanced assist-listener prompt so Claude knows about all available device control tools
+
+**Options Flow for Conversation Agents**
+- Added an options flow so users can edit the system prompt and timeout after initial setup
+- Go to Settings > Devices & Services > BRUH Claude > Configure to change settings
+- The conversation entity reloads automatically when options are changed
+
+**Integration Icon**
+- Note: To see the BRUH Claude icon in Settings > Devices & Services, submit the icon to the [home-assistant/brands](https://github.com/home-assistant/brands) repo under `custom_integrations/bruh_claude/`, or wait for HA 2026.3.0 which supports local custom integration icons
+
 ## 1.5.0
 
 ### HA Repairs Flow, OAuth Persistence & Conversation Memory

@@ -11,7 +11,7 @@ from typing import Any
 
 import voluptuous as vol
 
-from homeassistant.config_entries import ConfigFlow
+from homeassistant.config_entries import ConfigEntry, ConfigFlow, OptionsFlow
 
 try:
     from homeassistant.components.hassio import HassioServiceInfo
@@ -33,6 +33,11 @@ class BruhClaudeConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for BRUH Claude."""
 
     VERSION = 1
+
+    @staticmethod
+    def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
+        """Return the options flow handler."""
+        return BruhClaudeOptionsFlowHandler(config_entry)
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -118,4 +123,36 @@ class BruhClaudeConfigFlow(ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="hassio_confirm",
             description_placeholders={"addon": "BRUH Claude Terminal"},
+        )
+
+
+class BruhClaudeOptionsFlowHandler(OptionsFlow):
+    """Handle options for a BRUH Claude config entry."""
+
+    def __init__(self, config_entry: ConfigEntry) -> None:
+        self._config_entry = config_entry
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ):
+        """Manage the options."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        current = {**self._config_entry.data, **self._config_entry.options}
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(
+                        CONF_SYSTEM_PROMPT,
+                        default=current.get(CONF_SYSTEM_PROMPT, DEFAULT_SYSTEM_PROMPT),
+                    ): str,
+                    vol.Optional(
+                        CONF_TIMEOUT,
+                        default=current.get(CONF_TIMEOUT, DEFAULT_TIMEOUT),
+                    ): vol.All(int, vol.Range(min=10, max=600)),
+                }
+            ),
         )
