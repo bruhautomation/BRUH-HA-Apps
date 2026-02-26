@@ -16,13 +16,13 @@ CONFIG_DIR="/config"
 
 validate_yaml_syntax() {
     local file="$1"
-    local errors=0
 
     # Use Python for reliable YAML parsing
+    # Pass filename via sys.argv to avoid shell injection through filenames
     if python3 -c "
 import yaml, sys
 try:
-    with open('$file', 'r') as f:
+    with open(sys.argv[1], 'r') as f:
         yaml.safe_load(f)
     sys.exit(0)
 except yaml.YAMLError as e:
@@ -31,7 +31,7 @@ except yaml.YAMLError as e:
 except Exception as e:
     print(f'Error: {e}', file=sys.stderr)
     sys.exit(1)
-" 2>/dev/null; then
+" "$file" 2>/dev/null; then
         return 0
     else
         return 1

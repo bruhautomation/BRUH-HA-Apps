@@ -137,6 +137,14 @@ launch_claude_custom() {
     if [ -z "$custom_args" ]; then
         launch_claude_new
     else
+        # Validate: only allow flags and simple arguments (no shell metacharacters)
+        if echo "$custom_args" | grep -qE '[;&|$`\\()\{}<>!]'; then
+            echo "Error: Shell metacharacters are not allowed in arguments."
+            echo "Only Claude CLI flags and their values are permitted."
+            sleep 2
+            return
+        fi
+
         echo "Running: claude $custom_args"
 
         if check_existing_session; then

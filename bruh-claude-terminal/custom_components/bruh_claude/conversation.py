@@ -53,7 +53,7 @@ class BruhClaudeConversationEntity(ConversationEntity):
         self, user_input: ConversationInput
     ) -> ConversationResult:
         """Process a conversation turn by forwarding to the Claude app."""
-        conversation_id = user_input.conversation_id or ""
+        conversation_id = user_input.conversation_id
 
         _LOGGER.debug(
             "Processing conversation: %s (id=%s)",
@@ -64,7 +64,7 @@ class BruhClaudeConversationEntity(ConversationEntity):
         try:
             response_text = await self._bridge.async_send_conversation(
                 text=user_input.text,
-                conversation_id=conversation_id or None,
+                conversation_id=conversation_id,
             )
         except TimeoutError:
             response_text = (

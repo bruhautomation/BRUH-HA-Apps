@@ -120,15 +120,16 @@ class ClaudeBridge:
 
     async def _poll_for_response(self, path: str, timeout: int) -> str:
         """Poll for a response file, return its content or raise TimeoutError."""
-        elapsed = 0.0
-        while elapsed < timeout:
+        import time
+
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
             result = await self._hass.async_add_executor_job(
                 self._read_and_remove, path
             )
             if result is not None:
                 return result
             await asyncio.sleep(POLL_INTERVAL)
-            elapsed += POLL_INTERVAL
 
         raise TimeoutError(
             f"No response within {timeout}s for {os.path.basename(path)}"
@@ -156,6 +157,14 @@ class ClaudeBridge:
                 data = json.load(fh)
             os.remove(path)
             return data.get("text", data.get("result", json.dumps(data)))
-        except (json.JSONDecodeError, OSError) as exc:
+        except json.JSONDecodeError as exc:
+            _LOGGER.warning("Corrupt response file %s: %s", path, exc)
+            # Remove corrupt file to avoid infinite retry loop
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+            return "Error: received corrupt response from Claude Terminal."
+        except OSError as exc:
             _LOGGER.warning("Failed to read response %s: %s", path, exc)
             return None

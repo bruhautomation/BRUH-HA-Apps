@@ -45,6 +45,7 @@ claude-config/
 .claude/
 .claude.json
 .mcp.json
+.bruh_claude/
 www/
 media/
 custom_components/__pycache__/

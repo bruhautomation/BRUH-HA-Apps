@@ -16,10 +16,8 @@ sleep 30
 
 while true; do
     if [ -d "$CONFIG_DIR/.git" ]; then
-        cd "$CONFIG_DIR"
-
-        # Check for changes
-        changes=$(git status --porcelain 2>/dev/null || echo "")
+        # Check for changes (use git -C instead of cd)
+        changes=$(git -C "$CONFIG_DIR" status --porcelain 2>/dev/null || echo "")
 
         if [ -n "$changes" ]; then
             # Count changed files
@@ -29,8 +27,8 @@ while true; do
             # Get a summary of what changed
             changed_files=$(echo "$changes" | awk '{print $2}' | head -5 | tr '\n' ', ' | sed 's/,$//')
 
-            git add -A 2>/dev/null || true
-            git commit -m "Auto-backup: ${change_count} file(s) changed (${timestamp})" \
+            git -C "$CONFIG_DIR" add -A 2>/dev/null || true
+            git -C "$CONFIG_DIR" commit -m "Auto-backup: ${change_count} file(s) changed (${timestamp})" \
                 -m "Files: ${changed_files}" 2>/dev/null || true
 
             bashio::log.info "Auto-backup: ${change_count} file(s) committed"
