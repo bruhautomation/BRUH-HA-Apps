@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.5.1
+
+### Repair Flow Fix & Options Flow
+
+**Fixed Repair Flow Not Triggering**
+- Fixed the repair issue never appearing after an add-on update
+- Root cause: the version comparison read the already-overwritten manifest.json from disk instead of using the in-memory version, so it always thought the restart had already happened
+- The loaded version is now captured at module import time, before the add-on can overwrite it
+- Fixed repair flow translation strings to use the correct `fix_flow` structure per HA conventions (was incorrectly using a separate top-level `repairs` key)
+
+**Options Flow for Conversation Agents**
+- Added an options flow so users can edit the system prompt and timeout after initial setup
+- Go to Settings > Devices & Services > BRUH Claude > Configure to change settings
+- The conversation entity reloads automatically when options are changed
+
 ## 1.5.0
 
 ### HA Repairs Flow, OAuth Persistence & Conversation Memory

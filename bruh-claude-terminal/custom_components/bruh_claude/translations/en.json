@@ -27,18 +27,31 @@
       "already_configured": "An agent with this name is already configured. Choose a different name."
     }
   },
-  "issues": {
-    "restart_required": {
-      "title": "BRUH Claude: Restart required",
-      "description": "The BRUH Claude integration has been updated to version {version}. Home Assistant needs to restart to load the new version."
+  "options": {
+    "step": {
+      "init": {
+        "title": "BRUH Claude Options",
+        "description": "Adjust the system prompt and timeout for this conversation agent.",
+        "data": {
+          "system_prompt": "System prompt (personality)",
+          "timeout": "Response timeout (seconds)"
+        },
+        "data_description": {
+          "system_prompt": "Optional system prompt that defines this agent's personality. Leave blank for the default assistant behavior.",
+          "timeout": "Maximum time in seconds to wait for Claude to respond."
+        }
+      }
     }
   },
-  "repairs": {
+  "issues": {
     "restart_required": {
-      "step": {
-        "confirm": {
-          "title": "Restart Home Assistant",
-          "description": "Home Assistant will restart to load the updated BRUH Claude integration. This will briefly interrupt all automations and connections."
+      "title": "BRUH Claude: Restart required (v{version})",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Restart Home Assistant",
+            "description": "The BRUH Claude integration has been updated to version {version}. Home Assistant will restart to load the new version.\n\nThis will briefly interrupt all automations and connections."
+          }
         }
       }
     }

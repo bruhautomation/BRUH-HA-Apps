@@ -29,6 +29,17 @@ from .const import CONF_TIMEOUT, DEFAULT_TIMEOUT, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
+# Capture the manifest version at import time so we know which version of the
+# code is actually loaded in memory.  The on-disk manifest.json may be
+# overwritten by the add-on before _check_restart_required runs, so reading
+# it later would give the *new* version instead of the *running* version.
+_LOADED_VERSION: str = "unknown"
+try:
+    with open(os.path.join(os.path.dirname(__file__), "manifest.json")) as _fh:
+        _LOADED_VERSION = json.load(_fh).get("version", "unknown")
+except (OSError, json.JSONDecodeError):
+    pass
+
 PLATFORMS = [Platform.CONVERSATION]
 
 SEND_PROMPT_SCHEMA = vol.Schema(
@@ -50,7 +61,8 @@ RUN_TASK_SCHEMA = vol.Schema(
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up BRUH Claude from a config entry."""
-    timeout = entry.data.get(CONF_TIMEOUT, DEFAULT_TIMEOUT)
+    opts = {**entry.data, **entry.options}
+    timeout = opts.get(CONF_TIMEOUT, DEFAULT_TIMEOUT)
     bridge = ClaudeBridge(hass, timeout=timeout)
 
     hass.data.setdefault(DOMAIN, {})
@@ -65,6 +77,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Check if the add-on deployed newer integration files that need a restart
     await _check_restart_required(hass)
 
+    # Reload the entry when the user changes options (system prompt, timeout, etc.)
+    entry.async_on_unload(entry.add_update_listener(_async_options_updated))
+
     # Listen for the add-on signalling that new files were deployed while HA is running
     async def _on_restart_required(event: Event) -> None:
         await _check_restart_required(hass)
@@ -72,6 +87,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.bus.async_listen("bruh_claude_restart_required", _on_restart_required)
 
     return True
+
+
+async def _async_options_updated(
+    hass: HomeAssistant, entry: ConfigEntry
+) -> None:
+    """Reload the config entry when options change."""
+    await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -94,10 +116,9 @@ async def _check_restart_required(hass: HomeAssistant) -> None:
 
     required_version = marker.get("required_version", "")
 
-    # Compare the required version with our currently loaded version
-    manifest_path = os.path.join(os.path.dirname(__file__), "manifest.json")
-    loaded_manifest = await hass.async_add_executor_job(_read_json, manifest_path)
-    loaded_version = (loaded_manifest or {}).get("version", "")
+    # Use the version captured at import time — NOT the on-disk manifest,
+    # which the add-on may have already overwritten with the newer version.
+    loaded_version = _LOADED_VERSION
 
     if required_version and required_version == loaded_version:
         # The restart already happened — we're running the new version
