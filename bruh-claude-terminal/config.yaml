@@ -1,7 +1,7 @@
 ---
 name: "BRUH Claude Terminal"
 description: "Enhanced Claude Code terminal for Home Assistant with native HA API access, auto-backup, context generation, and Assist integration"
-version: "1.5.1"
+version: "1.5.2"
 slug: "bruh_claude_terminal"
 init: false
 
