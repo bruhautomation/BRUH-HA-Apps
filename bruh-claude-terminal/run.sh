@@ -68,6 +68,15 @@ init_environment() {
         chmod 644 "$data_home/.tmux.conf"
     fi
 
+    # Read the permissions toggle so we can persist it for background listeners.
+    # This must happen before writing the env file below.
+    local skip_perms
+    skip_perms=$(bashio::config 'dangerously_skip_permissions' 'true')
+    local perms_flag=""
+    if [ "$skip_perms" = "true" ]; then
+        perms_flag="--dangerously-skip-permissions"
+    fi
+
     # Write environment file for background processes (listeners, etc.)
     # These processes may lose env vars due to with-contenv shebang reloading
     # the s6 container environment, so we persist the critical vars to a file.
@@ -81,6 +90,7 @@ export XDG_DATA_HOME="/data/.local/share"
 export ANTHROPIC_CONFIG_DIR="${claude_config_dir}"
 export ANTHROPIC_HOME="/data"
 export PATH="${data_home}/.local/bin:\${PATH}"
+export BRUH_CLAUDE_PERMS_FLAG="${perms_flag}"
 ENVEOF
     chmod 600 "$env_file"
 
@@ -637,18 +647,47 @@ setup_automation_integration() {
 # Session Launch
 # ============================================================================
 
+# Returns "--dangerously-skip-permissions" if the user has opted in via config,
+# or an empty string if disabled. This flag tells Claude Code to execute tool
+# calls (file edits, shell commands, etc.) without interactive confirmation.
+#
+# WHY THIS EXISTS: Inside the HA add-on container, Claude Code runs in a
+# sandboxed environment where the only files it can reach are /config and /data.
+# Skipping the per-action permission prompts makes the terminal and background
+# integrations (Assist, Automations) usable without manual approval of every
+# action. The flag is ON by default to preserve the current user experience,
+# but can be disabled in the app configuration if you prefer to approve each
+# action manually.
+#
+# SECURITY NOTE: Even with this flag enabled, Claude Code still runs as a
+# non-root user (UID 1000) inside an isolated container. It cannot access the
+# host OS or other add-ons. Disabling the flag adds an extra confirmation step
+# before Claude modifies files or runs commands.
+get_permissions_flag() {
+    local skip_perms
+    skip_perms=$(bashio::config 'dangerously_skip_permissions' 'true')
+
+    if [ "$skip_perms" = "true" ]; then
+        echo "--dangerously-skip-permissions"
+    else
+        echo ""
+    fi
+}
+
 get_claude_launch_command() {
     local auto_launch_claude
     auto_launch_claude=$(bashio::config 'auto_launch_claude' 'true')
+    local perms_flag
+    perms_flag=$(get_permissions_flag)
 
     if [ "$auto_launch_claude" = "true" ]; then
-        echo "tmux new-session -A -s claude 'claude --dangerously-skip-permissions'"
+        echo "tmux new-session -A -s claude 'claude ${perms_flag}'"
     else
         if [ -f /usr/local/bin/claude-session-picker ]; then
             echo "tmux new-session -A -s claude-picker '/usr/local/bin/claude-session-picker'"
         else
             bashio::log.warning "Session picker not found, falling back to auto-launch"
-            echo "tmux new-session -A -s claude 'claude --dangerously-skip-permissions'"
+            echo "tmux new-session -A -s claude 'claude ${perms_flag}'"
         fi
     fi
 }
@@ -666,6 +705,7 @@ start_web_terminal() {
     bashio::log.info "  HOME=${HOME}"
     bashio::log.info "  HA MCP Server: $(bashio::config 'enable_ha_mcp_server' 'true')"
     bashio::log.info "  Auto-backup: $(bashio::config 'auto_backup' 'true')"
+    bashio::log.info "  Skip permissions: $(bashio::config 'dangerously_skip_permissions' 'true')"
 
     local launch_command
     launch_command=$(get_claude_launch_command)
@@ -720,7 +760,7 @@ trap cleanup SIGTERM SIGINT EXIT
 
 main() {
     bashio::log.info "============================================"
-    bashio::log.info "  BRUH Claude Terminal v1.3.0"
+    bashio::log.info "  BRUH Claude Terminal v1.4.0"
     bashio::log.info "  Enhanced Claude Code for Home Assistant"
     bashio::log.info "============================================"
 

@@ -59,11 +59,14 @@ Trigger Claude tasks from HA automations via file-based task queue.
 
 ## Installation
 
-1. Add this repository to your Home Assistant add-on store
+1. Add this repository to your Home Assistant app store
 2. Install "BRUH Claude Terminal"
-3. Start the add-on
-4. Home Assistant will automatically discover the BRUH Claude integration and prompt you to set it up
-5. Authenticate with your Anthropic account in the terminal
+3. Start the app
+4. **Restart Home Assistant** (Settings > System > Restart) — required on first install so HA loads the BRUH Claude integration
+5. Home Assistant will automatically discover the BRUH Claude integration and prompt you to set it up
+6. Authenticate with your Anthropic account in the terminal
+
+> **After upgrades:** If the app version changes, restart HA again so the updated integration code is loaded. The app will send a persistent notification when this is needed.
 
 The integration can also be added manually via Settings > Devices & Services > Add Integration > BRUH Claude.
 
@@ -78,6 +81,7 @@ The integration can also be added manually via Settings > Devices & Services > A
 | `enable_ha_mcp_server` | `true` | Enable HA MCP server for Claude |
 | `enable_assist_integration` | `false` | Enable Assist conversation agent |
 | `enable_automation_integration` | `false` | Enable automation task queue |
+| `dangerously_skip_permissions` | `true` | Skip per-action confirmation prompts in Claude Code (see [Permissions docs](DOCS.md#permissions-dangerously_skip_permissions)) |
 | `persistent_apk_packages` | `[]` | APK packages to install on startup |
 | `persistent_pip_packages` | `[]` | pip packages to install on startup |
 | `log_level` | `info` | Logging verbosity |

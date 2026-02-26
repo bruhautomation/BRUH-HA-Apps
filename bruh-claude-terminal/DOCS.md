@@ -2,13 +2,51 @@
 
 ## Quick Start
 
-1. Install the add-on from the BRUH HA Apps repository
-2. Start the add-on - it will open a web terminal
-3. Home Assistant will automatically discover the BRUH Claude integration and prompt you to set it up via a notification in Settings > Devices & Services
-4. Authenticate with your Anthropic account
-5. Claude Code now has full access to your HA config and live API
+1. Install the app from the BRUH HA Apps repository
+2. Start the app — it will open a web terminal
+3. **Restart Home Assistant** (Settings > System > Restart) so HA loads the BRUH Claude integration
+4. Home Assistant will automatically discover the BRUH Claude integration and prompt you to set it up via a notification in Settings > Devices & Services
+5. Authenticate with your Anthropic account
+6. Claude Code now has full access to your HA config and live API
 
-> **Note:** The BRUH Claude integration is discovered automatically when the add-on starts. If you prefer manual setup, go to Settings > Devices & Services > Add Integration > BRUH Claude.
+> **Note:** The BRUH Claude integration is discovered automatically when the app starts. If you prefer manual setup, go to Settings > Devices & Services > Add Integration > BRUH Claude.
+
+## Restart Requirements
+
+The BRUH Claude app deploys a custom Home Assistant integration (`custom_components/bruh_claude/`) that provides the conversation agent and services. Because HA Core only loads custom component Python code at startup, **a restart is required** in the following situations:
+
+| Scenario | Restart Required? | Why |
+|----------|-------------------|-----|
+| **First install** | **Yes** | HA Core must load the new `bruh_claude` custom component before the integration can be discovered or configured. |
+| **App upgrade** (version change) | **Yes** | Updated Python files are deployed to `custom_components/`, but HA Core won't pick up the new code until it restarts. |
+| **App restart** (same version) | No | The integration files haven't changed, and HA Core already has the current code loaded. |
+| **Disconnect & reconnect integration** | No (but doesn't reload code) | Removing and re-adding the integration in Devices & Services re-runs the config flow but does **not** reload the Python module from disk. If the underlying code changed, you still need a full HA restart. |
+
+**How you'll know:** The app sends a persistent notification to the HA UI when a restart is needed. You'll also see a prominent banner in the app logs.
+
+**To restart:** Go to **Settings > System > Restart**, then check **Settings > Devices & Services** for BRUH Claude.
+
+## Permissions (dangerously_skip_permissions)
+
+Claude Code has a `--dangerously-skip-permissions` flag that tells it to execute tool calls (file edits, shell commands, etc.) without asking for interactive confirmation on each action.
+
+### Why the app uses this flag
+
+Inside the Home Assistant app container, Claude Code runs in a sandboxed environment:
+- It can only access `/config` (your HA configuration) and `/data` (persistent app storage)
+- It runs as a non-root user (UID 1000), not as root
+- It cannot access the host OS, other apps, or the HA Core container
+
+Skipping per-action permission prompts makes the interactive terminal and background integrations (Assist, Automations) usable without manually approving every file edit or command.
+
+### Configuration
+
+The `dangerously_skip_permissions` option in the app configuration controls this flag:
+
+- **`true` (default):** Claude Code runs without per-action confirmation prompts. This is the standard mode for the app and is required for background integrations (Assist, Automation) to function without manual intervention.
+- **`false`:** Claude Code will prompt for confirmation before each tool call. Note that this will make the Assist and Automation integrations non-functional since they run non-interactively and cannot respond to confirmation prompts.
+
+To change: go to **Settings > Apps > BRUH Claude Terminal > Configuration**.
 
 ## CLI Tools Reference
 

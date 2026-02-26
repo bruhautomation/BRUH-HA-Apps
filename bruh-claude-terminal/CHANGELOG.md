@@ -1,5 +1,32 @@
 # Changelog
 
+## 1.4.0
+
+### Permissions Toggle, Restart Documentation & Version Bump
+
+**Configurable Permissions Flag**
+- Added `dangerously_skip_permissions` configuration toggle (default: `true`)
+- The `--dangerously-skip-permissions` flag is no longer hardcoded — it's now controlled via the app configuration UI
+- Setting this to `false` makes Claude Code prompt for confirmation before each tool call (file edits, shell commands, etc.)
+- Flag state is persisted in the shared env file so background integrations (Assist, Automation listeners) respect the setting
+- Note: Disabling this will make Assist and Automation integrations non-functional since they run non-interactively
+
+**Restart Requirements Documentation**
+- Clarified that an HA Core restart is required after first install and after version upgrades
+- Added a detailed restart requirements table to DOCS.md explaining each scenario
+- Updated Quick Start guides in DOCS.md and README.md to include the restart step
+- Added upgrade note to README.md installation instructions
+- Documented that disconnecting/reconnecting the integration does NOT reload updated Python code
+
+**Security Documentation**
+- Added comprehensive "Permissions" section to DOCS.md explaining what `--dangerously-skip-permissions` does
+- Documented the sandboxing context: non-root user (UID 1000), isolated container, limited to /config and /data
+- Added inline code comments in `run.sh` explaining the security model
+
+## 1.3.0
+
+_Skipped — reserved for intermediate builds._
+
 ## 1.2.0
 
 ### Discovery Fix, Version Updates & App Terminology
