@@ -33,8 +33,8 @@ options:
   auto_generate_context: true
   backup_interval_minutes: 30
   enable_ha_mcp_server: true
-  enable_assist_integration: false
-  enable_automation_integration: false
+  enable_assist_integration: true
+  enable_automation_integration: true
   persistent_apk_packages: []
   persistent_pip_packages: []
   log_level: info
