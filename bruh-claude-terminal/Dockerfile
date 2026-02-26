@@ -61,6 +61,9 @@ COPY ha-mcp-server/ /opt/ha-mcp-server/
 # Copy integrations
 COPY integrations/ /opt/integrations/
 
+# Copy custom HA integration (deployed to /config/custom_components at runtime)
+COPY custom_components/ /opt/custom_components/
+
 # Set permissions
 RUN chmod +x /run.sh \
     && find /opt/scripts -name "*.sh" -exec chmod +x {} \; \

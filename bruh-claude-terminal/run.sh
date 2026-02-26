@@ -316,6 +316,9 @@ claude-config/
 .claude.json
 .mcp.json
 
+# BRUH Claude integration communication (transient files)
+.bruh_claude/
+
 # Media and large directories
 www/
 media/
@@ -404,6 +407,51 @@ setup_mcp_server() {
     fi
 
     bashio::log.info "HA MCP server configured - Claude Code will have real-time HA access"
+}
+
+# ============================================================================
+# Custom Integration Deployment
+# ============================================================================
+
+deploy_custom_integration() {
+    local src="/opt/custom_components/bruh_claude"
+    local dest="/config/custom_components/bruh_claude"
+
+    bashio::log.info "Deploying BRUH Claude custom integration..."
+
+    # Create shared communication directories
+    mkdir -p /config/.bruh_claude/requests \
+             /config/.bruh_claude/responses \
+             /config/.bruh_claude/tasks \
+             /config/.bruh_claude/task_results
+
+    if [ ! -d "$src" ]; then
+        bashio::log.warning "Custom integration source not found at $src, skipping"
+        return
+    fi
+
+    mkdir -p /config/custom_components
+
+    # Deploy or update the integration files
+    if [ -d "$dest" ]; then
+        local src_version
+        local dest_version
+        src_version=$(jq -r '.version // "0"' "$src/manifest.json" 2>/dev/null || echo "0")
+        dest_version=$(jq -r '.version // "0"' "$dest/manifest.json" 2>/dev/null || echo "0")
+
+        if [ "$src_version" != "$dest_version" ]; then
+            bashio::log.info "Updating BRUH Claude integration: $dest_version -> $src_version"
+            rm -rf "$dest"
+            cp -r "$src" "$dest"
+            bashio::log.info "Integration updated - restart Home Assistant to apply"
+        else
+            bashio::log.info "BRUH Claude integration is up to date (v${dest_version})"
+        fi
+    else
+        cp -r "$src" "$dest"
+        bashio::log.info "BRUH Claude integration installed to $dest"
+        bashio::log.info "Restart Home Assistant, then add the integration via Settings > Devices & Services"
+    fi
 }
 
 # ============================================================================
@@ -537,6 +585,7 @@ main() {
     setup_auto_backup
     setup_context_generation
     setup_mcp_server
+    deploy_custom_integration
     setup_assist_integration
     setup_automation_integration
     start_web_terminal

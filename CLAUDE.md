@@ -30,9 +30,20 @@ BRUH-HA-Apps/
 │   │   ├── persist-install.sh   # Persistent package manager
 │   │   ├── ha-api-examples.sh   # API usage examples
 │   │   └── tmux.conf            # tmux configuration
-│   └── integrations/            # HA integrations
-│       ├── assist-listener.sh   # Assist conversation agent bridge
-│       └── automation-listener.sh # Automation task queue
+│   ├── integrations/            # HA integrations (add-on side)
+│   │   ├── assist-listener.sh   # Conversation request file watcher
+│   │   └── automation-listener.sh # Task request file watcher
+│   └── custom_components/       # HA custom integration (deployed at runtime)
+│       └── bruh_claude/
+│           ├── __init__.py      # Integration setup + service registration
+│           ├── manifest.json    # HA integration metadata
+│           ├── config_flow.py   # UI config flow
+│           ├── conversation.py  # ConversationEntity for Assist
+│           ├── bridge.py        # File-based IPC with the add-on
+│           ├── const.py         # Constants
+│           ├── services.yaml    # Service definitions
+│           ├── strings.json     # UI strings
+│           └── translations/en.json
 ├── .gitignore
 ├── LICENSE
 └── CLAUDE.md                    # This file
@@ -54,8 +65,16 @@ BRUH-HA-Apps/
 6. Auto-backup (git init + background watcher)
 7. Context generation (CLAUDE.md)
 8. MCP server configuration
-9. Optional: Assist + Automation integrations
-10. ttyd web terminal launch
+9. Custom integration deployment to `/config/custom_components/bruh_claude/`
+10. Optional: Assist + Automation integrations
+11. ttyd web terminal launch
+
+### Custom Integration (`custom_components/bruh_claude/`)
+- Deployed automatically to `/config/custom_components/` by the add-on at startup
+- Registers a `ConversationEntity` so "BRUH Claude" appears in Settings > Voice Assistants
+- Provides `bruh_claude.send_prompt` and `bruh_claude.run_task` services
+- Communicates with the add-on via shared files in `/config/.bruh_claude/`
+- Request/response flow: integration writes JSON → add-on processes → add-on writes JSON response
 
 ### Container Environment
 - Base: Home Assistant Alpine Linux 3.19
