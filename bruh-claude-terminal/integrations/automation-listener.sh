@@ -19,6 +19,14 @@ RESULTS_DIR="$SHARED_DIR/task_results"
 
 mkdir -p "$TASKS_DIR" "$RESULTS_DIR"
 
+# Source the Claude environment written by run.sh
+# This ensures HOME, ANTHROPIC_CONFIG_DIR, etc. are set correctly
+# even when with-contenv shebang reloads the s6 container environment.
+if [ -f /data/.bruh_claude_env ]; then
+    # shellcheck disable=SC1091
+    source /data/.bruh_claude_env
+fi
+
 bashio::log.info "Automation listener starting..."
 bashio::log.info "Watching $TASKS_DIR for automation tasks"
 
@@ -49,12 +57,18 @@ process_task() {
     local output_file
     output_file=$(mktemp)
 
-    # Run Claude with the task prompt
-    printf '%s' "$prompt" | claude -p > "$output_file" 2>&1 || true
+    # Run Claude with --dangerously-skip-permissions for non-interactive use
+    printf '%s' "$prompt" | claude -p --dangerously-skip-permissions > "$output_file" 2>&1 || true
 
     local result
     result=$(cat "$output_file" 2>/dev/null || echo "Task failed")
     rm -f "$output_file"
+
+    # Check for auth errors and return a helpful message
+    if echo "$result" | grep -qi "not logged in\|please log in\|authentication required"; then
+        result="Claude is not logged in. Please open the BRUH Claude Terminal sidebar and complete the OAuth login first."
+        bashio::log.error "Claude auth error - user needs to log in via the terminal"
+    fi
 
     # Write result file (atomic via tmp + rename)
     local result_file="$RESULTS_DIR/${task_id}.json"
