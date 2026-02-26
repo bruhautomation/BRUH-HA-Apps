@@ -144,6 +144,26 @@ async def _check_restart_required(hass: HomeAssistant) -> None:
         translation_placeholders={"version": required_version},
     )
 
+    # Also create a persistent notification as a visible fallback in case
+    # the user doesn't check Settings > System > Repairs.
+    try:
+        await hass.services.async_call(
+            "persistent_notification",
+            "create",
+            {
+                "title": f"BRUH Claude: Restart Required (v{required_version})",
+                "message": (
+                    f"The BRUH Claude integration has been updated to v{required_version}. "
+                    "Please restart Home Assistant to load the new version.\n\n"
+                    "Go to **Settings > System > Restart**, or check "
+                    "**Settings > System > Repairs** to fix automatically."
+                ),
+                "notification_id": "bruh_claude_restart_needed",
+            },
+        )
+    except Exception:
+        _LOGGER.debug("Could not create persistent notification for restart")
+
 
 def _read_marker(path: str) -> dict | None:
     """Read the restart marker JSON file, return None if missing."""

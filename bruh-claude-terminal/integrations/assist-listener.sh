@@ -64,6 +64,8 @@ process_request() {
     text=$(jq -r '.text // empty' "$req_file" 2>/dev/null)
     system_prompt=$(jq -r '.system_prompt // empty' "$req_file" 2>/dev/null)
     history_json=$(jq -c '.conversation_history // []' "$req_file" 2>/dev/null)
+    local model
+    model=$(jq -r '.model // empty' "$req_file" 2>/dev/null)
 
     if [ -z "$req_id" ] || [ -z "$text" ]; then
         bashio::log.warning "Invalid request file: $req_file"
@@ -138,13 +140,20 @@ ${base_instructions}"
         fi
     fi
 
+    # Build model flag (each conversation agent can specify its own model)
+    local model_flag=""
+    if [ -n "$model" ] && [ "$model" != "default" ]; then
+        model_flag="--model $model"
+    fi
+
     local output_file
     output_file=$(mktemp)
 
-    # Run Claude in print mode. The permissions flag is controlled by the
-    # dangerously_skip_permissions app config option (persisted in the env file).
+    # Run Claude in print mode from /config so it finds .mcp.json for HA tools.
+    # The permissions flag is controlled by the dangerously_skip_permissions
+    # app config option (persisted in the env file).
     # shellcheck disable=SC2086
-    printf '%s' "$full_prompt" | claude -p ${BRUH_CLAUDE_PERMS_FLAG:-} > "$output_file" 2>&1 || true
+    (cd /config && printf '%s' "$full_prompt" | claude -p ${BRUH_CLAUDE_PERMS_FLAG:-} ${model_flag} > "$output_file" 2>&1) || true
 
     local response
     response=$(cat "$output_file" 2>/dev/null || echo "I had trouble processing that request.")

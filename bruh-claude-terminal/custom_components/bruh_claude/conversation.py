@@ -23,9 +23,12 @@ try:
 
     SUPPORTS_CONTROL = ConversationEntityFeature.CONTROL
 except (ImportError, AttributeError):
-    SUPPORTS_CONTROL = 0
+    # CONTROL = 1 in HA 2024.2+. Hardcode the value so the agent always
+    # declares device-control support, even on HA versions where the enum
+    # doesn't exist yet (where the flag is simply ignored).
+    SUPPORTS_CONTROL = 1
 
-from .const import CONF_NAME, CONF_SYSTEM_PROMPT, DEFAULT_NAME, DOMAIN
+from .const import CONF_MODEL, CONF_NAME, CONF_SYSTEM_PROMPT, DEFAULT_MODEL, DEFAULT_NAME, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -57,6 +60,7 @@ class BruhClaudeConversationEntity(ConversationEntity):
         # Options (from the options flow) override the original data values
         opts = {**config_entry.data, **config_entry.options}
         self._system_prompt = opts.get(CONF_SYSTEM_PROMPT, "")
+        self._model = opts.get(CONF_MODEL, DEFAULT_MODEL)
         self._attr_name = config_entry.data.get(CONF_NAME, DEFAULT_NAME)
         self._attr_unique_id = f"{config_entry.entry_id}_conversation"
 
@@ -83,6 +87,7 @@ class BruhClaudeConversationEntity(ConversationEntity):
                 text=user_input.text,
                 conversation_id=conversation_id,
                 system_prompt=self._system_prompt or None,
+                model=self._model if self._model != "default" else None,
             )
         except TimeoutError:
             response_text = (
