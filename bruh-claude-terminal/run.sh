@@ -572,6 +572,7 @@ setup_claude_settings() {
 SETTINGS
     chown -R claude:claude "$claude_settings_dir" 2>/dev/null || true
     bashio::log.info "Claude Code project settings written to $claude_settings_dir/settings.local.json"
+}
 
 # ============================================================================
 # Custom Integration Deployment
