@@ -1,5 +1,59 @@
 # Changelog
 
+## 1.13.0
+
+### Version Bump, Documentation & Changelog Catch-Up
+
+**Documentation Updates**
+- Added missing CHANGELOG entries for v1.11.0 and v1.12.0
+- Synced version numbers across all files (config.yaml, manifest.json, run.sh)
+
+## 1.12.0
+
+### Deep MCP Cleanup, Device Separation & Agent Timeout Fix
+
+**Comprehensive MCP Auth Cleanup**
+- Replaced `cleanup_broken_plugins()` with `cleanup_all_mcp_references()` that scans all Claude Code config locations with unlimited depth
+- Clears ALL persistent conversation sessions on startup (fixes v1.8.0 `--resume` regression where stale MCP state survived config cleanup)
+- Cleans ALL `.mcp.json` files across `/data`, `/config`, `/root`, and `~/.claude.json`
+- Added MCP watchdog background process that monitors for `/api/mcp` entries being re-created after cleanup, auto-cleans them, and logs the source
+- Added `CLAUDE_CODE_DISABLE_MCP_DISCOVERY` and `CLAUDE_MCP_SERVERS_OVERRIDE` env vars to block Claude Code from auto-discovering HA's native `/api/mcp`
+- Enhanced `verify_mcp_config()` in both listeners to check and clean Claude Code's project-level configs before each invocation
+- Added `/api/mcp` error detection in listeners — auto-cleans configs and retries
+
+**Entity & Device Separation**
+- Each conversation agent now gets its own `DeviceInfo`, appearing as a distinct device card in HA
+- Agents show as "BRUH Claude" / "BRUH OPUS" devices with model "Claude Conversation Agent"
+- Usage sensors remain grouped under "BRUH Claude Usage Limits" device
+
+**Agent Timeout Fix**
+- Simplified `assist-listener.sh` to match the proven `automation-listener` pattern (single invocation, plain text output)
+- Removed `--output-format json`, `--resume`, session persistence, and nested retry loops from assist-listener
+- Added `~/.claude.json` cleanup — the primary hiding spot for stale `/api/mcp` entries that caused Claude Code to hang on MCP connection
+- Changed `setup_mcp_server()` from warning about extra configs to actively cleaning them
+
+**Config Flow UX Improvements**
+- Improved first_setup, add_agent, and options flow descriptions for clarity
+- Updated both `strings.json` and `translations/en.json`
+
+## 1.11.0
+
+### Simplified Onboarding & /api/mcp Auth Fix
+
+**Integration Onboarding Redesign**
+- Redesigned config flow with context-aware routing
+- First setup shows only a name field and creates a conversation agent + sensors with all defaults (one click)
+- "Add Service" shows the full agent personality form (name, model, system prompt, timeout)
+- Removed the confusing two-step feature-toggle flow from v1.10.0
+- Options flow now only shows the sensor toggle when this is the sole config entry
+- Config entry migration v2 → v3
+
+**Fixed /api/mcp Authentication Errors**
+- `setup_mcp_server()` now always overwrites `/config/.mcp.json` with a clean config instead of merging (which preserved stale entries)
+- `cleanup_broken_plugins()` now stringifies entire MCP entry values for matching (catches URLs in any field, not just `.url`/`.args`)
+- Both listeners verify MCP config is clean before each Claude invocation, preventing runtime re-contamination
+- Broader cleanup search locations, broken npm package removal, MCP diagnostic logging
+
 ## 1.10.0
 
 ### Feature Toggles & MCP Cleanup Hardening
