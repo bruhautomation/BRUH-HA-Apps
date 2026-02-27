@@ -88,6 +88,31 @@ MCP_CLEAN
         chmod 644 "$mcp_file"
         bashio::log.info "MCP config restored to clean state"
     fi
+
+    # Also check Claude Code's project-level configs for /api/mcp entries
+    local claude_projects="/data/home/.claude/projects"
+    if [ -d "$claude_projects" ]; then
+        find "$claude_projects" -name "*.json" -type f -print0 2>/dev/null | \
+        while IFS= read -r -d '' f; do
+            if grep -q "/api/mcp" "$f" 2>/dev/null; then
+                bashio::log.warning "Stale /api/mcp in project config: $f — cleaning"
+                local tmp
+                tmp=$(mktemp)
+                if jq '
+                    if .mcpServers then
+                        .mcpServers |= with_entries(
+                            select((.value | tostring) | contains("/api/mcp") | not)
+                        )
+                    else . end
+                ' "$f" > "$tmp" 2>/dev/null; then
+                    mv "$tmp" "$f"
+                    chown claude:claude "$f" 2>/dev/null || true
+                else
+                    rm -f "$tmp"
+                fi
+            fi
+        done
+    fi
 }
 
 # Process an automation task file
@@ -151,6 +176,50 @@ process_task() {
     result=$(cat "$output_file" 2>/dev/null || echo "")
     stderr_output=$(cat "$stderr_file" 2>/dev/null || echo "")
     rm -f "$output_file" "$stderr_file"
+
+    # Check for /api/mcp auth errors in stderr — clean configs and retry
+    if echo "$stderr_output" | grep -qi "/api/mcp\|invalid authentication.*mcp"; then
+        bashio::log.error "Detected /api/mcp auth error in task [$task_id] — cleaning and retrying"
+        verify_mcp_config
+
+        # Clean project-level configs
+        local claude_projects="/data/home/.claude/projects"
+        if [ -d "$claude_projects" ]; then
+            find "$claude_projects" -name "*.json" -type f -exec \
+                grep -l "/api/mcp" {} \; 2>/dev/null | while read -r f; do
+                local tmp
+                tmp=$(mktemp)
+                if jq '
+                    if .mcpServers then
+                        .mcpServers |= with_entries(
+                            select((.value | tostring) | contains("/api/mcp") | not)
+                        )
+                    else . end
+                ' "$f" > "$tmp" 2>/dev/null; then
+                    mv "$tmp" "$f"
+                    chown claude:claude "$f" 2>/dev/null || true
+                else
+                    rm -f "$tmp"
+                fi
+            done
+        fi
+
+        # Retry with clean config
+        output_file=$(mktemp)
+        stderr_file=$(mktemp)
+        start_time=$(date +%s)
+
+        # shellcheck disable=SC2086
+        (cd /config && printf '%s' "$prompt" | timeout "$CLAUDE_TIMEOUT" ${CLAUDE_BIN} -p --verbose --max-turns "$MAX_TURNS" > "$output_file" 2>"$stderr_file") || true
+
+        end_time=$(date +%s)
+        duration=$((end_time - start_time))
+
+        result=$(cat "$output_file" 2>/dev/null || echo "")
+        stderr_output=$(cat "$stderr_file" 2>/dev/null || echo "")
+        rm -f "$output_file" "$stderr_file"
+        bashio::log.info "Retried task [$task_id] after /api/mcp cleanup"
+    fi
 
     # If result is empty, something went wrong — check stderr for clues
     if [ -z "$result" ]; then

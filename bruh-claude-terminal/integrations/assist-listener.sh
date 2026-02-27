@@ -101,6 +101,68 @@ MCP_CLEAN
         chmod 644 "$mcp_file"
         bashio::log.info "MCP config restored to clean state"
     fi
+
+    # Also check Claude Code's project-level configs for /api/mcp entries
+    # that may have been cached by previous sessions.
+    local claude_projects="/data/home/.claude/projects"
+    if [ -d "$claude_projects" ]; then
+        find "$claude_projects" -name "*.json" -type f -print0 2>/dev/null | \
+        while IFS= read -r -d '' f; do
+            if grep -q "/api/mcp" "$f" 2>/dev/null; then
+                bashio::log.warning "Stale /api/mcp in project config: $f — cleaning"
+                local tmp
+                tmp=$(mktemp)
+                if jq '
+                    if .mcpServers then
+                        .mcpServers |= with_entries(
+                            select((.value | tostring) | contains("/api/mcp") | not)
+                        )
+                    else . end
+                ' "$f" > "$tmp" 2>/dev/null; then
+                    mv "$tmp" "$f"
+                    chown claude:claude "$f" 2>/dev/null || true
+                else
+                    rm -f "$tmp"
+                fi
+            fi
+        done
+    fi
+}
+
+# Clean up /api/mcp references from project configs and clear the session.
+# Called when stderr indicates an /api/mcp auth error during Claude invocation.
+cleanup_mcp_and_clear_session() {
+    local conv_id="$1"
+    bashio::log.error "Detected /api/mcp auth error — clearing session and cleaning configs"
+
+    # Clear the session so --resume doesn't reuse stale MCP state
+    clear_session "$conv_id"
+
+    # Clean project-level configs
+    local claude_projects="/data/home/.claude/projects"
+    if [ -d "$claude_projects" ]; then
+        find "$claude_projects" -name "*.json" -type f -exec \
+            grep -l "/api/mcp" {} \; 2>/dev/null | while read -r f; do
+            bashio::log.info "  Cleaning /api/mcp from: $f"
+            local tmp
+            tmp=$(mktemp)
+            if jq '
+                if .mcpServers then
+                    .mcpServers |= with_entries(
+                        select((.value | tostring) | contains("/api/mcp") | not)
+                    )
+                else . end
+            ' "$f" > "$tmp" 2>/dev/null; then
+                mv "$tmp" "$f"
+                chown claude:claude "$f" 2>/dev/null || true
+            else
+                rm -f "$tmp"
+            fi
+        done
+    fi
+
+    # Also rewrite the canonical MCP config clean
+    verify_mcp_config
 }
 
 # ---------------------------------------------------------------------------
@@ -334,6 +396,32 @@ USER: ${text}"
     raw_output=$(cat "$output_file" 2>/dev/null || echo "")
     stderr_output=$(cat "$stderr_file" 2>/dev/null || echo "")
     rm -f "$output_file" "$stderr_file"
+
+    # Check for /api/mcp auth errors in stderr — this indicates Claude Code
+    # tried to connect to HA's native MCP endpoint with invalid auth.
+    # Clean configs and force a fresh session retry.
+    if echo "$stderr_output" | grep -qi "/api/mcp\|invalid authentication.*mcp"; then
+        bashio::log.error "Detected /api/mcp auth error in stderr for [$req_id]"
+        cleanup_mcp_and_clear_session "$req_id"
+        is_resume="false"
+        claude_session=""
+
+        # Retry as a fresh session with clean configs
+        output_file=$(mktemp)
+        stderr_file=$(mktemp)
+        start_time=$(date +%s)
+
+        # shellcheck disable=SC2086
+        (cd /config && printf '%s' "$text" | timeout "$CLAUDE_TIMEOUT" ${CLAUDE_BIN} -p --output-format json --verbose --max-turns "$MAX_TURNS" --system-prompt "$final_system_prompt" ${model_flag} > "$output_file" 2>"$stderr_file") || exit_code=$?
+
+        end_time=$(date +%s)
+        duration=$((end_time - start_time))
+
+        raw_output=$(cat "$output_file" 2>/dev/null || echo "")
+        stderr_output=$(cat "$stderr_file" 2>/dev/null || echo "")
+        rm -f "$output_file" "$stderr_file"
+        bashio::log.info "Retried fresh session after /api/mcp cleanup for [$req_id]"
+    fi
 
     # Parse JSON output to extract result and session_id
     response=$(echo "$raw_output" | jq -r '.result // empty' 2>/dev/null)

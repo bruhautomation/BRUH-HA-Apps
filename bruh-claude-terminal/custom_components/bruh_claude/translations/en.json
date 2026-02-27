@@ -3,17 +3,17 @@
     "step": {
       "first_setup": {
         "title": "Set Up BRUH Claude",
-        "description": "This will create a conversation agent and usage limit sensors.\n\nYou can add more agents with different personalities later using the **Add Service** button.\n\nAgent settings (model, system prompt) can be customized in the integration options after setup.",
+        "description": "This creates:\n- A **conversation agent** that appears in Settings > Voice Assistants\n- **Usage limit sensors** that track your Anthropic account usage\n\nYou can add more agents with different personalities later using the **Add Service** button.",
         "data": {
-          "name": "Agent name"
+          "name": "Conversation agent name"
         },
         "data_description": {
-          "name": "Display name for this conversation agent. You can keep the default or customize it."
+          "name": "This name appears in Voice Assistants and on the Devices page."
         }
       },
       "add_agent": {
-        "title": "Add Conversation Agent",
-        "description": "Create an additional conversation agent with its own personality and model.\n\nEach agent appears separately in Settings > Voice Assistants and can be assigned to different voice pipelines.",
+        "title": "Add Another Agent",
+        "description": "Create a new conversation agent with its own personality. Each agent gets its own model, system prompt, and timeout.\n\n**Usage sensors are shared** — they're account-wide and already set up.",
         "data": {
           "name": "Agent name",
           "model": "Claude model",
@@ -43,11 +43,11 @@
   "options": {
     "step": {
       "init": {
-        "title": "Agent Settings",
-        "description": "These settings apply to this conversation agent only. Other agents have their own settings.",
+        "title": "Configure Agent",
+        "description": "**Agent Settings** control how this conversation agent behaves.\n**Feature Toggles** control what this config entry provides.",
         "data": {
-          "enable_conversation": "Enable conversation agent",
-          "enable_sensors": "Enable usage limit sensors",
+          "enable_conversation": "Conversation agent active",
+          "enable_sensors": "Usage limit sensors active",
           "model": "Claude model",
           "system_prompt": "System prompt (personality)",
           "timeout": "Response timeout (seconds)"
