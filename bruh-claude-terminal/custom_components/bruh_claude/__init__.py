@@ -2,9 +2,12 @@
 
 Provides:
 - A conversation agent ("BRUH Claude") selectable in Settings > Voice Assistants
+- Usage limit sensors for Anthropic account data
 - bruh_claude.send_prompt          — send a one-shot prompt to Claude
 - bruh_claude.run_task             — run a Claude task with optional notification
 - bruh_claude.clear_conversation   — clear a persistent conversation session
+
+Both conversation agent and sensors are independently toggleable per config entry.
 """
 
 from __future__ import annotations
@@ -26,7 +29,13 @@ except ImportError:
     SupportsResponse = None  # type: ignore[assignment,misc]
 
 from .bridge import ClaudeBridge
-from .const import CONF_TIMEOUT, DEFAULT_TIMEOUT, DOMAIN
+from .const import (
+    CONF_ENABLE_CONVERSATION,
+    CONF_ENABLE_SENSORS,
+    CONF_TIMEOUT,
+    DEFAULT_TIMEOUT,
+    DOMAIN,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -40,8 +49,6 @@ try:
         _LOADED_VERSION = json.load(_fh).get("version", "unknown")
 except (OSError, json.JSONDecodeError):
     pass
-
-PLATFORMS = [Platform.CONVERSATION, Platform.SENSOR]
 
 SEND_PROMPT_SCHEMA = vol.Schema(
     {
@@ -66,6 +73,31 @@ CLEAR_CONVERSATION_SCHEMA = vol.Schema(
 )
 
 
+def _get_platforms(entry: ConfigEntry) -> list[Platform]:
+    """Return the list of platforms to set up for this config entry."""
+    opts = {**entry.data, **entry.options}
+    platforms: list[Platform] = []
+    if opts.get(CONF_ENABLE_CONVERSATION, True):
+        platforms.append(Platform.CONVERSATION)
+    if opts.get(CONF_ENABLE_SENSORS, True):
+        platforms.append(Platform.SENSOR)
+    return platforms
+
+
+async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
+    """Migrate config entries to the current version."""
+    if config_entry.version < 2:
+        _LOGGER.debug("Migrating config entry %s from version %s to 2",
+                       config_entry.entry_id, config_entry.version)
+        new_data = {**config_entry.data}
+        new_data.setdefault(CONF_ENABLE_CONVERSATION, True)
+        new_data.setdefault(CONF_ENABLE_SENSORS, True)
+        hass.config_entries.async_update_entry(
+            config_entry, data=new_data, version=2
+        )
+    return True
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up BRUH Claude from a config entry."""
     opts = {**entry.data, **entry.options}
@@ -75,7 +107,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = bridge
 
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    # Only forward platforms the user has enabled
+    platforms = _get_platforms(entry)
+    hass.data[DOMAIN][f"{entry.entry_id}_platforms"] = platforms
+
+    await hass.config_entries.async_forward_entry_setups(entry, platforms)
 
     # Register services (only once, guarded by domain key)
     if not hass.services.has_service(DOMAIN, "send_prompt"):
@@ -105,9 +141,15 @@ async def _async_options_updated(
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    platforms = hass.data.get(DOMAIN, {}).get(
+        f"{entry.entry_id}_platforms",
+        _get_platforms(entry),
+    )
+
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, platforms)
     if unload_ok:
         hass.data[DOMAIN].pop(entry.entry_id, None)
+        hass.data[DOMAIN].pop(f"{entry.entry_id}_platforms", None)
 
         # If this entry owned the account-wide sensors, clear the flag so
         # another entry can recreate them on its next reload.
@@ -118,7 +160,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             # Auto-migrate: reload another entry so it picks up sensor duties.
             remaining = [
                 eid for eid in hass.data[DOMAIN]
-                if not eid.startswith("_")
+                if not eid.startswith("_") and not eid.endswith("_platforms")
             ]
             if remaining:
                 hass.async_create_task(
@@ -216,10 +258,11 @@ def _remove_file(path: str) -> None:
 
 def _get_bridge(hass: HomeAssistant) -> ClaudeBridge:
     """Return the first available bridge instance."""
-    bridges = hass.data.get(DOMAIN, {})
-    if not bridges:
-        raise ValueError("BRUH Claude integration is not configured")
-    return next(iter(bridges.values()))
+    domain_data = hass.data.get(DOMAIN, {})
+    for key, value in domain_data.items():
+        if isinstance(value, ClaudeBridge):
+            return value
+    raise ValueError("BRUH Claude integration is not configured")
 
 
 def _register_services(hass: HomeAssistant) -> None:
