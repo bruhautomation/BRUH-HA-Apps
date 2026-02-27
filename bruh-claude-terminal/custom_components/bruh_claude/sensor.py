@@ -2,6 +2,8 @@
 
 Reads aggregated token stats written by the add-on's background tracker
 (token-stats-tracker.py) and exposes them as Home Assistant sensors.
+
+These sensors are account-level — one set total, not per conversation agent.
 """
 
 from __future__ import annotations
@@ -9,15 +11,17 @@ from __future__ import annotations
 import json
 import logging
 import os
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from homeassistant.components.sensor import (
+    SensorDeviceClass,
     SensorEntity,
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN, SHARED_DIR
@@ -28,21 +32,33 @@ SCAN_INTERVAL = timedelta(seconds=30)
 
 STATS_FILENAME = "token_stats.json"
 
+# Device that groups all token sensors together in the HA UI.
+DEVICE_INFO = DeviceInfo(
+    identifiers={(DOMAIN, "token_usage")},
+    name="BRUH Claude Token Usage",
+    manufacturer="BRUH Automation",
+    model="Claude Terminal",
+)
+
 
 # ---------------------------------------------------------------------------
 # Sensor descriptions
 # ---------------------------------------------------------------------------
 
-# (key, name, icon, unit, state_class, period_key, value_key)
-# Token counts are the real values from the Anthropic API usage field.
-SENSOR_TYPES: list[tuple[str, str, str, str | None, SensorStateClass | None, str, str]] = [
-    ("session_input_tokens", "Session Input Tokens", "mdi:arrow-down-bold", "tokens", SensorStateClass.TOTAL, "session", "input_tokens"),
-    ("session_output_tokens", "Session Output Tokens", "mdi:arrow-up-bold", "tokens", SensorStateClass.TOTAL, "session", "output_tokens"),
-    ("session_total_tokens", "Session Total Tokens", "mdi:sigma", "tokens", SensorStateClass.TOTAL, "session", "total_tokens"),
-    ("today_total_tokens", "Today Total Tokens", "mdi:calendar-today", "tokens", SensorStateClass.TOTAL, "today", "total_tokens"),
-    ("weekly_total_tokens", "Weekly Total Tokens", "mdi:calendar-week", "tokens", SensorStateClass.TOTAL, "week", "total_tokens"),
-    ("weekly_session_count", "Weekly Sessions", "mdi:counter", "sessions", SensorStateClass.TOTAL, "week", "session_count"),
-    ("all_time_total_tokens", "All Time Total Tokens", "mdi:infinity", "tokens", SensorStateClass.TOTAL_INCREASING, "all_time", "total_tokens"),
+# (key, name, icon, unit, state_class, device_class, period_key, value_key)
+SENSOR_TYPES: list[
+    tuple[str, str, str, str | None, SensorStateClass | None, SensorDeviceClass | None, str, str]
+] = [
+    ("session_input_tokens", "Session Input Tokens", "mdi:arrow-down-bold", "tokens", SensorStateClass.TOTAL, None, "session", "input_tokens"),
+    ("session_output_tokens", "Session Output Tokens", "mdi:arrow-up-bold", "tokens", SensorStateClass.TOTAL, None, "session", "output_tokens"),
+    ("session_total_tokens", "Session Total Tokens", "mdi:sigma", "tokens", SensorStateClass.TOTAL, None, "session", "total_tokens"),
+    ("session_started_at", "Session Started", "mdi:clock-start", None, None, SensorDeviceClass.TIMESTAMP, "session", "started_at"),
+    ("today_total_tokens", "Today Total Tokens", "mdi:calendar-today", "tokens", SensorStateClass.TOTAL, None, "today", "total_tokens"),
+    ("today_resets_at", "Today Resets At", "mdi:clock-end", None, None, SensorDeviceClass.TIMESTAMP, "today", "resets_at"),
+    ("weekly_total_tokens", "Weekly Total Tokens", "mdi:calendar-week", "tokens", SensorStateClass.TOTAL, None, "week", "total_tokens"),
+    ("weekly_session_count", "Weekly Sessions", "mdi:counter", "sessions", SensorStateClass.TOTAL, None, "week", "session_count"),
+    ("weekly_resets_at", "Weekly Resets At", "mdi:clock-end", None, None, SensorDeviceClass.TIMESTAMP, "week", "resets_at"),
+    ("all_time_total_tokens", "All Time Total Tokens", "mdi:infinity", "tokens", SensorStateClass.TOTAL_INCREASING, None, "all_time", "total_tokens"),
 ]
 
 
@@ -55,10 +71,18 @@ async def async_setup_entry(
     config_entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up BRUH Claude token usage sensors."""
+    """Set up BRUH Claude token usage sensors (once, not per conversation)."""
+    domain_data = hass.data.get(DOMAIN, {})
+
+    # Guard: sensors are account-wide — only create them from the first entry.
+    if domain_data.get("_sensors_added"):
+        return
+    domain_data["_sensors_added"] = True
+    domain_data["_sensors_entry"] = config_entry.entry_id
+
     stats_path = hass.config.path(SHARED_DIR, STATS_FILENAME)
     entities: list[SensorEntity] = []
-    for key, name, icon, unit, state_cls, period, value_key in SENSOR_TYPES:
+    for key, name, icon, unit, state_cls, device_cls, period, value_key in SENSOR_TYPES:
         entities.append(
             BruhClaudeTokenSensor(
                 config_entry=config_entry,
@@ -68,6 +92,7 @@ async def async_setup_entry(
                 sensor_icon=icon,
                 sensor_unit=unit,
                 sensor_state_class=state_cls,
+                sensor_device_class=device_cls,
                 period_key=period,
                 value_key=value_key,
             )
@@ -94,18 +119,23 @@ class BruhClaudeTokenSensor(SensorEntity):
         sensor_icon: str,
         sensor_unit: str | None,
         sensor_state_class: SensorStateClass | None,
+        sensor_device_class: SensorDeviceClass | None,
         period_key: str,
         value_key: str,
     ) -> None:
         self._stats_path = stats_path
         self._period_key = period_key
         self._value_key = value_key
+        self._is_timestamp = sensor_device_class == SensorDeviceClass.TIMESTAMP
         self._attr_name = sensor_name
-        self._attr_unique_id = f"{config_entry.entry_id}_{sensor_key}"
+        # Fixed unique_id — not per config entry — so only one set of sensors exists.
+        self._attr_unique_id = f"{DOMAIN}_{sensor_key}"
         self._attr_icon = sensor_icon
         self._attr_native_unit_of_measurement = sensor_unit
         self._attr_state_class = sensor_state_class
-        self._attr_native_value: float | int | None = None
+        self._attr_device_class = sensor_device_class
+        self._attr_device_info = DEVICE_INFO
+        self._attr_native_value: float | int | datetime | None = None
         self._stats_data: dict[str, Any] = {}
 
     @property
@@ -157,7 +187,25 @@ class BruhClaudeTokenSensor(SensorEntity):
         period_data = data.get(self._period_key, {})
         value = period_data.get(self._value_key)
         if value is not None:
-            self._attr_native_value = value
+            if self._is_timestamp:
+                self._attr_native_value = self._parse_timestamp(value)
+            else:
+                self._attr_native_value = value
+
+    @staticmethod
+    def _parse_timestamp(value: str) -> datetime | None:
+        """Parse an ISO timestamp string to a timezone-aware datetime."""
+        try:
+            if isinstance(value, str):
+                if value.endswith("Z"):
+                    value = value[:-1] + "+00:00"
+                dt = datetime.fromisoformat(value)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                return dt
+        except (ValueError, TypeError):
+            pass
+        return None
 
     def _read_stats(self) -> dict | None:
         """Read the token stats JSON file from disk."""
