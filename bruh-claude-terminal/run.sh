@@ -551,7 +551,10 @@ cleanup_broken_plugins() {
     local search_dirs=(
         "/data/.config/claude"
         "/data/home/.claude"
+        "/data/home/.config/claude"
         "/config/.claude"
+        "/root/.claude"
+        "/root/.config/claude"
     )
 
     for dir in "${search_dirs[@]}"; do
@@ -577,6 +580,7 @@ cleanup_broken_plugins() {
             fi
 
             # Pass 2: Remove any mcpServers entries pointing to /api/mcp
+            # Stringify entire value to catch URLs in any field (url, serverUrl, uri, args, env, etc.)
             if grep -q "/api/mcp" "$config_file" 2>/dev/null; then
                 bashio::log.info "  Found /api/mcp reference in: $config_file"
                 local tmp_file
@@ -586,8 +590,7 @@ cleanup_broken_plugins() {
                         .mcpServers |= with_entries(
                             select(
                                 .key != "homeassistant-config" and
-                                ((.value.url // "") | contains("/api/mcp") | not) and
-                                ((.value.args // [] | join(" ")) | contains("/api/mcp") | not)
+                                ((.value | tostring) | contains("/api/mcp") | not)
                             )
                         )
                     else . end
@@ -611,7 +614,9 @@ cleanup_broken_plugins() {
         "/config/.mcp.json"
         "/data/home/.mcp.json"
         "/data/home/.claude.json"
+        "/data/home/.config/claude/.mcp.json"
         "/root/.mcp.json"
+        "/root/.claude.json"
     )
 
     for mcp_file in "${mcp_files[@]}"; do
@@ -625,8 +630,7 @@ cleanup_broken_plugins() {
                     .mcpServers |= with_entries(
                         select(
                             .key != "homeassistant-config" and
-                            ((.value.url // "") | contains("/api/mcp") | not) and
-                            ((.value.args // [] | join(" ")) | contains("/api/mcp") | not)
+                            ((.value | tostring) | contains("/api/mcp") | not)
                         )
                     )
                 else . end
@@ -639,6 +643,24 @@ cleanup_broken_plugins() {
                 rm -f "$tmp_file"
                 bashio::log.warning "  Could not clean $mcp_file — manual removal may be needed"
             fi
+        fi
+    done
+
+    # Remove the broken npm plugin package if it's installed.
+    # This prevents runtime re-registration of the SSE MCP server.
+    local plugin_dirs=(
+        "/data/home/.claude/plugins/claude-homeassistant-plugins"
+        "/data/home/.claude/extensions/claude-homeassistant-plugins"
+        "/data/home/.local/share/claude/plugins/claude-homeassistant-plugins"
+        "/data/home/node_modules/claude-homeassistant-plugins"
+        "/data/home/.npm-global/lib/node_modules/claude-homeassistant-plugins"
+        "/root/.npm-global/lib/node_modules/claude-homeassistant-plugins"
+    )
+    for pkg_dir in "${plugin_dirs[@]}"; do
+        if [ -d "$pkg_dir" ]; then
+            bashio::log.info "  Removing broken plugin package: $pkg_dir"
+            rm -rf "$pkg_dir"
+            cleaned=true
         fi
     done
 
@@ -682,47 +704,17 @@ setup_mcp_server() {
   }
 }'
 
-    if [ ! -f "$project_config" ]; then
-        echo "$mcp_entry" > "$project_config"
-        bashio::log.info "MCP server config written to $project_config"
-    else
-        # Merge MCP config into existing file, preserving other servers
-        local tmp_config
-        tmp_config=$(mktemp)
-        jq '.mcpServers["home-assistant"] = {
-          "command": "python3",
-          "args": ["/opt/ha-mcp-server/ha_mcp_server.py"]
-        }' "$project_config" > "$tmp_config" 2>/dev/null && mv "$tmp_config" "$project_config" || {
-            bashio::log.warning "Could not merge MCP config, writing fresh config"
-            rm -f "$tmp_config"
-            echo "$mcp_entry" > "$project_config"
-        }
-        bashio::log.info "MCP server config merged into $project_config"
-    fi
+    # ALWAYS write a clean config — do NOT merge with existing entries.
+    # The add-on owns this file. The only valid MCP server is the BRUH Claude
+    # stdio server. Merging risks preserving stale entries from broken
+    # marketplace plugins that cause /api/mcp auth errors.
+    echo "$mcp_entry" > "$project_config"
+    bashio::log.info "MCP server config written to $project_config (clean overwrite)"
 
-    # Post-write sanitization: strip any stale /api/mcp entries that may have
-    # survived the merge (e.g. from a broken marketplace plugin).  This is the
-    # definitive file Claude Code reads, so it MUST be clean.
-    if grep -q "/api/mcp\|homeassistant-config" "$project_config" 2>/dev/null; then
-        bashio::log.warning "Stale /api/mcp entries found in $project_config after write — removing"
-        local sanitize_tmp
-        sanitize_tmp=$(mktemp)
-        if jq '
-            if .mcpServers then
-                .mcpServers |= with_entries(
-                    select(
-                        .key != "homeassistant-config" and
-                        ((.value.url // "") | contains("/api/mcp") | not) and
-                        ((.value.args // [] | join(" ")) | contains("/api/mcp") | not)
-                    )
-                )
-            else . end
-        ' "$project_config" > "$sanitize_tmp" 2>/dev/null; then
-            mv "$sanitize_tmp" "$project_config"
-            bashio::log.info "Stale entries removed from $project_config"
-        else
-            rm -f "$sanitize_tmp"
-        fi
+    # Safety check: verify the file is clean after write
+    if grep -q "/api/mcp" "$project_config" 2>/dev/null; then
+        bashio::log.error "CRITICAL: /api/mcp still found in $project_config after clean write!"
+        echo "$mcp_entry" > "$project_config"
     fi
 
     # CRITICAL: Claude Code runs as the 'claude' user (UID 1000) but this
@@ -737,6 +729,20 @@ setup_mcp_server() {
     mcp_perms=$(stat -c '%a' "$project_config" 2>/dev/null || echo "unknown")
     bashio::log.info "HA MCP server configured (owner=$mcp_owner, perms=$mcp_perms)"
     bashio::log.info "  Token available: $([ -n "$SUPERVISOR_TOKEN" ] && echo "yes (${#SUPERVISOR_TOKEN} chars)" || echo "NO")"
+
+    # Log all configured MCP servers for diagnostic purposes
+    bashio::log.info "Configured MCP servers in $project_config:"
+    jq -r '.mcpServers | to_entries[] | "  - \(.key): \(.value.command // .value.url // "unknown") \(.value.args // [] | join(" "))"' "$project_config" 2>/dev/null || true
+
+    # Warn if additional MCP configs exist elsewhere (they may contain stale entries)
+    for extra_mcp in "/data/home/.mcp.json" "/root/.mcp.json" "/data/home/.claude.json"; do
+        if [ -f "$extra_mcp" ] && jq -e '.mcpServers | length > 0' "$extra_mcp" >/dev/null 2>&1; then
+            bashio::log.warning "Additional MCP config found in $extra_mcp — may contain stale entries"
+            jq -r '.mcpServers | keys[]' "$extra_mcp" 2>/dev/null | while read -r key; do
+                bashio::log.warning "  - $key"
+            done
+        fi
+    done
 
     # Write project-level Claude Code settings that pre-allow all necessary
     # tools.  This is the PRIMARY permission mechanism for background listeners

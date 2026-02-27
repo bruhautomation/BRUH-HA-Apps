@@ -3,9 +3,10 @@
 Supports multiple config entries so users can create several conversation
 agents with different names and system prompts (personalities).
 
-The setup flow has two steps:
-  1. Feature selection — name + which features to enable (conversation / sensors)
-  2. Agent settings   — model, system prompt, timeout (only if conversation enabled)
+Flow paths:
+  - First setup (no entries): just a name → creates agent + sensors with defaults
+  - Add Service (entries exist): name + model + system prompt + timeout → new agent
+  - Discovery: confirm → creates agent + sensors with defaults
 """
 
 from __future__ import annotations
@@ -41,11 +42,10 @@ from .const import (
 class BruhClaudeConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for BRUH Claude."""
 
-    VERSION = 2
+    VERSION = 3
 
     def __init__(self) -> None:
         """Initialise flow state."""
-        self._user_data: dict[str, Any] = {}
         self._discovery_info: dict[str, Any] = {}
 
     @staticmethod
@@ -54,85 +54,102 @@ class BruhClaudeConfigFlow(ConfigFlow, domain=DOMAIN):
         return BruhClaudeOptionsFlowHandler(config_entry)
 
     # ------------------------------------------------------------------
-    # Step 1: Feature selection
+    # Entry point: route based on whether entries already exist
     # ------------------------------------------------------------------
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ):
-        """Handle the initial step — name and feature selection."""
+        """Route to the appropriate setup step."""
+        if self._async_current_entries():
+            return await self.async_step_add_agent(user_input)
+        return await self.async_step_first_setup(user_input)
+
+    # ------------------------------------------------------------------
+    # First setup: minimal — just name, auto-enable everything
+    # ------------------------------------------------------------------
+
+    async def async_step_first_setup(
+        self, user_input: dict[str, Any] | None = None
+    ):
+        """Minimal first-time setup — just confirm and create defaults."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            enable_conv = user_input.get(CONF_ENABLE_CONVERSATION, True)
-            enable_sens = user_input.get(CONF_ENABLE_SENSORS, True)
-
-            if not enable_conv and not enable_sens:
-                errors["base"] = "no_features"
+            shared_path = self.hass.config.path(".bruh_claude")
+            dir_exists = await self.hass.async_add_executor_job(
+                os.path.isdir, shared_path
+            )
+            if not dir_exists:
+                errors["base"] = "addon_not_running"
             else:
-                # Check that the shared directory exists (app is running)
-                shared_path = self.hass.config.path(".bruh_claude")
-                dir_exists = await self.hass.async_add_executor_job(
-                    os.path.isdir, shared_path
+                name = user_input.get(CONF_NAME, DEFAULT_NAME)
+                unique_id = f"{DOMAIN}_{name.lower().replace(' ', '_')}"
+                await self.async_set_unique_id(unique_id)
+                self._abort_if_unique_id_configured()
+                return self.async_create_entry(
+                    title=name,
+                    data={
+                        CONF_NAME: name,
+                        CONF_ENABLE_CONVERSATION: True,
+                        CONF_ENABLE_SENSORS: True,
+                        CONF_MODEL: DEFAULT_MODEL,
+                        CONF_SYSTEM_PROMPT: DEFAULT_SYSTEM_PROMPT,
+                        CONF_TIMEOUT: DEFAULT_TIMEOUT,
+                    },
                 )
-                if not dir_exists:
-                    errors["base"] = "addon_not_running"
-                else:
-                    self._user_data = user_input
-
-                    if enable_conv:
-                        # Proceed to agent settings
-                        return await self.async_step_agent_settings()
-
-                    # Only sensors — create entry directly
-                    name = user_input.get(CONF_NAME, DEFAULT_NAME)
-                    unique_id = f"{DOMAIN}_{name.lower().replace(' ', '_')}"
-                    await self.async_set_unique_id(unique_id)
-                    self._abort_if_unique_id_configured()
-                    return self.async_create_entry(
-                        title=name,
-                        data=user_input,
-                    )
 
         return self.async_show_form(
-            step_id="user",
+            step_id="first_setup",
             data_schema=vol.Schema(
                 {
                     vol.Optional(CONF_NAME, default=DEFAULT_NAME): str,
-                    vol.Optional(
-                        CONF_ENABLE_CONVERSATION, default=True
-                    ): bool,
-                    vol.Optional(
-                        CONF_ENABLE_SENSORS, default=True
-                    ): bool,
                 }
             ),
             errors=errors,
         )
 
     # ------------------------------------------------------------------
-    # Step 2: Conversation agent settings
+    # Add agent: full personality settings for additional agents
     # ------------------------------------------------------------------
 
-    async def async_step_agent_settings(
+    async def async_step_add_agent(
         self, user_input: dict[str, Any] | None = None
     ):
-        """Configure the conversation agent — model, prompt, timeout."""
+        """Add an additional conversation agent with a custom personality."""
+        errors: dict[str, str] = {}
+
         if user_input is not None:
-            data = {**self._user_data, **user_input}
-            name = data.get(CONF_NAME, DEFAULT_NAME)
-            unique_id = f"{DOMAIN}_{name.lower().replace(' ', '_')}"
-            await self.async_set_unique_id(unique_id)
-            self._abort_if_unique_id_configured()
-            return self.async_create_entry(
-                title=name,
-                data=data,
+            shared_path = self.hass.config.path(".bruh_claude")
+            dir_exists = await self.hass.async_add_executor_job(
+                os.path.isdir, shared_path
             )
+            if not dir_exists:
+                errors["base"] = "addon_not_running"
+            else:
+                name = user_input.get(CONF_NAME, "Claude Agent")
+                unique_id = f"{DOMAIN}_{name.lower().replace(' ', '_')}"
+                await self.async_set_unique_id(unique_id)
+                self._abort_if_unique_id_configured()
+                return self.async_create_entry(
+                    title=name,
+                    data={
+                        CONF_NAME: name,
+                        CONF_ENABLE_CONVERSATION: True,
+                        CONF_ENABLE_SENSORS: False,
+                        CONF_MODEL: user_input.get(CONF_MODEL, DEFAULT_MODEL),
+                        CONF_SYSTEM_PROMPT: user_input.get(
+                            CONF_SYSTEM_PROMPT, DEFAULT_SYSTEM_PROMPT
+                        ),
+                        CONF_TIMEOUT: user_input.get(CONF_TIMEOUT, DEFAULT_TIMEOUT),
+                    },
+                )
 
         return self.async_show_form(
-            step_id="agent_settings",
+            step_id="add_agent",
             data_schema=vol.Schema(
                 {
+                    vol.Required(CONF_NAME): str,
                     vol.Optional(
                         CONF_MODEL, default=DEFAULT_MODEL
                     ): vol.In(AVAILABLE_MODELS),
@@ -144,6 +161,7 @@ class BruhClaudeConfigFlow(ConfigFlow, domain=DOMAIN):
                     ): vol.All(int, vol.Range(min=10, max=600)),
                 }
             ),
+            errors=errors,
         )
 
     # ------------------------------------------------------------------
@@ -203,43 +221,64 @@ class BruhClaudeOptionsFlowHandler(OptionsFlow):
     ):
         """Manage the options."""
         errors: dict[str, str] = {}
+        current = {**self._config_entry.data, **self._config_entry.options}
+
+        # Only show the sensor toggle if this is the sole entry
+        all_entries = self.hass.config_entries.async_entries(DOMAIN)
+        is_only_entry = len(all_entries) <= 1
 
         if user_input is not None:
-            enable_conv = user_input.get(CONF_ENABLE_CONVERSATION, True)
-            enable_sens = user_input.get(CONF_ENABLE_SENSORS, True)
+            enable_conv = user_input.get(
+                CONF_ENABLE_CONVERSATION,
+                current.get(CONF_ENABLE_CONVERSATION, True),
+            )
+            enable_sens = user_input.get(
+                CONF_ENABLE_SENSORS,
+                current.get(CONF_ENABLE_SENSORS, is_only_entry),
+            )
 
-            if not enable_conv and not enable_sens:
+            if is_only_entry and not enable_conv and not enable_sens:
+                errors["base"] = "no_features"
+            elif not is_only_entry and not enable_conv:
                 errors["base"] = "no_features"
             else:
-                return self.async_create_entry(title="", data=user_input)
+                data = {**user_input}
+                if not is_only_entry:
+                    data[CONF_ENABLE_SENSORS] = current.get(
+                        CONF_ENABLE_SENSORS, False
+                    )
+                return self.async_create_entry(title="", data=data)
 
-        current = {**self._config_entry.data, **self._config_entry.options}
+        schema_fields: dict = {
+            vol.Optional(
+                CONF_ENABLE_CONVERSATION,
+                default=current.get(CONF_ENABLE_CONVERSATION, True),
+            ): bool,
+        }
+
+        if is_only_entry:
+            schema_fields[vol.Optional(
+                CONF_ENABLE_SENSORS,
+                default=current.get(CONF_ENABLE_SENSORS, True),
+            )] = bool
+
+        schema_fields[vol.Optional(
+            CONF_MODEL,
+            default=current.get(CONF_MODEL, DEFAULT_MODEL),
+        )] = vol.In(AVAILABLE_MODELS)
+
+        schema_fields[vol.Optional(
+            CONF_SYSTEM_PROMPT,
+            default=current.get(CONF_SYSTEM_PROMPT, DEFAULT_SYSTEM_PROMPT),
+        )] = str
+
+        schema_fields[vol.Optional(
+            CONF_TIMEOUT,
+            default=current.get(CONF_TIMEOUT, DEFAULT_TIMEOUT),
+        )] = vol.All(int, vol.Range(min=10, max=600))
 
         return self.async_show_form(
             step_id="init",
-            data_schema=vol.Schema(
-                {
-                    vol.Optional(
-                        CONF_ENABLE_CONVERSATION,
-                        default=current.get(CONF_ENABLE_CONVERSATION, True),
-                    ): bool,
-                    vol.Optional(
-                        CONF_ENABLE_SENSORS,
-                        default=current.get(CONF_ENABLE_SENSORS, True),
-                    ): bool,
-                    vol.Optional(
-                        CONF_MODEL,
-                        default=current.get(CONF_MODEL, DEFAULT_MODEL),
-                    ): vol.In(AVAILABLE_MODELS),
-                    vol.Optional(
-                        CONF_SYSTEM_PROMPT,
-                        default=current.get(CONF_SYSTEM_PROMPT, DEFAULT_SYSTEM_PROMPT),
-                    ): str,
-                    vol.Optional(
-                        CONF_TIMEOUT,
-                        default=current.get(CONF_TIMEOUT, DEFAULT_TIMEOUT),
-                    ): vol.All(int, vol.Range(min=10, max=600)),
-                }
-            ),
+            data_schema=vol.Schema(schema_fields),
             errors=errors,
         )

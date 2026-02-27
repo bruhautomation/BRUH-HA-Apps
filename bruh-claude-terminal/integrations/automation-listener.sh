@@ -57,6 +57,39 @@ bashio::log.info "Automation listener starting (UID=$(id -u), claude=$CLAUDE_BIN
 bashio::log.info "Watching $TASKS_DIR for automation tasks"
 bashio::log.info "Debug logs: $LOG_DIR/automation-*.log"
 
+# ---------------------------------------------------------------------------
+# MCP config verification
+# ---------------------------------------------------------------------------
+
+# Verify /config/.mcp.json is clean before each Claude invocation.
+# A broken marketplace plugin can re-register an SSE MCP server entry
+# pointing to /api/mcp with invalid auth, causing task failures.
+verify_mcp_config() {
+    local mcp_file="/config/.mcp.json"
+
+    if [ ! -f "$mcp_file" ]; then
+        bashio::log.warning "MCP config missing: $mcp_file — Claude may lack HA tools"
+        return
+    fi
+
+    if grep -q "/api/mcp\|homeassistant-config" "$mcp_file" 2>/dev/null; then
+        bashio::log.warning "Stale MCP entry found in $mcp_file — rewriting clean config"
+        cat > "$mcp_file" << 'MCP_CLEAN'
+{
+  "mcpServers": {
+    "home-assistant": {
+      "command": "python3",
+      "args": ["/opt/ha-mcp-server/ha_mcp_server.py"]
+    }
+  }
+}
+MCP_CLEAN
+        chown claude:claude "$mcp_file" 2>/dev/null || true
+        chmod 644 "$mcp_file"
+        bashio::log.info "MCP config restored to clean state"
+    fi
+}
+
 # Process an automation task file
 process_task() {
     local task_file="$1"
@@ -80,6 +113,9 @@ process_task() {
 
     # Remove task file immediately
     rm -f "$task_file"
+
+    # Ensure MCP config is clean before invoking Claude
+    verify_mcp_config
 
     # Log request for debugging
     local log_file="$LOG_DIR/automation-$(date +%Y%m%d).log"
