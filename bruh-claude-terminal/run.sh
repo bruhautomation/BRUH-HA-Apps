@@ -144,6 +144,11 @@ init_environment() {
     # the token from the s6 environment for any reason.
     #
     # NOTE: BRUH_CLAUDE_PERMS_FLAG is used by the interactive terminal only.
+    local assist_max_turns
+    assist_max_turns=$(bashio::config 'assist_max_turns' '5')
+    local automation_max_turns
+    automation_max_turns=$(bashio::config 'automation_max_turns' '10')
+
     local env_file="/data/.bruh_claude_env"
     cat > "$env_file" << ENVEOF
 export HOME="${data_home}"
@@ -159,6 +164,8 @@ export SUPERVISOR_TOKEN="${SUPERVISOR_TOKEN}"
 export HA_TOKEN="${SUPERVISOR_TOKEN}"
 export HA_BASE_URL="http://supervisor/core/api"
 export SUPERVISOR_API_URL="http://supervisor"
+export BRUH_ASSIST_MAX_TURNS="${assist_max_turns}"
+export BRUH_AUTOMATION_MAX_TURNS="${automation_max_turns}"
 ENVEOF
     chmod 600 "$env_file"
 

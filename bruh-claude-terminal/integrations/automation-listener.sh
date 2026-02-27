@@ -26,7 +26,8 @@ LOG_DIR="$SHARED_DIR/logs"
 
 # Automation tasks may need more turns than conversation requests (e.g.
 # multi-step config edits), so allow a higher limit than the assist listener.
-MAX_TURNS=10
+# Configurable via the add-on's automation_max_turns option.
+MAX_TURNS="${BRUH_AUTOMATION_MAX_TURNS:-10}"
 
 mkdir -p "$TASKS_DIR" "$RESULTS_DIR" "$LOG_DIR"
 

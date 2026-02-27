@@ -36,6 +36,8 @@ options:
   enable_assist_integration: true
   enable_automation_integration: true
   dangerously_skip_permissions: false
+  assist_max_turns: 5
+  automation_max_turns: 10
   persistent_apk_packages: []
   persistent_pip_packages: []
   log_level: info
@@ -48,6 +50,8 @@ schema:
   enable_assist_integration: bool?
   enable_automation_integration: bool?
   dangerously_skip_permissions: bool?
+  assist_max_turns: "int(1,20)?"
+  automation_max_turns: "int(1,50)?"
   persistent_apk_packages:
     - str
   persistent_pip_packages:

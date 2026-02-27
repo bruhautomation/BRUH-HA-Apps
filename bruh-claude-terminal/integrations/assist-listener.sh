@@ -24,9 +24,10 @@ REQUESTS_DIR="$SHARED_DIR/requests"
 RESPONSES_DIR="$SHARED_DIR/responses"
 LOG_DIR="$SHARED_DIR/logs"
 
-# Maximum number of agentic turns per request.  Keeps responses fast:
-# typically 1 turn to read entities + 1 turn to call a service + 1 to respond.
-MAX_TURNS=3
+# Maximum number of agentic turns per request.
+# Configurable via the add-on's assist_max_turns option.
+# Default 5: enough for entity lookup + service call + follow-up + response.
+MAX_TURNS="${BRUH_ASSIST_MAX_TURNS:-5}"
 
 mkdir -p "$REQUESTS_DIR" "$RESPONSES_DIR" "$LOG_DIR"
 
