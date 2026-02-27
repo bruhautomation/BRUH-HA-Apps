@@ -43,6 +43,12 @@ RUN curl -fsSL https://claude.ai/install.sh | bash \
     && ln -sf /root/.local/bin/claude /usr/local/bin/claude \
     && chmod 755 /root /root/.local /root/.local/bin
 
+# Remove config directories that the Claude Code installer may have created.
+# At runtime, run.sh symlinks these paths to persistent storage (/data volume).
+# If real directories exist here, `ln -sfn` cannot replace them with symlinks,
+# causing Claude Code to find an empty config dir instead of stored credentials.
+RUN rm -rf /root/.config/claude /root/.config/anthropic /root/.claude 2>/dev/null; true
+
 # Create non-root user for Claude Code
 # --dangerously-skip-permissions requires non-root execution
 RUN adduser -D -s /bin/bash -u 1000 claude

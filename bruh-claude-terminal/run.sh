@@ -10,6 +10,25 @@ set -o pipefail
 # Environment Initialization
 # ============================================================================
 
+# Helper: Replace a real directory with a symlink, salvaging any files first.
+# This is needed because the Claude Code installer may create real directories
+# at paths we need to symlink to persistent storage. `ln -sfn` cannot replace
+# a real directory, so we must remove it first.
+_replace_dir_with_symlink() {
+    local dir_path="$1"
+    local link_dest="$2"
+
+    if [ -d "$dir_path" ] && [ ! -L "$dir_path" ]; then
+        # Real directory found — salvage any auth files to persistent storage
+        if [ "$(ls -A "$dir_path" 2>/dev/null)" ]; then
+            bashio::log.info "  - Salvaging credentials from $dir_path to persistent storage"
+            cp -a "$dir_path"/* "$link_dest/" 2>/dev/null || true
+        fi
+        rm -rf "$dir_path"
+    fi
+    ln -sfn "$link_dest" "$dir_path"
+}
+
 init_environment() {
     local data_home="/data/home"
     local config_dir="/data/.config"
@@ -66,16 +85,39 @@ init_environment() {
     # On add-on updates the container is rebuilt fresh, so any symlinks from the
     # previous container are gone. Re-create them every startup so Claude Code
     # can find auth credentials regardless of which path it checks.
+    #
+    # CRITICAL: The Claude Code installer may create real directories at these
+    # paths during the Docker build. `ln -sfn` CANNOT replace a real directory
+    # with a symlink — it either fails silently or creates a link inside the
+    # directory. We must explicitly remove any real directories first, salvaging
+    # any credential files they might contain.
     mkdir -p /root/.config "$data_home/.config"
-    ln -sfn "$claude_config_dir" /root/.config/claude
-    ln -sfn "$claude_config_dir" /root/.config/anthropic
-    ln -sfn "$claude_config_dir" "$data_home/.config/claude"
-    ln -sfn "$claude_config_dir" "$data_home/.config/anthropic"
 
-    # Claude Code also checks $HOME/.claude/ for settings and credentials
+    local symlink_targets=(
+        "/root/.config/claude"
+        "/root/.config/anthropic"
+        "$data_home/.config/claude"
+        "$data_home/.config/anthropic"
+    )
+
+    for target in "${symlink_targets[@]}"; do
+        _replace_dir_with_symlink "$target" "$claude_config_dir"
+    done
+
+    # Claude Code also checks $HOME/.claude/ for settings and credentials.
+    # This directory lives directly in persistent storage (/data/home/.claude/).
     mkdir -p "$data_home/.claude"
+    # Symlink from /root/.claude → persistent storage
+    _replace_dir_with_symlink "/root/.claude" "$data_home/.claude"
 
     bashio::log.info "  - Auth symlinks refreshed for persistent OAuth"
+
+    # Log credential status for debugging
+    local cred_count
+    cred_count=$(find "$claude_config_dir" -type f 2>/dev/null | wc -l)
+    local claude_dot_count
+    claude_dot_count=$(find "$data_home/.claude" -type f 2>/dev/null | wc -l)
+    bashio::log.info "  - Credential files: $cred_count in $claude_config_dir, $claude_dot_count in $data_home/.claude"
 
     # Install tmux configuration
     if [ -f "/opt/scripts/tmux.conf" ]; then
@@ -83,8 +125,9 @@ init_environment() {
         chmod 644 "$data_home/.tmux.conf"
     fi
 
-    # Read the permissions toggle so we can persist it for background listeners.
-    # This must happen before writing the env file below.
+    # Read the permissions toggle.  This controls the interactive terminal only;
+    # background listeners (Assist, Automation) always force the flag because
+    # they run non-interactively and cannot respond to confirmation prompts.
     local skip_perms
     skip_perms=$(bashio::config 'dangerously_skip_permissions' 'true')
     local perms_flag=""
@@ -95,6 +138,10 @@ init_environment() {
     # Write environment file for background processes (listeners, etc.)
     # These processes may lose env vars due to with-contenv shebang reloading
     # the s6 container environment, so we persist the critical vars to a file.
+    #
+    # NOTE: BRUH_CLAUDE_PERMS_FLAG is used by the interactive terminal.
+    # The assist-listener and automation-listener hardcode
+    # --dangerously-skip-permissions because they cannot work without it.
     local env_file="/data/.bruh_claude_env"
     cat > "$env_file" << ENVEOF
 export HOME="${data_home}"
@@ -496,6 +543,28 @@ setup_mcp_server() {
     fi
 
     bashio::log.info "HA MCP server configured - Claude Code will have real-time HA access"
+
+    # Write project-level Claude Code settings that pre-allow all MCP tools.
+    # This acts as a belt-and-suspenders alongside --dangerously-skip-permissions:
+    # even if the flag is somehow not passed, the allowed tools list ensures
+    # Claude Code won't prompt for MCP tool approval.
+    local claude_settings_dir="/config/.claude"
+    mkdir -p "$claude_settings_dir"
+    cat > "$claude_settings_dir/settings.local.json" << 'SETTINGS'
+{
+  "permissions": {
+    "allow": [
+      "mcp__home-assistant__*",
+      "Bash(*)",
+      "Read",
+      "Write",
+      "Edit"
+    ]
+  }
+}
+SETTINGS
+    chown -R claude:claude "$claude_settings_dir" 2>/dev/null || true
+    bashio::log.info "Claude Code project settings written to $claude_settings_dir/settings.local.json"
 }
 
 # ============================================================================
@@ -515,7 +584,11 @@ deploy_custom_integration() {
     mkdir -p /config/.bruh_claude/requests \
              /config/.bruh_claude/responses \
              /config/.bruh_claude/tasks \
-             /config/.bruh_claude/task_results
+             /config/.bruh_claude/task_results \
+             /config/.bruh_claude/logs
+
+    # Rotate old debug logs (keep last 7 days)
+    find /config/.bruh_claude/logs -name "*.log" -mtime +7 -delete 2>/dev/null || true
 
     if [ ! -d "$src" ]; then
         bashio::log.warning "Custom integration source not found at $src, skipping"

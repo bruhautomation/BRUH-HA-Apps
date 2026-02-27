@@ -143,8 +143,11 @@ class TestNoCommandInjection(unittest.TestCase):
         """Listeners should pipe prompts to claude via stdin, not as args."""
         for listener in ["assist-listener.sh", "automation-listener.sh"]:
             content = read_file(os.path.join(INTEGRATIONS_DIR, listener))
-            self.assertIn("| claude -p", content,
-                          f"{listener} should pipe prompt to claude")
+            # Listeners use ${CLAUDE_BIN} variable which defaults to "claude"
+            self.assertTrue(
+                "| claude -p" in content or "| ${CLAUDE_BIN} -p" in content,
+                f"{listener} should pipe prompt to claude via stdin"
+            )
 
 
 class TestGitignoreCoversSecrets(unittest.TestCase):
