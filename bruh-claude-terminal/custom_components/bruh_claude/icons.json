@@ -2,7 +2,7 @@
   "entity": {
     "conversation": {
       "_": {
-        "default": "mdi:robot"
+        "default": "mdi:creation"
       }
     }
   },
@@ -11,7 +11,7 @@
       "service": "mdi:message-text"
     },
     "run_task": {
-      "service": "mdi:robot-outline"
+      "service": "mdi:creation"
     }
   }
 }

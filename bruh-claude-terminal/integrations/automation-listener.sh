@@ -9,6 +9,12 @@
 #
 # Request format:  {"id": "<uuid>", "prompt": "...", "notify": true, "notify_entity": "notify.mobile_app"}
 # Response format: {"id": "<uuid>", "result": "claude output", "status": "completed"}
+#
+# Permissions:
+#   This listener does NOT use --dangerously-skip-permissions. Instead, tool
+#   permissions are granted via /config/.claude/settings.local.json, which
+#   pre-approves all MCP, Bash, Read, Write, and Edit tools. This avoids the
+#   root-user restrictions of the flag while still allowing non-interactive use.
 
 set -e
 
@@ -17,6 +23,10 @@ SHARED_DIR="/config/.bruh_claude"
 TASKS_DIR="$SHARED_DIR/tasks"
 RESULTS_DIR="$SHARED_DIR/task_results"
 LOG_DIR="$SHARED_DIR/logs"
+
+# Automation tasks may need more turns than conversation requests (e.g.
+# multi-step config edits), so allow a higher limit than the assist listener.
+MAX_TURNS=10
 
 mkdir -p "$TASKS_DIR" "$RESULTS_DIR" "$LOG_DIR"
 
@@ -28,11 +38,6 @@ if [ -f /data/.bruh_claude_env ]; then
     source /data/.bruh_claude_env
 fi
 
-# Background listeners ALWAYS need --dangerously-skip-permissions because
-# they run non-interactively and cannot respond to confirmation prompts.
-# The config option only controls the interactive terminal.
-LISTENER_PERMS_FLAG="--dangerously-skip-permissions"
-
 # Resolve the claude binary (see assist-listener.sh for details).
 CLAUDE_BIN="claude"
 if [ ! -x /usr/local/bin/claude ]; then
@@ -41,7 +46,7 @@ if [ ! -x /usr/local/bin/claude ]; then
     fi
 fi
 
-bashio::log.info "Automation listener starting (UID=$(id -u), claude=$CLAUDE_BIN)..."
+bashio::log.info "Automation listener starting (UID=$(id -u), claude=$CLAUDE_BIN, max_turns=$MAX_TURNS)..."
 bashio::log.info "Watching $TASKS_DIR for automation tasks"
 bashio::log.info "Debug logs: $LOG_DIR/automation-*.log"
 
@@ -78,29 +83,44 @@ process_task() {
         echo "  Prompt:   ${prompt:0:500}"
         echo "  Chars:    ${#prompt}"
         echo "  Notify:   $notify"
-        echo "  Flags:    $LISTENER_PERMS_FLAG"
+        echo "  MaxTurns: $MAX_TURNS"
     } >> "$log_file"
 
     local output_file stderr_file
     output_file=$(mktemp)
     stderr_file=$(mktemp)
 
-    # Run Claude in print mode from /config so it finds .mcp.json for HA tools.
-    # ALWAYS use --dangerously-skip-permissions for non-interactive listeners.
+    # Run Claude in print mode from /config so it finds .mcp.json for HA tools
+    # and .claude/settings.local.json for pre-approved tool permissions.
+    # --max-turns prevents runaway agentic loops.
+    # No --dangerously-skip-permissions: permissions come from settings.local.json.
     local start_time
     start_time=$(date +%s)
 
     # shellcheck disable=SC2086
-    (cd /config && printf '%s' "$prompt" | ${CLAUDE_BIN} -p ${LISTENER_PERMS_FLAG} > "$output_file" 2>"$stderr_file") || true
+    (cd /config && printf '%s' "$prompt" | ${CLAUDE_BIN} -p --verbose --max-turns "$MAX_TURNS" > "$output_file" 2>"$stderr_file") || true
 
     local end_time duration
     end_time=$(date +%s)
     duration=$((end_time - start_time))
 
     local result stderr_output
-    result=$(cat "$output_file" 2>/dev/null || echo "Task failed")
+    result=$(cat "$output_file" 2>/dev/null || echo "")
     stderr_output=$(cat "$stderr_file" 2>/dev/null || echo "")
     rm -f "$output_file" "$stderr_file"
+
+    # If result is empty, something went wrong — check stderr for clues
+    if [ -z "$result" ]; then
+        bashio::log.error "Empty result for task [$task_id] after ${duration}s"
+        bashio::log.error "Stderr: ${stderr_output:0:500}"
+        if echo "$stderr_output" | grep -qi "not logged in\|please log in\|authentication"; then
+            result="Claude is not logged in. Please open the BRUH Claude Terminal sidebar and complete the OAuth login first."
+        elif echo "$stderr_output" | grep -qi "permission\|not allowed\|denied"; then
+            result="Claude encountered a permission error. Check the add-on logs for details."
+        else
+            result="Task failed — Claude didn't produce a result. Check the BRUH Claude Terminal add-on logs."
+        fi
+    fi
 
     # Log response for debugging
     {
@@ -121,7 +141,7 @@ process_task() {
 
     bashio::log.info "Task completed [$task_id]: ${duration}s, ${#result} chars"
 
-    # Check for auth errors and return a helpful message
+    # Check for auth errors in the result text
     if echo "$result" | grep -qi "not logged in\|please log in\|authentication required"; then
         result="Claude is not logged in. Please open the BRUH Claude Terminal sidebar and complete the OAuth login first."
         bashio::log.error "Claude auth error - user needs to log in via the terminal"

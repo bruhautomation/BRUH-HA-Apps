@@ -16,7 +16,7 @@ url: "https://github.com/bruhautomation/BRUH-HA-Apps"
 # Web interface configuration
 ingress: true
 ingress_port: 7681
-panel_icon: mdi:robot
+panel_icon: mdi:creation
 panel_title: "BRUH Claude"
 panel_admin: true
 
@@ -35,7 +35,7 @@ options:
   enable_ha_mcp_server: true
   enable_assist_integration: true
   enable_automation_integration: true
-  dangerously_skip_permissions: true
+  dangerously_skip_permissions: false
   persistent_apk_packages: []
   persistent_pip_packages: []
   log_level: info
