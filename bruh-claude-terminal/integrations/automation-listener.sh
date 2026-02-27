@@ -16,8 +16,9 @@ SUPERVISOR_TOKEN="${SUPERVISOR_TOKEN:-}"
 SHARED_DIR="/config/.bruh_claude"
 TASKS_DIR="$SHARED_DIR/tasks"
 RESULTS_DIR="$SHARED_DIR/task_results"
+LOG_DIR="$SHARED_DIR/logs"
 
-mkdir -p "$TASKS_DIR" "$RESULTS_DIR"
+mkdir -p "$TASKS_DIR" "$RESULTS_DIR" "$LOG_DIR"
 
 # Source the Claude environment written by run.sh
 # This ensures HOME, ANTHROPIC_CONFIG_DIR, etc. are set correctly
@@ -27,8 +28,22 @@ if [ -f /data/.bruh_claude_env ]; then
     source /data/.bruh_claude_env
 fi
 
-bashio::log.info "Automation listener starting..."
+# Background listeners ALWAYS need --dangerously-skip-permissions because
+# they run non-interactively and cannot respond to confirmation prompts.
+# The config option only controls the interactive terminal.
+LISTENER_PERMS_FLAG="--dangerously-skip-permissions"
+
+# Resolve the claude binary (see assist-listener.sh for details).
+CLAUDE_BIN="claude"
+if [ ! -x /usr/local/bin/claude ]; then
+    if [ "$(id -u)" = "0" ] && command -v su-exec >/dev/null 2>&1; then
+        CLAUDE_BIN="su-exec claude /root/.local/bin/claude"
+    fi
+fi
+
+bashio::log.info "Automation listener starting (UID=$(id -u), claude=$CLAUDE_BIN)..."
 bashio::log.info "Watching $TASKS_DIR for automation tasks"
+bashio::log.info "Debug logs: $LOG_DIR/automation-*.log"
 
 # Process an automation task file
 process_task() {
@@ -54,18 +69,57 @@ process_task() {
     # Remove task file immediately
     rm -f "$task_file"
 
-    local output_file
+    # Log request for debugging
+    local log_file="$LOG_DIR/automation-$(date +%Y%m%d).log"
+    {
+        echo "================================================================"
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] TASK REQUEST $task_id"
+        echo "  Channel:  automation"
+        echo "  Prompt:   ${prompt:0:500}"
+        echo "  Chars:    ${#prompt}"
+        echo "  Notify:   $notify"
+        echo "  Flags:    $LISTENER_PERMS_FLAG"
+    } >> "$log_file"
+
+    local output_file stderr_file
     output_file=$(mktemp)
+    stderr_file=$(mktemp)
 
     # Run Claude in print mode from /config so it finds .mcp.json for HA tools.
-    # The permissions flag is controlled by the dangerously_skip_permissions
-    # app config option (persisted in the env file).
-    # shellcheck disable=SC2086
-    (cd /config && printf '%s' "$prompt" | claude -p ${BRUH_CLAUDE_PERMS_FLAG:-} > "$output_file" 2>&1) || true
+    # ALWAYS use --dangerously-skip-permissions for non-interactive listeners.
+    local start_time
+    start_time=$(date +%s)
 
-    local result
+    # shellcheck disable=SC2086
+    (cd /config && printf '%s' "$prompt" | ${CLAUDE_BIN} -p ${LISTENER_PERMS_FLAG} > "$output_file" 2>"$stderr_file") || true
+
+    local end_time duration
+    end_time=$(date +%s)
+    duration=$((end_time - start_time))
+
+    local result stderr_output
     result=$(cat "$output_file" 2>/dev/null || echo "Task failed")
-    rm -f "$output_file"
+    stderr_output=$(cat "$stderr_file" 2>/dev/null || echo "")
+    rm -f "$output_file" "$stderr_file"
+
+    # Log response for debugging
+    {
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] TASK RESPONSE $task_id"
+        echo "  Duration: ${duration}s"
+        echo "  Result:   ${#result} chars"
+        if [ -n "$stderr_output" ]; then
+            local token_info
+            token_info=$(echo "$stderr_output" | grep -iE 'token|cost|usage|input|output' | head -5) || true
+            if [ -n "$token_info" ]; then
+                echo "  Tokens:   $token_info"
+            fi
+            echo "  Stderr:   ${stderr_output:0:500}"
+        fi
+        echo "  Preview:  ${result:0:200}"
+        echo "----------------------------------------------------------------"
+    } >> "$log_file"
+
+    bashio::log.info "Task completed [$task_id]: ${duration}s, ${#result} chars"
 
     # Check for auth errors and return a helpful message
     if echo "$result" | grep -qi "not logged in\|please log in\|authentication required"; then

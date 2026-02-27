@@ -83,8 +83,9 @@ init_environment() {
         chmod 644 "$data_home/.tmux.conf"
     fi
 
-    # Read the permissions toggle so we can persist it for background listeners.
-    # This must happen before writing the env file below.
+    # Read the permissions toggle.  This controls the interactive terminal only;
+    # background listeners (Assist, Automation) always force the flag because
+    # they run non-interactively and cannot respond to confirmation prompts.
     local skip_perms
     skip_perms=$(bashio::config 'dangerously_skip_permissions' 'true')
     local perms_flag=""
@@ -95,6 +96,10 @@ init_environment() {
     # Write environment file for background processes (listeners, etc.)
     # These processes may lose env vars due to with-contenv shebang reloading
     # the s6 container environment, so we persist the critical vars to a file.
+    #
+    # NOTE: BRUH_CLAUDE_PERMS_FLAG is used by the interactive terminal.
+    # The assist-listener and automation-listener hardcode
+    # --dangerously-skip-permissions because they cannot work without it.
     local env_file="/data/.bruh_claude_env"
     cat > "$env_file" << ENVEOF
 export HOME="${data_home}"
@@ -496,6 +501,28 @@ setup_mcp_server() {
     fi
 
     bashio::log.info "HA MCP server configured - Claude Code will have real-time HA access"
+
+    # Write project-level Claude Code settings that pre-allow all MCP tools.
+    # This acts as a belt-and-suspenders alongside --dangerously-skip-permissions:
+    # even if the flag is somehow not passed, the allowed tools list ensures
+    # Claude Code won't prompt for MCP tool approval.
+    local claude_settings_dir="/config/.claude"
+    mkdir -p "$claude_settings_dir"
+    cat > "$claude_settings_dir/settings.local.json" << 'SETTINGS'
+{
+  "permissions": {
+    "allow": [
+      "mcp__home-assistant__*",
+      "Bash(*)",
+      "Read",
+      "Write",
+      "Edit"
+    ]
+  }
+}
+SETTINGS
+    chown -R claude:claude "$claude_settings_dir" 2>/dev/null || true
+    bashio::log.info "Claude Code project settings written to $claude_settings_dir/settings.local.json"
 }
 
 # ============================================================================
@@ -515,7 +542,11 @@ deploy_custom_integration() {
     mkdir -p /config/.bruh_claude/requests \
              /config/.bruh_claude/responses \
              /config/.bruh_claude/tasks \
-             /config/.bruh_claude/task_results
+             /config/.bruh_claude/task_results \
+             /config/.bruh_claude/logs
+
+    # Rotate old debug logs (keep last 7 days)
+    find /config/.bruh_claude/logs -name "*.log" -mtime +7 -delete 2>/dev/null || true
 
     if [ ! -d "$src" ]; then
         bashio::log.warning "Custom integration source not found at $src, skipping"

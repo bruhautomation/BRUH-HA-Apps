@@ -317,7 +317,12 @@ class TestIntegrationListeners(unittest.TestCase):
     def test_automation_listener_pipes_prompt(self):
         """automation-listener.sh should pipe prompt to claude, not pass as arg."""
         content = read_file(os.path.join(INTEGRATIONS_DIR, "automation-listener.sh"))
-        self.assertIn("printf '%s' \"$prompt\" | claude -p", content)
+        # Listeners use ${CLAUDE_BIN} variable which defaults to "claude"
+        self.assertTrue(
+            "printf '%s' \"$prompt\" | claude -p" in content
+            or "printf '%s' \"$prompt\" | ${CLAUDE_BIN} -p" in content,
+            "automation-listener.sh should pipe prompt to claude via stdin"
+        )
 
     def test_assist_listener_pipes_prompt(self):
         """assist-listener.sh should pipe text to claude, not use single quotes."""

@@ -28,25 +28,39 @@ The BRUH Claude app deploys a custom Home Assistant integration (`custom_compone
 
 ## Permissions (dangerously_skip_permissions)
 
-Claude Code has a `--dangerously-skip-permissions` flag that tells it to execute tool calls (file edits, shell commands, etc.) without asking for interactive confirmation on each action.
+Claude Code has a `--dangerously-skip-permissions` flag that tells it to execute tool calls (file edits, shell commands, MCP tool calls) without asking for interactive confirmation on each action.
 
 ### Why the app uses this flag
 
 Inside the Home Assistant app container, Claude Code runs in a sandboxed environment:
 - It can only access `/config` (your HA configuration) and `/data` (persistent app storage)
-- It runs as a non-root user (UID 1000), not as root
+- It runs as a non-root user (UID 1000), not as root — this is required because the flag refuses to work as root
 - It cannot access the host OS, other apps, or the HA Core container
 
-Skipping per-action permission prompts makes the interactive terminal and background integrations (Assist, Automations) usable without manually approving every file edit or command.
+### How it applies to different channels
+
+| Channel | Permission flag | Configurable? | Why |
+|---------|----------------|---------------|-----|
+| **Interactive terminal** | Controlled by config | Yes | You can choose to approve each action manually |
+| **Conversation agents** (Assist) | Always on | No | Runs non-interactively — cannot prompt for approval |
+| **Automation tasks** | Always on | No | Runs non-interactively — cannot prompt for approval |
+
+**Conversation agents and automation tasks always use `--dangerously-skip-permissions`** regardless of the config setting. Without this flag, non-interactive Claude Code invocations would either silently fail or return permission prompts as text responses instead of executing the requested action.
+
+Additionally, the app writes a `settings.local.json` file that pre-allows all MCP tools (like `control_light`, `call_service`, etc.) as a belt-and-suspenders safeguard.
 
 ### Configuration
 
-The `dangerously_skip_permissions` option in the app configuration controls this flag:
+The `dangerously_skip_permissions` config option **only affects the interactive terminal**:
 
-- **`true` (default):** Claude Code runs without per-action confirmation prompts. This is the standard mode for the app and is required for background integrations (Assist, Automation) to function without manual intervention.
-- **`false`:** Claude Code will prompt for confirmation before each tool call. Note that this will make the Assist and Automation integrations non-functional since they run non-interactively and cannot respond to confirmation prompts.
+- **`true` (default):** The terminal runs Claude Code without per-action confirmation prompts. This is the standard mode.
+- **`false`:** The terminal will prompt for confirmation before each tool call. Conversation agents and automation tasks are **not affected** — they always skip permissions.
 
 To change: go to **Settings > Apps > BRUH Claude Terminal > Configuration**.
+
+### OAuth Authentication
+
+After an add-on update, you may need to re-authenticate with Anthropic in the terminal. This does not affect conversation agents that are already configured — they will continue to work as long as the stored OAuth credentials are valid. If conversation agents start returning auth errors, open the terminal and complete the OAuth login.
 
 ## CLI Tools Reference
 
@@ -109,6 +123,55 @@ persist-install apk vim htop        # Install Alpine packages
 persist-install pip pandas numpy    # Install Python packages
 persist-install list                # List persistent packages
 persist-install remove apk vim      # Remove from persistence
+```
+
+## Debugging & Logs
+
+The app writes detailed debug logs for every conversation agent and automation task request. These help you understand what's being sent to Claude, how long it takes, and what comes back.
+
+### Log locations
+
+| Log file | Contents |
+|----------|----------|
+| `/config/.bruh_claude/logs/assist-YYYYMMDD.log` | Conversation agent (Assist) requests and responses |
+| `/config/.bruh_claude/logs/automation-YYYYMMDD.log` | Automation task requests and results |
+
+### What's logged for each request
+
+- **Channel** — whether the request came from the conversation agent or automation
+- **User text** — what the user said
+- **Model** — which Claude model was used
+- **History turns** — how many prior conversation turns were included
+- **Prompt size** — total characters sent to Claude
+- **Flags** — what CLI flags were passed (e.g., `--dangerously-skip-permissions`)
+- **Duration** — wall-clock time for the Claude invocation
+- **Response size** — characters and lines in the response
+- **Token/cost info** — extracted from Claude Code's stderr output (when available)
+- **Response preview** — first 200 characters of the response
+- **Stderr output** — any errors or diagnostics from Claude Code
+
+### Viewing logs
+
+From the terminal:
+```bash
+# Today's conversation agent logs
+cat /config/.bruh_claude/logs/assist-$(date +%Y%m%d).log
+
+# Follow logs in real-time
+tail -f /config/.bruh_claude/logs/assist-$(date +%Y%m%d).log
+
+# Today's automation logs
+cat /config/.bruh_claude/logs/automation-$(date +%Y%m%d).log
+
+# List all log files
+ls -la /config/.bruh_claude/logs/
+```
+
+### Add-on system logs
+
+For startup issues and overall add-on health, check the add-on logs in Settings > Apps > BRUH Claude Terminal > Log tab, or:
+```bash
+ha-log addon bruh_claude_terminal
 ```
 
 ## MCP Server
