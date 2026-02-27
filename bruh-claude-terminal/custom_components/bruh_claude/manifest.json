@@ -8,5 +8,5 @@
   "documentation": "https://github.com/bruhautomation/BRUH-HA-Apps",
   "integration_type": "service",
   "iot_class": "local_polling",
-  "version": "1.6.3"
+  "version": "1.8.0"
 }

@@ -1,5 +1,43 @@
 # Changelog
 
+## 1.8.0
+
+### Anthropic Usage Sensors, Persistent Sessions & Configurable Turns
+
+**Real Anthropic Usage Limit Sensors**
+- New sensors that show your actual Claude account usage — the same data shown on claude.ai Settings > Usage
+- A background tracker (`usage-limits-tracker.py`) queries the Anthropic OAuth usage API every 2 minutes
+- Reads the OAuth token from Claude Code's credentials file automatically
+- New sensors:
+  - Session Usage (%) — 5-hour rolling window utilization percentage
+  - Session Usage Resets At — timestamp when the session window resets
+  - Weekly Usage (%) — 7-day utilization percentage
+  - Weekly Usage Resets At — timestamp when the weekly limit resets
+- Sensors grouped under a "BRUH Claude Usage Limits" device
+- Gracefully shows "unavailable" if Claude Code is not authenticated or using an API key
+
+**Persistent Conversation Sessions**
+- Each conversation agent now maintains a persistent Claude Code session using `--resume`
+- First message creates a new session; subsequent messages resume it with full context
+- Claude remembers conversation history natively — no more re-sending history as text
+- MCP tool state is preserved across messages (no cold-start MCP discovery)
+- Automatic fallback to new session if resume fails (e.g., session deleted)
+- New `bruh_claude.clear_conversation` HA service to reset sessions:
+  - Pass `conversation_id` to clear one specific agent's session
+  - Omit it to clear ALL sessions
+- Session IDs stored in `/config/.bruh_claude/sessions/`
+
+**Configurable Max Turns**
+- Assist max turns increased from 3 to 5 (default)
+- Both `assist_max_turns` and `automation_max_turns` are now configurable via the add-on config UI
+- Assist: 1–20 (default 5), Automation: 1–50 (default 10)
+
+**Per-Model Token Tracking**
+- Token stats tracker now parses model names from JSONL session files
+- Tracks per-model usage (Sonnet, Opus, Haiku) for session and weekly periods
+- Adds estimated session reset time based on session activity window
+- Per-model data available in `token_stats.json` under `models_week` and `models_session` keys
+
 ## 1.6.3
 
 ### Fix Duplicate Sensors & Add Reset Time Sensors

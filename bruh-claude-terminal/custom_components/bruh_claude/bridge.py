@@ -54,6 +54,10 @@ class ClaudeBridge:
         return os.path.join(self._base, RESPONSES_DIR)
 
     @property
+    def clear_sessions_dir(self) -> str:
+        return os.path.join(self._base, "clear_sessions")
+
+    @property
     def tasks_dir(self) -> str:
         return os.path.join(self._base, TASKS_DIR)
 
@@ -117,6 +121,28 @@ class ClaudeBridge:
 
         return response_text
 
+    async def async_clear_conversation(
+        self, conversation_id: str | None = None
+    ) -> None:
+        """Clear a persistent Claude session for a conversation.
+
+        If conversation_id is None, clears ALL sessions.
+        The assist listener watches the clear_sessions/ directory for these signals.
+        """
+        clear_dir = self.clear_sessions_dir
+        if conversation_id:
+            # Clear in-memory history
+            self._conversation_history.pop(conversation_id, None)
+            # Signal the add-on listener to clear the persistent session
+            marker = os.path.join(clear_dir, f"{conversation_id}.clear")
+        else:
+            # Clear all in-memory history
+            self._conversation_history.clear()
+            marker = os.path.join(clear_dir, "_all.clear")
+
+        await self._hass.async_add_executor_job(self._touch_file, marker)
+        _LOGGER.info("Clear session signal written: %s", marker)
+
     async def async_send_task(
         self,
         prompt: str,
@@ -168,6 +194,12 @@ class ClaudeBridge:
     # ------------------------------------------------------------------
     # Synchronous filesystem helpers (run via executor)
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _touch_file(path: str) -> None:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as fh:
+            fh.write("")
 
     @staticmethod
     def _write_json(path: str, data: dict) -> None:

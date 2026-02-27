@@ -2,8 +2,9 @@
 
 Provides:
 - A conversation agent ("BRUH Claude") selectable in Settings > Voice Assistants
-- bruh_claude.send_prompt  — send a one-shot prompt to Claude
-- bruh_claude.run_task     — run a Claude task with optional notification
+- bruh_claude.send_prompt          — send a one-shot prompt to Claude
+- bruh_claude.run_task             — run a Claude task with optional notification
+- bruh_claude.clear_conversation   — clear a persistent conversation session
 """
 
 from __future__ import annotations
@@ -55,6 +56,12 @@ RUN_TASK_SCHEMA = vol.Schema(
         vol.Optional("notify", default=False): bool,
         vol.Optional("notify_entity"): str,
         vol.Optional("timeout"): vol.All(int, vol.Range(min=10, max=600)),
+    }
+)
+
+CLEAR_CONVERSATION_SCHEMA = vol.Schema(
+    {
+        vol.Optional("conversation_id"): str,
     }
 )
 
@@ -251,6 +258,15 @@ def _register_services(hass: HomeAssistant) -> None:
 
         return {"response": result}
 
+    async def handle_clear_conversation(call: ServiceCall):
+        bridge = _get_bridge(hass)
+        conversation_id = call.data.get("conversation_id")
+        await bridge.async_clear_conversation(conversation_id)
+        _LOGGER.info(
+            "Cleared conversation session: %s",
+            conversation_id or "ALL",
+        )
+
     extra_kwargs: dict = {}
     if SupportsResponse is not None:
         extra_kwargs["supports_response"] = SupportsResponse.OPTIONAL
@@ -269,4 +285,11 @@ def _register_services(hass: HomeAssistant) -> None:
         handle_run_task,
         schema=RUN_TASK_SCHEMA,
         **extra_kwargs,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "clear_conversation",
+        handle_clear_conversation,
+        schema=CLEAR_CONVERSATION_SCHEMA,
     )

@@ -10,6 +10,12 @@
 # Request format:  {"id": "<uuid>", "text": "user message", "type": "conversation", "system_prompt": "optional"}
 # Response format: {"id": "<uuid>", "text": "claude response"}
 #
+# Persistent sessions:
+#   Each conversation_id maps to a Claude Code session via --resume.
+#   The first message creates a new session; subsequent messages resume it.
+#   Sessions persist until the user explicitly clears them (via the HA service)
+#   or a file in /config/.bruh_claude/clear_sessions/ triggers cleanup.
+#
 # Permissions:
 #   This listener does NOT use --dangerously-skip-permissions. Instead, tool
 #   permissions are granted via /config/.claude/settings.local.json, which
@@ -22,13 +28,16 @@ SUPERVISOR_TOKEN="${SUPERVISOR_TOKEN:-}"
 SHARED_DIR="/config/.bruh_claude"
 REQUESTS_DIR="$SHARED_DIR/requests"
 RESPONSES_DIR="$SHARED_DIR/responses"
+SESSIONS_DIR="$SHARED_DIR/sessions"
+CLEAR_DIR="$SHARED_DIR/clear_sessions"
 LOG_DIR="$SHARED_DIR/logs"
 
-# Maximum number of agentic turns per request.  Keeps responses fast:
-# typically 1 turn to read entities + 1 turn to call a service + 1 to respond.
-MAX_TURNS=3
+# Maximum number of agentic turns per request.
+# Configurable via the add-on's assist_max_turns option.
+# Default 5: enough for entity lookup + service call + follow-up + response.
+MAX_TURNS="${BRUH_ASSIST_MAX_TURNS:-5}"
 
-mkdir -p "$REQUESTS_DIR" "$RESPONSES_DIR" "$LOG_DIR"
+mkdir -p "$REQUESTS_DIR" "$RESPONSES_DIR" "$SESSIONS_DIR" "$CLEAR_DIR" "$LOG_DIR"
 
 # Source the Claude environment written by run.sh
 # This ensures HOME, ANTHROPIC_CONFIG_DIR, etc. are set correctly
@@ -51,7 +60,51 @@ fi
 
 bashio::log.info "Assist listener starting (UID=$(id -u), claude=$CLAUDE_BIN, max_turns=$MAX_TURNS)..."
 bashio::log.info "Watching $REQUESTS_DIR for conversation requests"
+bashio::log.info "Persistent sessions: $SESSIONS_DIR"
 bashio::log.info "Debug logs: $LOG_DIR/assist-*.log"
+
+# ---------------------------------------------------------------------------
+# Session management
+# ---------------------------------------------------------------------------
+
+# Get the Claude session ID for a conversation, or empty string if none.
+get_session_id() {
+    local conv_id="$1"
+    local session_file="$SESSIONS_DIR/${conv_id}.session"
+    if [ -f "$session_file" ]; then
+        cat "$session_file"
+    fi
+}
+
+# Save the Claude session ID for a conversation.
+save_session_id() {
+    local conv_id="$1"
+    local session_id="$2"
+    echo "$session_id" > "$SESSIONS_DIR/${conv_id}.session"
+}
+
+# Clear a session for a conversation.
+clear_session() {
+    local conv_id="$1"
+    rm -f "$SESSIONS_DIR/${conv_id}.session"
+    bashio::log.info "Cleared session for conversation: $conv_id"
+}
+
+# Process any pending session clear requests.
+process_clear_requests() {
+    for clear_file in "$CLEAR_DIR"/*.clear; do
+        [ -f "$clear_file" ] || continue
+        local conv_id
+        conv_id=$(basename "$clear_file" .clear)
+        if [ "$conv_id" = "_all" ]; then
+            rm -f "$SESSIONS_DIR"/*.session
+            bashio::log.info "Cleared ALL conversation sessions"
+        else
+            clear_session "$conv_id"
+        fi
+        rm -f "$clear_file"
+    done
+}
 
 # Format conversation history from JSON array into a readable transcript
 format_history() {
@@ -69,8 +122,9 @@ log_request_debug() {
     local req_id="$1"
     local text="$2"
     local model="$3"
-    local history_turns="$4"
-    local prompt_chars="$5"
+    local session_id="$4"
+    local is_resume="$5"
+    local prompt_chars="$6"
     local log_file="$LOG_DIR/assist-$(date +%Y%m%d).log"
 
     {
@@ -79,7 +133,8 @@ log_request_debug() {
         echo "  Channel:  conversation_agent"
         echo "  Text:     $text"
         echo "  Model:    ${model:-default}"
-        echo "  History:  $history_turns turns"
+        echo "  Session:  ${session_id:-new}"
+        echo "  Resume:   $is_resume"
         echo "  Prompt:   $prompt_chars chars"
         echo "  MaxTurns: $MAX_TURNS"
     } >> "$log_file"
@@ -91,6 +146,7 @@ log_response_debug() {
     local response="$2"
     local duration="$3"
     local stderr_output="$4"
+    local session_id="$5"
     local log_file="$LOG_DIR/assist-$(date +%Y%m%d).log"
 
     local response_chars=${#response}
@@ -105,14 +161,15 @@ log_response_debug() {
 
     {
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] RESPONSE $req_id"
-        echo "  Duration: ${duration}s"
-        echo "  Response: $response_chars chars, $response_lines lines"
+        echo "  Duration:  ${duration}s"
+        echo "  Session:   ${session_id:-unknown}"
+        echo "  Response:  $response_chars chars, $response_lines lines"
         if [ -n "$token_info" ]; then
-            echo "  Tokens:   $token_info"
+            echo "  Tokens:    $token_info"
         fi
-        echo "  Preview:  ${response:0:200}"
+        echo "  Preview:   ${response:0:200}"
         if [ -n "$stderr_output" ]; then
-            echo "  Stderr:   ${stderr_output:0:500}"
+            echo "  Stderr:    ${stderr_output:0:500}"
         fi
         echo "----------------------------------------------------------------"
     } >> "$log_file"
@@ -144,13 +201,13 @@ process_request() {
     # Remove request file immediately so we don't re-process it
     rm -f "$req_file"
 
-    # Format conversation history if present
-    local history_text
-    history_text=$(format_history "$history_json")
-    local history_turns=0
-    if [ -n "$history_text" ]; then
-        history_turns=$(echo "$history_json" | jq 'length / 2 | floor' 2>/dev/null || echo 0)
-    fi
+    # Process any pending session clear requests
+    process_clear_requests
+
+    # Check for an existing Claude session for this conversation
+    local claude_session
+    claude_session=$(get_session_id "$req_id")
+    local is_resume="false"
 
     # System prompt for Claude: kept concise for speed.
     # MCP tool details are discovered automatically from the server;
@@ -168,15 +225,30 @@ Keep responses concise."
 ${base_system_prompt}"
     fi
 
-    # Build the user message, including conversation history for context
+    # Build the user message and Claude flags depending on session state
     local user_message
-    if [ -n "$history_text" ]; then
-        user_message="Previous conversation:
+    local resume_flag=""
+    local system_flag=""
+
+    if [ -n "$claude_session" ]; then
+        # Resume existing session — Claude already has conversation history
+        user_message="$text"
+        resume_flag="--resume $claude_session"
+        is_resume="true"
+        bashio::log.info "Resuming session [$claude_session] for [$req_id]"
+    else
+        # New session — include conversation history if present for first message
+        local history_text
+        history_text=$(format_history "$history_json")
+        if [ -n "$history_text" ]; then
+            user_message="Previous conversation:
 ${history_text}
 
 USER: ${text}"
-    else
-        user_message="$text"
+        else
+            user_message="$text"
+        fi
+        system_flag="--system-prompt"
     fi
 
     # Build model flag (each conversation agent can specify its own model)
@@ -186,7 +258,7 @@ USER: ${text}"
     fi
 
     # Log the request for debugging
-    log_request_debug "$req_id" "$text" "$model" "$history_turns" "${#user_message}"
+    log_request_debug "$req_id" "$text" "$model" "$claude_session" "$is_resume" "${#user_message}"
 
     local output_file stderr_file
     output_file=$(mktemp)
@@ -194,24 +266,78 @@ USER: ${text}"
 
     # Run Claude in print mode from /config so it finds .mcp.json for HA tools
     # and .claude/settings.local.json for pre-approved tool permissions.
+    # Use --output-format json to capture the session_id for persistence.
     # --max-turns keeps responses fast by limiting agentic loops.
     # No --dangerously-skip-permissions: permissions come from settings.local.json.
     local start_time
     start_time=$(date +%s)
 
-    # shellcheck disable=SC2086
-    (cd /config && printf '%s' "$user_message" | ${CLAUDE_BIN} -p --verbose --max-turns "$MAX_TURNS" --system-prompt "$final_system_prompt" ${model_flag} > "$output_file" 2>"$stderr_file") || true
+    local exit_code=0
+    if [ -n "$resume_flag" ]; then
+        # Resume existing session — no system prompt needed
+        # shellcheck disable=SC2086
+        (cd /config && printf '%s' "$user_message" | ${CLAUDE_BIN} -p --output-format json --verbose --max-turns "$MAX_TURNS" ${resume_flag} ${model_flag} > "$output_file" 2>"$stderr_file") || exit_code=$?
+    else
+        # New session — include system prompt
+        # shellcheck disable=SC2086
+        (cd /config && printf '%s' "$user_message" | ${CLAUDE_BIN} -p --output-format json --verbose --max-turns "$MAX_TURNS" ${system_flag} "$final_system_prompt" ${model_flag} > "$output_file" 2>"$stderr_file") || exit_code=$?
+    fi
 
     local end_time duration
     end_time=$(date +%s)
     duration=$((end_time - start_time))
 
-    local response stderr_output
-    response=$(cat "$output_file" 2>/dev/null || echo "")
+    local raw_output stderr_output response new_session_id
+    raw_output=$(cat "$output_file" 2>/dev/null || echo "")
     stderr_output=$(cat "$stderr_file" 2>/dev/null || echo "")
     rm -f "$output_file" "$stderr_file"
 
-    # If response is empty, something went wrong — check stderr for clues
+    # Parse JSON output to extract result and session_id
+    response=$(echo "$raw_output" | jq -r '.result // empty' 2>/dev/null)
+    new_session_id=$(echo "$raw_output" | jq -r '.session_id // empty' 2>/dev/null)
+
+    # If JSON parsing failed, treat the raw output as plain text (fallback)
+    if [ -z "$response" ] && [ -n "$raw_output" ]; then
+        response="$raw_output"
+    fi
+
+    # Save the session ID for future requests
+    if [ -n "$new_session_id" ]; then
+        save_session_id "$req_id" "$new_session_id"
+        bashio::log.info "Session saved: $req_id -> $new_session_id"
+    fi
+
+    # If resume failed (empty response + non-zero exit), retry as new session
+    if [ -z "$response" ] && [ "$is_resume" = "true" ]; then
+        bashio::log.warning "Resume failed for [$req_id], retrying as new session..."
+        clear_session "$req_id"
+
+        output_file=$(mktemp)
+        stderr_file=$(mktemp)
+        start_time=$(date +%s)
+
+        # shellcheck disable=SC2086
+        (cd /config && printf '%s' "$text" | ${CLAUDE_BIN} -p --output-format json --verbose --max-turns "$MAX_TURNS" --system-prompt "$final_system_prompt" ${model_flag} > "$output_file" 2>"$stderr_file") || true
+
+        end_time=$(date +%s)
+        duration=$((end_time - start_time))
+
+        raw_output=$(cat "$output_file" 2>/dev/null || echo "")
+        stderr_output=$(cat "$stderr_file" 2>/dev/null || echo "")
+        rm -f "$output_file" "$stderr_file"
+
+        response=$(echo "$raw_output" | jq -r '.result // empty' 2>/dev/null)
+        new_session_id=$(echo "$raw_output" | jq -r '.session_id // empty' 2>/dev/null)
+
+        if [ -z "$response" ] && [ -n "$raw_output" ]; then
+            response="$raw_output"
+        fi
+        if [ -n "$new_session_id" ]; then
+            save_session_id "$req_id" "$new_session_id"
+        fi
+    fi
+
+    # If response is still empty, something went wrong — check stderr for clues
     if [ -z "$response" ]; then
         bashio::log.error "Empty response for [$req_id] after ${duration}s"
         bashio::log.error "Stderr: ${stderr_output:0:500}"
@@ -225,9 +351,9 @@ USER: ${text}"
     fi
 
     # Log the response for debugging
-    log_response_debug "$req_id" "$response" "$duration" "$stderr_output"
+    log_response_debug "$req_id" "$response" "$duration" "$stderr_output" "${new_session_id:-$claude_session}"
 
-    bashio::log.info "Assist response [$req_id]: ${duration}s, ${#response} chars"
+    bashio::log.info "Assist response [$req_id]: ${duration}s, ${#response} chars (session=${new_session_id:-$claude_session:-new})"
 
     # Check for auth errors in the response text
     if echo "$response" | grep -qi "not logged in\|please log in\|authentication required"; then

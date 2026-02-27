@@ -144,6 +144,11 @@ init_environment() {
     # the token from the s6 environment for any reason.
     #
     # NOTE: BRUH_CLAUDE_PERMS_FLAG is used by the interactive terminal only.
+    local assist_max_turns
+    assist_max_turns=$(bashio::config 'assist_max_turns' '5')
+    local automation_max_turns
+    automation_max_turns=$(bashio::config 'automation_max_turns' '10')
+
     local env_file="/data/.bruh_claude_env"
     cat > "$env_file" << ENVEOF
 export HOME="${data_home}"
@@ -159,6 +164,8 @@ export SUPERVISOR_TOKEN="${SUPERVISOR_TOKEN}"
 export HA_TOKEN="${SUPERVISOR_TOKEN}"
 export HA_BASE_URL="http://supervisor/core/api"
 export SUPERVISOR_API_URL="http://supervisor"
+export BRUH_ASSIST_MAX_TURNS="${assist_max_turns}"
+export BRUH_AUTOMATION_MAX_TURNS="${automation_max_turns}"
 ENVEOF
     chmod 600 "$env_file"
 
@@ -690,6 +697,8 @@ deploy_custom_integration() {
              /config/.bruh_claude/responses \
              /config/.bruh_claude/tasks \
              /config/.bruh_claude/task_results \
+             /config/.bruh_claude/sessions \
+             /config/.bruh_claude/clear_sessions \
              /config/.bruh_claude/logs
 
     # Rotate old debug logs (keep last 7 days)
@@ -836,6 +845,22 @@ start_token_stats_tracker() {
         bashio::log.info "Token stats tracker started (writes to /config/.bruh_claude/token_stats.json)"
     else
         bashio::log.warning "Token stats tracker script not found, skipping"
+    fi
+}
+
+# ============================================================================
+# Usage Limits Tracker (real Anthropic account data)
+# ============================================================================
+
+start_usage_limits_tracker() {
+    bashio::log.info "Starting Anthropic usage limits tracker..."
+
+    if [ -f "/opt/scripts/usage-limits-tracker.py" ]; then
+        # Run as the claude user so it can read OAuth credentials from ~/.claude/
+        su-exec claude python3 /opt/scripts/usage-limits-tracker.py &
+        bashio::log.info "Usage limits tracker started (writes to /config/.bruh_claude/usage_limits.json)"
+    else
+        bashio::log.warning "Usage limits tracker script not found, skipping"
     fi
 }
 
@@ -993,7 +1018,7 @@ trap cleanup SIGTERM SIGINT EXIT
 
 main() {
     bashio::log.info "============================================"
-    bashio::log.info "  BRUH Claude Terminal v1.6.3"
+    bashio::log.info "  BRUH Claude Terminal v1.8.0"
     bashio::log.info "  Enhanced Claude Code for Home Assistant"
     bashio::log.info "============================================"
 
@@ -1009,6 +1034,7 @@ main() {
     setup_mcp_server
     deploy_custom_integration
     start_token_stats_tracker
+    start_usage_limits_tracker
     setup_assist_integration
     setup_automation_integration
     start_web_terminal

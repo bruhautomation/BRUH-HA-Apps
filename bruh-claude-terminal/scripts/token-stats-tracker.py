@@ -9,6 +9,9 @@ Token counts (input_tokens, output_tokens, cache_*) are the real values
 returned by the Anthropic API in each response's ``usage`` field — they
 are not estimated.
 
+Also tracks per-model usage (Sonnet, Opus, Haiku) and estimates
+session reset times based on session activity windows.
+
 Output: /config/.bruh_claude/token_stats.json
 """
 
@@ -32,6 +35,37 @@ SESSION_DIRS = [
     os.path.join(CLAUDE_HOME, ".claude", "projects"),
     os.path.join(CLAUDE_HOME, ".claude"),
 ]
+
+
+# ---------------------------------------------------------------------------
+# Model classification
+# ---------------------------------------------------------------------------
+
+# Map model ID substrings to model family names.
+# Claude API model IDs look like: claude-sonnet-4-20250514, claude-opus-4-20250514, etc.
+MODEL_FAMILIES = {
+    "opus": "opus",
+    "sonnet": "sonnet",
+    "haiku": "haiku",
+}
+
+# Session window duration — Anthropic's rolling session window is approximately
+# 5 hours for most plans.  This is used to estimate when the session resets.
+SESSION_WINDOW_HOURS = int(os.environ.get("SESSION_WINDOW_HOURS", "5"))
+
+
+def classify_model(model_id):
+    """Classify a model ID string into a model family (sonnet, opus, haiku).
+
+    Returns 'unknown' if the model can't be classified.
+    """
+    if not model_id:
+        return "unknown"
+    model_lower = model_id.lower()
+    for substring, family in MODEL_FAMILIES.items():
+        if substring in model_lower:
+            return family
+    return "unknown"
 
 
 # ---------------------------------------------------------------------------
@@ -92,6 +126,10 @@ def parse_session_file(path):
                 timestamp_str = record.get("timestamp", "")
                 session_id = record.get("sessionId", "")
 
+                # Extract model name from the message or record
+                model_id = msg.get("model", "") or record.get("model", "")
+                model_family = classify_model(model_id)
+
                 entries.append({
                     "session_id": session_id,
                     "timestamp": timestamp_str,
@@ -99,6 +137,8 @@ def parse_session_file(path):
                     "output_tokens": output_tokens,
                     "cache_creation_tokens": cache_creation,
                     "cache_read_tokens": cache_read,
+                    "model": model_id,
+                    "model_family": model_family,
                 })
     except OSError:
         pass
@@ -177,14 +217,29 @@ def aggregate_stats(all_entries):
             week_session_ids.add(sid)
     week_stats["session_count"] = len(week_session_ids)
 
+    # Estimate session reset time based on first activity in the current session
+    session_reset_at = None
+    if session_dts:
+        session_start = min(session_dts)
+        session_reset_at = (session_start + timedelta(hours=SESSION_WINDOW_HOURS)).isoformat()
+    session_stats["reset_at"] = session_reset_at
+
     # All-time stats
     all_time_stats = _sum_entries(all_entries)
+
+    # Per-model weekly stats
+    models_week = _per_model_stats(week_entries)
+
+    # Per-model session stats
+    models_session = _per_model_stats(session_entries)
 
     return {
         "session": session_stats,
         "today": today_stats,
         "week": week_stats,
         "all_time": all_time_stats,
+        "models_week": models_week,
+        "models_session": models_session,
         "total_sessions": len(sessions),
         "updated_at": now.isoformat(),
     }
@@ -202,6 +257,30 @@ def _sum_entries(entries):
         "cache_read_tokens": sum(e.get("cache_read_tokens", 0) for e in entries),
         "message_count": len(entries),
     }
+
+
+def _per_model_stats(entries):
+    """Group entries by model family and sum token counts for each.
+
+    Returns a dict keyed by model family (sonnet, opus, haiku, unknown)
+    with the same structure as _sum_entries.
+    """
+    by_family = {}
+    for e in entries:
+        family = e.get("model_family", "unknown")
+        if family not in by_family:
+            by_family[family] = []
+        by_family[family].append(e)
+
+    result = {}
+    for family, family_entries in by_family.items():
+        stats = _sum_entries(family_entries)
+        # Include the most recently seen full model ID for reference
+        model_ids = [e.get("model", "") for e in family_entries if e.get("model")]
+        if model_ids:
+            stats["model_id"] = model_ids[-1]
+        result[family] = stats
+    return result
 
 
 # ---------------------------------------------------------------------------

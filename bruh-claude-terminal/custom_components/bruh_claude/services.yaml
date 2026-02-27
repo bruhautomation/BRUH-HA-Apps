@@ -48,3 +48,13 @@ run_task:
           min: 10
           max: 600
           unit_of_measurement: seconds
+
+clear_conversation:
+  name: Clear conversation
+  description: Clear a persistent Claude conversation session. This resets the conversation history so the next message starts fresh. If no conversation_id is provided, ALL sessions are cleared.
+  fields:
+    conversation_id:
+      name: Conversation ID
+      description: The conversation ID to clear. Leave empty to clear all sessions.
+      selector:
+        text:
