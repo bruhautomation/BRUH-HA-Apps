@@ -166,6 +166,8 @@ export HA_BASE_URL="http://supervisor/core/api"
 export SUPERVISOR_API_URL="http://supervisor"
 export BRUH_ASSIST_MAX_TURNS="${assist_max_turns}"
 export BRUH_AUTOMATION_MAX_TURNS="${automation_max_turns}"
+export CLAUDE_CODE_DISABLE_MCP_DISCOVERY=1
+export CLAUDE_MCP_SERVERS_OVERRIDE="/config/.mcp.json"
 ENVEOF
     chmod 600 "$env_file"
 
@@ -538,19 +540,66 @@ setup_context_generation() {
 # Claude Code Plugin / Config Cleanup
 # ============================================================================
 
-cleanup_broken_plugins() {
-    bashio::log.info "Checking for broken Claude Code plugin configurations..."
+cleanup_all_mcp_references() {
+    bashio::log.info "Deep cleaning ALL /api/mcp references..."
 
-    # Claude Code stores plugin references in settings files.
-    # The broken "homeassistant-config@claude-homeassistant-plugins" plugin
-    # tries to connect to HA's /api/mcp endpoint with invalid auth, causing
-    # "invalid authentication" errors in HA logs.  Remove it if found.
-    local cleaned=false
+    # -------------------------------------------------------------------------
+    # 1. Clear persistent conversation sessions so --resume starts fresh.
+    #    This is the critical fix for the v1.8.0 regression: resumed sessions
+    #    cache stale MCP server connection state that survives .mcp.json cleanup.
+    # -------------------------------------------------------------------------
+    local sessions_dir="/config/.bruh_claude/sessions"
+    if [ -d "$sessions_dir" ]; then
+        local session_count
+        session_count=$(find "$sessions_dir" -name "*.session" -type f 2>/dev/null | wc -l)
+        if [ "$session_count" -gt 0 ]; then
+            rm -f "$sessions_dir"/*.session
+            bashio::log.info "  Cleared $session_count persistent conversation sessions"
+        fi
+    fi
 
-    # Search all Claude Code settings/config directories for plugin references
+    # -------------------------------------------------------------------------
+    # 2. Clean Claude Code's internal project state that caches MCP connections.
+    #    Project configs live in hashed subdirectories like
+    #    ~/.claude/projects/<sha256-hash>/settings.json and .mcp.json.
+    #    The previous maxdepth-4 search could miss deeply nested entries.
+    # -------------------------------------------------------------------------
+    local claude_projects="/data/home/.claude/projects"
+    if [ -d "$claude_projects" ]; then
+        find "$claude_projects" -type f -name "*.json" -print0 2>/dev/null | \
+        while IFS= read -r -d '' f; do
+            if grep -q "/api/mcp\|homeassistant-config\|claude-homeassistant-plugins" "$f" 2>/dev/null; then
+                bashio::log.info "  Cleaning project config: $f"
+                local tmp
+                tmp=$(mktemp)
+                if jq '
+                    # Remove mcpServers entries pointing to /api/mcp
+                    if .mcpServers then
+                        .mcpServers |= with_entries(
+                            select(
+                                .key != "homeassistant-config" and
+                                ((.value | tostring) | contains("/api/mcp") | not)
+                            )
+                        )
+                    else . end |
+                    # Remove plugin/extension marketplace references
+                    del(.plugins) | del(.extensions)
+                ' "$f" > "$tmp" 2>/dev/null; then
+                    mv "$tmp" "$f"
+                    chown claude:claude "$f" 2>/dev/null || true
+                else
+                    rm -f "$tmp"
+                fi
+            fi
+        done
+    fi
+
+    # -------------------------------------------------------------------------
+    # 3. Clean ALL settings/config directories (broader search than before).
+    #    Use unlimited depth to catch configs in deeply nested project hashes.
+    # -------------------------------------------------------------------------
     local search_dirs=(
         "/data/.config/claude"
-        "/data/home/.claude"
         "/data/home/.config/claude"
         "/config/.claude"
         "/root/.claude"
@@ -560,29 +609,9 @@ cleanup_broken_plugins() {
     for dir in "${search_dirs[@]}"; do
         [ -d "$dir" ] || continue
 
-        # Search deep — Claude Code can nest project configs several levels
-        # (e.g. /data/.config/claude/projects/<hash>/settings.json)
         while IFS= read -r -d '' config_file; do
-            # Pass 1: Remove plugin/extension marketplace references
-            if grep -q "claude-homeassistant-plugins\|homeassistant-config" "$config_file" 2>/dev/null; then
-                bashio::log.info "  Found broken plugin reference in: $config_file"
-                local tmp_file
-                tmp_file=$(mktemp)
-                if jq 'del(.plugins) | del(.extensions)' "$config_file" > "$tmp_file" 2>/dev/null; then
-                    mv "$tmp_file" "$config_file"
-                    chown claude:claude "$config_file" 2>/dev/null || true
-                    bashio::log.info "  Removed broken plugin entries from $config_file"
-                    cleaned=true
-                else
-                    rm -f "$tmp_file"
-                    bashio::log.warning "  Could not clean $config_file — manual removal may be needed"
-                fi
-            fi
-
-            # Pass 2: Remove any mcpServers entries pointing to /api/mcp
-            # Stringify entire value to catch URLs in any field (url, serverUrl, uri, args, env, etc.)
-            if grep -q "/api/mcp" "$config_file" 2>/dev/null; then
-                bashio::log.info "  Found /api/mcp reference in: $config_file"
+            if grep -q "claude-homeassistant-plugins\|homeassistant-config\|/api/mcp" "$config_file" 2>/dev/null; then
+                bashio::log.info "  Found stale reference in: $config_file"
                 local tmp_file
                 tmp_file=$(mktemp)
                 if jq '
@@ -593,82 +622,43 @@ cleanup_broken_plugins() {
                                 ((.value | tostring) | contains("/api/mcp") | not)
                             )
                         )
-                    else . end
+                    else . end |
+                    del(.plugins) | del(.extensions)
                 ' "$config_file" > "$tmp_file" 2>/dev/null; then
                     mv "$tmp_file" "$config_file"
                     chown claude:claude "$config_file" 2>/dev/null || true
-                    bashio::log.info "  Cleaned /api/mcp entries from $config_file"
-                    cleaned=true
                 else
                     rm -f "$tmp_file"
                 fi
             fi
-        done < <(find "$dir" -maxdepth 4 -name "*.json" -type f -print0 2>/dev/null)
+        done < <(find "$dir" -name "*.json" -type f -print0 2>/dev/null)
     done
 
-    # Also clean stale MCP server entries from well-known .mcp.json locations.
-    # The broken "claude-homeassistant-plugins" marketplace plugin registers an
-    # mcpServers entry using SSE transport to /api/mcp with httpx, causing
-    # "invalid authentication" errors and blocking all conversation responses.
-    local mcp_files=(
-        "/config/.mcp.json"
-        "/data/home/.mcp.json"
-        "/data/home/.claude.json"
-        "/data/home/.config/claude/.mcp.json"
-        "/root/.mcp.json"
-        "/root/.claude.json"
-    )
-
-    for mcp_file in "${mcp_files[@]}"; do
-        [ -f "$mcp_file" ] || continue
-        if grep -q "/api/mcp\|homeassistant-config" "$mcp_file" 2>/dev/null; then
-            bashio::log.info "  Found stale MCP server entry in: $mcp_file"
-            local tmp_file
-            tmp_file=$(mktemp)
-            if jq '
-                if .mcpServers then
-                    .mcpServers |= with_entries(
-                        select(
-                            .key != "homeassistant-config" and
-                            ((.value | tostring) | contains("/api/mcp") | not)
-                        )
-                    )
-                else . end
-            ' "$mcp_file" > "$tmp_file" 2>/dev/null; then
-                mv "$tmp_file" "$mcp_file"
-                chown claude:claude "$mcp_file" 2>/dev/null || true
-                bashio::log.info "  Removed stale MCP server entries from $mcp_file"
-                cleaned=true
-            else
-                rm -f "$tmp_file"
-                bashio::log.warning "  Could not clean $mcp_file — manual removal may be needed"
-            fi
+    # -------------------------------------------------------------------------
+    # 4. Clean ALL .mcp.json files anywhere in /data, /config, /root.
+    #    Our canonical config at /config/.mcp.json is skipped — it gets
+    #    overwritten clean by setup_mcp_server() later in the startup flow.
+    # -------------------------------------------------------------------------
+    find /data /config /root -name ".mcp.json" -type f -print0 2>/dev/null | \
+    while IFS= read -r -d '' f; do
+        [ "$f" = "/config/.mcp.json" ] && continue
+        if grep -q "/api/mcp\|homeassistant-config" "$f" 2>/dev/null; then
+            bashio::log.info "  Removing stale MCP config: $f"
+            rm -f "$f"
         fi
     done
 
-    # Remove the broken npm plugin package if it's installed.
-    # This prevents runtime re-registration of the SSE MCP server.
-    local plugin_dirs=(
-        "/data/home/.claude/plugins/claude-homeassistant-plugins"
-        "/data/home/.claude/extensions/claude-homeassistant-plugins"
-        "/data/home/.local/share/claude/plugins/claude-homeassistant-plugins"
-        "/data/home/node_modules/claude-homeassistant-plugins"
-        "/data/home/.npm-global/lib/node_modules/claude-homeassistant-plugins"
-        "/root/.npm-global/lib/node_modules/claude-homeassistant-plugins"
-    )
-    for pkg_dir in "${plugin_dirs[@]}"; do
-        if [ -d "$pkg_dir" ]; then
-            bashio::log.info "  Removing broken plugin package: $pkg_dir"
-            rm -rf "$pkg_dir"
-            cleaned=true
-        fi
+    # -------------------------------------------------------------------------
+    # 5. Remove the broken npm plugin package from ALL possible locations.
+    #    Use find to catch any installation path, not just hardcoded ones.
+    # -------------------------------------------------------------------------
+    find /data /root -type d -name "claude-homeassistant-plugins" -print0 2>/dev/null | \
+    while IFS= read -r -d '' d; do
+        bashio::log.info "  Removing plugin directory: $d"
+        rm -rf "$d"
     done
 
-    if [ "$cleaned" = true ]; then
-        bashio::log.info "Broken plugin configurations cleaned up"
-    else
-        bashio::log.info "No broken plugin configurations found"
-    fi
+    bashio::log.info "Deep MCP cleanup complete"
 }
 
 # ============================================================================
@@ -772,6 +762,71 @@ setup_claude_settings() {
 SETTINGS
     chown -R claude:claude "$claude_settings_dir" 2>/dev/null || true
     bashio::log.info "Claude Code project settings written to $claude_settings_dir/settings.local.json"
+}
+
+# Start a background watchdog that monitors for /api/mcp entries being
+# re-created by Claude Code or plugins after our cleanup.  This helps
+# pinpoint the root cause if the broken entry keeps coming back.
+start_mcp_watchdog() {
+    bashio::log.info "Starting MCP watchdog (checks every 30s for /api/mcp re-creation)..."
+    touch /tmp/.mcp_watchdog_marker
+    (
+        while true; do
+            sleep 30
+            # Check all MCP/settings configs modified since last check
+            find /data /config /root -name "*.json" \
+                -newer /tmp/.mcp_watchdog_marker \
+                -type f -print0 2>/dev/null | \
+            while IFS= read -r -d '' f; do
+                if grep -q "/api/mcp" "$f" 2>/dev/null; then
+                    bashio::log.error "MCP WATCHDOG: /api/mcp found in $f (modified after startup)"
+                    bashio::log.error "  Content: $(head -20 "$f" 2>/dev/null)"
+                    # Auto-clean: remove the offending entry immediately
+                    if echo "$f" | grep -q "\.mcp\.json$"; then
+                        # For .mcp.json files, remove and let setup_mcp_server() pattern rewrite
+                        if [ "$f" != "/config/.mcp.json" ]; then
+                            rm -f "$f"
+                            bashio::log.info "MCP WATCHDOG: Removed $f"
+                        else
+                            # Rewrite the canonical config clean
+                            cat > "$f" << 'WATCHDOG_MCP'
+{
+  "mcpServers": {
+    "home-assistant": {
+      "command": "python3",
+      "args": ["/opt/ha-mcp-server/ha_mcp_server.py"]
+    }
+  }
+}
+WATCHDOG_MCP
+                            chown claude:claude "$f" 2>/dev/null || true
+                            chmod 644 "$f"
+                            bashio::log.info "MCP WATCHDOG: Rewrote $f clean"
+                        fi
+                    else
+                        # For settings/project files, clean with jq
+                        local tmp
+                        tmp=$(mktemp)
+                        if jq '
+                            if .mcpServers then
+                                .mcpServers |= with_entries(
+                                    select((.value | tostring) | contains("/api/mcp") | not)
+                                )
+                            else . end
+                        ' "$f" > "$tmp" 2>/dev/null; then
+                            mv "$tmp" "$f"
+                            chown claude:claude "$f" 2>/dev/null || true
+                            bashio::log.info "MCP WATCHDOG: Cleaned /api/mcp from $f"
+                        else
+                            rm -f "$tmp"
+                        fi
+                    fi
+                fi
+            done
+            touch /tmp/.mcp_watchdog_marker
+        done
+    ) &
+    bashio::log.info "MCP watchdog running (PID=$!)"
 }
 
 # ============================================================================
@@ -1101,7 +1156,7 @@ trap cleanup SIGTERM SIGINT EXIT
 
 main() {
     bashio::log.info "============================================"
-    bashio::log.info "  BRUH Claude Terminal v1.9.0"
+    bashio::log.info "  BRUH Claude Terminal v1.12.0"
     bashio::log.info "  Enhanced Claude Code for Home Assistant"
     bashio::log.info "============================================"
 
@@ -1113,8 +1168,9 @@ main() {
     install_persistent_packages
     setup_auto_backup
     setup_context_generation
-    cleanup_broken_plugins
+    cleanup_all_mcp_references
     setup_mcp_server
+    start_mcp_watchdog
     deploy_custom_integration
     start_usage_limits_tracker
     setup_assist_integration

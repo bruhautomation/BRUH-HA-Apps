@@ -17,6 +17,7 @@ from homeassistant.components.conversation import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import intent
+from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 try:
@@ -62,8 +63,18 @@ class BruhClaudeConversationEntity(ConversationEntity):
         opts = {**config_entry.data, **config_entry.options}
         self._system_prompt = opts.get(CONF_SYSTEM_PROMPT, "")
         self._model = opts.get(CONF_MODEL, DEFAULT_MODEL)
-        self._attr_name = config_entry.data.get(CONF_NAME, DEFAULT_NAME)
+        name = config_entry.data.get(CONF_NAME, DEFAULT_NAME)
+        self._attr_name = "Agent"  # Short — the device name provides context
         self._attr_unique_id = f"{config_entry.entry_id}_conversation"
+
+        # Give each conversation agent its own device so it appears as a
+        # distinct card in Settings > Devices, separate from the usage sensors.
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"agent_{config_entry.entry_id}")},
+            name=name,
+            manufacturer="BRUH Automation",
+            model="Claude Conversation Agent",
+        )
 
     @property
     def supported_languages(self) -> list[str] | str:
