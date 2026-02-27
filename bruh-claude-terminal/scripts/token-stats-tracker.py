@@ -140,18 +140,40 @@ def aggregate_stats(all_entries):
     sorted_sessions = sorted(sessions.keys(), key=session_max_ts, reverse=True)
     latest_session_id = sorted_sessions[0] if sorted_sessions else None
 
+    # Period boundaries
+    today_end = today_start + timedelta(days=1)
+    week_end = week_start + timedelta(days=7)
+
     # Current session stats
     session_entries = sessions.get(latest_session_id, []) if latest_session_id else []
     session_stats = _sum_entries(session_entries)
     session_stats["session_id"] = latest_session_id or ""
 
+    # Session start / last activity times
+    session_dts = [e["_dt"] for e in session_entries if e["_dt"]]
+    if session_dts:
+        session_stats["started_at"] = min(session_dts).isoformat()
+        session_stats["last_activity"] = max(session_dts).isoformat()
+
     # Today's stats
     today_entries = [e for e in all_entries if e["_dt"] and e["_dt"] >= today_start]
     today_stats = _sum_entries(today_entries)
+    today_stats["period_start"] = today_start.isoformat()
+    today_stats["resets_at"] = today_end.isoformat()
 
-    # This week's stats (Monday to now)
+    # This week's stats (Monday to Sunday)
     week_entries = [e for e in all_entries if e["_dt"] and e["_dt"] >= week_start]
     week_stats = _sum_entries(week_entries)
+    week_stats["period_start"] = week_start.isoformat()
+    week_stats["resets_at"] = week_end.isoformat()
+
+    # Count sessions active this week
+    week_session_ids = set()
+    for e in week_entries:
+        sid = e.get("session_id")
+        if sid:
+            week_session_ids.add(sid)
+    week_stats["session_count"] = len(week_session_ids)
 
     # All-time stats
     all_time_stats = _sum_entries(all_entries)

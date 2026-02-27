@@ -43,6 +43,7 @@ SENSOR_TYPES: list[tuple[str, str, str, str | None, SensorStateClass | None, str
     ("today_cost", "Today Cost", "mdi:cash-clock", "USD", SensorStateClass.TOTAL, "today", "cost_usd"),
     ("weekly_total_tokens", "Weekly Total Tokens", "mdi:calendar-week", "tokens", SensorStateClass.TOTAL, "week", "total_tokens"),
     ("weekly_cost", "Weekly Cost", "mdi:cash-multiple", "USD", SensorStateClass.TOTAL, "week", "cost_usd"),
+    ("weekly_session_count", "Weekly Sessions", "mdi:counter", "sessions", SensorStateClass.TOTAL, "week", "session_count"),
     ("all_time_total_tokens", "All Time Total Tokens", "mdi:infinity", "tokens", SensorStateClass.TOTAL_INCREASING, "all_time", "total_tokens"),
     ("all_time_cost", "All Time Cost", "mdi:cash", "USD", SensorStateClass.TOTAL_INCREASING, "all_time", "cost_usd"),
 ]
@@ -115,10 +116,33 @@ class BruhClaudeTokenSensor(SensorEntity):
         """Expose extra detail from the stats file."""
         period_data = self._stats_data.get(self._period_key, {})
         attrs: dict[str, Any] = {}
+
+        # Session-specific: id, start time, last activity
         if self._period_key == "session":
             sid = period_data.get("session_id")
             if sid:
                 attrs["session_id"] = sid
+            started = period_data.get("started_at")
+            if started:
+                attrs["started_at"] = started
+            last_act = period_data.get("last_activity")
+            if last_act:
+                attrs["last_activity"] = last_act
+
+        # Period-based: start and reset times
+        period_start = period_data.get("period_start")
+        if period_start:
+            attrs["period_start"] = period_start
+        resets_at = period_data.get("resets_at")
+        if resets_at:
+            attrs["resets_at"] = resets_at
+
+        # Weekly: session count
+        if self._period_key == "week":
+            sc = period_data.get("session_count")
+            if sc is not None:
+                attrs["session_count"] = sc
+
         msg_count = period_data.get("message_count")
         if msg_count is not None:
             attrs["message_count"] = msg_count
