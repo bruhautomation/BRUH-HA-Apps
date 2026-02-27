@@ -139,6 +139,10 @@ init_environment() {
     # These processes may lose env vars due to with-contenv shebang reloading
     # the s6 container environment, so we persist the critical vars to a file.
     #
+    # SUPERVISOR_TOKEN is included so that the MCP server and HA API calls
+    # always have valid auth, even if the listener process doesn't inherit
+    # the token from the s6 environment for any reason.
+    #
     # NOTE: BRUH_CLAUDE_PERMS_FLAG is used by the interactive terminal only.
     local env_file="/data/.bruh_claude_env"
     cat > "$env_file" << ENVEOF
@@ -151,6 +155,10 @@ export ANTHROPIC_CONFIG_DIR="${claude_config_dir}"
 export ANTHROPIC_HOME="/data"
 export PATH="${data_home}/.local/bin:\${PATH}"
 export BRUH_CLAUDE_PERMS_FLAG="${perms_flag}"
+export SUPERVISOR_TOKEN="${SUPERVISOR_TOKEN}"
+export HA_TOKEN="${SUPERVISOR_TOKEN}"
+export HA_BASE_URL="http://supervisor/core/api"
+export SUPERVISOR_API_URL="http://supervisor"
 ENVEOF
     chmod 600 "$env_file"
 
@@ -194,8 +202,14 @@ setup_claude_user() {
     # Create a wrapper script so `claude` always runs as the non-root user.
     # This satisfies Claude Code's security requirement that
     # --dangerously-skip-permissions cannot be used as root (UID 0).
-    rm -f /usr/local/bin/claude
-    cat > /usr/local/bin/claude << 'WRAPPER'
+    #
+    # The wrapper lives at /usr/local/bin/claude-run (NOT /usr/local/bin/claude)
+    # to prevent Claude Code diagnostics from detecting it as a conflicting
+    # "npm-global" installation.  The interactive terminal and background
+    # listeners reference this wrapper directly.
+    rm -f /usr/local/bin/claude          # remove stale build-time symlink
+    rm -f /usr/local/bin/claude-run      # clean slate
+    cat > /usr/local/bin/claude-run << 'WRAPPER'
 #!/bin/bash
 if [ "$(id -u)" = "0" ]; then
     exec su-exec claude /root/.local/bin/claude "$@"
@@ -203,7 +217,29 @@ else
     exec /root/.local/bin/claude "$@"
 fi
 WRAPPER
-    chmod +x /usr/local/bin/claude
+    chmod +x /usr/local/bin/claude-run
+
+    # Set up shell profile for the claude user so that:
+    # 1. $HOME/.local/bin is in PATH (fixes "not in PATH" diagnostic warning)
+    # 2. SUPERVISOR_TOKEN and HA env vars are available in interactive shells
+    # 3. The `claude` command resolves to the native binary
+    local profile="/data/home/.bashrc"
+    cat > "$profile" << 'PROFILE'
+# BRUH Claude Terminal shell profile (auto-generated at startup)
+export PATH="$HOME/.local/bin:$PATH"
+
+# Source HA environment if available
+if [ -f /data/.bruh_claude_env ]; then
+    . /data/.bruh_claude_env
+fi
+
+# HA API token (inherited from add-on environment)
+if [ -z "$SUPERVISOR_TOKEN" ] && [ -n "$HA_TOKEN" ]; then
+    export SUPERVISOR_TOKEN="$HA_TOKEN"
+fi
+PROFILE
+    chown claude:claude "$profile"
+    chmod 644 "$profile"
 
     bashio::log.info "Claude user configured - claude commands run as non-root (UID 1000)"
 }
@@ -492,6 +528,57 @@ setup_context_generation() {
 }
 
 # ============================================================================
+# Claude Code Plugin / Config Cleanup
+# ============================================================================
+
+cleanup_broken_plugins() {
+    bashio::log.info "Checking for broken Claude Code plugin configurations..."
+
+    # Claude Code stores plugin references in settings files.
+    # The broken "homeassistant-config@claude-homeassistant-plugins" plugin
+    # tries to connect to HA's /api/mcp endpoint with invalid auth, causing
+    # "invalid authentication" errors in HA logs.  Remove it if found.
+    local cleaned=false
+
+    # Search all Claude Code settings/config directories for plugin references
+    local search_dirs=(
+        "/data/.config/claude"
+        "/data/home/.claude"
+        "/config/.claude"
+    )
+
+    for dir in "${search_dirs[@]}"; do
+        [ -d "$dir" ] || continue
+
+        # Look for JSON files containing the broken plugin marketplace reference
+        while IFS= read -r -d '' config_file; do
+            if grep -q "claude-homeassistant-plugins\|homeassistant-config" "$config_file" 2>/dev/null; then
+                bashio::log.info "  Found broken plugin reference in: $config_file"
+
+                # Remove the plugins key from settings if it exists
+                local tmp_file
+                tmp_file=$(mktemp)
+                if jq 'del(.plugins) | del(.extensions)' "$config_file" > "$tmp_file" 2>/dev/null; then
+                    mv "$tmp_file" "$config_file"
+                    chown claude:claude "$config_file" 2>/dev/null || true
+                    bashio::log.info "  Removed broken plugin entries from $config_file"
+                    cleaned=true
+                else
+                    rm -f "$tmp_file"
+                    bashio::log.warning "  Could not clean $config_file — manual removal may be needed"
+                fi
+            fi
+        done < <(find "$dir" -maxdepth 2 -name "*.json" -type f -print0 2>/dev/null)
+    done
+
+    if [ "$cleaned" = true ]; then
+        bashio::log.info "Broken plugin configurations cleaned up"
+    else
+        bashio::log.info "No broken plugin configurations found"
+    fi
+}
+
+# ============================================================================
 # HA MCP Server
 # ============================================================================
 
@@ -542,7 +629,18 @@ setup_mcp_server() {
         bashio::log.info "MCP server config merged into $project_config"
     fi
 
-    bashio::log.info "HA MCP server configured - Claude Code will have real-time HA access"
+    # CRITICAL: Claude Code runs as the 'claude' user (UID 1000) but this
+    # script runs as root.  Without this chown, Claude Code gets EACCES
+    # trying to read .mcp.json and the HA MCP server never loads.
+    chown claude:claude "$project_config" 2>/dev/null || true
+    chmod 644 "$project_config"
+
+    # Log the final state for diagnostics
+    local mcp_owner mcp_perms
+    mcp_owner=$(stat -c '%U:%G' "$project_config" 2>/dev/null || echo "unknown")
+    mcp_perms=$(stat -c '%a' "$project_config" 2>/dev/null || echo "unknown")
+    bashio::log.info "HA MCP server configured (owner=$mcp_owner, perms=$mcp_perms)"
+    bashio::log.info "  Token available: $([ -n "$SUPERVISOR_TOKEN" ] && echo "yes (${#SUPERVISOR_TOKEN} chars)" || echo "NO")"
 
     # Write project-level Claude Code settings that pre-allow all necessary
     # tools.  This is the PRIMARY permission mechanism for background listeners
@@ -800,13 +898,13 @@ get_claude_launch_command() {
     perms_flag=$(get_permissions_flag)
 
     if [ "$auto_launch_claude" = "true" ]; then
-        echo "tmux new-session -A -s claude 'claude ${perms_flag}'"
+        echo "tmux new-session -A -s claude '/usr/local/bin/claude-run ${perms_flag}'"
     else
         if [ -f /usr/local/bin/claude-session-picker ]; then
             echo "tmux new-session -A -s claude-picker '/usr/local/bin/claude-session-picker'"
         else
             bashio::log.warning "Session picker not found, falling back to auto-launch"
-            echo "tmux new-session -A -s claude 'claude ${perms_flag}'"
+            echo "tmux new-session -A -s claude '/usr/local/bin/claude-run ${perms_flag}'"
         fi
     fi
 }
@@ -879,7 +977,7 @@ trap cleanup SIGTERM SIGINT EXIT
 
 main() {
     bashio::log.info "============================================"
-    bashio::log.info "  BRUH Claude Terminal v1.5.3"
+    bashio::log.info "  BRUH Claude Terminal v1.5.6"
     bashio::log.info "  Enhanced Claude Code for Home Assistant"
     bashio::log.info "============================================"
 
@@ -891,6 +989,7 @@ main() {
     install_persistent_packages
     setup_auto_backup
     setup_context_generation
+    cleanup_broken_plugins
     setup_mcp_server
     deploy_custom_integration
     setup_assist_integration

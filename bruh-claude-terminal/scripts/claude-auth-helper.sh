@@ -40,7 +40,7 @@ trap 'rm -f /tmp/claude-auth-code' EXIT
     echo "Code saved. Starting Claude authentication..."
     sleep 1
 
-    echo "$auth_code" | claude
+    echo "$auth_code" | claude-run
 }
 
 read_auth_from_file() {
@@ -59,7 +59,7 @@ read_auth_from_file() {
         echo "Code found. Starting Claude authentication..."
         sleep 1
 
-        echo "$auth_code" | claude
+        echo "$auth_code" | claude-run
 
         rm -f "$auth_file"
         echo "Cleaned up auth code file"
@@ -85,7 +85,7 @@ retry_standard_auth() {
     echo "  - On mobile, long-press may show paste option"
     echo ""
     sleep 2
-    exec claude
+    exec claude-run
 }
 
 main() {
