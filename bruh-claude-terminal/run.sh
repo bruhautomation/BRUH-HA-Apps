@@ -587,6 +587,7 @@ cleanup_broken_plugins() {
     local mcp_files=(
         "/config/.mcp.json"
         "/data/home/.mcp.json"
+        "/data/home/.claude.json"
     )
 
     for mcp_file in "${mcp_files[@]}"; do
