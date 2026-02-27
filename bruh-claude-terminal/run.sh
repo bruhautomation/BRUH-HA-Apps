@@ -10,6 +10,25 @@ set -o pipefail
 # Environment Initialization
 # ============================================================================
 
+# Helper: Replace a real directory with a symlink, salvaging any files first.
+# This is needed because the Claude Code installer may create real directories
+# at paths we need to symlink to persistent storage. `ln -sfn` cannot replace
+# a real directory, so we must remove it first.
+_replace_dir_with_symlink() {
+    local dir_path="$1"
+    local link_dest="$2"
+
+    if [ -d "$dir_path" ] && [ ! -L "$dir_path" ]; then
+        # Real directory found — salvage any auth files to persistent storage
+        if [ "$(ls -A "$dir_path" 2>/dev/null)" ]; then
+            bashio::log.info "  - Salvaging credentials from $dir_path to persistent storage"
+            cp -a "$dir_path"/* "$link_dest/" 2>/dev/null || true
+        fi
+        rm -rf "$dir_path"
+    fi
+    ln -sfn "$link_dest" "$dir_path"
+}
+
 init_environment() {
     local data_home="/data/home"
     local config_dir="/data/.config"
@@ -66,16 +85,39 @@ init_environment() {
     # On add-on updates the container is rebuilt fresh, so any symlinks from the
     # previous container are gone. Re-create them every startup so Claude Code
     # can find auth credentials regardless of which path it checks.
+    #
+    # CRITICAL: The Claude Code installer may create real directories at these
+    # paths during the Docker build. `ln -sfn` CANNOT replace a real directory
+    # with a symlink — it either fails silently or creates a link inside the
+    # directory. We must explicitly remove any real directories first, salvaging
+    # any credential files they might contain.
     mkdir -p /root/.config "$data_home/.config"
-    ln -sfn "$claude_config_dir" /root/.config/claude
-    ln -sfn "$claude_config_dir" /root/.config/anthropic
-    ln -sfn "$claude_config_dir" "$data_home/.config/claude"
-    ln -sfn "$claude_config_dir" "$data_home/.config/anthropic"
 
-    # Claude Code also checks $HOME/.claude/ for settings and credentials
+    local symlink_targets=(
+        "/root/.config/claude"
+        "/root/.config/anthropic"
+        "$data_home/.config/claude"
+        "$data_home/.config/anthropic"
+    )
+
+    for target in "${symlink_targets[@]}"; do
+        _replace_dir_with_symlink "$target" "$claude_config_dir"
+    done
+
+    # Claude Code also checks $HOME/.claude/ for settings and credentials.
+    # This directory lives directly in persistent storage (/data/home/.claude/).
     mkdir -p "$data_home/.claude"
+    # Symlink from /root/.claude → persistent storage
+    _replace_dir_with_symlink "/root/.claude" "$data_home/.claude"
 
     bashio::log.info "  - Auth symlinks refreshed for persistent OAuth"
+
+    # Log credential status for debugging
+    local cred_count
+    cred_count=$(find "$claude_config_dir" -type f 2>/dev/null | wc -l)
+    local claude_dot_count
+    claude_dot_count=$(find "$data_home/.claude" -type f 2>/dev/null | wc -l)
+    bashio::log.info "  - Credential files: $cred_count in $claude_config_dir, $claude_dot_count in $data_home/.claude"
 
     # Install tmux configuration
     if [ -f "/opt/scripts/tmux.conf" ]; then
