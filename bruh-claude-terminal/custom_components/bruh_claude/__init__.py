@@ -40,7 +40,7 @@ try:
 except (OSError, json.JSONDecodeError):
     pass
 
-PLATFORMS = [Platform.CONVERSATION]
+PLATFORMS = [Platform.CONVERSATION, Platform.SENSOR]
 
 SEND_PROMPT_SCHEMA = vol.Schema(
     {

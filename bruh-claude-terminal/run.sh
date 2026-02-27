@@ -824,6 +824,22 @@ notify_restart_required() {
 }
 
 # ============================================================================
+# Token Stats Tracker
+# ============================================================================
+
+start_token_stats_tracker() {
+    bashio::log.info "Starting token usage stats tracker..."
+
+    if [ -f "/opt/scripts/token-stats-tracker.py" ]; then
+        # Run as the claude user so it can read session files in /data/home/.claude/
+        su-exec claude python3 /opt/scripts/token-stats-tracker.py &
+        bashio::log.info "Token stats tracker started (writes to /config/.bruh_claude/token_stats.json)"
+    else
+        bashio::log.warning "Token stats tracker script not found, skipping"
+    fi
+}
+
+# ============================================================================
 # Assist Integration
 # ============================================================================
 
@@ -977,7 +993,7 @@ trap cleanup SIGTERM SIGINT EXIT
 
 main() {
     bashio::log.info "============================================"
-    bashio::log.info "  BRUH Claude Terminal v1.5.6"
+    bashio::log.info "  BRUH Claude Terminal v1.6.0"
     bashio::log.info "  Enhanced Claude Code for Home Assistant"
     bashio::log.info "============================================"
 
@@ -992,6 +1008,7 @@ main() {
     cleanup_broken_plugins
     setup_mcp_server
     deploy_custom_integration
+    start_token_stats_tracker
     setup_assist_integration
     setup_automation_integration
     start_web_terminal
