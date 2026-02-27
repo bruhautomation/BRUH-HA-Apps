@@ -10,11 +10,11 @@
 # Request format:  {"id": "<uuid>", "text": "user message", "type": "conversation", "system_prompt": "optional"}
 # Response format: {"id": "<uuid>", "text": "claude response"}
 #
-# Persistent sessions:
-#   Each conversation_id maps to a Claude Code session via --resume.
-#   The first message creates a new session; subsequent messages resume it.
-#   Sessions persist until the user explicitly clears them (via the HA service)
-#   or a file in /config/.bruh_claude/clear_sessions/ triggers cleanup.
+# Conversation history:
+#   The HA integration (bridge.py) maintains in-memory conversation history
+#   and passes it in the request JSON.  Each invocation of Claude is
+#   independent — no --resume or --output-format json.  This matches the
+#   proven automation-listener pattern.
 #
 # Permissions:
 #   This listener does NOT use --dangerously-skip-permissions. Instead, tool
@@ -28,8 +28,6 @@ SUPERVISOR_TOKEN="${SUPERVISOR_TOKEN:-}"
 SHARED_DIR="/config/.bruh_claude"
 REQUESTS_DIR="$SHARED_DIR/requests"
 RESPONSES_DIR="$SHARED_DIR/responses"
-SESSIONS_DIR="$SHARED_DIR/sessions"
-CLEAR_DIR="$SHARED_DIR/clear_sessions"
 LOG_DIR="$SHARED_DIR/logs"
 
 # Maximum number of agentic turns per request.
@@ -40,11 +38,10 @@ MAX_TURNS="${BRUH_ASSIST_MAX_TURNS:-5}"
 # Process-level timeout for claude -p commands (seconds).
 # Must be shorter than the integration's bridge timeout (default 120s) so the
 # listener always has time to write an error response file before the bridge
-# gives up polling.  Without this, a hung MCP connection causes claude -p to
-# block forever and no response file is ever written.
+# gives up polling.
 CLAUDE_TIMEOUT="${BRUH_ASSIST_TIMEOUT:-105}"
 
-mkdir -p "$REQUESTS_DIR" "$RESPONSES_DIR" "$SESSIONS_DIR" "$CLEAR_DIR" "$LOG_DIR"
+mkdir -p "$REQUESTS_DIR" "$RESPONSES_DIR" "$LOG_DIR"
 
 # Source the Claude environment written by run.sh
 # This ensures HOME, ANTHROPIC_CONFIG_DIR, etc. are set correctly
@@ -67,16 +64,16 @@ fi
 
 bashio::log.info "Assist listener starting (UID=$(id -u), claude=$CLAUDE_BIN, max_turns=$MAX_TURNS, timeout=${CLAUDE_TIMEOUT}s)..."
 bashio::log.info "Watching $REQUESTS_DIR for conversation requests"
-bashio::log.info "Persistent sessions: $SESSIONS_DIR"
 bashio::log.info "Debug logs: $LOG_DIR/assist-*.log"
 
 # ---------------------------------------------------------------------------
 # MCP config verification
 # ---------------------------------------------------------------------------
 
-# Verify /config/.mcp.json is clean before each Claude invocation.
-# A broken marketplace plugin can re-register an SSE MCP server entry
-# pointing to /api/mcp with invalid auth, causing conversation failures.
+# Verify MCP configs are clean before each Claude invocation.
+# A broken marketplace plugin can register an SSE MCP server entry
+# pointing to /api/mcp with invalid auth, causing Claude to hang on
+# connection and timeout.
 verify_mcp_config() {
     local mcp_file="/config/.mcp.json"
 
@@ -102,8 +99,33 @@ MCP_CLEAN
         bashio::log.info "MCP config restored to clean state"
     fi
 
-    # Also check Claude Code's project-level configs for /api/mcp entries
-    # that may have been cached by previous sessions.
+    # Check ~/.claude.json — the most common hiding spot for stale /api/mcp
+    # entries added by marketplace plugins.
+    local claude_json="/data/home/.claude.json"
+    if [ -f "$claude_json" ] && grep -q "/api/mcp\|homeassistant-config\|claude-homeassistant-plugins" "$claude_json" 2>/dev/null; then
+        bashio::log.warning "Stale MCP entry in ~/.claude.json — cleaning"
+        local tmp
+        tmp=$(mktemp)
+        if jq '
+            if .mcpServers then
+                .mcpServers |= with_entries(
+                    select(
+                        .key != "homeassistant-config" and
+                        ((.value | tostring) | contains("/api/mcp") | not) and
+                        ((.value | tostring) | contains("claude-homeassistant-plugins") | not)
+                    )
+                )
+            else . end
+        ' "$claude_json" > "$tmp" 2>/dev/null; then
+            mv "$tmp" "$claude_json"
+            chown claude:claude "$claude_json" 2>/dev/null || true
+            bashio::log.info "~/.claude.json cleaned"
+        else
+            rm -f "$tmp"
+        fi
+    fi
+
+    # Check Claude Code's project-level configs for /api/mcp entries
     local claude_projects="/data/home/.claude/projects"
     if [ -d "$claude_projects" ]; then
         find "$claude_projects" -name "*.json" -type f -print0 2>/dev/null | \
@@ -129,84 +151,9 @@ MCP_CLEAN
     fi
 }
 
-# Clean up /api/mcp references from project configs and clear the session.
-# Called when stderr indicates an /api/mcp auth error during Claude invocation.
-cleanup_mcp_and_clear_session() {
-    local conv_id="$1"
-    bashio::log.error "Detected /api/mcp auth error — clearing session and cleaning configs"
-
-    # Clear the session so --resume doesn't reuse stale MCP state
-    clear_session "$conv_id"
-
-    # Clean project-level configs
-    local claude_projects="/data/home/.claude/projects"
-    if [ -d "$claude_projects" ]; then
-        find "$claude_projects" -name "*.json" -type f -exec \
-            grep -l "/api/mcp" {} \; 2>/dev/null | while read -r f; do
-            bashio::log.info "  Cleaning /api/mcp from: $f"
-            local tmp
-            tmp=$(mktemp)
-            if jq '
-                if .mcpServers then
-                    .mcpServers |= with_entries(
-                        select((.value | tostring) | contains("/api/mcp") | not)
-                    )
-                else . end
-            ' "$f" > "$tmp" 2>/dev/null; then
-                mv "$tmp" "$f"
-                chown claude:claude "$f" 2>/dev/null || true
-            else
-                rm -f "$tmp"
-            fi
-        done
-    fi
-
-    # Also rewrite the canonical MCP config clean
-    verify_mcp_config
-}
-
 # ---------------------------------------------------------------------------
-# Session management
+# Helpers
 # ---------------------------------------------------------------------------
-
-# Get the Claude session ID for a conversation, or empty string if none.
-get_session_id() {
-    local conv_id="$1"
-    local session_file="$SESSIONS_DIR/${conv_id}.session"
-    if [ -f "$session_file" ]; then
-        cat "$session_file"
-    fi
-}
-
-# Save the Claude session ID for a conversation.
-save_session_id() {
-    local conv_id="$1"
-    local session_id="$2"
-    echo "$session_id" > "$SESSIONS_DIR/${conv_id}.session"
-}
-
-# Clear a session for a conversation.
-clear_session() {
-    local conv_id="$1"
-    rm -f "$SESSIONS_DIR/${conv_id}.session"
-    bashio::log.info "Cleared session for conversation: $conv_id"
-}
-
-# Process any pending session clear requests.
-process_clear_requests() {
-    for clear_file in "$CLEAR_DIR"/*.clear; do
-        [ -f "$clear_file" ] || continue
-        local conv_id
-        conv_id=$(basename "$clear_file" .clear)
-        if [ "$conv_id" = "_all" ]; then
-            rm -f "$SESSIONS_DIR"/*.session
-            bashio::log.info "Cleared ALL conversation sessions"
-        else
-            clear_session "$conv_id"
-        fi
-        rm -f "$clear_file"
-    done
-}
 
 # Format conversation history from JSON array into a readable transcript
 format_history() {
@@ -224,9 +171,7 @@ log_request_debug() {
     local req_id="$1"
     local text="$2"
     local model="$3"
-    local session_id="$4"
-    local is_resume="$5"
-    local prompt_chars="$6"
+    local prompt_chars="$4"
     local log_file="$LOG_DIR/assist-$(date +%Y%m%d).log"
 
     {
@@ -235,8 +180,6 @@ log_request_debug() {
         echo "  Channel:  conversation_agent"
         echo "  Text:     $text"
         echo "  Model:    ${model:-default}"
-        echo "  Session:  ${session_id:-new}"
-        echo "  Resume:   $is_resume"
         echo "  Prompt:   $prompt_chars chars"
         echo "  MaxTurns: $MAX_TURNS"
     } >> "$log_file"
@@ -248,7 +191,6 @@ log_response_debug() {
     local response="$2"
     local duration="$3"
     local stderr_output="$4"
-    local session_id="$5"
     local log_file="$LOG_DIR/assist-$(date +%Y%m%d).log"
 
     local response_chars=${#response}
@@ -264,7 +206,6 @@ log_response_debug() {
     {
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] RESPONSE $req_id"
         echo "  Duration:  ${duration}s"
-        echo "  Session:   ${session_id:-unknown}"
         echo "  Response:  $response_chars chars, $response_lines lines"
         if [ -n "$token_info" ]; then
             echo "  Tokens:    $token_info"
@@ -284,12 +225,12 @@ process_request() {
     local text
     local system_prompt
     local history_json
+    local model
 
     req_id=$(jq -r '.id // empty' "$req_file" 2>/dev/null)
     text=$(jq -r '.text // empty' "$req_file" 2>/dev/null)
     system_prompt=$(jq -r '.system_prompt // empty' "$req_file" 2>/dev/null)
     history_json=$(jq -c '.conversation_history // []' "$req_file" 2>/dev/null)
-    local model
     model=$(jq -r '.model // empty' "$req_file" 2>/dev/null)
 
     if [ -z "$req_id" ] || [ -z "$text" ]; then
@@ -305,14 +246,6 @@ process_request() {
 
     # Ensure MCP config is clean before invoking Claude
     verify_mcp_config
-
-    # Process any pending session clear requests
-    process_clear_requests
-
-    # Check for an existing Claude session for this conversation
-    local claude_session
-    claude_session=$(get_session_id "$req_id")
-    local is_resume="false"
 
     # System prompt for Claude: kept concise for speed.
     # MCP tool details are discovered automatically from the server;
@@ -330,30 +263,17 @@ Keep responses concise."
 ${base_system_prompt}"
     fi
 
-    # Build the user message and Claude flags depending on session state
+    # Build user message — include conversation history if present
     local user_message
-    local resume_flag=""
-    local system_flag=""
-
-    if [ -n "$claude_session" ]; then
-        # Resume existing session — Claude already has conversation history
-        user_message="$text"
-        resume_flag="--resume $claude_session"
-        is_resume="true"
-        bashio::log.info "Resuming session [$claude_session] for [$req_id]"
-    else
-        # New session — include conversation history if present for first message
-        local history_text
-        history_text=$(format_history "$history_json")
-        if [ -n "$history_text" ]; then
-            user_message="Previous conversation:
+    local history_text
+    history_text=$(format_history "$history_json")
+    if [ -n "$history_text" ]; then
+        user_message="Previous conversation:
 ${history_text}
 
 USER: ${text}"
-        else
-            user_message="$text"
-        fi
-        system_flag="--system-prompt"
+    else
+        user_message="$text"
     fi
 
     # Build model flag (each conversation agent can specify its own model)
@@ -363,7 +283,7 @@ USER: ${text}"
     fi
 
     # Log the request for debugging
-    log_request_debug "$req_id" "$text" "$model" "$claude_session" "$is_resume" "${#user_message}"
+    log_request_debug "$req_id" "$text" "$model" "${#user_message}"
 
     local output_file stderr_file
     output_file=$(mktemp)
@@ -371,104 +291,29 @@ USER: ${text}"
 
     # Run Claude in print mode from /config so it finds .mcp.json for HA tools
     # and .claude/settings.local.json for pre-approved tool permissions.
-    # Use --output-format json to capture the session_id for persistence.
-    # --max-turns keeps responses fast by limiting agentic loops.
-    # No --dangerously-skip-permissions: permissions come from settings.local.json.
+    # Plain text output (no --output-format json) — matches the proven
+    # automation-listener pattern that works reliably.
+    # Single attempt, no retries — retries can exceed the bridge timeout.
     local start_time
     start_time=$(date +%s)
 
     local exit_code=0
-    if [ -n "$resume_flag" ]; then
-        # Resume existing session — no system prompt needed
-        # shellcheck disable=SC2086
-        (cd /config && printf '%s' "$user_message" | timeout "$CLAUDE_TIMEOUT" ${CLAUDE_BIN} -p --output-format json --verbose --max-turns "$MAX_TURNS" ${resume_flag} ${model_flag} > "$output_file" 2>"$stderr_file") || exit_code=$?
-    else
-        # New session — include system prompt
-        # shellcheck disable=SC2086
-        (cd /config && printf '%s' "$user_message" | timeout "$CLAUDE_TIMEOUT" ${CLAUDE_BIN} -p --output-format json --verbose --max-turns "$MAX_TURNS" ${system_flag} "$final_system_prompt" ${model_flag} > "$output_file" 2>"$stderr_file") || exit_code=$?
-    fi
+    # shellcheck disable=SC2086
+    (cd /config && printf '%s' "$user_message" | timeout "$CLAUDE_TIMEOUT" \
+        ${CLAUDE_BIN} -p --verbose --max-turns "$MAX_TURNS" \
+        --system-prompt "$final_system_prompt" \
+        ${model_flag} > "$output_file" 2>"$stderr_file") || exit_code=$?
 
     local end_time duration
     end_time=$(date +%s)
     duration=$((end_time - start_time))
 
-    local raw_output stderr_output response new_session_id
-    raw_output=$(cat "$output_file" 2>/dev/null || echo "")
+    local response stderr_output
+    response=$(cat "$output_file" 2>/dev/null || echo "")
     stderr_output=$(cat "$stderr_file" 2>/dev/null || echo "")
     rm -f "$output_file" "$stderr_file"
 
-    # Check for /api/mcp auth errors in stderr — this indicates Claude Code
-    # tried to connect to HA's native MCP endpoint with invalid auth.
-    # Clean configs and force a fresh session retry.
-    if echo "$stderr_output" | grep -qi "/api/mcp\|invalid authentication.*mcp"; then
-        bashio::log.error "Detected /api/mcp auth error in stderr for [$req_id]"
-        cleanup_mcp_and_clear_session "$req_id"
-        is_resume="false"
-        claude_session=""
-
-        # Retry as a fresh session with clean configs
-        output_file=$(mktemp)
-        stderr_file=$(mktemp)
-        start_time=$(date +%s)
-
-        # shellcheck disable=SC2086
-        (cd /config && printf '%s' "$text" | timeout "$CLAUDE_TIMEOUT" ${CLAUDE_BIN} -p --output-format json --verbose --max-turns "$MAX_TURNS" --system-prompt "$final_system_prompt" ${model_flag} > "$output_file" 2>"$stderr_file") || exit_code=$?
-
-        end_time=$(date +%s)
-        duration=$((end_time - start_time))
-
-        raw_output=$(cat "$output_file" 2>/dev/null || echo "")
-        stderr_output=$(cat "$stderr_file" 2>/dev/null || echo "")
-        rm -f "$output_file" "$stderr_file"
-        bashio::log.info "Retried fresh session after /api/mcp cleanup for [$req_id]"
-    fi
-
-    # Parse JSON output to extract result and session_id
-    response=$(echo "$raw_output" | jq -r '.result // empty' 2>/dev/null)
-    new_session_id=$(echo "$raw_output" | jq -r '.session_id // empty' 2>/dev/null)
-
-    # If JSON parsing failed, treat the raw output as plain text (fallback)
-    if [ -z "$response" ] && [ -n "$raw_output" ]; then
-        response="$raw_output"
-    fi
-
-    # Save the session ID for future requests
-    if [ -n "$new_session_id" ]; then
-        save_session_id "$req_id" "$new_session_id"
-        bashio::log.info "Session saved: $req_id -> $new_session_id"
-    fi
-
-    # If resume failed (empty response + non-zero exit), retry as new session
-    if [ -z "$response" ] && [ "$is_resume" = "true" ]; then
-        bashio::log.warning "Resume failed for [$req_id], retrying as new session..."
-        clear_session "$req_id"
-
-        output_file=$(mktemp)
-        stderr_file=$(mktemp)
-        start_time=$(date +%s)
-
-        # shellcheck disable=SC2086
-        (cd /config && printf '%s' "$text" | timeout "$CLAUDE_TIMEOUT" ${CLAUDE_BIN} -p --output-format json --verbose --max-turns "$MAX_TURNS" --system-prompt "$final_system_prompt" ${model_flag} > "$output_file" 2>"$stderr_file") || true
-
-        end_time=$(date +%s)
-        duration=$((end_time - start_time))
-
-        raw_output=$(cat "$output_file" 2>/dev/null || echo "")
-        stderr_output=$(cat "$stderr_file" 2>/dev/null || echo "")
-        rm -f "$output_file" "$stderr_file"
-
-        response=$(echo "$raw_output" | jq -r '.result // empty' 2>/dev/null)
-        new_session_id=$(echo "$raw_output" | jq -r '.session_id // empty' 2>/dev/null)
-
-        if [ -z "$response" ] && [ -n "$raw_output" ]; then
-            response="$raw_output"
-        fi
-        if [ -n "$new_session_id" ]; then
-            save_session_id "$req_id" "$new_session_id"
-        fi
-    fi
-
-    # If response is still empty, something went wrong — check stderr for clues
+    # If response is empty, something went wrong — check stderr for clues
     if [ -z "$response" ]; then
         bashio::log.error "Empty response for [$req_id] after ${duration}s (exit=$exit_code)"
         bashio::log.error "Stderr: ${stderr_output:0:500}"
@@ -477,6 +322,9 @@ USER: ${text}"
             bashio::log.error "Claude process timed out (exit=$exit_code, limit=${CLAUDE_TIMEOUT}s)"
         elif echo "$stderr_output" | grep -qi "not logged in\|please log in\|authentication"; then
             response="Claude is not logged in. Please open the BRUH Claude Terminal sidebar and complete the OAuth login first."
+        elif echo "$stderr_output" | grep -qi "/api/mcp\|invalid authentication.*mcp"; then
+            response="Claude encountered a broken MCP server connection (/api/mcp auth error). Restart the BRUH Claude Terminal add-on to clean it up."
+            bashio::log.error "Detected /api/mcp auth error — restart add-on to trigger deep cleanup"
         elif echo "$stderr_output" | grep -qi "permission\|not allowed\|denied"; then
             response="Claude encountered a permission error. Check the add-on logs for details."
         else
@@ -485,9 +333,9 @@ USER: ${text}"
     fi
 
     # Log the response for debugging
-    log_response_debug "$req_id" "$response" "$duration" "$stderr_output" "${new_session_id:-$claude_session}"
+    log_response_debug "$req_id" "$response" "$duration" "$stderr_output"
 
-    bashio::log.info "Assist response [$req_id]: ${duration}s, ${#response} chars (session=${new_session_id:-$claude_session:-new})"
+    bashio::log.info "Assist response [$req_id]: ${duration}s, ${#response} chars"
 
     # Check for auth errors in the response text
     if echo "$response" | grep -qi "not logged in\|please log in\|authentication required"; then

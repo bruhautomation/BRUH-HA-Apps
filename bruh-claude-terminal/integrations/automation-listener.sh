@@ -89,6 +89,32 @@ MCP_CLEAN
         bashio::log.info "MCP config restored to clean state"
     fi
 
+    # Check ~/.claude.json — the most common hiding spot for stale /api/mcp
+    # entries added by marketplace plugins.
+    local claude_json="/data/home/.claude.json"
+    if [ -f "$claude_json" ] && grep -q "/api/mcp\|homeassistant-config\|claude-homeassistant-plugins" "$claude_json" 2>/dev/null; then
+        bashio::log.warning "Stale MCP entry in ~/.claude.json — cleaning"
+        local tmp
+        tmp=$(mktemp)
+        if jq '
+            if .mcpServers then
+                .mcpServers |= with_entries(
+                    select(
+                        .key != "homeassistant-config" and
+                        ((.value | tostring) | contains("/api/mcp") | not) and
+                        ((.value | tostring) | contains("claude-homeassistant-plugins") | not)
+                    )
+                )
+            else . end
+        ' "$claude_json" > "$tmp" 2>/dev/null; then
+            mv "$tmp" "$claude_json"
+            chown claude:claude "$claude_json" 2>/dev/null || true
+            bashio::log.info "~/.claude.json cleaned"
+        else
+            rm -f "$tmp"
+        fi
+    fi
+
     # Also check Claude Code's project-level configs for /api/mcp entries
     local claude_projects="/data/home/.claude/projects"
     if [ -d "$claude_projects" ]; then

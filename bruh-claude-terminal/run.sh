@@ -658,6 +658,37 @@ cleanup_all_mcp_references() {
         rm -rf "$d"
     done
 
+    # -------------------------------------------------------------------------
+    # 6. Clean ~/.claude.json (Claude Code's global config).
+    #    This is the PRIMARY hiding spot for stale /api/mcp MCP server entries
+    #    added by marketplace plugins. Previous cleanup steps missed this file
+    #    because it's not in the searched directories and not named .mcp.json.
+    # -------------------------------------------------------------------------
+    local claude_json="/data/home/.claude.json"
+    if [ -f "$claude_json" ] && grep -q "/api/mcp\|homeassistant-config\|claude-homeassistant-plugins" "$claude_json" 2>/dev/null; then
+        bashio::log.info "  Cleaning stale entries from ~/.claude.json"
+        local tmp
+        tmp=$(mktemp)
+        if jq '
+            if .mcpServers then
+                .mcpServers |= with_entries(
+                    select(
+                        .key != "homeassistant-config" and
+                        ((.value | tostring) | contains("/api/mcp") | not) and
+                        ((.value | tostring) | contains("claude-homeassistant-plugins") | not)
+                    )
+                )
+            else . end |
+            del(.plugins) | del(.extensions)
+        ' "$claude_json" > "$tmp" 2>/dev/null; then
+            mv "$tmp" "$claude_json"
+            chown claude:claude "$claude_json" 2>/dev/null || true
+            bashio::log.info "  ~/.claude.json cleaned"
+        else
+            rm -f "$tmp"
+        fi
+    fi
+
     bashio::log.info "Deep MCP cleanup complete"
 }
 
@@ -724,15 +755,38 @@ setup_mcp_server() {
     bashio::log.info "Configured MCP servers in $project_config:"
     jq -r '.mcpServers | to_entries[] | "  - \(.key): \(.value.command // .value.url // "unknown") \(.value.args // [] | join(" "))"' "$project_config" 2>/dev/null || true
 
-    # Warn if additional MCP configs exist elsewhere (they may contain stale entries)
-    for extra_mcp in "/data/home/.mcp.json" "/root/.mcp.json" "/data/home/.claude.json"; do
-        if [ -f "$extra_mcp" ] && jq -e '.mcpServers | length > 0' "$extra_mcp" >/dev/null 2>&1; then
-            bashio::log.warning "Additional MCP config found in $extra_mcp — may contain stale entries"
-            jq -r '.mcpServers | keys[]' "$extra_mcp" 2>/dev/null | while read -r key; do
-                bashio::log.warning "  - $key"
-            done
+    # Clean stale entries from additional MCP configs (don't just warn — fix them).
+    for extra_mcp in "/data/home/.mcp.json" "/root/.mcp.json"; do
+        if [ -f "$extra_mcp" ] && grep -q "/api/mcp\|homeassistant-config" "$extra_mcp" 2>/dev/null; then
+            bashio::log.warning "Removing stale MCP config: $extra_mcp"
+            rm -f "$extra_mcp"
         fi
     done
+
+    # ~/.claude.json needs surgical cleaning (contains OAuth creds and other config)
+    local global_claude="/data/home/.claude.json"
+    if [ -f "$global_claude" ] && grep -q "/api/mcp\|homeassistant-config\|claude-homeassistant-plugins" "$global_claude" 2>/dev/null; then
+        bashio::log.warning "Cleaning stale MCP entries from ~/.claude.json"
+        local tmp
+        tmp=$(mktemp)
+        if jq '
+            if .mcpServers then
+                .mcpServers |= with_entries(
+                    select(
+                        .key != "homeassistant-config" and
+                        ((.value | tostring) | contains("/api/mcp") | not) and
+                        ((.value | tostring) | contains("claude-homeassistant-plugins") | not)
+                    )
+                )
+            else . end
+        ' "$global_claude" > "$tmp" 2>/dev/null; then
+            mv "$tmp" "$global_claude"
+            chown claude:claude "$global_claude" 2>/dev/null || true
+            bashio::log.info "  ~/.claude.json cleaned"
+        else
+            rm -f "$tmp"
+        fi
+    fi
 
     # Write project-level Claude Code settings that pre-allow all necessary
     # tools.  This is the PRIMARY permission mechanism for background listeners
