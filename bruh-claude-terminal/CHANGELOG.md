@@ -1,5 +1,43 @@
 # Changelog
 
+## 1.10.0
+
+### Feature Toggles & MCP Cleanup Hardening
+
+**Integration Onboarding Redesign**
+- New two-step config flow: first choose which features to enable, then configure agent settings
+- Conversation agent and usage limit sensors are now independently toggleable
+- Users can enable just sensors, just a conversation agent, or both
+- Options flow updated with feature toggles — easily turn features on/off after setup
+- Config entry migration (v1 → v2) ensures existing installs keep working seamlessly
+
+**Hardened /api/mcp Cleanup**
+- Increased search depth from 2 to 4 levels to catch entries in Claude Code project config files
+- Added post-write sanitization to `setup_mcp_server()` — even if cleanup misses a stale entry, the final `.mcp.json` is always verified clean
+- Now also checks `.args` fields (not just `.url`) for `/api/mcp` references
+- Added `/root/.mcp.json` to the list of checked locations
+
+**Fixed: Conversation Agent Not Responding**
+- Added process-level `timeout` to all `claude -p` calls in both assist and automation listeners
+- Previously, if Claude Code hung (e.g., broken MCP server connection), the listener blocked forever and no response file was ever written — the user got nothing
+- Now Claude Code is killed after 105s (assist) or 300s (automation), and a meaningful error message is returned
+- Added timeout-specific error messages so users know what happened
+- Added `asyncio.CancelledError` handling in the conversation entity for cases where HA cancels the request
+
+## 1.9.0
+
+### Remove Legacy Token Sensors & Fix /api/mcp Auth Error
+
+**Removed Legacy Token Sensors**
+- Removed the old token-counting sensors (session/daily/weekly/all-time token counts)
+- The `token-stats-tracker.py` script is no longer started
+- Kept the Anthropic usage limit sensors (session/weekly usage %, reset times) which read real API data
+
+**Fixed /api/mcp Authentication Error**
+- Added `cleanup_broken_plugins()` to startup that removes stale MCP server entries from the broken `claude-homeassistant-plugins` marketplace plugin
+- The plugin registered an SSE MCP server pointing to HA's `/api/mcp` endpoint with invalid auth, causing "invalid authentication" errors and blocking conversation agent responses
+- Cleanup removes plugin/extension references and stale `mcpServers` entries from all Claude Code config locations
+
 ## 1.8.0
 
 ### Anthropic Usage Sensors, Persistent Sessions & Configurable Turns

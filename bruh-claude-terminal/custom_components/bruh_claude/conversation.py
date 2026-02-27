@@ -6,6 +6,7 @@ personality agents can appear under Settings > Voice Assistants.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from homeassistant.components.conversation import (
@@ -93,6 +94,11 @@ class BruhClaudeConversationEntity(ConversationEntity):
             response_text = (
                 "Sorry, Claude didn't respond in time. "
                 "Make sure the BRUH Claude Terminal app is running."
+            )
+        except asyncio.CancelledError:
+            _LOGGER.warning("Conversation cancelled for [%s]", conversation_id)
+            response_text = (
+                "The request was cancelled before Claude could respond."
             )
         except Exception:
             _LOGGER.exception("Error communicating with Claude app")
