@@ -697,6 +697,8 @@ deploy_custom_integration() {
              /config/.bruh_claude/responses \
              /config/.bruh_claude/tasks \
              /config/.bruh_claude/task_results \
+             /config/.bruh_claude/sessions \
+             /config/.bruh_claude/clear_sessions \
              /config/.bruh_claude/logs
 
     # Rotate old debug logs (keep last 7 days)
