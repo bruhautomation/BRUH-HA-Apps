@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """Token usage stats tracker for BRUH Claude Terminal.
 
-Periodically scans Claude Code session JSONL files for token usage and
-cost data, then writes aggregated stats to a shared JSON file that the
+Periodically scans Claude Code session JSONL files for token usage
+data, then writes aggregated stats to a shared JSON file that the
 Home Assistant custom integration can read as sensor data.
+
+Token counts (input_tokens, output_tokens, cache_*) are the real values
+returned by the Anthropic API in each response's ``usage`` field — they
+are not estimated.
 
 Output: /config/.bruh_claude/token_stats.json
 """
@@ -55,7 +59,7 @@ def parse_session_file(path):
 
     Returns a list of dicts with keys:
       session_id, timestamp, input_tokens, output_tokens,
-      cache_creation_tokens, cache_read_tokens, cost_usd
+      cache_creation_tokens, cache_read_tokens
     """
     entries = []
     try:
@@ -75,15 +79,14 @@ def parse_session_file(path):
 
                 msg = record.get("message", {})
                 usage = msg.get("usage") or record.get("usage") or {}
-                cost = record.get("costUSD") or record.get("cost_usd") or 0
 
                 input_tokens = usage.get("input_tokens", 0)
                 output_tokens = usage.get("output_tokens", 0)
                 cache_creation = usage.get("cache_creation_input_tokens", 0)
                 cache_read = usage.get("cache_read_input_tokens", 0)
 
-                # Skip entries with no usage data at all
-                if not input_tokens and not output_tokens and not cost:
+                # Skip entries with no token data
+                if not input_tokens and not output_tokens:
                     continue
 
                 timestamp_str = record.get("timestamp", "")
@@ -96,7 +99,6 @@ def parse_session_file(path):
                     "output_tokens": output_tokens,
                     "cache_creation_tokens": cache_creation,
                     "cache_read_tokens": cache_read,
-                    "cost_usd": float(cost) if cost else 0.0,
                 })
     except OSError:
         pass
@@ -189,7 +191,7 @@ def aggregate_stats(all_entries):
 
 
 def _sum_entries(entries):
-    """Sum token counts and costs for a list of entries."""
+    """Sum token counts for a list of entries (all values from the Anthropic API)."""
     return {
         "input_tokens": sum(e.get("input_tokens", 0) for e in entries),
         "output_tokens": sum(e.get("output_tokens", 0) for e in entries),
@@ -198,7 +200,6 @@ def _sum_entries(entries):
         ),
         "cache_creation_tokens": sum(e.get("cache_creation_tokens", 0) for e in entries),
         "cache_read_tokens": sum(e.get("cache_read_tokens", 0) for e in entries),
-        "cost_usd": round(sum(e.get("cost_usd", 0) for e in entries), 4),
         "message_count": len(entries),
     }
 

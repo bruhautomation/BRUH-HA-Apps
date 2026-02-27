@@ -34,18 +34,15 @@ STATS_FILENAME = "token_stats.json"
 # ---------------------------------------------------------------------------
 
 # (key, name, icon, unit, state_class, period_key, value_key)
+# Token counts are the real values from the Anthropic API usage field.
 SENSOR_TYPES: list[tuple[str, str, str, str | None, SensorStateClass | None, str, str]] = [
     ("session_input_tokens", "Session Input Tokens", "mdi:arrow-down-bold", "tokens", SensorStateClass.TOTAL, "session", "input_tokens"),
     ("session_output_tokens", "Session Output Tokens", "mdi:arrow-up-bold", "tokens", SensorStateClass.TOTAL, "session", "output_tokens"),
     ("session_total_tokens", "Session Total Tokens", "mdi:sigma", "tokens", SensorStateClass.TOTAL, "session", "total_tokens"),
-    ("session_cost", "Session Cost", "mdi:currency-usd", "USD", SensorStateClass.TOTAL, "session", "cost_usd"),
     ("today_total_tokens", "Today Total Tokens", "mdi:calendar-today", "tokens", SensorStateClass.TOTAL, "today", "total_tokens"),
-    ("today_cost", "Today Cost", "mdi:cash-clock", "USD", SensorStateClass.TOTAL, "today", "cost_usd"),
     ("weekly_total_tokens", "Weekly Total Tokens", "mdi:calendar-week", "tokens", SensorStateClass.TOTAL, "week", "total_tokens"),
-    ("weekly_cost", "Weekly Cost", "mdi:cash-multiple", "USD", SensorStateClass.TOTAL, "week", "cost_usd"),
     ("weekly_session_count", "Weekly Sessions", "mdi:counter", "sessions", SensorStateClass.TOTAL, "week", "session_count"),
     ("all_time_total_tokens", "All Time Total Tokens", "mdi:infinity", "tokens", SensorStateClass.TOTAL_INCREASING, "all_time", "total_tokens"),
-    ("all_time_cost", "All Time Cost", "mdi:cash", "USD", SensorStateClass.TOTAL_INCREASING, "all_time", "cost_usd"),
 ]
 
 
