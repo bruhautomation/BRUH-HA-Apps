@@ -840,6 +840,22 @@ start_token_stats_tracker() {
 }
 
 # ============================================================================
+# Usage Limits Tracker (real Anthropic account data)
+# ============================================================================
+
+start_usage_limits_tracker() {
+    bashio::log.info "Starting Anthropic usage limits tracker..."
+
+    if [ -f "/opt/scripts/usage-limits-tracker.py" ]; then
+        # Run as the claude user so it can read OAuth credentials from ~/.claude/
+        su-exec claude python3 /opt/scripts/usage-limits-tracker.py &
+        bashio::log.info "Usage limits tracker started (writes to /config/.bruh_claude/usage_limits.json)"
+    else
+        bashio::log.warning "Usage limits tracker script not found, skipping"
+    fi
+}
+
+# ============================================================================
 # Assist Integration
 # ============================================================================
 
@@ -993,7 +1009,7 @@ trap cleanup SIGTERM SIGINT EXIT
 
 main() {
     bashio::log.info "============================================"
-    bashio::log.info "  BRUH Claude Terminal v1.6.3"
+    bashio::log.info "  BRUH Claude Terminal v1.7.0"
     bashio::log.info "  Enhanced Claude Code for Home Assistant"
     bashio::log.info "============================================"
 
@@ -1009,6 +1025,7 @@ main() {
     setup_mcp_server
     deploy_custom_integration
     start_token_stats_tracker
+    start_usage_limits_tracker
     setup_assist_integration
     setup_automation_integration
     start_web_terminal
