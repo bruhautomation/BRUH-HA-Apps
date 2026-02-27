@@ -32,7 +32,11 @@ from .bridge import ClaudeBridge
 from .const import (
     CONF_ENABLE_CONVERSATION,
     CONF_ENABLE_SENSORS,
+    CONF_MODEL,
+    CONF_SYSTEM_PROMPT,
     CONF_TIMEOUT,
+    DEFAULT_MODEL,
+    DEFAULT_SYSTEM_PROMPT,
     DEFAULT_TIMEOUT,
     DOMAIN,
 )
@@ -94,6 +98,16 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
         new_data.setdefault(CONF_ENABLE_SENSORS, True)
         hass.config_entries.async_update_entry(
             config_entry, data=new_data, version=2
+        )
+    if config_entry.version < 3:
+        _LOGGER.debug("Migrating config entry %s from version 2 to 3",
+                       config_entry.entry_id)
+        new_data = {**config_entry.data}
+        new_data.setdefault(CONF_MODEL, DEFAULT_MODEL)
+        new_data.setdefault(CONF_SYSTEM_PROMPT, DEFAULT_SYSTEM_PROMPT)
+        new_data.setdefault(CONF_TIMEOUT, DEFAULT_TIMEOUT)
+        hass.config_entries.async_update_entry(
+            config_entry, data=new_data, version=3
         )
     return True
 

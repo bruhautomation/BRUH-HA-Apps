@@ -1,52 +1,50 @@
 {
   "config": {
     "step": {
-      "user": {
-        "title": "BRUH Claude",
-        "description": "Connect to the BRUH Claude Terminal app. Make sure the app is installed and running before continuing.\n\nChoose which features to enable for this entry.",
+      "first_setup": {
+        "title": "Set Up BRUH Claude",
+        "description": "This will create a conversation agent and usage limit sensors.\n\nYou can add more agents with different personalities later using the **Add Service** button.\n\nAgent settings (model, system prompt) can be customized in the integration options after setup.",
         "data": {
-          "name": "Name",
-          "enable_conversation": "Enable conversation agent",
-          "enable_sensors": "Enable usage limit sensors"
+          "name": "Agent name"
         },
         "data_description": {
-          "name": "A name for this entry (e.g. 'BRUH Claude'). Used as the agent name in Settings > Voice Assistants if conversation is enabled.",
-          "enable_conversation": "Create a conversation agent you can use with voice assistants and the chat UI.",
-          "enable_sensors": "Create sensors that track your Anthropic account usage limits (session and weekly)."
+          "name": "Display name for this conversation agent. You can keep the default or customize it."
         }
       },
-      "agent_settings": {
-        "title": "Conversation Agent Settings",
-        "description": "Configure the conversation agent behavior.",
+      "add_agent": {
+        "title": "Add Conversation Agent",
+        "description": "Create an additional conversation agent with its own personality and model.\n\nEach agent appears separately in Settings > Voice Assistants and can be assigned to different voice pipelines.",
         "data": {
+          "name": "Agent name",
           "model": "Claude model",
           "system_prompt": "System prompt (personality)",
           "timeout": "Response timeout (seconds)"
         },
         "data_description": {
+          "name": "A unique name for this agent (e.g. 'Sarcastic Claude', 'Kitchen Assistant').",
           "model": "Which Claude model this agent uses. Sonnet is fast and balanced, Opus is the most capable, Haiku is the fastest and cheapest.",
-          "system_prompt": "Optional system prompt that defines this agent's personality. Leave blank for the default assistant behavior.",
+          "system_prompt": "Instructions that define this agent's personality and behavior. Leave blank for the default assistant.",
           "timeout": "Maximum time in seconds to wait for Claude to respond."
         }
       },
       "hassio_confirm": {
         "title": "BRUH Claude Discovered",
-        "description": "The BRUH Claude Terminal app has been detected. Do you want to set up the BRUH Claude integration?\n\nThis will create a conversation agent and usage limit sensors. You can adjust features later in the integration options."
+        "description": "The BRUH Claude Terminal add-on has been detected. Click Submit to create a conversation agent and usage limit sensors.\n\nYou can add more agents with different personalities later from the integration page."
       }
     },
     "error": {
-      "addon_not_running": "The BRUH Claude Terminal app does not appear to be running. Start the app and try again.",
-      "no_features": "Please enable at least one feature (conversation agent or sensors)."
+      "addon_not_running": "The BRUH Claude Terminal add-on does not appear to be running. Start the add-on and try again.",
+      "no_features": "Please enable at least one feature."
     },
     "abort": {
-      "already_configured": "BRUH Claude is already configured."
+      "already_configured": "BRUH Claude is already configured. You can add more conversation agents from the integration page using 'Add Service'."
     }
   },
   "options": {
     "step": {
       "init": {
-        "title": "BRUH Claude Options",
-        "description": "Toggle features and adjust conversation agent settings.",
+        "title": "Agent Settings",
+        "description": "These settings apply to this conversation agent only. Other agents have their own settings.",
         "data": {
           "enable_conversation": "Enable conversation agent",
           "enable_sensors": "Enable usage limit sensors",
@@ -55,16 +53,16 @@
           "timeout": "Response timeout (seconds)"
         },
         "data_description": {
-          "enable_conversation": "Create a conversation agent you can use with voice assistants and the chat UI.",
-          "enable_sensors": "Create sensors that track your Anthropic account usage limits (session and weekly).",
+          "enable_conversation": "When disabled, this agent will not appear in Voice Assistants.",
+          "enable_sensors": "Create sensors that track your Anthropic account usage limits. This is account-wide (not per agent).",
           "model": "Which Claude model this agent uses. Sonnet is fast and balanced, Opus is the most capable, Haiku is the fastest and cheapest.",
-          "system_prompt": "Optional system prompt that defines this agent's personality. Leave blank for the default assistant behavior.",
+          "system_prompt": "A system prompt that defines this agent's personality. Leave blank for the default assistant behavior.",
           "timeout": "Maximum time in seconds to wait for Claude to respond."
         }
       }
     },
     "error": {
-      "no_features": "Please enable at least one feature (conversation agent or sensors)."
+      "no_features": "Please enable at least one feature."
     }
   },
   "issues": {
