@@ -578,6 +578,76 @@ cleanup_broken_plugins() {
         done < <(find "$dir" -maxdepth 2 -name "*.json" -type f -print0 2>/dev/null)
     done
 
+    # Also clean stale MCP server entries that point to HA's /api/mcp endpoint.
+    # These come from the broken "claude-homeassistant-plugins" marketplace plugin
+    # which registers an mcpServers entry using SSE transport to /api/mcp.
+    # The entry uses httpx with invalid auth, causing "invalid authentication"
+    # errors in HA logs.  Our add-on uses its own MCP server ("home-assistant"
+    # key) via stdio, so these SSE-based entries are always stale.
+    local mcp_files=(
+        "/config/.mcp.json"
+        "/data/home/.mcp.json"
+        "/data/home/.claude.json"
+    )
+
+    for mcp_file in "${mcp_files[@]}"; do
+        [ -f "$mcp_file" ] || continue
+        if grep -q "/api/mcp\|homeassistant-config" "$mcp_file" 2>/dev/null; then
+            bashio::log.info "  Found stale MCP server entry in: $mcp_file"
+            local tmp_file
+            tmp_file=$(mktemp)
+            # Remove any mcpServers entry whose value contains a url with /api/mcp
+            # or whose key is "homeassistant-config", but keep our "home-assistant" entry
+            if jq '
+                if .mcpServers then
+                    .mcpServers |= with_entries(
+                        select(
+                            .key != "homeassistant-config" and
+                            ((.value.url // "") | contains("/api/mcp") | not)
+                        )
+                    )
+                else . end
+            ' "$mcp_file" > "$tmp_file" 2>/dev/null; then
+                mv "$tmp_file" "$mcp_file"
+                chown claude:claude "$mcp_file" 2>/dev/null || true
+                bashio::log.info "  Removed stale MCP server entries from $mcp_file"
+                cleaned=true
+            else
+                rm -f "$tmp_file"
+                bashio::log.warning "  Could not clean $mcp_file — manual removal may be needed"
+            fi
+        fi
+    done
+
+    # Check Claude Code settings files for mcpServers entries pointing to /api/mcp
+    for dir in "${search_dirs[@]}"; do
+        [ -d "$dir" ] || continue
+        while IFS= read -r -d '' config_file; do
+            if grep -q "/api/mcp" "$config_file" 2>/dev/null; then
+                bashio::log.info "  Found /api/mcp reference in settings: $config_file"
+                local tmp_file
+                tmp_file=$(mktemp)
+                if jq '
+                    if .mcpServers then
+                        .mcpServers |= with_entries(
+                            select(
+                                .key != "homeassistant-config" and
+                                ((.value.url // "") | contains("/api/mcp") | not)
+                            )
+                        )
+                    else . end
+                ' "$config_file" > "$tmp_file" 2>/dev/null; then
+                    mv "$tmp_file" "$config_file"
+                    chown claude:claude "$config_file" 2>/dev/null || true
+                    bashio::log.info "  Cleaned /api/mcp entries from $config_file"
+                    cleaned=true
+                else
+                    rm -f "$tmp_file"
+                fi
+            fi
+        done < <(find "$dir" -maxdepth 2 -name "*.json" -type f -print0 2>/dev/null)
+    done
+
     if [ "$cleaned" = true ]; then
         bashio::log.info "Broken plugin configurations cleaned up"
     else
@@ -833,20 +903,8 @@ notify_restart_required() {
 }
 
 # ============================================================================
-# Token Stats Tracker
+# Token Stats Tracker (disabled — token usage sensors removed in v1.9.0)
 # ============================================================================
-
-start_token_stats_tracker() {
-    bashio::log.info "Starting token usage stats tracker..."
-
-    if [ -f "/opt/scripts/token-stats-tracker.py" ]; then
-        # Run as the claude user so it can read session files in /data/home/.claude/
-        su-exec claude python3 /opt/scripts/token-stats-tracker.py &
-        bashio::log.info "Token stats tracker started (writes to /config/.bruh_claude/token_stats.json)"
-    else
-        bashio::log.warning "Token stats tracker script not found, skipping"
-    fi
-}
 
 # ============================================================================
 # Usage Limits Tracker (real Anthropic account data)
@@ -1018,7 +1076,7 @@ trap cleanup SIGTERM SIGINT EXIT
 
 main() {
     bashio::log.info "============================================"
-    bashio::log.info "  BRUH Claude Terminal v1.8.0"
+    bashio::log.info "  BRUH Claude Terminal v1.9.0"
     bashio::log.info "  Enhanced Claude Code for Home Assistant"
     bashio::log.info "============================================"
 
@@ -1033,7 +1091,6 @@ main() {
     cleanup_broken_plugins
     setup_mcp_server
     deploy_custom_integration
-    start_token_stats_tracker
     start_usage_limits_tracker
     setup_assist_integration
     setup_automation_integration
