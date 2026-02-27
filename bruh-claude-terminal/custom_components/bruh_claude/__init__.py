@@ -101,6 +101,22 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
         hass.data[DOMAIN].pop(entry.entry_id, None)
+
+        # If this entry owned the account-wide sensors, clear the flag so
+        # another entry can recreate them on its next reload.
+        if hass.data[DOMAIN].get("_sensors_entry") == entry.entry_id:
+            hass.data[DOMAIN].pop("_sensors_entry", None)
+            hass.data[DOMAIN].pop("_sensors_added", None)
+
+            # Auto-migrate: reload another entry so it picks up sensor duties.
+            remaining = [
+                eid for eid in hass.data[DOMAIN]
+                if not eid.startswith("_")
+            ]
+            if remaining:
+                hass.async_create_task(
+                    hass.config_entries.async_reload(remaining[0])
+                )
     return unload_ok
 
 

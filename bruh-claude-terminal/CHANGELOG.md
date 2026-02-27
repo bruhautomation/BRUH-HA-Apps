@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.6.3
+
+### Fix Duplicate Sensors & Add Reset Time Sensors
+
+**Fixed Duplicate Token Sensors**
+- Token usage sensors were being created per conversation config entry, causing duplicates when multiple conversation agents existed
+- Sensors now use fixed unique IDs and are only created once (account-wide, not per conversation agent)
+- All sensors are grouped under a single "BRUH Claude Token Usage" device for cleaner organization
+- If the config entry owning the sensors is removed, sensor ownership automatically migrates to another entry
+
+**Added Reset Time Sensors**
+- Session Started — timestamp sensor showing when the current Claude session began
+- Today Resets At — timestamp sensor showing when today's token counters reset (midnight UTC)
+- Weekly Resets At — timestamp sensor showing when weekly token counters reset (next Monday UTC)
+
+**Note:** After updating, old duplicate sensor entities will show as unavailable and can be removed from the entity registry.
+
 ## 1.6.1
 
 ### MCP Fixes & Token Usage Sensors
