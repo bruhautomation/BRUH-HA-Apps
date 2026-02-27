@@ -59,15 +59,17 @@ BRUH-HA-Apps/
 ### Startup Flow (`run.sh`)
 1. Health check
 2. Environment initialization (`/data` for persistence)
-3. Tool installation
-4. CLI tools setup (ha-reload, ha-log, ha-backup, etc.)
-5. Persistent packages
-6. Auto-backup (git init + background watcher)
-7. Context generation (CLAUDE.md)
-8. MCP server configuration
-9. Custom integration deployment to `/config/custom_components/bruh_claude/`
-10. Optional: Assist + Automation integrations
-11. ttyd web terminal launch
+3. Non-root user setup (`claude` UID 1000, `claude-run` wrapper, shell profile)
+4. Tool installation
+5. CLI tools setup (ha-reload, ha-log, ha-backup, etc.)
+6. Persistent packages
+7. Auto-backup (git init + background watcher)
+8. Context generation (CLAUDE.md)
+9. Broken plugin cleanup (removes stale `claude-homeassistant-plugins` entries)
+10. MCP server configuration (writes `.mcp.json` with proper ownership)
+11. Custom integration deployment to `/config/custom_components/bruh_claude/`
+12. Optional: Assist + Automation integrations
+13. ttyd web terminal launch
 
 ### Custom Integration (`custom_components/bruh_claude/`)
 - Deployed automatically to `/config/custom_components/` by the add-on at startup
@@ -80,7 +82,7 @@ BRUH-HA-Apps/
 - **Interactive terminal**: `dangerously_skip_permissions` config option (default: **off**)
 - **Background listeners (Assist, Automation)**: Do NOT use `--dangerously-skip-permissions`. Instead, tool permissions are granted via `/config/.claude/settings.local.json`, which pre-approves MCP, Bash, Read, Write, Edit, WebFetch, and WebSearch tools. This avoids root-user restrictions of the flag.
 - **Project settings**: Written to `/config/.claude/settings.local.json` at startup by `setup_claude_settings()` in `run.sh`
-- **Non-root execution**: Claude Code runs as UID 1000 (`claude` user) via a wrapper script at `/usr/local/bin/claude` that uses `su-exec`
+- **Non-root execution**: Claude Code runs as UID 1000 (`claude` user) via a wrapper script at `/usr/local/bin/claude-run` that uses `su-exec`
 - **Listener speed**: Both listeners use `--max-turns` to limit agentic loops (3 for Assist, 10 for Automation) and `--system-prompt` for efficient prompt handling
 
 ### Container Environment

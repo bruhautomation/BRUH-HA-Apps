@@ -39,8 +39,8 @@ if [ -f /data/.bruh_claude_env ]; then
 fi
 
 # Resolve the claude binary (see assist-listener.sh for details).
-CLAUDE_BIN="claude"
-if [ ! -x /usr/local/bin/claude ]; then
+CLAUDE_BIN="claude-run"
+if [ ! -x /usr/local/bin/claude-run ]; then
     if [ "$(id -u)" = "0" ] && command -v su-exec >/dev/null 2>&1; then
         CLAUDE_BIN="su-exec claude /root/.local/bin/claude"
     fi

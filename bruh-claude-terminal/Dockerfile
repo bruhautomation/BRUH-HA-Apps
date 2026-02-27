@@ -39,8 +39,11 @@ RUN pip3 install --break-system-packages --no-cache-dir \
     yamllint
 
 # Install Claude Code CLI using native installer
+# NOTE: Do NOT symlink to /usr/local/bin/claude — Claude Code diagnostics
+# detects that path as an "npm-global" installation, causing misleading
+# warnings.  The run.sh wrapper at /usr/local/bin/claude-run handles
+# non-root execution instead.
 RUN curl -fsSL https://claude.ai/install.sh | bash \
-    && ln -sf /root/.local/bin/claude /usr/local/bin/claude \
     && chmod 755 /root /root/.local /root/.local/bin
 
 # Remove config directories that the Claude Code installer may have created.

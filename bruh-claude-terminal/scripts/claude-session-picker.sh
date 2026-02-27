@@ -112,7 +112,7 @@ launch_claude_new() {
     fi
 
     sleep 1
-    exec tmux new-session -s "$TMUX_SESSION_NAME" "claude ${PERMS_FLAG}"
+    exec tmux new-session -s "$TMUX_SESSION_NAME" "claude-run ${PERMS_FLAG}"
 }
 
 launch_claude_continue() {
@@ -123,7 +123,7 @@ launch_claude_continue() {
     fi
 
     sleep 1
-    exec tmux new-session -s "$TMUX_SESSION_NAME" "claude ${PERMS_FLAG} -c"
+    exec tmux new-session -s "$TMUX_SESSION_NAME" "claude-run ${PERMS_FLAG} -c"
 }
 
 launch_claude_resume() {
@@ -134,7 +134,7 @@ launch_claude_resume() {
     fi
 
     sleep 1
-    exec tmux new-session -s "$TMUX_SESSION_NAME" "claude ${PERMS_FLAG} -r"
+    exec tmux new-session -s "$TMUX_SESSION_NAME" "claude-run ${PERMS_FLAG} -r"
 }
 
 launch_claude_custom() {
@@ -162,7 +162,7 @@ launch_claude_custom() {
         fi
 
         sleep 1
-        exec tmux new-session -s "$TMUX_SESSION_NAME" "claude $custom_args"
+        exec tmux new-session -s "$TMUX_SESSION_NAME" "claude-run $custom_args"
     fi
 }
 
@@ -170,11 +170,11 @@ launch_new_window() {
     if ! check_existing_session; then
         echo "No existing session. Starting new session..."
         sleep 1
-        exec tmux new-session -s "$TMUX_SESSION_NAME" "claude ${PERMS_FLAG}"
+        exec tmux new-session -s "$TMUX_SESSION_NAME" "claude-run ${PERMS_FLAG}"
     fi
 
     echo "Opening new Claude window in existing session..."
-    tmux new-window -t "$TMUX_SESSION_NAME" "claude ${PERMS_FLAG}"
+    tmux new-window -t "$TMUX_SESSION_NAME" "claude-run ${PERMS_FLAG}"
     sleep 1
     exec tmux attach-session -t "$TMUX_SESSION_NAME"
 }
@@ -202,7 +202,7 @@ launch_background_task() {
 
     # Run Claude in background with the prompt
     (
-        claude ${PERMS_FLAG} -p "$task_prompt" > "${task_file}.output" 2>&1
+        claude-run ${PERMS_FLAG} -p "$task_prompt" > "${task_file}.output" 2>&1
         rm -f "${task_file}.running"
         touch "${task_file}.done"
         echo "Task $task_id completed at $(date)" >> "${task_file}.output"

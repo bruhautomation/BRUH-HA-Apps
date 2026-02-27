@@ -38,12 +38,12 @@ if [ -f /data/.bruh_claude_env ]; then
     source /data/.bruh_claude_env
 fi
 
-# Resolve the claude binary.  The wrapper at /usr/local/bin/claude already
+# Resolve the claude binary.  The wrapper at /usr/local/bin/claude-run
 # drops to the non-root 'claude' user via su-exec so that Claude Code runs
 # as UID 1000 inside the container.  If the wrapper doesn't exist yet, fall
 # back to calling the native binary through su-exec directly.
-CLAUDE_BIN="claude"
-if [ ! -x /usr/local/bin/claude ]; then
+CLAUDE_BIN="claude-run"
+if [ ! -x /usr/local/bin/claude-run ]; then
     if [ "$(id -u)" = "0" ] && command -v su-exec >/dev/null 2>&1; then
         CLAUDE_BIN="su-exec claude /root/.local/bin/claude"
     fi
