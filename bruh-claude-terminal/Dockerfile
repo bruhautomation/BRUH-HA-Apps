@@ -82,6 +82,7 @@ COPY custom_components/ /opt/custom_components/
 # Set permissions
 RUN chmod +x /run.sh \
     && find /opt/scripts -name "*.sh" -exec chmod +x {} \; \
+    && find /opt/scripts -name "*.py" -exec chmod +x {} \; \
     && find /opt/integrations -name "*.sh" -exec chmod +x {} \;
 
 # Use exec form for better signal handling

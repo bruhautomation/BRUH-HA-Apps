@@ -184,12 +184,12 @@ The built-in MCP server gives Claude Code these capabilities:
 | `get_all_states` | List all entities (filterable by domain) |
 | `call_service` | Call any HA service (turn on lights, etc.) |
 | `get_automations` | List all automations with status |
-| `get_automation_trace` | Get execution traces for debugging |
+| `get_automation_trace` | Get automation state and stored execution traces |
 | `get_ha_config` | Get HA configuration details |
 | `get_services` | List all available services |
 | `get_device_registry` | Get device/entity summary |
 | `get_logbook` | Get recent logbook entries |
-| `get_error_log` | Get HA error log |
+| `get_error_log` | Get HA logs from Supervisor journal |
 | `render_template` | Render Jinja2 templates |
 | `fire_event` | Fire custom events |
 | `get_supervisor_info` | Get system information |
@@ -245,3 +245,19 @@ data:
   notify: true
   timeout: 300
 ```
+
+### Token Usage Sensors
+
+The integration exposes sensors that track Claude Code token usage. Token counts are the real values from the Anthropic API `usage` field in each response — they are not estimated.
+
+| Sensor | Description | Key attributes |
+|--------|-------------|----------------|
+| Session Input Tokens | Input tokens for the current session | `session_id`, `started_at`, `last_activity` |
+| Session Output Tokens | Output tokens for the current session | `session_id`, `started_at`, `last_activity` |
+| Session Total Tokens | Total tokens for the current session | `session_id`, `started_at`, `last_activity` |
+| Today Total Tokens | Total tokens used today | `period_start`, `resets_at` |
+| Weekly Total Tokens | Total tokens used this week (Mon–Sun) | `period_start`, `resets_at`, `session_count` |
+| Weekly Sessions | Number of distinct sessions this week | `period_start`, `resets_at` |
+| All Time Total Tokens | Lifetime total tokens | `message_count` |
+
+A background tracker (`token-stats-tracker.py`) scans Claude Code session JSONL files every 60 seconds and writes stats to `/config/.bruh_claude/token_stats.json`. The sensors poll this file every 30 seconds.

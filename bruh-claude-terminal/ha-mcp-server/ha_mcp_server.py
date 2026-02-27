@@ -25,7 +25,7 @@ HA_BASE_URL = os.environ.get("HA_BASE_URL", "http://supervisor/core/api")
 SUPERVISOR_API_URL = os.environ.get("SUPERVISOR_API_URL", "http://supervisor")
 
 
-def ha_api_request(endpoint, method="GET", data=None):
+def ha_api_request(endpoint, method="GET", data=None, accept=None):
     """Make a request to the Home Assistant API."""
     if endpoint.startswith("/api/"):
         url = f"{HA_BASE_URL}{endpoint[4:]}"
@@ -38,6 +38,8 @@ def ha_api_request(endpoint, method="GET", data=None):
         "Authorization": f"Bearer {SUPERVISOR_TOKEN}",
         "Content-Type": "application/json",
     }
+    if accept:
+        headers["Accept"] = accept
 
     body = json.dumps(data).encode() if data else None
     req = urllib.request.Request(url, data=body, headers=headers, method=method)
@@ -48,7 +50,7 @@ def ha_api_request(endpoint, method="GET", data=None):
             try:
                 return json.loads(raw)
             except json.JSONDecodeError:
-                # Some endpoints (e.g., error_log) return plain text
+                # Some endpoints (e.g., logs) return plain text
                 return raw
     except urllib.error.HTTPError as e:
         error_body = e.read().decode() if e.fp else ""
@@ -451,9 +453,80 @@ def get_automations():
 
 
 def get_automation_trace(automation_id):
-    """Get recent traces for an automation."""
-    result = ha_api_request(f"/api/trace/automation/{automation_id}")
-    return result
+    """Get recent traces for an automation.
+
+    The trace API is WebSocket-only (no REST endpoint).  This function
+    combines the automation's entity state (last_triggered, mode, etc.)
+    with stored trace data read from HA's .storage directory.
+    """
+    # Normalise entity_id
+    entity_id = automation_id
+    if not entity_id.startswith("automation."):
+        entity_id = f"automation.{entity_id}"
+
+    output = {}
+
+    # 1. Always-available: entity state from REST API
+    state = ha_api_request(f"/api/states/{entity_id}")
+    if isinstance(state, dict) and "error" not in state:
+        attrs = state.get("attributes", {})
+        output["entity_id"] = state.get("entity_id", entity_id)
+        output["state"] = state.get("state")
+        output["last_triggered"] = attrs.get("last_triggered")
+        output["last_changed"] = state.get("last_changed")
+        output["mode"] = attrs.get("mode")
+        output["current"] = attrs.get("current", 0)
+        output["friendly_name"] = attrs.get("friendly_name")
+    else:
+        output["entity_state_error"] = state
+
+    # 2. Try reading stored traces from disk (HA saves them in .storage)
+    traces = _read_stored_traces(automation_id, entity_id)
+    if traces:
+        output["traces"] = traces
+    else:
+        output["traces_note"] = (
+            "No stored traces found on disk. Traces are available in the "
+            "HA UI under Settings > Automations > (select automation) > Traces."
+        )
+
+    return output
+
+
+def _read_stored_traces(automation_id, entity_id):
+    """Read stored automation traces from HA's .storage directory."""
+    import os
+    storage_path = "/config/.storage/trace.saved_traces"
+    if not os.path.isfile(storage_path):
+        return None
+    try:
+        with open(storage_path) as fh:
+            store = json.load(fh)
+        data = store.get("data", {})
+
+        # Try both the entity_id and the bare automation id as keys
+        traces = data.get(entity_id)
+        if traces is None:
+            traces = data.get(automation_id)
+        if traces is None:
+            # HA may nest under domain key: data.automation.{id}
+            auto_data = data.get("automation", {})
+            bare_id = entity_id.replace("automation.", "", 1)
+            traces = auto_data.get(entity_id) or auto_data.get(bare_id)
+
+        if not traces:
+            return None
+
+        # Return the most recent traces (limit to 5)
+        if isinstance(traces, list):
+            return traces[-5:]
+        if isinstance(traces, dict):
+            # Some versions store as dict keyed by run_id
+            items = sorted(traces.values(), key=lambda t: t.get("timestamp", {}).get("start", ""), reverse=True)
+            return items[:5]
+        return traces
+    except (OSError, json.JSONDecodeError, KeyError, TypeError):
+        return None
 
 
 def get_config():
@@ -507,12 +580,34 @@ def get_logbook(hours=1, entity_id=None):
 
 
 def get_error_log():
-    """Get the Home Assistant error log."""
-    result = ha_api_request("/api/error_log")
-    if isinstance(result, str):
+    """Get the Home Assistant error log.
+
+    Uses the Supervisor /core/logs endpoint which reads from the systemd
+    journal.  This works reliably on HA 2025.11+ where the traditional
+    home-assistant.log file was removed on supervised installations.
+    Falls back to the legacy /api/error_log REST endpoint for
+    non-supervised setups.
+    """
+    # Primary: Supervisor journal logs (works on HAOS / Supervised)
+    result = ha_api_request("/core/logs", accept="text/plain")
+    if isinstance(result, str) and result.strip():
         lines = result.strip().split("\n")
         return "\n".join(lines[-100:])  # Last 100 lines
-    return result
+
+    # Fallback: legacy HA Core REST endpoint (works if log file exists)
+    if isinstance(result, dict) and "error" in result:
+        result = ha_api_request("/api/error_log")
+        if isinstance(result, str) and result.strip():
+            lines = result.strip().split("\n")
+            return "\n".join(lines[-100:])
+
+    if isinstance(result, dict) and "error" in result:
+        return {
+            "error": "Could not retrieve logs from Supervisor or HA Core. "
+                     "Check Settings > System > Logs in the HA UI instead.",
+            "details": result.get("details", ""),
+        }
+    return result or {"error": "No log data available."}
 
 
 def render_template(template_str):
@@ -1116,7 +1211,7 @@ TOOLS = [
     },
     {
         "name": "get_automation_trace",
-        "description": "Get recent execution traces for a specific automation. Useful for debugging why an automation did or didn't fire.",
+        "description": "Get state info and recent execution traces for a specific automation. Returns last_triggered time, current state, and stored trace data when available. Useful for debugging why an automation did or didn't fire.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -1174,7 +1269,7 @@ TOOLS = [
     },
     {
         "name": "get_error_log",
-        "description": "Get the last 100 lines of the Home Assistant error log. Useful for diagnosing integration issues, failed automations, and system errors.",
+        "description": "Get the last 100 lines of Home Assistant logs from the Supervisor journal. Useful for diagnosing integration issues, failed automations, and system errors.",
         "inputSchema": {
             "type": "object",
             "properties": {}

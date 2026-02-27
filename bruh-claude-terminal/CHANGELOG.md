@@ -1,5 +1,56 @@
 # Changelog
 
+## 1.6.1
+
+### MCP Fixes & Token Usage Sensors
+
+**Fixed MCP Tool 404 Errors**
+- Fixed `get_error_log` returning HTTP 404 on HA 2025.11+ — the legacy `/api/error_log` REST endpoint broke when supervised installations removed `home-assistant.log`. Now uses the Supervisor's `/core/logs` journal endpoint with automatic fallback to the legacy endpoint for non-supervised setups.
+- Fixed `get_automation_trace` returning HTTP 404 — the `/api/trace/automation/{id}` REST endpoint never existed (traces are WebSocket-only). Replaced with automation entity state lookup via `/api/states` plus stored trace reading from `/config/.storage/trace.saved_traces` when available.
+
+**Token Usage Sensors**
+- Added token usage sensors to the BRUH Claude custom integration
+- A background tracker (`token-stats-tracker.py`) scans Claude Code session JSONL files every 60 seconds and writes aggregated stats to `/config/.bruh_claude/token_stats.json`
+- Token counts are the real values from the Anthropic API `usage` field — not estimated
+- Sensors:
+  - Session Input Tokens / Output Tokens / Total Tokens (with `started_at`, `last_activity` attributes)
+  - Today Total Tokens (with `period_start`, `resets_at` attributes)
+  - Weekly Total Tokens (with `period_start`, `resets_at`, `session_count` attributes)
+  - Weekly Sessions (distinct session count this week)
+  - All Time Total Tokens
+
+## 1.5.6
+
+### Auth & Permission Fixes
+
+**Fixed MCP Server Permission Denied**
+- `.mcp.json` was written as root but Claude Code runs as UID 1000 — added chown/chmod after writing
+
+**Fixed Broken Plugin Interference**
+- A stale `claude-homeassistant-plugins` marketplace plugin was hitting HA's native MCP endpoint with invalid auth — added `cleanup_broken_plugins()` to remove stale plugin references at startup
+
+**Fixed "Multiple Installations" Warnings**
+- Renamed wrapper script from `/usr/local/bin/claude` to `/usr/local/bin/claude-run` to prevent Claude Code diagnostics from detecting a conflicting npm-global install
+
+## 1.5.5
+
+### Syntax Fix
+- Fixed missing closing brace in `setup_claude_settings()` that caused "syntax error: unexpected end of file"
+
+## 1.5.4
+
+### Conversation Agent Permissions Rework
+
+**Fixed Conversation Agents Returning Empty Responses**
+- Replaced `--dangerously-skip-permissions` in listeners with project-level `settings.local.json` tool allowlist
+- Added `--max-turns` (3 for Assist, 10 for Automation) to reduce latency
+- Added `--system-prompt` flag for cleaner prompt separation
+- Added empty-response detection with stderr-based error diagnostics
+- Default `dangerously_skip_permissions` changed to `false` in config.yaml
+
+**Updated Branding**
+- Updated all icons to Claude AI branding (`mdi:creation` sparkle)
+
 ## 1.5.3
 
 ## 1.5.2

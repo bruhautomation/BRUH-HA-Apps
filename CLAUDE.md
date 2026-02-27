@@ -24,6 +24,7 @@ BRUH-HA-Apps/
 │   │   ├── ha-context-gen.sh    # CLAUDE.md context generator
 │   │   ├── ha-backup.sh         # Manual backup tool
 │   │   ├── ha-backup-watcher.sh # Background auto-backup daemon
+│   │   ├── token-stats-tracker.py  # Background token usage stats daemon
 │   │   ├── claude-session-picker.sh  # Enhanced session picker
 │   │   ├── claude-auth-helper.sh     # Auth workaround helper
 │   │   ├── health-check.sh      # Startup diagnostics
@@ -39,6 +40,7 @@ BRUH-HA-Apps/
 │           ├── manifest.json    # HA integration metadata
 │           ├── config_flow.py   # UI config flow
 │           ├── conversation.py  # ConversationEntity for Assist
+│           ├── sensor.py        # Token usage sensors
 │           ├── bridge.py        # File-based IPC with the add-on
 │           ├── const.py         # Constants
 │           ├── services.yaml    # Service definitions
@@ -68,13 +70,15 @@ BRUH-HA-Apps/
 9. Broken plugin cleanup (removes stale `claude-homeassistant-plugins` entries)
 10. MCP server configuration (writes `.mcp.json` with proper ownership)
 11. Custom integration deployment to `/config/custom_components/bruh_claude/`
-12. Optional: Assist + Automation integrations
-13. ttyd web terminal launch
+12. Token stats tracker (background daemon scanning session JSONL files)
+13. Optional: Assist + Automation integrations
+14. ttyd web terminal launch
 
 ### Custom Integration (`custom_components/bruh_claude/`)
 - Deployed automatically to `/config/custom_components/` by the add-on at startup
 - Registers a `ConversationEntity` so "BRUH Claude" appears in Settings > Voice Assistants
 - Provides `bruh_claude.send_prompt` and `bruh_claude.run_task` services
+- Token usage sensors reading from `/config/.bruh_claude/token_stats.json` (real Anthropic API values)
 - Communicates with the add-on via shared files in `/config/.bruh_claude/`
 - Request/response flow: integration writes JSON → add-on processes → add-on writes JSON response
 
