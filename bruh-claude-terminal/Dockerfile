@@ -50,7 +50,7 @@ RUN curl -fsSL https://claude.ai/install.sh | bash \
 RUN rm -rf /root/.config/claude /root/.config/anthropic /root/.claude 2>/dev/null; true
 
 # Create non-root user for Claude Code
-# --dangerously-skip-permissions requires non-root execution
+# Claude Code should run as non-root inside the container
 RUN adduser -D -s /bin/bash -u 1000 claude
 
 # Create directory structure

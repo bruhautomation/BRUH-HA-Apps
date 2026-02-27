@@ -53,7 +53,7 @@ class BruhClaudeConversationEntity(ConversationEntity):
     _attr_has_entity_name = True
     _attr_should_poll = False
     _attr_supported_features = SUPPORTS_CONTROL
-    _attr_icon = "mdi:robot"
+    _attr_icon = "mdi:creation"
 
     def __init__(self, config_entry: ConfigEntry, bridge) -> None:
         self._bridge = bridge

@@ -76,6 +76,13 @@ BRUH-HA-Apps/
 - Communicates with the add-on via shared files in `/config/.bruh_claude/`
 - Request/response flow: integration writes JSON → add-on processes → add-on writes JSON response
 
+### Permissions Architecture
+- **Interactive terminal**: `dangerously_skip_permissions` config option (default: **off**)
+- **Background listeners (Assist, Automation)**: Do NOT use `--dangerously-skip-permissions`. Instead, tool permissions are granted via `/config/.claude/settings.local.json`, which pre-approves MCP, Bash, Read, Write, Edit, WebFetch, and WebSearch tools. This avoids root-user restrictions of the flag.
+- **Project settings**: Written to `/config/.claude/settings.local.json` at startup by `setup_claude_settings()` in `run.sh`
+- **Non-root execution**: Claude Code runs as UID 1000 (`claude` user) via a wrapper script at `/usr/local/bin/claude` that uses `su-exec`
+- **Listener speed**: Both listeners use `--max-turns` to limit agentic loops (3 for Assist, 10 for Automation) and `--system-prompt` for efficient prompt handling
+
 ### Container Environment
 - Base: Home Assistant Alpine Linux 3.19
 - HOME: `/data/home` (persistent across restarts)

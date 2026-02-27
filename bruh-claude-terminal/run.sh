@@ -125,11 +125,11 @@ init_environment() {
         chmod 644 "$data_home/.tmux.conf"
     fi
 
-    # Read the permissions toggle.  This controls the interactive terminal only;
-    # background listeners (Assist, Automation) always force the flag because
-    # they run non-interactively and cannot respond to confirmation prompts.
+    # Read the permissions toggle.  This controls the interactive terminal ONLY.
+    # Background listeners (Assist, Automation) do NOT use this flag — they get
+    # tool permissions from /config/.claude/settings.local.json instead.
     local skip_perms
-    skip_perms=$(bashio::config 'dangerously_skip_permissions' 'true')
+    skip_perms=$(bashio::config 'dangerously_skip_permissions' 'false')
     local perms_flag=""
     if [ "$skip_perms" = "true" ]; then
         perms_flag="--dangerously-skip-permissions"
@@ -139,9 +139,7 @@ init_environment() {
     # These processes may lose env vars due to with-contenv shebang reloading
     # the s6 container environment, so we persist the critical vars to a file.
     #
-    # NOTE: BRUH_CLAUDE_PERMS_FLAG is used by the interactive terminal.
-    # The assist-listener and automation-listener hardcode
-    # --dangerously-skip-permissions because they cannot work without it.
+    # NOTE: BRUH_CLAUDE_PERMS_FLAG is used by the interactive terminal only.
     local env_file="/data/.bruh_claude_env"
     cat > "$env_file" << ENVEOF
 export HOME="${data_home}"
@@ -503,6 +501,8 @@ setup_mcp_server() {
 
     if [ "$enable_mcp" != "true" ]; then
         bashio::log.info "HA MCP server disabled"
+        # Still write project settings — background listeners need the allowlist
+        setup_claude_settings
         return
     fi
 
@@ -544,10 +544,15 @@ setup_mcp_server() {
 
     bashio::log.info "HA MCP server configured - Claude Code will have real-time HA access"
 
-    # Write project-level Claude Code settings that pre-allow all MCP tools.
-    # This acts as a belt-and-suspenders alongside --dangerously-skip-permissions:
-    # even if the flag is somehow not passed, the allowed tools list ensures
-    # Claude Code won't prompt for MCP tool approval.
+    # Write project-level Claude Code settings that pre-allow all necessary
+    # tools.  This is the PRIMARY permission mechanism for background listeners
+    # (Assist, Automation) — they rely on this allowlist instead of
+    # --dangerously-skip-permissions, which has issues running as root/su-exec.
+    # The interactive terminal also benefits: matching tools are auto-approved.
+    setup_claude_settings
+}
+
+setup_claude_settings() {
     local claude_settings_dir="/config/.claude"
     mkdir -p "$claude_settings_dir"
     cat > "$claude_settings_dir/settings.local.json" << 'SETTINGS'
@@ -558,14 +563,15 @@ setup_mcp_server() {
       "Bash(*)",
       "Read",
       "Write",
-      "Edit"
+      "Edit",
+      "WebFetch",
+      "WebSearch"
     ]
   }
 }
 SETTINGS
     chown -R claude:claude "$claude_settings_dir" 2>/dev/null || true
     bashio::log.info "Claude Code project settings written to $claude_settings_dir/settings.local.json"
-}
 
 # ============================================================================
 # Custom Integration Deployment
@@ -762,21 +768,22 @@ setup_automation_integration() {
 # or an empty string if disabled. This flag tells Claude Code to execute tool
 # calls (file edits, shell commands, etc.) without interactive confirmation.
 #
-# WHY THIS EXISTS: Inside the HA add-on container, Claude Code runs in a
-# sandboxed environment where the only files it can reach are /config and /data.
-# Skipping the per-action permission prompts makes the terminal and background
-# integrations (Assist, Automations) usable without manual approval of every
-# action. The flag is ON by default to preserve the current user experience,
-# but can be disabled in the app configuration if you prefer to approve each
-# action manually.
+# This flag controls the INTERACTIVE TERMINAL only. Background listeners
+# (Assist conversation agents, Automation tasks) get their tool permissions
+# from /config/.claude/settings.local.json, which pre-approves MCP tools,
+# Bash, Read, Write, and Edit — so they never need this flag.
+#
+# The flag is OFF by default.  The project-level settings.local.json already
+# grants the permissions Claude Code needs to work with Home Assistant, so
+# most users do not need to enable this.  Turning it on skips ALL permission
+# prompts, including for operations not in the allowlist.
 #
 # SECURITY NOTE: Even with this flag enabled, Claude Code still runs as a
 # non-root user (UID 1000) inside an isolated container. It cannot access the
-# host OS or other add-ons. Disabling the flag adds an extra confirmation step
-# before Claude modifies files or runs commands.
+# host OS or other add-ons.
 get_permissions_flag() {
     local skip_perms
-    skip_perms=$(bashio::config 'dangerously_skip_permissions' 'true')
+    skip_perms=$(bashio::config 'dangerously_skip_permissions' 'false')
 
     if [ "$skip_perms" = "true" ]; then
         echo "--dangerously-skip-permissions"
@@ -816,7 +823,7 @@ start_web_terminal() {
     bashio::log.info "  HOME=${HOME}"
     bashio::log.info "  HA MCP Server: $(bashio::config 'enable_ha_mcp_server' 'true')"
     bashio::log.info "  Auto-backup: $(bashio::config 'auto_backup' 'true')"
-    bashio::log.info "  Skip permissions: $(bashio::config 'dangerously_skip_permissions' 'true')"
+    bashio::log.info "  Skip permissions: $(bashio::config 'dangerously_skip_permissions' 'false')"
 
     local launch_command
     launch_command=$(get_claude_launch_command)

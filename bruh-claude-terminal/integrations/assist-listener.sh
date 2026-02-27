@@ -9,6 +9,12 @@
 #
 # Request format:  {"id": "<uuid>", "text": "user message", "type": "conversation", "system_prompt": "optional"}
 # Response format: {"id": "<uuid>", "text": "claude response"}
+#
+# Permissions:
+#   This listener does NOT use --dangerously-skip-permissions. Instead, tool
+#   permissions are granted via /config/.claude/settings.local.json, which
+#   pre-approves all MCP, Bash, Read, Write, and Edit tools. This avoids the
+#   root-user restrictions of the flag while still allowing non-interactive use.
 
 set -e
 
@@ -17,6 +23,10 @@ SHARED_DIR="/config/.bruh_claude"
 REQUESTS_DIR="$SHARED_DIR/requests"
 RESPONSES_DIR="$SHARED_DIR/responses"
 LOG_DIR="$SHARED_DIR/logs"
+
+# Maximum number of agentic turns per request.  Keeps responses fast:
+# typically 1 turn to read entities + 1 turn to call a service + 1 to respond.
+MAX_TURNS=3
 
 mkdir -p "$REQUESTS_DIR" "$RESPONSES_DIR" "$LOG_DIR"
 
@@ -28,16 +38,10 @@ if [ -f /data/.bruh_claude_env ]; then
     source /data/.bruh_claude_env
 fi
 
-# Background listeners ALWAYS need --dangerously-skip-permissions because
-# they run non-interactively and cannot respond to confirmation prompts.
-# The config option only controls the interactive terminal.
-LISTENER_PERMS_FLAG="--dangerously-skip-permissions"
-
 # Resolve the claude binary.  The wrapper at /usr/local/bin/claude already
-# drops to the non-root 'claude' user via su-exec, which is required because
-# --dangerously-skip-permissions REFUSES to work as root (UID 0).
-# If the wrapper doesn't exist yet, fall back to calling the native binary
-# through su-exec directly.
+# drops to the non-root 'claude' user via su-exec so that Claude Code runs
+# as UID 1000 inside the container.  If the wrapper doesn't exist yet, fall
+# back to calling the native binary through su-exec directly.
 CLAUDE_BIN="claude"
 if [ ! -x /usr/local/bin/claude ]; then
     if [ "$(id -u)" = "0" ] && command -v su-exec >/dev/null 2>&1; then
@@ -45,7 +49,7 @@ if [ ! -x /usr/local/bin/claude ]; then
     fi
 fi
 
-bashio::log.info "Assist listener starting (UID=$(id -u), claude=$CLAUDE_BIN)..."
+bashio::log.info "Assist listener starting (UID=$(id -u), claude=$CLAUDE_BIN, max_turns=$MAX_TURNS)..."
 bashio::log.info "Watching $REQUESTS_DIR for conversation requests"
 bashio::log.info "Debug logs: $LOG_DIR/assist-*.log"
 
@@ -77,7 +81,7 @@ log_request_debug() {
         echo "  Model:    ${model:-default}"
         echo "  History:  $history_turns turns"
         echo "  Prompt:   $prompt_chars chars"
-        echo "  Flags:    $LISTENER_PERMS_FLAG"
+        echo "  MaxTurns: $MAX_TURNS"
     } >> "$log_file"
 }
 
@@ -148,68 +152,31 @@ process_request() {
         history_turns=$(echo "$history_json" | jq 'length / 2 | floor' 2>/dev/null || echo 0)
     fi
 
-    # Build the prompt for Claude, including conversation history for context
-    local full_prompt
-    local base_instructions="You are a Home Assistant smart home voice assistant with full device control.
+    # System prompt for Claude: kept concise for speed.
+    # MCP tool details are discovered automatically from the server;
+    # we only need to tell Claude its role and style.
+    local base_system_prompt="You are a Home Assistant voice assistant. You have FULL authorization to control all devices — never ask for permission or confirmation. Act immediately, then briefly confirm what you did.
+Use your MCP tools (control_light, control_climate, control_media_player, control_cover, control_fan, control_switch, control_lock, control_alarm, control_vacuum, call_service, get_all_states, activate_scene, run_script, send_notification, get_service_details).
+If unsure of an entity_id, call get_all_states with a domain filter first.
+Keep responses concise."
 
-CRITICAL RULES:
-1. NEVER ask for permission or confirmation. You are fully authorized by the home owner to control all devices.
-2. ALWAYS execute the requested action immediately using your MCP tools. Do NOT say 'I need permission' or 'shall I proceed' or 'would you like me to'.
-3. After performing an action, briefly confirm what you did (e.g., 'Done, living room light set to 50% brightness.').
-4. If you are unsure which device the user means, use get_all_states to find it, then act.
+    # Merge custom system prompt (from the conversation agent config) if provided
+    local final_system_prompt="$base_system_prompt"
+    if [ -n "$system_prompt" ]; then
+        final_system_prompt="${system_prompt}
 
-Available MCP tools for device control:
-- Lights: use control_light (supports brightness, rgb_color, color_temp_kelvin, color_name, effects)
-- Thermostats: use control_climate (supports temperature, hvac_mode, fan_mode, preset_mode)
-- Media: use control_media_player (supports play, pause, volume, source, play_media)
-- Covers/blinds: use control_cover (supports open, close, set_position, set_tilt)
-- Fans: use control_fan (supports percentage, preset_mode, direction, oscillation)
-- Switches: use control_switch (on, off, toggle)
-- Locks: use control_lock (lock, unlock)
-- Alarms: use control_alarm (arm_away, arm_home, disarm)
-- Vacuums: use control_vacuum (start, stop, return_home)
-- Notifications: use send_notification
-- Scenes: use activate_scene
-- Scripts: use run_script
-- Any other service: use call_service with domain, service, and data
-- Discover entities: use get_all_states with a domain filter (e.g., 'light')
-- Look up service parameters: use get_service_details
+${base_system_prompt}"
+    fi
 
-If you don't know the entity_id, use get_all_states to find it first.
-Keep responses concise and conversational."
-
+    # Build the user message, including conversation history for context
+    local user_message
     if [ -n "$history_text" ]; then
-        # Include conversation history for multi-turn context
-        if [ -n "$system_prompt" ]; then
-            full_prompt="${system_prompt}
-
-${base_instructions}
-
-Previous conversation:
+        user_message="Previous conversation:
 ${history_text}
 
 USER: ${text}"
-        else
-            full_prompt="${base_instructions}
-
-Previous conversation:
-${history_text}
-
-USER: ${text}"
-        fi
     else
-        # No history - first message in conversation
-        if [ -n "$system_prompt" ]; then
-            full_prompt="${system_prompt}
-
-${base_instructions}
-
-User said: ${text}"
-        else
-            full_prompt="${base_instructions}
-
-User said: ${text}"
-        fi
+        user_message="$text"
     fi
 
     # Build model flag (each conversation agent can specify its own model)
@@ -219,44 +186,53 @@ User said: ${text}"
     fi
 
     # Log the request for debugging
-    log_request_debug "$req_id" "$text" "$model" "$history_turns" "${#full_prompt}"
+    log_request_debug "$req_id" "$text" "$model" "$history_turns" "${#user_message}"
 
     local output_file stderr_file
     output_file=$(mktemp)
     stderr_file=$(mktemp)
 
-    # Run Claude in print mode from /config so it finds .mcp.json for HA tools.
-    # ALWAYS use --dangerously-skip-permissions for non-interactive listeners.
-    # The claude wrapper (or CLAUDE_BIN fallback) ensures non-root execution.
+    # Run Claude in print mode from /config so it finds .mcp.json for HA tools
+    # and .claude/settings.local.json for pre-approved tool permissions.
+    # --max-turns keeps responses fast by limiting agentic loops.
+    # No --dangerously-skip-permissions: permissions come from settings.local.json.
     local start_time
     start_time=$(date +%s)
 
     # shellcheck disable=SC2086
-    (cd /config && printf '%s' "$full_prompt" | ${CLAUDE_BIN} -p ${LISTENER_PERMS_FLAG} ${model_flag} > "$output_file" 2>"$stderr_file") || true
+    (cd /config && printf '%s' "$user_message" | ${CLAUDE_BIN} -p --verbose --max-turns "$MAX_TURNS" --system-prompt "$final_system_prompt" ${model_flag} > "$output_file" 2>"$stderr_file") || true
 
     local end_time duration
     end_time=$(date +%s)
     duration=$((end_time - start_time))
 
     local response stderr_output
-    response=$(cat "$output_file" 2>/dev/null || echo "I had trouble processing that request.")
+    response=$(cat "$output_file" 2>/dev/null || echo "")
     stderr_output=$(cat "$stderr_file" 2>/dev/null || echo "")
     rm -f "$output_file" "$stderr_file"
+
+    # If response is empty, something went wrong — check stderr for clues
+    if [ -z "$response" ]; then
+        bashio::log.error "Empty response for [$req_id] after ${duration}s"
+        bashio::log.error "Stderr: ${stderr_output:0:500}"
+        if echo "$stderr_output" | grep -qi "not logged in\|please log in\|authentication"; then
+            response="Claude is not logged in. Please open the BRUH Claude Terminal sidebar and complete the OAuth login first."
+        elif echo "$stderr_output" | grep -qi "permission\|not allowed\|denied"; then
+            response="Claude encountered a permission error. Check the add-on logs for details."
+        else
+            response="Sorry, Claude didn't produce a response. Check the BRUH Claude Terminal add-on logs for details."
+        fi
+    fi
 
     # Log the response for debugging
     log_response_debug "$req_id" "$response" "$duration" "$stderr_output"
 
     bashio::log.info "Assist response [$req_id]: ${duration}s, ${#response} chars"
 
-    # Check for auth errors and return a helpful message
+    # Check for auth errors in the response text
     if echo "$response" | grep -qi "not logged in\|please log in\|authentication required"; then
         response="Claude is not logged in. Please open the BRUH Claude Terminal sidebar and complete the OAuth login first."
         bashio::log.error "Claude auth error - user needs to log in via the terminal"
-    fi
-
-    # Check for permission errors (shouldn't happen with --dangerously-skip-permissions)
-    if echo "$response" | grep -qi "permission\|approve\|confirm.*tool\|allow.*tool"; then
-        bashio::log.warning "Possible permission prompt in response [$req_id] - check debug logs"
     fi
 
     # Write response file (atomic via tmp + rename)
