@@ -15,6 +15,7 @@ Enhanced Claude Code terminal for Home Assistant. Everything the original Claude
 - **Log access** - `ha-log core -f` for real-time log tailing
 - **Persistent environment** - packages survive restarts
 - **Multi-session support** - background tasks, multiple tmux windows
+- **Token usage sensors** - real Anthropic API token counts as HA sensors
 - **Assist integration** - use Claude as a conversation agent
 - **Automation integration** - trigger Claude tasks from HA automations
 

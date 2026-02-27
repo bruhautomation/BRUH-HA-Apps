@@ -7,8 +7,8 @@ Enhanced Claude Code terminal for Home Assistant with native HA API access, auto
 ### Native HA API Access (MCP Server)
 A built-in MCP server gives Claude Code real-time access to your Home Assistant installation:
 - Get entity states, call services, trigger automations
-- View automation traces for debugging
-- Check error logs and system health
+- View automation state and stored execution traces for debugging
+- Check HA logs via Supervisor journal
 - Render Jinja2 templates
 - Reload configurations after YAML edits
 
@@ -53,6 +53,12 @@ Packages survive container restarts:
 
 ### Home Assistant Assist Integration
 Connect Claude to HA's conversation agent for voice/text assistant responses.
+
+### Token Usage Sensors
+Track Claude Code token usage directly in Home Assistant:
+- Session, daily, weekly, and all-time token counts (real Anthropic API values)
+- Session start time, last activity, and period reset timestamps
+- Weekly session count
 
 ### Home Assistant Automation Integration
 Trigger Claude tasks from HA automations via file-based task queue.
