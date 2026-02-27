@@ -29,6 +29,12 @@ LOG_DIR="$SHARED_DIR/logs"
 # Configurable via the add-on's automation_max_turns option.
 MAX_TURNS="${BRUH_AUTOMATION_MAX_TURNS:-10}"
 
+# Process-level timeout for claude -p commands (seconds).
+# Automation tasks can be longer than conversation requests, so default is
+# higher.  Without this, a hung MCP connection causes claude -p to block
+# forever and no result file is ever written.
+CLAUDE_TIMEOUT="${BRUH_AUTOMATION_TIMEOUT:-300}"
+
 mkdir -p "$TASKS_DIR" "$RESULTS_DIR" "$LOG_DIR"
 
 # Source the Claude environment written by run.sh
@@ -47,7 +53,7 @@ if [ ! -x /usr/local/bin/claude-run ]; then
     fi
 fi
 
-bashio::log.info "Automation listener starting (UID=$(id -u), claude=$CLAUDE_BIN, max_turns=$MAX_TURNS)..."
+bashio::log.info "Automation listener starting (UID=$(id -u), claude=$CLAUDE_BIN, max_turns=$MAX_TURNS, timeout=${CLAUDE_TIMEOUT}s)..."
 bashio::log.info "Watching $TASKS_DIR for automation tasks"
 bashio::log.info "Debug logs: $LOG_DIR/automation-*.log"
 
@@ -99,7 +105,7 @@ process_task() {
     start_time=$(date +%s)
 
     # shellcheck disable=SC2086
-    (cd /config && printf '%s' "$prompt" | ${CLAUDE_BIN} -p --verbose --max-turns "$MAX_TURNS" > "$output_file" 2>"$stderr_file") || true
+    (cd /config && printf '%s' "$prompt" | timeout "$CLAUDE_TIMEOUT" ${CLAUDE_BIN} -p --verbose --max-turns "$MAX_TURNS" > "$output_file" 2>"$stderr_file") || true
 
     local end_time duration
     end_time=$(date +%s)
@@ -114,7 +120,10 @@ process_task() {
     if [ -z "$result" ]; then
         bashio::log.error "Empty result for task [$task_id] after ${duration}s"
         bashio::log.error "Stderr: ${stderr_output:0:500}"
-        if echo "$stderr_output" | grep -qi "not logged in\|please log in\|authentication"; then
+        if [ "$duration" -ge "$((CLAUDE_TIMEOUT - 5))" ] 2>/dev/null; then
+            result="Claude task timed out after ${duration}s. This may be caused by a broken MCP server connection. Try restarting the BRUH Claude Terminal add-on."
+            bashio::log.error "Claude process timed out (limit=${CLAUDE_TIMEOUT}s)"
+        elif echo "$stderr_output" | grep -qi "not logged in\|please log in\|authentication"; then
             result="Claude is not logged in. Please open the BRUH Claude Terminal sidebar and complete the OAuth login first."
         elif echo "$stderr_output" | grep -qi "permission\|not allowed\|denied"; then
             result="Claude encountered a permission error. Check the add-on logs for details."

@@ -17,6 +17,13 @@
 - Now also checks `.args` fields (not just `.url`) for `/api/mcp` references
 - Added `/root/.mcp.json` to the list of checked locations
 
+**Fixed: Conversation Agent Not Responding**
+- Added process-level `timeout` to all `claude -p` calls in both assist and automation listeners
+- Previously, if Claude Code hung (e.g., broken MCP server connection), the listener blocked forever and no response file was ever written — the user got nothing
+- Now Claude Code is killed after 105s (assist) or 300s (automation), and a meaningful error message is returned
+- Added timeout-specific error messages so users know what happened
+- Added `asyncio.CancelledError` handling in the conversation entity for cases where HA cancels the request
+
 ## 1.9.0
 
 ### Remove Legacy Token Sensors & Fix /api/mcp Auth Error

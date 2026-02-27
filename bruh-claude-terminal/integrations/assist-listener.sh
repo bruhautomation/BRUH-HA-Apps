@@ -37,6 +37,13 @@ LOG_DIR="$SHARED_DIR/logs"
 # Default 5: enough for entity lookup + service call + follow-up + response.
 MAX_TURNS="${BRUH_ASSIST_MAX_TURNS:-5}"
 
+# Process-level timeout for claude -p commands (seconds).
+# Must be shorter than the integration's bridge timeout (default 120s) so the
+# listener always has time to write an error response file before the bridge
+# gives up polling.  Without this, a hung MCP connection causes claude -p to
+# block forever and no response file is ever written.
+CLAUDE_TIMEOUT="${BRUH_ASSIST_TIMEOUT:-105}"
+
 mkdir -p "$REQUESTS_DIR" "$RESPONSES_DIR" "$SESSIONS_DIR" "$CLEAR_DIR" "$LOG_DIR"
 
 # Source the Claude environment written by run.sh
@@ -58,7 +65,7 @@ if [ ! -x /usr/local/bin/claude-run ]; then
     fi
 fi
 
-bashio::log.info "Assist listener starting (UID=$(id -u), claude=$CLAUDE_BIN, max_turns=$MAX_TURNS)..."
+bashio::log.info "Assist listener starting (UID=$(id -u), claude=$CLAUDE_BIN, max_turns=$MAX_TURNS, timeout=${CLAUDE_TIMEOUT}s)..."
 bashio::log.info "Watching $REQUESTS_DIR for conversation requests"
 bashio::log.info "Persistent sessions: $SESSIONS_DIR"
 bashio::log.info "Debug logs: $LOG_DIR/assist-*.log"
@@ -276,11 +283,11 @@ USER: ${text}"
     if [ -n "$resume_flag" ]; then
         # Resume existing session — no system prompt needed
         # shellcheck disable=SC2086
-        (cd /config && printf '%s' "$user_message" | ${CLAUDE_BIN} -p --output-format json --verbose --max-turns "$MAX_TURNS" ${resume_flag} ${model_flag} > "$output_file" 2>"$stderr_file") || exit_code=$?
+        (cd /config && printf '%s' "$user_message" | timeout "$CLAUDE_TIMEOUT" ${CLAUDE_BIN} -p --output-format json --verbose --max-turns "$MAX_TURNS" ${resume_flag} ${model_flag} > "$output_file" 2>"$stderr_file") || exit_code=$?
     else
         # New session — include system prompt
         # shellcheck disable=SC2086
-        (cd /config && printf '%s' "$user_message" | ${CLAUDE_BIN} -p --output-format json --verbose --max-turns "$MAX_TURNS" ${system_flag} "$final_system_prompt" ${model_flag} > "$output_file" 2>"$stderr_file") || exit_code=$?
+        (cd /config && printf '%s' "$user_message" | timeout "$CLAUDE_TIMEOUT" ${CLAUDE_BIN} -p --output-format json --verbose --max-turns "$MAX_TURNS" ${system_flag} "$final_system_prompt" ${model_flag} > "$output_file" 2>"$stderr_file") || exit_code=$?
     fi
 
     local end_time duration
@@ -317,7 +324,7 @@ USER: ${text}"
         start_time=$(date +%s)
 
         # shellcheck disable=SC2086
-        (cd /config && printf '%s' "$text" | ${CLAUDE_BIN} -p --output-format json --verbose --max-turns "$MAX_TURNS" --system-prompt "$final_system_prompt" ${model_flag} > "$output_file" 2>"$stderr_file") || true
+        (cd /config && printf '%s' "$text" | timeout "$CLAUDE_TIMEOUT" ${CLAUDE_BIN} -p --output-format json --verbose --max-turns "$MAX_TURNS" --system-prompt "$final_system_prompt" ${model_flag} > "$output_file" 2>"$stderr_file") || true
 
         end_time=$(date +%s)
         duration=$((end_time - start_time))
@@ -339,9 +346,12 @@ USER: ${text}"
 
     # If response is still empty, something went wrong — check stderr for clues
     if [ -z "$response" ]; then
-        bashio::log.error "Empty response for [$req_id] after ${duration}s"
+        bashio::log.error "Empty response for [$req_id] after ${duration}s (exit=$exit_code)"
         bashio::log.error "Stderr: ${stderr_output:0:500}"
-        if echo "$stderr_output" | grep -qi "not logged in\|please log in\|authentication"; then
+        if [ "$exit_code" -ge 124 ] 2>/dev/null && [ "$duration" -ge "$((CLAUDE_TIMEOUT - 5))" ] 2>/dev/null; then
+            response="Claude timed out after ${duration}s. This may be caused by a broken MCP server connection. Try restarting the BRUH Claude Terminal add-on."
+            bashio::log.error "Claude process timed out (exit=$exit_code, limit=${CLAUDE_TIMEOUT}s)"
+        elif echo "$stderr_output" | grep -qi "not logged in\|please log in\|authentication"; then
             response="Claude is not logged in. Please open the BRUH Claude Terminal sidebar and complete the OAuth login first."
         elif echo "$stderr_output" | grep -qi "permission\|not allowed\|denied"; then
             response="Claude encountered a permission error. Check the add-on logs for details."
