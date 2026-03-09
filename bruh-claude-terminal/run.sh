@@ -301,18 +301,22 @@ update_claude_code() {
     current_version=$(/root/.local/bin/claude --version 2>/dev/null | head -1 | awk '{print $1}' || echo "unknown")
     bashio::log.info "  - Current Claude Code version: ${current_version}"
 
-    # Re-run the official installer to get the latest version
-    if curl -fsSL https://claude.ai/install.sh | bash 2>/dev/null; then
+    # Re-run the official installer to get the latest version.
+    # IMPORTANT: Override HOME=/root so the installer updates /root/.local/bin/claude
+    # (the binary the claude-run wrapper and symlinks point to). Without this,
+    # HOME=/data/home causes the installer to write to persistent storage while
+    # the wrapper keeps running the stale Docker-image copy.
+    if HOME=/root curl -fsSL https://claude.ai/install.sh | HOME=/root bash 2>/dev/null; then
         local new_version
         new_version=$(/root/.local/bin/claude --version 2>/dev/null | head -1 | awk '{print $1}' || echo "unknown")
         if [ "$new_version" != "$current_version" ]; then
             bashio::log.info "  - Claude Code updated: ${current_version} -> ${new_version}"
-            # Refresh the symlink in persistent storage
+            # Refresh the symlink in persistent storage (always, in case a
+            # previous broken update replaced the symlink with a real file)
             local native_bin_dir="/data/home/.local/bin"
-            if [ -L "$native_bin_dir/claude" ]; then
-                ln -sf /root/.local/bin/claude "$native_bin_dir/claude"
-                bashio::log.info "  - Refreshed persistent binary symlink"
-            fi
+            mkdir -p "$native_bin_dir"
+            ln -sf /root/.local/bin/claude "$native_bin_dir/claude"
+            bashio::log.info "  - Refreshed persistent binary symlink"
         else
             bashio::log.info "  - Claude Code is up to date (v${new_version})"
         fi
