@@ -294,6 +294,35 @@ migrate_legacy_auth_files() {
 # Tool Installation
 # ============================================================================
 
+update_claude_code() {
+    bashio::log.info "Checking for Claude Code updates..."
+
+    local current_version
+    current_version=$(/root/.local/bin/claude --version 2>/dev/null | head -1 | awk '{print $1}' || echo "unknown")
+    bashio::log.info "  - Current Claude Code version: ${current_version}"
+
+    # Re-run the official installer to get the latest version
+    if curl -fsSL https://claude.ai/install.sh | bash 2>/dev/null; then
+        local new_version
+        new_version=$(/root/.local/bin/claude --version 2>/dev/null | head -1 | awk '{print $1}' || echo "unknown")
+        if [ "$new_version" != "$current_version" ]; then
+            bashio::log.info "  - Claude Code updated: ${current_version} -> ${new_version}"
+            # Refresh the symlink in persistent storage
+            local native_bin_dir="/data/home/.local/bin"
+            if [ -L "$native_bin_dir/claude" ]; then
+                ln -sf /root/.local/bin/claude "$native_bin_dir/claude"
+                bashio::log.info "  - Refreshed persistent binary symlink"
+            fi
+        else
+            bashio::log.info "  - Claude Code is up to date (v${new_version})"
+        fi
+    else
+        bashio::log.warning "Claude Code update check failed - continuing with current version"
+    fi
+
+    chmod 755 /root /root/.local /root/.local/bin 2>/dev/null || true
+}
+
 install_tools() {
     bashio::log.info "Verifying tools..."
 
@@ -1210,12 +1239,13 @@ trap cleanup SIGTERM SIGINT EXIT
 
 main() {
     bashio::log.info "============================================"
-    bashio::log.info "  BRUH Claude Terminal v1.13.0"
+    bashio::log.info "  BRUH Claude Terminal v1.14.0"
     bashio::log.info "  Enhanced Claude Code for Home Assistant"
     bashio::log.info "============================================"
 
     run_health_check
     init_environment
+    update_claude_code
     setup_claude_user
     install_tools
     install_cli_tools
