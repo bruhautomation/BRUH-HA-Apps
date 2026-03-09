@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.14.1
+
+### Fix Claude Code Auto-Update Installing to Wrong Path
+
+**Fixed Auto-Update Not Working**
+- The `update_claude_code()` function was installing the updated binary to `/data/home/.local/bin/claude` instead of `/root/.local/bin/claude` because `HOME` was already set to `/data/home` by `init_environment()`
+- The `claude-run` wrapper always executes `/root/.local/bin/claude`, so the stale Docker-image binary was used regardless of the update
+- Fixed by overriding `HOME=/root` when running the installer so it updates the correct binary
+- Made the persistent symlink refresh unconditional to recover from edge cases
+
 ## 1.14.0
 
 ### Auto-Update Claude Code on Startup
