@@ -216,7 +216,19 @@ setup_claude_user() {
     # to prevent Claude Code diagnostics from detecting it as a conflicting
     # "npm-global" installation.  The interactive terminal and background
     # listeners reference this wrapper directly.
-    rm -f /usr/local/bin/claude          # remove stale build-time symlink
+    # npm install -g puts the claude binary at /usr/local/bin/claude which
+    # triggers a misleading "npm-global" diagnostic warning. We need to remove
+    # it, but /root/.local/bin/claude may be a symlink pointing to it.
+    # Resolve the real path first so we can re-point the symlink.
+    if [ -e /usr/local/bin/claude ]; then
+        local real_claude
+        real_claude=$(readlink -f /usr/local/bin/claude 2>/dev/null || echo "")
+        rm -f /usr/local/bin/claude
+        if [ -n "$real_claude" ] && [ -f "$real_claude" ]; then
+            mkdir -p /root/.local/bin
+            ln -sf "$real_claude" /root/.local/bin/claude
+        fi
+    fi
     rm -f /usr/local/bin/claude-run      # clean slate
     cat > /usr/local/bin/claude-run << 'WRAPPER'
 #!/bin/bash
@@ -322,15 +334,15 @@ update_claude_code() {
         # npm installs the binary to the global node_modules bin directory.
         # Find where npm put it and update our expected paths.
         local npm_claude_bin
-        npm_claude_bin=$(command -v claude 2>/dev/null || npm bin -g 2>/dev/null | xargs -I{} echo "{}/claude")
+        # Resolve the real path of the npm-installed binary (not the
+        # /usr/local/bin symlink, which setup_claude_user will remove).
+        npm_claude_bin=$(readlink -f "$(command -v claude 2>/dev/null)" 2>/dev/null || echo "")
 
-        if [ -n "$npm_claude_bin" ] && [ -x "$npm_claude_bin" ]; then
-            # Ensure /root/.local/bin/claude points to the npm-installed binary
+        if [ -n "$npm_claude_bin" ] && [ -f "$npm_claude_bin" ]; then
+            # Ensure /root/.local/bin/claude points to the actual cli.js file
             # so the claude-run wrapper and existing symlinks keep working.
             mkdir -p /root/.local/bin
-            if [ "$npm_claude_bin" != "/root/.local/bin/claude" ]; then
-                ln -sf "$npm_claude_bin" /root/.local/bin/claude
-            fi
+            ln -sf "$npm_claude_bin" /root/.local/bin/claude
         fi
 
         local new_version
@@ -1269,7 +1281,7 @@ trap cleanup SIGTERM SIGINT EXIT
 
 main() {
     bashio::log.info "============================================"
-    bashio::log.info "  BRUH Claude Terminal v1.14.3"
+    bashio::log.info "  BRUH Claude Terminal v1.14.4"
     bashio::log.info "  Enhanced Claude Code for Home Assistant"
     bashio::log.info "============================================"
 

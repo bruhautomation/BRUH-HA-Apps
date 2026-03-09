@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.14.4
+
+### Fix Claude Code binary removed during startup
+
+**Fixed Claude Code exiting immediately when opened via ingress**
+- `setup_claude_user()` deleted `/usr/local/bin/claude` (the npm-installed binary) to suppress a diagnostic warning, but `/root/.local/bin/claude` was a symlink pointing to it — leaving a broken symlink
+- Now resolves the real binary path (the `cli.js` inside `node_modules`) before removing the `/usr/local/bin` entry, and re-points the symlink to the resolved path
+- Same fix applied to the Dockerfile build and the `update_claude_code()` runtime updater
+- Updated health check to treat `/usr/local/bin/claude` as expected (from npm) rather than "stale"
+
 ## 1.14.3
 
 ### Fix Claude Code Auto-Update musl Compatibility
