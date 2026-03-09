@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.14.2
+
+### Fix Claude Code Auto-Update Failing on Startup
+
+**Fixed Auto-Update Failing with "update check failed"**
+- Root cause: `set -o pipefail` caused `curl ... | bash` to fail if `curl` hadn't completed before `bash` exited, or if the network wasn't ready at container startup
+- Separated download and execution: installer script is now downloaded first, then executed, avoiding pipeline exit-code issues
+- Added retry logic (4 attempts with backoff) for downloading the installer, since the network may not be available immediately at startup
+- Stopped suppressing stderr (`2>/dev/null`) from the installer so failures are logged for diagnosis
+- On installer failure, the actual error output is now logged via `bashio::log.warning`
+
 ## 1.14.1
 
 ### Fix Claude Code Auto-Update Installing to Wrong Path
