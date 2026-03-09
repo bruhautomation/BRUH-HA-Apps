@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.14.3
+
+### Fix Claude Code Auto-Update musl Compatibility
+
+**Fixed "posix_getdents: symbol not found" crash on update**
+- The binary installer (`install.sh`) downloads a native musl build that requires `posix_getdents`, a symbol added in musl 1.2.5 - but Alpine 3.19 ships musl 1.2.4
+- Switched both Dockerfile and runtime auto-update from the binary installer to `npm install -g @anthropic-ai/claude-code`, which uses the Node.js package and works on any musl version
+- npm-installed binary is symlinked to `/root/.local/bin/claude` so the `claude-run` wrapper and persistent symlinks continue to work unchanged
+- Retains retry logic (4 attempts with exponential backoff) for network readiness at startup
+
 ## 1.14.2
 
 ### Fix Claude Code Auto-Update Failing on Startup
