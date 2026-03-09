@@ -301,12 +301,28 @@ update_claude_code() {
     current_version=$(/root/.local/bin/claude --version 2>/dev/null | head -1 | awk '{print $1}' || echo "unknown")
     bashio::log.info "  - Current Claude Code version: ${current_version}"
 
-    # Re-run the official installer to get the latest version.
-    # IMPORTANT: Override HOME=/root so the installer updates /root/.local/bin/claude
+    # Download the installer script with retries.
+    # Network may not be ready immediately at container startup.
+    local installer_script=""
+    local attempt
+    for attempt in 1 2 3 4; do
+        installer_script=$(curl -fsSL https://claude.ai/install.sh 2>/dev/null) && break
+        bashio::log.info "  - Download attempt ${attempt}/4 failed, retrying in ${attempt}s..."
+        sleep "$attempt"
+    done
+
+    if [ -z "$installer_script" ]; then
+        bashio::log.warning "Could not download Claude Code installer after 4 attempts - continuing with current version"
+        chmod 755 /root /root/.local /root/.local/bin 2>/dev/null || true
+        return
+    fi
+
+    # Run the installer with HOME=/root so it updates /root/.local/bin/claude
     # (the binary the claude-run wrapper and symlinks point to). Without this,
     # HOME=/data/home causes the installer to write to persistent storage while
     # the wrapper keeps running the stale Docker-image copy.
-    if HOME=/root curl -fsSL https://claude.ai/install.sh | HOME=/root bash 2>/dev/null; then
+    local install_output
+    if install_output=$(echo "$installer_script" | HOME=/root bash 2>&1); then
         local new_version
         new_version=$(/root/.local/bin/claude --version 2>/dev/null | head -1 | awk '{print $1}' || echo "unknown")
         if [ "$new_version" != "$current_version" ]; then
@@ -321,7 +337,8 @@ update_claude_code() {
             bashio::log.info "  - Claude Code is up to date (v${new_version})"
         fi
     else
-        bashio::log.warning "Claude Code update check failed - continuing with current version"
+        bashio::log.warning "Claude Code installer failed - continuing with current version"
+        bashio::log.warning "Installer output: ${install_output}"
     fi
 
     chmod 755 /root /root/.local /root/.local/bin 2>/dev/null || true
@@ -1243,7 +1260,7 @@ trap cleanup SIGTERM SIGINT EXIT
 
 main() {
     bashio::log.info "============================================"
-    bashio::log.info "  BRUH Claude Terminal v1.14.1"
+    bashio::log.info "  BRUH Claude Terminal v1.14.2"
     bashio::log.info "  Enhanced Claude Code for Home Assistant"
     bashio::log.info "============================================"
 
