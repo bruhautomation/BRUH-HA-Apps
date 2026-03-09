@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.14.0
+
+### Auto-Update Claude Code on Startup
+
+**Claude Code Auto-Update**
+- Added `update_claude_code()` function that runs the official Claude Code installer on every container startup
+- Ensures the add-on always uses the latest Claude Code version without requiring a Docker image rebuild
+- Logs current and updated version numbers for visibility
+- Gracefully falls back to the existing version if the update check fails
+- Refreshes persistent binary symlinks after updates
+
 ## 1.13.0
 
 ### Version Bump, Documentation & Changelog Catch-Up
