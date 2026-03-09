@@ -81,10 +81,10 @@ check_claude_cli() {
         bashio::log.warning "  (will be created by setup_claude_user)"
     fi
 
-    # Warn about stale /usr/local/bin/claude that causes "multiple installations" diagnostic
+    # npm install -g places claude at /usr/local/bin/claude — this is expected
+    # but will be removed during setup to avoid "npm-global" diagnostic warnings.
     if [ -e /usr/local/bin/claude ]; then
-        bashio::log.warning "Stale /usr/local/bin/claude detected (causes 'npm-global' warning)"
-        bashio::log.info "  This will be removed during setup"
+        bashio::log.info "npm-installed /usr/local/bin/claude present (will be cleaned up during setup)"
     fi
 
     # Check if $HOME/.local/bin/claude symlink exists for the claude user

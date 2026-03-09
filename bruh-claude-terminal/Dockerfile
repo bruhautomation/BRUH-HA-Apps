@@ -50,7 +50,7 @@ RUN pip3 install --break-system-packages --no-cache-dir \
 # warnings.
 RUN npm install -g @anthropic-ai/claude-code \
     && mkdir -p /root/.local/bin \
-    && ln -sf "$(command -v claude)" /root/.local/bin/claude \
+    && ln -sf "$(readlink -f "$(command -v claude)")" /root/.local/bin/claude \
     && chmod 755 /root /root/.local /root/.local/bin
 
 # Remove config directories that the Claude Code installer may have created.
