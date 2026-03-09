@@ -38,12 +38,19 @@ RUN pip3 install --break-system-packages --no-cache-dir \
     pyyaml \
     yamllint
 
-# Install Claude Code CLI using native installer
+# Install Claude Code CLI via npm (not the binary installer).
+# The binary installer downloads a native musl build that may require
+# symbols missing from Alpine 3.19's musl 1.2.4 (e.g. posix_getdents).
+# npm install uses the Node.js package which works on any musl version.
+#
+# We symlink the npm-installed binary to /root/.local/bin/claude so the
+# claude-run wrapper and persistent symlinks have a stable path.
 # NOTE: Do NOT symlink to /usr/local/bin/claude — Claude Code diagnostics
 # detects that path as an "npm-global" installation, causing misleading
-# warnings.  The run.sh wrapper at /usr/local/bin/claude-run handles
-# non-root execution instead.
-RUN curl -fsSL https://claude.ai/install.sh | bash \
+# warnings.
+RUN npm install -g @anthropic-ai/claude-code \
+    && mkdir -p /root/.local/bin \
+    && ln -sf "$(command -v claude)" /root/.local/bin/claude \
     && chmod 755 /root /root/.local /root/.local/bin
 
 # Remove config directories that the Claude Code installer may have created.

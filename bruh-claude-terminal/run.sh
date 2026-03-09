@@ -301,44 +301,53 @@ update_claude_code() {
     current_version=$(/root/.local/bin/claude --version 2>/dev/null | head -1 | awk '{print $1}' || echo "unknown")
     bashio::log.info "  - Current Claude Code version: ${current_version}"
 
-    # Download the installer script with retries.
-    # Network may not be ready immediately at container startup.
-    local installer_script=""
+    # Use npm to update Claude Code instead of the binary installer.
+    # The binary installer downloads a native musl build that requires
+    # posix_getdents (musl 1.2.5+), but Alpine 3.19 ships musl 1.2.4.
+    # npm install uses the Node.js package which works on any musl version.
+    local install_output
     local attempt
+    local install_success=false
+
     for attempt in 1 2 3 4; do
-        installer_script=$(curl -fsSL https://claude.ai/install.sh 2>/dev/null) && break
-        bashio::log.info "  - Download attempt ${attempt}/4 failed, retrying in ${attempt}s..."
-        sleep "$attempt"
+        if install_output=$(npm install -g @anthropic-ai/claude-code 2>&1); then
+            install_success=true
+            break
+        fi
+        bashio::log.info "  - npm install attempt ${attempt}/4 failed, retrying in $((attempt * 2))s..."
+        sleep $((attempt * 2))
     done
 
-    if [ -z "$installer_script" ]; then
-        bashio::log.warning "Could not download Claude Code installer after 4 attempts - continuing with current version"
-        chmod 755 /root /root/.local /root/.local/bin 2>/dev/null || true
-        return
-    fi
+    if [ "$install_success" = "true" ]; then
+        # npm installs the binary to the global node_modules bin directory.
+        # Find where npm put it and update our expected paths.
+        local npm_claude_bin
+        npm_claude_bin=$(command -v claude 2>/dev/null || npm bin -g 2>/dev/null | xargs -I{} echo "{}/claude")
 
-    # Run the installer with HOME=/root so it updates /root/.local/bin/claude
-    # (the binary the claude-run wrapper and symlinks point to). Without this,
-    # HOME=/data/home causes the installer to write to persistent storage while
-    # the wrapper keeps running the stale Docker-image copy.
-    local install_output
-    if install_output=$(echo "$installer_script" | HOME=/root bash 2>&1); then
+        if [ -n "$npm_claude_bin" ] && [ -x "$npm_claude_bin" ]; then
+            # Ensure /root/.local/bin/claude points to the npm-installed binary
+            # so the claude-run wrapper and existing symlinks keep working.
+            mkdir -p /root/.local/bin
+            if [ "$npm_claude_bin" != "/root/.local/bin/claude" ]; then
+                ln -sf "$npm_claude_bin" /root/.local/bin/claude
+            fi
+        fi
+
         local new_version
         new_version=$(/root/.local/bin/claude --version 2>/dev/null | head -1 | awk '{print $1}' || echo "unknown")
         if [ "$new_version" != "$current_version" ]; then
             bashio::log.info "  - Claude Code updated: ${current_version} -> ${new_version}"
-            # Refresh the symlink in persistent storage (always, in case a
-            # previous broken update replaced the symlink with a real file)
-            local native_bin_dir="/data/home/.local/bin"
-            mkdir -p "$native_bin_dir"
-            ln -sf /root/.local/bin/claude "$native_bin_dir/claude"
-            bashio::log.info "  - Refreshed persistent binary symlink"
         else
             bashio::log.info "  - Claude Code is up to date (v${new_version})"
         fi
+
+        # Refresh the symlink in persistent storage
+        local native_bin_dir="/data/home/.local/bin"
+        mkdir -p "$native_bin_dir"
+        ln -sf /root/.local/bin/claude "$native_bin_dir/claude"
     else
-        bashio::log.warning "Claude Code installer failed - continuing with current version"
-        bashio::log.warning "Installer output: ${install_output}"
+        bashio::log.warning "Claude Code update failed after 4 attempts - continuing with current version"
+        bashio::log.warning "Last npm output: ${install_output}"
     fi
 
     chmod 755 /root /root/.local /root/.local/bin 2>/dev/null || true
@@ -1260,7 +1269,7 @@ trap cleanup SIGTERM SIGINT EXIT
 
 main() {
     bashio::log.info "============================================"
-    bashio::log.info "  BRUH Claude Terminal v1.14.2"
+    bashio::log.info "  BRUH Claude Terminal v1.14.3"
     bashio::log.info "  Enhanced Claude Code for Home Assistant"
     bashio::log.info "============================================"
 
