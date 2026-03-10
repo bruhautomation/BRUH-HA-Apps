@@ -7,7 +7,7 @@
 **Fixed "Auto-update failed · Try claude doctor or npm i -g @anthropic-ai/claude-code" warning**
 - Claude Code's built-in auto-updater fails when running as the non-root `claude` user because it cannot write to npm global directories or `/root/.local/bin`
 - Set `DISABLE_AUTOUPDATER=1` environment variable to suppress the auto-updater since the add-on already handles updates at startup via `update_claude_code()` running as root
-- Added to both the main process environment and the persisted env file so it applies to interactive terminal sessions and background listeners
+- Added to the main process environment, the persisted env file, and the `claude-run` wrapper script to guarantee the env var reaches Claude Code through the `ttyd -> tmux -> su-exec` process chain
 
 ## 1.14.4
 

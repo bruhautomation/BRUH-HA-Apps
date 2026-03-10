@@ -239,6 +239,12 @@ setup_claude_user() {
     rm -f /usr/local/bin/claude-run      # clean slate
     cat > /usr/local/bin/claude-run << 'WRAPPER'
 #!/bin/bash
+# Source HA environment (SUPERVISOR_TOKEN, DISABLE_AUTOUPDATER, etc.)
+# This ensures env vars reach Claude Code even if tmux/su-exec don't
+# fully propagate the parent environment.
+if [ -f /data/.bruh_claude_env ]; then
+    . /data/.bruh_claude_env
+fi
 if [ "$(id -u)" = "0" ]; then
     exec su-exec claude /root/.local/bin/claude "$@"
 else
@@ -660,6 +666,16 @@ cleanup_all_mcp_references() {
                             )
                         )
                     else . end |
+                    # Remove stale permission entries for old plugins
+                    if .permissions?.allow then
+                        .permissions.allow |= map(
+                            select(
+                                contains("homeassistant-config") | not
+                            ) | select(
+                                contains("claude-homeassistant-plugins") | not
+                            )
+                        )
+                    else . end |
                     # Remove plugin/extension marketplace references
                     del(.plugins) | del(.extensions)
                 ' "$f" > "$tmp" 2>/dev/null; then
@@ -698,6 +714,15 @@ cleanup_all_mcp_references() {
                             select(
                                 .key != "homeassistant-config" and
                                 ((.value | tostring) | contains("/api/mcp") | not)
+                            )
+                        )
+                    else . end |
+                    if .permissions?.allow then
+                        .permissions.allow |= map(
+                            select(
+                                contains("homeassistant-config") | not
+                            ) | select(
+                                contains("claude-homeassistant-plugins") | not
                             )
                         )
                     else . end |
@@ -754,6 +779,15 @@ cleanup_all_mcp_references() {
                         .key != "homeassistant-config" and
                         ((.value | tostring) | contains("/api/mcp") | not) and
                         ((.value | tostring) | contains("claude-homeassistant-plugins") | not)
+                    )
+                )
+            else . end |
+            if .permissions?.allow then
+                .permissions.allow |= map(
+                    select(
+                        contains("homeassistant-config") | not
+                    ) | select(
+                        contains("claude-homeassistant-plugins") | not
                     )
                 )
             else . end |
@@ -1288,7 +1322,7 @@ trap cleanup SIGTERM SIGINT EXIT
 
 main() {
     bashio::log.info "============================================"
-    bashio::log.info "  BRUH Claude Terminal v1.14.4"
+    bashio::log.info "  BRUH Claude Terminal v1.14.5"
     bashio::log.info "  Enhanced Claude Code for Home Assistant"
     bashio::log.info "============================================"
 
