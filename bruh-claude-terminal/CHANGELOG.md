@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.14.5
+
+### Fix "Auto-update failed" error in Claude Code UI
+
+**Fixed "Auto-update failed · Try claude doctor or npm i -g @anthropic-ai/claude-code" warning**
+- Claude Code's built-in auto-updater fails when running as the non-root `claude` user because it cannot write to npm global directories or `/root/.local/bin`
+- Set `DISABLE_AUTOUPDATER=1` environment variable to suppress the auto-updater since the add-on already handles updates at startup via `update_claude_code()` running as root
+- Added to both the main process environment and the persisted env file so it applies to interactive terminal sessions and background listeners
+
 ## 1.14.4
 
 ### Fix Claude Code binary removed during startup

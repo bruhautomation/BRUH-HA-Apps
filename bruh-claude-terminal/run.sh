@@ -73,6 +73,12 @@ init_environment() {
     export ANTHROPIC_CONFIG_DIR="$claude_config_dir"
     export ANTHROPIC_HOME="/data"
 
+    # Disable Claude Code's built-in auto-updater — the add-on handles
+    # updates at startup via update_claude_code() running as root.
+    # The auto-updater fails when Claude Code runs as the non-root claude
+    # user because it cannot write to npm global dirs or /root/.local/bin.
+    export DISABLE_AUTOUPDATER=1
+
     # HA API environment - make SUPERVISOR_TOKEN easily accessible
     export HA_TOKEN="${SUPERVISOR_TOKEN}"
     export HA_BASE_URL="http://supervisor/core/api"
@@ -168,6 +174,7 @@ export BRUH_ASSIST_MAX_TURNS="${assist_max_turns}"
 export BRUH_AUTOMATION_MAX_TURNS="${automation_max_turns}"
 export CLAUDE_CODE_DISABLE_MCP_DISCOVERY=1
 export CLAUDE_MCP_SERVERS_OVERRIDE="/config/.mcp.json"
+export DISABLE_AUTOUPDATER=1
 ENVEOF
     chmod 600 "$env_file"
 
