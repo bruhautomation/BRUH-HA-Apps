@@ -666,6 +666,16 @@ cleanup_all_mcp_references() {
                             )
                         )
                     else . end |
+                    # Remove stale permission entries for old plugins
+                    if .permissions?.allow then
+                        .permissions.allow |= map(
+                            select(
+                                contains("homeassistant-config") | not
+                            ) | select(
+                                contains("claude-homeassistant-plugins") | not
+                            )
+                        )
+                    else . end |
                     # Remove plugin/extension marketplace references
                     del(.plugins) | del(.extensions)
                 ' "$f" > "$tmp" 2>/dev/null; then
@@ -704,6 +714,15 @@ cleanup_all_mcp_references() {
                             select(
                                 .key != "homeassistant-config" and
                                 ((.value | tostring) | contains("/api/mcp") | not)
+                            )
+                        )
+                    else . end |
+                    if .permissions?.allow then
+                        .permissions.allow |= map(
+                            select(
+                                contains("homeassistant-config") | not
+                            ) | select(
+                                contains("claude-homeassistant-plugins") | not
                             )
                         )
                     else . end |
@@ -760,6 +779,15 @@ cleanup_all_mcp_references() {
                         .key != "homeassistant-config" and
                         ((.value | tostring) | contains("/api/mcp") | not) and
                         ((.value | tostring) | contains("claude-homeassistant-plugins") | not)
+                    )
+                )
+            else . end |
+            if .permissions?.allow then
+                .permissions.allow |= map(
+                    select(
+                        contains("homeassistant-config") | not
+                    ) | select(
+                        contains("claude-homeassistant-plugins") | not
                     )
                 )
             else . end |
