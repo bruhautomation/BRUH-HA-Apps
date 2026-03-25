@@ -25,7 +25,9 @@ RUN apk add --no-cache \
     openssh-client \
     inotify-tools \
     socat \
-    su-exec
+    su-exec \
+    rsync \
+    sqlite
 
 # Install websocat from community repo (may not be in all base images)
 RUN apk add --no-cache --repository=https://dl-cdn.alpinelinux.org/alpine/edge/community \
