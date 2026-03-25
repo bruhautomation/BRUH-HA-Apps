@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.15.2
+
+### Recursive Ownership for addon_configs & Writable Addons Directory
+
+- Fixed `chown` for `/addon_configs` to use `-R` (recursive) so subdirectories are also owned by the `claude` user, not just the top-level directory
+- Changed `/addons` mount from read-only (`addons:ro`) to read-write (`addons:rw`) so Claude can edit add-on files
+- Added recursive `chown` for `/addons` directory at startup
+
 ## 1.15.1
 
 ### Configurable Directory Access & Fix addon_configs Mount

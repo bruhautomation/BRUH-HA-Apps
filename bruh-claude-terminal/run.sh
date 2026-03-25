@@ -260,7 +260,8 @@ setup_claude_user() {
     # Grant ownership of enabled volume mounts
     [ -n "${SHARE_DIR:-}" ] && chown claude:claude /share 2>/dev/null || true
     [ -n "${MEDIA_DIR:-}" ] && chown claude:claude /media 2>/dev/null || true
-    [ -n "${ADDON_CONFIG_DIR:-}" ] && chown claude:claude /addon_configs 2>/dev/null || true
+    [ -n "${ADDON_CONFIG_DIR:-}" ] && chown -R claude:claude /addon_configs 2>/dev/null || true
+    chown -R claude:claude /addons 2>/dev/null || true
 
     # Grant ownership of additional user-configured directories
     if bashio::config.has_value 'additional_directories'; then
@@ -1401,7 +1402,7 @@ trap cleanup SIGTERM SIGINT EXIT
 
 main() {
     bashio::log.info "============================================"
-    bashio::log.info "  BRUH Claude Terminal v1.15.1"
+    bashio::log.info "  BRUH Claude Terminal v1.15.2"
     bashio::log.info "  Enhanced Claude Code for Home Assistant"
     bashio::log.info "============================================"
 
