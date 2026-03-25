@@ -1,7 +1,7 @@
 ---
 name: "BRUH Claude Terminal"
 description: "Enhanced Claude Code terminal for Home Assistant with native HA API access, auto-backup, context generation, and Assist integration"
-version: "1.15.0"
+version: "1.15.1"
 slug: "bruh_claude_terminal"
 init: false
 
@@ -38,6 +38,11 @@ options:
   dangerously_skip_permissions: false
   assist_max_turns: 5
   automation_max_turns: 10
+  access_share: true
+  access_media: true
+  access_backup: true
+  access_addon_configs: true
+  additional_directories: []
   persistent_apk_packages: []
   persistent_pip_packages: []
   log_level: info
@@ -52,6 +57,12 @@ schema:
   dangerously_skip_permissions: bool?
   assist_max_turns: "int(1,20)?"
   automation_max_turns: "int(1,50)?"
+  access_share: bool?
+  access_media: bool?
+  access_backup: bool?
+  access_addon_configs: bool?
+  additional_directories:
+    - str
   persistent_apk_packages:
     - str
   persistent_pip_packages:
@@ -64,7 +75,8 @@ map:
   - share:rw
   - media:rw
   - backup:ro
-  - addon_config:rw
+  - all_addon_configs:rw
+  - addons:ro
 
 # API access for Home Assistant integration
 hassio_api: true

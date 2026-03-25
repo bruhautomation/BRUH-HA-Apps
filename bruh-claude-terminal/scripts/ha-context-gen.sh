@@ -186,10 +186,19 @@ ${integration_list}
 ## Available Directories
 
 - \`/config/\` - Home Assistant configuration (read-write)
-- \`/share/\` - Shared storage accessible by other add-ons (read-write)
-- \`/media/\` - Media files for images, audio, video (read-write)
-- \`/backup/\` - Backup snapshots (read-only)
-- \`/addon_configs/\` - Add-on persistent config directories (read-write)
+$([ -d "/share" ] && echo '- `/share/` - Shared storage accessible by other add-ons (read-write)')
+$([ -d "/media" ] && echo '- `/media/` - Media files for images, audio, video (read-write)')
+$([ -d "/backup" ] && echo '- `/backup/` - Backup snapshots (read-only)')
+$([ -d "/addon_configs" ] && echo '- `/addon_configs/` - Add-on config directories (read-write)')
+$(
+    # List any additional user-configured directories
+    for env_var in $(env | grep '^ADDITIONAL_DIR_' | sort); do
+        dir_path="${env_var#*=}"
+        if [ -d "$dir_path" ]; then
+            echo "- \\\`${dir_path}\\\` - User-configured directory (read-write)"
+        fi
+    done
+)
 
 ## File Structure
 

@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.15.1
+
+### Configurable Directory Access & Fix addon_configs Mount
+
+**Configurable Directory Access**
+- Added `access_share`, `access_media`, `access_backup`, `access_addon_configs` boolean options in the add-on configuration UI — toggle which directories Claude can access
+- Added `additional_directories` list option — specify custom paths for Claude to access (e.g., other mount points or data directories)
+- Environment variables (`SHARE_DIR`, `MEDIA_DIR`, `BACKUP_DIR`, `ADDON_CONFIG_DIR`) are only exported when the corresponding access option is enabled and the directory exists
+- Ownership (`chown`) for volume mount directories is only set for enabled directories
+- Context generation (`ha-context-gen`) now dynamically lists only the directories that are actually available in the container
+
+**Fix addon_configs Mount**
+- Changed `map` from `addon_config:rw` to `all_addon_configs:rw` — `addon_config` only mounts this add-on's own config dir at `/addon_configs/<slug>/`, while `all_addon_configs` mounts the full `/addon_configs/` directory so Claude can inspect and manage config for any add-on
+- Added `addons:ro` mount for read-only access to installed add-on files
+- Fixed `ADDON_CONFIG_DIR` environment variable to point to `/addon_configs` (the actual mount path)
+
 ## 1.15.0
 
 ### Volume Mounts, Admin Role, Expanded Permissions & New CLI Tools
