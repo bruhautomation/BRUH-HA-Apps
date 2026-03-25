@@ -61,14 +61,10 @@ schema:
 # Volume mappings for file access
 map:
   - config:rw
-  - share:rw
-  - media:rw
-  - backup:ro
-  - addon_config:rw
 
 # API access for Home Assistant integration
 hassio_api: true
-hassio_role: admin
+hassio_role: manager
 homeassistant_api: true
 auth_api: true
 

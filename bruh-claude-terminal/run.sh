@@ -84,12 +84,6 @@ init_environment() {
     export HA_BASE_URL="http://supervisor/core/api"
     export SUPERVISOR_API_URL="http://supervisor"
 
-    # Volume mount directories
-    export SHARE_DIR="/share"
-    export MEDIA_DIR="/media"
-    export BACKUP_DIR="/backup"
-    export ADDON_CONFIG_DIR="/addon_configs"
-
     # Migrate any existing authentication files from legacy locations
     migrate_legacy_auth_files "$claude_config_dir"
 
@@ -181,10 +175,6 @@ export BRUH_AUTOMATION_MAX_TURNS="${automation_max_turns}"
 export CLAUDE_CODE_DISABLE_MCP_DISCOVERY=1
 export CLAUDE_MCP_SERVERS_OVERRIDE="/config/.mcp.json"
 export DISABLE_AUTOUPDATER=1
-export SHARE_DIR="/share"
-export MEDIA_DIR="/media"
-export BACKUP_DIR="/backup"
-export ADDON_CONFIG_DIR="/addon_configs"
 ENVEOF
     chmod 600 "$env_file"
 
@@ -222,8 +212,6 @@ setup_claude_user() {
     # Claude Code needs write access to /config for editing HA configuration.
     # This is safe within the add-on container; HA Core runs in its own container.
     chown claude:claude /config 2>/dev/null || true
-    chown claude:claude /share 2>/dev/null || true
-    chown claude:claude /media 2>/dev/null || true
     chown -R claude:claude /config/.bruh_claude 2>/dev/null || true
     chown -R claude:claude /config/custom_components 2>/dev/null || true
 
@@ -464,15 +452,7 @@ install_cli_tools() {
         chmod +x /usr/local/bin/persist-install
     fi
 
-    # New CLI tools: ha-addon, ha-entity, ha-service, ha-notify, ha-share
-    for script in ha-addon ha-entity ha-service ha-notify ha-share; do
-        if [ -f "/opt/scripts/${script}.sh" ]; then
-            cp "/opt/scripts/${script}.sh" "/usr/local/bin/${script}"
-            chmod +x "/usr/local/bin/${script}"
-        fi
-    done
-
-    bashio::log.info "CLI tools installed: ha-reload, ha-log, ha-context-gen, ha-backup, ha-yaml-check, ha-addon, ha-entity, ha-service, ha-notify, ha-share"
+    bashio::log.info "CLI tools installed: ha-reload, ha-log, ha-context-gen, ha-backup, ha-yaml-check"
 }
 
 # ============================================================================
@@ -936,25 +916,12 @@ setup_claude_settings() {
   "permissions": {
     "allow": [
       "mcp__home-assistant__*",
-      "mcp__claude_ai_Home_Assistant__*",
-      "mcp__claude_ai_Vercel__*",
       "Bash(*)",
       "Read",
       "Write",
       "Edit",
-      "Glob",
-      "Grep",
-      "Agent",
-      "Skill",
       "WebFetch",
-      "WebSearch",
-      "NotebookEdit",
-      "TaskCreate",
-      "TaskUpdate",
-      "TaskGet",
-      "TaskList",
-      "TodoWrite",
-      "TodoRead"
+      "WebSearch"
     ]
   }
 }

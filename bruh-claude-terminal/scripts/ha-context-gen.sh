@@ -183,14 +183,6 @@ ${addon_list}
 
 ${integration_list}
 
-## Available Directories
-
-- \`/config/\` - Home Assistant configuration (read-write)
-- \`/share/\` - Shared storage accessible by other add-ons (read-write)
-- \`/media/\` - Media files for images, audio, video (read-write)
-- \`/backup/\` - Backup snapshots (read-only)
-- \`/addon_configs/\` - Add-on persistent config directories (read-write)
-
 ## File Structure
 
 The Home Assistant configuration lives in \`/config/\`. Key files:
@@ -201,19 +193,13 @@ The Home Assistant configuration lives in \`/config/\`. Key files:
 - \`/config/secrets.yaml\` - Secrets (DO NOT read or modify)
 - \`/config/customize.yaml\` - Entity customizations
 
-## CLI Tools
+## BRUH Claude Terminal Tools
 
 You have access to these CLI tools:
 - \`ha-reload <target>\` - Reload HA config (automations, scripts, scenes, groups, core, all)
 - \`ha-log [core|supervisor|addons]\` - View HA logs in real-time
 - \`ha-backup [commit-message]\` - Manually trigger a config backup
 - \`ha-context-gen\` - Regenerate this context file
-- \`ha-yaml-check\` - Validate YAML configuration
-- \`ha-addon <action> <slug>\` - Manage add-ons (list, info, restart, stop, start, logs, options)
-- \`ha-entity <action> <id>\` - Get/set entity states (get, set, list, search)
-- \`ha-service call <domain>.<service>\` - Call HA services
-- \`ha-notify "msg"\` - Send notifications (persistent or mobile push)
-- \`ha-share <action>\` - Cross-addon file sync via /share (push, pull, ls)
 - \`persist-install apk|pip <packages>\` - Install persistent packages
 
 ## MCP Server
