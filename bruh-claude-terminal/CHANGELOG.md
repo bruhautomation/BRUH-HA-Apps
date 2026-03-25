@@ -1,5 +1,36 @@
 # Changelog
 
+## 1.15.0
+
+### Volume Mounts, Admin Role, Expanded Permissions & New CLI Tools
+
+**New Volume Mounts**
+- Added `share:rw` (`/share/`) — shared storage accessible by other add-ons for cross-addon file operations
+- Added `media:rw` (`/media/`) — HA media directory for images, audio, video
+- Added `backup:ro` (`/backup/`) — read-only access to HA backup snapshots
+- Added `addon_config:rw` (`/addon_configs/`) — persistent config directory for the add-on
+
+**Supervisor Role Upgrade**
+- Upgraded `hassio_role` from `manager` to `admin`, unlocking full Supervisor API access: managing other add-ons (restart, stop, start, get info), managing HA Core, and managing snapshots
+
+**Expanded Tool Permissions**
+- Updated `settings.local.json` allowlist to include all Claude Code tools: Glob, Grep, Agent, Skill, NotebookEdit, TaskCreate/Update/Get/List, TodoWrite/Read, and MCP wildcards for Home Assistant and Vercel
+
+**5 New CLI Tools**
+- `ha-addon` — manage add-ons via Supervisor API (list, info, restart, stop, start, logs, options) with confirmation prompts for destructive actions
+- `ha-entity` — get/set entity states, list by domain, search by name or ID
+- `ha-service` — call any HA service with JSON data, list available service domains
+- `ha-notify` — send persistent notifications to the HA UI or mobile push via notify services
+- `ha-share` — cross-addon file sync via `/share` (push, pull, ls) with rsync support when available
+
+**Environment & Context Updates**
+- Exported `SHARE_DIR`, `MEDIA_DIR`, `BACKUP_DIR`, `ADDON_CONFIG_DIR` environment variables for scripts and background processes
+- Added `chown` for `/share` and `/media` so the claude user has write access
+- Updated context generation (`ha-context-gen`) to document available directories and all CLI tools
+
+**Dockerfile**
+- Added `rsync` and `sqlite` packages to the container image
+
 ## 1.14.5
 
 ### Fix "Auto-update failed" error in Claude Code UI
