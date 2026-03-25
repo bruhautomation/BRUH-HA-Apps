@@ -84,11 +84,25 @@ init_environment() {
     export HA_BASE_URL="http://supervisor/core/api"
     export SUPERVISOR_API_URL="http://supervisor"
 
-    # Volume mount directories
-    export SHARE_DIR="/share"
-    export MEDIA_DIR="/media"
-    export BACKUP_DIR="/backup"
-    export ADDON_CONFIG_DIR="/addon_configs"
+    # Volume mount directories — only export if enabled in config
+    local access_share access_media access_backup access_addon_configs
+    access_share=$(bashio::config 'access_share' 'true')
+    access_media=$(bashio::config 'access_media' 'true')
+    access_backup=$(bashio::config 'access_backup' 'true')
+    access_addon_configs=$(bashio::config 'access_addon_configs' 'true')
+
+    if [ "$access_share" = "true" ] && [ -d "/share" ]; then
+        export SHARE_DIR="/share"
+    fi
+    if [ "$access_media" = "true" ] && [ -d "/media" ]; then
+        export MEDIA_DIR="/media"
+    fi
+    if [ "$access_backup" = "true" ] && [ -d "/backup" ]; then
+        export BACKUP_DIR="/backup"
+    fi
+    if [ "$access_addon_configs" = "true" ] && [ -d "/addon_configs" ]; then
+        export ADDON_CONFIG_DIR="/addon_configs"
+    fi
 
     # Migrate any existing authentication files from legacy locations
     migrate_legacy_auth_files "$claude_config_dir"
@@ -181,11 +195,29 @@ export BRUH_AUTOMATION_MAX_TURNS="${automation_max_turns}"
 export CLAUDE_CODE_DISABLE_MCP_DISCOVERY=1
 export CLAUDE_MCP_SERVERS_OVERRIDE="/config/.mcp.json"
 export DISABLE_AUTOUPDATER=1
-export SHARE_DIR="/share"
-export MEDIA_DIR="/media"
-export BACKUP_DIR="/backup"
-export ADDON_CONFIG_DIR="/addon_configs"
 ENVEOF
+
+    # Append enabled directory env vars to the env file
+    [ -n "${SHARE_DIR:-}" ] && echo "export SHARE_DIR=\"${SHARE_DIR}\"" >> "$env_file"
+    [ -n "${MEDIA_DIR:-}" ] && echo "export MEDIA_DIR=\"${MEDIA_DIR}\"" >> "$env_file"
+    [ -n "${BACKUP_DIR:-}" ] && echo "export BACKUP_DIR=\"${BACKUP_DIR}\"" >> "$env_file"
+    [ -n "${ADDON_CONFIG_DIR:-}" ] && echo "export ADDON_CONFIG_DIR=\"${ADDON_CONFIG_DIR}\"" >> "$env_file"
+
+    # Handle additional user-configured directories
+    if bashio::config.has_value 'additional_directories'; then
+        local additional_dirs
+        additional_dirs=$(bashio::config 'additional_directories')
+        local dir_index=0
+        for dir_path in $(echo "$additional_dirs" | jq -r '.[]? // empty' 2>/dev/null); do
+            if [ -d "$dir_path" ]; then
+                echo "export ADDITIONAL_DIR_${dir_index}=\"${dir_path}\"" >> "$env_file"
+                dir_index=$((dir_index + 1))
+                bashio::log.info "  - Additional directory: $dir_path"
+            else
+                bashio::log.warning "  - Additional directory not found: $dir_path (skipped)"
+            fi
+        done
+    fi
     chmod 600 "$env_file"
 
     bashio::log.info "Environment initialized:"
@@ -222,10 +254,24 @@ setup_claude_user() {
     # Claude Code needs write access to /config for editing HA configuration.
     # This is safe within the add-on container; HA Core runs in its own container.
     chown claude:claude /config 2>/dev/null || true
-    chown claude:claude /share 2>/dev/null || true
-    chown claude:claude /media 2>/dev/null || true
     chown -R claude:claude /config/.bruh_claude 2>/dev/null || true
     chown -R claude:claude /config/custom_components 2>/dev/null || true
+
+    # Grant ownership of enabled volume mounts
+    [ -n "${SHARE_DIR:-}" ] && chown claude:claude /share 2>/dev/null || true
+    [ -n "${MEDIA_DIR:-}" ] && chown claude:claude /media 2>/dev/null || true
+    [ -n "${ADDON_CONFIG_DIR:-}" ] && chown claude:claude /addon_configs 2>/dev/null || true
+
+    # Grant ownership of additional user-configured directories
+    if bashio::config.has_value 'additional_directories'; then
+        local add_dirs
+        add_dirs=$(bashio::config 'additional_directories')
+        for dir_path in $(echo "$add_dirs" | jq -r '.[]? // empty' 2>/dev/null); do
+            if [ -d "$dir_path" ]; then
+                chown claude:claude "$dir_path" 2>/dev/null || true
+            fi
+        done
+    fi
 
     # Create a wrapper script so `claude` always runs as the non-root user.
     # This satisfies Claude Code's security requirement that
@@ -1355,7 +1401,7 @@ trap cleanup SIGTERM SIGINT EXIT
 
 main() {
     bashio::log.info "============================================"
-    bashio::log.info "  BRUH Claude Terminal v1.15.0"
+    bashio::log.info "  BRUH Claude Terminal v1.15.1"
     bashio::log.info "  Enhanced Claude Code for Home Assistant"
     bashio::log.info "============================================"
 
