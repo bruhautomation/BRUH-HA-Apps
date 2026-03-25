@@ -190,6 +190,7 @@ $([ -d "/share" ] && echo '- `/share/` - Shared storage accessible by other add-
 $([ -d "/media" ] && echo '- `/media/` - Media files for images, audio, video (read-write)')
 $([ -d "/backup" ] && echo '- `/backup/` - Backup snapshots (read-only)')
 $([ -d "/addon_configs" ] && echo '- `/addon_configs/` - Add-on config directories (read-write)')
+$([ -n "${ADDONS_DIR:-}" ] && echo '- `/addons/` - Installed add-on files (read-write)')
 $(
     # List any additional user-configured directories
     for env_var in $(env | grep '^ADDITIONAL_DIR_' | sort); do

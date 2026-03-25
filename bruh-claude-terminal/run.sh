@@ -85,11 +85,12 @@ init_environment() {
     export SUPERVISOR_API_URL="http://supervisor"
 
     # Volume mount directories — only export if enabled in config
-    local access_share access_media access_backup access_addon_configs
+    local access_share access_media access_backup access_addon_configs access_addons
     access_share=$(bashio::config 'access_share' 'true')
     access_media=$(bashio::config 'access_media' 'true')
     access_backup=$(bashio::config 'access_backup' 'true')
     access_addon_configs=$(bashio::config 'access_addon_configs' 'true')
+    access_addons=$(bashio::config 'access_addons' 'true')
 
     if [ "$access_share" = "true" ] && [ -d "/share" ]; then
         export SHARE_DIR="/share"
@@ -102,6 +103,9 @@ init_environment() {
     fi
     if [ "$access_addon_configs" = "true" ] && [ -d "/addon_configs" ]; then
         export ADDON_CONFIG_DIR="/addon_configs"
+    fi
+    if [ "$access_addons" = "true" ] && [ -d "/addons" ]; then
+        export ADDONS_DIR="/addons"
     fi
 
     # Migrate any existing authentication files from legacy locations
@@ -202,6 +206,7 @@ ENVEOF
     [ -n "${MEDIA_DIR:-}" ] && echo "export MEDIA_DIR=\"${MEDIA_DIR}\"" >> "$env_file"
     [ -n "${BACKUP_DIR:-}" ] && echo "export BACKUP_DIR=\"${BACKUP_DIR}\"" >> "$env_file"
     [ -n "${ADDON_CONFIG_DIR:-}" ] && echo "export ADDON_CONFIG_DIR=\"${ADDON_CONFIG_DIR}\"" >> "$env_file"
+    [ -n "${ADDONS_DIR:-}" ] && echo "export ADDONS_DIR=\"${ADDONS_DIR}\"" >> "$env_file"
 
     # Handle additional user-configured directories
     if bashio::config.has_value 'additional_directories'; then
@@ -260,7 +265,8 @@ setup_claude_user() {
     # Grant ownership of enabled volume mounts
     [ -n "${SHARE_DIR:-}" ] && chown claude:claude /share 2>/dev/null || true
     [ -n "${MEDIA_DIR:-}" ] && chown claude:claude /media 2>/dev/null || true
-    [ -n "${ADDON_CONFIG_DIR:-}" ] && chown claude:claude /addon_configs 2>/dev/null || true
+    [ -n "${ADDON_CONFIG_DIR:-}" ] && chown -R claude:claude /addon_configs 2>/dev/null || true
+    [ -n "${ADDONS_DIR:-}" ] && chown -R claude:claude /addons 2>/dev/null || true
 
     # Grant ownership of additional user-configured directories
     if bashio::config.has_value 'additional_directories'; then
@@ -1401,7 +1407,7 @@ trap cleanup SIGTERM SIGINT EXIT
 
 main() {
     bashio::log.info "============================================"
-    bashio::log.info "  BRUH Claude Terminal v1.15.1"
+    bashio::log.info "  BRUH Claude Terminal v1.15.2"
     bashio::log.info "  Enhanced Claude Code for Home Assistant"
     bashio::log.info "============================================"
 
