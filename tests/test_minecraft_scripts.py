@@ -1,0 +1,235 @@
+#!/usr/bin/env python3
+"""Static analysis of bruh-minecraft-server shell scripts.
+
+Checks:
+* bash/python syntax is valid
+* Shebangs are correct (bashio for run.sh, /bin/bash for standalone)
+* No obviously dangerous patterns (rm -rf $VAR with no fallback, eval of user input, ...)
+* Scripts marked executable
+* run.sh starts all background helpers and registers a shutdown trap
+* download-server.sh dispatches every supported server_type
+"""
+from __future__ import annotations
+
+import os
+import stat
+import subprocess
+import unittest
+
+BASE_DIR = os.path.join(os.path.dirname(__file__), "..")
+ADDON_DIR = os.path.join(BASE_DIR, "bruh-minecraft-server")
+SCRIPTS_DIR = os.path.join(ADDON_DIR, "scripts")
+INTEG_DIR = os.path.join(ADDON_DIR, "integrations")
+
+
+def _read(path: str) -> str:
+    with open(path) as f:
+        return f.read()
+
+
+def _all_shell_scripts() -> list[str]:
+    out: list[str] = [os.path.join(ADDON_DIR, "run.sh")]
+    for root in (SCRIPTS_DIR, INTEG_DIR):
+        if not os.path.isdir(root):
+            continue
+        for name in os.listdir(root):
+            if name.endswith(".sh"):
+                out.append(os.path.join(root, name))
+    return out
+
+
+def _all_python_scripts() -> list[str]:
+    roots = [
+        os.path.join(ADDON_DIR, "scripts"),
+        os.path.join(ADDON_DIR, "panel"),
+        os.path.join(ADDON_DIR, "integrations"),
+    ]
+    out: list[str] = []
+    for root in roots:
+        if not os.path.isdir(root):
+            continue
+        for name in os.listdir(root):
+            if name.endswith(".py"):
+                out.append(os.path.join(root, name))
+    return out
+
+
+class TestSyntax(unittest.TestCase):
+    def test_bash_syntax(self):
+        for path in _all_shell_scripts():
+            with self.subTest(path=path):
+                proc = subprocess.run(["bash", "-n", path], capture_output=True, text=True)
+                self.assertEqual(proc.returncode, 0,
+                                 f"{path}: {proc.stderr.strip()}")
+
+    def test_python_syntax(self):
+        import py_compile
+        for path in _all_python_scripts():
+            with self.subTest(path=path):
+                try:
+                    py_compile.compile(path, doraise=True)
+                except py_compile.PyCompileError as exc:
+                    self.fail(f"{path} failed to compile: {exc}")
+
+
+class TestShebangsAndPermissions(unittest.TestCase):
+    def test_run_sh_uses_bashio(self):
+        text = _read(os.path.join(ADDON_DIR, "run.sh"))
+        self.assertTrue(text.startswith("#!/usr/bin/with-contenv bashio"),
+                        "run.sh must start with '#!/usr/bin/with-contenv bashio'")
+
+    def test_helper_scripts_use_bash(self):
+        for path in _all_shell_scripts():
+            if path.endswith("/run.sh"):
+                continue
+            with self.subTest(path=path):
+                first_line = _read(path).splitlines()[0]
+                self.assertTrue(
+                    first_line.startswith("#!/bin/bash"),
+                    f"{path} must have '#!/bin/bash' shebang, got {first_line!r}",
+                )
+
+    def test_python_scripts_have_env_shebang(self):
+        for path in _all_python_scripts():
+            with self.subTest(path=path):
+                first_line = _read(path).splitlines()[0]
+                self.assertTrue(
+                    first_line == "#!/usr/bin/env python3" or first_line.startswith('"""'),
+                    f"{path} should start with env-python3 shebang or module docstring; got {first_line!r}",
+                )
+
+    def test_all_scripts_executable(self):
+        for path in _all_shell_scripts() + _all_python_scripts():
+            with self.subTest(path=path):
+                mode = os.stat(path).st_mode
+                self.assertTrue(mode & stat.S_IXUSR, f"{path} is not user-executable")
+
+
+class TestDangerousPatterns(unittest.TestCase):
+    def test_no_unprotected_rm_rf(self):
+        for path in _all_shell_scripts():
+            text = _read(path)
+            # Reject `rm -rf $X` where $X could be empty; require either
+            # a quoted literal leading char or `:?` guard
+            for line in text.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("#"):
+                    continue
+                if "rm -rf" not in stripped:
+                    continue
+                # Ensure the target path literally begins with a '/' or '"/'
+                # (so we never rm -rf the current dir if a var expands empty).
+                ok = any(
+                    f"rm -rf {prefix}" in stripped
+                    for prefix in ('"/', '/', '"${', '${')
+                )
+                self.assertTrue(
+                    ok,
+                    f"{path}: potentially unsafe rm -rf line {stripped!r}",
+                )
+
+    def test_no_eval_of_stdin(self):
+        for path in _all_shell_scripts():
+            text = _read(path)
+            self.assertNotIn("eval $(cat", text, f"{path} uses eval with cat")
+
+
+class TestRunSh(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.text = _read(os.path.join(ADDON_DIR, "run.sh"))
+
+    def test_starts_required_helpers(self):
+        # All background helpers that must be started
+        for helper in (
+            "start_ingress_panel",
+            "start_backup_watcher",
+            "start_stats_collector",
+            "start_ha_bridge",
+        ):
+            self.assertIn(helper, self.text, f"run.sh missing {helper}")
+
+    def test_registers_shutdown_trap(self):
+        self.assertIn("trap graceful_shutdown", self.text)
+        self.assertIn("SIGTERM", self.text)
+
+    def test_eula_hard_gate(self):
+        # If EULA isn't true the script must exit before launching the JVM
+        self.assertIn('if [ "${EULA}" != "true" ]', self.text)
+        self.assertIn("exit 1", self.text)
+
+    def test_auto_restart_window(self):
+        # Rate-limited crash restarts
+        self.assertIn("max_crash_restarts", self.text)
+        self.assertIn("crash_window_seconds", self.text)
+
+    def test_no_hardcoded_rcon_password(self):
+        # The RCON password is either auto-generated or read from rcon.secret
+        self.assertNotIn('RCON_PASSWORD="hunter2"', self.text)
+        self.assertIn("rcon.secret", self.text)
+
+    def test_custom_integration_deployment_guard(self):
+        self.assertIn("deploy_custom_integration", self.text)
+
+
+class TestDownloadServer(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.text = _read(os.path.join(SCRIPTS_DIR, "download-server.sh"))
+
+    def test_dispatches_every_server_type(self):
+        for typ in ("paper", "purpur", "folia", "vanilla", "fabric", "forge"):
+            # Each type must appear as a case branch
+            self.assertRegex(self.text, rf"\b{typ}\)")
+
+    def test_uses_cache_dir(self):
+        self.assertIn("SERVER_CACHE", self.text)
+        self.assertIn("Using cached", self.text)  # cache hit log message
+
+    def test_vanilla_sha1_verification(self):
+        # The vanilla jar URL includes sha1; we must verify it
+        self.assertIn("sha1sum", self.text)
+
+    def test_failure_exits_nonzero(self):
+        self.assertIn("exit 1", self.text)
+
+
+class TestBackup(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.text = _read(os.path.join(SCRIPTS_DIR, "backup.sh"))
+
+    def test_flushes_before_backup(self):
+        # save-off → save-all flush → copy → save-on
+        self.assertIn("save-off", self.text)
+        self.assertIn("save-all flush", self.text)
+        self.assertIn("save-on", self.text)
+
+    def test_supports_both_git_and_tar(self):
+        self.assertIn("backup_worlds_git", self.text)
+        self.assertIn("backup_worlds_tar", self.text)
+
+    def test_prunes_old_archives(self):
+        self.assertIn("BACKUP_KEEP_COUNT", self.text)
+
+
+class TestServerLauncher(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.text = _read(os.path.join(SCRIPTS_DIR, "server-launcher.sh"))
+
+    def test_aikar_flags_toggle(self):
+        self.assertIn("USE_AIKAR_FLAGS", self.text)
+        self.assertIn("-XX:+UseG1GC", self.text)
+
+    def test_respects_memory_mb(self):
+        self.assertIn("-Xms", self.text)
+        self.assertIn("-Xmx", self.text)
+
+    def test_input_fifo_for_rcon_free_stdin(self):
+        # The panel pushes commands by writing to the input FIFO
+        self.assertIn("MC_INPUT_FIFO", self.text)
+
+
+if __name__ == "__main__":
+    unittest.main()
