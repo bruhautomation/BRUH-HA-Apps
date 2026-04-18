@@ -484,8 +484,12 @@ def build_app() -> web.Application:
     app.router.add_get("/favicon.ico", favicon)
     app.router.add_get("/favicon.svg", favicon)
     app.router.add_static("/static/", path=str(STATIC), name="static")
-    app.router.add_get("/style.css", lambda r: web.FileResponse(STATIC / "style.css"))
-    app.router.add_get("/app.js", lambda r: web.FileResponse(STATIC / "app.js"))
+    async def _send_style(_: web.Request) -> web.Response:
+        return web.FileResponse(STATIC / "style.css")
+    async def _send_app(_: web.Request) -> web.Response:
+        return web.FileResponse(STATIC / "app.js")
+    app.router.add_get("/style.css", _send_style)
+    app.router.add_get("/app.js", _send_app)
 
     # API
     app.router.add_get("/api/status", api_status)
