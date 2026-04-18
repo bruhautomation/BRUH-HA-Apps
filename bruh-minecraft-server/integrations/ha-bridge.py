@@ -19,7 +19,14 @@ import time
 from pathlib import Path
 from typing import Any
 
-from mcrcon import MCRcon
+_SCRIPTS_DIR = os.environ.get(
+    "BRUH_MC_SCRIPTS_DIR",
+    "/opt/bruh-mc/scripts",
+)
+for _candidate in (_SCRIPTS_DIR, str(Path(__file__).resolve().parent.parent / "scripts")):
+    if _candidate and _candidate not in sys.path:
+        sys.path.insert(0, _candidate)
+from rcon_client import Rcon  # noqa: E402
 
 PANEL_STATE = Path(os.environ.get("MC_PANEL_STATE", "/data/panel"))
 SHARED = Path("/config/.bruh_minecraft")
@@ -57,7 +64,7 @@ async def _rcon(command: str) -> str:
     pw = _rcon_password()
 
     def _exec() -> str:
-        with MCRcon(RCON_HOST, pw, port=RCON_PORT, timeout=5) as r:
+        with Rcon(RCON_HOST, pw, port=RCON_PORT, timeout=5) as r:
             return r.command(command)
 
     return await asyncio.to_thread(_exec)

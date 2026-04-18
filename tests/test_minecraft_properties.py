@@ -80,23 +80,91 @@ class TestSetupServerProperties(unittest.TestCase):
             self.assertEqual(props["rcon.port"], "25575")
             self.assertEqual(props["rcon.password"], "testpw")
             self.assertEqual(props["server-port"], "25565")
+            # The new managed keys must always be rendered — regression guard
+            # for the Xbox-login / "enforce-secure-profile" fix.
+            self.assertIn("enforce-secure-profile", props)
+            self.assertIn("allow-nether", props)
+            self.assertIn("spawn-monsters", props)
+            self.assertIn("generate-structures", props)
+            self.assertIn("prevent-proxy-connections", props)
+
+    def test_enforce_secure_profile_defaults_false_online(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _run(tmp, ONLINE_MODE="true")
+            props = _parse(os.path.join(tmp, "server.properties"))
+            self.assertEqual(props["online-mode"], "true")
+            self.assertEqual(props["enforce-secure-profile"], "false")
+
+    def test_enforce_secure_profile_respects_opt_in_online(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _run(tmp, ONLINE_MODE="true", ENFORCE_SECURE_PROFILE="true")
+            props = _parse(os.path.join(tmp, "server.properties"))
+            self.assertEqual(props["enforce-secure-profile"], "true")
+
+    def test_enforce_secure_profile_forced_false_in_offline_mode(self):
+        # Offline mode users have no signed profile — if we leave the
+        # toggle on they are kicked on join. The script must auto-force
+        # it false regardless of the raw env value.
+        with tempfile.TemporaryDirectory() as tmp:
+            _run(tmp, ONLINE_MODE="false", ENFORCE_SECURE_PROFILE="true")
+            props = _parse(os.path.join(tmp, "server.properties"))
+            self.assertEqual(props["online-mode"], "false")
+            self.assertEqual(
+                props["enforce-secure-profile"], "false",
+                "must auto-force enforce-secure-profile=false when online-mode=false",
+            )
+
+    def test_allow_cheats_forces_command_block_and_op_level(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _run(
+                tmp, ALLOW_CHEATS="true",
+                ENABLE_COMMAND_BLOCK="false", OP_PERMISSION_LEVEL="1",
+            )
+            props = _parse(os.path.join(tmp, "server.properties"))
+            self.assertEqual(props["enable-command-block"], "true")
+            self.assertEqual(props["op-permission-level"], "2")
+
+    def test_allow_cheats_off_respects_raw_values(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _run(
+                tmp, ALLOW_CHEATS="false",
+                ENABLE_COMMAND_BLOCK="false", OP_PERMISSION_LEVEL="4",
+            )
+            props = _parse(os.path.join(tmp, "server.properties"))
+            self.assertEqual(props["enable-command-block"], "false")
+            self.assertEqual(props["op-permission-level"], "4")
+
+    def test_resource_pack_keys_pass_through(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _run(
+                tmp,
+                RESOURCE_PACK="https://cdn.example/pack.zip",
+                RESOURCE_PACK_SHA1="deadbeef",
+                REQUIRE_RESOURCE_PACK="true",
+            )
+            props = _parse(os.path.join(tmp, "server.properties"))
+            self.assertEqual(props["resource-pack"], "https://cdn.example/pack.zip")
+            self.assertEqual(props["resource-pack-sha1"], "deadbeef")
+            self.assertEqual(props["require-resource-pack"], "true")
 
     def test_preserves_hand_edited_unknown_keys(self):
         with tempfile.TemporaryDirectory() as tmp:
             props_path = os.path.join(tmp, "server.properties")
-            # Operator hand-edits a key the UI doesn't know about
+            # Operator hand-edits keys the add-on doesn't know about.
+            # (`resource-pack` IS managed now, so pick keys we explicitly
+            # don't render — e.g. modded or Paper/Purpur-specific options.)
             with open(props_path, "w") as f:
                 f.write("# my custom comment\n")
-                f.write("resource-pack=https://example.com/pack.zip\n")
-                f.write("resource-pack-sha1=deadbeef\n")
+                f.write("text-filtering-config=https://example.com/filter\n")
+                f.write("pause-when-empty-seconds=60\n")
                 f.write("motd=OLD\n")  # will be overridden by managed render
             _run(tmp)
             props = _parse(props_path)
             self.assertEqual(
-                props["resource-pack"], "https://example.com/pack.zip",
+                props["text-filtering-config"], "https://example.com/filter",
                 "non-managed key was dropped during re-render",
             )
-            self.assertEqual(props["resource-pack-sha1"], "deadbeef")
+            self.assertEqual(props["pause-when-empty-seconds"], "60")
             self.assertEqual(props["motd"], "Test MOTD", "managed key should win")
 
     def test_file_permissions_are_600(self):

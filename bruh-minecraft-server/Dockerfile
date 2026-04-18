@@ -41,11 +41,13 @@ RUN apk add --no-cache \
     iproute2 \
     inotify-tools
 
-# Python libs used by the ingress panel and RCON client.
-# aiohttp ships with base image; we add aiofiles + mcrcon.
+# Python libs used by the ingress panel.
+# aiohttp ships with base image; we add aiofiles for async file IO and
+# mcstatus for the status-ping probe. The RCON client is built-in
+# (scripts/rcon_client.py) so we no longer depend on `mcrcon`, which uses
+# signal.SIGALRM for timeouts and breaks in aiohttp worker threads.
 RUN pip3 install --break-system-packages --no-cache-dir \
     aiofiles \
-    mcrcon \
     mcstatus
 
 # Dedicated, non-root minecraft user (UID 1000). The JVM should not run as root.

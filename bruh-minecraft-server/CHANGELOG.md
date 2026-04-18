@@ -5,6 +5,63 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.2.0
+
+### Fixed
+
+- **`signal only works in main thread of the main interpreter`** when
+  sending console commands from the ingress panel's sidebar or via
+  `bruh_minecraft.rcon_command`. The `mcrcon` PyPI package uses
+  `signal.SIGALRM` for its handshake timeout, which isn't allowed in
+  aiohttp / `asyncio.to_thread` worker threads. The add-on now ships
+  a thread-safe RCON client at `scripts/rcon_client.py` that uses only
+  `socket.settimeout()`, and the `mcrcon` dependency has been dropped
+  from the Dockerfile. Panel, HA bridge, stats collector, and the
+  `rcon.py` CLI all switch over.
+- **"Please log into Xbox to join this server" even after setting
+  `online_mode: false`.** MC 1.19+ requires a Mojang-signed chat profile
+  unless `enforce-secure-profile=false`, and there was no way to turn
+  that off from the add-on UI. Added a new `enforce_secure_profile`
+  option (default `false`), exposed as an editable property in the
+  panel's Server Properties tab, and auto-forced to `false` whenever
+  `online_mode` is off so offline clients can't be bounced by this.
+
+### Added
+
+- **Offline / cracked-login mode just works.** Set `online_mode: false`
+  in the add-on options and the server now accepts any Java username
+  without an Xbox / Microsoft account — Bedrock clients keep working
+  via Floodgate as before. Safe for LAN-only / family servers.
+- **`allow_cheats` convenience toggle.** One click flips on
+  `enable-command-block` and ensures `op-permission-level >= 2` so
+  `/gamemode`, `/give`, `/tp`, `/summon`, `/fill` etc. all work once a
+  player is OP'd.
+- **`initial_ops` list.** Auto-OP the listed Minecraft usernames on
+  startup via RCON (handles UUID lookup in both online and offline
+  mode) — no more "how do I OP myself after a fresh install?"
+- **Many more server.properties toggles exposed as add-on options:**
+  `allow_nether`, `generate_structures`, `spawn_monsters`,
+  `spawn_animals`, `spawn_npcs`, `prevent_proxy_connections`,
+  `hide_online_players`, `resource_pack`, `resource_pack_sha1`,
+  `require_resource_pack`, `max_world_size`,
+  `network_compression_threshold`, `entity_broadcast_range_percentage`.
+- **More editable keys in the panel's Server Properties tab,**
+  including everything added above, `op-permission-level`, and the
+  world-gen keys (`level-name`, `level-seed`, `level-type`).
+
+### Tests (14 new, 154 total)
+
+- `test_minecraft_rcon_client.py` — 4 tests: auth round-trip,
+  multi-packet reply reassembly, bad-password ``RconAuthError``, and
+  the key **regression guard** that the RCON client still works when
+  invoked from a worker thread (the exact path that used to trip
+  `signal only works in main thread`).
+- `test_minecraft_properties.py` — 6 new tests covering
+  `enforce-secure-profile` defaults / opt-in / offline-mode auto-force,
+  `allow_cheats` coercion of command block + op level, the
+  `resource-pack` triplet pass-through, and that all new managed keys
+  actually render.
+
 ## 1.1.0
 
 ### Added

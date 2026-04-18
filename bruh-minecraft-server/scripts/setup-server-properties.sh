@@ -13,6 +13,30 @@ set -euo pipefail
 MC_SERVER_DIR="${MC_SERVER_DIR:-/config/minecraft}"
 PROPS="${MC_SERVER_DIR}/server.properties"
 
+# Secure-profile enforcement only makes sense when the server is authenticating
+# players against Mojang (online-mode=true). With online-mode=false nobody has
+# a signed profile, and leaving enforce-secure-profile=true bounces every
+# client with "You are not permitted to join due to the enforce-secure-profile
+# setting." Auto-force it false in offline mode regardless of the raw option.
+ONLINE_MODE_VALUE="${ONLINE_MODE:-true}"
+ENFORCE_SECURE_PROFILE_VALUE="${ENFORCE_SECURE_PROFILE:-false}"
+if [ "${ONLINE_MODE_VALUE}" != "true" ]; then
+    ENFORCE_SECURE_PROFILE_VALUE="false"
+fi
+
+# allow_cheats is a convenience knob: flip it on and the "cheat" commands
+# (/gamemode, /give, /tp, /summon, /fill, …) will actually be usable for OP'd
+# players. Translate it into the two underlying server.properties keys.
+ALLOW_CHEATS_VALUE="${ALLOW_CHEATS:-false}"
+ENABLE_COMMAND_BLOCK_VALUE="${ENABLE_COMMAND_BLOCK:-false}"
+OP_PERMISSION_LEVEL_VALUE="${OP_PERMISSION_LEVEL:-4}"
+if [ "${ALLOW_CHEATS_VALUE}" = "true" ]; then
+    ENABLE_COMMAND_BLOCK_VALUE="true"
+    if [ "${OP_PERMISSION_LEVEL_VALUE}" -lt 2 ] 2>/dev/null; then
+        OP_PERMISSION_LEVEL_VALUE=2
+    fi
+fi
+
 declare -A MANAGED=(
     [motd]="${MOTD:-A BRUH Minecraft Server}"
     [difficulty]="${DIFFICULTY:-normal}"
@@ -20,7 +44,8 @@ declare -A MANAGED=(
     [max-players]="${MAX_PLAYERS:-20}"
     [view-distance]="${VIEW_DISTANCE:-10}"
     [simulation-distance]="${SIM_DISTANCE:-10}"
-    [online-mode]="${ONLINE_MODE:-true}"
+    [online-mode]="${ONLINE_MODE_VALUE}"
+    [enforce-secure-profile]="${ENFORCE_SECURE_PROFILE_VALUE}"
     [pvp]="${PVP:-true}"
     [hardcore]="${HARDCORE:-false}"
     [allow-flight]="${ALLOW_FLIGHT:-false}"
@@ -30,8 +55,8 @@ declare -A MANAGED=(
     [level-name]="${LEVEL_NAME:-world}"
     [level-seed]="${LEVEL_SEED:-}"
     [level-type]="${LEVEL_TYPE:-minecraft:normal}"
-    [enable-command-block]="${ENABLE_COMMAND_BLOCK:-false}"
-    [op-permission-level]="${OP_PERMISSION_LEVEL:-4}"
+    [enable-command-block]="${ENABLE_COMMAND_BLOCK_VALUE}"
+    [op-permission-level]="${OP_PERMISSION_LEVEL_VALUE}"
     [server-port]="25565"
     [query.port]="25565"
     [enable-rcon]="true"
@@ -44,16 +69,20 @@ declare -A MANAGED=(
     [function-permission-level]="2"
     [max-tick-time]="60000"
     [use-native-transport]="true"
-    [network-compression-threshold]="256"
-    [max-world-size]="29999984"
-    [spawn-monsters]="true"
-    [spawn-animals]="true"
-    [spawn-npcs]="true"
-    [generate-structures]="true"
-    [allow-nether]="true"
-    [entity-broadcast-range-percentage]="100"
+    [network-compression-threshold]="${NETWORK_COMPRESSION_THRESHOLD:-256}"
+    [max-world-size]="${MAX_WORLD_SIZE:-29999984}"
+    [spawn-monsters]="${SPAWN_MONSTERS:-true}"
+    [spawn-animals]="${SPAWN_ANIMALS:-true}"
+    [spawn-npcs]="${SPAWN_NPCS:-true}"
+    [generate-structures]="${GENERATE_STRUCTURES:-true}"
+    [allow-nether]="${ALLOW_NETHER:-true}"
+    [entity-broadcast-range-percentage]="${ENTITY_BROADCAST_RANGE_PERCENTAGE:-100}"
     [enable-jmx-monitoring]="false"
-    [prevent-proxy-connections]="false"
+    [prevent-proxy-connections]="${PREVENT_PROXY_CONNECTIONS:-false}"
+    [hide-online-players]="${HIDE_ONLINE_PLAYERS:-false}"
+    [resource-pack]="${RESOURCE_PACK:-}"
+    [resource-pack-sha1]="${RESOURCE_PACK_SHA1:-}"
+    [require-resource-pack]="${REQUIRE_RESOURCE_PACK:-false}"
 )
 
 # Load any existing properties into a map so we can preserve hand-edited keys

@@ -50,6 +50,7 @@ load_config() {
     VIEW_DISTANCE=$(bashio::config 'view_distance' '10')
     SIM_DISTANCE=$(bashio::config 'simulation_distance' '10')
     ONLINE_MODE=$(bashio::config 'online_mode' 'true')
+    ENFORCE_SECURE_PROFILE=$(bashio::config 'enforce_secure_profile' 'false')
     PVP=$(bashio::config 'pvp' 'true')
     HARDCORE=$(bashio::config 'hardcore' 'false')
     ALLOW_FLIGHT=$(bashio::config 'allow_flight' 'false')
@@ -58,10 +59,31 @@ load_config() {
     LEVEL_NAME=$(bashio::config 'level_name' 'world')
     LEVEL_SEED=$(bashio::config 'level_seed' '')
     LEVEL_TYPE=$(bashio::config 'level_type' 'minecraft:normal')
+    ALLOW_NETHER=$(bashio::config 'allow_nether' 'true')
+    GENERATE_STRUCTURES=$(bashio::config 'generate_structures' 'true')
+    SPAWN_MONSTERS=$(bashio::config 'spawn_monsters' 'true')
+    SPAWN_ANIMALS=$(bashio::config 'spawn_animals' 'true')
+    SPAWN_NPCS=$(bashio::config 'spawn_npcs' 'true')
+    PREVENT_PROXY_CONNECTIONS=$(bashio::config 'prevent_proxy_connections' 'false')
+    HIDE_ONLINE_PLAYERS=$(bashio::config 'hide_online_players' 'false')
+    RESOURCE_PACK=$(bashio::config 'resource_pack' '')
+    RESOURCE_PACK_SHA1=$(bashio::config 'resource_pack_sha1' '')
+    REQUIRE_RESOURCE_PACK=$(bashio::config 'require_resource_pack' 'false')
+    MAX_WORLD_SIZE=$(bashio::config 'max_world_size' '29999984')
+    NETWORK_COMPRESSION_THRESHOLD=$(bashio::config 'network_compression_threshold' '256')
+    ENTITY_BROADCAST_RANGE_PERCENTAGE=$(bashio::config 'entity_broadcast_range_percentage' '100')
     MEMORY_MB=$(bashio::config 'memory_mb' '2048')
     USE_AIKAR_FLAGS=$(bashio::config 'use_aikar_flags' 'true')
     ENABLE_COMMAND_BLOCK=$(bashio::config 'enable_command_block' 'false')
     OP_PERMISSION_LEVEL=$(bashio::config 'op_permission_level' '4')
+    ALLOW_CHEATS=$(bashio::config 'allow_cheats' 'false')
+    # initial_ops is a list in config.yaml; flatten to newline-separated
+    # names so the downstream shell scripts can iterate cleanly.
+    if bashio::config.is_empty 'initial_ops'; then
+        INITIAL_OPS=""
+    else
+        INITIAL_OPS=$(bashio::config 'initial_ops' | jq -r '.[]')
+    fi
     RCON_PASSWORD_CFG=$(bashio::config 'rcon_password' '')
     AUTO_UPDATE_SERVER=$(bashio::config 'auto_update_server' 'true')
     AUTO_BACKUP=$(bashio::config 'auto_backup' 'true')
@@ -94,10 +116,17 @@ load_config() {
     RCON_PASSWORD=""
 
     export EULA SERVER_TYPE MINECRAFT_VERSION MOTD DIFFICULTY GAMEMODE \
-           MAX_PLAYERS VIEW_DISTANCE SIM_DISTANCE ONLINE_MODE PVP HARDCORE \
+           MAX_PLAYERS VIEW_DISTANCE SIM_DISTANCE ONLINE_MODE \
+           ENFORCE_SECURE_PROFILE PVP HARDCORE \
            ALLOW_FLIGHT WHITE_LIST SPAWN_PROTECTION LEVEL_NAME LEVEL_SEED \
-           LEVEL_TYPE MEMORY_MB USE_AIKAR_FLAGS ENABLE_COMMAND_BLOCK \
-           OP_PERMISSION_LEVEL RCON_PASSWORD RCON_PASSWORD_CFG \
+           LEVEL_TYPE ALLOW_NETHER GENERATE_STRUCTURES SPAWN_MONSTERS \
+           SPAWN_ANIMALS SPAWN_NPCS PREVENT_PROXY_CONNECTIONS \
+           HIDE_ONLINE_PLAYERS RESOURCE_PACK RESOURCE_PACK_SHA1 \
+           REQUIRE_RESOURCE_PACK MAX_WORLD_SIZE \
+           NETWORK_COMPRESSION_THRESHOLD ENTITY_BROADCAST_RANGE_PERCENTAGE \
+           MEMORY_MB USE_AIKAR_FLAGS ENABLE_COMMAND_BLOCK \
+           OP_PERMISSION_LEVEL ALLOW_CHEATS INITIAL_OPS \
+           RCON_PASSWORD RCON_PASSWORD_CFG \
            AUTO_UPDATE_SERVER AUTO_BACKUP \
            BACKUP_INTERVAL_MINUTES BACKUP_KEEP_COUNT BACKUP_USE_GIT \
            AUTO_RESTART_ON_CRASH AUTO_RESTART_SCHEDULE ENABLE_HA_INTEGRATION \
@@ -309,6 +338,19 @@ start_stats_collector() {
     echo $! > "${MC_PANEL_STATE}/stats.pid"
 }
 
+start_initial_ops() {
+    # Auto-OP the configured names once the JVM is actually listening on
+    # RCON. The helper waits and exits on its own if there's nothing to do.
+    if [ -z "${INITIAL_OPS:-}" ] && [ "${ALLOW_CHEATS:-false}" != "true" ]; then
+        return 0
+    fi
+    bashio::log.info "Scheduling initial OP application (names='${INITIAL_OPS//$'\n'/ }')"
+    (
+        exec su-exec minecraft "${SCRIPTS_DIR}/apply-initial-ops.sh"
+    ) >> "${MC_PANEL_STATE}/initial-ops.log" 2>&1 &
+    echo $! > "${MC_PANEL_STATE}/initial-ops.pid"
+}
+
 start_ha_bridge() {
     if [ "${ENABLE_HA_INTEGRATION}" != "true" ]; then
         bashio::log.info "HA integration disabled; bridge not started"
@@ -417,7 +459,7 @@ graceful_shutdown() {
         fi
     fi
 
-    for helper in panel backup stats ha-bridge; do
+    for helper in panel backup stats ha-bridge initial-ops; do
         [ -f "${MC_PANEL_STATE}/${helper}.pid" ] \
             && kill "$(cat "${MC_PANEL_STATE}/${helper}.pid")" 2>/dev/null || true
     done
@@ -521,6 +563,7 @@ main() {
     start_backup_watcher
     start_stats_collector
     start_ha_bridge
+    start_initial_ops
     announce_ha_discovery
 
     run_server_loop

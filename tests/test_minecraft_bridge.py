@@ -76,11 +76,11 @@ def _load_ha_bridge(shared_dir: Path):
     return bridge_mod
 
 
-def _install_fake_mcrcon(capture: list[str]) -> None:
-    """Install a fake mcrcon module that records commands passed to it."""
-    mod = type(sys)("mcrcon")
+def _install_fake_rcon(capture: list[str]) -> None:
+    """Install a fake rcon_client module that records commands passed to it."""
+    mod = type(sys)("rcon_client")
 
-    class _FakeMCRcon:
+    class _FakeRcon:
         def __init__(self, *a, **kw): pass
         def __enter__(self): return self
         def __exit__(self, *a): return False
@@ -88,12 +88,15 @@ def _install_fake_mcrcon(capture: list[str]) -> None:
             capture.append(cmd)
             return f"OK: {cmd}"
 
-    mod.MCRcon = _FakeMCRcon
-    sys.modules["mcrcon"] = mod
+    mod.Rcon = _FakeRcon
+    sys.modules["rcon_client"] = mod
 
 
 def _load_bridge(panel_state: Path, shared_dir: Path, capture: list[str]):
-    _install_fake_mcrcon(capture)
+    _install_fake_rcon(capture)
+    # Steer ha-bridge's scripts-dir resolver at a non-existent path so it
+    # can't pull in the real rcon_client over our stub.
+    os.environ["BRUH_MC_SCRIPTS_DIR"] = "/nonexistent/for-tests"
     os.environ["MC_PANEL_STATE"] = str(panel_state)
     spec = importlib.util.spec_from_file_location("ha_bridge", BRIDGE_PY)
     module = importlib.util.module_from_spec(spec)
