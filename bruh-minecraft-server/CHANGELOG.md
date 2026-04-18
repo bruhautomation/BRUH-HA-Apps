@@ -5,6 +5,43 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.2.3
+
+### Fixed
+
+- **The real root cause of `Please log into Xbox to join this server.`**
+  — different from what 1.2.1 and 1.2.2 chased. Setting
+  `remote.auth-type: offline` and removing Floodgate wasn't enough;
+  Bedrock clients were **still** kicked. The actual gate is Geyser's
+  `advanced.bedrock.validate-bedrock-login` (default `true`), which
+  validates the Bedrock client's signed Xbox Live JWT chain in
+  `LoginEncryptionUtils.encryptConnectionWithCert()` *before* any
+  `auth-type` / Floodgate logic even runs. Unsigned chains (LAN-only
+  Bedrock devices, non-Xbox-signed clients) get disconnected with the
+  exact message we've been chasing. The installer now flips this key
+  based on the resolved Geyser auth-type:
+  - `offline` → `validate-bedrock-login: false` (Bedrock joins with no
+    Xbox sign-in).
+  - `floodgate` / `online` → `validate-bedrock-login: true` (secure
+    default; Floodgate provides a trusted chain).
+- Added `scripts/patch-geyser-config.py` — a comment-preserving YAML
+  patcher that handles the three cases cleanly: flip an existing
+  nested key, insert a missing key under an existing section, or
+  append a fresh `advanced.bedrock` block when neither exists.
+- Fresh-install Geyser config also carries the key at the right value
+  from the very first boot.
+
+### Tests (11 new, 174 total)
+
+- `test_minecraft_validate_bedrock_login.py`:
+  - 7 unit tests on `patch-geyser-config.py` covering flip-in-place,
+    comment preservation, insertion-under-existing-section,
+    append-full-section, idempotence, restore-secure-default, and a
+    realistic full Geyser config round-trip.
+  - 4 installer integration tests locking in offline + floodgate
+    fresh installs, real-sized-config patching, and offline → floodgate
+    restoration of the secure default.
+
 ## 1.2.2
 
 ### Fixed

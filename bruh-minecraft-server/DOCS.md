@@ -74,7 +74,9 @@ If you — or your kids — want to play **without an Xbox/Microsoft sign-in** o
 Two important subtleties with Geyser:
 
 - `geyser_auth_type: floodgate` **still requires the Bedrock client to be signed in to Xbox Live** (Floodgate uses the XUID to identify the player). It's the right default for public-facing servers, but it's not "no login needed."
-- `geyser_auth_type: offline` removes the Xbox requirement entirely. Bedrock usernames are taken verbatim from the player's device, and Floodgate's `.`-prefix no longer applies. This is the correct setting for LAN-only / family servers. **The add-on also uninstalls Floodgate when this mode is active** — Geyser delegates auth to Floodgate whenever the jar is present, and Floodgate itself requires an Xbox XUID, so leaving the jar loaded would silently re-introduce the "Please log into Xbox" kick.
+- `geyser_auth_type: offline` removes the Xbox requirement entirely. Bedrock usernames are taken verbatim from the player's device, and Floodgate's `.`-prefix no longer applies. This is the correct setting for LAN-only / family servers. Two things the add-on does under the hood for this mode:
+    1. **Uninstalls Floodgate** (Geyser delegates auth to it whenever the jar is present, and Floodgate requires a valid Xbox XUID).
+    2. **Sets `advanced.bedrock.validate-bedrock-login: false`** in Geyser's config — this is the toggle that actually suppresses Geyser's pre-auth signed-chain check. Without it, Geyser kicks every Bedrock client whose login JWT isn't signed by Mojang's Xbox Live root key, which includes every LAN-only device and every client that isn't currently signed in to Xbox.
 
 Offline mode is **not safe for public/internet-exposed servers** — anyone can spoof any username. Use it only on LAN or when you fully trust the player pool.
 
