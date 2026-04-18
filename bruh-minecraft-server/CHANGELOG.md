@@ -5,6 +5,34 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.0.1
+
+### Fixed
+
+- **Add-on would not start** with `s6-envdir: fatal: unable to envdir
+  /run/s6/container_environment: No such file or directory`. The Dockerfile
+  set a custom `ENTRYPOINT` (tini), which bypassed the HA base image's
+  s6-overlay init. Without s6-overlay, the `#!/usr/bin/with-contenv bashio`
+  shebang on `run.sh` had nothing to read, so the script exited before
+  executing a single line.
+- Drop the custom `ENTRYPOINT` so s6-overlay runs as PID 1 and signals +
+  zombie reaping continue to work correctly.
+- Remove the now-unused `tini` package from the image.
+
+### Added
+
+- 110-test suite under `tests/test_minecraft_*.py` covering config /
+  Dockerfile / script quality, server.properties rendering, RCON parsers,
+  the ingress panel API (aiohttp test client), the file-IPC bridge
+  (round-trip + timeout cleanup), and the HA custom integration.
+- Regression guard: `test_no_entrypoint_override` will fail loudly if a
+  future Dockerfile edit reintroduces the s6 bypass.
+
+### Changed
+
+- Replaced two lambda GET handlers in `panel/server.py` with async
+  functions to silence the aiohttp 3.13 `DeprecationWarning`.
+
 ## 1.0.0 — Initial release
 
 ### Added
