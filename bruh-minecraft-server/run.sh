@@ -72,6 +72,7 @@ load_config() {
     AUTO_RESTART_SCHEDULE=$(bashio::config 'auto_restart_schedule' '')
     ENABLE_HA_INTEGRATION=$(bashio::config 'enable_ha_integration' 'true')
     ANNOUNCE_HA_EVENTS=$(bashio::config 'announce_ha_events' 'true')
+    ENABLE_BEDROCK_SUPPORT=$(bashio::config 'enable_bedrock_support' 'true')
     EXTRA_JVM_ARGS=$(bashio::config 'extra_jvm_args' '')
     LOG_LEVEL=$(bashio::config 'log_level' 'info')
 
@@ -100,7 +101,7 @@ load_config() {
            AUTO_UPDATE_SERVER AUTO_BACKUP \
            BACKUP_INTERVAL_MINUTES BACKUP_KEEP_COUNT BACKUP_USE_GIT \
            AUTO_RESTART_ON_CRASH AUTO_RESTART_SCHEDULE ENABLE_HA_INTEGRATION \
-           ANNOUNCE_HA_EVENTS EXTRA_JVM_ARGS LOG_LEVEL
+           ANNOUNCE_HA_EVENTS ENABLE_BEDROCK_SUPPORT EXTRA_JVM_ARGS LOG_LEVEL
 
     # HA integration — SUPERVISOR_TOKEN is injected by the Supervisor.
     # Default to empty so `set -u` doesn't abort if the runtime hasn't set it.
@@ -260,6 +261,20 @@ install_plugins() {
             bashio::log.warning "server_type=${SERVER_TYPE} does not support Bukkit plugins; skipping"
             ;;
     esac
+}
+
+# ----------------------------------------------------------------------------
+# Auto-install Geyser + Floodgate so Bedrock clients (iOS/Android/consoles)
+# can connect. See scripts/install-bedrock-support.sh for the implementation.
+# ----------------------------------------------------------------------------
+install_bedrock_support() {
+    if [ "${ENABLE_BEDROCK_SUPPORT}" != "true" ]; then
+        bashio::log.debug "Bedrock support disabled; skipping Geyser install"
+        return 0
+    fi
+    bashio::log.info "Installing Bedrock support (Geyser + Floodgate)"
+    "${SCRIPTS_DIR}/install-bedrock-support.sh" \
+        || bashio::log.warning "Bedrock support install had errors (continuing)"
 }
 
 # ----------------------------------------------------------------------------
@@ -458,6 +473,7 @@ main() {
 
     render_server_properties
     install_plugins
+    install_bedrock_support
 
     start_backup_watcher
     start_stats_collector

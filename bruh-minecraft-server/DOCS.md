@@ -105,6 +105,21 @@ Plugins are fetched with `If-Modified-Since`, so re-starts don't re-download unc
 | `enable_ha_integration` | bool | `true` | Deploy the `bruh_minecraft` custom integration and start the file-IPC bridge. |
 | `announce_ha_events` | bool | `true` | Announce HA-triggered events (restarts, backups) in chat with `/say`. |
 
+### Bedrock cross-play (iOS / Android / consoles)
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enable_bedrock_support` | bool | `true` | Auto-install Geyser + Floodgate so Bedrock clients can connect. |
+
+With this enabled (the default) the add-on downloads the latest Geyser + Floodgate builds from GeyserMC's v2 API on every boot:
+
+- **Geyser** bridges the Bedrock protocol (UDP:19132) to your Java server.
+- **Floodgate** lets Bedrock players log in without needing a Java / Mojang / Microsoft account linked to Minecraft Java Edition.
+
+Bedrock clients connect to `your-home-assistant-host` on port `19132` (UDP) — the same port the add-on already exposes. Cross-play "just works" for Paper / Purpur / Folia and Fabric server types. Vanilla and Forge aren't supported by Geyser-as-a-plugin; you'd need to run Geyser-Standalone separately and should set `enable_bedrock_support: false` to avoid the warning log.
+
+Geyser + Floodgate files land in `/config/minecraft/plugins/` (or `mods/` for Fabric) and can be deleted from the panel's **Plugins** tab just like any other plugin. If you delete them while the toggle is still on, they'll be re-downloaded the next time the add-on restarts.
+
 ---
 
 ## 2. Ingress panel tour

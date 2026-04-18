@@ -5,6 +5,26 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.0.3
+
+### Added
+
+- **Bedrock cross-play is on by default.** New `enable_bedrock_support`
+  option (default `true`) auto-installs Geyser + Floodgate so iOS, Android,
+  Windows 10/11, Xbox, Switch and PlayStation players can join the same
+  Java Edition world on UDP:19132 — no manual plugin install needed.
+- Geyser + Floodgate are downloaded from GeyserMC's v2 API on every start;
+  `If-Modified-Since` prevents needless re-downloads.
+- Supported on Paper / Purpur / Folia (plugin mode) and Fabric (mod mode).
+  Vanilla / Forge log a friendly warning and skip (use Geyser-Standalone
+  separately, or set `enable_bedrock_support: false`).
+- Six new tests in `tests/test_minecraft_scripts.py::TestBedrockSupport`
+  lock in the default, the toggle behaviour, and per-server-type dispatch.
+
+### Docs
+
+- README and DOCS updated with a dedicated "Bedrock cross-play" section.
+
 ## 1.0.2
 
 ### Fixed

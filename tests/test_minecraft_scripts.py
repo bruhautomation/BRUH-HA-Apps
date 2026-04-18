@@ -265,6 +265,52 @@ class TestBackup(unittest.TestCase):
         self.assertIn("BACKUP_KEEP_COUNT", self.text)
 
 
+class TestBedrockSupport(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.run_sh = _read(os.path.join(ADDON_DIR, "run.sh"))
+        cls.installer = _read(os.path.join(SCRIPTS_DIR, "install-bedrock-support.sh"))
+
+    def test_default_enabled(self):
+        """On by default so iOS/Android/console players work out of the box."""
+        import yaml
+        cfg = yaml.safe_load(_read(os.path.join(ADDON_DIR, "config.yaml")))
+        self.assertTrue(cfg["options"]["enable_bedrock_support"],
+                        "enable_bedrock_support must default to true")
+        self.assertEqual(cfg["schema"]["enable_bedrock_support"], "bool")
+
+    def test_run_sh_invokes_installer(self):
+        self.assertIn("install_bedrock_support", self.run_sh)
+        self.assertIn("install-bedrock-support.sh", self.run_sh)
+
+    def test_respects_toggle(self):
+        # When disabled, installer must be skipped
+        self.assertIn('ENABLE_BEDROCK_SUPPORT', self.run_sh)
+        self.assertRegex(
+            self.run_sh,
+            r'ENABLE_BEDROCK_SUPPORT.*!=\s*"true"',
+            "run.sh must check ENABLE_BEDROCK_SUPPORT before invoking the installer",
+        )
+
+    def test_installer_handles_all_server_types(self):
+        """Paper/Purpur/Folia go to plugins/, Fabric goes to mods/, rest warn."""
+        for typ in ("paper|purpur|folia", "fabric"):
+            self.assertIn(typ, self.installer)
+        # Must explicitly handle the unsupported types gracefully
+        self.assertIn("doesn't support Geyser", self.installer)
+
+    def test_installer_fetches_both_geyser_and_floodgate(self):
+        # The URL uses ${project}; the jar names are passed positionally
+        self.assertIn("download.geysermc.org/v2/projects/", self.installer)
+        self.assertIn("install_jar geyser", self.installer)
+        self.assertIn("install_jar floodgate", self.installer)
+
+    def test_installer_caches_via_if_modified_since(self):
+        # -z <file> makes curl send If-Modified-Since; keeps startup quick.
+        self.assertIn("--remote-time", self.installer)
+        self.assertIn('-z "${dest}"', self.installer)
+
+
 class TestServerLauncher(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
