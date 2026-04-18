@@ -5,6 +5,32 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.0.5
+
+### Fixed
+
+- **Bedrock LAN discovery now works.** The server started and Geyser bound
+  to UDP 19132 correctly, but the world didn't appear in the **Friends**
+  tab of Minecraft Bedrock (iOS, Android, Switch, Xbox, PS, Win10/11).
+  Bedrock clients find local servers by listening for UDP multicast /
+  broadcast pings on 19132, and Docker's bridge network drops those
+  packets. Flipped `host_network: true` so the container shares the HA
+  host's network stack directly and the pings reach LAN devices.
+- This matches the upstream convention for Bedrock HA add-ons (e.g.
+  `ha-spawn-point-bedrock`) and is the "obvious thing" I missed in 1.0.3 /
+  1.0.4.
+
+### Unchanged
+
+- Ingress (management panel) still works because the Supervisor proxies
+  it over a unix socket, not TCP.
+- Manual "Add Server" connect-by-IP always worked, but now LAN auto-
+  discovery does too.
+
+### Added
+
+- `test_host_network_enabled` regression guard.
+
 ## 1.0.4
 
 ### Fixed

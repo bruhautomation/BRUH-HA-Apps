@@ -118,6 +118,12 @@ With this enabled (the default) the add-on downloads the latest Geyser + Floodga
 
 Bedrock clients connect to `your-home-assistant-host` on port `19132` (UDP) — the same port the add-on already exposes. Cross-play "just works" for Paper / Purpur / Folia and Fabric server types. Vanilla and Forge aren't supported by Geyser-as-a-plugin; you'd need to run Geyser-Standalone separately and should set `enable_bedrock_support: false` to avoid the warning log.
 
+**LAN auto-discovery:** Because this add-on runs with `host_network: true`, the server appears automatically in Minecraft's **Friends** tab on any phone/tablet/console on the same LAN. If it doesn't show up:
+
+- Make sure the device is on the **same subnet/VLAN** as your Home Assistant host. Guest networks, "IoT VLANs," and client isolation block UDP multicast.
+- Manual fallback: **Servers** tab → **Add Server** → enter `<HA host IPv4>` and port `19132`.
+- `homeassistant.local` sometimes fails on iOS — always prefer the raw IPv4 address.
+
 Geyser + Floodgate files land in `/config/minecraft/plugins/` (or `mods/` for Fabric) and can be deleted from the panel's **Plugins** tab just like any other plugin. If you delete them while the toggle is still on, they'll be re-downloaded the next time the add-on restarts.
 
 ---

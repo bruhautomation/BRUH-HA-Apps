@@ -58,6 +58,19 @@ class TestConfigYaml(unittest.TestCase):
         self.assertEqual(self.cfg["ingress_port"], 8099)
         self.assertTrue(self.cfg["panel_admin"])
 
+    def test_host_network_enabled(self):
+        """Required for Bedrock LAN discovery — iOS/Android/consoles use UDP
+        multicast on 19132 which Docker's bridge network drops.
+
+        This is a regression guard for 1.0.5 — the server worked fine but
+        didn't appear in iOS Minecraft's Friends tab because the container's
+        NAT dropped the LAN broadcast pings.
+        """
+        self.assertIs(
+            self.cfg["host_network"], True,
+            "host_network must be true for Bedrock LAN discovery on iOS/Android/consoles",
+        )
+
     def test_startup_is_services(self):
         # Long-running add-on
         self.assertEqual(self.cfg["startup"], "services")
