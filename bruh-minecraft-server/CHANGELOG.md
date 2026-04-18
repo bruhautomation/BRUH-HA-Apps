@@ -5,6 +5,30 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.2.1
+
+### Fixed
+
+- **Bedrock still hit "Please log into Xbox to join this server." after
+  setting `online_mode: false`.** The Java side was correct (offline
+  mode accepted the first join), but the Geyser config was pinned to
+  `auth-type: floodgate`, which *still* requires the Bedrock client to
+  be signed in to Xbox Live (Floodgate uses the XUID). Subsequent
+  connections without a live Xbox session were kicked by Geyser.
+- Added a new `geyser_auth_type` option with values
+  `auto | floodgate | online | offline`. The default `auto` resolves to
+  **`offline` whenever `online_mode` is `false`** (so Bedrock clients
+  can join with zero sign-in alongside cracked Java clients) and
+  `floodgate` when `online_mode` is on (preserves GeyserMC's
+  recommended default for public servers).
+
+### Tests (4 new, 158 total)
+
+- `TestGeyserAuthPatch` gained 4 tests covering auto → offline in
+  offline-mode, auto → floodgate in online-mode, explicit `offline`
+  winning over online-mode, and explicit `online` patching over a
+  floodgate config.
+
 ## 1.2.0
 
 ### Fixed

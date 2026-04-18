@@ -64,11 +64,17 @@ Forge uses an installer and may need a few extra minutes on the first boot while
 
 #### "Please log into Xbox to join this server" / "You are not permitted to join…"
 
-If you — or your kids — want to play **without an Xbox/Microsoft sign-in**:
+If you — or your kids — want to play **without an Xbox/Microsoft sign-in** on either Java **or** Bedrock:
 
 1. Set `online_mode: false` in the add-on Configuration tab.
 2. Leave `enforce_secure_profile: false` (the default; auto-forced off whenever `online_mode` is `false`).
-3. Restart the add-on. Any Java username now connects, and Bedrock clients keep working via Floodgate.
+3. Leave `geyser_auth_type: auto` (the default; resolves to `offline` automatically whenever `online_mode` is `false`).
+4. Restart the add-on. Any Java username now connects, and Bedrock clients join under whatever username is set on their device — **no Xbox sign-in required**.
+
+Two important subtleties with Geyser:
+
+- `geyser_auth_type: floodgate` **still requires the Bedrock client to be signed in to Xbox Live** (Floodgate uses the XUID to identify the player). It's the right default for public-facing servers, but it's not "no login needed."
+- `geyser_auth_type: offline` removes the Xbox requirement entirely. Bedrock usernames are taken verbatim from the player's device, and Floodgate's `.`-prefix no longer applies. This is the correct setting for LAN-only / family servers.
 
 Offline mode is **not safe for public/internet-exposed servers** — anyone can spoof any username. Use it only on LAN or when you fully trust the player pool.
 
@@ -141,6 +147,7 @@ Plugins are fetched with `If-Modified-Since`, so re-starts don't re-download unc
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `enable_bedrock_support` | bool | `true` | Auto-install Geyser + Floodgate so Bedrock clients can connect. |
+| `geyser_auth_type` | `auto \| floodgate \| online \| offline` | `auto` | Controls Geyser's Bedrock authentication. `auto` picks `offline` whenever Java `online_mode` is `false` (no Xbox sign-in required on Bedrock either) and `floodgate` otherwise. Set explicitly to override. |
 
 With this enabled (the default) the add-on downloads the latest Geyser + Floodgate builds from GeyserMC's v2 API on every boot:
 

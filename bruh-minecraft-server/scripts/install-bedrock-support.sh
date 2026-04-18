@@ -89,20 +89,50 @@ install_jar() {
 
 # ----------------------------------------------------------------------------
 # Geyser's default auth-type is "online", which prompts every Bedrock client
-# with "Please log into Xbox to join this server." Since we're shipping
-# Floodgate alongside to handle Bedrock logins without a Microsoft account,
-# we flip Geyser to auth-type: floodgate so iOS / Switch / etc. can join.
+# with "Please log into Xbox to join this server." We patch the value based
+# on $GEYSER_AUTH_TYPE (set by run.sh from the `geyser_auth_type` option):
+#
+#   auto      — pick based on the Java online-mode: offline when online-mode
+#               is off (no Xbox sign-in required for Bedrock either), else
+#               floodgate (Floodgate bridges Bedrock XUID into Java).
+#   floodgate — GeyserMC's recommended default for public servers; Bedrock
+#               client must be signed in to Xbox Live.
+#   online    — Geyser prompts for Xbox sign-in on every connect.
+#   offline   — Bedrock client joins without any Xbox / Microsoft sign-in;
+#               great for LAN-only / family servers.
+#
 # Safe to re-run: idempotent and preserves the rest of the user's config.
 # ----------------------------------------------------------------------------
+resolve_auth_type() {
+    local requested="${GEYSER_AUTH_TYPE:-auto}"
+    case "${requested}" in
+        floodgate|online|offline)
+            printf '%s' "${requested}"
+            ;;
+        *)
+            # "auto" and any bogus value fall through to the inference path.
+            if [ "${ONLINE_MODE:-true}" = "true" ]; then
+                printf 'floodgate'
+            else
+                printf 'offline'
+            fi
+            ;;
+    esac
+}
+
 configure_geyser_for_floodgate() {
-    # Configure Geyser: auth-type=floodgate (no Xbox login) + MOTD from add-on.
+    # Configure Geyser auth-type + MOTD from add-on options.
     local plugin_dir="${PLUGINS_DIR}/Geyser-Spigot"
     local cfg="${plugin_dir}/config.yml"
+    local auth_type
+    auth_type=$(resolve_auth_type)
 
     mkdir -p "${plugin_dir}"
 
     local motd="${MOTD:-A BRUH Minecraft Server}"
     local motd_sub="Powered by BRUH HA Apps"
+
+    log "Resolved Geyser auth-type: ${auth_type} (requested='${GEYSER_AUTH_TYPE:-auto}', online-mode='${ONLINE_MODE:-true}')"
 
     if [ -f "${cfg}" ]; then
         log "Geyser config exists at ${cfg} ($(stat -c '%s bytes, %y' "${cfg}" 2>/dev/null || echo '?'))"
@@ -112,18 +142,18 @@ configure_geyser_for_floodgate() {
         before=$(grep -E '^[[:space:]]*auth-type:' "${cfg}" 2>/dev/null | head -n 1 | sed 's/^[[:space:]]*//' || true)
         if [ -n "${before}" ]; then
             sed -i -E \
-                's/^([[:space:]]*)auth-type:[[:space:]]*.*/\1auth-type: floodgate/' \
+                "s/^([[:space:]]*)auth-type:[[:space:]]*.*/\\1auth-type: ${auth_type}/" \
                 "${cfg}"
             after=$(grep -E '^[[:space:]]*auth-type:' "${cfg}" 2>/dev/null | head -n 1 | sed 's/^[[:space:]]*//' || true)
             log "  - auth-type: ${before} -> ${after}"
-            if [ "${after}" != "auth-type: floodgate" ]; then
-                warn "  ! auth-type did NOT end up as 'floodgate' after patching!"
+            if [ "${after}" != "auth-type: ${auth_type}" ]; then
+                warn "  ! auth-type did NOT end up as '${auth_type}' after patching!"
                 warn "  ! current value: ${after}"
-                warn "  ! Bedrock clients will still see 'Please log into Xbox'"
+                warn "  ! Bedrock clients may still see 'Please log into Xbox'"
             fi
         else
-            printf '\nremote:\n  auth-type: floodgate\n' >> "${cfg}"
-            log "  - appended remote.auth-type: floodgate (no auth-type line was present)"
+            printf '\nremote:\n  auth-type: %s\n' "${auth_type}" >> "${cfg}"
+            log "  - appended remote.auth-type: ${auth_type} (no auth-type line was present)"
         fi
 
         # Patch bedrock MOTD lines (motd1 + motd2) to match the add-on motd
@@ -145,17 +175,17 @@ configure_geyser_for_floodgate() {
     else
         # Fresh install: stage a minimal file. Geyser fills in defaults for
         # every key we don't specify on first boot.
-        log "Staging fresh Geyser config at ${cfg}"
+        log "Staging fresh Geyser config at ${cfg} (auth-type: ${auth_type})"
         cat > "${cfg}" <<YAML
 # Managed by BRUH Minecraft Server add-on.
-# Bedrock clients authenticate through Floodgate — no Microsoft / Xbox
-# account required to join. Edit freely; auth-type + MOTD are re-asserted
-# on every add-on boot so the defaults stay consistent.
+# auth-type is re-asserted on every add-on boot from the add-on options.
+# See the README / DOCS for the tradeoffs between floodgate / offline /
+# online. Every other key here is edited freely.
 bedrock:
   motd1: "${motd}"
   motd2: "${motd_sub}"
 remote:
-  auth-type: floodgate
+  auth-type: ${auth_type}
 YAML
     fi
 
