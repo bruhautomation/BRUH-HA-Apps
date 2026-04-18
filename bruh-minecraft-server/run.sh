@@ -276,7 +276,15 @@ render_server_properties() {
 }
 
 # ----------------------------------------------------------------------------
-# Install any plugins declared in options.plugins (Paper / Purpur only)
+# Install any plugins declared in options.plugins (Paper / Purpur only).
+#
+# Robustness: individual plugin download failures (bad URL, 404, timeout,
+# GitHub rate-limit) MUST NOT bring the whole add-on down. Before 1.2.5,
+# install-plugin.sh exited 1 on failure and bashio's implicit `set -e`
+# killed run.sh mid-startup — users saw the add-on exit silently right
+# after "Installing configured plugins" with no Minecraft server launch.
+# Now we isolate the pipeline in a subshell and swallow per-plugin
+# failures with a loud warning so the server still comes up.
 # ----------------------------------------------------------------------------
 install_plugins() {
     if bashio::config.is_empty 'plugins'; then
@@ -287,17 +295,36 @@ install_plugins() {
     case "${SERVER_TYPE}" in
         paper|purpur|folia)
             bashio::log.info "Installing configured plugins"
-            bashio::config 'plugins' | jq -c '.[]' | while IFS= read -r plugin; do
-                local url name
-                url=$(echo "${plugin}" | jq -r '.url')
-                name=$(echo "${plugin}" | jq -r '.name // empty')
-                "${SCRIPTS_DIR}/install-plugin.sh" "${url}" "${name}"
-            done
+            (
+                # Intentionally disable pipefail here so a single failing
+                # plugin can't abort the add-on. Each plugin result is
+                # logged individually below.
+                set +o pipefail
+                local failures=0
+                bashio::config 'plugins' | jq -c '.[]' | while IFS= read -r plugin; do
+                    local url name
+                    url=$(echo "${plugin}" | jq -r '.url // empty')
+                    name=$(echo "${plugin}" | jq -r '.name // empty')
+                    if [ -z "${url}" ] || [ "${url}" = "null" ]; then
+                        bashio::log.warning "Skipping plugin entry with empty URL"
+                        continue
+                    fi
+                    bashio::log.info "Plugin: ${name:-<derived from url>} -> ${url}"
+                    if ! "${SCRIPTS_DIR}/install-plugin.sh" "${url}" "${name}"; then
+                        bashio::log.warning "Plugin install failed for ${url} — continuing"
+                        failures=$((failures + 1))
+                    fi
+                done
+                if [ "${failures:-0}" -gt 0 ]; then
+                    bashio::log.warning "${failures} plugin(s) failed; see logs above. Server will start anyway."
+                fi
+            ) || bashio::log.warning "Plugin install loop returned non-zero; continuing"
             ;;
         *)
             bashio::log.warning "server_type=${SERVER_TYPE} does not support Bukkit plugins; skipping"
             ;;
     esac
+    return 0
 }
 
 # ----------------------------------------------------------------------------

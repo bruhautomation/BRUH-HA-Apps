@@ -336,6 +336,24 @@ If your world is huge, switch to tar-archive mode (`backup_use_git: false`) whic
 
 After a restore, the panel sends `stop` via RCON. If `auto_restart_on_crash` is `false`, the add-on won't restart the JVM — toggle the option back on (the default) or hit the add-on's **Start** button.
 
+### Add-on exits immediately after "Installing configured plugins"
+
+Before 1.2.5 this was a hard crash caused by a single bad plugin URL killing `run.sh` through `set -e`. As of 1.2.5, per-plugin failures are isolated, logged, and counted:
+
+```
+[INFO]: Plugin: NickNamer.jar -> https://.../NickNamer.jar
+[WARNING]: Plugin install failed for https://.../NickNamer.jar — continuing
+[WARNING]: 1 plugin(s) failed; see logs above. Server will start anyway.
+```
+
+If you see a failure:
+
+- **Check the `[install-plugin]` line** — the HTTP status / curl exit code tells you whether the URL 404'd, timed out, or served HTML instead of a jar. `--max-time 60` caps each attempt.
+- **GitHub `/releases/latest/download/X.jar` URLs only work if an asset is named *exactly* `X.jar`** — many projects version their filenames (`NickNamer-5.15.0.jar`), in which case the `latest/download/` shortcut 404s. Use a pinned versioned URL or the project's own mirror.
+- **Rate-limit HTML pages (GitHub anonymous limits) are rejected** — a jar must start with `PK`. The add-on refuses to install a ~10 KB HTML blob masquerading as a jar.
+
+Even on total failure the Minecraft server will launch without the plugin, so you can fix the URL and restart.
+
 ### iOS Bedrock hangs on "Connecting multiplayer server…"
 
 Checklist in order of likelihood:
