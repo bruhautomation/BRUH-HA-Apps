@@ -95,6 +95,7 @@ load_config() {
     ENABLE_HA_INTEGRATION=$(bashio::config 'enable_ha_integration' 'true')
     ANNOUNCE_HA_EVENTS=$(bashio::config 'announce_ha_events' 'true')
     ENABLE_BEDROCK_SUPPORT=$(bashio::config 'enable_bedrock_support' 'true')
+    GEYSER_AUTH_TYPE=$(bashio::config 'geyser_auth_type' 'auto')
     EXTRA_JVM_ARGS=$(bashio::config 'extra_jvm_args' '')
     LOG_LEVEL=$(bashio::config 'log_level' 'info')
 
@@ -130,7 +131,8 @@ load_config() {
            AUTO_UPDATE_SERVER AUTO_BACKUP \
            BACKUP_INTERVAL_MINUTES BACKUP_KEEP_COUNT BACKUP_USE_GIT \
            AUTO_RESTART_ON_CRASH AUTO_RESTART_SCHEDULE ENABLE_HA_INTEGRATION \
-           ANNOUNCE_HA_EVENTS ENABLE_BEDROCK_SUPPORT EXTRA_JVM_ARGS LOG_LEVEL
+           ANNOUNCE_HA_EVENTS ENABLE_BEDROCK_SUPPORT GEYSER_AUTH_TYPE \
+           EXTRA_JVM_ARGS LOG_LEVEL
 
     # HA integration — SUPERVISOR_TOKEN is injected by the Supervisor.
     # Default to empty so `set -u` doesn't abort if the runtime hasn't set it.

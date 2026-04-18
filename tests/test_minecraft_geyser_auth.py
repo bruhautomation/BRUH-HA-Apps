@@ -39,32 +39,45 @@ def _read_props(path: Path) -> dict[str, str]:
     return result
 
 
-def _run_patcher(server_dir: Path, motd: str = "A BRUH Minecraft Server") -> subprocess.CompletedProcess:
+def _run_patcher(
+    server_dir: Path,
+    motd: str = "A BRUH Minecraft Server",
+    *,
+    geyser_auth_type: str | None = None,
+    online_mode: str = "true",
+) -> subprocess.CompletedProcess:
     """Execute just the `configure_geyser_for_floodgate` function against
     `${server_dir}/plugins/Geyser-Spigot/config.yml`."""
     source = SCRIPT.read_text()
-    wrapper = textwrap.dedent(f"""
+    env_bits = [
+        f"export MC_SERVER_DIR={server_dir.as_posix()!r}",
+        f"export PLUGINS_DIR={(server_dir / 'plugins').as_posix()!r}",
+        f"export MOTD={motd!r}",
+        f"export ONLINE_MODE={online_mode!r}",
+    ]
+    if geyser_auth_type is not None:
+        env_bits.append(f"export GEYSER_AUTH_TYPE={geyser_auth_type!r}")
+    wrapper = textwrap.dedent("""
         set -euo pipefail
-        export MC_SERVER_DIR={server_dir.as_posix()!r}
-        export PLUGINS_DIR={(server_dir / "plugins").as_posix()!r}
-        export MOTD={motd!r}
+        {env}
         log()  {{ printf '[test] %s\\n' "$*" >&2; }}
         warn() {{ printf '[test] %s\\n' "$*" >&2; }}
-        # Bring just the function we want to test into scope
-    """)
-    # Extract the function body from the real script
-    start = source.index("configure_geyser_for_floodgate() {")
-    # Find the matching closing brace at column 0
-    remaining = source[start:]
-    brace = 0
-    for i, ch in enumerate(remaining):
-        if ch == "{": brace += 1
-        elif ch == "}":
-            brace -= 1
-            if brace == 0:
-                body = remaining[: i + 1]
-                break
-    wrapper += body + "\nconfigure_geyser_for_floodgate\n"
+        # Bring the functions we want to test into scope
+    """).format(env="\n        ".join(env_bits))
+    # Extract the two function bodies from the real script
+    bodies: list[str] = []
+    for func in ("resolve_auth_type", "configure_geyser_for_floodgate"):
+        start = source.index(f"{func}() {{")
+        remaining = source[start:]
+        brace = 0
+        for i, ch in enumerate(remaining):
+            if ch == "{": brace += 1
+            elif ch == "}":
+                brace -= 1
+                if brace == 0:
+                    bodies.append(remaining[: i + 1])
+                    break
+    wrapper += "\n".join(bodies) + "\nconfigure_geyser_for_floodgate\n"
     return subprocess.run(
         ["bash", "-c", wrapper], capture_output=True, text=True, check=False,
     )
@@ -160,6 +173,58 @@ class TestGeyserAuthPatch(unittest.TestCase):
             self.assertEqual(proc.returncode, 0, proc.stderr)
             text = (server_dir / "plugins" / "Geyser-Spigot" / "config.yml").read_text()
             self.assertIn('motd1: "BRUH House MC"', text)
+
+    def test_auto_picks_offline_when_online_mode_is_off(self):
+        """Java `online_mode: false` + `geyser_auth_type: auto` must resolve
+        to `offline` on the Geyser side — otherwise Bedrock clients still
+        hit "Please log into Xbox to join this server." even though the
+        Java server accepts cracked logins."""
+        with tempfile.TemporaryDirectory() as tmp:
+            server_dir = Path(tmp)
+            (server_dir / "plugins").mkdir()
+            proc = _run_patcher(
+                server_dir, geyser_auth_type="auto", online_mode="false",
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            cfg = server_dir / "plugins" / "Geyser-Spigot" / "config.yml"
+            self.assertIn("auth-type: offline", cfg.read_text())
+
+    def test_auto_picks_floodgate_when_online_mode_is_on(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            server_dir = Path(tmp)
+            (server_dir / "plugins").mkdir()
+            proc = _run_patcher(
+                server_dir, geyser_auth_type="auto", online_mode="true",
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            cfg = server_dir / "plugins" / "Geyser-Spigot" / "config.yml"
+            self.assertIn("auth-type: floodgate", cfg.read_text())
+
+    def test_explicit_offline_wins_over_online_mode(self):
+        """Explicit geyser_auth_type: offline should be honoured even when
+        Java is running in online-mode — it's the user's decision."""
+        with tempfile.TemporaryDirectory() as tmp:
+            server_dir = Path(tmp)
+            (server_dir / "plugins").mkdir()
+            proc = _run_patcher(
+                server_dir, geyser_auth_type="offline", online_mode="true",
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            cfg = server_dir / "plugins" / "Geyser-Spigot" / "config.yml"
+            self.assertIn("auth-type: offline", cfg.read_text())
+
+    def test_explicit_online_mode_patches_from_floodgate(self):
+        """Existing config on floodgate + requested online should flip to online."""
+        with tempfile.TemporaryDirectory() as tmp:
+            server_dir = Path(tmp)
+            plugin_dir = server_dir / "plugins" / "Geyser-Spigot"
+            plugin_dir.mkdir(parents=True)
+            cfg = plugin_dir / "config.yml"
+            cfg.write_text("remote:\n  auth-type: floodgate\n")
+            proc = _run_patcher(server_dir, geyser_auth_type="online")
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertIn("auth-type: online", cfg.read_text())
+            self.assertNotIn("auth-type: floodgate", cfg.read_text())
 
     def test_existing_config_motd_patched(self):
         """motd1/motd2 on an existing default config get overwritten."""

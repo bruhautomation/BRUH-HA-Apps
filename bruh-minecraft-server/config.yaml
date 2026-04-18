@@ -1,7 +1,7 @@
 ---
 name: "BRUH Minecraft Server"
 description: "Rock-solid Minecraft Java Edition server with ingress panel, RCON, git world backups, auto-updates, plugin management, and deep Home Assistant integration"
-version: "1.2.0"
+version: "1.2.1"
 slug: "bruh_minecraft_server"
 init: false
 
@@ -122,6 +122,19 @@ options:
   enable_ha_integration: true
   announce_ha_events: true
   enable_bedrock_support: true
+  # Geyser Bedrock auth-type:
+  #   auto      — pick automatically: `offline` when online_mode=false,
+  #               `floodgate` when online_mode=true (recommended default).
+  #   floodgate — Bedrock client must be signed in to Xbox Live (XUID
+  #               is used by Floodgate to ID the player). This is what
+  #               GeyserMC recommends for public servers.
+  #   online    — Bedrock client is prompted with "Please log into Xbox"
+  #               on every connect. Rarely what anyone wants.
+  #   offline   — NO Xbox sign-in needed on the Bedrock device; player
+  #               joins with whatever username is set on their client.
+  #               The right choice for LAN-only / family servers where
+  #               the kids don't have Xbox accounts.
+  geyser_auth_type: auto
   plugins: []
   extra_jvm_args: ""
   log_level: info
@@ -176,6 +189,7 @@ schema:
   enable_ha_integration: bool
   announce_ha_events: bool
   enable_bedrock_support: bool
+  geyser_auth_type: "list(auto|floodgate|online|offline)"
   plugins:
     - url: "url"
       name: "str?"
