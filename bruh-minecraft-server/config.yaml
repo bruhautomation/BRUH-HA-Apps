@@ -1,7 +1,7 @@
 ---
 name: "BRUH Minecraft Server"
 description: "Rock-solid Minecraft Java Edition server with ingress panel, RCON, git world backups, auto-updates, plugin management, and deep Home Assistant integration"
-version: "1.0.2"
+version: "1.0.3"
 slug: "bruh_minecraft_server"
 init: false
 
@@ -75,6 +75,7 @@ options:
   auto_restart_schedule: ""
   enable_ha_integration: true
   announce_ha_events: true
+  enable_bedrock_support: true
   plugins: []
   extra_jvm_args: ""
   log_level: info
@@ -111,6 +112,7 @@ schema:
   auto_restart_schedule: "str?"
   enable_ha_integration: bool
   announce_ha_events: bool
+  enable_bedrock_support: bool
   plugins:
     - url: "url"
       name: "str?"
