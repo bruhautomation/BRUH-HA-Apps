@@ -87,6 +87,49 @@ install_jar() {
     fi
 }
 
+# ----------------------------------------------------------------------------
+# Geyser's default auth-type is "online", which prompts every Bedrock client
+# with "Please log into Xbox to join this server." Since we're shipping
+# Floodgate alongside to handle Bedrock logins without a Microsoft account,
+# we flip Geyser to auth-type: floodgate so iOS / Switch / etc. can join.
+# Safe to re-run: idempotent and preserves the rest of the user's config.
+# ----------------------------------------------------------------------------
+configure_geyser_for_floodgate() {
+    local plugin_dir="${PLUGINS_DIR}/Geyser-Spigot"
+    local cfg="${plugin_dir}/config.yml"
+
+    mkdir -p "${plugin_dir}"
+
+    if [ -f "${cfg}" ]; then
+        if grep -qE '^[[:space:]]*auth-type:' "${cfg}"; then
+            # In-place patch of the existing auth-type line. sed -E lets us
+            # capture the leading whitespace so indentation is preserved.
+            sed -i -E \
+                's/^([[:space:]]*)auth-type:[[:space:]]*.*/\1auth-type: floodgate/' \
+                "${cfg}"
+            log "Geyser config patched -> auth-type: floodgate"
+        else
+            # Config exists but no auth-type key — append a minimal remote block
+            printf '\nremote:\n  auth-type: floodgate\n' >> "${cfg}"
+            log "Geyser config: appended remote.auth-type: floodgate"
+        fi
+    else
+        # Fresh install: stage the minimum so Geyser merges in defaults
+        # for everything else on first boot.
+        cat > "${cfg}" <<'YAML'
+# Managed by BRUH Minecraft Server add-on.
+# Bedrock clients authenticate through Floodgate — no Microsoft / Xbox
+# account required to join. Edit freely; auth-type is re-asserted on every
+# add-on boot so it stays consistent with the plugin layout we ship.
+remote:
+  auth-type: floodgate
+YAML
+        log "Geyser config staged with auth-type: floodgate (fresh install)"
+    fi
+
+    chown -R minecraft:minecraft "${plugin_dir}" 2>/dev/null || true
+}
+
 # The jars are named by convention so the server picks them up automatically.
 install_jar geyser "${GEYSER_VARIANT}" "Geyser-${GEYSER_VARIANT^}.jar" \
     || warn "Geyser install failed; Bedrock clients will not be able to connect"
@@ -94,6 +137,8 @@ install_jar geyser "${GEYSER_VARIANT}" "Geyser-${GEYSER_VARIANT^}.jar" \
 if [ "${INSTALL_FLOODGATE}" = "1" ]; then
     install_jar floodgate "${FLOODGATE_VARIANT}" "floodgate-${FLOODGATE_VARIANT}.jar" \
         || warn "Floodgate install failed; Bedrock players will need a Java account to log in"
+    # Only meaningful when we've installed Floodgate
+    configure_geyser_for_floodgate
 else
     log "Floodgate skipped — Geyser-${GEYSER_VARIANT^} includes Floodgate support natively"
 fi

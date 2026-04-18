@@ -5,6 +5,29 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.0.6
+
+### Fixed
+
+- **"Please log into Xbox to join this server."** Geyser's default
+  `auth-type` is `online`, which forces every Bedrock client to
+  authenticate against Xbox Live — defeating the whole point of bundling
+  Floodgate. The installer now patches `plugins/Geyser-Spigot/config.yml`
+  to `auth-type: floodgate` on every boot:
+    - Fresh install → stages a minimal config so Geyser uses Floodgate
+      the first time it starts.
+    - Existing `auth-type: online` / `auth-type: offline` → patched in
+      place (indentation preserved, other keys untouched).
+    - Already `floodgate` → no-op (idempotent).
+- This is the final missing piece for painless iOS / iPadOS / Switch /
+  Xbox / PS / Android LAN play.
+
+### Added
+
+- `tests/test_minecraft_geyser_auth.py` — 5 behaviour tests covering
+  fresh install, default online config, already-patched config,
+  missing-auth-type append, and indent preservation.
+
 ## 1.0.5
 
 ### Fixed
