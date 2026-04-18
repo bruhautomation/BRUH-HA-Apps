@@ -1,7 +1,7 @@
 ---
 name: "BRUH Minecraft Server"
 description: "Rock-solid Minecraft Java Edition server with ingress panel, RCON, git world backups, auto-updates, plugin management, and deep Home Assistant integration"
-version: "1.0.4"
+version: "1.0.5"
 slug: "bruh_minecraft_server"
 init: false
 
@@ -29,7 +29,16 @@ panel_title: "Minecraft"
 panel_admin: true
 
 # Minecraft networking
-host_network: false
+# host_network: true is REQUIRED for Bedrock LAN discovery — iOS, Android,
+# consoles, and Win10/11 find local servers via UDP multicast/broadcast on
+# port 19132, and Docker's bridge network drops those packets. With host
+# networking the container shares the HA host's network stack directly, so:
+#   * Bedrock LAN pings reach the server and the world shows up in the
+#     "Friends" tab of Minecraft Bedrock without manual IP entry.
+#   * All ports below bind directly to the host (no Docker NAT translation).
+# Ingress (the management panel) still works because the Supervisor proxies
+# it over a unix socket, not a TCP port.
+host_network: true
 ports:
   25565/tcp: 25565
   25565/udp: 25565
