@@ -5,6 +5,33 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.0.2
+
+### Fixed
+
+- **Crash-loop on first start.** `bashio` sources `set -e` + `set -u` +
+  `pipefail`, and `load_config()` was attempting to write the RCON password
+  to `/data/panel/rcon.secret` before `prepare_filesystem()` created that
+  directory. The redirection failed silently, `set -e` killed the script,
+  and s6 restarted the add-on over and over with nothing after
+  `Loading add-on configuration` in the logs.
+- Moved all RCON password IO into a new `ensure_rcon_password()` step that
+  runs after `prepare_filesystem()` so the target dir is guaranteed to exist.
+- Added `${SUPERVISOR_TOKEN:-}` so `set -u` can't abort if the Supervisor
+  token isn't injected for some reason.
+
+### Added
+
+- `log_level` option now actually controls bashio verbosity: `load_config()`
+  exports `BASHIO_LOG_LEVEL` based on the option, so `debug`/`trace` really
+  produce extra output.
+- Four regression tests in `tests/test_minecraft_scripts.py` that would
+  have caught this:
+    - `test_load_config_does_not_write_to_panel_state`
+    - `test_ensure_rcon_password_runs_after_prepare_filesystem`
+    - `test_supervisor_token_has_default`
+    - `test_log_level_propagated_to_bashio`
+
 ## 1.0.1
 
 ### Fixed
