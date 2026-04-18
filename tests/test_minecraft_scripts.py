@@ -171,6 +171,58 @@ class TestRunSh(unittest.TestCase):
     def test_custom_integration_deployment_guard(self):
         self.assertIn("deploy_custom_integration", self.text)
 
+    def test_load_config_does_not_write_to_panel_state(self):
+        """Regression guard for the 1.0.2 crash-loop bug.
+
+        bashio sources `set -e` + `set -u` + `pipefail`. If load_config does
+        filesystem IO before prepare_filesystem creates MC_PANEL_STATE, the
+        failed redirection kills the script silently and HA crash-loops the
+        add-on with no user-visible error.
+        """
+        in_load = False
+        brace_depth = 0
+        for line in self.text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("load_config()"):
+                in_load = True
+                continue
+            if not in_load:
+                continue
+            # Track brace depth to know when we leave the function
+            if "{" in line and "${" not in line.replace("${", ""):
+                brace_depth += 1
+            if line.strip() == "}":
+                break
+            # Inside load_config: disallow any writes to MC_PANEL_STATE
+            if "MC_PANEL_STATE" in line and (">" in line or "mkdir" in line or "touch" in line):
+                if not line.lstrip().startswith("#"):
+                    self.fail(f"load_config must not write to MC_PANEL_STATE: {line!r}")
+
+    def test_ensure_rcon_password_runs_after_prepare_filesystem(self):
+        """The RCON password MUST be resolved after MC_PANEL_STATE exists."""
+        self.assertIn("ensure_rcon_password", self.text,
+                      "run.sh must define/call ensure_rcon_password")
+        # Find main() body and check call order
+        start = self.text.index("main() {")
+        end = self.text.index("\n}\n", start)
+        main_body = self.text[start:end]
+        prep_idx = main_body.find("prepare_filesystem")
+        rcon_idx = main_body.find("ensure_rcon_password")
+        self.assertGreater(prep_idx, 0, "prepare_filesystem not called in main")
+        self.assertGreater(rcon_idx, 0, "ensure_rcon_password not called in main")
+        self.assertLess(prep_idx, rcon_idx,
+                        "ensure_rcon_password must run AFTER prepare_filesystem")
+
+    def test_supervisor_token_has_default(self):
+        """set -u would abort if SUPERVISOR_TOKEN is unset."""
+        self.assertIn("${SUPERVISOR_TOKEN:-}", self.text,
+                      "SUPERVISOR_TOKEN must have a :- default (set -u guard)")
+
+    def test_log_level_propagated_to_bashio(self):
+        """Toggling log_level in config should actually affect bashio output."""
+        self.assertIn("BASHIO_LOG_LEVEL", self.text,
+                      "log_level option must export BASHIO_LOG_LEVEL")
+
 
 class TestDownloadServer(unittest.TestCase):
     @classmethod

@@ -75,34 +75,69 @@ load_config() {
     EXTRA_JVM_ARGS=$(bashio::config 'extra_jvm_args' '')
     LOG_LEVEL=$(bashio::config 'log_level' 'info')
 
-    # Auto-generate RCON password if blank so the panel + HA integration always work.
-    if [ -z "${RCON_PASSWORD_CFG}" ] || [ "${RCON_PASSWORD_CFG}" = "null" ]; then
-        if [ -f "${MC_PANEL_STATE}/rcon.secret" ]; then
-            RCON_PASSWORD=$(cat "${MC_PANEL_STATE}/rcon.secret")
-        else
-            RCON_PASSWORD=$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 32)
-            printf '%s' "${RCON_PASSWORD}" > "${MC_PANEL_STATE}/rcon.secret"
-            chmod 600 "${MC_PANEL_STATE}/rcon.secret"
-        fi
-    else
-        RCON_PASSWORD="${RCON_PASSWORD_CFG}"
-        printf '%s' "${RCON_PASSWORD}" > "${MC_PANEL_STATE}/rcon.secret"
-        chmod 600 "${MC_PANEL_STATE}/rcon.secret"
-    fi
+    # Apply log level so bashio::log.debug / bashio::log.trace actually render
+    case "${LOG_LEVEL}" in
+        trace)   export BASHIO_LOG_LEVEL=8 ;;
+        debug)   export BASHIO_LOG_LEVEL=7 ;;
+        info)    export BASHIO_LOG_LEVEL=5 ;;
+        notice)  export BASHIO_LOG_LEVEL=4 ;;
+        warning) export BASHIO_LOG_LEVEL=3 ;;
+        error)   export BASHIO_LOG_LEVEL=2 ;;
+        fatal)   export BASHIO_LOG_LEVEL=1 ;;
+    esac
+
+    # NOTE: RCON password is resolved in ensure_rcon_password() AFTER
+    # prepare_filesystem has created ${MC_PANEL_STATE}. Doing IO here would
+    # fail on first boot (directory doesn't exist yet) and bashio's implicit
+    # `set -e` kills the script silently, causing an s6 crash-restart loop.
+    RCON_PASSWORD=""
 
     export EULA SERVER_TYPE MINECRAFT_VERSION MOTD DIFFICULTY GAMEMODE \
            MAX_PLAYERS VIEW_DISTANCE SIM_DISTANCE ONLINE_MODE PVP HARDCORE \
            ALLOW_FLIGHT WHITE_LIST SPAWN_PROTECTION LEVEL_NAME LEVEL_SEED \
            LEVEL_TYPE MEMORY_MB USE_AIKAR_FLAGS ENABLE_COMMAND_BLOCK \
-           OP_PERMISSION_LEVEL RCON_PASSWORD AUTO_UPDATE_SERVER AUTO_BACKUP \
+           OP_PERMISSION_LEVEL RCON_PASSWORD RCON_PASSWORD_CFG \
+           AUTO_UPDATE_SERVER AUTO_BACKUP \
            BACKUP_INTERVAL_MINUTES BACKUP_KEEP_COUNT BACKUP_USE_GIT \
            AUTO_RESTART_ON_CRASH AUTO_RESTART_SCHEDULE ENABLE_HA_INTEGRATION \
            ANNOUNCE_HA_EVENTS EXTRA_JVM_ARGS LOG_LEVEL
 
-    # HA integration
-    export HA_TOKEN="${SUPERVISOR_TOKEN}"
+    # HA integration — SUPERVISOR_TOKEN is injected by the Supervisor.
+    # Default to empty so `set -u` doesn't abort if the runtime hasn't set it.
+    export HA_TOKEN="${SUPERVISOR_TOKEN:-}"
     export HA_BASE_URL="http://supervisor/core/api"
     export SUPERVISOR_API_URL="http://supervisor"
+
+    bashio::log.debug "Config loaded: type=${SERVER_TYPE} version=${MINECRAFT_VERSION} memory=${MEMORY_MB}MB"
+}
+
+# ----------------------------------------------------------------------------
+# Resolve the RCON password *after* the panel state dir exists
+# ----------------------------------------------------------------------------
+ensure_rcon_password() {
+    local secret_file="${MC_PANEL_STATE}/rcon.secret"
+
+    if [ -n "${RCON_PASSWORD_CFG}" ] && [ "${RCON_PASSWORD_CFG}" != "null" ]; then
+        # User supplied an explicit password — persist it
+        RCON_PASSWORD="${RCON_PASSWORD_CFG}"
+        printf '%s' "${RCON_PASSWORD}" > "${secret_file}"
+    elif [ -s "${secret_file}" ]; then
+        # Reuse the previously-generated secret
+        RCON_PASSWORD=$(cat "${secret_file}")
+    else
+        # Generate a fresh 32-char random password
+        RCON_PASSWORD=$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32 || true)
+        if [ -z "${RCON_PASSWORD}" ]; then
+            # Extremely unlikely fallback — still deterministic-enough for RCON
+            RCON_PASSWORD=$(date +%s%N | sha256sum | head -c 32)
+        fi
+        printf '%s' "${RCON_PASSWORD}" > "${secret_file}"
+    fi
+
+    chmod 600 "${secret_file}" || true
+    chown minecraft:minecraft "${secret_file}" 2>/dev/null || true
+    export RCON_PASSWORD
+    bashio::log.info "RCON password resolved (${#RCON_PASSWORD} chars)"
 }
 
 # ----------------------------------------------------------------------------
@@ -408,6 +443,7 @@ main() {
     load_config
     check_eula
     prepare_filesystem
+    ensure_rcon_password
 
     # Stats / panel rely on a running (or cached) jar; start them first so the
     # user can see progress even while the jar is downloading
