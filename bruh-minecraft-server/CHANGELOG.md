@@ -5,6 +5,26 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.0.4
+
+### Fixed
+
+- **Geyser + Floodgate downloads were 404ing** in 1.0.3 because the
+  GeyserMC v2 API calls the Paper/Purpur/Folia build `spigot`, not
+  `paper`. The installer now uses the correct slug and the downloads
+  succeed. Bedrock clients (iOS, Android, consoles, Win10/11) can finally
+  connect to the Java server on UDP:19132.
+- **Fabric:** Floodgate has no `fabric` variant (Geyser-Fabric bundles
+  Floodgate support natively), so we now install Geyser only on Fabric
+  and log a clear "Floodgate skipped" message.
+
+### Added
+
+- New `test_installer_uses_spigot_not_paper_slug` keyword test.
+- New `test_geyser_download_urls_resolve` live HEAD test that probes
+  `download.geysermc.org` and fails loudly if a URL slug changes. Skipped
+  automatically when the test host has no internet.
+
 ## 1.0.3
 
 ### Added
