@@ -356,6 +356,46 @@ deploy_custom_integration() {
 }
 
 # ----------------------------------------------------------------------------
+# Announce the bruh_minecraft service to the Supervisor's /discovery endpoint.
+# HA Core sees this and surfaces a one-click "Discovered: BRUH Minecraft"
+# tile on Settings → Devices & Services. Already-configured instances are
+# left alone; the Supervisor dedupes by service + uuid.
+# ----------------------------------------------------------------------------
+announce_ha_discovery() {
+    if [ "${ENABLE_HA_INTEGRATION}" != "true" ]; then
+        return 0
+    fi
+    if [ -z "${SUPERVISOR_TOKEN:-}" ]; then
+        bashio::log.warning "SUPERVISOR_TOKEN not set; skipping discovery announcement"
+        return 0
+    fi
+
+    local payload response http_code
+    payload='{"service":"bruh_minecraft","config":{"host":"homeassistant.local","port":25565}}'
+    response=$(curl -sS -o /tmp/discovery-response.json -w "%{http_code}" \
+        -X POST \
+        -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
+        -H "Content-Type: application/json" \
+        -d "${payload}" \
+        "http://supervisor/discovery" 2>&1) || true
+
+    http_code="${response: -3}"
+    case "${http_code}" in
+        200|201|202)
+            bashio::log.info "Announced bruh_minecraft to Supervisor — HA should show a 1-click setup tile"
+            ;;
+        400)
+            # Already announced — Supervisor returns 400 if the service is live
+            bashio::log.debug "bruh_minecraft discovery already active (Supervisor returned 400)"
+            ;;
+        *)
+            bashio::log.debug "Discovery announce returned HTTP ${http_code} (non-fatal)"
+            ;;
+    esac
+    rm -f /tmp/discovery-response.json
+}
+
+# ----------------------------------------------------------------------------
 # Clean shutdown — RCON-stop the server so worlds save cleanly
 # ----------------------------------------------------------------------------
 graceful_shutdown() {
@@ -451,8 +491,11 @@ run_server_loop() {
 # Main
 # ============================================================================
 main() {
+    # ADDON_VERSION is baked into the Dockerfile from config.yaml's version:
+    # field, so the log always shows which build is actually running. This
+    # is the fastest way to answer "did my update take?" questions.
     bashio::log.info "================================================================"
-    bashio::log.info " BRUH Minecraft Server starting"
+    bashio::log.info " BRUH Minecraft Server v${ADDON_VERSION:-unknown} starting"
     bashio::log.info "================================================================"
 
     load_config
@@ -478,6 +521,7 @@ main() {
     start_backup_watcher
     start_stats_collector
     start_ha_bridge
+    announce_ha_discovery
 
     run_server_loop
 }

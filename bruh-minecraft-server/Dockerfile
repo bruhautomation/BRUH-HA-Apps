@@ -1,7 +1,10 @@
 ARG BUILD_FROM
+ARG ADDON_VERSION=dev
 FROM ${BUILD_FROM}
 
-ENV LANG=C.UTF-8 \
+ARG ADDON_VERSION
+ENV ADDON_VERSION=${ADDON_VERSION} \
+    LANG=C.UTF-8 \
     JAVA_HOME=/usr/lib/jvm/java-21-openjdk \
     PATH=/usr/lib/jvm/java-21-openjdk/bin:$PATH \
     MC_SERVER_DIR=/config/minecraft \

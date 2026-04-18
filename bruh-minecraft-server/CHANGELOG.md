@@ -5,6 +5,37 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.1.0
+
+### Added
+
+- **Bedrock MOTD matches your add-on MOTD.** No more "Another Geyser
+  server." — Geyser's `motd1` / `motd2` are now rewritten to your add-on
+  `motd` option (plus a "Powered by BRUH HA Apps" subtitle) every boot.
+- **One-click HA integration setup.** The add-on now POSTs to the
+  Supervisor's `/discovery` endpoint on startup, so a "Discovered: BRUH
+  Minecraft" tile appears on Settings → Devices & Services. A single
+  click adds all the sensors, buttons, and services.
+- **Notify platform.** New `notify.bruh_minecraft_broadcast` entity that
+  works with HA's standard `notify.send_message` service:
+    - Plain message -> `/say` broadcast.
+    - `message` + `title` -> `/tellraw @a <json>` with a bold gold title.
+    - Newlines stripped, 256-char safety cap.
+  Drop it into any automation like any other notify target.
+- **Version stamp in the log.** `ADDON_VERSION` is baked into the image
+  at build time and printed in the startup banner, so "am I running the
+  latest build?" is answerable in one line.
+- **Louder Geyser-patch logs.** The install-bedrock-support.sh now prints
+  the config file's size/owner/mode, the before/after auth-type values,
+  and a loud warning if the patch didn't produce `auth-type: floodgate`.
+
+### Tests (12 new, 140 total)
+
+- `TestHaDiscoveryAnnouncement` — 4 tests for the `/discovery` POST.
+- `test_minecraft_notify.py` — 6 tests covering plain/say, title/tellraw,
+  newline stripping, 256-char cap, empty-message no-op, TITLE feature.
+- `TestGeyserAuthPatch` gained 2 tests covering motd1/motd2 patching.
+
 ## 1.0.6
 
 ### Fixed

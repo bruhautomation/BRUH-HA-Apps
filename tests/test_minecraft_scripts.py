@@ -265,6 +265,31 @@ class TestBackup(unittest.TestCase):
         self.assertIn("BACKUP_KEEP_COUNT", self.text)
 
 
+class TestHaDiscoveryAnnouncement(unittest.TestCase):
+    """1-click Devices & Services setup requires the add-on to POST to
+    /discovery on the Supervisor. Verify run.sh does that correctly."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.run_sh = _read(os.path.join(ADDON_DIR, "run.sh"))
+
+    def test_announce_function_exists(self):
+        self.assertIn("announce_ha_discovery", self.run_sh)
+
+    def test_posts_to_supervisor_endpoint(self):
+        self.assertIn("http://supervisor/discovery", self.run_sh)
+        self.assertIn("Authorization: Bearer ${SUPERVISOR_TOKEN}", self.run_sh)
+
+    def test_payload_advertises_bruh_minecraft_service(self):
+        self.assertIn('"service":"bruh_minecraft"', self.run_sh)
+
+    def test_called_from_main(self):
+        start = self.run_sh.index("main() {")
+        body = self.run_sh[start:self.run_sh.index("\n}\n", start)]
+        self.assertIn("announce_ha_discovery", body,
+                      "announce_ha_discovery must be invoked from main()")
+
+
 class TestBedrockSupport(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
