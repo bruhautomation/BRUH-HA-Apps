@@ -1,0 +1,17 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up BRUH Minecraft",
+        "description": "This integration talks to the BRUH Minecraft Server add-on running on this Home Assistant host.\n\nServer files live at `{server_dir}` and backups at `{backup_dir}`."
+      },
+      "confirm": {
+        "title": "BRUH Minecraft discovered",
+        "description": "Confirm setup to enable sensors, buttons, and services."
+      }
+    },
+    "abort": {
+      "already_configured": "BRUH Minecraft is already configured."
+    }
+  }
+}

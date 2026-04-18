@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark light" />
+  <title>BRUH Minecraft Server</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">⛏️</span>
+      <div>
+        <h1>BRUH Minecraft Server</h1>
+        <p id="brand-subtitle">Loading…</p>
+      </div>
+    </div>
+    <div class="actions">
+      <button id="btn-backup" class="btn btn-ghost" title="Backup now">Backup</button>
+      <button id="btn-update" class="btn btn-ghost" title="Check for server update">Update</button>
+      <button id="btn-restart" class="btn btn-warn" title="Restart the server">Restart</button>
+      <button id="btn-stop" class="btn btn-danger" title="Stop the server">Stop</button>
+    </div>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button class="tab active" data-tab="dashboard" role="tab">Dashboard</button>
+    <button class="tab" data-tab="console" role="tab">Console</button>
+    <button class="tab" data-tab="players" role="tab">Players</button>
+    <button class="tab" data-tab="properties" role="tab">Server Properties</button>
+    <button class="tab" data-tab="plugins" role="tab">Plugins</button>
+    <button class="tab" data-tab="backups" role="tab">Backups</button>
+  </nav>
+
+  <main>
+    <!-- Dashboard -->
+    <section id="tab-dashboard" class="tab-panel active">
+      <div class="grid">
+        <div class="card">
+          <h2>Status</h2>
+          <div class="metric"><span id="m-status" class="dot">●</span><span id="m-status-text">unknown</span></div>
+          <dl>
+            <dt>Version</dt><dd id="m-version">—</dd>
+            <dt>Type</dt><dd id="m-type">—</dd>
+            <dt>Uptime</dt><dd id="m-uptime">—</dd>
+            <dt>Memory</dt><dd id="m-memory">—</dd>
+          </dl>
+        </div>
+        <div class="card">
+          <h2>Performance</h2>
+          <dl>
+            <dt>TPS (1m)</dt><dd id="m-tps1">—</dd>
+            <dt>TPS (5m)</dt><dd id="m-tps5">—</dd>
+            <dt>TPS (15m)</dt><dd id="m-tps15">—</dd>
+            <dt>Latency</dt><dd id="m-latency">—</dd>
+          </dl>
+        </div>
+        <div class="card">
+          <h2>Players</h2>
+          <div class="big-number">
+            <span id="m-online">0</span>
+            <span class="slash">/</span>
+            <span id="m-max">0</span>
+          </div>
+          <ul id="m-players" class="players-mini"></ul>
+        </div>
+        <div class="card wide">
+          <h2>Quick chat</h2>
+          <form id="f-say" class="inline-form">
+            <input id="say-input" type="text" placeholder="Broadcast a message to everyone online" maxlength="256" />
+            <button class="btn btn-primary">Say</button>
+          </form>
+          <h3>Quick command</h3>
+          <form id="f-cmd" class="inline-form">
+            <input id="cmd-input" type="text" placeholder="/weather clear" />
+            <button class="btn btn-primary">Run</button>
+          </form>
+          <pre id="cmd-reply" class="reply"></pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- Console -->
+    <section id="tab-console" class="tab-panel">
+      <div class="console-toolbar">
+        <label><input type="checkbox" id="console-autoscroll" checked /> Auto-scroll</label>
+        <button id="console-clear" class="btn btn-ghost">Clear</button>
+        <form id="console-cmd-form" class="inline-form">
+          <input id="console-cmd-input" type="text" placeholder="Type a server command (no leading slash needed)" autocomplete="off" />
+          <button class="btn btn-primary">Send</button>
+        </form>
+      </div>
+      <pre id="console" class="console"></pre>
+    </section>
+
+    <!-- Players -->
+    <section id="tab-players" class="tab-panel">
+      <h2>Online players</h2>
+      <table class="table" id="players-table">
+        <thead><tr><th>Name</th><th>Actions</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <h2>Manage by name</h2>
+      <form id="f-player-action" class="inline-form">
+        <input id="player-name" type="text" placeholder="PlayerName" maxlength="16" />
+        <select id="player-action">
+          <option value="op">Op</option>
+          <option value="deop">De-op</option>
+          <option value="kick">Kick</option>
+          <option value="ban">Ban</option>
+          <option value="pardon">Pardon</option>
+          <option value="whitelist_add">Whitelist add</option>
+          <option value="whitelist_remove">Whitelist remove</option>
+        </select>
+        <button class="btn btn-primary">Apply</button>
+      </form>
+      <pre id="player-reply" class="reply"></pre>
+    </section>
+
+    <!-- Properties -->
+    <section id="tab-properties" class="tab-panel">
+      <p class="muted">Editing these keys writes to server.properties and (where possible) applies live via RCON. Changes to non-editable keys must be made in the add-on options.</p>
+      <table class="table" id="props-table">
+        <thead><tr><th>Key</th><th>Value</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <!-- Plugins -->
+    <section id="tab-plugins" class="tab-panel">
+      <h2>Installed plugins</h2>
+      <table class="table" id="plugins-table">
+        <thead><tr><th>Jar</th><th>Size</th><th>Modified</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <h2>Install from URL</h2>
+      <form id="f-plugin-install" class="inline-form">
+        <input id="plugin-url" type="url" placeholder="https://…/some-plugin.jar" required />
+        <input id="plugin-name" type="text" placeholder="optional rename (e.g. Essentials.jar)" />
+        <button class="btn btn-primary">Install</button>
+      </form>
+      <pre id="plugin-reply" class="reply"></pre>
+      <p class="muted">Plugin jars are written to <code>/config/minecraft/plugins/</code> and require a restart to load.</p>
+    </section>
+
+    <!-- Backups -->
+    <section id="tab-backups" class="tab-panel">
+      <h2>Backups</h2>
+      <p class="muted">Git-mode backups store incremental history; restoring a commit re-syncs the world from that snapshot.</p>
+      <div id="backups-panel"></div>
+    </section>
+  </main>
+
+  <footer>
+    <span id="last-refresh">—</span>
+    <span class="sep">·</span>
+    <span>Panel updates every 5s · Console streams live</span>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

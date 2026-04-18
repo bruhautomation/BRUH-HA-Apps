@@ -19,6 +19,17 @@ Enhanced Claude Code terminal for Home Assistant. Everything the original Claude
 - **Assist integration** - use Claude as a conversation agent
 - **Automation integration** - trigger Claude tasks from HA automations
 
+### [BRUH Minecraft Server](bruh-minecraft-server/)
+
+Rock-solid Minecraft **Java Edition** server add-on with an ingress management panel, git-based world version control, RCON, and a first-class HA integration:
+
+- **Any flavour** - Paper, Purpur, Folia, Vanilla, Fabric, or Forge, `LATEST` / `SNAPSHOT` / explicit versions resolved from upstream APIs
+- **Ingress panel** - dashboard, live console, player management, editable `server.properties`, plugin installer, backup browser
+- **Git-based world version control** - every snapshot committed; one-click restore
+- **Deep HA integration** - 12 sensors, 2 binary sensors, 4 buttons, 13 services; config-flow + discovery
+- **Aikar-tuned JVM** on Java 21, crash auto-restart, graceful shutdown
+- **Plugin management** with `If-Modified-Since` caching
+
 ## Installation
 
 Add this repository URL to your Home Assistant add-on store:
