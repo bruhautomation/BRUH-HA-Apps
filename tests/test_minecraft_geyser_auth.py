@@ -39,7 +39,7 @@ def _read_props(path: Path) -> dict[str, str]:
     return result
 
 
-def _run_patcher(server_dir: Path) -> subprocess.CompletedProcess:
+def _run_patcher(server_dir: Path, motd: str = "A BRUH Minecraft Server") -> subprocess.CompletedProcess:
     """Execute just the `configure_geyser_for_floodgate` function against
     `${server_dir}/plugins/Geyser-Spigot/config.yml`."""
     source = SCRIPT.read_text()
@@ -47,6 +47,7 @@ def _run_patcher(server_dir: Path) -> subprocess.CompletedProcess:
         set -euo pipefail
         export MC_SERVER_DIR={server_dir.as_posix()!r}
         export PLUGINS_DIR={(server_dir / "plugins").as_posix()!r}
+        export MOTD={motd!r}
         log()  {{ printf '[test] %s\\n' "$*" >&2; }}
         warn() {{ printf '[test] %s\\n' "$*" >&2; }}
         # Bring just the function we want to test into scope
@@ -104,12 +105,13 @@ class TestGeyserAuthPatch(unittest.TestCase):
             """).lstrip())
             proc = _run_patcher(server_dir)
             self.assertEqual(proc.returncode, 0, proc.stderr)
-            # auth-type must be floodgate now; unrelated keys must survive
             text = cfg.read_text()
+            # auth-type + motd1/motd2 are all managed; every other key must survive
             self.assertIn("auth-type: floodgate", text)
             self.assertNotIn("auth-type: online", text)
-            self.assertIn('motd1: "Geyser"', text, "non-managed keys dropped")
             self.assertIn("port: 19132", text)
+            self.assertIn("allow-password-authentication", text)
+            self.assertIn("floodgate-key-file: key.pem", text)
 
     def test_idempotent_on_already_patched_config(self):
         """Running a second time must be a no-op."""
@@ -148,6 +150,38 @@ class TestGeyserAuthPatch(unittest.TestCase):
             self.assertEqual(proc.returncode, 0, proc.stderr)
             # Four-space indent should be preserved
             self.assertIn("    auth-type: floodgate", cfg.read_text())
+
+    def test_fresh_install_uses_addon_motd(self):
+        """Fresh staged config should carry the add-on's motd as motd1."""
+        with tempfile.TemporaryDirectory() as tmp:
+            server_dir = Path(tmp)
+            (server_dir / "plugins").mkdir()
+            proc = _run_patcher(server_dir, motd="BRUH House MC")
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            text = (server_dir / "plugins" / "Geyser-Spigot" / "config.yml").read_text()
+            self.assertIn('motd1: "BRUH House MC"', text)
+
+    def test_existing_config_motd_patched(self):
+        """motd1/motd2 on an existing default config get overwritten."""
+        with tempfile.TemporaryDirectory() as tmp:
+            server_dir = Path(tmp)
+            plugin_dir = server_dir / "plugins" / "Geyser-Spigot"
+            plugin_dir.mkdir(parents=True)
+            cfg = plugin_dir / "config.yml"
+            cfg.write_text(textwrap.dedent("""
+                bedrock:
+                  port: 19132
+                  motd1: "Geyser"
+                  motd2: "Another Geyser server."
+                remote:
+                  auth-type: online
+            """).lstrip())
+            proc = _run_patcher(server_dir, motd="BRUH MC")
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            text = cfg.read_text()
+            self.assertIn('motd1: "BRUH MC"', text)
+            self.assertNotIn('motd1: "Geyser"', text)
+            self.assertNotIn('Another Geyser server', text)
 
 
 if __name__ == "__main__":

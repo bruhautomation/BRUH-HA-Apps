@@ -2,6 +2,12 @@ build_from:
   aarch64: ghcr.io/home-assistant/aarch64-base:3.19
   amd64: ghcr.io/home-assistant/amd64-base:3.19
 
+# Passes the version from config.yaml into the Dockerfile ARG so run.sh can
+# print it in the startup banner. Answers "am I actually on the latest build?"
+# without needing to open the Supervisor info panel.
+args:
+  ADDON_VERSION: "{{ version }}"
+
 labels:
   org.opencontainers.image.title: "Home Assistant App: BRUH Minecraft Server"
   org.opencontainers.image.description: "Rock-solid Minecraft Java Edition server with ingress panel, RCON, git backups, and deep HA integration"

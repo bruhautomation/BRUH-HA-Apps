@@ -95,36 +95,68 @@ install_jar() {
 # Safe to re-run: idempotent and preserves the rest of the user's config.
 # ----------------------------------------------------------------------------
 configure_geyser_for_floodgate() {
+    # Configure Geyser: auth-type=floodgate (no Xbox login) + MOTD from add-on.
     local plugin_dir="${PLUGINS_DIR}/Geyser-Spigot"
     local cfg="${plugin_dir}/config.yml"
 
     mkdir -p "${plugin_dir}"
 
+    local motd="${MOTD:-A BRUH Minecraft Server}"
+    local motd_sub="Powered by BRUH HA Apps"
+
     if [ -f "${cfg}" ]; then
-        if grep -qE '^[[:space:]]*auth-type:' "${cfg}"; then
-            # In-place patch of the existing auth-type line. sed -E lets us
-            # capture the leading whitespace so indentation is preserved.
+        log "Geyser config exists at ${cfg} ($(stat -c '%s bytes, %y' "${cfg}" 2>/dev/null || echo '?'))"
+        log "  owner: $(stat -c '%U:%G' "${cfg}" 2>/dev/null || echo '?')  mode: $(stat -c '%a' "${cfg}" 2>/dev/null || echo '?')"
+        local before after
+        # `|| true` so grep's non-zero "no match" exit doesn't abort under set -e.
+        before=$(grep -E '^[[:space:]]*auth-type:' "${cfg}" 2>/dev/null | head -n 1 | sed 's/^[[:space:]]*//' || true)
+        if [ -n "${before}" ]; then
             sed -i -E \
                 's/^([[:space:]]*)auth-type:[[:space:]]*.*/\1auth-type: floodgate/' \
                 "${cfg}"
-            log "Geyser config patched -> auth-type: floodgate"
+            after=$(grep -E '^[[:space:]]*auth-type:' "${cfg}" 2>/dev/null | head -n 1 | sed 's/^[[:space:]]*//' || true)
+            log "  - auth-type: ${before} -> ${after}"
+            if [ "${after}" != "auth-type: floodgate" ]; then
+                warn "  ! auth-type did NOT end up as 'floodgate' after patching!"
+                warn "  ! current value: ${after}"
+                warn "  ! Bedrock clients will still see 'Please log into Xbox'"
+            fi
         else
-            # Config exists but no auth-type key — append a minimal remote block
             printf '\nremote:\n  auth-type: floodgate\n' >> "${cfg}"
-            log "Geyser config: appended remote.auth-type: floodgate"
+            log "  - appended remote.auth-type: floodgate (no auth-type line was present)"
+        fi
+
+        # Patch bedrock MOTD lines (motd1 + motd2) to match the add-on motd
+        local motd_escaped sub_escaped
+        motd_escaped=$(printf '%s' "${motd}"     | sed -e 's/[\/&]/\\&/g')
+        sub_escaped=$( printf '%s' "${motd_sub}" | sed -e 's/[\/&]/\\&/g')
+        if grep -qE '^[[:space:]]*motd1:' "${cfg}"; then
+            sed -i -E \
+                "s/^([[:space:]]*)motd1:[[:space:]]*.*/\\1motd1: \"${motd_escaped}\"/" \
+                "${cfg}"
+            log "  - motd1 -> \"${motd}\""
+        fi
+        if grep -qE '^[[:space:]]*motd2:' "${cfg}"; then
+            sed -i -E \
+                "s/^([[:space:]]*)motd2:[[:space:]]*.*/\\1motd2: \"${sub_escaped}\"/" \
+                "${cfg}"
+            log "  - motd2 -> \"${motd_sub}\""
         fi
     else
-        # Fresh install: stage the minimum so Geyser merges in defaults
-        # for everything else on first boot.
-        cat > "${cfg}" <<'YAML'
+        # Fresh install: stage a minimal file. Geyser fills in defaults for
+        # every key we don't specify on first boot.
+        log "Staging fresh Geyser config at ${cfg}"
+        cat > "${cfg}" <<YAML
 # Managed by BRUH Minecraft Server add-on.
 # Bedrock clients authenticate through Floodgate — no Microsoft / Xbox
-# account required to join. Edit freely; auth-type is re-asserted on every
-# add-on boot so it stays consistent with the plugin layout we ship.
+# account required to join. Edit freely; auth-type + MOTD are re-asserted
+# on every add-on boot so the defaults stay consistent.
+bedrock:
+  motd1: "${motd}"
+  motd2: "${motd_sub}"
 remote:
   auth-type: floodgate
 YAML
-        log "Geyser config staged with auth-type: floodgate (fresh install)"
     fi
 
     chown -R minecraft:minecraft "${plugin_dir}" 2>/dev/null || true
