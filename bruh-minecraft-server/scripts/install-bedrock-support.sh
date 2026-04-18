@@ -30,15 +30,25 @@ warn() { printf '[bedrock-support] WARN: %s\n' "$*" >&2; }
 
 # Map our server_type to Geyser's platform slug. Also pick the right
 # destination dir (plugins/ for Bukkit-API servers, mods/ for Fabric).
+#
+# NOTES on GeyserMC's v2 API slugs (ground truth: the `downloads` keys in
+# https://download.geysermc.org/v2/projects/{geyser,floodgate}/versions/latest/builds/latest):
+# * Geyser:    spigot | fabric | bungeecord | velocity | neoforge | standalone | viaproxy
+# * Floodgate: spigot | bungee  | velocity  | neoforge
+#   -> There is NO `floodgate/fabric`. Geyser-Fabric bundles Floodgate support
+#      internally, so we install Geyser only when running Fabric.
+# Using "paper" was the 1.0.3 bug — it returns HTTP 404.
+INSTALL_FLOODGATE=1
 case "${SERVER_TYPE}" in
     paper|purpur|folia)
-        GEYSER_VARIANT="paper"
-        FLOODGATE_VARIANT="paper"
+        GEYSER_VARIANT="spigot"
+        FLOODGATE_VARIANT="spigot"
         DEST_DIR="${PLUGINS_DIR}"
         ;;
     fabric)
         GEYSER_VARIANT="fabric"
-        FLOODGATE_VARIANT="fabric"
+        FLOODGATE_VARIANT=""
+        INSTALL_FLOODGATE=0
         DEST_DIR="${MODS_DIR}"
         ;;
     *)
@@ -77,10 +87,15 @@ install_jar() {
     fi
 }
 
-# The two jars are named by convention so Paper picks them up automatically.
-install_jar geyser    "${GEYSER_VARIANT}"    "Geyser-${GEYSER_VARIANT^}.jar" \
+# The jars are named by convention so the server picks them up automatically.
+install_jar geyser "${GEYSER_VARIANT}" "Geyser-${GEYSER_VARIANT^}.jar" \
     || warn "Geyser install failed; Bedrock clients will not be able to connect"
-install_jar floodgate "${FLOODGATE_VARIANT}" "floodgate-${FLOODGATE_VARIANT}.jar" \
-    || warn "Floodgate install failed; Bedrock players will need a Java account to log in"
+
+if [ "${INSTALL_FLOODGATE}" = "1" ]; then
+    install_jar floodgate "${FLOODGATE_VARIANT}" "floodgate-${FLOODGATE_VARIANT}.jar" \
+        || warn "Floodgate install failed; Bedrock players will need a Java account to log in"
+else
+    log "Floodgate skipped — Geyser-${GEYSER_VARIANT^} includes Floodgate support natively"
+fi
 
 log "Bedrock support ready. Bedrock clients connect to this host on UDP:19132"

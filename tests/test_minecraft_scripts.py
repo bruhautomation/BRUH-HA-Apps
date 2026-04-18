@@ -310,6 +310,52 @@ class TestBedrockSupport(unittest.TestCase):
         self.assertIn("--remote-time", self.installer)
         self.assertIn('-z "${dest}"', self.installer)
 
+    def test_installer_uses_spigot_not_paper_slug(self):
+        """Regression for 1.0.4: the v2 API download is called 'spigot',
+        not 'paper'. 'paper' returns HTTP 404 and Bedrock clients can't
+        connect. We keyword-check the case branch here; a separate network
+        test (skipped when offline) HEADs the real URL."""
+        self.assertNotRegex(
+            self.installer,
+            r'GEYSER_VARIANT="paper"',
+            "Geyser/Floodgate v2 API uses 'spigot', not 'paper' — regression",
+        )
+        self.assertIn('GEYSER_VARIANT="spigot"', self.installer)
+        self.assertIn('FLOODGATE_VARIANT="spigot"', self.installer)
+
+    def test_geyser_download_urls_resolve(self):
+        """Live HEAD the GeyserMC API. Skipped when offline so CI in an
+        air-gapped runner doesn't fail spuriously, but catches URL-schema
+        breakages quickly when the machine has internet."""
+        import socket
+        import urllib.error
+        import urllib.request
+        try:
+            socket.create_connection(("download.geysermc.org", 443), timeout=2.0)
+        except OSError:
+            self.skipTest("no internet access to download.geysermc.org")
+
+        # Only URL combinations we actually install. Floodgate has no Fabric
+        # variant (Geyser-Fabric bundles Floodgate support internally).
+        combos = [("geyser", "spigot"), ("geyser", "fabric"), ("floodgate", "spigot")]
+        for project, variant in combos:
+            url = (
+                f"https://download.geysermc.org/v2/projects/{project}/"
+                f"versions/latest/builds/latest/downloads/{variant}"
+            )
+            req = urllib.request.Request(url, method="HEAD")
+            try:
+                with urllib.request.urlopen(req, timeout=5.0) as resp:
+                    self.assertIn(
+                        resp.status, (200, 301, 302, 307, 308),
+                        f"{project}/{variant} responded {resp.status} — URL schema changed?",
+                    )
+            except urllib.error.HTTPError as exc:
+                self.fail(
+                    f"{project}/{variant} returned HTTP {exc.code} "
+                    f"— GeyserMC API slug may have changed"
+                )
+
 
 class TestServerLauncher(unittest.TestCase):
     @classmethod
