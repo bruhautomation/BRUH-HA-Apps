@@ -24,6 +24,12 @@ MC_SERVER_DIR="${MC_SERVER_DIR:-/config/minecraft}"
 SERVER_TYPE="${SERVER_TYPE:-paper}"
 PLUGINS_DIR="${MC_SERVER_DIR}/plugins"
 MODS_DIR="${MC_SERVER_DIR}/mods"
+# Resolve our own directory so we can invoke sibling helpers (patch-geyser-config.py).
+# BRUH_MC_SCRIPTS_DIR is an escape hatch used by the test harness when the
+# script is run via `bash -c "<source>"` (in which case $0 = "bash" and the
+# cd-dirname trick resolves to the CWD instead of the real scripts dir).
+SCRIPT_DIR="${BRUH_MC_SCRIPTS_DIR:-$(cd "$(dirname "${0}")" 2>/dev/null && pwd)}"
+SCRIPT_DIR="${SCRIPT_DIR:-/opt/bruh-mc/scripts}"
 
 log()  { printf '[bedrock-support] %s\n' "$*" >&2; }
 warn() { printf '[bedrock-support] WARN: %s\n' "$*" >&2; }
@@ -176,6 +182,29 @@ configure_geyser() {
             log "  - appended remote.auth-type: ${auth_type} (no auth-type line was present)"
         fi
 
+        # The REAL fix for "Please log into Xbox to join this server.":
+        # Geyser validates the Bedrock client's signed Xbox Live JWT chain
+        # in LoginEncryptionUtils.encryptConnectionWithCert() *before* any
+        # auth-type / Floodgate logic runs. The gate is
+        # `advanced.bedrock.validate-bedrock-login` (default true). When
+        # it's true and the client's chain is unsigned (LAN devices,
+        # cracked clients, family Bedrock with no Xbox session), Geyser
+        # kicks with the exact message we've been chasing — regardless of
+        # auth-type. We flip this key to false in offline mode, and
+        # restore the secure default (true) in online / floodgate modes.
+        local want_validate
+        if [ "${auth_type}" = "offline" ]; then
+            want_validate="false"
+        else
+            want_validate="true"
+        fi
+        if python3 "${SCRIPT_DIR}/patch-geyser-config.py" \
+               "${cfg}" validate-bedrock-login "${want_validate}" advanced.bedrock; then
+            log "  - advanced.bedrock.validate-bedrock-login: ${want_validate}"
+        else
+            warn "  ! failed to patch validate-bedrock-login"
+        fi
+
         # Patch bedrock MOTD lines (motd1 + motd2) to match the add-on motd
         local motd_escaped sub_escaped
         motd_escaped=$(printf '%s' "${motd}"     | sed -e 's/[\/&]/\\&/g')
@@ -195,17 +224,30 @@ configure_geyser() {
     else
         # Fresh install: stage a minimal file. Geyser fills in defaults for
         # every key we don't specify on first boot.
-        log "Staging fresh Geyser config at ${cfg} (auth-type: ${auth_type})"
+        local fresh_validate
+        if [ "${auth_type}" = "offline" ]; then
+            fresh_validate="false"
+        else
+            fresh_validate="true"
+        fi
+        log "Staging fresh Geyser config at ${cfg} (auth-type: ${auth_type}, validate-bedrock-login: ${fresh_validate})"
         cat > "${cfg}" <<YAML
 # Managed by BRUH Minecraft Server add-on.
-# auth-type is re-asserted on every add-on boot from the add-on options.
-# See the README / DOCS for the tradeoffs between floodgate / offline /
-# online. Every other key here is edited freely.
+# auth-type + validate-bedrock-login are re-asserted on every add-on boot
+# from the add-on options. See the README / DOCS for the tradeoffs
+# between floodgate / offline / online. Every other key here is free for
+# you to edit — Geyser fills in defaults for anything we haven't set.
 bedrock:
   motd1: "${motd}"
   motd2: "${motd_sub}"
 remote:
   auth-type: ${auth_type}
+advanced:
+  bedrock:
+    # When false, Geyser skips validating the Bedrock client's signed
+    # Xbox Live JWT chain — required so family LAN / cracked clients
+    # can join a server with auth-type: offline.
+    validate-bedrock-login: ${fresh_validate}
 YAML
     fi
 

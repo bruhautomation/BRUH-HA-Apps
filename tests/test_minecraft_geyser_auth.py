@@ -55,6 +55,9 @@ def _run_patcher(
         f"export PLUGINS_DIR={(server_dir / 'plugins').as_posix()!r}",
         f"export MOTD={motd!r}",
         f"export ONLINE_MODE={online_mode!r}",
+        # configure_geyser shells out to patch-geyser-config.py via $SCRIPT_DIR.
+        # Point it at the real scripts/ checkout so the helper is reachable.
+        f"export SCRIPT_DIR={(BASE_DIR / 'bruh-minecraft-server' / 'scripts').as_posix()!r}",
     ]
     if geyser_auth_type is not None:
         env_bits.append(f"export GEYSER_AUTH_TYPE={geyser_auth_type!r}")
@@ -254,13 +257,20 @@ class TestGeyserAuthPatch(unittest.TestCase):
             self.assertIn("floodgate-key-file: key.pem", text)
 
     def test_idempotent_on_already_patched_config(self):
-        """Running a second time must be a no-op."""
+        """Running a second time must be a no-op. Seed BOTH managed keys
+        at their target values so the script has nothing to touch."""
         with tempfile.TemporaryDirectory() as tmp:
             server_dir = Path(tmp)
             plugin_dir = server_dir / "plugins" / "Geyser-Spigot"
             plugin_dir.mkdir(parents=True)
             cfg = plugin_dir / "config.yml"
-            cfg.write_text("remote:\n  auth-type: floodgate\n")
+            cfg.write_text(textwrap.dedent("""
+                remote:
+                  auth-type: floodgate
+                advanced:
+                  bedrock:
+                    validate-bedrock-login: true
+            """).lstrip())
             before = cfg.read_text()
             proc = _run_patcher(server_dir)
             self.assertEqual(proc.returncode, 0, proc.stderr)
