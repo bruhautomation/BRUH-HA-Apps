@@ -29,7 +29,6 @@ RUN apk add --no-cache \
     py3-aiohttp \
     py3-yaml \
     py3-requests \
-    tini \
     coreutils \
     procps \
     tzdata \
@@ -82,6 +81,7 @@ RUN chmod +x /run.sh \
 # The add-on startup will re-chown at runtime because the volumes are bind-mounted.
 RUN chown -R minecraft:minecraft /opt/bruh-mc /data /config/minecraft /config/minecraft-backups
 
-# Use tini as PID 1 for correct signal + zombie handling.
-ENTRYPOINT ["/sbin/tini", "--"]
+# The HA base image provides s6-overlay as /init, which handles signals and
+# sets up /run/s6/container_environment so `with-contenv bashio` works. Do
+# NOT override ENTRYPOINT — it would bypass s6 init and break bashio.
 CMD ["/run.sh"]
