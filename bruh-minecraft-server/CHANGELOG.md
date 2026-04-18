@@ -5,6 +5,43 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.2.5
+
+### Fixed
+
+- **Bad plugin URL would kill the whole add-on mid-startup.** If a
+  URL in the `plugins:` list 404'd, timed out, or served an HTML
+  rate-limit page (looking at you, GitHub), `install-plugin.sh`
+  exited 1 and bashio's implicit `set -e` in `run.sh` killed the
+  entire startup sequence. Users saw the add-on exit silently right
+  after `Installing configured plugins` with no Minecraft server
+  launch and no explanation. Now:
+  - `install_plugins` isolates the loop in a subshell with
+    `set +o pipefail` and a top-level `|| log.warning`, so per-
+    plugin failures can't propagate.
+  - Each plugin is announced *before* download (`Plugin: X -> URL`)
+    so you can see which one misbehaved.
+  - Per-plugin failures are tallied and summarised at the end:
+    `N plugin(s) failed; see logs above. Server will start anyway.`
+- **`install-plugin.sh` now validates downloads.** `curl` now has
+  `--max-time 60` so a dead host can't hang startup, and the
+  downloaded file is rejected if it doesn't start with the ZIP magic
+  bytes `PK` — GitHub / Spigot rate-limit HTML bodies will no longer
+  be written to `plugins/X.jar` as a corrupt jar.
+- Empty / `null` / non-http(s) URLs are rejected up front with a
+  clear message.
+
+### Tests (6 new, 200 total)
+
+- `test_minecraft_install_plugin.py`:
+  - 5 edge-case tests for `install-plugin.sh` (empty URL, literal
+    `"null"`, `file://` URLs, HTML-body rate-limit pages served as
+    200 OK, and a valid PK-header jar download round-trip against
+    an in-process HTTP server).
+  - 1 static-analysis test locking in the `install_plugins`
+    isolation pattern in `run.sh` (`set +o pipefail`, per-plugin
+    warning, and the top-level `|| bashio::log.warning` fallback).
+
 ## 1.2.4
 
 ### Fixed
