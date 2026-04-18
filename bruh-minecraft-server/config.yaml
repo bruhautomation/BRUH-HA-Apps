@@ -1,0 +1,135 @@
+---
+name: "BRUH Minecraft Server"
+description: "Rock-solid Minecraft Java Edition server with ingress panel, RCON, git world backups, auto-updates, plugin management, and deep Home Assistant integration"
+version: "1.0.0"
+slug: "bruh_minecraft_server"
+init: false
+
+# Supported architectures
+arch:
+  - aarch64
+  - amd64
+
+# External resources
+url: "https://github.com/bruhautomation/BRUH-HA-Apps/tree/main/bruh-minecraft-server"
+
+# AppArmor profile
+apparmor: false
+
+# Boot policy
+boot: auto
+startup: services
+stage: stable
+
+# Web interface configuration (ingress panel)
+ingress: true
+ingress_port: 8099
+panel_icon: mdi:minecraft
+panel_title: "Minecraft"
+panel_admin: true
+
+# Minecraft networking
+host_network: false
+ports:
+  25565/tcp: 25565
+  25565/udp: 25565
+  19132/udp: 19132
+  24454/udp: 24454
+ports_description:
+  25565/tcp: "Minecraft Java Edition (TCP)"
+  25565/udp: "Minecraft Java Edition (UDP)"
+  19132/udp: "Minecraft Bedrock / Geyser (optional)"
+  24454/udp: "Simple Voice Chat (optional)"
+
+# App configuration options
+options:
+  eula: false
+  server_type: paper
+  minecraft_version: LATEST
+  motd: "A BRUH Minecraft Server"
+  difficulty: normal
+  gamemode: survival
+  max_players: 20
+  view_distance: 10
+  simulation_distance: 10
+  online_mode: true
+  pvp: true
+  hardcore: false
+  allow_flight: false
+  white_list: false
+  spawn_protection: 16
+  level_name: world
+  level_seed: ""
+  level_type: minecraft:normal
+  memory_mb: 2048
+  use_aikar_flags: true
+  enable_command_block: false
+  op_permission_level: 4
+  rcon_password: ""
+  auto_update_server: true
+  auto_backup: true
+  backup_interval_minutes: 60
+  backup_keep_count: 48
+  backup_use_git: true
+  auto_restart_on_crash: true
+  auto_restart_schedule: ""
+  enable_ha_integration: true
+  announce_ha_events: true
+  plugins: []
+  extra_jvm_args: ""
+  log_level: info
+schema:
+  eula: bool
+  server_type: "list(paper|purpur|vanilla|fabric|forge|folia)"
+  minecraft_version: "match(^(LATEST|SNAPSHOT|(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(\\.(0|[1-9]\\d*))?(-.+)?)$)"
+  motd: str
+  difficulty: "list(peaceful|easy|normal|hard)"
+  gamemode: "list(survival|creative|adventure|spectator)"
+  max_players: "int(1,1000)"
+  view_distance: "int(3,32)"
+  simulation_distance: "int(3,32)"
+  online_mode: bool
+  pvp: bool
+  hardcore: bool
+  allow_flight: bool
+  white_list: bool
+  spawn_protection: "int(0,10000)"
+  level_name: str
+  level_seed: "str?"
+  level_type: "str?"
+  memory_mb: "int(512,65536)"
+  use_aikar_flags: bool
+  enable_command_block: bool
+  op_permission_level: "int(1,4)"
+  rcon_password: "password?"
+  auto_update_server: bool
+  auto_backup: bool
+  backup_interval_minutes: "int(5,1440)"
+  backup_keep_count: "int(1,500)"
+  backup_use_git: bool
+  auto_restart_on_crash: bool
+  auto_restart_schedule: "str?"
+  enable_ha_integration: bool
+  announce_ha_events: bool
+  plugins:
+    - url: "url"
+      name: "str?"
+  extra_jvm_args: "str?"
+  log_level: "list(trace|debug|info|notice|warning|error|fatal)"
+
+# Volume mappings for file access
+map:
+  - config:rw
+  - share:rw
+  - backup:rw
+
+# API access for Home Assistant integration
+hassio_api: true
+hassio_role: default
+homeassistant_api: true
+auth_api: false
+
+# Auto-discovery: registers "bruh_minecraft" service with the Supervisor
+# so HA Core can auto-discover and offer to set up the companion integration
+discovery:
+  - bruh_minecraft

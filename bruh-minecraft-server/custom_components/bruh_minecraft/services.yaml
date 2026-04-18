@@ -1,0 +1,107 @@
+rcon_command:
+  name: Run RCON command
+  description: Execute an arbitrary server command. Do not include the leading slash.
+  fields:
+    command:
+      name: Command
+      description: 'Example: "weather clear"'
+      required: true
+      selector:
+        text: {}
+
+say:
+  name: Broadcast chat
+  description: Send a chat message to all players using /say.
+  fields:
+    message:
+      name: Message
+      required: true
+      selector:
+        text:
+          multiline: true
+
+give:
+  name: Give item
+  description: Give an item to a player.
+  fields:
+    player:
+      name: Player
+      required: true
+      selector:
+        text: {}
+    item:
+      name: Item id
+      required: true
+      example: "minecraft:diamond"
+      selector:
+        text: {}
+    amount:
+      name: Amount
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 64
+          step: 1
+
+set_weather:
+  name: Set weather
+  fields:
+    weather:
+      name: Weather
+      required: true
+      selector:
+        select:
+          options: [clear, rain, thunder]
+
+set_time:
+  name: Set time
+  fields:
+    time:
+      name: Time
+      description: Preset (day/night/noon/midnight) or integer ticks.
+      required: true
+      selector:
+        text: {}
+
+backup_now:
+  name: Back up world
+  description: Trigger an immediate world backup (git or tar, per add-on config).
+
+restart_server:
+  name: Restart server
+  description: Save and restart the Minecraft server.
+
+stop_server:
+  name: Stop server
+  description: Save and stop the Minecraft server; the add-on remains running.
+
+op_player:
+  name: Op player
+  fields:
+    player: { name: Player, required: true, selector: { text: {} } }
+
+deop_player:
+  name: De-op player
+  fields:
+    player: { name: Player, required: true, selector: { text: {} } }
+
+kick_player:
+  name: Kick player
+  fields:
+    player: { name: Player, required: true, selector: { text: {} } }
+
+ban_player:
+  name: Ban player
+  fields:
+    player: { name: Player, required: true, selector: { text: {} } }
+
+whitelist_add:
+  name: Whitelist add
+  fields:
+    player: { name: Player, required: true, selector: { text: {} } }
+
+whitelist_remove:
+  name: Whitelist remove
+  fields:
+    player: { name: Player, required: true, selector: { text: {} } }
