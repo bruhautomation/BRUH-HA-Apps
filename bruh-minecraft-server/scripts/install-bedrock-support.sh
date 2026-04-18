@@ -59,7 +59,54 @@ case "${SERVER_TYPE}" in
         ;;
 esac
 
+# Resolve the requested auth-type up-front so we know whether to include
+# Floodgate. **When auth-type=offline we MUST NOT install Floodgate** —
+# Geyser delegates auth to Floodgate whenever it's loaded, and Floodgate
+# requires every Bedrock client to have an Xbox XUID. That's the exact
+# "Please log into Xbox to join this server." kick users hit even after
+# patching the Geyser config to auth-type: offline. See DOCS #troubleshooting.
+resolve_auth_type() {
+    local requested="${GEYSER_AUTH_TYPE:-auto}"
+    case "${requested}" in
+        floodgate|online|offline)
+            printf '%s' "${requested}"
+            ;;
+        *)
+            # "auto" and any bogus value fall through to the inference path.
+            if [ "${ONLINE_MODE:-true}" = "true" ]; then
+                printf 'floodgate'
+            else
+                printf 'offline'
+            fi
+            ;;
+    esac
+}
+
+AUTH_TYPE=$(resolve_auth_type)
+if [ "${AUTH_TYPE}" = "offline" ]; then
+    INSTALL_FLOODGATE=0
+fi
+
 mkdir -p "${DEST_DIR}"
+
+# Remove any previously-installed Floodgate jar when we're in offline mode.
+# Leaving it in place would re-trigger the Xbox-login kick on the next boot
+# because Geyser still routes auth through Floodgate whenever the jar is
+# present, irrespective of auth-type. Match both Spigot + Fabric naming.
+remove_floodgate_jar_if_present() {
+    local removed=0
+    shopt -s nullglob
+    for f in "${PLUGINS_DIR}"/floodgate-*.jar "${MODS_DIR}"/floodgate-*.jar; do
+        [ -f "${f}" ] || continue
+        log "Removing stale Floodgate jar for offline auth: ${f}"
+        rm -f "${f}" && removed=1
+    done
+    shopt -u nullglob
+    return ${removed}
+}
+if [ "${INSTALL_FLOODGATE}" = "0" ] && [ "${AUTH_TYPE}" = "offline" ]; then
+    remove_floodgate_jar_if_present || true
+fi
 
 install_jar() {
     local project="$1" variant="$2" filename="$3"
@@ -90,42 +137,15 @@ install_jar() {
 # ----------------------------------------------------------------------------
 # Geyser's default auth-type is "online", which prompts every Bedrock client
 # with "Please log into Xbox to join this server." We patch the value based
-# on $GEYSER_AUTH_TYPE (set by run.sh from the `geyser_auth_type` option):
-#
-#   auto      — pick based on the Java online-mode: offline when online-mode
-#               is off (no Xbox sign-in required for Bedrock either), else
-#               floodgate (Floodgate bridges Bedrock XUID into Java).
-#   floodgate — GeyserMC's recommended default for public servers; Bedrock
-#               client must be signed in to Xbox Live.
-#   online    — Geyser prompts for Xbox sign-in on every connect.
-#   offline   — Bedrock client joins without any Xbox / Microsoft sign-in;
-#               great for LAN-only / family servers.
-#
-# Safe to re-run: idempotent and preserves the rest of the user's config.
+# on $GEYSER_AUTH_TYPE (already resolved to $AUTH_TYPE at the top of the
+# script). Safe to re-run: idempotent and preserves the rest of the user's
+# config.
 # ----------------------------------------------------------------------------
-resolve_auth_type() {
-    local requested="${GEYSER_AUTH_TYPE:-auto}"
-    case "${requested}" in
-        floodgate|online|offline)
-            printf '%s' "${requested}"
-            ;;
-        *)
-            # "auto" and any bogus value fall through to the inference path.
-            if [ "${ONLINE_MODE:-true}" = "true" ]; then
-                printf 'floodgate'
-            else
-                printf 'offline'
-            fi
-            ;;
-    esac
-}
-
-configure_geyser_for_floodgate() {
+configure_geyser() {
     # Configure Geyser auth-type + MOTD from add-on options.
     local plugin_dir="${PLUGINS_DIR}/Geyser-Spigot"
     local cfg="${plugin_dir}/config.yml"
-    local auth_type
-    auth_type=$(resolve_auth_type)
+    local auth_type="${AUTH_TYPE:-$(resolve_auth_type)}"
 
     mkdir -p "${plugin_dir}"
 
@@ -199,10 +219,17 @@ install_jar geyser "${GEYSER_VARIANT}" "Geyser-${GEYSER_VARIANT^}.jar" \
 if [ "${INSTALL_FLOODGATE}" = "1" ]; then
     install_jar floodgate "${FLOODGATE_VARIANT}" "floodgate-${FLOODGATE_VARIANT}.jar" \
         || warn "Floodgate install failed; Bedrock players will need a Java account to log in"
-    # Only meaningful when we've installed Floodgate
-    configure_geyser_for_floodgate
 else
-    log "Floodgate skipped — Geyser-${GEYSER_VARIANT^} includes Floodgate support natively"
+    if [ "${AUTH_TYPE}" = "offline" ]; then
+        log "Floodgate NOT installed (auth-type=offline) — Bedrock clients join without any Xbox sign-in"
+    elif [ "${SERVER_TYPE}" = "fabric" ]; then
+        log "Floodgate skipped — Geyser-${GEYSER_VARIANT^} includes Floodgate support natively"
+    fi
 fi
+
+# Configure Geyser config on every boot regardless of Floodgate presence —
+# that's where auth-type lives, and it needs to match what the user asked
+# for even when we didn't touch the Floodgate jar.
+configure_geyser
 
 log "Bedrock support ready. Bedrock clients connect to this host on UDP:19132"

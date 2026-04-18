@@ -5,6 +5,35 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.2.2
+
+### Fixed
+
+- **`Please log into Xbox to join this server.` still fired in 1.2.1
+  even with `geyser_auth_type: offline`.** Root cause: Geyser delegates
+  Bedrock authentication to Floodgate whenever Floodgate is loaded,
+  regardless of the `auth-type` value in Geyser's own config. So even
+  after 1.2.1 correctly wrote `auth-type: offline`, Floodgate was still
+  demanding an Xbox XUID from every connecting client and kicking them.
+- The installer now treats offline as a first-class mode:
+  - **Skips the Floodgate install** when the resolved auth-type is
+    `offline` (auto → offline path included).
+  - **Removes any existing `floodgate-*.jar`** from `plugins/` on
+    boot, so switching from `floodgate`/`auto-online` to `offline`
+    stops kicking players on the very next restart instead of
+    requiring a manual delete.
+- `configure_geyser` (renamed from `configure_geyser_for_floodgate`
+  since it's not Floodgate-specific) runs unconditionally, so the
+  Geyser config still gets `auth-type: offline` written even when
+  we skip Floodgate.
+
+### Tests (5 new, 163 total)
+
+- `TestFloodgateSkipWhenOffline` in `test_minecraft_geyser_auth.py`:
+  5 behaviour tests locking in the skip, the stale-jar removal,
+  that `floodgate`/`auto-online` still installs Floodgate, and that
+  the Geyser config still lands correctly in offline mode.
+
 ## 1.2.1
 
 ### Fixed

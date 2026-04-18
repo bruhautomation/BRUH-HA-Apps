@@ -16,6 +16,7 @@ hermetic and network-free.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import tempfile
 import textwrap
@@ -64,9 +65,11 @@ def _run_patcher(
         warn() {{ printf '[test] %s\\n' "$*" >&2; }}
         # Bring the functions we want to test into scope
     """).format(env="\n        ".join(env_bits))
-    # Extract the two function bodies from the real script
+    # Extract the function bodies from the real script. configure_geyser
+    # reads $AUTH_TYPE which is normally set by the top-level of the real
+    # script, so we export it here too for the test harness.
     bodies: list[str] = []
-    for func in ("resolve_auth_type", "configure_geyser_for_floodgate"):
+    for func in ("resolve_auth_type", "configure_geyser"):
         start = source.index(f"{func}() {{")
         remaining = source[start:]
         brace = 0
@@ -77,10 +80,134 @@ def _run_patcher(
                 if brace == 0:
                     bodies.append(remaining[: i + 1])
                     break
-    wrapper += "\n".join(bodies) + "\nconfigure_geyser_for_floodgate\n"
+    wrapper += "\n".join(bodies) + "\nAUTH_TYPE=$(resolve_auth_type); export AUTH_TYPE\nconfigure_geyser\n"
     return subprocess.run(
         ["bash", "-c", wrapper], capture_output=True, text=True, check=False,
     )
+
+
+def _run_full_script(
+    server_dir: Path,
+    *,
+    geyser_auth_type: str | None = None,
+    online_mode: str = "true",
+    seed_floodgate_jar: bool = False,
+) -> subprocess.CompletedProcess:
+    """Run the real install-bedrock-support.sh with a stubbed install_jar
+    (so we don't hit the network). This exercises the top-level branches
+    that decide whether to install Floodgate, which is the critical path
+    for the Xbox-login kick — just patching Geyser's config isn't enough
+    if Floodgate is still loaded."""
+    (server_dir / "plugins").mkdir(exist_ok=True)
+    if seed_floodgate_jar:
+        (server_dir / "plugins" / "floodgate-spigot.jar").write_bytes(b"MZfake")
+    env = {
+        **os.environ,
+        "MC_SERVER_DIR": str(server_dir),
+        "SERVER_TYPE": "paper",
+        "MOTD": "test",
+        "ONLINE_MODE": online_mode,
+    }
+    if geyser_auth_type is not None:
+        env["GEYSER_AUTH_TYPE"] = geyser_auth_type
+    # Replace the real install_jar with a no-network stub: just `touch` the
+    # destination file so downstream assertions can verify the jar "landed".
+    # A regex swap against the source keeps the rest of the script intact.
+    source = SCRIPT.read_text()
+    stub_body = (
+        "install_jar() {\n"
+        "    local filename=\"$3\"\n"
+        "    : > \"${DEST_DIR}/${filename}\"\n"
+        "}\n"
+    )
+    patched = re.sub(
+        r"^install_jar\(\)\s*\{.*?^\}\s*$",
+        stub_body,
+        source,
+        count=1,
+        flags=re.DOTALL | re.MULTILINE,
+    )
+    if patched == source:
+        raise RuntimeError("failed to stub install_jar in install-bedrock-support.sh")
+    proc = subprocess.run(
+        ["bash", "-c", patched],
+        env=env, capture_output=True, text=True, check=False,
+    )
+    return proc
+
+
+class TestFloodgateSkipWhenOffline(unittest.TestCase):
+    """Regression guards for the 1.2.2 fix. When auth-type resolves to
+    `offline`, Floodgate MUST NOT end up in plugins/ — Geyser defers auth
+    to Floodgate whenever the jar is loaded, which re-introduces the
+    "Please log into Xbox to join this server." kick even though we set
+    auth-type: offline in config.yml."""
+
+    def test_offline_mode_skips_floodgate_install(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            server_dir = Path(tmp)
+            proc = _run_full_script(
+                server_dir, geyser_auth_type="offline", online_mode="false",
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            floodgate_jars = list((server_dir / "plugins").glob("floodgate-*.jar"))
+            self.assertEqual(
+                floodgate_jars, [],
+                f"Floodgate must NOT be installed in offline mode; found {floodgate_jars}",
+            )
+            geyser_jar = server_dir / "plugins" / "Geyser-Spigot.jar"
+            self.assertTrue(geyser_jar.exists(), "Geyser must still be installed")
+
+    def test_offline_mode_removes_existing_floodgate_jar(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            server_dir = Path(tmp)
+            proc = _run_full_script(
+                server_dir, geyser_auth_type="offline", online_mode="false",
+                seed_floodgate_jar=True,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            floodgate_jars = list((server_dir / "plugins").glob("floodgate-*.jar"))
+            self.assertEqual(
+                floodgate_jars, [],
+                "existing floodgate-spigot.jar should be removed when switching to offline",
+            )
+
+    def test_floodgate_mode_still_installs_floodgate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            server_dir = Path(tmp)
+            proc = _run_full_script(
+                server_dir, geyser_auth_type="floodgate", online_mode="true",
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            floodgate_jar = server_dir / "plugins" / "floodgate-spigot.jar"
+            self.assertTrue(
+                floodgate_jar.exists(),
+                "Floodgate must be installed when auth-type is floodgate",
+            )
+
+    def test_auto_mode_offline_skips_floodgate(self):
+        """auto + online_mode=false -> resolves to offline -> skip Floodgate."""
+        with tempfile.TemporaryDirectory() as tmp:
+            server_dir = Path(tmp)
+            proc = _run_full_script(
+                server_dir, geyser_auth_type="auto", online_mode="false",
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            floodgate_jars = list((server_dir / "plugins").glob("floodgate-*.jar"))
+            self.assertEqual(floodgate_jars, [])
+
+    def test_offline_mode_writes_auth_type_offline_to_config(self):
+        """Sanity: we still patch the Geyser config in offline mode even
+        though we skip Floodgate — auth-type must be rendered."""
+        with tempfile.TemporaryDirectory() as tmp:
+            server_dir = Path(tmp)
+            proc = _run_full_script(
+                server_dir, geyser_auth_type="offline", online_mode="false",
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            cfg = server_dir / "plugins" / "Geyser-Spigot" / "config.yml"
+            self.assertTrue(cfg.exists(), "Geyser config should still be staged")
+            self.assertIn("auth-type: offline", cfg.read_text())
 
 
 class TestGeyserAuthPatch(unittest.TestCase):
