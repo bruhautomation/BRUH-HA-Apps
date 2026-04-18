@@ -96,6 +96,10 @@ load_config() {
     ANNOUNCE_HA_EVENTS=$(bashio::config 'announce_ha_events' 'true')
     ENABLE_BEDROCK_SUPPORT=$(bashio::config 'enable_bedrock_support' 'true')
     GEYSER_AUTH_TYPE=$(bashio::config 'geyser_auth_type' 'auto')
+    GEYSER_MTU=$(bashio::config 'geyser_mtu' '1400')
+    AUTO_KICK_GHOST_SESSIONS=$(bashio::config 'auto_kick_ghost_sessions' 'true')
+    CONNECTION_THROTTLE_MS=$(bashio::config 'connection_throttle_ms' '4000')
+    PLAYER_IDLE_TIMEOUT_MINUTES=$(bashio::config 'player_idle_timeout_minutes' '0')
     EXTRA_JVM_ARGS=$(bashio::config 'extra_jvm_args' '')
     LOG_LEVEL=$(bashio::config 'log_level' 'info')
 
@@ -132,6 +136,8 @@ load_config() {
            BACKUP_INTERVAL_MINUTES BACKUP_KEEP_COUNT BACKUP_USE_GIT \
            AUTO_RESTART_ON_CRASH AUTO_RESTART_SCHEDULE ENABLE_HA_INTEGRATION \
            ANNOUNCE_HA_EVENTS ENABLE_BEDROCK_SUPPORT GEYSER_AUTH_TYPE \
+           GEYSER_MTU AUTO_KICK_GHOST_SESSIONS CONNECTION_THROTTLE_MS \
+           PLAYER_IDLE_TIMEOUT_MINUTES \
            EXTRA_JVM_ARGS LOG_LEVEL
 
     # HA integration — SUPERVISOR_TOKEN is injected by the Supervisor.
@@ -340,6 +346,21 @@ start_stats_collector() {
     echo $! > "${MC_PANEL_STATE}/stats.pid"
 }
 
+start_ghost_watcher() {
+    # Auto-kick ghost sessions so iOS Bedrock retries don't get stuck on
+    # "You are already connected to this server!" See
+    # scripts/ghost-session-watcher.py for the full rationale.
+    if [ "${AUTO_KICK_GHOST_SESSIONS:-true}" != "true" ]; then
+        bashio::log.info "auto_kick_ghost_sessions disabled; skipping watcher"
+        return 0
+    fi
+    bashio::log.info "Starting ghost-session watcher (auto-kick duplicate-login rejects)"
+    (
+        exec su-exec minecraft python3 -u "${SCRIPTS_DIR}/ghost-session-watcher.py"
+    ) >> "${MC_PANEL_STATE}/ghost-watcher.log" 2>&1 &
+    echo $! > "${MC_PANEL_STATE}/ghost-watcher.pid"
+}
+
 start_initial_ops() {
     # Auto-OP the configured names once the JVM is actually listening on
     # RCON. The helper waits and exits on its own if there's nothing to do.
@@ -461,7 +482,7 @@ graceful_shutdown() {
         fi
     fi
 
-    for helper in panel backup stats ha-bridge initial-ops; do
+    for helper in panel backup stats ha-bridge ghost-watcher initial-ops; do
         [ -f "${MC_PANEL_STATE}/${helper}.pid" ] \
             && kill "$(cat "${MC_PANEL_STATE}/${helper}.pid")" 2>/dev/null || true
     done
@@ -565,6 +586,7 @@ main() {
     start_backup_watcher
     start_stats_collector
     start_ha_bridge
+    start_ghost_watcher
     start_initial_ops
     announce_ha_discovery
 

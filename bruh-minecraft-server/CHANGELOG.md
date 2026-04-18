@@ -5,6 +5,51 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.2.4
+
+### Fixed
+
+- **iOS "Connecting multiplayer server…" hang + "You are already
+  connected" ghost-session loop.** After a Bedrock handshake stalls
+  mid-login (very common on iOS over Wi-Fi), Paper keeps the stale
+  session counted as online for ~60–90 s until Geyser's RakNet
+  keepalive fires. Every retry during that window is rejected with
+  `You are already connected to this server!`, and the user has no
+  obvious way to break out short of waiting.
+- New **`auto_kick_ghost_sessions`** option (default `true`). A
+  lightweight Python daemon (`scripts/ghost-session-watcher.py`) tails
+  the Minecraft console log, detects the duplicate-login rejection
+  regex, extracts the player name, and fires `/kick <name>` over RCON
+  with a per-name 10 s cooldown. Ghost clears in under a second; the
+  next retry succeeds.
+
+### Added
+
+- **`geyser_mtu`** option (default `1400`, range 576–1492). Writes
+  `advanced.mtu` into the Geyser config. Lowering to `1200` is the
+  canonical fix for iOS handshake hangs on home Wi-Fi that fragments
+  UDP at 1400 — the Geyser installer now patches this on every boot
+  (fresh install + existing config).
+- **`connection_throttle_ms`** option (default `4000`). Directly maps
+  to Paper's `connection-throttle` in `server.properties`. Setting to
+  `0` lets rapid iOS retries through instead of hitting "Slow down,
+  you're connecting too fast!"
+- **`player_idle_timeout_minutes`** option (default `0` = disabled).
+  Paper's built-in idle-kick; a low value (e.g. `5`) is a belt-and-
+  suspenders cleanup for stuck sessions on top of the auto-kick
+  watcher.
+
+### Tests (13 new, 194 total)
+
+- `test_minecraft_ghost_watcher.py` — 10 tests on the duplicate-login
+  regex (matches both Paper variants incl. Floodgate-prefix names;
+  rejects unrelated "lost connection" reasons so we never kick an
+  innocent player) plus rate-limit and disabled-flag early-exit.
+- `test_minecraft_properties.py` gained 2 tests covering the new
+  `connection-throttle` / `player-idle-timeout` pass-through.
+- `test_minecraft_validate_bedrock_login.py` gained 1 test locking
+  in the `advanced.mtu` patch from `GEYSER_MTU`.
+
 ## 1.2.3
 
 ### Fixed

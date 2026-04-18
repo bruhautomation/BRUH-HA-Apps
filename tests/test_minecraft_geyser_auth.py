@@ -257,8 +257,8 @@ class TestGeyserAuthPatch(unittest.TestCase):
             self.assertIn("floodgate-key-file: key.pem", text)
 
     def test_idempotent_on_already_patched_config(self):
-        """Running a second time must be a no-op. Seed BOTH managed keys
-        at their target values so the script has nothing to touch."""
+        """Running a second time must be a no-op. Seed EVERY managed key
+        at its target value so the script has nothing to touch."""
         with tempfile.TemporaryDirectory() as tmp:
             server_dir = Path(tmp)
             plugin_dir = server_dir / "plugins" / "Geyser-Spigot"
@@ -268,6 +268,7 @@ class TestGeyserAuthPatch(unittest.TestCase):
                 remote:
                   auth-type: floodgate
                 advanced:
+                  mtu: 1400
                   bedrock:
                     validate-bedrock-login: true
             """).lstrip())

@@ -1,7 +1,7 @@
 ---
 name: "BRUH Minecraft Server"
 description: "Rock-solid Minecraft Java Edition server with ingress panel, RCON, git world backups, auto-updates, plugin management, and deep Home Assistant integration"
-version: "1.2.3"
+version: "1.2.4"
 slug: "bruh_minecraft_server"
 init: false
 
@@ -135,6 +135,24 @@ options:
   #               The right choice for LAN-only / family servers where
   #               the kids don't have Xbox accounts.
   geyser_auth_type: auto
+  # Geyser Bedrock MTU. Lowering from the default 1400 to 1200 fixes the
+  # iOS "Connecting multiplayer server..." hang on flaky home Wi-Fi by
+  # sidestepping UDP fragmentation. Range 576–1492.
+  geyser_mtu: 1400
+  # Auto-kick ghost sessions: when Paper rejects a new login with
+  # "You are already connected to this server!" (because the previous
+  # connection hung and hasn't timed out yet), kick the stale session
+  # over RCON so the next retry succeeds. No plugin needed — a
+  # background daemon tails the server log and issues /kick.
+  auto_kick_ghost_sessions: true
+  # Paper connection-throttle (ms). Default 4000; 0 disables and avoids
+  # the "Slow down, you're connecting too fast!" kick on rapid iOS
+  # retries. Safe to leave on for public servers, fine to turn off on LAN.
+  connection_throttle_ms: 4000
+  # Auto-kick a player after N minutes of being idle. 0 disables.
+  # Low values (e.g. 5) help clean up ghost sessions quickly in addition
+  # to `auto_kick_ghost_sessions`.
+  player_idle_timeout_minutes: 0
   plugins: []
   extra_jvm_args: ""
   log_level: info
@@ -190,6 +208,10 @@ schema:
   announce_ha_events: bool
   enable_bedrock_support: bool
   geyser_auth_type: "list(auto|floodgate|online|offline)"
+  geyser_mtu: "int(576,1492)"
+  auto_kick_ghost_sessions: bool
+  connection_throttle_ms: "int(0,60000)"
+  player_idle_timeout_minutes: "int(0,1440)"
   plugins:
     - url: "url"
       name: "str?"

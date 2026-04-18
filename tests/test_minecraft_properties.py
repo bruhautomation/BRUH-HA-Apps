@@ -134,6 +134,18 @@ class TestSetupServerProperties(unittest.TestCase):
             self.assertEqual(props["enable-command-block"], "false")
             self.assertEqual(props["op-permission-level"], "4")
 
+    def test_connection_throttle_passthrough(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _run(tmp, CONNECTION_THROTTLE_MS="0")
+            props = _parse(os.path.join(tmp, "server.properties"))
+            self.assertEqual(props["connection-throttle"], "0")
+
+    def test_player_idle_timeout_passthrough(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _run(tmp, PLAYER_IDLE_TIMEOUT_MINUTES="5")
+            props = _parse(os.path.join(tmp, "server.properties"))
+            self.assertEqual(props["player-idle-timeout"], "5")
+
     def test_resource_pack_keys_pass_through(self):
         with tempfile.TemporaryDirectory() as tmp:
             _run(
