@@ -272,6 +272,30 @@ class TestInstallerIntegration(unittest.TestCase):
                 "must flip validate-bedrock-login: true -> false",
             )
 
+    def test_installer_patches_advanced_mtu(self):
+        """New in 1.2.4: the installer must set advanced.mtu from the
+        GEYSER_MTU env var — the #1 fix for iOS "Connecting multiplayer
+        server…" hangs on Wi-Fi routers that fragment UDP at 1400."""
+        with tempfile.TemporaryDirectory() as tmp:
+            server_dir = Path(tmp)
+            (server_dir / "plugins").mkdir()
+            # Pass GEYSER_MTU=1200 to simulate a user-tuned value.
+            old = os.environ.get("GEYSER_MTU")
+            os.environ["GEYSER_MTU"] = "1200"
+            try:
+                proc = self._run_installer(
+                    server_dir, geyser_auth_type="offline", online_mode="false",
+                )
+            finally:
+                if old is None:
+                    del os.environ["GEYSER_MTU"]
+                else:
+                    os.environ["GEYSER_MTU"] = old
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            cfg = server_dir / "plugins" / "Geyser-Spigot" / "config.yml"
+            data = yaml.safe_load(cfg.read_text())
+            self.assertEqual(data["advanced"]["mtu"], 1200)
+
     def test_switching_back_to_floodgate_restores_validate_true(self):
         """Regression guard: if a user flips geyser_auth_type offline -> floodgate,
         we must restore the secure default instead of leaving the bypass enabled."""

@@ -205,6 +205,19 @@ configure_geyser() {
             warn "  ! failed to patch validate-bedrock-login"
         fi
 
+        # MTU tuning: lowering from 1400 -> 1200 is the #1 fix for the iOS
+        # "Connecting multiplayer server..." hang. Wi-Fi routers + cellular
+        # hot-spots commonly fragment UDP at ~1400 and RakNet's login
+        # handshake silently stalls. Expose as an add-on option so users
+        # can dial it down when LAN pings work but joins hang.
+        local want_mtu="${GEYSER_MTU:-1400}"
+        if python3 "${SCRIPT_DIR}/patch-geyser-config.py" \
+               "${cfg}" mtu "${want_mtu}" advanced; then
+            log "  - advanced.mtu: ${want_mtu}"
+        else
+            warn "  ! failed to patch advanced.mtu"
+        fi
+
         # Patch bedrock MOTD lines (motd1 + motd2) to match the add-on motd
         local motd_escaped sub_escaped
         motd_escaped=$(printf '%s' "${motd}"     | sed -e 's/[\/&]/\\&/g')
@@ -230,19 +243,24 @@ configure_geyser() {
         else
             fresh_validate="true"
         fi
-        log "Staging fresh Geyser config at ${cfg} (auth-type: ${auth_type}, validate-bedrock-login: ${fresh_validate})"
+        local fresh_mtu="${GEYSER_MTU:-1400}"
+        log "Staging fresh Geyser config at ${cfg} (auth-type: ${auth_type}, validate-bedrock-login: ${fresh_validate}, mtu: ${fresh_mtu})"
         cat > "${cfg}" <<YAML
 # Managed by BRUH Minecraft Server add-on.
-# auth-type + validate-bedrock-login are re-asserted on every add-on boot
-# from the add-on options. See the README / DOCS for the tradeoffs
-# between floodgate / offline / online. Every other key here is free for
-# you to edit — Geyser fills in defaults for anything we haven't set.
+# auth-type, validate-bedrock-login, and mtu are re-asserted on every
+# add-on boot from the add-on options. See the README / DOCS for the
+# tradeoffs between floodgate / offline / online. Every other key here
+# is free for you to edit — Geyser fills in defaults for anything we
+# haven't set.
 bedrock:
   motd1: "${motd}"
   motd2: "${motd_sub}"
 remote:
   auth-type: ${auth_type}
 advanced:
+  # Lower from 1400 to 1200 if iOS clients hang on "Connecting
+  # multiplayer server…" — Wi-Fi routers often fragment UDP at 1400.
+  mtu: ${fresh_mtu}
   bedrock:
     # When false, Geyser skips validating the Bedrock client's signed
     # Xbox Live JWT chain — required so family LAN / cracked clients

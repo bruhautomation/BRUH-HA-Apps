@@ -336,6 +336,16 @@ If your world is huge, switch to tar-archive mode (`backup_use_git: false`) whic
 
 After a restore, the panel sends `stop` via RCON. If `auto_restart_on_crash` is `false`, the add-on won't restart the JVM — toggle the option back on (the default) or hit the add-on's **Start** button.
 
+### iOS Bedrock hangs on "Connecting multiplayer server…"
+
+Checklist in order of likelihood:
+
+1. **MTU.** Set `geyser_mtu: 1200` in the add-on options and restart — the default 1400 gets fragmented by many home Wi-Fi routers mid-handshake.
+2. **Ghost session from a previous hang.** If you get *"You are already connected to this server!"* on the retry, the add-on's auto-kicker should clear it within a second (enabled by default via `auto_kick_ghost_sessions`). Manual fallback: open the panel → Players tab → type the name → action `Kick`. Or type `kick <name>` in the Console tab.
+3. **Connection-throttle.** If the iOS client retries rapidly and gets *"Slow down, you're connecting too fast!"*, drop `connection_throttle_ms` to `0` (LAN-safe). It's 4000 ms by default.
+4. **Apple Family Sharing / shared Xbox account.** Two iOS devices signed into the same Microsoft account share a gamertag and the server will only accept one at a time. Give each device its own Microsoft/child account or sign out of Xbox on the second device and set a distinct offline username in Minecraft → Settings → Profile.
+5. **Resource-pack URL.** An unreachable `resource_pack` URL makes iOS hang silently. Clear `resource_pack` / `resource_pack_sha1` or set `require_resource_pack: false`.
+
 ### `signal only works in main thread of the main interpreter`
 
 Fixed in **1.2.0**. The old RCON client (`mcrcon`) used `signal.SIGALRM` for its timeout, which can't be set from worker threads — so the ingress panel's command bar crashed with this message. The add-on now ships a thread-safe RCON implementation (`scripts/rcon_client.py`) and no longer depends on `mcrcon`.
