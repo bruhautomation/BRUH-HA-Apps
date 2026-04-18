@@ -17,14 +17,17 @@ ADDON_SCRIPTS = os.path.join(BASE_DIR, "bruh-minecraft-server", "scripts")
 
 
 def _load_stats_module():
-    # The module imports mcrcon + mcstatus at import-time. Provide dummy
-    # placeholders so the tests can import the parse helpers in isolation.
-    for name in ("mcrcon", "mcstatus"):
-        if name not in sys.modules:
-            mod = type(sys)(name)
-            setattr(mod, "MCRcon", object)
-            setattr(mod, "JavaServer", object)
-            sys.modules[name] = mod
+    # The module imports rcon_client (our own, co-located) + mcstatus at
+    # import-time. Provide dummy placeholders so the tests can import the
+    # parse helpers in isolation without opening sockets.
+    if "mcstatus" not in sys.modules:
+        mod = type(sys)("mcstatus")
+        setattr(mod, "JavaServer", object)
+        sys.modules["mcstatus"] = mod
+    if "rcon_client" not in sys.modules:
+        rmod = type(sys)("rcon_client")
+        setattr(rmod, "Rcon", object)
+        sys.modules["rcon_client"] = rmod
     spec = importlib.util.spec_from_file_location(
         "stats_collector", os.path.join(ADDON_SCRIPTS, "stats-collector.py"),
     )

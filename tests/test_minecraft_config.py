@@ -186,7 +186,10 @@ class TestDockerfile(unittest.TestCase):
         self.assertRegex(self.text, r"adduser -D .*-u 1000.*minecraft")
 
     def test_python_libs_for_panel_and_rcon(self):
-        for lib in ("mcrcon", "mcstatus", "aiofiles"):
+        # RCON is handled by our own scripts/rcon_client.py — no need for the
+        # `mcrcon` PyPI package (which uses signal.SIGALRM and crashes in
+        # worker threads). We still need mcstatus for the status-ping probe.
+        for lib in ("mcstatus", "aiofiles"):
             self.assertIn(lib, self.text, f"pip package {lib} not installed")
 
     def test_runtime_paths_env(self):

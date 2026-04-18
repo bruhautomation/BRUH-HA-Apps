@@ -32,12 +32,25 @@ import os
 import re
 import shlex
 import subprocess
+import sys
 import time
 from pathlib import Path
 
 import aiofiles
 from aiohttp import web
-from mcrcon import MCRcon
+
+# The RCON client lives next to the other shell/python tools. Adding its
+# directory to sys.path keeps the import working both in production (where
+# run.sh copies scripts to /opt/bruh-mc/scripts) and in the unit-test
+# harness, which exercises panel/server.py directly from the repo checkout.
+_SCRIPTS_DIR = os.environ.get(
+    "BRUH_MC_SCRIPTS_DIR",
+    "/opt/bruh-mc/scripts",
+)
+for _candidate in (_SCRIPTS_DIR, str(Path(__file__).resolve().parent.parent / "scripts")):
+    if _candidate and _candidate not in sys.path:
+        sys.path.insert(0, _candidate)
+from rcon_client import Rcon  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Paths / constants
@@ -78,7 +91,7 @@ async def _rcon_command(command: str) -> str:
     password = _rcon_password()
 
     def _exec() -> str:
-        with MCRcon(RCON_HOST, password, port=RCON_PORT, timeout=5) as r:
+        with Rcon(RCON_HOST, password, port=RCON_PORT, timeout=5) as r:
             return r.command(command)
 
     return await asyncio.to_thread(_exec)
@@ -113,7 +126,25 @@ EDITABLE_PROPS = {
     "spawn-protection",
     "enable-command-block",
     "online-mode",
+    "enforce-secure-profile",
     "hardcore",
+    "allow-nether",
+    "generate-structures",
+    "spawn-monsters",
+    "spawn-animals",
+    "spawn-npcs",
+    "prevent-proxy-connections",
+    "hide-online-players",
+    "resource-pack",
+    "resource-pack-sha1",
+    "require-resource-pack",
+    "max-world-size",
+    "network-compression-threshold",
+    "entity-broadcast-range-percentage",
+    "op-permission-level",
+    "level-seed",
+    "level-type",
+    "level-name",
 }
 
 VALID_PLAYER_NAME = re.compile(r"^[A-Za-z0-9_]{1,16}$")

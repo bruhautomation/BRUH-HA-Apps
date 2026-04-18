@@ -1,7 +1,7 @@
 ---
 name: "BRUH Minecraft Server"
 description: "Rock-solid Minecraft Java Edition server with ingress panel, RCON, git world backups, auto-updates, plugin management, and deep Home Assistant integration"
-version: "1.1.0"
+version: "1.2.0"
 slug: "bruh_minecraft_server"
 init: false
 
@@ -61,7 +61,18 @@ options:
   max_players: 20
   view_distance: 10
   simulation_distance: 10
+  # online_mode=false lets clients connect without a Microsoft/Mojang account
+  # (cracked/offline mode). Safe for LAN-only servers and for kids who don't
+  # have Xbox Live sign-in. Required alongside enforce_secure_profile=false
+  # to avoid the "Please log into Xbox" / signed-profile messages.
   online_mode: true
+  # enforce_secure_profile: since Minecraft 1.19+, the server can require
+  # every client to present a Mojang-signed chat profile. When online_mode
+  # is off, clients have no such profile and are kicked with "You are not
+  # permitted to join due to the enforce-secure-profile setting". Default
+  # to false so offline accounts work out-of-the-box; also auto-forced to
+  # false whenever online_mode=false regardless of this setting.
+  enforce_secure_profile: false
   pvp: true
   hardcore: false
   allow_flight: false
@@ -70,10 +81,36 @@ options:
   level_name: world
   level_seed: ""
   level_type: minecraft:normal
+  # World-generation / gameplay toggles (server.properties passthroughs)
+  allow_nether: true
+  generate_structures: true
+  spawn_monsters: true
+  spawn_animals: true
+  spawn_npcs: true
+  prevent_proxy_connections: false
+  hide_online_players: false
+  resource_pack: ""
+  resource_pack_sha1: ""
+  require_resource_pack: false
+  max_world_size: 29999984
+  network_compression_threshold: 256
+  entity_broadcast_range_percentage: 100
   memory_mb: 2048
   use_aikar_flags: true
   enable_command_block: false
   op_permission_level: 4
+  # allow_cheats: convenience toggle that guarantees the "cheat" commands
+  # (/gamemode, /give, /tp, /summon, /fill, …) are usable for OP'd players.
+  # When true, forces enable-command-block=true and ensures
+  # op-permission-level is at least 2 regardless of the raw option above.
+  # Players still need to be OP'd to actually use the commands; use the
+  # initial_ops list (or the panel → Players tab) to OP someone.
+  allow_cheats: false
+  # initial_ops: auto-OP these player names once the server starts. Handy
+  # for a host who wants cheats on themselves (and their kids) without
+  # having to run `op <name>` manually after every fresh install. Entries
+  # are applied via RCON, so UUID lookup works in online and offline mode.
+  initial_ops: []
   rcon_password: ""
   auto_update_server: true
   auto_backup: true
@@ -99,6 +136,7 @@ schema:
   view_distance: "int(3,32)"
   simulation_distance: "int(3,32)"
   online_mode: bool
+  enforce_secure_profile: bool
   pvp: bool
   hardcore: bool
   allow_flight: bool
@@ -107,10 +145,26 @@ schema:
   level_name: str
   level_seed: "str?"
   level_type: "str?"
+  allow_nether: bool
+  generate_structures: bool
+  spawn_monsters: bool
+  spawn_animals: bool
+  spawn_npcs: bool
+  prevent_proxy_connections: bool
+  hide_online_players: bool
+  resource_pack: "str?"
+  resource_pack_sha1: "str?"
+  require_resource_pack: bool
+  max_world_size: "int(1,29999984)"
+  network_compression_threshold: "int(-1,65536)"
+  entity_broadcast_range_percentage: "int(10,1000)"
   memory_mb: "int(512,65536)"
   use_aikar_flags: bool
   enable_command_block: bool
   op_permission_level: "int(1,4)"
+  allow_cheats: bool
+  initial_ops:
+    - "match(^[A-Za-z0-9_]{1,16}$)"
   rcon_password: "password?"
   auto_update_server: bool
   auto_backup: bool

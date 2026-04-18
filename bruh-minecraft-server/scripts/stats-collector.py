@@ -17,8 +17,9 @@ import time
 from pathlib import Path
 from typing import Any
 
-from mcrcon import MCRcon
-from mcstatus import JavaServer
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from rcon_client import Rcon  # noqa: E402
+from mcstatus import JavaServer  # noqa: E402
 
 POLL_INTERVAL = 15
 RCON_HOST = "127.0.0.1"
@@ -78,7 +79,7 @@ def _atomic_write(path: Path, data: dict) -> None:
 def _probe_rcon(password: str) -> dict[str, Any]:
     out: dict[str, Any] = {}
     try:
-        with MCRcon(RCON_HOST, password, port=RCON_PORT, timeout=5) as r:
+        with Rcon(RCON_HOST, password, port=RCON_PORT, timeout=5) as r:
             try:
                 out.update(_parse_list(r.command("list")))
             except Exception:  # noqa: BLE001

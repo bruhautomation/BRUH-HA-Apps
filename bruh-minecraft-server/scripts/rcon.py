@@ -14,7 +14,8 @@ import sys
 import time
 from pathlib import Path
 
-from mcrcon import MCRcon
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from rcon_client import Rcon  # noqa: E402
 
 RCON_HOST = os.environ.get("RCON_HOST", "127.0.0.1")
 RCON_PORT = int(os.environ.get("RCON_PORT", "25575"))
@@ -44,7 +45,7 @@ def main() -> int:
     last_err: Exception | None = None
     while time.monotonic() < deadline:
         try:
-            with MCRcon(RCON_HOST, password, port=RCON_PORT, timeout=5) as rcon:
+            with Rcon(RCON_HOST, password, port=RCON_PORT, timeout=5) as rcon:
                 reply = rcon.command(command)
                 print(reply)
                 return 0

@@ -26,22 +26,27 @@ PANEL_SERVER_PY = os.path.join(ADDON_DIR, "panel", "server.py")
 
 def _load_panel_module(server_dir: Path, backup_dir: Path, state_dir: Path):
     """Import panel/server.py with PATHS pointing at a tmp fixture dir."""
-    # mcrcon is imported at module-top; provide a lightweight stub so we
-    # never actually open a TCP socket. Overwrite any stub a previous test
-    # file may have installed so our return value is stable.
-    mcrcon = type(sys)("mcrcon")
+    # panel/server.py imports Rcon from scripts/rcon_client.py. Swap in a
+    # lightweight stub so tests never open a TCP socket. We install the stub
+    # under the real module name so the panel's `from rcon_client import Rcon`
+    # picks it up; a previous test file may have installed its own stub, so
+    # overwrite unconditionally.
+    rcon_mod = type(sys)("rcon_client")
 
-    class _FakeMCRcon:
+    class _FakeRcon:
         def __init__(self, *a, **kw): pass
         def __enter__(self): return self
         def __exit__(self, *a): return False
         def command(self, *a, **kw): return "ok"
 
-    mcrcon.MCRcon = _FakeMCRcon
-    sys.modules["mcrcon"] = mcrcon
-    # Also purge the panel module so it picks up the fresh mcrcon
+    rcon_mod.Rcon = _FakeRcon
+    sys.modules["rcon_client"] = rcon_mod
+    # Also purge the panel module so it picks up the fresh stub
     sys.modules.pop("panel_server", None)
 
+    # Point the panel's scripts-dir resolution at the repo checkout so its
+    # fallback sys.path insert doesn't clobber our stub with the real module.
+    os.environ["BRUH_MC_SCRIPTS_DIR"] = "/nonexistent/for-tests"
     os.environ["MC_SERVER_DIR"] = str(server_dir)
     os.environ["MC_BACKUP_DIR"] = str(backup_dir)
     os.environ["MC_PANEL_STATE"] = str(state_dir)

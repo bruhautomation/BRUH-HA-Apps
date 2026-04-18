@@ -34,7 +34,8 @@ Forge uses an installer and may need a few extra minutes on the first boot while
 | `max_players` | 1–1000 | `20` |
 | `view_distance` | 3–32 | `10` |
 | `simulation_distance` | 3–32 | `10` |
-| `online_mode` | bool | `true` |
+| `online_mode` | bool | `true` | Validate every login against Microsoft/Mojang. Turn **off** for cracked/offline play (e.g. kids without an Xbox account, LAN-only sessions). |
+| `enforce_secure_profile` | bool | `false` | Require Mojang-signed chat profiles (MC 1.19+). Auto-forced to `false` whenever `online_mode` is off so offline clients aren't kicked with "You are not permitted to join due to the enforce-secure-profile setting." |
 | `pvp` | bool | `true` |
 | `hardcore` | bool | `false` |
 | `allow_flight` | bool | `false` |
@@ -43,10 +44,40 @@ Forge uses an installer and may need a few extra minutes on the first boot while
 | `level_name` | string | `world` |
 | `level_seed` | string | `""` (random) |
 | `level_type` | string | `minecraft:normal` |
+| `allow_nether` | bool | `true` |
+| `generate_structures` | bool | `true` |
+| `spawn_monsters` / `spawn_animals` / `spawn_npcs` | bool | `true` |
+| `prevent_proxy_connections` | bool | `false` |
+| `hide_online_players` | bool | `false` |
+| `resource_pack` | URL | `""` |
+| `resource_pack_sha1` | string | `""` |
+| `require_resource_pack` | bool | `false` |
+| `max_world_size` | 1–29999984 | `29999984` |
+| `network_compression_threshold` | `-1`–65536 | `256` |
+| `entity_broadcast_range_percentage` | 10–1000 | `100` |
 | `enable_command_block` | bool | `false` |
 | `op_permission_level` | 1–4 | `4` |
+| `allow_cheats` | bool | `false` | One-click enables the "cheat" commands (`/gamemode`, `/give`, `/tp`, `/summon`, `/fill`, …). Forces `enable-command-block=true` and ensures `op_permission_level` is at least 2. Players still need to be OP'd to use the commands — add names to `initial_ops` or OP them from the panel's **Players** tab. |
+| `initial_ops` | list of player names | `[]` | Auto-OP these names at boot via RCON (handles UUID lookup in both online and offline mode). |
 
 > **Heads-up:** changing `level_name` or `level_seed` only takes effect when a fresh world is being generated. To reset a world, move the world directory aside under `/config/minecraft/` and restart.
+
+#### "Please log into Xbox to join this server" / "You are not permitted to join…"
+
+If you — or your kids — want to play **without an Xbox/Microsoft sign-in**:
+
+1. Set `online_mode: false` in the add-on Configuration tab.
+2. Leave `enforce_secure_profile: false` (the default; auto-forced off whenever `online_mode` is `false`).
+3. Restart the add-on. Any Java username now connects, and Bedrock clients keep working via Floodgate.
+
+Offline mode is **not safe for public/internet-exposed servers** — anyone can spoof any username. Use it only on LAN or when you fully trust the player pool.
+
+#### Cheats / creative commands
+
+Toggle `allow_cheats: true` to guarantee the "cheat" commands work, then OP the player who wants them:
+
+- Drop their Minecraft username into `initial_ops` (the add-on OPs them on startup — no need to wait for a manual `/op`), **or**
+- Go to the panel's **Players** tab after you've joined once and click **op**.
 
 ### JVM / performance
 
@@ -295,6 +326,10 @@ If your world is huge, switch to tar-archive mode (`backup_use_git: false`) whic
 ### Restore did not restart the server
 
 After a restore, the panel sends `stop` via RCON. If `auto_restart_on_crash` is `false`, the add-on won't restart the JVM — toggle the option back on (the default) or hit the add-on's **Start** button.
+
+### `signal only works in main thread of the main interpreter`
+
+Fixed in **1.2.0**. The old RCON client (`mcrcon`) used `signal.SIGALRM` for its timeout, which can't be set from worker threads — so the ingress panel's command bar crashed with this message. The add-on now ships a thread-safe RCON implementation (`scripts/rcon_client.py`) and no longer depends on `mcrcon`.
 
 ### Out-of-memory crashes
 
