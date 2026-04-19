@@ -5,6 +5,35 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.2.6
+
+### Changed
+
+- **Mobile panel is now first-class.** Multiple users reported tabs
+  they couldn't reach on phones and forms that overflowed the HA
+  Companion viewport. Full responsive pass on `panel/style.css`:
+    - Tab row scrolls horizontally with iOS momentum + a right-edge
+      fade so you can tell there's more to the right.
+    - 40–44 px touch targets on every `.btn` and `.tab`.
+    - Tables collapse to horizontal-scroll on narrow viewports
+      instead of forcing the page wider than the screen.
+    - Input fields use 16 px font to suppress iOS Safari's auto-zoom
+      on focus.
+    - Single-column grid + compact padding under 720 px; even
+      tighter under 400 px (iPhone SE class).
+    - `prefers-reduced-motion` honoured for accessibility.
+- **Complete DOCS overhaul.** New feature overview + quick-start +
+  mobile-access sections at the top of `DOCS.md`; new
+  **Complete service reference** with copy-paste payloads for every
+  HA service; new **Automation examples** (low-TPS alert, idle
+  auto-stop, safe-fill wrapper); new **Security considerations**
+  section covering RCON isolation, offline-mode caveats, and the
+  plugin-URL threat model. README gains a feature row for the new
+  offline-mode / cheats / mobile-friendly work shipped in 1.2.0
+  through 1.2.5.
+- `viewport-fit=cover` on the panel `<meta>` so the layout respects
+  iOS safe-area insets on notched devices.
+
 ## 1.2.5
 
 ### Fixed
