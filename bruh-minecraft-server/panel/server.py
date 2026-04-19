@@ -505,6 +505,85 @@ async def api_plugin_delete(request: web.Request) -> web.Response:
 
 
 # ---------------------------------------------------------------------------
+# Routes: API — switchable server profiles ("worlds")
+# ---------------------------------------------------------------------------
+MC_WORLDS_DIR = Path(os.environ.get("MC_WORLDS_DIR", "/config/minecraft-worlds"))
+WORLD_MANAGER = SCRIPTS_DIR / "world-manager.sh"
+VALID_WORLD_NAME = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
+
+
+async def _run_world_manager(*args: str) -> tuple[int, str]:
+    proc = await asyncio.create_subprocess_exec(
+        str(WORLD_MANAGER), *args,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+    )
+    out_b, _ = await proc.communicate()
+    return proc.returncode or 0, out_b.decode("utf-8", "replace")
+
+
+async def api_worlds_list(_: web.Request) -> web.Response:
+    rc, out = await _run_world_manager("list")
+    worlds: list[dict] = []
+    for line in out.splitlines():
+        parts = line.split("\t")
+        if len(parts) != 3:
+            continue
+        try:
+            worlds.append({
+                "name": parts[0],
+                "size_bytes": int(parts[1]),
+                "active": parts[2] == "true",
+            })
+        except ValueError:
+            continue
+    # Also surface the active name even when the world list is empty.
+    rc2, active = await _run_world_manager("active")
+    return web.json_response({
+        "worlds": worlds,
+        "active": active.strip() if rc2 == 0 else None,
+    })
+
+
+async def api_worlds_create(request: web.Request) -> web.Response:
+    body = await request.json()
+    name = str(body.get("name", "")).strip()
+    seed = str(body.get("seed", "")).strip()
+    if not VALID_WORLD_NAME.match(name):
+        return web.json_response({"error": "invalid name (1-32 chars, A-Z a-z 0-9 _ -)"}, status=400)
+    rc, out = await _run_world_manager("create", name, seed) if seed else await _run_world_manager("create", name)
+    if rc != 0:
+        return web.json_response({"error": out.strip()}, status=400)
+    return web.json_response({"ok": True, "output": out})
+
+
+async def api_worlds_switch(request: web.Request) -> web.Response:
+    name = request.match_info["name"]
+    if not VALID_WORLD_NAME.match(name):
+        return web.json_response({"error": "invalid name"}, status=400)
+    rc, out = await _run_world_manager("switch", name)
+    if rc != 0:
+        return web.json_response({"error": out.strip()}, status=400)
+    # The options write succeeded; now prompt the add-on to restart so the
+    # relink happens. Responsibility for restarting the add-on belongs to
+    # the Supervisor, but the operator can also stop + start from HA.
+    return web.json_response({
+        "ok": True,
+        "message": f"active_world set to '{name}'. Restart the add-on to activate.",
+    })
+
+
+async def api_worlds_delete(request: web.Request) -> web.Response:
+    name = request.match_info["name"]
+    if not VALID_WORLD_NAME.match(name):
+        return web.json_response({"error": "invalid name"}, status=400)
+    rc, out = await _run_world_manager("delete", name)
+    if rc != 0:
+        status = 409 if "active profile" in out else 400
+        return web.json_response({"error": out.strip()}, status=status)
+    return web.json_response({"ok": True})
+
+
+# ---------------------------------------------------------------------------
 # App factory
 # ---------------------------------------------------------------------------
 def build_app() -> web.Application:
@@ -540,6 +619,11 @@ def build_app() -> web.Application:
     app.router.add_get("/api/plugins", api_plugin_list)
     app.router.add_post("/api/plugins", api_plugin_install)
     app.router.add_delete("/api/plugins/{name}", api_plugin_delete)
+    # Switchable server profiles
+    app.router.add_get("/api/worlds", api_worlds_list)
+    app.router.add_post("/api/worlds", api_worlds_create)
+    app.router.add_post("/api/worlds/{name}/switch", api_worlds_switch)
+    app.router.add_delete("/api/worlds/{name}", api_worlds_delete)
     return app
 
 

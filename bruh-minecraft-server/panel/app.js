@@ -29,6 +29,7 @@
       if (tab.dataset.tab === 'properties') loadProperties();
       if (tab.dataset.tab === 'plugins')    loadPlugins();
       if (tab.dataset.tab === 'backups')    loadBackups();
+      if (tab.dataset.tab === 'worlds')     loadWorlds();
     });
   });
 
@@ -329,6 +330,73 @@
   // ------------------------------------------------------------------
   // Backups tab
   // ------------------------------------------------------------------
+  // ------------------------------------------------------------------
+  // Worlds (switchable server profiles, new in 1.3.0)
+  // ------------------------------------------------------------------
+  async function loadWorlds() {
+    const data = await api('api/worlds');
+    const tbody = document.querySelector('#worlds-table tbody');
+    tbody.innerHTML = '';
+    (data.worlds || []).forEach((w) => {
+      const tr = document.createElement('tr');
+      const activeBadge = w.active
+        ? '<span style="color: var(--accent); font-weight: 600;">● active</span>'
+        : '—';
+      const actions = w.active
+        ? '<span class="muted">—</span>'
+        : `
+          <button class="btn btn-primary" data-switch="${w.name}">Switch</button>
+          <button class="btn btn-danger" data-delete="${w.name}">Delete</button>
+        `;
+      tr.innerHTML = `
+        <td><code>${w.name}</code></td>
+        <td>${fmtSize(w.size_bytes)}</td>
+        <td>${activeBadge}</td>
+        <td class="actions">${actions}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+    tbody.querySelectorAll('button[data-switch]').forEach((b) => {
+      b.addEventListener('click', async () => {
+        const name = b.dataset.switch;
+        if (!confirm(`Switch active world to "${name}"? The add-on needs a restart for the new world to load — you'll be prompted to restart after this.`)) return;
+        const resp = await api(`api/worlds/${encodeURIComponent(name)}/switch`, { method: 'POST' });
+        const msg = resp.message || resp.error || 'unknown error';
+        alert(msg);
+        if (resp.ok && confirm('Restart the server now so the new world loads?')) {
+          await api('api/restart', { method: 'POST' });
+        }
+        loadWorlds();
+      });
+    });
+    tbody.querySelectorAll('button[data-delete]').forEach((b) => {
+      b.addEventListener('click', async () => {
+        const name = b.dataset.delete;
+        if (!confirm(`DELETE the world "${name}" permanently? This removes its world files, plugins, and backup history. This cannot be undone.`)) return;
+        const resp = await api(`api/worlds/${encodeURIComponent(name)}`, { method: 'DELETE' });
+        if (resp.error) alert(resp.error);
+        loadWorlds();
+      });
+    });
+  }
+
+  document.querySelector('#f-world-create').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const name = document.querySelector('#world-name').value.trim();
+    const seed = document.querySelector('#world-seed').value.trim();
+    const resp = await api('api/worlds', {
+      method: 'POST',
+      body: JSON.stringify({ name, seed }),
+    });
+    document.querySelector('#world-reply').textContent =
+      resp.ok ? `Created "${name}". Switch to it and restart to boot into it.` : (resp.error || 'failed');
+    if (resp.ok) {
+      document.querySelector('#world-name').value = '';
+      document.querySelector('#world-seed').value = '';
+      loadWorlds();
+    }
+  });
+
   async function loadBackups() {
     const data = await api('api/backups');
     const host = $('#backups-panel');

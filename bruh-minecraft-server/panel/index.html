@@ -32,6 +32,7 @@
     <button class="tab" data-tab="properties" role="tab">Server Properties</button>
     <button class="tab" data-tab="plugins" role="tab">Plugins</button>
     <button class="tab" data-tab="backups" role="tab">Backups</button>
+    <button class="tab" data-tab="worlds" role="tab">Worlds</button>
   </nav>
 
   <main>
@@ -148,8 +149,27 @@
     <!-- Backups -->
     <section id="tab-backups" class="tab-panel">
       <h2>Backups</h2>
-      <p class="muted">Git-mode backups store incremental history; restoring a commit re-syncs the world from that snapshot.</p>
+      <p class="muted">Git-mode backups store incremental history; restoring a commit re-syncs the world from that snapshot. Backups are <strong>per-world</strong> — switch worlds from the Worlds tab to browse another profile's history.</p>
       <div id="backups-panel"></div>
+    </section>
+
+    <!-- Worlds (switchable server profiles, new in 1.3.0) -->
+    <section id="tab-worlds" class="tab-panel">
+      <h2>Worlds</h2>
+      <p class="muted">Each world is a complete, self-contained server: its own world files, plugins, <code>server.properties</code>, and backup history. Only one is active at a time. Switching a world sets the <code>active_world</code> add-on option — restart the add-on (use the <strong>Restart</strong> button in the header) to boot into the new world.</p>
+      <table class="table" id="worlds-table">
+        <thead><tr><th>Name</th><th>Size</th><th>Active?</th><th>Actions</th></tr></thead>
+        <tbody></tbody>
+      </table>
+
+      <h3>Create a new world</h3>
+      <form id="f-world-create" class="inline-form">
+        <input id="world-name" type="text" placeholder="creative_flat" maxlength="32" required />
+        <input id="world-seed" type="text" placeholder="optional seed" />
+        <button class="btn btn-primary">Create</button>
+      </form>
+      <p class="muted">Name must be 1–32 characters, letters/digits/underscore/dash only. The new world is staged empty — switch to it and restart to generate its initial chunks with the seed / level-type from your add-on options.</p>
+      <pre id="world-reply" class="reply"></pre>
     </section>
   </main>
 

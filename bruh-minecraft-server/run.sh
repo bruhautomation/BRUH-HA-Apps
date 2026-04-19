@@ -17,7 +17,15 @@ set -o pipefail
 
 # ----------------------------------------------------------------------------
 # Locations (aligned with Dockerfile ENV)
+#
+# 1.3.0 introduced switchable server profiles. Each profile lives under
+# /config/minecraft-worlds/<name>/ with its own world, plugins, config,
+# and backups. /config/minecraft and /config/minecraft-backups are
+# symlinks to the active profile's dirs — keeps old scripts / docs
+# working unchanged. See scripts/world-manager.sh for the CRUD CLI.
 # ----------------------------------------------------------------------------
+MC_WORLDS_DIR="/config/minecraft-worlds"
+MC_BACKUPS_ROOT="/config/minecraft-backups"
 MC_SERVER_DIR="/config/minecraft"
 MC_BACKUP_DIR="/config/minecraft-backups"
 MC_PANEL_STATE="/data/panel"
@@ -31,7 +39,8 @@ SCRIPTS_DIR="/opt/bruh-mc/scripts"
 PANEL_DIR="/opt/bruh-mc/panel"
 INTEGRATIONS_DIR="/opt/bruh-mc/integrations"
 
-export MC_SERVER_DIR MC_BACKUP_DIR MC_PANEL_STATE MC_LOG_FIFO MC_INPUT_FIFO \
+export MC_SERVER_DIR MC_BACKUP_DIR MC_WORLDS_DIR MC_BACKUPS_ROOT \
+       MC_PANEL_STATE MC_LOG_FIFO MC_INPUT_FIFO \
        MC_CONSOLE_LOG MC_STATS_FILE MC_STATE_FILE SERVER_CACHE
 
 # ----------------------------------------------------------------------------
@@ -39,6 +48,14 @@ export MC_SERVER_DIR MC_BACKUP_DIR MC_PANEL_STATE MC_LOG_FIFO MC_INPUT_FIFO \
 # ----------------------------------------------------------------------------
 load_config() {
     bashio::log.info "Loading add-on configuration"
+
+    ACTIVE_WORLD=$(bashio::config 'active_world' 'default')
+    # Sanitize to [A-Za-z0-9_-]{1,32}; fall back to "default" if invalid.
+    if ! printf '%s' "${ACTIVE_WORLD}" | grep -Eq '^[A-Za-z0-9_-]{1,32}$'; then
+        bashio::log.warning "active_world '${ACTIVE_WORLD}' is invalid — falling back to 'default'"
+        ACTIVE_WORLD="default"
+    fi
+    export ACTIVE_WORLD
 
     EULA=$(bashio::config 'eula' 'false')
     SERVER_TYPE=$(bashio::config 'server_type' 'paper')
@@ -191,6 +208,86 @@ check_eula() {
         exit 1
     fi
     bashio::log.info "Minecraft EULA accepted"
+}
+
+# ----------------------------------------------------------------------------
+# Ensure switchable-world layout under /config/minecraft-worlds/<name>/ and
+# point the canonical /config/minecraft + /config/minecraft-backups symlinks
+# at the active profile.
+#
+# Migration (1.3.0): existing users have a real /config/minecraft/ directory
+# that predates the profile system. On first boot we:
+#   1. mkdir -p /config/minecraft-worlds
+#   2. If /config/minecraft/ is a plain directory (not a symlink), move
+#      it to /config/minecraft-worlds/${ACTIVE_WORLD}/ wholesale.
+#   3. Same for /config/minecraft-backups/ -> /config/minecraft-backups/
+#      flattened into <active>/git + <active>/archives.
+#   4. Create the /config/minecraft symlink pointing at the active profile.
+#
+# Subsequent boots: just ensure the symlink exists and points at the current
+# active profile. Switching worlds is a matter of updating the `active_world`
+# add-on option + restarting; this function handles the relinking.
+# ----------------------------------------------------------------------------
+ensure_worlds_layout() {
+    mkdir -p "${MC_WORLDS_DIR}" "${MC_BACKUPS_ROOT}"
+
+    local active="${ACTIVE_WORLD:-default}"
+    local world_dir="${MC_WORLDS_DIR}/${active}"
+    local backup_dir="${MC_BACKUPS_ROOT}/${active}"
+
+    # --- Migration: legacy /config/minecraft/ is a real directory -----------
+    if [ -d "/config/minecraft" ] && [ ! -L "/config/minecraft" ]; then
+        bashio::log.notice "Migrating legacy /config/minecraft -> ${MC_WORLDS_DIR}/${active}"
+        if [ -e "${world_dir}" ]; then
+            bashio::log.warning "${world_dir} already exists; not overwriting. Please inspect manually."
+        else
+            mv "/config/minecraft" "${world_dir}"
+        fi
+    fi
+
+    # --- Migration: legacy /config/minecraft-backups/ with no profile dir ---
+    # Detect the old shape (direct git/ and archives/ children) and flatten
+    # it into the active profile.
+    if [ -d "${MC_BACKUPS_ROOT}" ] && [ ! -L "${MC_BACKUPS_ROOT}" ]; then
+        if [ -d "${MC_BACKUPS_ROOT}/git" ] || [ -d "${MC_BACKUPS_ROOT}/archives" ]; then
+            bashio::log.notice "Migrating legacy ${MC_BACKUPS_ROOT}/{git,archives} -> ${backup_dir}/"
+            mkdir -p "${backup_dir}"
+            for sub in git archives; do
+                if [ -d "${MC_BACKUPS_ROOT}/${sub}" ] && [ ! -e "${backup_dir}/${sub}" ]; then
+                    mv "${MC_BACKUPS_ROOT}/${sub}" "${backup_dir}/${sub}"
+                fi
+            done
+        fi
+    fi
+
+    # Make sure the active profile's dirs exist
+    mkdir -p "${world_dir}" "${backup_dir}"
+
+    # --- Symlinks: point /config/minecraft + /config/minecraft-backups at
+    # the active profile. Replace wrong-target symlinks silently.
+    for pair in "/config/minecraft:${world_dir}" "/config/minecraft-backups:${backup_dir}"; do
+        local link="${pair%%:*}"
+        local target="${pair##*:}"
+        if [ -L "${link}" ]; then
+            local current
+            current=$(readlink "${link}")
+            if [ "${current}" != "${target}" ]; then
+                bashio::log.info "Relinking ${link} -> ${target} (was ${current})"
+                rm -f "${link}"
+                ln -s "${target}" "${link}"
+            fi
+        elif [ -e "${link}" ]; then
+            # Shouldn't reach here after migration — but if we do, get out
+            # of the way with a loud warning rather than clobbering data.
+            bashio::log.error "${link} is not a symlink but should be after migration. Refusing to overwrite."
+        else
+            ln -s "${target}" "${link}"
+            bashio::log.info "Linked ${link} -> ${target}"
+        fi
+    done
+
+    chown -R minecraft:minecraft "${MC_WORLDS_DIR}" "${MC_BACKUPS_ROOT}" 2>/dev/null || true
+    bashio::log.info "Active world: ${active}  (dir: ${world_dir})"
 }
 
 # ----------------------------------------------------------------------------
@@ -592,6 +689,7 @@ main() {
 
     load_config
     check_eula
+    ensure_worlds_layout
     prepare_filesystem
     ensure_rcon_password
 
