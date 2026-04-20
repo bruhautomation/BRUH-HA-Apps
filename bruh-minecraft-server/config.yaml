@@ -53,6 +53,14 @@ ports_description:
 # App configuration options
 options:
   eula: false
+  # active_world: which saved server profile is currently live. Each profile
+  # lives at /config/minecraft-worlds/<name>/ with its own world folder,
+  # server.properties, plugins, and backup history. Use the panel's "Worlds"
+  # tab (or the world-manager.sh CLI) to create, switch, and delete profiles.
+  # Changing this option + restarting the add-on flips the active world.
+  # The legacy /config/minecraft/ directory migrates to "default" on first
+  # boot of 1.3.0, so existing installs keep their world unchanged.
+  active_world: default
   server_type: paper
   minecraft_version: LATEST
   motd: "A BRUH Minecraft Server"
@@ -158,6 +166,7 @@ options:
   log_level: info
 schema:
   eula: bool
+  active_world: "match(^[A-Za-z0-9_-]{1,32}$)?"
   server_type: "list(paper|purpur|vanilla|fabric|forge|folia)"
   minecraft_version: "match(^(LATEST|SNAPSHOT|(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(\\.(0|[1-9]\\d*))?(-.+)?)$)"
   motd: str
