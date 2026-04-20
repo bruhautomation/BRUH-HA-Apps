@@ -4,6 +4,59 @@ Complete configuration reference, operational notes, and integration details.
 
 ---
 
+## 0. Feature overview (what this add-on does)
+
+A bird's-eye view so you can skim to the sections that matter to you:
+
+- **Rock-solid Paper / Purpur / Folia / Vanilla / Fabric / Forge** server jar management. `LATEST`, `SNAPSHOT`, or any pinned version; auto-resolves, caches to `/data/server-cache`, re-downloads only when upstream changes.
+- **Aikar-flagged Java 21 JVM** with configurable memory, extra JVM args, and crash auto-restart (rate-limited so a fatal misconfig can't runaway-restart).
+- **Ingress-only panel** at the add-on's sidebar entry with:
+  - Live dashboard (status dot, version, uptime, TPS, latency, players).
+  - Streaming console over SSE with INFO/WARN/ERROR colouring, clear button, autoscroll toggle, and a command input (no leading slash needed).
+  - Players tab with one-click op/deop/kick/ban/pardon/whitelist.
+  - Server properties editor for the UI-safe subset of keys; changes apply over RCON where Paper supports it.
+  - Plugins tab with install-by-URL, size/mtime listing, one-click delete.
+  - Backups tab browsing both git snapshots and tar.gz archives with per-entry restore.
+  - Backup / Update / Restart / Stop buttons on every page.
+- **Bedrock cross-play** via Geyser (+ Floodgate when applicable). Auto-installed, auto-configured for your auth-type choice, and MTU/auth-type/validate-bedrock-login patched on every boot so iOS, Android, Switch, Xbox, PS and Windows 10/11 can connect.
+- **Offline mode done right.** Flip `online_mode: false` and the add-on silently forces `enforce-secure-profile: false`, switches Geyser to `auth-type: offline`, uninstalls Floodgate, and sets `validate-bedrock-login: false` — the full chain of changes Microsoft/Mojang's and GeyserMC's defaults gate behind one flag.
+- **Cheats made easy.** `allow_cheats: true` guarantees `/gamemode`, `/give`, `/tp`, `/summon`, `/fill` work for OP'd players; `initial_ops` auto-OPs listed usernames via RCON on startup (works in both online and offline auth).
+- **World safety.** Incremental git-backed world snapshots or tar.gz archive backups, on a configurable schedule, with one-click restore from either format.
+- **Home Assistant integration** with 12 sensors, 2 binary sensors, 4 buttons, 13 services, a `notify.bruh_minecraft_broadcast` platform, and a Supervisor-registered discovery tile for one-click setup.
+- **Self-healing.** Ghost-session auto-kicker clears stuck Bedrock handshakes; RCON client is thread-safe (fixes the `signal only works in main thread` panel crash); bad plugin URLs log a warning instead of tanking startup.
+- **Zero-dependency architecture.** Everything runs inside the one add-on container — no separate proxy jars, no VPS, no external broker.
+
+Version 1.2.6 at time of writing; see CHANGELOG.md for the full evolution.
+
+---
+
+## 0.1 Quick start
+
+1. Install the add-on from the BRUH repository in Home Assistant.
+2. **Set `eula: true`** in the **Configuration** tab. The add-on will refuse to start otherwise — that's the Minecraft EULA acknowledgement, required by Mojang.
+3. (Optional) For kids / LAN / no-Microsoft-account play: set `online_mode: false`. Everything Bedrock + Java needs will auto-adjust.
+4. (Optional) Add usernames to `initial_ops` so you're OP'd the first time you join.
+5. Start the add-on. Give it ~30 s for the jar to download and Paper to boot, then open the **Minecraft** entry in HA's sidebar — the panel's dashboard tells you when the server is online.
+6. Connect to `<your-HA-host>:25565` from Java Edition, or `<your-HA-host>:19132` from Bedrock (UDP, same subnet gets automatic LAN discovery in the Bedrock **Friends** tab).
+
+The rest of this document is optional reading — the defaults are sensible.
+
+---
+
+## 0.2 Panel access on mobile
+
+The panel is served over HA's ingress, so anywhere the Home Assistant Companion app works (iOS, Android, web), the panel works too. 1.2.6 added a full mobile responsive layout:
+
+- Tab row scrolls horizontally with momentum on iOS; the right edge fades out so you can tell there's more tabs to reach.
+- Forms stack vertically on narrow viewports.
+- Tables scroll horizontally inside their own container instead of breaking the layout.
+- Input fields use 16px font to avoid iOS Safari's auto-zoom on focus.
+- Touch targets honour the 40–44px minimum the iOS/Material design guides recommend.
+
+If a page feels cramped, pull the companion app's **Sidebar → Minecraft** tile to full-width (there's no benefit to the "card" view here — the panel's own layout wants the pixels).
+
+---
+
 ## 1. Configuration reference
 
 Every option can be set from the add-on's **Configuration** tab. All options are validated against the schema in `config.yaml`; invalid values will be rejected by the Supervisor before the add-on starts.
@@ -309,6 +362,110 @@ automation:
 │   └── *.pid *.log
 └── server-cache/                # downloaded jars (content-addressed)
 ```
+
+## 4.1 Complete service reference
+
+Every HA service the integration exposes, with payload examples. Call from **Developer Tools → Actions** or from an automation.
+
+```yaml
+# Broadcast a message to everyone online.
+action: bruh_minecraft.say
+data:
+  message: "Dinner's ready — server going down in 2 minutes."
+
+# Send any Minecraft command over RCON (response comes back in the UI).
+action: bruh_minecraft.rcon_command
+data:
+  command: "weather clear"
+
+# Give an item. Player must be online.
+action: bruh_minecraft.give
+data:
+  player: "Alice"
+  item: "minecraft:diamond_pickaxe"
+  amount: 1
+
+# Weather: clear / rain / thunder.
+action: bruh_minecraft.set_weather
+data:
+  weather: "clear"
+
+# Time: shortcuts or absolute ticks.
+action: bruh_minecraft.set_time
+data:
+  time: "day"  # or "night", "noon", "midnight", or a number e.g. "12000"
+
+# Take a backup right now (git or archive, per your config).
+action: bruh_minecraft.backup_now
+
+# Graceful save + restart. The add-on re-launches the JVM automatically
+# unless you also call stop_server.
+action: bruh_minecraft.restart_server
+
+# Graceful save + stop. Sets no_restart so the add-on stays at "stopped"
+# until you start it again from the UI or call another lifecycle service.
+action: bruh_minecraft.stop_server
+
+# Player management (all take `player: "<name>"`):
+# bruh_minecraft.op_player, deop_player, kick_player, ban_player,
+# whitelist_add, whitelist_remove.
+```
+
+## 4.2 More automation examples
+
+**Low-TPS alert** — if the TPS drops below 15 for a minute, notify the admin.
+
+```yaml
+automation:
+  - alias: Minecraft - lag alert
+    trigger:
+      - platform: numeric_state
+        entity_id: sensor.bruh_minecraft_tps_1m
+        below: 15
+        for: "00:01:00"
+    action:
+      - service: notify.mobile_app_pixel
+        data:
+          title: "Minecraft server lagging"
+          message: "TPS 1m is {{ states('sensor.bruh_minecraft_tps_1m') }}"
+```
+
+**Auto-stop when idle for 30 min** — saves CPU when the kids are off the server.
+
+```yaml
+automation:
+  - alias: Minecraft - auto-stop on idle
+    trigger:
+      - platform: numeric_state
+        entity_id: sensor.bruh_minecraft_players_online
+        below: 1
+        for: "00:30:00"
+    action:
+      - service: bruh_minecraft.stop_server
+```
+
+**Snap a backup right before any destructive command** — use the `rcon_command` service plus the `backup_now` service in sequence.
+
+```yaml
+script:
+  minecraft_safe_fill:
+    sequence:
+      - service: bruh_minecraft.backup_now
+      - delay: "00:00:05"
+      - service: bruh_minecraft.rcon_command
+        data:
+          command: "fill ~-10 ~ ~-10 ~10 ~ ~10 minecraft:stone"
+```
+
+**Assist voice control** — the BRUH Claude Terminal add-on pairs with this to let you say "tell everyone dinner's ready" and have it hit the `say` service. See the Claude Terminal docs for setup; no config change needed on the Minecraft side.
+
+## 4.3 Security considerations
+
+- **RCON is loopback-only** (bound to `127.0.0.1:25575`) with a 32-character random password stored at `/data/panel/rcon.secret` (mode 0600). It's never exposed to the LAN.
+- **Ingress auth** — the panel inherits whatever authentication your Home Assistant instance uses; there's no separate login.
+- **Offline mode on the internet is dangerous.** If you forward port 25565 publicly with `online_mode: false`, anyone who guesses a username can join as that player — including OPs. Keep offline mode LAN-only, or put the server behind a Velocity/Waterfall proxy that handles auth.
+- **Plugin URLs run with full server permissions.** Only add URLs you trust from the `plugins:` option. 1.2.5+ verifies downloads start with the ZIP magic bytes so a rate-limit HTML page can't be saved as a jar, but a malicious signed jar can still compromise the server.
+- **World backups live under `/config/minecraft-backups/`** (bind-mounted to your HA host). Git mode keeps a full history with commits; copy the whole dir off-host for true disaster recovery.
 
 ## 5. Troubleshooting
 

@@ -5,53 +5,34 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## 1.3.0
+## 1.2.6
 
-### Added
+### Changed
 
-- **Switchable server profiles (aka "multi-world").** Each profile is
-  a complete, self-contained server root — its own world, plugins,
-  `server.properties`, and backup history. Only one is active at a
-  time; switching is a config change + restart. This unblocks
-  survival ↔ creative ↔ pvp ↔ hardcore workflows on a single add-on
-  install without manually shuffling folders.
-- New **`active_world`** option (`match(^[A-Za-z0-9_-]{1,32}$)?`,
-  default `default`). Points at `/config/minecraft-worlds/<name>/`.
-- New **`scripts/world-manager.sh`** CLI with `list / create / switch
-  / delete / active` subcommands. `switch` writes the new
-  `active_world` value via the Supervisor `/addons/self/options` API;
-  the caller restarts the add-on to activate.
-- New **panel "Worlds" tab** (`/api/worlds` endpoints):
-    - Table of all profiles with size, active flag, and per-row
-      **Switch** / **Delete** actions (switch prompts to restart the
-      add-on immediately after so the new world boots).
-    - Create form taking a profile name + optional seed.
-    - Delete refuses the active profile (hard stop) so you can't
-      brick the running server by removing its own files.
-- **Automatic migration for existing (1.2.x) installs.** On first
-  1.3.0 boot, `ensure_worlds_layout` detects a legacy
-  `/config/minecraft/` plain directory + legacy
-  `/config/minecraft-backups/{git,archives}` and moves them to
-  `/config/minecraft-worlds/default/` and
-  `/config/minecraft-backups/default/{git,archives}` respectively.
-  `/config/minecraft` becomes a symlink to the active profile — all
-  existing scripts, plugins, and HA services keep working unchanged.
-- **Per-world backups out of the box.** Because each profile has its
-  own `minecraft-backups/<name>/` tree, the existing git / archive
-  backup pipelines work per-profile automatically — no changes
-  needed to `backup.sh` beyond the symlink resolution.
-
-### Tests (12 new, 213 total)
-
-- `test_minecraft_world_manager.py`:
-    - 4 tests on `create` (skeleton layout, invalid-name rejection,
-      duplicate rejection, seed pass-through).
-    - 2 tests on `list` (enumeration, active-flag reporting).
-    - 3 tests on `delete` (success path, missing refusal, invalid-name
-      rejection).
-    - 3 tests on `ensure_worlds_layout` migration (legacy plain-dir
-      migration into `default`, relinking when `active_world`
-      changes, idempotence on already-linked state).
+- **Mobile panel is now first-class.** Multiple users reported tabs
+  they couldn't reach on phones and forms that overflowed the HA
+  Companion viewport. Full responsive pass on `panel/style.css`:
+    - Tab row scrolls horizontally with iOS momentum + a right-edge
+      fade so you can tell there's more to the right.
+    - 40–44 px touch targets on every `.btn` and `.tab`.
+    - Tables collapse to horizontal-scroll on narrow viewports
+      instead of forcing the page wider than the screen.
+    - Input fields use 16 px font to suppress iOS Safari's auto-zoom
+      on focus.
+    - Single-column grid + compact padding under 720 px; even
+      tighter under 400 px (iPhone SE class).
+    - `prefers-reduced-motion` honoured for accessibility.
+- **Complete DOCS overhaul.** New feature overview + quick-start +
+  mobile-access sections at the top of `DOCS.md`; new
+  **Complete service reference** with copy-paste payloads for every
+  HA service; new **Automation examples** (low-TPS alert, idle
+  auto-stop, safe-fill wrapper); new **Security considerations**
+  section covering RCON isolation, offline-mode caveats, and the
+  plugin-URL threat model. README gains a feature row for the new
+  offline-mode / cheats / mobile-friendly work shipped in 1.2.0
+  through 1.2.5.
+- `viewport-fit=cover` on the panel `<meta>` so the layout respects
+  iOS safe-area insets on notched devices.
 
 ## 1.2.5
 

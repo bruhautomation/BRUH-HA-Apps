@@ -10,6 +10,9 @@ A rock-solid Minecraft **Java Edition** server add-on for Home Assistant with a 
 
 - **Cross-play with Bedrock (iOS, Android, Xbox, Switch, PS, Win10/11).** `enable_bedrock_support: true` is on by default and auto-installs Geyser + Floodgate so iPhone / iPad / console players can join the same world on UDP:19132 — no extra setup. `host_network: true` means the server shows up automatically in Minecraft's **Friends** tab on any device on the same LAN (no manual IP entry needed).
 - **Latest Minecraft, any flavour.** Pick Paper, Purpur, Folia, Vanilla, Fabric, or Forge — the add-on resolves `LATEST`/`SNAPSHOT`/specific versions against upstream APIs on every boot and caches jars to `/data/server-cache`.
+- **Offline-mode / no-Xbox play done right.** Flip `online_mode: false` and the add-on silently fixes every downstream setting (`enforce_secure_profile`, Geyser `auth-type`, Floodgate removal, `validate-bedrock-login`) so LAN / family / kids-without-Xbox setups just work.
+- **Cheats + OPs in one click.** `allow_cheats: true` enables `/gamemode`, `/give`, `/tp`, `/summon`, `/fill`; `initial_ops` auto-OPs usernames on startup over RCON (works in both online and offline auth).
+- **Mobile-friendly panel.** Fully responsive layout with horizontal-scroll tab row, stacked forms, 44 px touch targets, and iOS-zoom-proof input fields — the HA Companion app experience matches desktop.
 - **Ingress management panel.** Dashboard, live console with colour-coded log levels, RCON command input, chat broadcast, player management, editable `server.properties`, plugin installer, and a full backup/restore browser — all inside Home Assistant's sidebar.
 - **Git-based world version control.** Every world snapshot is committed to a git repo at `/config/minecraft-backups/git`; restore any previous snapshot from the UI or service. (tar.gz archive mode is also available.)
 - **Deep HA integration.** Auto-discovered `bruh_minecraft` integration adds:
