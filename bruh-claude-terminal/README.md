@@ -78,6 +78,8 @@ The integration can also be added manually via Settings > Devices & Services > A
 
 ## Configuration
 
+See [DOCS.md — Configuration Reference](DOCS.md#configuration-reference) for a description of every option. Quick overview of the defaults:
+
 | Option | Default | Description |
 |--------|---------|-------------|
 | `auto_launch_claude` | `true` | Auto-start Claude or show session picker |
@@ -85,9 +87,17 @@ The integration can also be added manually via Settings > Devices & Services > A
 | `auto_generate_context` | `true` | Generate CLAUDE.md on startup |
 | `backup_interval_minutes` | `30` | Minutes between auto-backups |
 | `enable_ha_mcp_server` | `true` | Enable HA MCP server for Claude |
-| `enable_assist_integration` | `false` | Enable Assist conversation agent |
-| `enable_automation_integration` | `false` | Enable automation task queue |
-| `dangerously_skip_permissions` | `true` | Skip per-action confirmation prompts in Claude Code (see [Permissions docs](DOCS.md#permissions-dangerously_skip_permissions)) |
+| `enable_assist_integration` | `true` | Enable Assist conversation agent |
+| `enable_automation_integration` | `true` | Enable automation task queue |
+| `assist_max_turns` | `5` | Max agentic turns per Assist request |
+| `automation_max_turns` | `10` | Max agentic turns per automation task |
+| `dangerously_skip_permissions` | `false` | Skip per-action confirmation prompts in the terminal (see [Permissions docs](DOCS.md#permissions-dangerously_skip_permissions)) |
+| `access_share` | `true` | Expose `/share` to Claude |
+| `access_media` | `true` | Expose `/media` to Claude |
+| `access_backup` | `true` | Expose `/backup` to Claude (read-only) |
+| `access_addon_configs` | `true` | Expose `/addon_configs` to Claude |
+| `access_addons` | `true` | Expose `/addons` to Claude |
+| `additional_directories` | `[]` | Extra directories to expose to Claude |
 | `persistent_apk_packages` | `[]` | APK packages to install on startup |
 | `persistent_pip_packages` | `[]` | pip packages to install on startup |
 | `log_level` | `info` | Logging verbosity |

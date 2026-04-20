@@ -26,6 +26,70 @@ The BRUH Claude app deploys a custom Home Assistant integration (`custom_compone
 
 **To restart:** Go to **Settings > System > Restart**, then check **Settings > Devices & Services** for BRUH Claude.
 
+## Configuration Reference
+
+Every option from the add-on **Configuration** tab, grouped by what it controls. All defaults match `config.yaml` as shipped; the Supervisor validates each value against the schema before the add-on starts.
+
+### Startup behaviour
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `auto_launch_claude` | bool | `true` | Launch Claude Code immediately in the web terminal. Turn off if you'd rather land on the shell and choose a session yourself (`claude-session-picker.sh`). |
+| `auto_generate_context` | bool | `true` | Regenerate `/config/CLAUDE.md` on every startup with a fresh snapshot of your HA install — entity counts by domain, automation list + states, installed add-ons and integrations, and a file-tree guide. Claude Code reads this file at the start of each session so it understands your setup without you having to explain it. |
+| `log_level` | `trace \| debug \| info \| notice \| warning \| error \| fatal` | `info` | Verbosity of the add-on's own startup log (the orange text in the add-on **Log** tab). Set to `debug` or `trace` when filing a bug report. |
+
+### Config backup
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `auto_backup` | bool | `true` | Enable the git-based backup of `/config`. The add-on initialises a git repo on first boot, writes a sensible `.gitignore` (excludes secrets, DBs, logs), and a background watcher commits changes on the configured interval. |
+| `backup_interval_minutes` | 5–1440 | `30` | Minutes between auto-commits by the background watcher. Lower = more history, more churn in the repo; higher = lighter but less granular. `ha-backup` triggers an on-demand commit any time. |
+
+### Native HA integrations
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enable_ha_mcp_server` | bool | `true` | Start the built-in MCP server that gives Claude entity states, service calls, automation traces, template rendering, logs, and config reloads. See the **MCP Server** section for the full tool list. |
+| `enable_assist_integration` | bool | `true` | Run the Assist listener. When the Voice Assistants pipeline routes a message to **BRUH Claude** (or a service call hits `bruh_claude.send_prompt`), the add-on picks it up from `/config/.bruh_claude/` and runs Claude Code to generate the response. |
+| `enable_automation_integration` | bool | `true` | Run the Automation listener. Drop a JSON task into `/data/automation-tasks/` (or call `bruh_claude.run_task`) and the add-on executes it with Claude Code in the background, optionally notifying you when it's done. |
+
+### Non-interactive turn budgets
+
+These cap how many agentic loops Claude runs before returning. Lower values are cheaper and faster but may truncate complex tasks; higher values give Claude more room to chain tool calls.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `assist_max_turns` | 1–20 | `5` | Per-request turn cap for the Assist conversation agent. Passed as `--max-turns` to Claude Code. 5 is enough for the common "check/toggle/summarise" flows; bump it if you see replies getting cut off mid-thought. |
+| `automation_max_turns` | 1–50 | `10` | Per-request turn cap for the Automation listener. Automation tasks typically need more turns than Assist because they're doing multi-step work unattended (read log → analyse → write report → notify). |
+
+### Terminal permissions
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `dangerously_skip_permissions` | bool | `false` | Interactive-terminal only. When `true`, Claude Code skips the per-action confirmation prompt. Conversation agents and automation tasks always skip permissions regardless of this setting (they have no way to prompt). See the **Permissions** section below for the full story. |
+
+### Volume access
+
+The add-on manifest bind-mounts `/share`, `/media`, `/backup`, `/addon_configs`, and `/addons` into the container. The toggles below decide whether Claude Code actually sees them (the env vars `SHARE_DIR`, `MEDIA_DIR`, etc. are only exported when the corresponding toggle is on). Turning one off is a defence-in-depth measure — it does not physically unmount the path, but Claude's tools won't be pointed at it.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `access_share` | bool | `true` | Expose `/share` (HA's shared folder). |
+| `access_media` | bool | `true` | Expose `/media` (HA's media library). |
+| `access_backup` | bool | `true` | Expose `/backup` (HA's snapshot folder, read-only). |
+| `access_addon_configs` | bool | `true` | Expose `/addon_configs/` (every other add-on's config folder). Useful for asking Claude to diagnose a neighbour add-on. |
+| `access_addons` | bool | `true` | Expose `/addons` (the HA local add-ons folder). Useful when you're developing an add-on alongside this one. |
+| `additional_directories` | list of absolute paths | `[]` | Extra container paths to hand to Claude Code. Each entry must resolve to an existing directory inside the container — missing paths are logged and skipped. The add-on also `chown`s them to the non-root `claude` user so edits work. |
+
+### Persistent packages
+
+These let you keep packages installed across container restarts (the add-on container is otherwise rebuilt fresh on every update).
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `persistent_apk_packages` | list of strings | `[]` | Alpine `apk` packages to install on startup. Example: `["vim", "htop", "ripgrep"]`. Managed identically to running `persist-install apk <name>` from the terminal. |
+| `persistent_pip_packages` | list of strings | `[]` | Python `pip` packages to install on startup. Example: `["pandas", "numpy"]`. Managed identically to `persist-install pip <name>`. |
+
 ## Permissions (dangerously_skip_permissions)
 
 Claude Code has a `--dangerously-skip-permissions` flag that tells it to execute tool calls (file edits, shell commands, MCP tool calls) without asking for interactive confirmation on each action.
@@ -53,8 +117,8 @@ Additionally, the app writes a `settings.local.json` file that pre-allows all MC
 
 The `dangerously_skip_permissions` config option **only affects the interactive terminal**:
 
-- **`true` (default):** The terminal runs Claude Code without per-action confirmation prompts. This is the standard mode.
-- **`false`:** The terminal will prompt for confirmation before each tool call. Conversation agents and automation tasks are **not affected** — they always skip permissions.
+- **`false` (default):** The terminal will prompt for confirmation before each tool call. This is the safer mode and the right choice while you're still learning what Claude will do to your HA config.
+- **`true`:** The terminal runs Claude Code without per-action confirmation prompts. Conversation agents and automation tasks are **not affected** by this toggle — they always skip permissions regardless of the setting.
 
 To change: go to **Settings > Apps > BRUH Claude Terminal > Configuration**.
 
