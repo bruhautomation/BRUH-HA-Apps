@@ -71,6 +71,12 @@ body {
   background: var(--bg-card);
   border-bottom: 1px solid var(--border);
   overflow-x: auto;
+  /* Momentum scrolling on iOS so the horizontal tab row feels native */
+  -webkit-overflow-scrolling: touch;
+  scroll-snap-type: x proximity;
+  /* Subtle right-edge fade tells users there's more to scroll to */
+  mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 24px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 24px), transparent 100%);
 }
 .tab {
   background: transparent;
@@ -81,9 +87,15 @@ body {
   cursor: pointer;
   border-bottom: 2px solid transparent;
   white-space: nowrap;
+  scroll-snap-align: start;
+  /* 44px minimum height meets iOS HIG + Material touch-target recommendations */
+  min-height: 44px;
 }
 .tab:hover { color: var(--fg); }
 .tab.active { color: var(--fg); border-bottom-color: var(--accent); }
+/* Hide scrollbar on the tab row for cleaner look (still scrollable). */
+.tabs::-webkit-scrollbar { height: 2px; }
+.tabs::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 
 main { flex: 1; padding: 20px; }
 .tab-panel { display: none; }
@@ -131,10 +143,14 @@ dd { margin: 0; font-variant-numeric: tabular-nums; }
   color: var(--fg);
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 8px 14px;
+  padding: 10px 14px;
   font: inherit;
   cursor: pointer;
   transition: background .15s, border-color .15s;
+  /* Touch-target minimum. Applies on all viewports — desktop users
+     benefit from a larger click target too. */
+  min-height: 40px;
+  min-width: 40px;
 }
 .btn:hover { background: var(--border); }
 .btn-primary { background: var(--primary); color: #fff; border-color: transparent; }
@@ -205,7 +221,18 @@ dd { margin: 0; font-variant-numeric: tabular-nums; }
 .console .error { color: #ff6060; }
 .console .info  { color: #4ea2ff; }
 
-/* Tables */
+/* Tables. On narrow viewports we want horizontal scrolling so long
+   rows (backup SHAs, plugin filenames) don't clip off-screen. The
+   `.table-wrap` element wraps the table in JS-added lists; for
+   backwards compat with existing markup the .table itself also
+   gets `display: block` + overflow on small screens via the media
+   query at the bottom of this file. */
+.table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border-radius: 8px;
+}
 .table {
   width: 100%;
   border-collapse: collapse;
@@ -250,8 +277,69 @@ footer {
 }
 .sep { opacity: .5; }
 
-@media (max-width: 600px) {
-  .topbar { flex-direction: column; align-items: flex-start; }
-  .actions { width: 100%; }
-  .actions .btn { flex: 1; }
+/* ------------------------------------------------------------------
+   Responsive breakpoints
+   ------------------------------------------------------------------
+   The panel is served inside HA's ingress iframe, which on phones is
+   the full width of the HA Companion app. Before 1.2.6, wide tables
+   (Backups, Plugins), the console, and the tab row didn't scale down —
+   users reported they couldn't reach some tabs at all. These rules
+   put the panel squarely in mobile-first territory.
+   ------------------------------------------------------------------ */
+@media (max-width: 720px) {
+  /* Tighter outer padding so the content uses the available pixels. */
+  main { padding: 12px; }
+  .topbar { padding: 10px 12px; flex-direction: column; align-items: stretch; }
+  .brand h1 { font-size: 15px; }
+  .actions { width: 100%; justify-content: stretch; }
+  .actions .btn { flex: 1 1 0; min-width: 0; }
+
+  /* Tabs already scroll horizontally; bump the typing target size a
+     bit so a fat finger can tap without zooming in. */
+  .tab { padding: 14px 16px; font-size: 14px; }
+
+  /* Console sits above the fold nicely at ~280px min-height on
+     phones; the 70vh cap still applies so landscape still looks ok. */
+  .console { min-height: 240px; max-height: 60vh; font-size: 12px; }
+  .console-toolbar { padding: 10px; gap: 8px; }
+  .console-toolbar form { width: 100%; }
+
+  /* Stack inline forms so a "say" input doesn't get squished under
+     a "Send" button that's also trying to share the row. */
+  .inline-form { flex-direction: column; align-items: stretch; }
+  .inline-form input[type="text"],
+  .inline-form input[type="url"],
+  .inline-form select {
+    width: 100%;
+    min-width: 0;
+    font-size: 16px; /* 16px avoids iOS Safari auto-zoom on focus */
+  }
+  .inline-form .btn { width: 100%; }
+
+  /* Tables overflow horizontally on their own so a long backup SHA
+     or plugin filename doesn't force the rest of the layout wider
+     than the viewport. */
+  .table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .table td.actions { flex-wrap: wrap; }
+
+  /* Grid collapses to a single column on narrow widths. */
+  .grid { grid-template-columns: 1fr; gap: 10px; }
+  .big-number { font-size: 28px; }
+
+  footer { padding: 8px 12px; flex-direction: column; align-items: flex-start; gap: 2px; }
+  footer .sep { display: none; }
+}
+
+/* Extra-narrow (phones in portrait, e.g. iPhone SE). Drop padding
+   further and stack the Say/Command forms tightly. */
+@media (max-width: 400px) {
+  main { padding: 10px; }
+  .card { padding: 12px; }
+  dl { grid-template-columns: 1fr; }
+  dd { padding-bottom: 4px; }
+}
+
+/* Reduce motion for users who asked for it (iOS Settings → Motion). */
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
 }
