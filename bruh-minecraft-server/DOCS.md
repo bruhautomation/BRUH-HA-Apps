@@ -43,7 +43,32 @@ The rest of this document is optional reading — the defaults are sensible.
 
 ---
 
-## 0.2 Panel access on mobile
+## 0.2 Switchable server profiles (multi-world)
+
+Since 1.3.0 the add-on can host multiple independent servers and flip between them with one option change. Each **world profile** is a full server root — its own world files, `server.properties`, plugins, and backup history — living at `/config/minecraft-worlds/<name>/`. Only one is active at a time.
+
+Why you might want this:
+
+- A creative-mode sandbox world for kids, plus a survival world for the adults, without any world-file mixing.
+- Seasonal events (a "Halloween" profile, a "Summer vanilla" profile).
+- A throwaway test server for trying new plugin combos without risking the main save.
+
+How to switch:
+
+- **Panel → Worlds tab** (recommended). Shows every profile, its on-disk size, the active one, and a "Switch" button. The panel writes `active_world` to your add-on options via the Supervisor API, then you click **Restart** in the header to boot into the new world.
+- **Add-on Configuration tab.** Set `active_world: <name>` and restart — same effect.
+- **CLI.** From the terminal: `world-manager.sh list | create <name> [seed] | switch <name> | delete <name> | active`. Profile names are 1–32 characters, letters/digits/underscore/dash only.
+
+Notes:
+
+- The legacy `/config/minecraft/` path is migrated to the `default` profile on first boot of 1.3.0, so existing installs keep their world unchanged.
+- Backups are **per profile** — switching worlds also switches the backup history shown on the Backups tab.
+- `delete` refuses to remove the currently-active profile. Switch away first.
+- Add-on options (`difficulty`, `gamemode`, `memory_mb`, plugin URLs, etc.) are **shared across profiles** — they're not per-profile settings. Only the world state and per-world server.properties overrides are isolated.
+
+---
+
+## 0.3 Panel access on mobile
 
 The panel is served over HA's ingress, so anywhere the Home Assistant Companion app works (iOS, Android, web), the panel works too. 1.2.6 added a full mobile responsive layout:
 
@@ -66,6 +91,12 @@ Every option can be set from the add-on's **Configuration** tab. All options are
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `eula` | bool | `false` | **You must set this to `true` to start the server.** Accepts the Minecraft EULA at <https://www.minecraft.net/eula>. |
+
+### World selection
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `active_world` | `^[A-Za-z0-9_-]{1,32}$` | `default` | Which saved server profile is currently live. Each profile lives under `/config/minecraft-worlds/<name>/` with its own world, `server.properties`, plugins, and backups. See section 0.2 for the full multi-world workflow. |
 
 ### Server type & version
 
@@ -150,7 +181,11 @@ Toggle `allow_cheats: true` to guarantee the "cheat" commands work, then OP the 
 
 ### RCON
 
-RCON is always enabled on port `25575` and bound to `127.0.0.1`. The add-on auto-generates a secure password on first boot (stored at `/data/panel/rcon.secret`) unless you set `rcon_password`. The password never leaves the HA host — only the ingress panel and HA bridge use it.
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `rcon_password` | password | `""` (auto-generated) | Pre-set the RCON password instead of letting the add-on generate one. Leave blank and a random 32-character password is written to `/data/panel/rcon.secret` (mode `0600`) on first boot. |
+
+RCON is always enabled on port `25575` and bound to `127.0.0.1`. The password never leaves the HA host — only the ingress panel and HA bridge use it. You almost never need to set `rcon_password` yourself; the auto-generated one is what you want.
 
 ### Backups
 
@@ -173,11 +208,20 @@ You can trigger a one-shot backup at any time:
 
 ### Auto-restart
 
-| Option | Type | Default |
-|--------|------|---------|
-| `auto_restart_on_crash` | bool | `true` |
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `auto_restart_on_crash` | bool | `true` | Re-launch the JVM automatically when it exits unexpectedly. |
+| `auto_restart_schedule` | cron-like string | `""` | Optional scheduled restart (for long-running servers with memory creep). Empty string disables. Example: `"03:00"` for a daily 3 AM restart. |
 
 Rate-limited: a maximum of 5 restarts per 5-minute rolling window before the add-on gives up and reports the crash. The **Stop** button in the panel (and the `bruh_minecraft.stop_server` service) writes a `no_restart` flag so the JVM stays down until you start it again.
+
+### Connection handling
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `auto_kick_ghost_sessions` | bool | `true` | When Paper rejects a new login with "You are already connected to this server!" (because a previous connection hung), a background daemon tails the server log and RCON-kicks the stale session so the retry succeeds. No plugin needed. Leave on unless you're debugging a custom auth plugin. |
+| `connection_throttle_ms` | 0–60000 | `4000` | Paper's per-IP connection-throttle in milliseconds. `0` disables it, which avoids the "Slow down, you're connecting too fast!" kick on rapid iOS retries. Safe on LAN; keep the default on public servers to slow down connection-flood attacks. |
+| `player_idle_timeout_minutes` | 0–1440 | `0` | Auto-kick a player after this many idle minutes. `0` disables. Low values (e.g. `5`) help clean up ghost sessions quickly in addition to `auto_kick_ghost_sessions`. |
 
 ### Plugins (Paper / Purpur / Folia)
 
@@ -203,6 +247,7 @@ Plugins are fetched with `If-Modified-Since`, so re-starts don't re-download unc
 |--------|------|---------|-------------|
 | `enable_bedrock_support` | bool | `true` | Auto-install Geyser + Floodgate so Bedrock clients can connect. |
 | `geyser_auth_type` | `auto \| floodgate \| online \| offline` | `auto` | Controls Geyser's Bedrock authentication. `auto` picks `offline` whenever Java `online_mode` is `false` (no Xbox sign-in required on Bedrock either) and `floodgate` otherwise. Set explicitly to override. |
+| `geyser_mtu` | 576–1492 | `1400` | Geyser's Bedrock UDP MTU. Drop to `1200` if iOS clients hang on **"Connecting multiplayer server…"** — many home Wi-Fi routers fragment UDP packets above ~1200 bytes mid-handshake, which Bedrock doesn't recover from gracefully. |
 
 With this enabled (the default) the add-on downloads the latest Geyser + Floodgate builds from GeyserMC's v2 API on every boot:
 
@@ -218,6 +263,12 @@ Bedrock clients connect to `your-home-assistant-host` on port `19132` (UDP) — 
 - `homeassistant.local` sometimes fails on iOS — always prefer the raw IPv4 address.
 
 Geyser + Floodgate files land in `/config/minecraft/plugins/` (or `mods/` for Fabric) and can be deleted from the panel's **Plugins** tab just like any other plugin. If you delete them while the toggle is still on, they'll be re-downloaded the next time the add-on restarts.
+
+### Diagnostics
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `log_level` | `trace \| debug \| info \| notice \| warning \| error \| fatal` | `info` | Verbosity of the add-on's own startup / lifecycle logging (the orange text in the add-on **Log** tab). Has no effect on Minecraft server log output, which is controlled by `logback.xml` inside the server jar. Bump to `debug` or `trace` when filing a bug report. |
 
 ---
 
@@ -261,6 +312,14 @@ The panel is reachable from the **Minecraft** entry in HA's sidebar (or directly
 - Git snapshots with short SHA, timestamp, and subject.
 - Archive backups with filename, size, and timestamp.
 - One-click **Restore** on any row — the server is stopped, worlds are restored, and the add-on restarts the JVM automatically.
+- Backups shown are scoped to the **currently-active world profile**. Switch worlds from the Worlds tab to browse another profile's history.
+
+### Worlds
+
+- Lists every world profile under `/config/minecraft-worlds/` with on-disk size and an "Active?" marker.
+- **Switch** button writes `active_world` to the add-on options via the Supervisor API — then hit **Restart** in the header to boot into it.
+- **Create** form stages an empty profile (optional fixed seed); name must be 1–32 characters, `[A-Za-z0-9_-]`.
+- **Delete** removes both the world directory and its backup history; refuses to delete the active profile (switch away first).
 
 ---
 
@@ -339,15 +398,19 @@ automation:
 
 ```
 /config/
-├── minecraft/                   # server root (persisted)
-│   ├── server.jar
-│   ├── server.properties
-│   ├── eula.txt
-│   ├── world/ world_nether/ world_the_end/
-│   └── plugins/
+├── minecraft  ->  minecraft-worlds/<active_world>/   # symlink to the active profile
+├── minecraft-worlds/                                 # all world profiles live here
+│   ├── default/                                      # auto-migrated from pre-1.3.0
+│   │   ├── server.jar
+│   │   ├── server.properties
+│   │   ├── eula.txt
+│   │   ├── world/ world_nether/ world_the_end/
+│   │   └── plugins/
+│   └── creative_flat/                                # another profile
+│       └── …
 ├── minecraft-backups/
-│   ├── git/                     # git repo (backup_use_git=true)
-│   └── archives/                # *.tar.gz (backup_use_git=false)
+│   ├── <profile>/git/           # git repo (backup_use_git=true)
+│   └── <profile>/archives/      # *.tar.gz (backup_use_git=false)
 ├── .bruh_minecraft/             # HA bridge shared dir
 │   ├── stats.json state.json players.json
 │   ├── requests/
