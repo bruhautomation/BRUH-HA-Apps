@@ -117,12 +117,10 @@ if [ -z "$target" ]; then
 elif [ "$target" = "all" ]; then
     # Send to all mobile_app notify services
     echo -e "${CYAN}Sending to all mobile devices...${NC}"
-    local services
     services=$(get_notify_services)
-    local sent=0
+    sent=0
     while IFS= read -r svc; do
         if [[ "$svc" == mobile_app_* ]]; then
-            local data
             data=$(jq -n --arg title "$title" --arg msg "$message" \
                 '{"title": $title, "message": $msg}')
             api_post "/services/notify/${svc}" "$data"
@@ -137,9 +135,8 @@ elif [ "$target" = "all" ]; then
     fi
 else
     # Send to specific target
-    local svc_name="mobile_app_${target}"
+    svc_name="mobile_app_${target}"
     echo -e "${CYAN}Sending to ${svc_name}...${NC}"
-    local data
     data=$(jq -n --arg title "$title" --arg msg "$message" \
         '{"title": $title, "message": $msg}')
     api_post "/services/notify/${svc_name}" "$data"

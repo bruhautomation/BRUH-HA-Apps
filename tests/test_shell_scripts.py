@@ -155,10 +155,11 @@ class TestRunSh(unittest.TestCase):
 
     def test_mcp_config_no_token(self):
         """MCP JSON config should NOT embed SUPERVISOR_TOKEN value."""
-        # Find the MCP entry JSON template in run.sh
-        mcp_section = self.content[self.content.index("setup_mcp_server"):]
-        mcp_section = mcp_section[:mcp_section.index("# ====", 10)]
-        # The mcp_entry variable (the JSON written to disk) should not have SUPERVISOR_TOKEN
+        # Find the MCP entry JSON template in run.sh. The function definition
+        # (not any earlier comment references) is where the JSON template lives.
+        fn_start = self.content.index("setup_mcp_server()")
+        mcp_section = self.content[fn_start:]
+        # The mcp_entry variable holds the JSON written to disk.
         mcp_entry_start = mcp_section.index("local mcp_entry='")
         mcp_entry_end = mcp_section.index("}'", mcp_entry_start) + 2
         mcp_entry = mcp_section[mcp_entry_start:mcp_entry_end]
@@ -317,11 +318,16 @@ class TestIntegrationListeners(unittest.TestCase):
     def test_automation_listener_pipes_prompt(self):
         """automation-listener.sh should pipe prompt to claude, not pass as arg."""
         content = read_file(os.path.join(INTEGRATIONS_DIR, "automation-listener.sh"))
-        # Listeners use ${CLAUDE_BIN} variable which defaults to "claude"
-        self.assertTrue(
-            "printf '%s' \"$prompt\" | claude -p" in content
-            or "printf '%s' \"$prompt\" | ${CLAUDE_BIN} -p" in content,
-            "automation-listener.sh should pipe prompt to claude via stdin"
+        # The pipe chain may include `timeout` between the pipe and the claude
+        # binary, so we verify the prompt is piped in and is not an argument.
+        self.assertRegex(
+            content, r"printf\s+'%s'\s+\"\$prompt\"\s*\|",
+            "automation-listener.sh should pipe prompt via stdin (printf '%s' \"$prompt\" | ...)"
+        )
+        self.assertNotRegex(
+            content,
+            r"(?:claude|\$\{?CLAUDE_BIN\}?)\s+-p\b[^\n]*\"\$prompt\"",
+            "automation-listener.sh must not pass $prompt to claude as an argument"
         )
 
     def test_assist_listener_pipes_prompt(self):

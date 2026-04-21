@@ -161,10 +161,10 @@ class TestEdgeCaseErrorLog(unittest.TestCase):
 
     @patch("ha_mcp_server.ha_api_request")
     def test_empty_error_log(self, mock_api):
-        """Empty error log should return empty string."""
+        """Empty error log should surface a clear 'no data' error."""
         mock_api.return_value = ""
         result = ha_mcp_server.get_error_log()
-        self.assertEqual(result, "")
+        self.assertEqual(result, {"error": "No log data available."})
 
     @patch("ha_mcp_server.ha_api_request")
     def test_error_log_very_long(self, mock_api):

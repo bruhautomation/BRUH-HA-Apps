@@ -165,9 +165,15 @@ class TestStringsJson(unittest.TestCase):
             cls.translations = json.load(f)
 
     def test_strings_has_config_steps(self):
-        """strings.json should have config steps."""
+        """strings.json should have config steps.
+
+        The config flow uses `first_setup` for the initial agent and
+        `add_agent` for subsequent agents, plus `hassio_confirm` for
+        discovery.
+        """
         steps = self.strings.get("config", {}).get("step", {})
-        self.assertIn("user", steps)
+        self.assertIn("first_setup", steps)
+        self.assertIn("add_agent", steps)
         self.assertIn("hassio_confirm", steps)
 
     def test_strings_has_errors(self):
@@ -184,9 +190,9 @@ class TestStringsJson(unittest.TestCase):
         """translations/en.json should match strings.json."""
         self.assertEqual(self.strings, self.translations)
 
-    def test_user_step_has_timeout_data(self):
-        """User step should have a timeout data label."""
-        data = self.strings["config"]["step"]["user"].get("data", {})
+    def test_add_agent_step_has_timeout_data(self):
+        """The add_agent config step should have a timeout data label."""
+        data = self.strings["config"]["step"]["add_agent"].get("data", {})
         self.assertIn("timeout", data)
 
     def test_has_options_strings(self):

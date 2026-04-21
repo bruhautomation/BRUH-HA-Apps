@@ -83,15 +83,17 @@ class TestNoHardcodedCredentials(unittest.TestCase):
             )
 
     def test_supervisor_token_never_assigned_literal(self):
-        """SUPERVISOR_TOKEN should only come from environment."""
+        """SUPERVISOR_TOKEN should only come from environment variables."""
+        # HA_TOKEN is derived from SUPERVISOR_TOKEN in run.sh, so re-deriving
+        # SUPERVISOR_TOKEN from HA_TOKEN in an interactive-shell fallback is
+        # semantically equivalent to reading from the environment.
+        env_ref = re.compile(r'SUPERVISOR_TOKEN="\$\{?(SUPERVISOR_TOKEN|HA_TOKEN)')
         for script in get_all_shell_scripts():
             content = read_file(script)
             name = os.path.basename(script)
-            # Allow SUPERVISOR_TOKEN="${SUPERVISOR_TOKEN:-}" pattern
             for line in content.split("\n"):
                 if "SUPERVISOR_TOKEN=" in line and not line.strip().startswith("#"):
-                    # Only allow env var references
-                    if not re.search(r'SUPERVISOR_TOKEN="\$\{?SUPERVISOR_TOKEN', line):
+                    if not env_ref.search(line):
                         self.fail(f"{name}: SUPERVISOR_TOKEN assigned non-env value: {line.strip()}")
 
     def test_mcp_config_no_embedded_token(self):
@@ -141,12 +143,25 @@ class TestNoCommandInjection(unittest.TestCase):
 
     def test_listeners_pipe_prompts_not_args(self):
         """Listeners should pipe prompts to claude via stdin, not as args."""
+        # The actual pipe chain can include intermediate commands like
+        # `timeout $CLAUDE_TIMEOUT` between the pipe and the claude binary,
+        # so we check two things independently:
+        #   1. The prompt is piped in via `printf '%s' "$var" |`
+        #   2. The claude invocation (claude -p / ${CLAUDE_BIN} -p) appears
+        #      without the prompt variable as an argument.
+        pipe_pattern = re.compile(r"printf\s+'%s'\s+\"\$[A-Za-z_][A-Za-z0-9_]*\"\s*\|")
+        claude_arg_pattern = re.compile(
+            r"(?:claude|\$\{?CLAUDE_BIN\}?)\s+-p\b[^\n]*\"\$(?:prompt|text|user_message)\""
+        )
         for listener in ["assist-listener.sh", "automation-listener.sh"]:
             content = read_file(os.path.join(INTEGRATIONS_DIR, listener))
-            # Listeners use ${CLAUDE_BIN} variable which defaults to "claude"
-            self.assertTrue(
-                "| claude -p" in content or "| ${CLAUDE_BIN} -p" in content,
-                f"{listener} should pipe prompt to claude via stdin"
+            self.assertRegex(
+                content, pipe_pattern,
+                f"{listener} should pipe prompt via stdin (printf '%s' \"$var\" | ...)"
+            )
+            self.assertNotRegex(
+                content, claude_arg_pattern,
+                f"{listener} must not pass prompt to claude as a command-line argument"
             )
 
 
