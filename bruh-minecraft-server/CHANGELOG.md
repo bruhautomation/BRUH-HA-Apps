@@ -5,6 +5,47 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.2.7
+
+### Fixed
+
+- **"Outdated server! I'm still on X.Y.Z" when connecting from Java
+  Edition.** `LATEST` was resolving to whichever version ended up last
+  in PaperMC's `versions[]` array — which includes pre-releases
+  (`1.21.11-pre5`) and release candidates (`1.21.11-rc3`) mixed in
+  chronologically with stable releases. During Paper's rolling
+  pre-release window the add-on would download an RC jar whose
+  network protocol differs from the stable client, so vanilla clients
+  rejected the server with the "Outdated server!" kick even though
+  the version string matched. `resolve_paper_version` now filters the
+  array to stable-shaped entries (`X.Y` / `X.Y.Z`) before picking
+  `[-1]`, so `LATEST` always resolves to the newest *released* Paper
+  build. Users who explicitly want pre-release jars can still opt in
+  via `minecraft_version: SNAPSHOT`. The same filter is applied to
+  Purpur, where the upstream `versions[]` array contains out-of-order
+  and non-MC-shaped entries that could likewise produce a bogus
+  download.
+- **`jq: Cannot index string with string "url"` crash-logged on every
+  plugin with a shorthand URL entry.** `install_plugins` assumed every
+  element of the `plugins:` list was an object of shape
+  `{url: "...", name: "..."}`, but users commonly paste a plain URL
+  string (`plugins: ["https://.../NickNamer.jar"]`). The mismatch
+  logged a jq type error per entry and the plugin was silently skipped
+  with "Skipping plugin entry with empty URL", making it look like the
+  add-on had forgotten the plugin. The parser now accepts both shapes:
+  a JSON string is treated as `{url: <string>}`, so shorthand works
+  out of the box.
+- **Startup banner printed `v{{ version }}` instead of the real
+  version.** `build.yaml` passes `ADDON_VERSION: "{{ version }}"` as
+  a Docker ARG expecting the HA Supervisor to render the Jinja
+  template to the actual add-on version, but several Supervisor build
+  paths (and every local podman build) skip that rendering and leave
+  the literal string in place. The add-on now bakes `config.yaml`
+  into the image at build time and `run.sh` parses the authoritative
+  version at startup, falling back to the ARG only when the parse
+  fails. "Am I actually running the new build?" is answerable again
+  from the log banner.
+
 ## 1.2.6
 
 ### Changed

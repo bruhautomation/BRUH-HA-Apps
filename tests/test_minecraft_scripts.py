@@ -223,6 +223,50 @@ class TestRunSh(unittest.TestCase):
         self.assertIn("BASHIO_LOG_LEVEL", self.text,
                       "log_level option must export BASHIO_LOG_LEVEL")
 
+    def test_plugin_parser_accepts_string_shorthand(self):
+        """Regression for 1.2.7: `plugins:` entries can be either
+        `{url: "...", name: "..."}` objects or plain URL strings.
+        The pre-1.2.7 parser only handled the object form and emitted
+        `jq: Cannot index string with string "url"` on every string
+        entry, silently skipping the plugin.
+        """
+        # The parser must branch on the JSON type of the entry
+        self.assertIn("jq -r 'type'", self.text,
+                      "install_plugins must inspect entry type to support URL-string shorthand")
+        self.assertRegex(
+            self.text,
+            r'entry_type.*=.*"string"',
+            "install_plugins must special-case string-typed plugin entries",
+        )
+
+    def test_addon_version_resolver_handles_unrendered_template(self):
+        """Regression for 1.2.7: `build.yaml` passes ADDON_VERSION as a
+        Jinja template `{{ version }}`. When the Supervisor doesn't
+        render it (local builds, some Supervisor versions), the literal
+        `{{ version }}` ends up in the banner. run.sh must detect and
+        fall back to parsing config.yaml.
+        """
+        self.assertIn("resolve_addon_version", self.text,
+                      "run.sh must define resolve_addon_version")
+        self.assertIn('"{{ version }}"', self.text,
+                      "run.sh must detect un-rendered template value")
+        self.assertIn("/opt/bruh-mc/config.yaml", self.text,
+                      "run.sh must read baked-in config.yaml as fallback")
+
+
+class TestDockerfile(unittest.TestCase):
+    """The Dockerfile must bake config.yaml into the image so run.sh can
+    resolve the add-on version at startup without relying on the Jinja
+    template in build.yaml."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.text = _read(os.path.join(ADDON_DIR, "Dockerfile"))
+
+    def test_copies_config_yaml(self):
+        self.assertIn("COPY config.yaml /opt/bruh-mc/config.yaml", self.text,
+                      "Dockerfile must copy config.yaml so run.sh can parse the version at runtime")
+
 
 class TestDownloadServer(unittest.TestCase):
     @classmethod
@@ -244,6 +288,53 @@ class TestDownloadServer(unittest.TestCase):
 
     def test_failure_exits_nonzero(self):
         self.assertIn("exit 1", self.text)
+
+    def test_latest_filters_out_prereleases_and_rcs(self):
+        """Regression for 1.2.7: PaperMC's `versions[]` array mixes stable
+        releases with pre-releases (`1.21.11-pre5`) and release candidates
+        (`1.21.11-rc3`). A naive `.versions[-1]` picks a pre-release during
+        Paper's rolling release window, whose network protocol differs from
+        the stable client on the same MC version — vanilla clients reject
+        the server with "Outdated server! I'm still on X.Y.Z". LATEST must
+        filter to stable-shaped strings (X.Y or X.Y.Z) before picking [-1];
+        SNAPSHOT preserves opt-in to pre-releases.
+        """
+        # jq filter that selects only plain X.Y / X.Y.Z entries
+        filter_re = r'select\(test\("\^\[0-9\]\+\\\\\.\[0-9\]\+\(\\\\\.\[0-9\]\+\)\?\$"\)\)'
+        self.assertRegex(self.text, filter_re,
+                         "resolve_paper_version must filter versions to stable-shaped entries")
+        # Both paper and purpur must use the filter when VERSION_REQ == LATEST
+        # — the two separate branches prove LATEST and SNAPSHOT diverge.
+        self.assertIn('[ "${VERSION_REQ}" = "LATEST" ]', self.text)
+        self.assertIn('elif [ "${VERSION_REQ}" = "SNAPSHOT" ]', self.text)
+
+    def test_filter_regex_semantics(self):
+        """Sanity-check the jq filter against realistic upstream arrays.
+        Catches accidentally stripping valid versions or failing to strip
+        pre-releases.
+        """
+        import json
+        import subprocess
+        jq_filter = ('[.versions[] | select(test("^[0-9]+\\\\.[0-9]+'
+                     '(\\\\.[0-9]+)?$"))] | .[-1]')
+        scenarios = [
+            # stable 1.21.11 out, pre-releases also present -> pick stable
+            (["1.21.10", "1.21.11-pre5", "1.21.11-rc3", "1.21.11"], "1.21.11"),
+            # only pre-releases for the new version -> fall back to prior stable
+            (["1.21.9", "1.21.10", "1.21.11-pre3", "1.21.11-rc1"], "1.21.10"),
+            # two-component version ("1.20") is still a valid Minecraft version
+            (["1.19.4", "1.20", "1.20.1"], "1.20.1"),
+            # Snapshot-style weekly entries ("24w05a") must be filtered out
+            (["1.21.9", "1.21.10", "24w05a", "24w05b"], "1.21.10"),
+        ]
+        for versions, expected in scenarios:
+            with self.subTest(versions=versions):
+                payload = json.dumps({"versions": versions})
+                proc = subprocess.run(
+                    ["jq", "-r", jq_filter],
+                    input=payload, capture_output=True, text=True, check=True,
+                )
+                self.assertEqual(proc.stdout.strip(), expected)
 
 
 class TestBackup(unittest.TestCase):

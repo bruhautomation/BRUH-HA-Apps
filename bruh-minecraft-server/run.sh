@@ -399,9 +399,22 @@ install_plugins() {
                 set +o pipefail
                 local failures=0
                 bashio::config 'plugins' | jq -c '.[]' | while IFS= read -r plugin; do
-                    local url name
-                    url=$(echo "${plugin}" | jq -r '.url // empty')
-                    name=$(echo "${plugin}" | jq -r '.name // empty')
+                    local url name entry_type
+                    # Plugin entries accept two shapes:
+                    #   - { url: "...", name: "..." }  — canonical object form
+                    #   - "https://..."                — shorthand URL string
+                    # The shorthand is common when users paste a URL into the
+                    # HA Configuration tab's YAML editor without wrapping it.
+                    # Before 1.2.7 this raised `jq: Cannot index string with
+                    # string "url"` on every entry.
+                    entry_type=$(echo "${plugin}" | jq -r 'type')
+                    if [ "${entry_type}" = "string" ]; then
+                        url=$(echo "${plugin}" | jq -r '.')
+                        name=""
+                    else
+                        url=$(echo "${plugin}" | jq -r '.url // empty')
+                        name=$(echo "${plugin}" | jq -r '.name // empty')
+                    fi
                     if [ -z "${url}" ] || [ "${url}" = "null" ]; then
                         bashio::log.warning "Skipping plugin entry with empty URL"
                         continue
@@ -676,13 +689,44 @@ run_server_loop() {
     done
 }
 
+# ----------------------------------------------------------------------------
+# Resolve the add-on version for the startup banner.
+#
+# build.yaml passes `ADDON_VERSION: "{{ version }}"` as a Docker ARG, which
+# the HA Supervisor is supposed to render to the real version from
+# config.yaml. Some Supervisor build paths (and most local-build flows) skip
+# that Jinja rendering, leaving the literal string `{{ version }}` — which
+# then shows up in the banner as "BRUH Minecraft Server v{{ version }}".
+#
+# The Dockerfile bakes config.yaml into /opt/bruh-mc/config.yaml, so we can
+# read the authoritative version with a lightweight YAML parse. Fallback
+# chain: env ARG -> config.yaml -> "unknown".
+# ----------------------------------------------------------------------------
+resolve_addon_version() {
+    local candidate="${ADDON_VERSION:-}"
+    if [ -z "${candidate}" ] \
+       || [ "${candidate}" = "{{ version }}" ] \
+       || [ "${candidate}" = "dev" ]; then
+        if [ -r /opt/bruh-mc/config.yaml ]; then
+            candidate=$(python3 -c '
+import sys, yaml
+try:
+    with open("/opt/bruh-mc/config.yaml") as f:
+        print(yaml.safe_load(f).get("version", ""))
+except Exception:
+    pass
+' 2>/dev/null)
+        fi
+    fi
+    ADDON_VERSION="${candidate:-unknown}"
+    export ADDON_VERSION
+}
+
 # ============================================================================
 # Main
 # ============================================================================
 main() {
-    # ADDON_VERSION is baked into the Dockerfile from config.yaml's version:
-    # field, so the log always shows which build is actually running. This
-    # is the fastest way to answer "did my update take?" questions.
+    resolve_addon_version
     bashio::log.info "================================================================"
     bashio::log.info " BRUH Minecraft Server v${ADDON_VERSION:-unknown} starting"
     bashio::log.info "================================================================"
