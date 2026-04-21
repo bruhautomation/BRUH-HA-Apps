@@ -5,6 +5,26 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.2.8
+
+### Fixed
+
+- **Panel's Players tab showed nobody online even when players were
+  connected.** The ingress panel reads player names from `stats.json`,
+  which was populated solely by parsing Paper's `/list` RCON reply
+  against a strict regex. Paper rephrases that string between minor
+  versions, so the regex silently returned an empty name list and
+  (worse) overwrote mcstatus's valid online/max counts with zeros
+  during the merge. The collector now:
+    - Pulls player names from mcstatus's status-ping `players.sample`
+      in addition to RCON — the sample is a structured field that
+      doesn't suffer from text-format drift.
+    - Uses the sample as a fallback whenever RCON parsing returns no
+      names, so the panel stays populated even if Paper changes the
+      `/list` wording again.
+    - Guards the merge so a regex miss can no longer clobber the
+      mcstatus counts — "1/20 online" no longer decays to "0/0".
+
 ## 1.2.7
 
 ### Fixed
