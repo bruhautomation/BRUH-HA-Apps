@@ -9,6 +9,15 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Worlds tab "Switch" button failed with `HTTP 400: Missing option
+  'allow_nether'`.** `world-manager.sh switch` posted
+  `{"options": {"active_world": "<name>"}}` as the entire payload, but
+  the Supervisor's `POST /addons/self/options` endpoint **replaces**
+  the options object and re-validates against the full add-on schema —
+  so every other required field appeared missing. The script now
+  `GET`s `/addons/self/info`, merges the new `active_world` into the
+  existing options with `jq`, and POSTs the merged object. All of your
+  other settings survive the round-trip unchanged.
 - **Panel's Players tab showed nobody online even when players were
   connected.** The ingress panel reads player names from `stats.json`,
   which was populated solely by parsing Paper's `/list` RCON reply
