@@ -192,8 +192,13 @@ class TestDockerfile(unittest.TestCase):
             self.assertIn(pkg, self.content, f"Missing required package: {pkg}")
 
     def test_installs_claude_cli(self):
-        """Claude CLI should be installed."""
-        self.assertIn("claude.ai/install.sh", self.content)
+        """Claude CLI should be installed.
+
+        The Dockerfile installs via npm (the native installer downloads a
+        musl build that may miss symbols on Alpine 3.19's musl 1.2.4).
+        """
+        self.assertIn("@anthropic-ai/claude-code", self.content)
+        self.assertIn("npm install -g", self.content)
 
     def test_copies_run_sh(self):
         """run.sh should be copied."""
@@ -325,6 +330,7 @@ class TestScriptShebangs(unittest.TestCase):
         """Shebangs should use valid interpreters."""
         valid_shebangs = [
             "#!/bin/bash",
+            "#!/usr/bin/env bash",
             "#!/usr/bin/with-contenv bashio",
             "#!/usr/bin/env python3",
         ]

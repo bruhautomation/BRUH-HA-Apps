@@ -1,0 +1,126 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  tests:
+    name: Python tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pyyaml aiohttp aiofiles
+
+      - name: Run pytest
+        run: pytest tests/ -q
+
+  yamllint:
+    name: YAML lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install yamllint
+        run: |
+          python -m pip install --upgrade pip
+          pip install yamllint
+
+      - name: Lint add-on YAML
+        run: |
+          yamllint -d '{extends: relaxed, rules: {line-length: disable, trailing-spaces: enable, empty-lines: {max: 2}}}' \
+            repository.yaml \
+            bruh-claude-terminal/config.yaml \
+            bruh-claude-terminal/build.yaml \
+            bruh-minecraft-server/config.yaml \
+            bruh-minecraft-server/build.yaml
+
+  shellcheck:
+    name: Shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run shellcheck
+        uses: ludeeus/action-shellcheck@master
+        env:
+          # bashio's `#!/usr/bin/with-contenv bashio` shebang is not one
+          # shellcheck recognises — tell it to treat those scripts as bash.
+          # SC1091: can't follow source (runtime paths).
+          SHELLCHECK_OPTS: -s bash -e SC1091
+        with:
+          scandir: ./bruh-claude-terminal
+          severity: error
+          ignore_paths: >-
+            bruh-claude-terminal/ha-mcp-server
+            bruh-claude-terminal/custom_components
+
+      - name: Run shellcheck (minecraft)
+        uses: ludeeus/action-shellcheck@master
+        env:
+          SHELLCHECK_OPTS: -s bash -e SC1091
+        with:
+          scandir: ./bruh-minecraft-server
+          severity: error
+          ignore_paths: >-
+            bruh-minecraft-server/custom_components
+            bruh-minecraft-server/panel
+            bruh-minecraft-server/scripts
+
+  hadolint:
+    name: Dockerfile lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lint Claude Terminal Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: bruh-claude-terminal/Dockerfile
+          failure-threshold: error
+
+      - name: Lint Minecraft Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: bruh-minecraft-server/Dockerfile
+          failure-threshold: error
+
+  manifest-versions:
+    name: Manifest version consistency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check Claude Terminal version parity
+        run: |
+          addon_version=$(grep -E '^version:' bruh-claude-terminal/config.yaml | head -1 | sed 's/.*"\([^"]*\)".*/\1/')
+          manifest_version=$(python3 -c 'import json; print(json.load(open("bruh-claude-terminal/custom_components/bruh_claude/manifest.json"))["version"])')
+          echo "add-on:         $addon_version"
+          echo "HA integration: $manifest_version"
+          if [ "$addon_version" != "$manifest_version" ]; then
+            echo "::error::Claude Terminal add-on ($addon_version) and integration manifest ($manifest_version) versions disagree"
+            exit 1
+          fi
+
+      - name: Check Minecraft version parity
+        run: |
+          addon_version=$(grep -E '^version:' bruh-minecraft-server/config.yaml | head -1 | sed 's/.*"\([^"]*\)".*/\1/')
+          manifest_version=$(python3 -c 'import json; print(json.load(open("bruh-minecraft-server/custom_components/bruh_minecraft/manifest.json"))["version"])')
+          echo "add-on:         $addon_version"
+          echo "HA integration: $manifest_version"
+          if [ "$addon_version" != "$manifest_version" ]; then
+            echo "::error::Minecraft add-on ($addon_version) and integration manifest ($manifest_version) versions disagree"
+            exit 1
+          fi

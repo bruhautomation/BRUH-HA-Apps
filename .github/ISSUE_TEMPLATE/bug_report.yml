@@ -1,0 +1,57 @@
+name: Bug report
+description: Report a problem with a BRUH HA add-on
+labels: [bug]
+body:
+  - type: dropdown
+    id: addon
+    attributes:
+      label: Which add-on?
+      options:
+        - BRUH Claude Terminal
+        - BRUH Minecraft Server
+        - Other / unsure
+    validations:
+      required: true
+
+  - type: input
+    id: addon_version
+    attributes:
+      label: Add-on version
+      description: Find this in Settings > Add-ons > (the add-on) > Info.
+      placeholder: "1.15.2"
+    validations:
+      required: true
+
+  - type: input
+    id: ha_version
+    attributes:
+      label: Home Assistant version
+      placeholder: "2025.4.1"
+    validations:
+      required: true
+
+  - type: textarea
+    id: what_happened
+    attributes:
+      label: What happened?
+      description: What did you expect, and what did you actually see?
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Add-on logs
+      description: Copy relevant log output. Redact tokens/credentials first.
+      render: shell

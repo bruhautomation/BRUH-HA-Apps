@@ -1,0 +1,36 @@
+name: Feature request
+description: Suggest an idea for a BRUH HA add-on
+labels: [enhancement]
+body:
+  - type: dropdown
+    id: addon
+    attributes:
+      label: Which add-on?
+      options:
+        - BRUH Claude Terminal
+        - BRUH Minecraft Server
+        - Other / unsure
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the use case, not the solution.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: false
