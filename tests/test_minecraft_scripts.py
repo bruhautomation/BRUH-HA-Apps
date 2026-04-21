@@ -223,6 +223,50 @@ class TestRunSh(unittest.TestCase):
         self.assertIn("BASHIO_LOG_LEVEL", self.text,
                       "log_level option must export BASHIO_LOG_LEVEL")
 
+    def test_plugin_parser_accepts_string_shorthand(self):
+        """Regression for 1.2.7: `plugins:` entries can be either
+        `{url: "...", name: "..."}` objects or plain URL strings.
+        The pre-1.2.7 parser only handled the object form and emitted
+        `jq: Cannot index string with string "url"` on every string
+        entry, silently skipping the plugin.
+        """
+        # The parser must branch on the JSON type of the entry
+        self.assertIn("jq -r 'type'", self.text,
+                      "install_plugins must inspect entry type to support URL-string shorthand")
+        self.assertRegex(
+            self.text,
+            r'entry_type.*=.*"string"',
+            "install_plugins must special-case string-typed plugin entries",
+        )
+
+    def test_addon_version_resolver_handles_unrendered_template(self):
+        """Regression for 1.2.7: `build.yaml` passes ADDON_VERSION as a
+        Jinja template `{{ version }}`. When the Supervisor doesn't
+        render it (local builds, some Supervisor versions), the literal
+        `{{ version }}` ends up in the banner. run.sh must detect and
+        fall back to parsing config.yaml.
+        """
+        self.assertIn("resolve_addon_version", self.text,
+                      "run.sh must define resolve_addon_version")
+        self.assertIn('"{{ version }}"', self.text,
+                      "run.sh must detect un-rendered template value")
+        self.assertIn("/opt/bruh-mc/config.yaml", self.text,
+                      "run.sh must read baked-in config.yaml as fallback")
+
+
+class TestDockerfile(unittest.TestCase):
+    """The Dockerfile must bake config.yaml into the image so run.sh can
+    resolve the add-on version at startup without relying on the Jinja
+    template in build.yaml."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.text = _read(os.path.join(ADDON_DIR, "Dockerfile"))
+
+    def test_copies_config_yaml(self):
+        self.assertIn("COPY config.yaml /opt/bruh-mc/config.yaml", self.text,
+                      "Dockerfile must copy config.yaml so run.sh can parse the version at runtime")
+
 
 class TestDownloadServer(unittest.TestCase):
     @classmethod

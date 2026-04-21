@@ -76,6 +76,14 @@ COPY panel/ /opt/bruh-mc/panel/
 COPY integrations/ /opt/bruh-mc/integrations/
 COPY custom_components/ /opt/bruh-mc/custom_components/
 
+# Bake config.yaml into the image so run.sh can read the add-on version at
+# runtime. build.yaml passes `ADDON_VERSION: "{{ version }}"` but not every
+# Supervisor build path renders the Jinja template — local builds and some
+# Supervisor releases leave the literal string `{{ version }}` in the ENV,
+# which then shows up in the startup banner. Reading config.yaml at runtime
+# is authoritative and sidesteps the templating question entirely.
+COPY config.yaml /opt/bruh-mc/config.yaml
+
 # Ensure every shell / python entrypoint is executable
 RUN chmod +x /run.sh \
     && find /opt/bruh-mc/scripts -type f \( -name "*.sh" -o -name "*.py" \) -exec chmod +x {} \; \

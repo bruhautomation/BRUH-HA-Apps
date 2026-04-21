@@ -25,6 +25,26 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Purpur, where the upstream `versions[]` array contains out-of-order
   and non-MC-shaped entries that could likewise produce a bogus
   download.
+- **`jq: Cannot index string with string "url"` crash-logged on every
+  plugin with a shorthand URL entry.** `install_plugins` assumed every
+  element of the `plugins:` list was an object of shape
+  `{url: "...", name: "..."}`, but users commonly paste a plain URL
+  string (`plugins: ["https://.../NickNamer.jar"]`). The mismatch
+  logged a jq type error per entry and the plugin was silently skipped
+  with "Skipping plugin entry with empty URL", making it look like the
+  add-on had forgotten the plugin. The parser now accepts both shapes:
+  a JSON string is treated as `{url: <string>}`, so shorthand works
+  out of the box.
+- **Startup banner printed `v{{ version }}` instead of the real
+  version.** `build.yaml` passes `ADDON_VERSION: "{{ version }}"` as
+  a Docker ARG expecting the HA Supervisor to render the Jinja
+  template to the actual add-on version, but several Supervisor build
+  paths (and every local podman build) skip that rendering and leave
+  the literal string in place. The add-on now bakes `config.yaml`
+  into the image at build time and `run.sh` parses the authoritative
+  version at startup, falling back to the ARG only when the parse
+  fails. "Am I actually running the new build?" is answerable again
+  from the log banner.
 
 ## 1.2.6
 
