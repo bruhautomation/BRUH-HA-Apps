@@ -45,7 +45,18 @@ JSON
 
 resolve_paper_version() {
     local project="$1"  # paper | folia
-    if [ "${VERSION_REQ}" = "LATEST" ] || [ "${VERSION_REQ}" = "SNAPSHOT" ]; then
+    # PaperMC publishes pre-releases (`1.21.11-pre5`) and release candidates
+    # (`1.21.11-rc3`) into the same `versions[]` array as stable releases,
+    # in chronological order. A naive `.versions[-1]` therefore grabs a
+    # pre-release whenever one is out — whose network protocol differs from
+    # the stable client on the same MC version, so vanilla clients reject
+    # the server with "Outdated server! I'm still on X.Y.Z".
+    # For LATEST we filter to stable-shaped strings (`X.Y` / `X.Y.Z`).
+    # SNAPSHOT preserves the old behaviour and opts into pre-releases.
+    if [ "${VERSION_REQ}" = "LATEST" ]; then
+        curl -fsSL "https://api.papermc.io/v2/projects/${project}" \
+            | jq -r '[.versions[] | select(test("^[0-9]+\\.[0-9]+(\\.[0-9]+)?$"))] | .[-1]'
+    elif [ "${VERSION_REQ}" = "SNAPSHOT" ]; then
         curl -fsSL "https://api.papermc.io/v2/projects/${project}" \
             | jq -r '.versions[-1]'
     else
@@ -81,7 +92,14 @@ download_paper_like() {
 
 download_purpur() {
     local version build url
-    if [ "${VERSION_REQ}" = "LATEST" ] || [ "${VERSION_REQ}" = "SNAPSHOT" ]; then
+    # Purpur's `versions` array is not strictly chronological and can include
+    # non-MC-shaped entries (e.g. internal rebuild markers). Mirror the Paper
+    # logic: filter to stable-shaped strings (`X.Y` / `X.Y.Z`) for LATEST
+    # so we never try to download a bogus "26.1.2" jar.
+    if [ "${VERSION_REQ}" = "LATEST" ]; then
+        version=$(curl -fsSL "https://api.purpurmc.org/v2/purpur" \
+            | jq -r '[.versions[] | select(test("^[0-9]+\\.[0-9]+(\\.[0-9]+)?$"))] | .[-1]')
+    elif [ "${VERSION_REQ}" = "SNAPSHOT" ]; then
         version=$(curl -fsSL "https://api.purpurmc.org/v2/purpur" | jq -r '.versions[-1]')
     else
         version="${VERSION_REQ}"

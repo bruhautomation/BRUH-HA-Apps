@@ -5,6 +5,27 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.2.7
+
+### Fixed
+
+- **"Outdated server! I'm still on X.Y.Z" when connecting from Java
+  Edition.** `LATEST` was resolving to whichever version ended up last
+  in PaperMC's `versions[]` array — which includes pre-releases
+  (`1.21.11-pre5`) and release candidates (`1.21.11-rc3`) mixed in
+  chronologically with stable releases. During Paper's rolling
+  pre-release window the add-on would download an RC jar whose
+  network protocol differs from the stable client, so vanilla clients
+  rejected the server with the "Outdated server!" kick even though
+  the version string matched. `resolve_paper_version` now filters the
+  array to stable-shaped entries (`X.Y` / `X.Y.Z`) before picking
+  `[-1]`, so `LATEST` always resolves to the newest *released* Paper
+  build. Users who explicitly want pre-release jars can still opt in
+  via `minecraft_version: SNAPSHOT`. The same filter is applied to
+  Purpur, where the upstream `versions[]` array contains out-of-order
+  and non-MC-shaped entries that could likewise produce a bogus
+  download.
+
 ## 1.2.6
 
 ### Changed
