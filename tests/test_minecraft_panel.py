@@ -197,6 +197,65 @@ class TestCommandValidation(PanelTestBase):
         resp = await self.client.request("POST", "/api/say", json={"message": ""})
         self.assertEqual(resp.status, 400)
 
+
+class TestWorldsSwitchAutoRestart(PanelTestBase):
+    """Regression for 1.2.9: clicking Switch updates active_world but the
+    panel's header Restart only kicks the JVM — `ensure_worlds_layout`
+    never re-runs so the /config/minecraft symlink stays pointed at the
+    old profile and the same world keeps loading. api_worlds_switch must
+    now trigger a full add-on restart via the Supervisor so the symlink
+    actually moves."""
+
+    async def _patch_deps(self, *, switch_ok=True, restart_err=None):
+        """Replace _run_world_manager and _supervisor_restart_self on the
+        loaded panel module. Returns the call-log list."""
+        calls = []
+
+        async def fake_run_world_manager(*args):
+            calls.append(("world_manager", args))
+            if switch_ok:
+                return 0, "active_world set to 'survival'"
+            return 1, "profile does not exist"
+
+        async def fake_supervisor_restart():
+            calls.append(("supervisor_restart",))
+            return restart_err
+
+        self.panel._run_world_manager = fake_run_world_manager
+        self.panel._supervisor_restart_self = fake_supervisor_restart
+        return calls
+
+    async def test_switch_triggers_supervisor_restart(self):
+        calls = await self._patch_deps()
+        # Pretend the "survival" profile exists so world-name validation passes.
+        resp = await self.client.request("POST", "/api/worlds/survival/switch")
+        self.assertEqual(resp.status, 200, await resp.text())
+        data = await resp.json()
+        self.assertTrue(data["ok"])
+        self.assertIn("restarting now", data["message"])
+        # Both dependencies must have been invoked, in order.
+        self.assertEqual(
+            [c[0] for c in calls],
+            ["world_manager", "supervisor_restart"],
+        )
+
+    async def test_switch_surfaces_restart_failure(self):
+        calls = await self._patch_deps(restart_err="Supervisor HTTP 403")
+        resp = await self.client.request("POST", "/api/worlds/survival/switch")
+        self.assertEqual(resp.status, 200)
+        data = await resp.json()
+        self.assertTrue(data["ok"])
+        self.assertIn("auto-restart failed", data["warning"])
+        self.assertIn("403", data["warning"])
+
+    async def test_switch_does_not_restart_when_world_manager_fails(self):
+        calls = await self._patch_deps(switch_ok=False)
+        resp = await self.client.request("POST", "/api/worlds/nonexistent/switch")
+        self.assertEqual(resp.status, 400)
+        # Supervisor restart must NOT fire when the options write failed —
+        # otherwise we'd restart the add-on for nothing.
+        self.assertEqual([c[0] for c in calls], ["world_manager"])
+
     async def test_player_action_invalid_name(self):
         resp = await self.client.request("POST", "/api/player/bad;name/op")
         self.assertEqual(resp.status, 400)

@@ -5,6 +5,28 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.2.9
+
+### Fixed
+
+- **World switcher kept loading the same world.** Clicking **Switch**
+  updated the `active_world` add-on option correctly, but the symlink
+  that actually points at the active profile (`/config/minecraft ->
+  /config/minecraft-worlds/<name>`) is re-created inside
+  `ensure_worlds_layout` which only runs when the add-on CONTAINER
+  starts. The panel's header **Restart** button merely RCON-stops the
+  JVM, letting `run_server_loop` relaunch it inside the same container
+  — so the symlink never moved and the server kept loading the old
+  profile (users reported "it always goes back to the default
+  server"). The Switch button now issues `POST /addons/self/restart`
+  against the Supervisor immediately after updating `active_world`, so
+  the add-on container restarts, `ensure_worlds_layout` re-points the
+  symlink, and the new world loads on first boot — no second click
+  required. If the Supervisor restart call fails (e.g. the add-on was
+  granted reduced permissions), the panel reports the exact failure
+  and falls back to the old "click Restart on the HA add-on page"
+  instruction.
+
 ## 1.2.8
 
 ### Fixed

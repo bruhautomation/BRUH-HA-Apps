@@ -172,7 +172,7 @@
         <strong>What stays shared across every world:</strong> every setting in the add-on's <strong>Configuration</strong> tab — including <code>difficulty</code>, <code>gamemode</code>, <code>memory_mb</code>, <code>motd</code>, <code>level_name</code>, the <code>plugins:</code> URL list (copied into each profile's <code>plugins/</code> on boot), RCON password, and Geyser config. Changing them affects every profile.
       </p>
       <p class="muted">
-        <strong>Switching is a two-step workflow:</strong> (1) click <strong>Switch</strong> below — this writes <code>active_world</code> to your add-on options via the Supervisor API, nothing else happens yet. (2) Click <strong>Restart</strong> in the header to actually boot into the new world. The two-step design lets you queue a switch mid-session without forcing an immediate restart.
+        <strong>Switching is a one-click operation</strong> (since 1.2.9): hit <strong>Switch</strong> below and the add-on restarts itself so the new world's plugins, world files, and <code>server.properties</code> are loaded. The panel is unreachable for ~30 s while the container comes back up — refresh after that. The header's <strong>Restart</strong> button only kicks the JVM, which is faster but does NOT re-point the world symlink, so it won't switch worlds on its own.
       </p>
       <table class="table" id="worlds-table">
         <thead><tr><th>Name</th><th>Size</th><th>Active?</th><th>Actions</th></tr></thead>
