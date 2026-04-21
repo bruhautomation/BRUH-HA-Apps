@@ -82,12 +82,16 @@ These things **are shared across all profiles** — change them once and every p
 
 **Implication:** if you want a peaceful creative world and a hard survival world, you currently cannot set `difficulty: peaceful` for one and `difficulty: hard` for the other — they share that option. Workaround: edit the profile's `server.properties` directly via the panel's **Server Properties** tab; those changes persist until you restart the add-on (see **Settings precedence** below).
 
-### Switching — the exact two-step workflow
+### Switching — how it works (one click, since 1.2.9)
 
-1. Panel → **Worlds** tab → click **Switch** on the profile you want. The panel writes `active_world: <name>` into your add-on options via the Supervisor API. (Nothing happens to the running server yet.)
-2. Header → click **Restart**. On boot, `ensure_worlds_layout` re-points the `/config/minecraft` symlink to the new profile and the server starts with its world / plugins / ops.
+Panel → **Worlds** tab → click **Switch** on the profile you want. The panel:
 
-Skipping step 2 means the change is staged but not live — that's by design so you can queue a switch during an active session and trigger it later.
+1. Writes `active_world: <name>` into your add-on options via the Supervisor API.
+2. Immediately triggers a full add-on restart (`POST /addons/self/restart`). The container goes down, `main()` in `run.sh` runs again on startup, `ensure_worlds_layout` re-points the `/config/minecraft` symlink at the new profile, and the server boots with that profile's world / plugins / ops.
+
+The panel is unreachable for ~30 s while the container restarts — refresh after that. If the Supervisor refuses the restart call (rare; only if the add-on was granted reduced permissions), the panel surfaces the exact failure and you can click **Restart** on the HA add-on page manually.
+
+**Why not use the header's Restart button?** That button only RCON-stops the JVM, which `run_server_loop` then relaunches inside the same container. `ensure_worlds_layout` does NOT re-run, so the symlink stays pointed at the old profile. JVM-only restart is faster (~15 s vs ~30 s) and is the right tool for config-tab changes to server-properties keys, but it can't switch worlds.
 
 ### Notes
 

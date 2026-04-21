@@ -563,13 +563,63 @@ async def api_worlds_switch(request: web.Request) -> web.Response:
     rc, out = await _run_world_manager("switch", name)
     if rc != 0:
         return web.json_response({"error": out.strip()}, status=400)
-    # The options write succeeded; now prompt the add-on to restart so the
-    # relink happens. Responsibility for restarting the add-on belongs to
-    # the Supervisor, but the operator can also stop + start from HA.
+
+    # The active_world add-on option is now updated, but we still need the
+    # `/config/minecraft` symlink repointed at the new profile — that happens
+    # in `ensure_worlds_layout` inside `main()` of run.sh, which only runs
+    # when the add-on CONTAINER restarts (not when the JVM alone restarts).
+    # The header "Restart" button just RCON-stops the JVM and lets
+    # run_server_loop relaunch it in the same container, so the symlink
+    # never changes — users saw the same world keep loading.
+    #
+    # Trigger a full add-on restart via the Supervisor so the switch
+    # actually takes effect without a second manual step. The Supervisor
+    # queues the restart and returns immediately, so this response still
+    # makes it back to the browser before the panel goes down.
+    restart_err = await _supervisor_restart_self()
+    if restart_err:
+        return web.json_response({
+            "ok": True,
+            "warning": (
+                f"active_world set to '{name}', but auto-restart failed: "
+                f"{restart_err}. Click Restart on the HA add-on page to "
+                f"activate the switch."
+            ),
+        })
     return web.json_response({
         "ok": True,
-        "message": f"active_world set to '{name}'. Restart the add-on to activate.",
+        "message": (
+            f"Switched to '{name}'. The add-on is restarting now — "
+            f"this panel will be unreachable for ~30 seconds while the new "
+            f"world loads."
+        ),
     })
+
+
+async def _supervisor_restart_self() -> str | None:
+    """Ask the Supervisor to restart this add-on. Returns None on success
+    or a short error string on failure. Fire-and-forget: the Supervisor
+    queues the restart and responds immediately."""
+    token = os.environ.get("SUPERVISOR_TOKEN", "")
+    if not token:
+        return "SUPERVISOR_TOKEN not set"
+    base = os.environ.get("SUPERVISOR_API_URL", "http://supervisor")
+    # aiohttp is already imported at module scope (from aiohttp import web);
+    # we use the client session from the same package here.
+    import aiohttp
+    try:
+        timeout = aiohttp.ClientTimeout(total=5)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(
+                f"{base}/addons/self/restart",
+                headers={"Authorization": f"Bearer {token}"},
+            ) as resp:
+                if resp.status == 200:
+                    return None
+                body = (await resp.text())[:200]
+                return f"Supervisor HTTP {resp.status}: {body}"
+    except Exception as exc:  # noqa: BLE001
+        return f"{type(exc).__name__}: {exc}"
 
 
 async def api_worlds_delete(request: web.Request) -> web.Response:

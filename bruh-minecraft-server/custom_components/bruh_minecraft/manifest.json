@@ -1,7 +1,7 @@
 {
   "domain": "bruh_minecraft",
   "name": "BRUH Minecraft",
-  "version": "1.2.8",
+  "version": "1.2.9",
   "documentation": "https://github.com/bruhautomation/BRUH-HA-Apps/tree/main/bruh-minecraft-server",
   "issue_tracker": "https://github.com/bruhautomation/BRUH-HA-Apps/issues",
   "codeowners": ["@bruhautomation"],
