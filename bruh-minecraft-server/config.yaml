@@ -1,7 +1,7 @@
 ---
 name: "BRUH Minecraft Server"
 description: "Rock-solid Minecraft Java Edition server with ingress panel, RCON, git world backups, auto-updates, plugin management, and deep Home Assistant integration"
-version: "1.2.7"
+version: "1.2.8"
 slug: "bruh_minecraft_server"
 init: false
 
@@ -55,9 +55,20 @@ options:
   eula: false
   # active_world: which saved server profile is currently live. Each profile
   # lives at /config/minecraft-worlds/<name>/ with its own world folder,
-  # server.properties, plugins, and backup history. Use the panel's "Worlds"
-  # tab (or the world-manager.sh CLI) to create, switch, and delete profiles.
-  # Changing this option + restarting the add-on flips the active world.
+  # server.properties, plugins/ contents, ops/whitelist/bans, and backup
+  # history. Only ONE profile runs at a time — switching profiles is how
+  # you flip between (say) a creative-mode sandbox and a hard survival.
+  #
+  # IMPORTANT: every other setting in this file is SHARED across all
+  # profiles (difficulty, gamemode, memory_mb, motd, level_name, the
+  # plugins: URL list, etc.). So if you want per-world difficulty, you'll
+  # need to hand-edit that profile's server.properties via the panel's
+  # Server Properties tab; add-on options override it every boot.
+  #
+  # Two ways to change this value:
+  #   1. Panel → Worlds tab → "Switch". Writes this option for you via
+  #      the Supervisor API, then you click Restart to actually boot in.
+  #   2. Edit this value here and click Restart.
   # The legacy /config/minecraft/ directory migrates to "default" on first
   # boot of 1.3.0, so existing installs keep their world unchanged.
   active_world: default
@@ -161,6 +172,23 @@ options:
   # Low values (e.g. 5) help clean up ghost sessions quickly in addition
   # to `auto_kick_ghost_sessions`.
   player_idle_timeout_minutes: 0
+  # plugins: list of Bukkit plugin .jar URLs to install every boot into
+  # the active world's plugins/ folder (Paper/Purpur/Folia only — Fabric
+  # and Forge mods go in plugins/ manually or via the Dockerfile).
+  # Two accepted shapes — pick whichever is easier:
+  #
+  #   plugins:
+  #     - url: https://.../Essentials.jar
+  #       name: Essentials.jar          # optional filename on disk
+  #     - https://.../ViaVersion.jar    # shorthand — plain URL string
+  #
+  # You can mix the two in one list. Downloads use If-Modified-Since so
+  # unchanged files aren't re-fetched on every restart. Bad URLs (404,
+  # HTML rate-limit bodies, non-ZIP content) are skipped with a warning
+  # and the server still starts. Note: deleting a jar via the panel's
+  # Plugins tab is temporary — if the URL is still here, it comes back
+  # on the next boot. To remove a plugin permanently, remove the entry
+  # here AND delete the jar from the panel.
   plugins: []
   extra_jvm_args: ""
   log_level: info

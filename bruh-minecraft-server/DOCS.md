@@ -59,12 +59,41 @@ How to switch:
 - **Add-on Configuration tab.** Set `active_world: <name>` and restart — same effect.
 - **CLI.** From the terminal: `world-manager.sh list | create <name> [seed] | switch <name> | delete <name> | active`. Profile names are 1–32 characters, letters/digits/underscore/dash only.
 
-Notes:
+### What's per-world vs shared (important!)
+
+When you switch worlds, these things **travel with the world profile** — each profile has its own copy:
+
+| Per-world | Notes |
+|-----------|-------|
+| World save files (`world/`, `world_nether/`, `world_the_end/`) | The actual terrain & player data. |
+| `server.properties` | Rendered from add-on options on boot; any hand-edits to **non-managed** keys survive (see **Settings precedence** (below)). |
+| `plugins/` folder on disk | Jars live under each profile's `plugins/`. |
+| Backup history | `/config/minecraft-backups/<profile>/` — the Backups tab only shows the active profile's snapshots. |
+| `ops.json`, `whitelist.json`, `banned-players.json` | Each profile has its own op / whitelist / ban list. |
+
+These things **are shared across all profiles** — change them once and every profile sees it:
+
+| Shared | Why |
+|--------|-----|
+| All **add-on options** (`difficulty`, `gamemode`, `memory_mb`, `motd`, `level_name`, `level_seed`, `online_mode`, …) | They live in the add-on's Configuration tab, not in any profile. |
+| `plugins:` list in the add-on options | Jars get copied into the **active** profile's `plugins/` on boot. Switch worlds and the new profile's `plugins/` is populated from the same URL list. |
+| RCON password | Single secret per install, stored at `/data/panel/rcon.secret`. |
+| Geyser / Floodgate configuration | Regenerated per profile on boot, but from the same add-on options. |
+
+**Implication:** if you want a peaceful creative world and a hard survival world, you currently cannot set `difficulty: peaceful` for one and `difficulty: hard` for the other — they share that option. Workaround: edit the profile's `server.properties` directly via the panel's **Server Properties** tab; those changes persist until you restart the add-on (see **Settings precedence** below).
+
+### Switching — the exact two-step workflow
+
+1. Panel → **Worlds** tab → click **Switch** on the profile you want. The panel writes `active_world: <name>` into your add-on options via the Supervisor API. (Nothing happens to the running server yet.)
+2. Header → click **Restart**. On boot, `ensure_worlds_layout` re-points the `/config/minecraft` symlink to the new profile and the server starts with its world / plugins / ops.
+
+Skipping step 2 means the change is staged but not live — that's by design so you can queue a switch during an active session and trigger it later.
+
+### Notes
 
 - The legacy `/config/minecraft/` path is migrated to the `default` profile on first boot of 1.3.0, so existing installs keep their world unchanged.
-- Backups are **per profile** — switching worlds also switches the backup history shown on the Backups tab.
 - `delete` refuses to remove the currently-active profile. Switch away first.
-- Add-on options (`difficulty`, `gamemode`, `memory_mb`, plugin URLs, etc.) are **shared across profiles** — they're not per-profile settings. Only the world state and per-world server.properties overrides are isolated.
+- `level_name: <name>` in add-on options is the **level folder name inside the profile directory**. It's shared across profiles, so every profile will look for a subfolder with that name. If you rename `level_name`, existing worlds won't auto-rename their folder — they'll be regenerated from scratch (the old `world/` stays on disk but isn't loaded).
 
 ---
 
@@ -85,6 +114,8 @@ If a page feels cramped, pull the companion app's **Sidebar → Minecraft** tile
 ## 1. Configuration reference
 
 Every option can be set from the add-on's **Configuration** tab. All options are validated against the schema in `config.yaml`; invalid values will be rejected by the Supervisor before the add-on starts.
+
+> **Which surface do I change a setting on?** Read **Settings precedence** (below) before editing anything. Short version: add-on Configuration tab = source of truth, panel Server-Properties tab = live tweaks that don't survive a restart.
 
 ### Required
 
@@ -225,14 +256,43 @@ Rate-limited: a maximum of 5 restarts per 5-minute rolling window before the add
 
 ### Plugins (Paper / Purpur / Folia)
 
+Two accepted shapes — pick whichever is easier:
+
 ```yaml
+# Canonical object form — url required, name optional.
 plugins:
   - url: https://example.com/Essentials.jar
-    name: Essentials.jar          # optional rename
+    name: Essentials.jar           # optional rename on disk
   - url: https://example.com/ViaVersion.jar
 ```
 
-Plugins are fetched with `If-Modified-Since`, so re-starts don't re-download unchanged files.
+```yaml
+# Shorthand — a plain URL string also works (since 1.2.7). Filename
+# is derived from the URL.
+plugins:
+  - "https://example.com/ViaVersion.jar"
+  - "https://example.com/Essentials.jar"
+```
+
+You can mix the two forms in one list. Only `paper`, `purpur`, and `folia` load Bukkit plugins; for `fabric`/`forge` the `plugins:` list is ignored (mods go in `/config/minecraft/mods/` instead). Plugins are fetched with `If-Modified-Since`, so restarts don't re-download unchanged files.
+
+**URL gotchas to save you a debug cycle:**
+
+- `releases/latest/download/X.jar` only resolves when the asset is literally named `X.jar`. Many projects version their filenames (`NickNamer-5.15.0.jar`), which 404s the `/latest/download/` URL — pin the exact version in that case (`releases/download/5.15.0/NickNamer-5.15.0.jar`).
+- GitHub anonymous rate limits occasionally serve an HTML page instead of a jar. The add-on rejects downloads that don't start with `PK` and logs `download isn't a valid jar` — just restart the add-on a few minutes later.
+- Per-plugin failures are isolated since 1.2.5; a single bad URL can't prevent the server from starting (the failing plugin is skipped with a warning).
+
+### Settings precedence — who wins when you change a thing
+
+This is the single-most-confusing thing about the add-on, so here's the exact rule:
+
+1. **Add-on Configuration tab = source of truth.** On every add-on boot, `setup-server-properties.sh` renders `server.properties` from your add-on options. Any **managed key** (MOTD, difficulty, gamemode, max-players, view-distance, pvp, whitelist, etc. — see `scripts/setup-server-properties.sh` for the complete list) is overwritten.
+2. **Panel → Server Properties tab = live tweaks.** Editing a managed key here writes to `server.properties` AND (where possible) applies live via RCON, so the change takes effect immediately without a restart. **But it's transient** — the next add-on restart rewrites that key from step 1.
+3. **Non-managed keys are preserved.** Any key you add to `server.properties` that isn't in the managed set (exotic Paper-only keys, plugin-specific settings, etc.) survives across restarts. The panel also preserves them.
+4. **`initial_ops` vs the panel Players tab.** `initial_ops` runs once per boot via RCON. Using the Players tab to op/deop someone applies immediately and persists in `ops.json` — the next restart doesn't un-op them (ops.json is not rewritten from add-on options).
+5. **Plugin list (`plugins:`) vs the panel Plugins tab.** The add-on downloads every URL in `plugins:` on boot (with `If-Modified-Since`, so it's cheap). Deleting a plugin from the panel removes the jar from disk, but if the URL is still in `plugins:`, the add-on re-downloads it on next restart. Want it gone? Remove the entry from `plugins:` AND delete the jar.
+
+**Rule of thumb:** if you want the change to persist across add-on restarts, put it in the Configuration tab. Use the panel for "try this now" or for keys the Configuration tab doesn't manage.
 
 ### HA integration
 

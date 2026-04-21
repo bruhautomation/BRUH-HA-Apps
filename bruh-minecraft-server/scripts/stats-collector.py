@@ -81,7 +81,14 @@ def _probe_rcon(password: str) -> dict[str, Any]:
     try:
         with Rcon(RCON_HOST, password, port=RCON_PORT, timeout=5) as r:
             try:
-                out.update(_parse_list(r.command("list")))
+                parsed = _parse_list(r.command("list"))
+                # Only adopt the parsed result if the regex actually matched
+                # something useful. A zeros-only payload means the regex
+                # missed the server's `/list` format and would otherwise
+                # overwrite mcstatus's online/max during the later merge,
+                # hiding any players from the panel.
+                if parsed["max"] > 0 or parsed["players"]:
+                    out.update(parsed)
             except Exception:  # noqa: BLE001
                 pass
             try:
@@ -111,6 +118,15 @@ def _probe_mcstatus() -> dict[str, Any]:
         if status.players:
             out.setdefault("online", status.players.online)
             out.setdefault("max", status.players.max)
+            # `sample` is an optional list of currently-online players the
+            # server advertises in its status ping. Paper always populates it
+            # (capped at ~12). Use it as a fallback player-name source when
+            # RCON `/list` parsing misses the format — which happens whenever
+            # Paper tweaks the "There are X of a max of Y players…" string
+            # between minor versions, causing the panel to show an empty
+            # player list even though players are online.
+            if getattr(status.players, "sample", None):
+                out["players_sample"] = [p.name for p in status.players.sample]
     except Exception:  # noqa: BLE001
         pass
     return out
@@ -118,6 +134,12 @@ def _probe_mcstatus() -> dict[str, Any]:
 
 def write_stats(started_at: float, reachable: bool, last_rcon_ok: bool,
                 payload: dict[str, Any]) -> None:
+    # Player names come from RCON `/list` output when available; if the
+    # parser missed the format (Paper tweaks it between versions) we fall
+    # back to the mcstatus status-ping sample so the panel stays populated.
+    players = payload.get("players") or []
+    if not players and payload.get("players_sample"):
+        players = payload["players_sample"]
     data: dict[str, Any] = {
         "updated_at": int(time.time()),
         "uptime_seconds": int(time.time() - started_at),
@@ -125,7 +147,7 @@ def write_stats(started_at: float, reachable: bool, last_rcon_ok: bool,
         "rcon_ok": last_rcon_ok,
         "online": payload.get("online", 0),
         "max_players": payload.get("max", 0),
-        "players": payload.get("players", []),
+        "players": players,
         "tps_1m": payload.get("tps_1m"),
         "tps_5m": payload.get("tps_5m"),
         "tps_15m": payload.get("tps_15m"),

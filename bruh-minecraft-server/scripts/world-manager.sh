@@ -93,15 +93,42 @@ cmd_switch() {
     if [ -z "${SUPERVISOR_TOKEN:-}" ]; then
         die "SUPERVISOR_TOKEN not set; cannot update options from this context" 1
     fi
+    local supervisor_base="${SUPERVISOR_API_URL:-http://supervisor}"
+
+    # Supervisor's POST /addons/self/options REPLACES the options object and
+    # runs the full add-on schema validation against the new payload. A bare
+    # {"active_world": "<name>"} is rejected with
+    #   "Missing option 'allow_nether' in root in BRUH Minecraft Server…"
+    # because every required field that isn't in the payload is treated as
+    # missing. Fetch the current options first, merge in the new
+    # active_world, then POST the merged object so the rest of the config
+    # survives the round-trip.
+    local info_code
+    info_code=$(curl -sS -o /tmp/world-manager-info.out -w "%{http_code}" \
+        -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
+        "${supervisor_base}/addons/self/info" 2>&1) || true
+    if [ "${info_code}" != "200" ]; then
+        log "Supervisor /addons/self/info returned HTTP ${info_code}:"
+        cat /tmp/world-manager-info.out >&2 || true
+        rm -f /tmp/world-manager-info.out
+        exit 1
+    fi
     local payload
-    payload=$(printf '{"options":{"active_world":"%s"}}' "${name}")
+    payload=$(jq -c --arg w "${name}" \
+        '{options: ((.data.options // {}) + {active_world: $w})}' \
+        /tmp/world-manager-info.out)
+    rm -f /tmp/world-manager-info.out
+    if [ -z "${payload}" ]; then
+        die "failed to build merged options payload" 1
+    fi
+
     local http_code
     http_code=$(curl -sS -o /tmp/world-manager-switch.out -w "%{http_code}" \
         -X POST \
         -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
         -H "Content-Type: application/json" \
         -d "${payload}" \
-        "http://supervisor/addons/self/options" 2>&1) || true
+        "${supervisor_base}/addons/self/options" 2>&1) || true
     if [ "${http_code}" != "200" ]; then
         log "Supervisor options update returned HTTP ${http_code}:"
         cat /tmp/world-manager-switch.out >&2 || true

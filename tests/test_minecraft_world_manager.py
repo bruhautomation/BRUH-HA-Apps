@@ -144,6 +144,151 @@ class TestWorldManagerDelete(unittest.TestCase):
             self.assertNotEqual(proc.returncode, 0)
 
 
+class TestWorldManagerSwitch(unittest.TestCase):
+    """Regression for 1.2.8: `world-manager.sh switch` used to POST a
+    bare {"options": {"active_world": "<name>"}} to the Supervisor. The
+    Supervisor replaces the options object wholesale and validates the
+    full schema, so every other required field appeared missing and the
+    request was rejected with
+        "Missing option 'allow_nether' in root in BRUH Minecraft Server …"
+    The fix: GET /addons/self/info, merge the existing options with the
+    new active_world, then POST the merged object.
+    """
+
+    def _start_mock_supervisor(self):
+        """Start a tiny HTTP server that impersonates the Supervisor's
+        /addons/self/info + /addons/self/options endpoints. Records every
+        POST body so the test can assert the merged payload."""
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+        import json
+        import threading
+
+        state = {
+            "existing_options": {
+                "eula": True,
+                "allow_nether": True,
+                "difficulty": "normal",
+                "active_world": "default",
+            },
+            "posts": [],
+        }
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *_args, **_kwargs):  # silence
+                pass
+
+            def do_GET(self):
+                if self.path == "/addons/self/info":
+                    body = json.dumps({
+                        "result": "ok",
+                        "data": {"options": state["existing_options"]},
+                    }).encode()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                else:
+                    self.send_response(404)
+                    self.end_headers()
+
+            def do_POST(self):
+                length = int(self.headers.get("Content-Length", "0"))
+                raw = self.rfile.read(length)
+                try:
+                    parsed = json.loads(raw.decode())
+                except Exception:
+                    parsed = raw.decode(errors="replace")
+                state["posts"].append({"path": self.path, "body": parsed})
+
+                if self.path == "/addons/self/options":
+                    opts = parsed.get("options") if isinstance(parsed, dict) else None
+                    if not isinstance(opts, dict):
+                        self._err("invalid options")
+                        return
+                    if "allow_nether" not in opts:
+                        self._err("Missing option 'allow_nether' in root")
+                        return
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    body = b'{"result":"ok"}'
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                else:
+                    self.send_response(404)
+                    self.end_headers()
+
+            def _err(self, msg):
+                body = json.dumps({"result": "error", "message": msg}).encode()
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        httpd = HTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        return httpd, state
+
+    def test_switch_merges_existing_options_before_post(self):
+        httpd, state = self._start_mock_supervisor()
+        try:
+            host, port = httpd.server_address
+            base = f"http://{host}:{port}"
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                (root / "minecraft-worlds" / "survival").mkdir(parents=True)
+                proc = _run_manager(
+                    root, "switch", "survival",
+                    env_extra={
+                        "SUPERVISOR_TOKEN": "fake-token",
+                        "SUPERVISOR_API_URL": base,
+                    },
+                )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+
+            # One info GET, one options POST.
+            posts = state["posts"]
+            self.assertEqual(len(posts), 1, posts)
+            self.assertEqual(posts[0]["path"], "/addons/self/options")
+
+            merged = posts[0]["body"]["options"]
+            # The new value must land…
+            self.assertEqual(merged["active_world"], "survival")
+            # …without stripping any of the required / existing keys.
+            self.assertTrue(merged["eula"])
+            self.assertTrue(merged["allow_nether"])
+            self.assertEqual(merged["difficulty"], "normal")
+        finally:
+            httpd.shutdown()
+
+    def test_switch_reports_supervisor_error_body(self):
+        httpd, state = self._start_mock_supervisor()
+        # Remove allow_nether from existing options so the mock Supervisor
+        # returns the same 400 the user saw in production — guaranteeing
+        # the error path surfaces the Supervisor message.
+        state["existing_options"].pop("allow_nether")
+        try:
+            host, port = httpd.server_address
+            base = f"http://{host}:{port}"
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                (root / "minecraft-worlds" / "survival").mkdir(parents=True)
+                proc = _run_manager(
+                    root, "switch", "survival",
+                    env_extra={
+                        "SUPERVISOR_TOKEN": "fake-token",
+                        "SUPERVISOR_API_URL": base,
+                    },
+                )
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("Missing option 'allow_nether'", proc.stderr)
+        finally:
+            httpd.shutdown()
+
+
 class TestRunShMigration(unittest.TestCase):
     """Run just the ensure_worlds_layout function from run.sh against a
     tempdir that simulates a legacy (pre-1.3.0) install. The function

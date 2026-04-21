@@ -122,7 +122,10 @@
 
     <!-- Properties -->
     <section id="tab-properties" class="tab-panel">
-      <p class="muted">Editing these keys writes to server.properties and (where possible) applies live via RCON. Changes to non-editable keys must be made in the add-on options.</p>
+      <p class="muted">
+        <strong>Live tweaks, not permanent changes.</strong>
+        Editing a <em>managed</em> key here (MOTD, difficulty, gamemode, max-players, pvp, whitelist, etc.) writes to <code>server.properties</code> and applies live via RCON so it takes effect right away — but the next add-on restart rewrites that key from the <strong>Configuration</strong> tab. For persistent changes, edit the add-on's <strong>Configuration</strong> tab (the source of truth). Non-managed keys you add by hand persist across restarts.
+      </p>
       <table class="table" id="props-table">
         <thead><tr><th>Key</th><th>Value</th><th></th></tr></thead>
         <tbody></tbody>
@@ -131,19 +134,24 @@
 
     <!-- Plugins -->
     <section id="tab-plugins" class="tab-panel">
-      <h2>Installed plugins</h2>
+      <h2>Installed plugins (active world)</h2>
+      <p class="muted">
+        Plugins listed here are the <code>.jar</code> files on disk under <code>/config/minecraft/plugins/</code> — i.e. the <strong>active world's</strong> plugins folder. Switching worlds shows a different list. To add a plugin permanently across restarts, put its URL in the add-on's <strong>Configuration</strong> tab under <code>plugins:</code> (not here); the panel's install form below is for one-off additions to the current world.
+      </p>
       <table class="table" id="plugins-table">
         <thead><tr><th>Jar</th><th>Size</th><th>Modified</th><th></th></tr></thead>
         <tbody></tbody>
       </table>
-      <h2>Install from URL</h2>
+      <h2>Install from URL (one-off)</h2>
       <form id="f-plugin-install" class="inline-form">
         <input id="plugin-url" type="url" placeholder="https://…/some-plugin.jar" required />
         <input id="plugin-name" type="text" placeholder="optional rename (e.g. Essentials.jar)" />
         <button class="btn btn-primary">Install</button>
       </form>
       <pre id="plugin-reply" class="reply"></pre>
-      <p class="muted">Plugin jars are written to <code>/config/minecraft/plugins/</code> and require a restart to load.</p>
+      <p class="muted">
+        Jars land in <code>/config/minecraft/plugins/</code> and require a server restart to load. Heads-up: if the same plugin URL isn't also in the add-on's <code>plugins:</code> list, deleting this jar will persist across restarts; if it <em>is</em> in the list, the add-on re-downloads it on the next boot. GitHub <code>releases/latest/download/X.jar</code> URLs only work when the asset is literally named <code>X.jar</code> — pin a version tag if the upstream uses versioned filenames.
+      </p>
     </section>
 
     <!-- Backups -->
@@ -156,7 +164,16 @@
     <!-- Worlds (switchable server profiles, new in 1.3.0) -->
     <section id="tab-worlds" class="tab-panel">
       <h2>Worlds</h2>
-      <p class="muted">Each world is a complete, self-contained server: its own world files, plugins, <code>server.properties</code>, and backup history. Only one is active at a time. Switching a world sets the <code>active_world</code> add-on option — restart the add-on (use the <strong>Restart</strong> button in the header) to boot into the new world.</p>
+      <p class="muted">
+        Each world is a self-contained server root under <code>/config/minecraft-worlds/&lt;name&gt;/</code> with its own save files, <code>plugins/</code> folder, <code>server.properties</code>, ops/whitelist/bans, and backup history. Only one is active at a time.
+      </p>
+      <p class="muted">
+        <strong>What travels with the world:</strong> save files, plugins on disk, ops/whitelist/bans, per-world hand-edits to <code>server.properties</code>, backup history.<br />
+        <strong>What stays shared across every world:</strong> every setting in the add-on's <strong>Configuration</strong> tab — including <code>difficulty</code>, <code>gamemode</code>, <code>memory_mb</code>, <code>motd</code>, <code>level_name</code>, the <code>plugins:</code> URL list (copied into each profile's <code>plugins/</code> on boot), RCON password, and Geyser config. Changing them affects every profile.
+      </p>
+      <p class="muted">
+        <strong>Switching is a two-step workflow:</strong> (1) click <strong>Switch</strong> below — this writes <code>active_world</code> to your add-on options via the Supervisor API, nothing else happens yet. (2) Click <strong>Restart</strong> in the header to actually boot into the new world. The two-step design lets you queue a switch mid-session without forcing an immediate restart.
+      </p>
       <table class="table" id="worlds-table">
         <thead><tr><th>Name</th><th>Size</th><th>Active?</th><th>Actions</th></tr></thead>
         <tbody></tbody>
@@ -168,7 +185,9 @@
         <input id="world-seed" type="text" placeholder="optional seed" />
         <button class="btn btn-primary">Create</button>
       </form>
-      <p class="muted">Name must be 1–32 characters, letters/digits/underscore/dash only. The new world is staged empty — switch to it and restart to generate its initial chunks with the seed / level-type from your add-on options.</p>
+      <p class="muted">
+        Name must be 1–32 characters, letters/digits/underscore/dash only. The new world is staged empty — <em>Switch</em> to it and <em>Restart</em> to generate its initial chunks with the seed you gave here (or the <code>level_seed</code> from your add-on options if you leave the seed field blank). <code>delete</code> refuses to remove the currently-active world — switch away first.
+      </p>
       <pre id="world-reply" class="reply"></pre>
     </section>
   </main>

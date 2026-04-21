@@ -97,5 +97,67 @@ class TestParseTps(unittest.TestCase):
         self.assertIsNone(stats._parse_tps("unknown command"))
 
 
+class TestMcstatusPlayerSampleFallback(unittest.TestCase):
+    """Regression for 1.2.8: Paper can rephrase the `/list` RCON reply
+    between minor versions, which makes `_parse_list` return an empty
+    player-name array even though players are online. The panel then
+    shows a blank player list. mcstatus's status-ping `players.sample`
+    carries the names directly and is immune to text-format drift —
+    use it as a fallback in write_stats.
+    """
+
+    def _capture_write(self, **payload):
+        """Run write_stats with the given payload and return the players.json
+        body it would have emitted, without touching disk."""
+        written = {}
+
+        def fake_atomic_write(path, data):
+            written[path.name] = data
+
+        original = stats._atomic_write
+        stats._atomic_write = fake_atomic_write
+        try:
+            stats.write_stats(
+                started_at=0.0, reachable=True, last_rcon_ok=True,
+                payload=payload,
+            )
+        finally:
+            stats._atomic_write = original
+        return written
+
+    def test_uses_rcon_names_when_present(self):
+        written = self._capture_write(
+            online=2, max=20,
+            players=["Alice", "Bob"],
+            players_sample=["Alice"],  # stale sample must lose to fresh RCON
+        )
+        self.assertEqual(written["players.json"]["players"], ["Alice", "Bob"])
+
+    def test_falls_back_to_mcstatus_sample_when_rcon_empty(self):
+        written = self._capture_write(
+            online=1, max=20,
+            players=[],  # regex missed the format
+            players_sample=["BRxtreamsnipes"],
+        )
+        self.assertEqual(written["players.json"]["players"], ["BRxtreamsnipes"])
+
+    def test_both_empty_yields_empty_list(self):
+        written = self._capture_write(online=0, max=20, players=[])
+        self.assertEqual(written["players.json"]["players"], [])
+
+
+class TestParseListMissGuard(unittest.TestCase):
+    """The RCON probe must not overwrite mcstatus's online/max counts
+    with zeros when `/list` parsing misses the format."""
+
+    def test_parse_list_returns_zeros_on_miss(self):
+        # `_parse_list` still returns the zeros for backwards compat with
+        # callers that rely on the dict shape; the guard lives in _probe_rcon.
+        self.assertEqual(
+            stats._parse_list("nothing that looks like a list"),
+            {"online": 0, "max": 0, "players": []},
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
