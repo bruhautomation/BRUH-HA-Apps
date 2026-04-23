@@ -1363,27 +1363,32 @@ start_web_terminal() {
 
     export TTYD=1
 
-    # Mobile toolbar + iOS dictation fix.  Opt-in via `enable_mobile_ui`
-    # (default on).  build-mobile-index.py probes ttyd locally to discover
-    # whatever bundle filename the installed ttyd actually serves, then
-    # renders our template with those tags spliced in.  If the probe fails
-    # we fall back to ttyd's stock UI so a broken build never yields the
-    # blank black page we shipped in 1.16.0.
+    # Mobile toolbar + iOS dictation diff-fix.  Opt-in via `enable_mobile_ui`
+    # (default on).  build-mobile-index.py probes ttyd locally, fetches the
+    # full inlined HTML it serves at `/`, and splices our toolbar + iOS
+    # input-capture script into <head> so it runs before ttyd's bundle.
+    # On any probe error we log the builder's stderr verbatim and fall
+    # back to ttyd's stock UI — no more silent "black screen" regressions.
     local index_arg=()
     local enable_mobile_ui
     enable_mobile_ui=$(bashio::config 'enable_mobile_ui' 'true')
     if [ "$enable_mobile_ui" = "true" ] \
         && [ -f /opt/scripts/build-mobile-index.py ] \
-        && [ -f /opt/ttyd-assets/index.template.html ]; then
-        if python3 /opt/scripts/build-mobile-index.py; then
+        && [ -f /opt/ttyd-assets/inject.html ]; then
+        local build_log="/tmp/bruh-mobile-ui.log"
+        if python3 /opt/scripts/build-mobile-index.py >"$build_log" 2>&1; then
             if [ -f /opt/ttyd-assets/index.html ]; then
+                # ttyd refuses to start if --index target isn't readable by
+                # the process.  Belt-and-suspenders chmod + log.
+                chmod 644 /opt/ttyd-assets/index.html
                 index_arg=(--index /opt/ttyd-assets/index.html)
-                bashio::log.info "  Mobile UI: enabled"
+                bashio::log.info "  Mobile UI: enabled ($(sed -n 's/^\[bruh-mobile-ui\] //p' "$build_log" | tail -1))"
             else
-                bashio::log.warning "  Mobile UI: builder reported success but output missing, using stock UI"
+                bashio::log.warning "  Mobile UI: builder reported success but index.html missing; using stock UI"
             fi
         else
             bashio::log.warning "  Mobile UI: probe failed, using stock ttyd UI"
+            while IFS= read -r line; do bashio::log.warning "    $line"; done <"$build_log"
         fi
     elif [ "$enable_mobile_ui" = "true" ]; then
         bashio::log.warning "  Mobile UI: assets not present in image, using stock UI"
@@ -1438,7 +1443,7 @@ trap cleanup SIGTERM SIGINT EXIT
 
 main() {
     bashio::log.info "============================================"
-    bashio::log.info "  BRUH Claude Terminal v1.17.0"
+    bashio::log.info "  BRUH Claude Terminal v1.17.1"
     bashio::log.info "  Enhanced Claude Code for Home Assistant"
     bashio::log.info "============================================"
 

@@ -1,5 +1,59 @@
 # Changelog
 
+## 1.17.1
+
+### Mobile toolbar + iOS dictation fix — third time's the charm
+
+v1.17.0 shipped with the mobile toolbar "working" in theory but not in
+practice: the toolbar never appeared, and voice dictation still produced
+the classic "ttesttesting, can youtesting, can you hear me..." cumulative
+duplication. Two root causes, both fixed here.
+
+**Why 1.17.0 didn't show a toolbar.** ttyd 1.7.4 (Alpine 3.19) doesn't
+serve separate `/main.js` / `/index.css` files the way older builds did —
+`html/gulpfile.js` runs `inlineSource()` to bake the entire frontend
+into a single HTML blob as inline `<script>` and `<style>` tags. The
+1.17.0 builder extracted those inline tags and spliced them into our own
+template; the result referenced asset paths that don't exist on ttyd's
+HTTP server and, more fundamentally, ttyd's bundle renders React into
+`document.body` directly (wiping any toolbar DOM we staged in the HTML).
+
+**Why iOS dictation was still broken.** Our "swallow any `input` event
+within 60ms of `compositionend`" heuristic can never trigger on iOS.
+WebKit bug [261764](https://bugs.webkit.org/show_bug.cgi?id=261764)
+confirms that iOS Safari / WKWebView does NOT fire `compositionstart`
+or `compositionend` for voice dictation at all — only plain `input`
+events, each carrying the whole cumulative transcript. `lastCompositionEnd`
+stayed `0` forever, so the guard was a no-op. Any apparent improvement
+came from the autocorrect-off attributes alone.
+
+**What's different in 1.17.1.**
+
+- `build-mobile-index.py` now treats ttyd's HTML as opaque and splices a
+  snippet of ours into `<head>` without touching a single byte of ttyd's
+  payload. Our inline `<script>` runs before ttyd's inline bundle (both
+  inline scripts execute in document order), so we wrap `window.WebSocket`
+  before ttyd calls `new WebSocket(...)` and can send stdin from the
+  toolbar. No asset path assumptions; robust to ttyd bumps.
+- The toolbar DOM is created dynamically AFTER xterm mounts, via a
+  `MutationObserver` watching for `.xterm-helper-textarea`. Since React
+  is already done rendering into `document.body` by that point and our
+  toolbar uses `position: fixed`, React's virtual DOM never touches it.
+- iOS dictation: we install a capture-phase `input` listener on
+  `document`. Per DOM spec, ancestor capture-phase listeners fire before
+  target-level capture-phase listeners — and xterm's own listener is
+  attached on the textarea in capture phase — so we run first. On each
+  event we diff `textarea.value` against `lastValue`, send a backspace
+  (`\x7f`) for every retracted character and the new tail, then
+  `stopImmediatePropagation` so xterm never sees the event. This is the
+  CodeMirror / ProseMirror approach applied to xterm.
+- The probe runs with `Accept-Encoding: identity` so ttyd serves
+  uncompressed HTML, and `run.sh` now logs the full builder stderr into
+  the add-on log when the probe fails — no more silent fallback.
+
+The `enable_mobile_ui: false` kill switch from 1.17.0 is unchanged.
+Stock-ttyd fallback still kicks in automatically if the probe fails.
+
 ## 1.17.0
 
 ### Mobile toolbar + iOS dictation fix (reworked, take two)

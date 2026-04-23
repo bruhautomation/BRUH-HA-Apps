@@ -1,0 +1,306 @@
+<!-- BRUH Claude mobile toolbar + iOS dictation diff-fix.
+     Injected into ttyd's <head> by scripts/build-mobile-index.py so this
+     runs BEFORE ttyd's inline bundle (both are inline <script> blocks and
+     inline scripts execute in document order). -->
+<style>
+  #bruh-bar {
+    display: none;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 2147483600;
+    background: #241d18;
+    border-top: 1px solid #3a2e25;
+    padding: 6px 4px calc(6px + env(safe-area-inset-bottom)) 4px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    white-space: nowrap;
+    scrollbar-width: none;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+  #bruh-bar::-webkit-scrollbar { display: none; }
+
+  body.bruh-is-touch #bruh-bar { display: block; }
+  body.bruh-bar-hidden #bruh-bar { display: none !important; }
+
+  /* Lift the terminal above the toolbar on touch devices so the last
+     line isn't covered. Use padding-bottom with dynamic height set by JS. */
+  body.bruh-is-touch { padding-bottom: var(--bruh-bar-h, 56px); box-sizing: border-box; }
+  body.bruh-is-touch.bruh-bar-hidden { padding-bottom: 0; }
+
+  .bruh-key {
+    display: inline-block;
+    min-width: 44px;
+    height: 36px;
+    line-height: 36px;
+    padding: 0 10px;
+    margin: 0 2px;
+    background: #1a1613;
+    color: #e8ddd4;
+    border: 1px solid #3a2e25;
+    border-radius: 6px;
+    font-family: 'SF Mono', Menlo, Consolas, monospace;
+    font-size: 14px;
+    font-weight: 500;
+    text-align: center;
+    vertical-align: middle;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-user-select: none;
+    user-select: none;
+    cursor: pointer;
+    transition: background 0.08s, border-color 0.08s, color 0.08s;
+  }
+  .bruh-key:active,
+  .bruh-key.bruh-pressed,
+  .bruh-key.bruh-sticky-on { background: #d97757; border-color: #d97757; color: #1a1613; }
+  .bruh-key.bruh-primary { background: #a85638; border-color: #d97757; color: #fff; }
+  .bruh-key.bruh-primary:active { background: #d97757; }
+  .bruh-key.bruh-hide-btn { min-width: 36px; padding: 0 8px; color: #a89b90; }
+</style>
+<script>
+(function () {
+  'use strict';
+
+  // ===================================================================
+  // 1. Capture ttyd's WebSocket so the toolbar can send raw stdin.
+  //    Runs before ttyd's inline bundle (<head> vs <body>), so the
+  //    constructor wrap is in place when ttyd calls `new WebSocket(...)`.
+  //    ttyd stdin protocol: binary frame `TextEncoder.encode('0' + data)`.
+  // ===================================================================
+  var ttydSocket = null;
+  var OrigWS = window.WebSocket;
+  var enc = new TextEncoder();
+
+  function WrappedWS(url, protocols) {
+    var ws = protocols === undefined ? new OrigWS(url) : new OrigWS(url, protocols);
+    if (String(url).indexOf('/ws') !== -1) ttydSocket = ws;
+    return ws;
+  }
+  WrappedWS.prototype = OrigWS.prototype;
+  WrappedWS.CONNECTING = OrigWS.CONNECTING;
+  WrappedWS.OPEN       = OrigWS.OPEN;
+  WrappedWS.CLOSING    = OrigWS.CLOSING;
+  WrappedWS.CLOSED     = OrigWS.CLOSED;
+  window.WebSocket = WrappedWS;
+
+  function sendInput(data) {
+    if (!ttydSocket || ttydSocket.readyState !== 1) return;
+    try { ttydSocket.send(enc.encode('0' + data)); } catch (e) { /* closed */ }
+  }
+
+  // ===================================================================
+  // 2. iOS dictation duplicate-text fix — the actual reason voice
+  //    input was broken.  WebKit bug 261764: on iOS Safari / WKWebView
+  //    voice dictation NEVER fires composition events.  Instead, each
+  //    interim transcript arrives as a plain `input` event whose
+  //    textarea `value` contains the WHOLE cumulative transcript so far
+  //    ("t", "tes", "testing", "testing, can you", ...).  xterm.js
+  //    forwards every `ev.data` to the PTY verbatim, so saying
+  //    "testing, can you hear me" on iOS produces
+  //    "ttesttestingtesting, can youtesting, can you hear me...".
+  //
+  //    Fix: register a capture-phase `input` listener on `document`.
+  //    The DOM spec says ancestor capture listeners fire BEFORE
+  //    target-level capture listeners — and xterm's own listener is
+  //    attached on the textarea in capture phase, so we win.  We diff
+  //    the current textarea value against the last value we forwarded,
+  //    send backspaces for any retracted characters and the new tail,
+  //    then `stopImmediatePropagation` so xterm never sees the event.
+  // ===================================================================
+  var lastValue = '';
+
+  function diffAndSend(newValue) {
+    if (newValue === lastValue) return;
+    var i = 0;
+    var minLen = Math.min(newValue.length, lastValue.length);
+    while (i < minLen && newValue.charCodeAt(i) === lastValue.charCodeAt(i)) i++;
+    var removed = lastValue.length - i;
+    var added   = newValue.slice(i);
+    for (var b = 0; b < removed; b++) sendInput('\x7f'); // DEL / backspace
+    if (added) sendInput(added);
+    lastValue = newValue;
+  }
+
+  function onDocumentInputCapture(e) {
+    var t = e.target;
+    if (!t || !t.classList || !t.classList.contains('xterm-helper-textarea')) return;
+    diffAndSend(t.value || '');
+    e.stopImmediatePropagation();
+
+    // Keep the textarea from growing unbounded — iOS dictation will
+    // otherwise keep re-delivering an ever-longer transcript.  Clear on
+    // the next tick so we don't interrupt the current event dispatch.
+    var ta = t;
+    setTimeout(function () {
+      if (ta.value && ta.value.length > 64) {
+        ta.value = '';
+        lastValue = '';
+      }
+    }, 0);
+  }
+  document.addEventListener('input', onDocumentInputCapture, true);
+
+  // Also hint iOS to stop rewriting the stream via autocorrect/predictive.
+  // These attributes only apply after xterm creates the textarea, so we
+  // set them from the MutationObserver below.
+  function patchTextareaAttrs(ta) {
+    if (ta.dataset.bruhPatched) return;
+    ta.dataset.bruhPatched = '1';
+    ta.setAttribute('autocorrect', 'off');
+    ta.setAttribute('autocapitalize', 'off');
+    ta.setAttribute('autocomplete', 'off');
+    ta.setAttribute('spellcheck', 'false');
+  }
+
+  // ===================================================================
+  // 3. Mobile toolbar.  React renders into `document.body` (wiping
+  //    anything we put there) so we can't ship DOM in the HTML.  We
+  //    wait until xterm's `.xterm-helper-textarea` appears, then append
+  //    a `position: fixed` toolbar — React won't touch it because it
+  //    lives outside React's virtual-DOM root at that point.
+  // ===================================================================
+  var KEYS = {
+    'esc': '\x1b', 'tab': '\x09',
+    'up':   '\x1b[A', 'down':  '\x1b[B', 'right': '\x1b[C', 'left': '\x1b[D',
+    'pipe': '|', 'slash': '/', 'tilde': '~', 'dash': '-',
+    'ctrlc': '\x03'
+  };
+
+  function buildToolbar() {
+    if (document.getElementById('bruh-bar')) return;
+
+    var bar = document.createElement('div');
+    bar.id = 'bruh-bar';
+    bar.setAttribute('role', 'toolbar');
+    bar.setAttribute('aria-label', 'Mobile terminal controls');
+
+    var spec = [
+      { k: 'esc',   l: 'ESC',   primary: true },
+      { k: 'tab',   l: 'Tab'   },
+      { k: 'ctrl',  l: 'Ctrl'  },
+      { k: 'up',    l: '↑' },
+      { k: 'down',  l: '↓' },
+      { k: 'left',  l: '←' },
+      { k: 'right', l: '→' },
+      { k: 'pipe',  l: '|' },
+      { k: 'slash', l: '/' },
+      { k: 'tilde', l: '~' },
+      { k: 'dash',  l: '-' },
+      { k: 'ctrlc', l: '^C' },
+      { k: 'paste', l: 'Paste' },
+      { k: 'hide',  l: '×', hide: true }
+    ];
+    spec.forEach(function (s) {
+      var key = document.createElement('span');
+      key.className = 'bruh-key'
+        + (s.primary ? ' bruh-primary' : '')
+        + (s.hide ? ' bruh-hide-btn' : '');
+      key.setAttribute('data-bruh-key', s.k);
+      key.textContent = s.l;
+      bar.appendChild(key);
+    });
+    document.body.appendChild(bar);
+
+    // Measure and expose toolbar height so body padding-bottom matches.
+    function syncHeight() {
+      if (!bar.isConnected) return;
+      var h = bar.offsetHeight;
+      if (h) document.documentElement.style.setProperty('--bruh-bar-h', h + 'px');
+    }
+    syncHeight();
+    window.addEventListener('resize', syncHeight);
+
+    var ctrlSticky = false;
+    var ctrlEl = bar.querySelector('[data-bruh-key="ctrl"]');
+
+    function setCtrl(on) {
+      ctrlSticky = on;
+      if (ctrlEl) ctrlEl.classList.toggle('bruh-sticky-on', on);
+    }
+
+    function handleKey(keyName) {
+      if (keyName === 'ctrl') { setCtrl(!ctrlSticky); return; }
+      if (keyName === 'hide') {
+        document.body.classList.add('bruh-bar-hidden');
+        window.dispatchEvent(new Event('resize'));
+        return;
+      }
+      if (keyName === 'paste') {
+        if (navigator.clipboard && navigator.clipboard.readText) {
+          navigator.clipboard.readText()
+            .then(function (t) { if (t) sendInput(t); })
+            .catch(function () { /* permission denied — silent */ });
+        }
+        return;
+      }
+      var str = KEYS[keyName];
+      if (str === undefined) return;
+      if (ctrlSticky && str.length === 1) {
+        var code = str.toUpperCase().charCodeAt(0);
+        if (code >= 64 && code <= 95) str = String.fromCharCode(code - 64);
+        setCtrl(false);
+      }
+      sendInput(str);
+    }
+
+    function onPointerDown(e) {
+      var el = e.target.closest && e.target.closest('.bruh-key');
+      if (!el) return;
+      // preventDefault keeps xterm's textarea focused — otherwise iOS
+      // closes the keyboard when the toolbar is tapped.
+      e.preventDefault();
+      el.classList.add('bruh-pressed');
+      setTimeout(function () { el.classList.remove('bruh-pressed'); }, 120);
+      handleKey(el.dataset.bruhKey);
+      var ta = document.querySelector('.xterm-helper-textarea');
+      if (ta) ta.focus();
+    }
+    bar.addEventListener('pointerdown', onPointerDown);
+    if (!window.PointerEvent) {
+      bar.addEventListener('touchstart', onPointerDown, { passive: false });
+      bar.addEventListener('mousedown', onPointerDown);
+    }
+  }
+
+  // ===================================================================
+  // 4. Bootstrap — wait for xterm to mount, then wire everything up.
+  // ===================================================================
+  var touch = ('ontouchstart' in window) || (navigator.maxTouchPoints | 0) > 0;
+
+  function onXtermReady(ta) {
+    patchTextareaAttrs(ta);
+    if (touch) document.body.classList.add('bruh-is-touch');
+    buildToolbar();
+  }
+
+  function scanAndWire() {
+    var ta = document.querySelector('.xterm-helper-textarea');
+    if (ta) { onXtermReady(ta); return true; }
+    return false;
+  }
+
+  function startObserver() {
+    if (scanAndWire()) return;
+    var obs = new MutationObserver(function () {
+      if (scanAndWire()) obs.disconnect();
+    });
+    obs.observe(document.documentElement, { childList: true, subtree: true });
+    // Belt-and-suspenders: if the observer misses the insertion for any
+    // reason, poll for up to 20s so slow devices still light up the UI.
+    var tries = 0;
+    var timer = setInterval(function () {
+      if (scanAndWire() || ++tries > 80) {
+        clearInterval(timer);
+        obs.disconnect();
+      }
+    }, 250);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', startObserver, { once: true });
+  } else {
+    startObserver();
+  }
+})();
+</script>
