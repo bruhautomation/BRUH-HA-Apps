@@ -1363,6 +1363,17 @@ start_web_terminal() {
 
     export TTYD=1
 
+    # Custom index.html ships a mobile toolbar (ESC/Tab/Ctrl/arrows/paste)
+    # and an iOS dictation duplicate-text fix. Fall back to the stock index
+    # if the asset is missing for any reason.
+    local index_arg=()
+    if [ -f /opt/ttyd-assets/index.html ]; then
+        index_arg=(--index /opt/ttyd-assets/index.html)
+        bashio::log.info "  Mobile UI: enabled (custom index.html)"
+    else
+        bashio::log.warning "  Mobile UI: disabled (/opt/ttyd-assets/index.html not found)"
+    fi
+
     # Use wait instead of exec so the cleanup trap can fire on SIGTERM
     # and properly terminate background processes (backup watcher, listeners)
     ttyd \
@@ -1373,6 +1384,9 @@ start_web_terminal() {
         --client-option enableReconnect=true \
         --client-option reconnect=10 \
         --client-option reconnectInterval=5 \
+        --client-option 'fontFamily=SF Mono, Menlo, Consolas, monospace' \
+        --client-option 'theme={"background":"#1a1613","foreground":"#e8ddd4","cursor":"#d97757","cursorAccent":"#1a1613","selectionBackground":"#d9775766"}' \
+        "${index_arg[@]}" \
         bash -c "$launch_command" &
 
     wait $!
@@ -1407,7 +1421,7 @@ trap cleanup SIGTERM SIGINT EXIT
 
 main() {
     bashio::log.info "============================================"
-    bashio::log.info "  BRUH Claude Terminal v1.15.2"
+    bashio::log.info "  BRUH Claude Terminal v1.16.0"
     bashio::log.info "  Enhanced Claude Code for Home Assistant"
     bashio::log.info "============================================"
 
