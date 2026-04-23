@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.16.0
+
+### Mobile-Friendly Terminal (iOS / Android)
+
+Using the terminal on a phone was painful: iOS has no ESC key, and voice
+dictation often repeated words. This release ships a custom ttyd frontend
+themed to match Claude Code.
+
+**On-screen toolbar** (shown only on touch devices)
+- `ESC`, `Tab`, `Ctrl` (sticky), `↑ ↓ ← →`, `|`, `/`, `~`, `-`, `^C`, `Paste`, and `×` (hide)
+- Taps send real key sequences through the ttyd WebSocket, so everything Claude Code expects from a keyboard works (cancel prompts, navigate history, tab-complete, pipe commands).
+- Ctrl is a sticky modifier — tap `Ctrl` then a letter to send that control code (e.g. `Ctrl` + `C` → `^C`).
+- `Paste` reads from the clipboard via the Web Clipboard API.
+
+**iOS dictation / autocorrect fix**
+- Turned off `autocorrect`, `autocapitalize`, `autocomplete`, and `spellcheck` on xterm's helper textarea so the OS stops rewriting commands.
+- Added a compositionend → input deduper that swallows the extra `input` event iOS fires a few ms after voice dictation ends, which was the root cause of words appearing twice ([xtermjs/xterm.js#3600](https://github.com/xtermjs/xterm.js/issues/3600)).
+
+**Theme**
+- ttyd client colours now match Claude Code: warm dark background (`#1a1613`), Claude orange cursor (`#d97757`), light warm foreground.
+- Default font stack set to `SF Mono, Menlo, Consolas, monospace`.
+
+**Viewport**
+- Proper `viewport-fit=cover` + safe-area insets so the toolbar sits above the home indicator on modern iPhones.
+- `apple-mobile-web-app-capable` so adding the add-on URL to the iOS home screen gives a full-screen PWA-style launcher.
+
 ## 1.15.2
 
 ### Recursive Ownership for addon_configs & Writable Addons Directory
