@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.17.3
+
+### Lift the toolbar above the keyboard when running behind HA ingress
+
+1.17.2 hooked `visualViewport` but the terminal is almost always loaded
+inside Home Assistant's ingress iframe, and on iOS Safari / WKWebView
+the keyboard does NOT resize the inner frame's `visualViewport` — only
+the top window sees the change. From the iframe's point of view the
+viewport height never shrinks, so `gap` came out `0` and the bar
+stayed stuck at the layout bottom, covered by the keys.
+
+HA ingress serves us under `/api/hassio_ingress/<token>/` on the same
+origin as the frontend, so we can legally walk up via `window.parent`
+and read the top frame's `visualViewport`. If that path is unavailable
+for any reason (cross-origin parent, standalone browsing), we fall
+back to our own viewport, and then finally to a focus-driven heuristic
+(assume ~310px keyboard portrait / ~210px landscape while the xterm
+helper-textarea has focus). Listeners now attach to both the local and
+parent visual viewports plus document-level `focusin`/`focusout`.
+
 ## 1.17.2
 
 ### Keep the mobile toolbar above the on-screen keyboard
