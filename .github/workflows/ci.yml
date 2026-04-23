@@ -87,13 +87,13 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Lint Claude Terminal Dockerfile
-        uses: hadolint/hadolint-action@v3.1.0
+        uses: hadolint/hadolint-action@v3.3.0
         with:
           dockerfile: bruh-claude-terminal/Dockerfile
           failure-threshold: error
 
       - name: Lint Minecraft Dockerfile
-        uses: hadolint/hadolint-action@v3.1.0
+        uses: hadolint/hadolint-action@v3.3.0
         with:
           dockerfile: bruh-minecraft-server/Dockerfile
           failure-threshold: error
