@@ -88,10 +88,6 @@ COPY integrations/ /opt/integrations/
 # Copy custom HA integration (deployed to /config/custom_components at runtime)
 COPY custom_components/ /opt/custom_components/
 
-# Copy custom ttyd web assets (mobile-friendly index.html with on-screen
-# toolbar for ESC/Tab/Ctrl/arrows and an iOS dictation duplicate-text fix)
-COPY ttyd-assets/ /opt/ttyd-assets/
-
 # Set permissions
 RUN chmod +x /run.sh \
     && find /opt/scripts -name "*.sh" -exec chmod +x {} \; \

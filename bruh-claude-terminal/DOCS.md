@@ -189,38 +189,6 @@ persist-install list                # List persistent packages
 persist-install remove apk vim      # Remove from persistence
 ```
 
-## Using the Terminal on iOS / Android
-
-The web terminal auto-detects touch devices and shows an on-screen toolbar above the software keyboard with the keys iOS doesn't give you.
-
-### Mobile toolbar
-
-| Key | Sends | Notes |
-|-----|-------|-------|
-| `ESC` | `␛` | Claude Code's interrupt / close-menu key. Highlighted in orange. |
-| `Tab` | `\t` | Tab-complete in the shell; navigate Claude Code menus. |
-| `Ctrl` | (sticky) | Tap once to arm, then tap any letter to send the control code. Tap `Ctrl` again to cancel. |
-| `↑ ↓ ← →` | arrow keys | Shell history / cursor movement. |
-| <code>&#124;</code> `/` `~` `-` | literal | Characters iOS hides two taps deep. |
-| `^C` | `Ctrl-C` | One-tap interrupt. |
-| `Paste` | clipboard | Pastes via the Web Clipboard API (iOS will ask for permission the first time). |
-| `×` | hide toolbar | Tap again on the reconnected session to bring it back. |
-
-### Voice dictation
-
-Voice dictation on iOS used to duplicate words in the terminal. This release disables autocorrect/autocapitalize/spellcheck on xterm's hidden textarea and swallows the extra `input` event iOS fires right after `compositionend`, which was the root cause. Dictation should now land clean.
-
-If you still see doubled words:
-
-1. Go to **Settings > Accessibility > Voice Control** on iOS and make sure it's **off**. Having both Voice Control and keyboard Dictation on at the same time causes iOS itself to submit speech twice.
-2. **Settings > General > Keyboard** — turn off **Auto-Correction**, **Check Spelling**, and **Predictive**. These can still rewrite commands inside the terminal.
-
-### Tips
-
-- **Add to Home Screen** on iOS (Safari share sheet → "Add to Home Screen") gives you a full-screen launcher without Safari's browser chrome. The toolbar sits right above the home-indicator safe area.
-- **Bluetooth keyboard**: all real keys work as expected — ESC, Ctrl, Option, arrows. The on-screen toolbar still shows up, but you can tap `×` to hide it.
-- **External iOS terminal apps** (Blink Shell, Termius, etc.) are great too — point them at your HA ingress URL if you prefer SSH-style ergonomics. This add-on's mobile UI is aimed at the built-in HA Companion app where you just want to open the panel and type.
-
 ## Debugging & Logs
 
 The app writes detailed debug logs for every conversation agent and automation task request. These help you understand what's being sent to Claude, how long it takes, and what comes back.
