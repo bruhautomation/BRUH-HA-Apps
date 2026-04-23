@@ -1,5 +1,54 @@
 # Changelog
 
+## 1.17.0
+
+### Mobile toolbar + iOS dictation fix (reworked, take two)
+
+Brings back the on-screen toolbar and iOS dictation fix that 1.16.0 tried
+to ship, this time on top of whatever frontend bundle ttyd actually serves
+— not a hard-coded script name.
+
+**How this differs from 1.16.0**
+
+The earlier attempt shipped a static `index.html` that assumed ttyd's
+legacy webpack output (`<div id="terminal">` + `<script src="inline.js">`).
+ttyd 1.7.x on Alpine 3.19 ships a different build, the React app never
+mounted, and you got a black screen.
+
+1.17.0 adds a startup probe (`scripts/build-mobile-index.py`) that:
+
+1. Boots ttyd locally on a loopback-only port.
+2. `GET /` to grab whatever HTML ttyd actually serves today.
+3. Extracts its `<link>` / `<style>` / `<script>` tags with BeautifulSoup.
+4. Splices them into our mobile template next to the toolbar DOM, the
+   WebSocket-capturing wrapper, and the xterm-textarea patcher.
+5. Writes the rendered file for ttyd to serve via `--index`.
+
+If the probe fails for any reason, `run.sh` skips `--index` entirely and
+ttyd serves its stock working UI. No more silent black screens.
+
+**Mobile toolbar** (touch devices only)
+
+- `ESC`, `Tab`, sticky `Ctrl`, arrows, `|`, `/`, `~`, `-`, `^C`, `Paste`, `×` hide.
+- Taps send real key sequences through the ttyd WebSocket so Claude Code's
+  menu navigation, tab-complete, and interrupts all work.
+- `Ctrl` is a sticky modifier — tap it, then a letter, to send that
+  control code.
+
+**iOS dictation fix**
+
+- Turns off `autocorrect` / `autocapitalize` / `autocomplete` / `spellcheck`
+  on xterm's helper textarea.
+- Swallows the duplicate `input` event iOS fires ~30ms after
+  `compositionend` — the root cause of voice dictation doubling words
+  (xtermjs/xterm.js#3600).
+
+**Kill switch**
+
+New `enable_mobile_ui` config option (default `true`). Flip to `false` if
+the probe or custom UI ever misbehaves on your system; ttyd falls back to
+its stock frontend.
+
 ## 1.16.1
 
 ### Fix black-screen regression from 1.16.0
