@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.16.1
+
+### Fix black-screen regression from 1.16.0
+
+The custom ttyd `index.html` shipped in 1.16.0 didn't match how ttyd 1.7.x
+(the version on Alpine 3.19) bundles its frontend — the React terminal
+never mounted, leaving users with a blank black page. Rolled back the
+custom HTML and the `--index` flag so ttyd serves its working stock UI
+again. The Claude-Code colour theme and reconnect settings are preserved
+(those come from `--client-option`, not the HTML override).
+
+The mobile toolbar / iOS dictation fix will return in a follow-up release
+once it's reworked to hook into the stock bundle correctly.
+
 ## 1.16.0
 
 ### Mobile-Friendly Terminal (iOS / Android)
