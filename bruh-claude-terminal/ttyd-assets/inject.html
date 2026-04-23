@@ -208,8 +208,34 @@
       var h = bar.offsetHeight;
       if (h) document.documentElement.style.setProperty('--bruh-bar-h', h + 'px');
     }
-    syncHeight();
-    window.addEventListener('resize', syncHeight);
+
+    // iOS (and Android) render `position: fixed; bottom: 0` against the
+    // LAYOUT viewport, not the visual viewport, so as soon as the software
+    // keyboard opens it slides up over our toolbar and nothing is tappable.
+    // VisualViewport.height shrinks when the keyboard appears; the gap
+    // between layout-viewport-bottom and visual-viewport-bottom is exactly
+    // the keyboard + home-indicator overlap.  Translate the bar up by that
+    // gap so it always sits on top of the keyboard.
+    function syncBarToKeyboard() {
+      var vv = window.visualViewport;
+      var gap = vv ? Math.max(0, window.innerHeight - vv.height - vv.offsetTop) : 0;
+      if (gap > 0) {
+        // Keyboard is up: drop the safe-area inset (keyboard replaces the
+        // home indicator area) and stick the bar right above the keys.
+        bar.style.transform = 'translateY(-' + gap + 'px)';
+        bar.style.paddingBottom = '6px';
+      } else {
+        bar.style.transform = '';
+        bar.style.paddingBottom = '';
+      }
+      syncHeight();
+    }
+    syncBarToKeyboard();
+    window.addEventListener('resize', syncBarToKeyboard);
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', syncBarToKeyboard);
+      window.visualViewport.addEventListener('scroll', syncBarToKeyboard);
+    }
 
     var ctrlSticky = false;
     var ctrlEl = bar.querySelector('[data-bruh-key="ctrl"]');
