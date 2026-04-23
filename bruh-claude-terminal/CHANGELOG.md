@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.17.2
+
+### Keep the mobile toolbar above the on-screen keyboard
+
+On iOS / iPadOS (and Android configurations that overlay rather than
+reflow), the software keyboard slid up and covered the toolbar because
+`position: fixed; bottom: 0` is positioned against the *layout* viewport,
+not the visual viewport. The bar was still there — just hidden behind the
+keys.
+
+Hooked the `VisualViewport` API: when `visualViewport.height` shrinks
+(keyboard up), translate the bar up by exactly the keyboard-overlap gap
+(`window.innerHeight - vv.height - vv.offsetTop`) and drop the
+`safe-area-inset-bottom` padding since the keyboard replaces the home
+indicator area. When the keyboard closes, reset back to the stock
+position. Listens on `resize` and `scroll` of the visual viewport so the
+bar tracks the keyboard's own animation without lag.
+
 ## 1.17.1
 
 ### Mobile toolbar + iOS dictation fix — third time's the charm
