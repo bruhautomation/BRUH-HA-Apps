@@ -209,19 +209,65 @@
       if (h) document.documentElement.style.setProperty('--bruh-bar-h', h + 'px');
     }
 
-    // iOS (and Android) render `position: fixed; bottom: 0` against the
-    // LAYOUT viewport, not the visual viewport, so as soon as the software
-    // keyboard opens it slides up over our toolbar and nothing is tappable.
-    // VisualViewport.height shrinks when the keyboard appears; the gap
-    // between layout-viewport-bottom and visual-viewport-bottom is exactly
-    // the keyboard + home-indicator overlap.  Translate the bar up by that
-    // gap so it always sits on top of the keyboard.
+    // Keep the bar above the software keyboard.
+    //
+    // The naive approach is to read `window.visualViewport` — but we're
+    // almost always running INSIDE an iframe (Home Assistant's ingress
+    // panel embeds us at /api/hassio_ingress/<token>/). On iOS Safari /
+    // WKWebView, the keyboard event does NOT resize the inner frame's
+    // visualViewport; only the top frame sees it. `window.visualViewport`
+    // inside the iframe returns the unchanged frame size and `gap`
+    // comes out 0, so the bar stays pinned to the (layout) bottom and
+    // gets buried under the keyboard.
+    //
+    // HA ingress serves the iframe from the same origin as the main
+    // frontend (`/api/hassio_ingress/...` under the HA host), so we can
+    // legally walk up via `window.parent` and read the top viewport.
+    // When that path is unavailable (non-ingress browsing, or a future
+    // HA version changes the origin), we fall back to our own viewport
+    // and, failing that, to a focus-driven heuristic keyed off the
+    // xterm helper-textarea gaining focus.
+    function topWindow() {
+      try {
+        var w = window;
+        while (w.parent && w.parent !== w) w = w.parent;
+        // touch a property to confirm same-origin access
+        void w.innerHeight;
+        return w;
+      } catch (_e) { return null; }
+    }
+
+    // Heuristic fallback height for the keyboard when no viewport API
+    // reports it (e.g. cross-origin parent). Measured defaults that
+    // cover iPhone mini through Pro Max and most Android phones.
+    var FALLBACK_KB_PORTRAIT  = 310;
+    var FALLBACK_KB_LANDSCAPE = 210;
+    var taFocused = false;
+
+    function computeGap() {
+      var top = topWindow();
+      if (top && top.visualViewport) {
+        var pvv = top.visualViewport;
+        var pgap = top.innerHeight - pvv.height - pvv.offsetTop;
+        if (pgap > 0) return Math.round(pgap);
+      }
+      if (window.visualViewport) {
+        var vv = window.visualViewport;
+        var ogap = window.innerHeight - vv.height - vv.offsetTop;
+        if (ogap > 0) return Math.round(ogap);
+      }
+      if (taFocused) {
+        var portrait = window.innerHeight >= window.innerWidth;
+        return portrait ? FALLBACK_KB_PORTRAIT : FALLBACK_KB_LANDSCAPE;
+      }
+      return 0;
+    }
+
     function syncBarToKeyboard() {
-      var vv = window.visualViewport;
-      var gap = vv ? Math.max(0, window.innerHeight - vv.height - vv.offsetTop) : 0;
+      var gap = computeGap();
       if (gap > 0) {
-        // Keyboard is up: drop the safe-area inset (keyboard replaces the
-        // home indicator area) and stick the bar right above the keys.
+        // Keyboard is up: drop the safe-area inset (keyboard replaces
+        // the home-indicator area) and stick the bar right above the keys.
         bar.style.transform = 'translateY(-' + gap + 'px)';
         bar.style.paddingBottom = '6px';
       } else {
@@ -236,6 +282,30 @@
       window.visualViewport.addEventListener('resize', syncBarToKeyboard);
       window.visualViewport.addEventListener('scroll', syncBarToKeyboard);
     }
+    var top = topWindow();
+    if (top && top !== window && top.visualViewport) {
+      top.visualViewport.addEventListener('resize', syncBarToKeyboard);
+      top.visualViewport.addEventListener('scroll', syncBarToKeyboard);
+    }
+    // Focus/blur on the xterm textarea is our backstop signal — if the
+    // textarea has focus the keyboard is almost certainly up, regardless
+    // of what the viewport APIs report.
+    document.addEventListener('focusin', function (e) {
+      if (e.target && e.target.classList
+          && e.target.classList.contains('xterm-helper-textarea')) {
+        taFocused = true;
+        // let iOS finish animating the keyboard in before we measure
+        setTimeout(syncBarToKeyboard, 100);
+        setTimeout(syncBarToKeyboard, 350);
+      }
+    }, true);
+    document.addEventListener('focusout', function (e) {
+      if (e.target && e.target.classList
+          && e.target.classList.contains('xterm-helper-textarea')) {
+        taFocused = false;
+        setTimeout(syncBarToKeyboard, 100);
+      }
+    }, true);
 
     var ctrlSticky = false;
     var ctrlEl = bar.querySelector('[data-bruh-key="ctrl"]');
