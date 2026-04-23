@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.17.5
+
+### Dedicated one-tap buttons for Claude Code shortcuts
+
+The sticky `Ctrl` modifier approach turned out to be flaky on iOS — even
+with the IIFE-scope lift in 1.17.4 the software keyboard kept slipping
+past it. Scrapped it entirely in favour of dedicated one-tap buttons
+that each send a complete sequence on their own; no modifier state,
+nothing to intercept.
+
+New toolbar layout (scrollable horizontally):
+
+`ESC` · `Tab` · `⇧Tab` · `↑` `↓` `←` `→` · `^C` `^D` `^L` `^U` · `/` `@` `#` `!` `|` · `Paste` · `×`
+
+- `⇧Tab` sends `\x1b[Z` — Claude Code's mode-cycle key.
+- `^C` / `^D` / `^L` / `^U` send `\x03` / `\x04` / `\x0c` / `\x15` —
+  interrupt, EOF, clear screen, clear line.
+- `/` `@` `#` `!` are the Claude Code prefix characters (slash-command
+  menu, file reference, memory, bash mode) as literal single chars,
+  giving one-tap access without fishing for them in the iOS keyboard.
+
+Removed `Ctrl`, `~`, `-` buttons (the two latter were low-value and
+freed toolbar width for the new shortcuts). `diffAndSend` is now a
+straight diff forwarder — the dictation fix is unchanged, it just
+no longer has a Ctrl branch to worry about.
+
 ## 1.17.4
 
 ### Sticky Ctrl now works with the software keyboard
