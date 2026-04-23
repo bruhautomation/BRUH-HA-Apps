@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.17.4
+
+### Sticky Ctrl now works with the software keyboard
+
+Tapping the toolbar's `Ctrl` armed the modifier, but typing a letter
+on the on-screen keyboard afterwards (e.g. `Ctrl` then `R` to reload)
+reached the PTY as a plain `r`. The Ctrl state was scoped inside
+`buildToolbar()`, so `handleKey()` could see it but the
+document-level input capture path — which is how software-keyboard
+characters get forwarded to ttyd — couldn't.
+
+Lifted `ctrlSticky` and `setCtrl` to the IIFE scope so both call
+sites share the same state. `diffAndSend()` now applies the Ctrl
+transform when the textarea delta is exactly one new character (a
+real keypress) and drops it for multi-char deltas (dictation,
+autocorrect, paste) so `Ctrl` + spoken "test" doesn't turn into a
+burst of control codes. The toolbar's visual Ctrl pill still updates
+correctly because it's driven off `setCtrl`, which is now shared.
+
 ## 1.17.3
 
 ### Lift the toolbar above the keyboard when running behind HA ingress
