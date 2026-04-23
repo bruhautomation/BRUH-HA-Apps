@@ -102,7 +102,7 @@ class TestConfigYaml(unittest.TestCase):
         bool_options = [
             "auto_launch_claude", "auto_backup", "auto_generate_context",
             "enable_ha_mcp_server", "enable_assist_integration",
-            "enable_automation_integration"
+            "enable_automation_integration", "enable_mobile_ui"
         ]
         for opt in bool_options:
             self.assertIsInstance(options.get(opt), bool, f"{opt} should be bool")

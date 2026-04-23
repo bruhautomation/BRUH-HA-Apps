@@ -88,6 +88,12 @@ COPY integrations/ /opt/integrations/
 # Copy custom HA integration (deployed to /config/custom_components at runtime)
 COPY custom_components/ /opt/custom_components/
 
+# Copy ttyd asset template. run.sh runs scripts/build-mobile-index.py at
+# startup to probe ttyd's bundle filename and render the final index.html
+# so ttyd --index can serve a mobile toolbar + iOS dictation fix on top
+# of whatever frontend bundle ttyd happens to ship this version.
+COPY ttyd-assets/ /opt/ttyd-assets/
+
 # Set permissions
 RUN chmod +x /run.sh \
     && find /opt/scripts -name "*.sh" -exec chmod +x {} \; \

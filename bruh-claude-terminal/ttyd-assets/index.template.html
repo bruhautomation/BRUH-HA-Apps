@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="format-detection" content="telephone=no">
+    <title>BRUH Claude Terminal</title>
+    __TTYD_HEAD_ASSETS__
+    <style>
+      :root {
+        --bruh-bg:          #1a1613;
+        --bruh-bg-soft:     #241d18;
+        --bruh-accent:      #d97757;
+        --bruh-accent-dim:  #a85638;
+        --bruh-fg:          #e8ddd4;
+        --bruh-muted:       #a89b90;
+        --bruh-border:      #3a2e25;
+      }
+
+      html, body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        background: var(--bruh-bg);
+        color: var(--bruh-fg);
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        overflow: hidden;
+        -webkit-text-size-adjust: 100%;
+        overscroll-behavior: none;
+      }
+
+      #bruh-app {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+      }
+
+      /* ttyd's React app mounts to #terminal-container. Give it the remaining
+         space so xterm's FitAddon sizes correctly. */
+      #terminal-container {
+        flex: 1 1 auto;
+        min-height: 0;
+        background: var(--bruh-bg);
+        position: relative;
+      }
+
+      /* Mobile toolbar — hidden by default, shown only on touch devices */
+      #bruh-bar {
+        display: none;
+        flex: 0 0 auto;
+        background: var(--bruh-bg-soft);
+        border-top: 1px solid var(--bruh-border);
+        padding: 6px 4px calc(6px + env(safe-area-inset-bottom)) 4px;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        white-space: nowrap;
+        scrollbar-width: none;
+      }
+      #bruh-bar::-webkit-scrollbar { display: none; }
+
+      body.bruh-is-touch #bruh-bar { display: block; }
+      body.bruh-bar-hidden #bruh-bar { display: none; }
+
+      .bruh-key {
+        display: inline-block;
+        min-width: 44px;
+        height: 36px;
+        line-height: 36px;
+        padding: 0 10px;
+        margin: 0 2px;
+        background: var(--bruh-bg);
+        color: var(--bruh-fg);
+        border: 1px solid var(--bruh-border);
+        border-radius: 6px;
+        font-family: 'SF Mono', Menlo, Consolas, monospace;
+        font-size: 14px;
+        font-weight: 500;
+        text-align: center;
+        vertical-align: middle;
+        -webkit-tap-highlight-color: transparent;
+        -webkit-user-select: none;
+        user-select: none;
+        cursor: pointer;
+        transition: background 0.08s, border-color 0.08s, color 0.08s;
+      }
+
+      .bruh-key:active,
+      .bruh-key.bruh-pressed {
+        background: var(--bruh-accent);
+        border-color: var(--bruh-accent);
+        color: #1a1613;
+      }
+
+      .bruh-key.bruh-sticky-on {
+        background: var(--bruh-accent);
+        border-color: var(--bruh-accent);
+        color: #1a1613;
+      }
+
+      .bruh-key.bruh-primary {
+        background: var(--bruh-accent-dim);
+        border-color: var(--bruh-accent);
+        color: #fff;
+      }
+      .bruh-key.bruh-primary:active { background: var(--bruh-accent); }
+
+      .bruh-key.bruh-hide-btn {
+        min-width: 36px;
+        padding: 0 8px;
+        color: var(--bruh-muted);
+      }
+    </style>
+</head>
+<body>
+    <div id="bruh-app">
+        <div id="terminal-container"></div>
+        <div id="bruh-bar" role="toolbar" aria-label="Mobile terminal controls">
+            <span class="bruh-key bruh-primary" data-bruh-key="esc">ESC</span>
+            <span class="bruh-key" data-bruh-key="tab">Tab</span>
+            <span class="bruh-key" data-bruh-key="ctrl">Ctrl</span>
+            <span class="bruh-key" data-bruh-key="up">&#8593;</span>
+            <span class="bruh-key" data-bruh-key="down">&#8595;</span>
+            <span class="bruh-key" data-bruh-key="left">&#8592;</span>
+            <span class="bruh-key" data-bruh-key="right">&#8594;</span>
+            <span class="bruh-key" data-bruh-key="pipe">|</span>
+            <span class="bruh-key" data-bruh-key="slash">/</span>
+            <span class="bruh-key" data-bruh-key="tilde">~</span>
+            <span class="bruh-key" data-bruh-key="dash">-</span>
+            <span class="bruh-key" data-bruh-key="ctrlc">^C</span>
+            <span class="bruh-key" data-bruh-key="paste">Paste</span>
+            <span class="bruh-key bruh-hide-btn" data-bruh-key="hide" aria-label="Hide toolbar">&times;</span>
+        </div>
+    </div>
+
+    <!-- Our wrapper runs BEFORE ttyd's bundle (inline scripts execute during
+         HTML parsing; ttyd's script tag is below and may be `defer`ed, so
+         ours always wins). We monkey-patch window.WebSocket so we can capture
+         ttyd's connection for the toolbar's sendInput, and pre-register the
+         xterm-textarea patcher which runs once xterm mounts. -->
+    <script>
+    (function () {
+        'use strict';
+
+        // ------------------------------------------------------------------
+        // Capture ttyd's WebSocket so the toolbar can push raw stdin bytes.
+        // ttyd's protocol is: binary frame `TextEncoder.encode('0' + data)`
+        // for stdin (Command.INPUT = '0' in ttyd's protocol.ts).
+        // ------------------------------------------------------------------
+        var ttydSocket = null;
+        var OrigWS = window.WebSocket;
+        var enc = new TextEncoder();
+
+        function WrappedWS(url, protocols) {
+            var ws = protocols === undefined
+                ? new OrigWS(url)
+                : new OrigWS(url, protocols);
+            if (String(url).indexOf('/ws') !== -1) {
+                ttydSocket = ws;
+            }
+            return ws;
+        }
+        WrappedWS.prototype = OrigWS.prototype;
+        WrappedWS.CONNECTING = OrigWS.CONNECTING;
+        WrappedWS.OPEN       = OrigWS.OPEN;
+        WrappedWS.CLOSING    = OrigWS.CLOSING;
+        WrappedWS.CLOSED     = OrigWS.CLOSED;
+        window.WebSocket = WrappedWS;
+
+        function sendInput(data) {
+            if (!ttydSocket || ttydSocket.readyState !== 1) return;
+            try {
+                ttydSocket.send(enc.encode('0' + data));
+            } catch (e) { /* socket closed mid-send; ignore */ }
+        }
+
+        // ------------------------------------------------------------------
+        // Touch detection
+        // ------------------------------------------------------------------
+        var isTouch = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+        if (isTouch) document.body.classList.add('bruh-is-touch');
+
+        // ------------------------------------------------------------------
+        // Toolbar key handling
+        // ------------------------------------------------------------------
+        var ctrlSticky = false;
+        var ctrlEl = null;
+
+        var KEYS = {
+            'esc':    '\x1b',
+            'tab':    '\x09',
+            'up':     '\x1b[A',
+            'down':   '\x1b[B',
+            'right':  '\x1b[C',
+            'left':   '\x1b[D',
+            'pipe':   '|',
+            'slash':  '/',
+            'tilde':  '~',
+            'dash':   '-',
+            'ctrlc':  '\x03'
+        };
+
+        function setCtrl(on) {
+            ctrlSticky = on;
+            if (ctrlEl) ctrlEl.classList.toggle('bruh-sticky-on', on);
+        }
+
+        function refocusTerminal() {
+            var ta = document.querySelector('.xterm-helper-textarea');
+            if (ta) ta.focus();
+        }
+
+        function handleKey(keyName) {
+            if (keyName === 'ctrl') {
+                setCtrl(!ctrlSticky);
+                return;
+            }
+            if (keyName === 'hide') {
+                document.body.classList.add('bruh-bar-hidden');
+                window.dispatchEvent(new Event('resize'));
+                return;
+            }
+            if (keyName === 'paste') {
+                if (navigator.clipboard && navigator.clipboard.readText) {
+                    navigator.clipboard.readText()
+                        .then(function (text) { if (text) sendInput(text); })
+                        .catch(function () { /* permission denied — silent */ });
+                }
+                return;
+            }
+            var str = KEYS[keyName];
+            if (str === undefined) return;
+
+            if (ctrlSticky && str.length === 1) {
+                var code = str.toUpperCase().charCodeAt(0);
+                if (code >= 64 && code <= 95) {
+                    str = String.fromCharCode(code - 64);
+                }
+                setCtrl(false);
+            }
+            sendInput(str);
+        }
+
+        function onBarPointerDown(e) {
+            var el = e.target.closest && e.target.closest('.bruh-key');
+            if (!el) return;
+            // preventDefault keeps xterm's textarea focused on iOS,
+            // otherwise tapping the toolbar closes the keyboard.
+            e.preventDefault();
+            el.classList.add('bruh-pressed');
+            setTimeout(function () { el.classList.remove('bruh-pressed'); }, 120);
+            handleKey(el.dataset.bruhKey);
+            refocusTerminal();
+        }
+
+        function wireToolbar() {
+            var bar = document.getElementById('bruh-bar');
+            if (!bar) return;
+            bar.addEventListener('pointerdown', onBarPointerDown);
+            if (!window.PointerEvent) {
+                bar.addEventListener('touchstart', onBarPointerDown, { passive: false });
+                bar.addEventListener('mousedown', onBarPointerDown);
+            }
+            ctrlEl = document.querySelector('[data-bruh-key="ctrl"]');
+        }
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', wireToolbar);
+        } else {
+            wireToolbar();
+        }
+
+        // ------------------------------------------------------------------
+        // iOS dictation / autocorrect duplicate-text fix
+        // xterm.js #3600: iOS fires a second `input` event after
+        // `compositionend` with the same text xterm already consumed,
+        // doubling words. Swallow it, and disable OS text rewriting.
+        // ------------------------------------------------------------------
+        function patchTextarea() {
+            var ta = document.querySelector('.xterm-helper-textarea');
+            if (!ta || ta.dataset.bruhPatched) return !!ta;
+            ta.dataset.bruhPatched = '1';
+
+            ta.setAttribute('autocorrect',    'off');
+            ta.setAttribute('autocapitalize', 'off');
+            ta.setAttribute('autocomplete',   'off');
+            ta.setAttribute('spellcheck',     'false');
+
+            var composing = false;
+            var lastCompositionEnd = 0;
+
+            ta.addEventListener('compositionstart', function () {
+                composing = true;
+            }, true);
+            ta.addEventListener('compositionend', function () {
+                composing = false;
+                lastCompositionEnd = Date.now();
+            }, true);
+            ta.addEventListener('input', function (e) {
+                if (!composing && (Date.now() - lastCompositionEnd) < 60) {
+                    e.stopImmediatePropagation();
+                    ta.value = '';
+                }
+            }, true);
+
+            return true;
+        }
+
+        // Poll for xterm to mount. ttyd creates the helper-textarea after
+        // the React app boots and xterm.open() runs. 40 × 250ms = 10s is
+        // enough even on slow devices.
+        var tries = 0;
+        var timer = setInterval(function () {
+            if (patchTextarea() || ++tries > 40) clearInterval(timer);
+        }, 250);
+    })();
+    </script>
+
+    __TTYD_BODY_SCRIPTS__
+</body>
+</html>

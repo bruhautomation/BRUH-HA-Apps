@@ -1363,6 +1363,34 @@ start_web_terminal() {
 
     export TTYD=1
 
+    # Mobile toolbar + iOS dictation fix.  Opt-in via `enable_mobile_ui`
+    # (default on).  build-mobile-index.py probes ttyd locally to discover
+    # whatever bundle filename the installed ttyd actually serves, then
+    # renders our template with those tags spliced in.  If the probe fails
+    # we fall back to ttyd's stock UI so a broken build never yields the
+    # blank black page we shipped in 1.16.0.
+    local index_arg=()
+    local enable_mobile_ui
+    enable_mobile_ui=$(bashio::config 'enable_mobile_ui' 'true')
+    if [ "$enable_mobile_ui" = "true" ] \
+        && [ -f /opt/scripts/build-mobile-index.py ] \
+        && [ -f /opt/ttyd-assets/index.template.html ]; then
+        if python3 /opt/scripts/build-mobile-index.py; then
+            if [ -f /opt/ttyd-assets/index.html ]; then
+                index_arg=(--index /opt/ttyd-assets/index.html)
+                bashio::log.info "  Mobile UI: enabled"
+            else
+                bashio::log.warning "  Mobile UI: builder reported success but output missing, using stock UI"
+            fi
+        else
+            bashio::log.warning "  Mobile UI: probe failed, using stock ttyd UI"
+        fi
+    elif [ "$enable_mobile_ui" = "true" ]; then
+        bashio::log.warning "  Mobile UI: assets not present in image, using stock UI"
+    else
+        bashio::log.info "  Mobile UI: disabled via enable_mobile_ui=false"
+    fi
+
     # Use wait instead of exec so the cleanup trap can fire on SIGTERM
     # and properly terminate background processes (backup watcher, listeners)
     ttyd \
@@ -1375,6 +1403,7 @@ start_web_terminal() {
         --client-option reconnectInterval=5 \
         --client-option 'fontFamily=SF Mono, Menlo, Consolas, monospace' \
         --client-option 'theme={"background":"#1a1613","foreground":"#e8ddd4","cursor":"#d97757","cursorAccent":"#1a1613","selectionBackground":"#d9775766"}' \
+        "${index_arg[@]}" \
         bash -c "$launch_command" &
 
     wait $!
@@ -1409,7 +1438,7 @@ trap cleanup SIGTERM SIGINT EXIT
 
 main() {
     bashio::log.info "============================================"
-    bashio::log.info "  BRUH Claude Terminal v1.16.1"
+    bashio::log.info "  BRUH Claude Terminal v1.17.0"
     bashio::log.info "  Enhanced Claude Code for Home Assistant"
     bashio::log.info "============================================"
 

@@ -189,6 +189,38 @@ persist-install list                # List persistent packages
 persist-install remove apk vim      # Remove from persistence
 ```
 
+## Using the Terminal on iOS / Android
+
+The web terminal auto-detects touch devices and shows an on-screen toolbar above the software keyboard with the keys iOS doesn't give you.
+
+### Mobile toolbar
+
+| Key | Sends | Notes |
+|-----|-------|-------|
+| `ESC` | `␛` | Claude Code's interrupt / close-menu key. Highlighted in orange. |
+| `Tab` | `\t` | Tab-complete in the shell; navigate Claude Code menus. |
+| `Ctrl` | (sticky) | Tap once to arm, then tap any letter to send the control code. Tap `Ctrl` again to cancel. |
+| `↑ ↓ ← →` | arrow keys | Shell history / cursor movement. |
+| <code>&#124;</code> `/` `~` `-` | literal | Characters iOS hides two taps deep. |
+| `^C` | `Ctrl-C` | One-tap interrupt. |
+| `Paste` | clipboard | Pastes via the Web Clipboard API (iOS will ask for permission the first time). |
+| `×` | hide toolbar | Reconnect to the session to bring it back. |
+
+### Voice dictation
+
+iOS voice dictation used to duplicate words in the terminal. This release turns off autocorrect/autocapitalize/spellcheck on xterm's hidden textarea and swallows the extra `input` event iOS fires right after `compositionend`, which was the root cause.
+
+If you still see doubled words:
+
+1. **Settings > Accessibility > Voice Control** — make sure it's **off**. Having Voice Control and keyboard Dictation on at the same time causes iOS itself to submit speech twice.
+2. **Settings > General > Keyboard** — turn off **Auto-Correction**, **Check Spelling**, and **Predictive**.
+
+### Tips
+
+- **Add to Home Screen** on iOS gives a full-screen launcher without Safari's browser chrome. The toolbar sits right above the home-indicator safe area.
+- **Bluetooth keyboard**: all real keys work — ESC, Ctrl, Option, arrows. Tap `×` to hide the on-screen toolbar if you don't need it.
+- **Disable the feature**: flip `enable_mobile_ui` to `false` in the add-on config to fall back to ttyd's stock UI. The add-on also falls back automatically if the startup probe that builds the custom UI fails.
+
 ## Debugging & Logs
 
 The app writes detailed debug logs for every conversation agent and automation task request. These help you understand what's being sent to Claude, how long it takes, and what comes back.
