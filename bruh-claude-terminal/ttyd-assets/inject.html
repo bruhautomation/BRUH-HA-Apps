@@ -110,6 +110,14 @@
   // ===================================================================
   var lastValue = '';
 
+  // Sticky Ctrl modifier state — shared between the toolbar (which
+  // flips it on a `Ctrl` tap) and the diff sender below (which
+  // consumes it for the next single character typed on the software
+  // keyboard so Ctrl + R / Ctrl + C / etc. actually reach the PTY).
+  // `setCtrl` is assigned by buildToolbar() once the DOM is ready.
+  var ctrlSticky = false;
+  var setCtrl = function (on) { ctrlSticky = on; };
+
   function diffAndSend(newValue) {
     if (newValue === lastValue) return;
     var i = 0;
@@ -118,7 +126,20 @@
     var removed = lastValue.length - i;
     var added   = newValue.slice(i);
     for (var b = 0; b < removed; b++) sendInput('\x7f'); // DEL / backspace
-    if (added) sendInput(added);
+    if (added) {
+      // Apply sticky Ctrl ONLY when exactly one new char was typed and
+      // nothing was retracted — i.e. a normal keypress on the software
+      // keyboard. Skip it for dictation / paste (`added.length > 1`) so
+      // we don't turn a word into a burst of control codes.
+      if (ctrlSticky && removed === 0 && added.length === 1) {
+        var code = added.toUpperCase().charCodeAt(0);
+        if (code >= 64 && code <= 95) {
+          added = String.fromCharCode(code - 64);
+        }
+        setCtrl(false);
+      }
+      sendInput(added);
+    }
     lastValue = newValue;
   }
 
@@ -307,13 +328,14 @@
       }
     }, true);
 
-    var ctrlSticky = false;
+    // Wire the shared IIFE-scope `setCtrl` to this toolbar's Ctrl pill so
+    // the visual indicator tracks both toolbar taps and software-keyboard
+    // consumption of the modifier.
     var ctrlEl = bar.querySelector('[data-bruh-key="ctrl"]');
-
-    function setCtrl(on) {
+    setCtrl = function (on) {
       ctrlSticky = on;
       if (ctrlEl) ctrlEl.classList.toggle('bruh-sticky-on', on);
-    }
+    };
 
     function handleKey(keyName) {
       if (keyName === 'ctrl') { setCtrl(!ctrlSticky); return; }
