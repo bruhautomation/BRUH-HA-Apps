@@ -28,6 +28,28 @@ META_PATH="${MC_SERVER_DIR}/.server-meta.json"
 
 log() { printf '[download-server] %s\n' "$*" >&2; }
 
+# ----------------------------------------------------------------------------
+# Offline-mode short-circuit (1.3.0)
+#
+# run.sh sets BMS_OFFLINE=true when upstream isn't reachable. Defence in
+# depth: even if some other path calls this script directly, never attempt
+# a curl when we know it'll fail. If server.jar already exists we just keep
+# it; otherwise fail with a clear actionable error rather than letting curl
+# hang and exit 22.
+# ----------------------------------------------------------------------------
+if [ "${BMS_OFFLINE:-false}" = "true" ]; then
+    if [ -s "${JAR_PATH}" ]; then
+        log "Offline mode — reusing existing server.jar (no resolution attempted)"
+        log "Installed $(basename "${JAR_PATH}") ($(du -h "${JAR_PATH}" | cut -f1))"
+        exit 0
+    fi
+    log "ERROR: offline mode and no cached server.jar exists at ${JAR_PATH}"
+    log "       This is likely the add-on's first start without network access."
+    log "       Connect to the internet once so the initial jar can be downloaded;"
+    log "       subsequent boots will continue to work offline."
+    exit 1
+fi
+
 write_meta() {
     local version="$1" build="$2" src_url="$3"
     cat > "${META_PATH}" <<JSON
