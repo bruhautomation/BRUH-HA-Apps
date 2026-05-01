@@ -2,6 +2,8 @@
 
 Enhanced Claude Code terminal for Home Assistant with native HA API access, auto-backup, context generation, and deep Home Assistant integration.
 
+📖 **Full documentation:** [bruhautomation.com/bruh-claude](https://bruhautomation.com/bruh-claude/)
+
 ## Features
 
 ### Native HA API Access (MCP Server)
