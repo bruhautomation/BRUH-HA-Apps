@@ -6,6 +6,8 @@ A rock-solid Minecraft **Java Edition** server add-on for Home Assistant with a 
 ![Java](https://img.shields.io/badge/Java-21-orange)
 ![Status](https://img.shields.io/badge/status-stable-brightgreen)
 
+📖 **Full documentation:** [bruhautomation.com/bruh-minecraft](https://bruhautomation.com/bruh-minecraft/)
+
 ## Features
 
 - **Cross-play with Bedrock (iOS, Android, Xbox, Switch, PS, Win10/11).** `enable_bedrock_support: true` is on by default and auto-installs Geyser + Floodgate so iPhone / iPad / console players can join the same world on UDP:19132 — no extra setup. `host_network: true` means the server shows up automatically in Minecraft's **Friends** tab on any device on the same LAN (no manual IP entry needed).
