@@ -351,9 +351,50 @@ PY
 }
 
 # ----------------------------------------------------------------------------
+# Network reachability probe (1.3.0)
+#
+# We hit a single fast HEAD request against the upstream we depend on the
+# most (api.papermc.io) with a short timeout. The result is exported as
+# BMS_OFFLINE=true|false for child scripts (download-server.sh,
+# install-plugin.sh, install-bedrock-support.sh) so they can short-circuit
+# their curl calls and reuse cached artefacts instead of hanging on
+# unreachable endpoints.
+#
+# Why papermc.io specifically: it's the source for the default server type,
+# and if it's reachable we can almost certainly reach the other download
+# hosts (Mojang, Purpur, Fabric, Forge, GeyserMC) too. If the user is on a
+# truly LAN-only HA host with no DNS at all, every external host is equally
+# unreachable, so picking one we already need to hit is fine.
+#
+# Timeout sized for "is the host reachable at all" (3s connect + 2s body).
+# Slow upstream incidents won't trip the offline path; only DNS / routing
+# failure / firewall block / actual disconnect will.
+# ----------------------------------------------------------------------------
+detect_network_mode() {
+    local probe_url="https://api.papermc.io/v2/"
+    if curl -fsS --head --connect-timeout 3 --max-time 5 "${probe_url}" >/dev/null 2>&1; then
+        export BMS_OFFLINE="false"
+        bashio::log.info "Network: online (upstream reachable)"
+    else
+        export BMS_OFFLINE="true"
+        bashio::log.warning "================================================================"
+        bashio::log.warning " OFFLINE MODE — upstream unreachable (${probe_url})"
+        bashio::log.warning " Server will start using cached artefacts (jars, plugins, Geyser)"
+        bashio::log.warning " Server-jar resolution, plugin fetches, and Geyser auto-update"
+        bashio::log.warning " are all skipped this boot."
+        bashio::log.warning "================================================================"
+    fi
+}
+
+# ----------------------------------------------------------------------------
 # Download / update the server jar. Writes ${MC_SERVER_DIR}/server.jar
 # ----------------------------------------------------------------------------
 download_server_jar() {
+    if [ "${BMS_OFFLINE}" = "true" ] && [ -s "${MC_SERVER_DIR}/server.jar" ]; then
+        bashio::log.info "Offline — reusing existing server.jar (skipping resolution)"
+        return 0
+    fi
+
     bashio::log.info "Resolving ${SERVER_TYPE} jar for Minecraft version '${MINECRAFT_VERSION}'"
 
     if "${SCRIPTS_DIR}/download-server.sh"; then
@@ -386,6 +427,11 @@ render_server_properties() {
 install_plugins() {
     if bashio::config.is_empty 'plugins'; then
         bashio::log.debug "No plugins declared"
+        return 0
+    fi
+
+    if [ "${BMS_OFFLINE}" = "true" ]; then
+        bashio::log.info "Offline — skipping plugin URL fetch (using existing jars in plugins/)"
         return 0
     fi
 
@@ -446,7 +492,14 @@ install_bedrock_support() {
         bashio::log.debug "Bedrock support disabled; skipping Geyser install"
         return 0
     fi
-    bashio::log.info "Installing Bedrock support (Geyser + Floodgate)"
+    if [ "${BMS_OFFLINE}" = "true" ]; then
+        bashio::log.info "Offline — Bedrock support: reusing cached Geyser/Floodgate jars (no auto-update)"
+    else
+        bashio::log.info "Installing Bedrock support (Geyser + Floodgate)"
+    fi
+    # The script itself respects BMS_OFFLINE: skips downloads when set, only
+    # re-applies the Geyser config patch + Floodgate-removal logic so auth
+    # changes still take effect from cached jars on every boot.
     "${SCRIPTS_DIR}/install-bedrock-support.sh" \
         || bashio::log.warning "Bedrock support install had errors (continuing)"
 }
@@ -733,6 +786,7 @@ main() {
 
     load_config
     check_eula
+    detect_network_mode
     ensure_worlds_layout
     prepare_filesystem
     ensure_rcon_password

@@ -273,13 +273,40 @@ YAML
 }
 
 # The jars are named by convention so the server picks them up automatically.
-install_jar geyser "${GEYSER_VARIANT}" "Geyser-${GEYSER_VARIANT^}.jar" \
-    || warn "Geyser install failed; Bedrock clients will not be able to connect"
+GEYSER_JAR="${DEST_DIR}/Geyser-${GEYSER_VARIANT^}.jar"
+FLOODGATE_JAR="${DEST_DIR}/floodgate-${FLOODGATE_VARIANT}.jar"
 
-if [ "${INSTALL_FLOODGATE}" = "1" ]; then
-    install_jar floodgate "${FLOODGATE_VARIANT}" "floodgate-${FLOODGATE_VARIANT}.jar" \
-        || warn "Floodgate install failed; Bedrock players will need a Java account to log in"
+# Offline-mode short-circuit (1.3.0): when run.sh has detected we're offline,
+# don't attempt the GeyserMC v2 API calls — just verify the cached jars are
+# present and continue. configure_geyser below still runs so auth-type /
+# MTU / MOTD changes from add-on options take effect.
+if [ "${BMS_OFFLINE:-false}" = "true" ]; then
+    if [ -f "${GEYSER_JAR}" ]; then
+        log "Offline — using cached Geyser jar ($(basename "${GEYSER_JAR}"))"
+    else
+        warn "Offline and no cached Geyser jar at ${GEYSER_JAR}"
+        warn "Bedrock clients will not be able to connect until the add-on can"
+        warn "reach download.geysermc.org once to fetch the initial jar."
+    fi
+    if [ "${INSTALL_FLOODGATE}" = "1" ]; then
+        if [ -f "${FLOODGATE_JAR}" ]; then
+            log "Offline — using cached Floodgate jar ($(basename "${FLOODGATE_JAR}"))"
+        else
+            warn "Offline and no cached Floodgate jar — Bedrock players will need"
+            warn "a Java account to log in until Floodgate can be fetched."
+        fi
+    fi
 else
+    install_jar geyser "${GEYSER_VARIANT}" "Geyser-${GEYSER_VARIANT^}.jar" \
+        || warn "Geyser install failed; Bedrock clients will not be able to connect"
+
+    if [ "${INSTALL_FLOODGATE}" = "1" ]; then
+        install_jar floodgate "${FLOODGATE_VARIANT}" "floodgate-${FLOODGATE_VARIANT}.jar" \
+            || warn "Floodgate install failed; Bedrock players will need a Java account to log in"
+    fi
+fi
+
+if [ "${INSTALL_FLOODGATE}" = "0" ]; then
     if [ "${AUTH_TYPE}" = "offline" ]; then
         log "Floodgate NOT installed (auth-type=offline) — Bedrock clients join without any Xbox sign-in"
     elif [ "${SERVER_TYPE}" = "fabric" ]; then
