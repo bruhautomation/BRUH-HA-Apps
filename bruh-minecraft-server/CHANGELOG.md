@@ -5,36 +5,6 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## 1.3.0
-
-### Added
-
-- **Offline-first boot.** The add-on now starts a Minecraft server even
-  when the host has no internet access, by reusing the previously-downloaded
-  jar, plugin jars, and Geyser/Floodgate jars from `/data/server-cache`,
-  `plugins/`, and `mods/`. A new probe at startup hits `api.papermc.io`
-  with a 5-second timeout and exports `BMS_OFFLINE=true` if it can't
-  connect. Downstream scripts (`download-server.sh`,
-  `install-bedrock-support.sh`, the plugin loop in `run.sh`) all
-  short-circuit their network calls when offline and reuse cached
-  artefacts instead. Without this change a LAN-only HA host couldn't
-  start the server at all because `LATEST` resolution and the GeyserMC
-  v2 API calls would hang on unreachable upstreams.
-
-- **Clear startup banner** when running offline so it's obvious in the
-  add-on Log tab which mode you're in.
-
-### Notes
-
-- First-ever boot still requires internet — there's no jar to fall back
-  to until at least one online start has cached it. After that, the
-  server will keep starting forever offline.
-- Server jar / plugin / Geyser auto-updates are skipped while offline.
-  When the host comes back online, the next add-on restart picks up
-  the latest releases as before (unchanged behaviour).
-- Geyser config patches (auth-type, MTU, MOTD) still apply on every
-  boot regardless of network mode — those edits don't need network.
-
 ## 1.2.9
 
 ### Fixed
