@@ -5,6 +5,21 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.3.1
+
+### Reverted
+
+- **Reverts the offline-first boot behaviour shipped in 1.3.0.** That change
+  caused the add-on to fail to start with an empty log on some installs.
+  Behaviour is now identical to 1.2.9. Offline-first boot will return in a
+  later release once the regression is understood and fixed.
+
+## 1.3.0
+
+### Reverted
+
+- See 1.3.1. Do not install this version.
+
 ## 1.2.9
 
 ### Fixed
