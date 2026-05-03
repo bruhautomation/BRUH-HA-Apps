@@ -106,8 +106,32 @@
   //    the current textarea value against the last value we forwarded,
   //    send backspaces for any retracted characters and the new tail,
   //    then `stopImmediatePropagation` so xterm never sees the event.
+  //
+  //    1.18.0: gate the diff-and-send on "no recent keydown AND not in
+  //    IME composition" — otherwise this handler *also* fires for
+  //    every desktop keystroke (which xterm already converted to PTY
+  //    bytes via its own keydown handler), doubling every character.
+  //    iOS dictation produces input events with neither a preceding
+  //    keydown nor an active composition, so this reliably tells
+  //    "actual voice/IME input that needs our help" apart from
+  //    "ordinary typing xterm already handled".
   // ===================================================================
   var lastValue = '';
+  var lastKeyDownAt = 0;
+  var inComposition = false;
+
+  // Track keydown so we know which input events to ignore. Capture
+  // phase + document-level matches our input listener so timing is
+  // tight (no event bubbling latency between the two).
+  document.addEventListener('keydown', function () {
+    lastKeyDownAt = Date.now();
+  }, true);
+  document.addEventListener('compositionstart', function () {
+    inComposition = true;
+  }, true);
+  document.addEventListener('compositionend', function () {
+    inComposition = false;
+  }, true);
 
   function diffAndSend(newValue) {
     if (newValue === lastValue) return;
@@ -124,6 +148,22 @@
   function onDocumentInputCapture(e) {
     var t = e.target;
     if (!t || !t.classList || !t.classList.contains('xterm-helper-textarea')) return;
+
+    // Real keyboard input: xterm already sent the character via its
+    // keydown handler. Don't duplicate it. The 100ms window is
+    // generous enough for slow event loops but tight enough not to
+    // swallow genuine voice/IME input that happens to follow a
+    // recent keypress.
+    if (Date.now() - lastKeyDownAt < 100) return;
+
+    // IME composition (Japanese/Chinese/Korean keyboards on desktop):
+    // xterm handles these via compositionend. Skip during composition
+    // and let xterm do its job.
+    if (inComposition) return;
+
+    // What's left: voice dictation on iOS (or any other input event
+    // that fires without a paired keydown). Diff against last value
+    // and send the delta.
     diffAndSend(t.value || '');
     e.stopImmediatePropagation();
 
