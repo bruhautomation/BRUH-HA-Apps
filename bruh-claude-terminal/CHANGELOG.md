@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.18.0
+
+### Fixed: every keystroke double-typed in the web terminal
+
+The iOS-dictation `input` listener added in 1.16.x was firing for **every**
+keystroke, not just dictation. xterm.js had already converted each keypress
+into PTY bytes via its own `keydown` handler, then the BRUH listener saw the
+follow-up `input` event, ran the dictation diff-and-send, and wrote the same
+character to the PTY a second time. Net effect: typing "hello" produced
+"hheelllloo" in any setup that fires both events (most desktops, iPads with
+external keyboards, and a handful of HA Companion-app browser builds).
+
+The fix in `ttyd-assets/inject.html` gates the dictation handler on:
+
+1. **No recent keydown** (within 100 ms) — if a real key was just pressed,
+   xterm has already handled it; bail.
+2. **Not in IME composition** — desktop IMEs (Chinese / Japanese / Korean)
+   fire `compositionstart` / `compositionend` and want xterm to handle them
+   via `compositionend`; bail.
+
+iOS voice dictation produces input events with neither a paired keydown
+nor an active composition, so it still gets the diff-and-send treatment
+that fixed WebKit bug 261764. Real keyboard typing is now sent exactly once.
+
 ## 1.17.5
 
 ### Dedicated one-tap buttons for Claude Code shortcuts
