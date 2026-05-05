@@ -120,6 +120,19 @@ load_config() {
     EXTRA_JVM_ARGS=$(bashio::config 'extra_jvm_args' '')
     LOG_LEVEL=$(bashio::config 'log_level' 'info')
 
+    # Popular-plugin checkboxes (1.4.0). Each `install_<name>` add-on option
+    # becomes an `INSTALL_<NAME>` env var consumed by scripts/popular-plugins.sh.
+    # Keep this list in sync with PLUGIN_SLUGS in popular-plugins.sh AND
+    # the schema entries in config.yaml.
+    for popular in essentialsx essentialsx_chat luckperms worldedit worldguard \
+                   coreprotect multiverse_core dynmap bluemap spark \
+                   simple_voice_chat; do
+        var="INSTALL_$(echo "${popular}" | tr '[:lower:]' '[:upper:]')"
+        # shellcheck disable=SC2034
+        printf -v "${var}" '%s' "$(bashio::config "install_${popular}" 'false')"
+        export "${var?}"
+    done
+
     # Apply log level so bashio::log.debug / bashio::log.trace actually render
     case "${LOG_LEVEL}" in
         trace)   export BASHIO_LOG_LEVEL=8 ;;
@@ -438,6 +451,32 @@ install_plugins() {
 }
 
 # ----------------------------------------------------------------------------
+# Install curated popular plugins (1.4.0).
+#
+# The `install_<name>: true` add-on options drive scripts/popular-plugins.sh,
+# which resolves each enabled plugin's latest Paper-compatible jar via the
+# Modrinth API and installs through install-plugin.sh. Same per-plugin
+# isolation: a single failure logs a warning and the boot continues.
+#
+# Skipped on Fabric/Forge/Vanilla because the curated set is Bukkit-API
+# (Paper / Purpur / Folia). Mods for those platforms still go in mods/
+# manually or via the Dockerfile.
+# ----------------------------------------------------------------------------
+install_popular_plugins() {
+    case "${SERVER_TYPE}" in
+        paper|purpur|folia) ;;
+        *)
+            bashio::log.debug "server_type=${SERVER_TYPE} doesn't support Bukkit plugins; skipping popular plugins"
+            return 0
+            ;;
+    esac
+    bashio::log.info "Resolving any enabled popular plugins"
+    "${SCRIPTS_DIR}/popular-plugins.sh" \
+        || bashio::log.warning "popular-plugins.sh returned non-zero (continuing)"
+    return 0
+}
+
+# ----------------------------------------------------------------------------
 # Auto-install Geyser + Floodgate so Bedrock clients (iOS/Android/consoles)
 # can connect. See scripts/install-bedrock-support.sh for the implementation.
 # ----------------------------------------------------------------------------
@@ -750,6 +789,7 @@ main() {
 
     render_server_properties
     install_plugins
+    install_popular_plugins
     install_bedrock_support
 
     start_backup_watcher
