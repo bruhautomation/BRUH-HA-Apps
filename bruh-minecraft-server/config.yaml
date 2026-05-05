@@ -1,7 +1,7 @@
 ---
 name: "BRUH Minecraft Server"
 description: "Rock-solid Minecraft Java Edition server with ingress panel, RCON, git world backups, auto-updates, plugin management, and deep Home Assistant integration"
-version: "1.3.1"
+version: "1.4.0"
 slug: "bruh_minecraft_server"
 init: false
 
@@ -190,6 +190,24 @@ options:
   # on the next boot. To remove a plugin permanently, remove the entry
   # here AND delete the jar from the panel.
   plugins: []
+  # Popular plugin one-click installers (1.4.0).
+  # Each toggle below maps to a curated, well-known plugin. When set to
+  # `true`, the add-on resolves the latest Paper/Spigot/Folia-compatible
+  # build via the Modrinth API on every boot and installs it into the
+  # active world's plugins/ folder. Same caching & ZIP-validation as the
+  # plugins: URL list above. Toggling back to `false` does NOT remove the
+  # jar — delete it from the panel's Plugins tab to remove.
+  install_essentialsx: false
+  install_essentialsx_chat: false
+  install_luckperms: false
+  install_worldedit: false
+  install_worldguard: false
+  install_coreprotect: false
+  install_multiverse_core: false
+  install_dynmap: false
+  install_bluemap: false
+  install_spark: false
+  install_simple_voice_chat: false
   extra_jvm_args: ""
   log_level: info
 schema:
@@ -252,6 +270,17 @@ schema:
   plugins:
     - url: "url"
       name: "str?"
+  install_essentialsx: bool
+  install_essentialsx_chat: bool
+  install_luckperms: bool
+  install_worldedit: bool
+  install_worldguard: bool
+  install_coreprotect: bool
+  install_multiverse_core: bool
+  install_dynmap: bool
+  install_bluemap: bool
+  install_spark: bool
+  install_simple_voice_chat: bool
   extra_jvm_args: "str?"
   log_level: "list(trace|debug|info|notice|warning|error|fatal)"
 

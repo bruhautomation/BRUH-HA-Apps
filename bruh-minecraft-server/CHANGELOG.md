@@ -5,6 +5,37 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.4.0
+
+### Added
+
+- **One-click popular plugins.** 11 new `install_<name>` checkboxes in the
+  Configuration tab let you tick on a curated set of well-known free
+  plugins — the add-on resolves the latest Paper-compatible jar via the
+  Modrinth API on every boot and installs it just like the existing
+  `plugins:` URL list. Curated set:
+
+    - `install_essentialsx` — EssentialsX (homes, warps, kits, /tpa, /repair)
+    - `install_essentialsx_chat` — EssentialsXChat (chat formatting companion)
+    - `install_luckperms` — LuckPerms (modern permissions)
+    - `install_worldedit` — WorldEdit (in-game block editing)
+    - `install_worldguard` — WorldGuard (region protection)
+    - `install_coreprotect` — CoreProtect (anti-grief logging / rollback)
+    - `install_multiverse_core` — Multiverse-Core (multi-world)
+    - `install_dynmap` — Dynmap (web-based 2D live map)
+    - `install_bluemap` — BlueMap (3D web live map)
+    - `install_spark` — Spark (server profiler)
+    - `install_simple_voice_chat` — Simple Voice Chat (proximity voice)
+
+  Bukkit-API only (Paper / Purpur / Folia). All resolution goes through
+  `scripts/popular-plugins.sh`, which falls back gracefully when a plugin
+  isn't on Modrinth or the lookup fails (logs a warning and continues so
+  one bad lookup can't tank the add-on).
+
+  Browse for anything not in this list at <https://modrinth.com/plugins>,
+  <https://hangar.papermc.io>, or <https://www.spigotmc.org/resources/categories/spigot.4/>
+  and add it to the `plugins:` URL list.
+
 ## 1.3.1
 
 ### Reverted
