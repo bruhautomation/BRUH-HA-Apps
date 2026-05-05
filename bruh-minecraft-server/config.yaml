@@ -1,7 +1,7 @@
 ---
 name: "BRUH Minecraft Server"
 description: "Rock-solid Minecraft Java Edition server with ingress panel, RCON, git world backups, auto-updates, plugin management, and deep Home Assistant integration"
-version: "1.4.0"
+version: "1.5.0"
 slug: "bruh_minecraft_server"
 init: false
 
@@ -204,10 +204,11 @@ options:
   install_worldguard: false
   install_coreprotect: false
   install_multiverse_core: false
-  install_dynmap: false
-  install_bluemap: false
+  install_griefprevention: false
+  install_mcmmo: false
+  install_chestsort: false
+  install_veinminer: false
   install_spark: false
-  install_simple_voice_chat: false
   extra_jvm_args: ""
   log_level: info
 schema:
@@ -277,10 +278,11 @@ schema:
   install_worldguard: bool
   install_coreprotect: bool
   install_multiverse_core: bool
-  install_dynmap: bool
-  install_bluemap: bool
+  install_griefprevention: bool
+  install_mcmmo: bool
+  install_chestsort: bool
+  install_veinminer: bool
   install_spark: bool
-  install_simple_voice_chat: bool
   extra_jvm_args: "str?"
   log_level: "list(trace|debug|info|notice|warning|error|fatal)"
 
