@@ -41,10 +41,11 @@ declare -A PLUGIN_SLUGS=(
     [worldguard]="worldguard"
     [coreprotect]="coreprotect"
     [multiverse_core]="multiverse-core"
-    [dynmap]="dynmap"
-    [bluemap]="bluemap"
+    [griefprevention]="griefprevention"
+    [mcmmo]="mcmmo"
+    [chestsort]="chestsort"
+    [veinminer]="veinminer"
     [spark]="spark"
-    [simple_voice_chat]="simple-voice-chat"
 )
 
 # Loader filter: prefer Paper-family loaders. Modrinth tags vary, so we

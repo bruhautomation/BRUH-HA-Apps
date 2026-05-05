@@ -125,8 +125,8 @@ load_config() {
     # Keep this list in sync with PLUGIN_SLUGS in popular-plugins.sh AND
     # the schema entries in config.yaml.
     for popular in essentialsx essentialsx_chat luckperms worldedit worldguard \
-                   coreprotect multiverse_core dynmap bluemap spark \
-                   simple_voice_chat; do
+                   coreprotect multiverse_core griefprevention mcmmo \
+                   chestsort veinminer spark; do
         var="INSTALL_$(echo "${popular}" | tr '[:lower:]' '[:upper:]')"
         # shellcheck disable=SC2034
         printf -v "${var}" '%s' "$(bashio::config "install_${popular}" 'false')"

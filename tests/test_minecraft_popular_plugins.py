@@ -36,10 +36,11 @@ EXPECTED_PLUGINS = {
     "worldguard",
     "coreprotect",
     "multiverse_core",
-    "dynmap",
-    "bluemap",
+    "griefprevention",
+    "mcmmo",
+    "chestsort",
+    "veinminer",
     "spark",
-    "simple_voice_chat",
 }
 
 

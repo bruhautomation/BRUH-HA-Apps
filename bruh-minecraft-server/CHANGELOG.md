@@ -5,6 +5,50 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.5.0
+
+### Changed: revised the popular-plugin checkbox set
+
+Tightened the curated set to focus on **in-game-useful, no-extra-port**
+plugins. Web-map plugins were removed because their default ports
+(Dynmap on `8123`, BlueMap on `8100`) collide with Home Assistant's
+defaults often enough to surprise users. Voice Chat was removed because
+it requires every player to install a matching client mod and exposes
+an extra UDP port — the kind of friction the curated list shouldn't push.
+
+**Removed checkboxes (3):**
+
+- `install_dynmap` — Dynmap (web 2D live map)
+- `install_bluemap` — BlueMap (web 3D live map)
+- `install_simple_voice_chat` — Simple Voice Chat (proximity voice)
+
+**Added checkboxes (4):**
+
+- `install_griefprevention` — GriefPrevention (golden-shovel claim
+  protection — players right-click ground with a golden shovel to
+  claim a square; only they can build inside)
+- `install_mcmmo` — mcMMO (RPG-style skills — Mining/Woodcutting/
+  Swords/etc. level up with use)
+- `install_chestsort` — ChestSort (left-click outside an open chest
+  with an empty hand → instantly sorted)
+- `install_veinminer` — VeinMiner (sneak + break one ore = the whole
+  vein breaks)
+
+**Migrating from 1.4.0:**
+
+If you had `install_dynmap`, `install_bluemap`, or `install_simple_voice_chat`
+set to `true`, the option will silently drop on update — the corresponding
+jars will stay on disk. Delete them from the panel's **Plugins** tab if
+you don't want them anymore. Anything else can be installed manually via
+the existing `plugins:` URL list (browse [modrinth.com/plugins](https://modrinth.com/plugins),
+[hangar.papermc.io](https://hangar.papermc.io), or [SpigotMC](https://www.spigotmc.org/resources/categories/spigot.4/)).
+
+**Heads-up about "in-game biome maps":** these are fundamentally
+client-side mods (Xaero's Minimap, JourneyMap, etc.) — a server plugin
+can't draw on a player's client. The vanilla `/locate biome <id>`
+command (1.18+) does what most server admins actually want: points at
+the nearest desert / jungle / mushroom-field.
+
 ## 1.4.0
 
 ### Added
