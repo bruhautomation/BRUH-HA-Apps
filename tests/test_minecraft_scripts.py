@@ -290,19 +290,26 @@ class TestDownloadServer(unittest.TestCase):
         self.assertIn("exit 1", self.text)
 
     def test_latest_filters_out_prereleases_and_rcs(self):
-        """Regression for 1.2.7: PaperMC's `versions[]` array mixes stable
-        releases with pre-releases (`1.21.11-pre5`) and release candidates
-        (`1.21.11-rc3`). A naive `.versions[-1]` picks a pre-release during
-        Paper's rolling release window, whose network protocol differs from
-        the stable client on the same MC version — vanilla clients reject
-        the server with "Outdated server! I'm still on X.Y.Z". LATEST must
-        filter to stable-shaped strings (X.Y or X.Y.Z) before picking [-1];
-        SNAPSHOT preserves opt-in to pre-releases.
+        """Regression for 1.2.7 / 1.5.1: PaperMC's `versions[]` array mixes
+        stable releases with pre-releases (`1.21.11-pre5`) and release
+        candidates (`1.21.11-rc3`). A naive `.versions[-1]` picks a
+        pre-release during Paper's rolling release window, whose network
+        protocol differs from the stable client on the same MC version —
+        vanilla clients reject the server with "Outdated server! I'm still
+        on X.Y.Z". LATEST must filter to MC-shaped 1.x stable strings and
+        sort by numeric semver before picking the highest; SNAPSHOT
+        preserves opt-in to pre-releases.
         """
-        # jq filter that selects only plain X.Y / X.Y.Z entries
-        filter_re = r'select\(test\("\^\[0-9\]\+\\\\\.\[0-9\]\+\(\\\\\.\[0-9\]\+\)\?\$"\)\)'
+        # jq filter that selects only plain 1.X / 1.X.Y entries
+        filter_re = r'select\(test\("\^1\\\\\.\[0-9\]\+\(\\\\\.\[0-9\]\+\)\?\$"\)\)'
         self.assertRegex(self.text, filter_re,
-                         "resolve_paper_version must filter versions to stable-shaped entries")
+                         "resolve_paper_version must filter versions to "
+                         "MC-shaped 1.x stable entries")
+        # And must semver-sort (not rely on chronological array position)
+        self.assertIn('sort_by(split(".") | map(tonumber))', self.text,
+                      "LATEST must pick the highest semver, not the last "
+                      "array entry — Purpur ships out-of-order rebuild "
+                      "markers like 26.1.2 that would otherwise win")
         # Both paper and purpur must use the filter when VERSION_REQ == LATEST
         # — the two separate branches prove LATEST and SNAPSHOT diverge.
         self.assertIn('[ "${VERSION_REQ}" = "LATEST" ]', self.text)
@@ -311,12 +318,13 @@ class TestDownloadServer(unittest.TestCase):
     def test_filter_regex_semantics(self):
         """Sanity-check the jq filter against realistic upstream arrays.
         Catches accidentally stripping valid versions or failing to strip
-        pre-releases.
+        pre-releases / non-MC rebuild markers.
         """
         import json
         import subprocess
-        jq_filter = ('[.versions[] | select(test("^[0-9]+\\\\.[0-9]+'
-                     '(\\\\.[0-9]+)?$"))] | .[-1]')
+        jq_filter = ('[.versions[] | select(test("^1\\\\.[0-9]+'
+                     '(\\\\.[0-9]+)?$"))] | sort_by(split(".") '
+                     '| map(tonumber)) | .[-1]')
         scenarios = [
             # stable 1.21.11 out, pre-releases also present -> pick stable
             (["1.21.10", "1.21.11-pre5", "1.21.11-rc3", "1.21.11"], "1.21.11"),
@@ -326,6 +334,15 @@ class TestDownloadServer(unittest.TestCase):
             (["1.19.4", "1.20", "1.20.1"], "1.20.1"),
             # Snapshot-style weekly entries ("24w05a") must be filtered out
             (["1.21.9", "1.21.10", "24w05a", "24w05b"], "1.21.10"),
+            # 1.5.1 regression: Purpur appends a non-MC `26.1.2` rebuild
+            # marker AFTER the latest stable. The old `[-1]` selection
+            # happily handed back "26.1.2" as LATEST and the download URL
+            # 404'd. Numeric semver-sort with a `^1\.` filter rejects it.
+            (["1.21.9", "1.21.10", "1.21.11", "26.1.2"], "1.21.11"),
+            # Patch numbers with multi-digit components must compare
+            # numerically (not lexicographically — "1.21.9" > "1.21.10"
+            # as strings, which would have been wrong).
+            (["1.21.8", "1.21.9", "1.21.10", "1.21.11"], "1.21.11"),
         ]
         for versions, expected in scenarios:
             with self.subTest(versions=versions):

@@ -28,6 +28,24 @@ META_PATH="${MC_SERVER_DIR}/.server-meta.json"
 
 log() { printf '[download-server] %s\n' "$*" >&2; }
 
+# Read the version + build of the jar that's currently installed (if any),
+# so we can emit a clear "X -> Y" line when auto-update bumps the server.
+read_installed_version() {
+    [ -f "${META_PATH}" ] || { printf 'none'; return; }
+    local v b
+    v=$(jq -r '.version // empty' < "${META_PATH}" 2>/dev/null)
+    b=$(jq -r '.build   // empty' < "${META_PATH}" 2>/dev/null)
+    if [ -n "${v}" ] && [ -n "${b}" ] && [ "${b}" != "null" ]; then
+        printf '%s build %s' "${v}" "${b}"
+    elif [ -n "${v}" ]; then
+        printf '%s' "${v}"
+    else
+        printf 'unknown'
+    fi
+}
+INSTALLED_BEFORE=$(read_installed_version)
+log "Currently installed: ${INSTALLED_BEFORE} (request: ${SERVER_TYPE} ${VERSION_REQ})"
+
 write_meta() {
     local version="$1" build="$2" src_url="$3"
     cat > "${META_PATH}" <<JSON
@@ -47,15 +65,19 @@ resolve_paper_version() {
     local project="$1"  # paper | folia
     # PaperMC publishes pre-releases (`1.21.11-pre5`) and release candidates
     # (`1.21.11-rc3`) into the same `versions[]` array as stable releases,
-    # in chronological order. A naive `.versions[-1]` therefore grabs a
+    # in roughly chronological order. A naive `.versions[-1]` grabs a
     # pre-release whenever one is out — whose network protocol differs from
     # the stable client on the same MC version, so vanilla clients reject
     # the server with "Outdated server! I'm still on X.Y.Z".
-    # For LATEST we filter to stable-shaped strings (`X.Y` / `X.Y.Z`).
+    # For LATEST we filter to MC-shaped 1.x stable strings and pick the
+    # highest by numeric semver — so we're robust to the API ever shipping
+    # an out-of-order entry (Purpur has done this with non-MC rebuild
+    # markers like `26.1.2`).
     # SNAPSHOT preserves the old behaviour and opts into pre-releases.
     if [ "${VERSION_REQ}" = "LATEST" ]; then
         curl -fsSL "https://api.papermc.io/v2/projects/${project}" \
-            | jq -r '[.versions[] | select(test("^[0-9]+\\.[0-9]+(\\.[0-9]+)?$"))] | .[-1]'
+            | jq -r '[.versions[] | select(test("^1\\.[0-9]+(\\.[0-9]+)?$"))]
+                     | sort_by(split(".") | map(tonumber)) | .[-1]'
     elif [ "${VERSION_REQ}" = "SNAPSHOT" ]; then
         curl -fsSL "https://api.papermc.io/v2/projects/${project}" \
             | jq -r '.versions[-1]'
@@ -93,12 +115,15 @@ download_paper_like() {
 download_purpur() {
     local version build url
     # Purpur's `versions` array is not strictly chronological and can include
-    # non-MC-shaped entries (e.g. internal rebuild markers). Mirror the Paper
-    # logic: filter to stable-shaped strings (`X.Y` / `X.Y.Z`) for LATEST
-    # so we never try to download a bogus "26.1.2" jar.
+    # non-MC-shaped entries (e.g. an internal `26.1.2` rebuild marker that
+    # currently sits AFTER `1.21.11`). The 1.5.0 filter `^[0-9]+\.[0-9]+(\.[0-9]+)?$`
+    # was too loose — it matched `26.1.2` and `[-1]` returned the bogus
+    # marker, breaking LATEST resolution. Restrict to MC-shaped 1.x entries
+    # and pick the highest by numeric semver instead of array position.
     if [ "${VERSION_REQ}" = "LATEST" ]; then
         version=$(curl -fsSL "https://api.purpurmc.org/v2/purpur" \
-            | jq -r '[.versions[] | select(test("^[0-9]+\\.[0-9]+(\\.[0-9]+)?$"))] | .[-1]')
+            | jq -r '[.versions[] | select(test("^1\\.[0-9]+(\\.[0-9]+)?$"))]
+                     | sort_by(split(".") | map(tonumber)) | .[-1]')
     elif [ "${VERSION_REQ}" = "SNAPSHOT" ]; then
         version=$(curl -fsSL "https://api.purpurmc.org/v2/purpur" | jq -r '.versions[-1]')
     else
@@ -253,5 +278,11 @@ esac
 if [ ! -s "${JAR_PATH}" ]; then
     log "server.jar is missing or empty after download"
     exit 1
+fi
+INSTALLED_AFTER=$(read_installed_version)
+if [ "${INSTALLED_BEFORE}" != "${INSTALLED_AFTER}" ] && [ "${INSTALLED_BEFORE}" != "none" ]; then
+    log "Updated: ${INSTALLED_BEFORE} -> ${INSTALLED_AFTER}"
+else
+    log "Active: ${INSTALLED_AFTER}"
 fi
 log "Installed $(basename "${JAR_PATH}") ($(du -h "${JAR_PATH}" | cut -f1))"
