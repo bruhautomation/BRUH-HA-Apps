@@ -5,6 +5,46 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.5.1
+
+### Fixed: `LATEST` resolved to a bogus `26.1.2` jar on Purpur
+
+Purpur's API now appends a non-Minecraft `26.1.2` rebuild marker AFTER the
+latest stable release in `versions[]`. The 1.5.0 LATEST resolver took the
+last filtered entry, handed back `26.1.2`, and the Purpur download URL
+404'd — leaving the server stuck on the previously-cached jar. After your
+own Minecraft client auto-updated to the newest stable, joining failed
+with **"Outdated server!"** / "server is not up to date" because the
+add-on was never actually pulling the new build.
+
+The resolver is now numerically semver-sorted with a `^1\.` prefix
+filter, so non-MC rebuild markers can never win — even if the API ever
+ships them out of chronological order.
+
+`auto_update_server: true` (the default) was already wired up; together
+with this fix it now reliably pulls the newest Paper/Purpur/Folia/Vanilla/
+Fabric/Forge build on every add-on restart. Plugins (the `plugins:` URL
+list, the `install_*` checkboxes, and Geyser/Floodgate) continue to
+re-resolve the latest jar on every boot via Modrinth / GeyserMC's
+`versions/latest/builds/latest` endpoints — `If-Modified-Since` keeps
+unchanged plugins from re-downloading.
+
+### Added: clearer auto-update logging
+
+`download-server.sh` now logs the previously-installed version on entry
+and the resolved version on exit, with a one-liner like
+`Updated: 1.21.10 build 145 -> 1.21.11 build 12` whenever an update
+actually changes the active jar. Easier to confirm at a glance that a
+restart actually pulled the newest build.
+
+### Migration
+
+Restart the add-on. No config changes required. If your client is on
+the newest Minecraft release and the server still kicks you with
+"Outdated server!", check the add-on log for the
+`[download-server] Updated: ... -> ...` line — the version after `->`
+is what will be live after the boot completes.
+
 ## 1.5.0
 
 ### Changed: revised the popular-plugin checkbox set
