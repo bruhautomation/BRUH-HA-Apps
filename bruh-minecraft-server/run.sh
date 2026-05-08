@@ -124,12 +124,23 @@ load_config() {
     # becomes an `INSTALL_<NAME>` env var consumed by scripts/popular-plugins.sh.
     # Keep this list in sync with PLUGIN_SLUGS in popular-plugins.sh AND
     # the schema entries in config.yaml.
+    #
+    # `viaversion` and `viabackwards` default to `true` (1.5.2) — they're
+    # the protocol bridges that hide the gap between a fresh Mojang
+    # release and the matching Paper build (otherwise: "Outdated server!"
+    # / "This server does not support Java Edition X.Y").
     for popular in essentialsx essentialsx_chat luckperms worldedit worldguard \
                    coreprotect multiverse_core griefprevention mcmmo \
                    chestsort veinminer spark; do
         var="INSTALL_$(echo "${popular}" | tr '[:lower:]' '[:upper:]')"
         # shellcheck disable=SC2034
         printf -v "${var}" '%s' "$(bashio::config "install_${popular}" 'false')"
+        export "${var?}"
+    done
+    for popular in viaversion viabackwards; do
+        var="INSTALL_$(echo "${popular}" | tr '[:lower:]' '[:upper:]')"
+        # shellcheck disable=SC2034
+        printf -v "${var}" '%s' "$(bashio::config "install_${popular}" 'true')"
         export "${var?}"
     done
 

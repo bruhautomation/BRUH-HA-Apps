@@ -46,6 +46,13 @@ declare -A PLUGIN_SLUGS=(
     [chestsort]="chestsort"
     [veinminer]="veinminer"
     [spark]="spark"
+    # ViaVersion bridges newer Java/Bedrock clients (e.g. 26.1) to an
+    # older server (e.g. Paper 1.21.11) — the fix for "Outdated server!"
+    # / "This server does not support Java Edition X.Y" kicks during
+    # the gap between Mojang shipping a new MC release and Paper
+    # publishing the matching build. ViaBackwards covers the reverse.
+    [viaversion]="viaversion"
+    [viabackwards]="viabackwards"
 )
 
 # Loader filter: prefer Paper-family loaders. Modrinth tags vary, so we

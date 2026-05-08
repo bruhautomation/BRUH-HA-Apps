@@ -41,7 +41,16 @@ EXPECTED_PLUGINS = {
     "chestsort",
     "veinminer",
     "spark",
+    # 1.5.2: protocol bridges. Default ON so a Mojang release between
+    # Paper builds doesn't kick clients with "Outdated server!".
+    "viaversion",
+    "viabackwards",
 }
+
+# Plugins whose default is `true` rather than `false` in config.yaml.
+# Kept separate from EXPECTED_PLUGINS so the parity tests can assert the
+# default value as well as the membership.
+EXPECTED_DEFAULT_TRUE = {"viaversion", "viabackwards"}
 
 
 class TestCuratedSetParity(unittest.TestCase):
@@ -56,21 +65,27 @@ class TestCuratedSetParity(unittest.TestCase):
         cls.script = SCRIPT.read_text()
 
     def _options_in_config(self):
-        return set(re.findall(r"^\s*install_([a-z_]+):\s*false\b", self.config, re.MULTILINE))
+        # Captures `install_<name>: <true|false>` regardless of default.
+        return set(re.findall(r"^\s*install_([a-z_]+):\s*(?:true|false)\b",
+                              self.config, re.MULTILINE))
+
+    def _option_defaults_in_config(self):
+        return dict(re.findall(r"^\s*install_([a-z_]+):\s*(true|false)\b",
+                               self.config, re.MULTILINE))
 
     def _schema_in_config(self):
         return set(re.findall(r"^\s*install_([a-z_]+):\s*bool\b", self.config, re.MULTILINE))
 
     def _exports_in_run_sh(self):
-        # Find the for-loop body that builds INSTALL_<NAME> env vars.
-        match = re.search(
-            r"for popular in (.+?); do",
-            self.run_sh, re.DOTALL,
-        )
-        self.assertIsNotNone(match, "popular plugin export loop missing from run.sh")
-        names = match.group(1).split()
-        # Strip line continuations and stray backslashes
-        return {n.strip() for n in names if n.strip() and n.strip() != "\\"}
+        # Two for-loops now: false-default plugins and true-default plugins.
+        # Aggregate both so parity covers the full curated set.
+        names: set[str] = set()
+        for body in re.findall(r"for popular in (.+?); do", self.run_sh, re.DOTALL):
+            for token in body.split():
+                token = token.strip()
+                if token and token != "\\":
+                    names.add(token)
+        return names
 
     def _slugs_in_script(self):
         return set(re.findall(r"\[([a-z_]+)\]=\"[a-z0-9-]+\"", self.script))
@@ -86,6 +101,15 @@ class TestCuratedSetParity(unittest.TestCase):
 
     def test_script_slugs_match_expected(self):
         self.assertEqual(self._slugs_in_script(), EXPECTED_PLUGINS)
+
+    def test_default_true_set_matches_expected(self):
+        # The protocol-bridge plugins must default ON so a fresh Mojang
+        # release between Paper builds doesn't lock clients out.
+        defaults = self._option_defaults_in_config()
+        actual_true = {name for name, val in defaults.items() if val == "true"}
+        self.assertEqual(actual_true, EXPECTED_DEFAULT_TRUE,
+                         "Default-true plugin set drifted from expected. "
+                         "Update EXPECTED_DEFAULT_TRUE if intentional.")
 
     def test_run_sh_calls_install_popular_plugins(self):
         # In main(), install_popular_plugins must be called between
