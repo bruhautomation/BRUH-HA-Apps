@@ -178,8 +178,23 @@ class TestDockerfile(unittest.TestCase):
     def test_cmd_runs_run_sh(self):
         self.assertIn('CMD ["/run.sh"]', self.text)
 
-    def test_java_21(self):
-        self.assertIn("openjdk21-jre-headless", self.text)
+    def test_java_runtime_is_modern_enough_for_mc_26_plugins(self):
+        # 1.5.3: Mojang shipped MC 26.1, plugins on the new protocol
+        # (ViaVersion, recent VeinMiner) ship as Java 25 class files.
+        # Alpine 3.19–3.22 don't have an openjdk25 package, so we install
+        # Temurin's Alpine-musl JRE 25 directly. The Dockerfile must
+        # therefore: NOT install openjdk21-jre-headless from apk, AND
+        # download Temurin 25 from adoptium.
+        self.assertNotIn("openjdk21-jre-headless", self.text,
+                         "JDK 21 can't load Java-25 class files — "
+                         "ViaVersion silently fails to register and "
+                         "Bedrock clients on MC 26.1 still get kicked.")
+        self.assertIn("temurin25-binaries", self.text,
+                      "Dockerfile must download Temurin JRE 25 from "
+                      "adoptium for the new protocol bridge to work.")
+        self.assertIn("alpine-linux", self.text,
+                      "Adoptium URL must request the alpine-linux "
+                      "(musl) build, not the glibc one.")
 
     def test_non_root_user(self):
         # A dedicated non-root user must exist; the JVM should never run as root

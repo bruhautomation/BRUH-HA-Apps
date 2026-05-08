@@ -5,6 +5,55 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.5.3
+
+### Fixed: ViaVersion silently dropped on boot — Bedrock clients still kicked
+
+1.5.2 installed `ViaVersion-5.9.2-SNAPSHOT.jar` into the plugins folder
+on every restart, but Paper silently skipped it at load time. Logs
+showed only ViaBackwards initialising, followed by:
+
+> [ModernPluginLoadingStrategy] Could not load 'plugins/ViaBackwards-…jar'
+> Unknown/missing dependency plugins: [ViaVersion]
+
+…and Geyser:
+
+> Your server software does not support the Java version that Geyser
+> requires (26.1). Please install ViaVersion …
+
+**Root cause:** the ViaVersion build that supports MC 26.1 is compiled
+against Java 25 (class file version 69). The container shipped Alpine's
+`openjdk21-jre-headless`, which can only load class file version up to
+65, so the JVM threw `UnsupportedClassVersionError` and Paper dropped
+the plugin without surfacing it as an ERROR. The same failure mode
+killed the latest VeinMiner build (which logged the exception loudly:
+`de/miraculixx/veinminer/VeinminerLoader has been compiled by a more
+recent version of the Java Runtime (class file version 69.0)`).
+
+**Fix:** swap Alpine's `openjdk21-jre-headless` for **Eclipse Temurin
+JRE 25** (LTS), pulled directly from the Adoptium Alpine-musl release.
+Both `amd64` and `aarch64` are covered; the URL is selected at build
+time from `uname -m`. Java 25 runs Paper 1.21.11 and every earlier
+version unchanged — class files are backwards-compatible — so existing
+worlds and plugins keep working.
+
+After this update, ViaVersion loads, ViaBackwards finds its dependency,
+Geyser stops complaining, and 26.1 Bedrock/Java clients can join the
+1.21.11 server cleanly.
+
+### Migration
+
+Restart the add-on. The container image grows by ~80 MB (full Temurin
+JRE vs. Alpine's split package set). No config or world changes.
+
+If you have stale plugin jars sitting in
+`/config/minecraft-worlds/<world>/plugins/` from before — for example
+the old `Dynmap-3.7-beta-8-spigot.jar` (from when Dynmap was in the
+curated list pre-1.5.0) or a duplicate `multiverse-core-5.6.2-pre.jar`
+— delete them via the panel's **Plugins** tab. They're harmless on
+Java 25 but the duplicate Multiverse-Core jars trigger an "Ambiguous
+plugin name" error on every boot.
+
 ## 1.5.2
 
 ### Fixed: `Outdated server!` / `This server does not support Java Edition 26.1`
