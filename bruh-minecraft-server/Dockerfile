@@ -5,15 +5,16 @@ FROM ${BUILD_FROM}
 ARG ADDON_VERSION
 ENV ADDON_VERSION=${ADDON_VERSION} \
     LANG=C.UTF-8 \
-    JAVA_HOME=/usr/lib/jvm/java-21-openjdk \
-    PATH=/usr/lib/jvm/java-21-openjdk/bin:$PATH \
+    JAVA_HOME=/opt/java/openjdk \
+    PATH=/opt/java/openjdk/bin:$PATH \
     MC_SERVER_DIR=/config/minecraft \
     MC_BACKUP_DIR=/config/minecraft-backups \
     MC_PANEL_STATE=/data/panel \
     MC_LOG_FIFO=/tmp/mc-console.fifo
 
-# Core packages: OpenJDK 21 (required for MC 1.20.5+), utilities,
-# Python for panel + stats, git for world version control, jq for JSON tooling.
+# Core packages: utilities, Python for panel + stats, git for world version
+# control, jq for JSON tooling. Java is installed below from Eclipse Temurin
+# (Alpine doesn't ship a recent enough JDK; see the next RUN block).
 RUN apk add --no-cache \
     bash \
     curl \
@@ -26,7 +27,6 @@ RUN apk add --no-cache \
     xz \
     zip \
     unzip \
-    openjdk21-jre-headless \
     python3 \
     py3-pip \
     py3-aiohttp \
@@ -40,6 +40,36 @@ RUN apk add --no-cache \
     socat \
     iproute2 \
     inotify-tools
+
+# Java 25 from Eclipse Temurin (Adoptium). Why not Alpine's openjdk21?
+# When Mojang shipped Minecraft 26.1, plugins that support the new
+# protocol (ViaVersion, ViaBackwards, recent VeinMiner, etc.) started
+# being compiled against Java 25 — class file version 69. Loading them
+# on Java 21 fails with `UnsupportedClassVersionError`, which Paper logs
+# as `[EntrypointUtil] ... has been compiled by a more recent version of
+# the Java Runtime`. The plugin is silently skipped, so e.g. ViaVersion
+# never loads, ViaBackwards then fails with "Unknown/missing dependency
+# plugins: [ViaVersion]", and Bedrock clients on 26.1 still get kicked
+# with "Outdated server! I'm still on 1.21.11". Java 25 also runs
+# Paper 1.21.11 and earlier MC versions just fine — class files are
+# backwards-compatible. Alpine 3.22 still only ships up through
+# openjdk21, so we install Temurin's official Alpine-musl JRE directly.
+ARG TEMURIN_VERSION=25.0.3+9
+RUN set -eux; \
+    arch="$(uname -m)"; \
+    case "$arch" in \
+        x86_64)  jdk_arch=x64 ;; \
+        aarch64) jdk_arch=aarch64 ;; \
+        *)       echo "unsupported arch: $arch"; exit 1 ;; \
+    esac; \
+    plain_ver="$(printf '%s' "${TEMURIN_VERSION}" | tr '+' '_')"; \
+    enc_ver="$(printf '%s' "${TEMURIN_VERSION}" | sed 's/+/%2B/')"; \
+    url="https://github.com/adoptium/temurin25-binaries/releases/download/jdk-${enc_ver}/OpenJDK25U-jre_${jdk_arch}_alpine-linux_hotspot_${plain_ver}.tar.gz"; \
+    mkdir -p /opt/java/openjdk; \
+    curl -fsSL -o /tmp/jre.tar.gz "$url"; \
+    tar -xzf /tmp/jre.tar.gz -C /opt/java/openjdk --strip-components=1; \
+    rm /tmp/jre.tar.gz; \
+    java -version
 
 # Python libs used by the ingress panel.
 # aiohttp ships with base image; we add aiofiles for async file IO and
