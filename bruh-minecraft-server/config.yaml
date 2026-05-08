@@ -1,7 +1,7 @@
 ---
 name: "BRUH Minecraft Server"
 description: "Rock-solid Minecraft Java Edition server with ingress panel, RCON, git world backups, auto-updates, plugin management, and deep Home Assistant integration"
-version: "1.5.1"
+version: "1.5.2"
 slug: "bruh_minecraft_server"
 init: false
 
@@ -209,6 +209,16 @@ options:
   install_chestsort: false
   install_veinminer: false
   install_spark: false
+  # Cross-version protocol bridges (default ON). ViaVersion lets clients on
+  # a NEWER Minecraft version connect to an older server (e.g. a 26.1
+  # client joining a 1.21.11 Paper server). ViaBackwards lets OLDER
+  # clients connect to a newer server. Together they hide the ~weeks-long
+  # gap between a Mojang release and the matching Paper build, which
+  # otherwise manifests as "Outdated server!" or
+  # "This server does not support Java Edition X.Y" (the same kick Geyser
+  # surfaces for Bedrock clients). Lightweight; safe to leave on.
+  install_viaversion: true
+  install_viabackwards: true
   extra_jvm_args: ""
   log_level: info
 schema:
@@ -283,6 +293,8 @@ schema:
   install_chestsort: bool
   install_veinminer: bool
   install_spark: bool
+  install_viaversion: bool
+  install_viabackwards: bool
   extra_jvm_args: "str?"
   log_level: "list(trace|debug|info|notice|warning|error|fatal)"
 

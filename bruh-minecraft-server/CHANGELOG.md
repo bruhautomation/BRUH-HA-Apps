@@ -5,6 +5,41 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.5.2
+
+### Fixed: `Outdated server!` / `This server does not support Java Edition 26.1`
+
+Mojang shipped Minecraft **26.1** (the new year-based versioning) and
+Paper hasn't published a 26.1 build yet — `LATEST` correctly resolves
+to `1.21.11`, but Java *and* Bedrock clients on the new release get
+kicked with:
+
+> This server does not support Java Edition 26.1, which is required for
+> Geyser to connect. The server needs to update or have the ViaVersion
+> plugin installed.
+> Original disconnect message: Outdated server! I'm still on 1.21.11
+
+The fix is the **ViaVersion** + **ViaBackwards** protocol bridges,
+which let an older Paper server speak the newer client's protocol
+(and vice-versa). Two new one-click checkboxes ship enabled:
+
+- `install_viaversion: true` — newer client → older server
+- `install_viabackwards: true` — older client → newer server
+
+Both auto-resolve the latest Modrinth build on every restart, so as
+soon as ViaVersion publishes support for the next MC release the
+server picks it up the next time you restart.
+
+### Migration
+
+Restart the add-on. The two jars install automatically into
+`/config/minecraft-worlds/<world>/plugins/`. Bedrock clients on
+26.1 should now join the 1.21.11 server cleanly.
+
+If you specifically don't want the bridges (e.g. you're running a
+strict-version server for competitive play), flip both toggles off
+in the Configuration tab and delete the jars from the **Plugins** tab.
+
 ## 1.5.1
 
 ### Fixed: `LATEST` resolved to a bogus `26.1.2` jar on Purpur
