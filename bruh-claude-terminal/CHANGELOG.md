@@ -1,5 +1,34 @@
 # Changelog
 
+## 1.18.1
+
+### Fixed: mobile scroll & toolbar position on iOS
+
+Three related symptoms in HA ingress on iOS Safari / WKWebView traced
+back to the same root cause: when the on-screen keyboard opens, iOS
+auto-scrolls the iframe document to keep the focused xterm textarea in
+view, and `position: fixed` inside an iframe scrolls *with* the
+document on iOS. The toolbar got dragged into the middle of the
+screen, the terminal slid out from under the user's finger so
+scrollback stopped responding to touch, and the whole page rubber-
+banded while typing.
+
+The fix in `ttyd-assets/inject.html`:
+
+1. Add `bruh-is-touch` to BOTH `<html>` and `<body>` and lock them
+   with `position: fixed; overflow: hidden; overscroll-behavior:
+   none`. This blocks iOS's auto-scroll, so the bar stays anchored to
+   the visual viewport and touch input keeps landing on
+   `.xterm-viewport` where xterm expects it.
+2. Reassert touch-scroll on `.xterm-viewport`
+   (`-webkit-overflow-scrolling: touch`, `touch-action: pan-y`,
+   `overscroll-behavior: contain`) so terminal scrollback is actually
+   drag-scrollable.
+3. Bump `--bruh-bar-h` to include the keyboard gap, not just the
+   bar's own height — otherwise the bar overlaps the last terminal
+   line whenever the keyboard is up because body padding-bottom
+   only reserved space for the bar itself, not the keys beneath it.
+
 ## 1.18.0
 
 ### Fixed: every keystroke double-typed in the web terminal
