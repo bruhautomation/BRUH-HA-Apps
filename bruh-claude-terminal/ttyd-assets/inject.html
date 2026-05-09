@@ -25,9 +25,45 @@
   body.bruh-bar-hidden #bruh-bar { display: none !important; }
 
   /* Lift the terminal above the toolbar on touch devices so the last
-     line isn't covered. Use padding-bottom with dynamic height set by JS. */
+     line isn't covered. JS sets --bruh-bar-h to (bar height + keyboard
+     gap) so the padded area also accounts for the on-screen keyboard,
+     not just the bar itself. */
   body.bruh-is-touch { padding-bottom: var(--bruh-bar-h, 56px); box-sizing: border-box; }
   body.bruh-is-touch.bruh-bar-hidden { padding-bottom: 0; }
+
+  /* iOS Safari (especially inside HA ingress' iframe) auto-scrolls the
+     iframe document when the keyboard opens to keep the focused xterm
+     textarea in view — and `position: fixed` inside an iframe scrolls
+     *with* the document on iOS, so the toolbar drifts to the middle of
+     the screen and xterm's `.xterm-viewport` slides out from under the
+     user's finger (which is why scrollback stops responding to touch).
+     Locking html+body in place blocks the auto-scroll, so the bar stays
+     anchored to the visual viewport and touch input keeps landing on
+     the terminal where xterm expects it. `overscroll-behavior: none`
+     kills the rubber-band bounce that made the whole page jump while
+     typing. */
+  html.bruh-is-touch,
+  body.bruh-is-touch {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    overflow: hidden;
+    overscroll-behavior: none;
+    -webkit-overflow-scrolling: auto;
+  }
+
+  /* Scrollback lives on xterm's own viewport; make sure touch reaches
+     it and that vertical pans aren't stolen by parent gesture handlers. */
+  body.bruh-is-touch .xterm-viewport {
+    -webkit-overflow-scrolling: touch !important;
+    overscroll-behavior: contain !important;
+    touch-action: pan-y !important;
+  }
 
   .bruh-key {
     display: inline-block;
@@ -262,11 +298,17 @@
     });
     document.body.appendChild(bar);
 
-    // Measure and expose toolbar height so body padding-bottom matches.
-    function syncHeight() {
+    // Expose toolbar height + keyboard gap so the body padding-bottom
+    // shrinks the terminal area to end exactly above the visible bar.
+    // Without the gap addend the bar sits *over* the last terminal line
+    // whenever the keyboard is up, because body padding only accounts
+    // for the bar's own height, not the keyboard underneath.
+    function syncHeight(gap) {
       if (!bar.isConnected) return;
       var h = bar.offsetHeight;
-      if (h) document.documentElement.style.setProperty('--bruh-bar-h', h + 'px');
+      if (!h) return;
+      var total = h + (gap > 0 ? gap : 0);
+      document.documentElement.style.setProperty('--bruh-bar-h', total + 'px');
     }
 
     // Keep the bar above the software keyboard.
@@ -334,7 +376,7 @@
         bar.style.transform = '';
         bar.style.paddingBottom = '';
       }
-      syncHeight();
+      syncHeight(gap);
     }
     syncBarToKeyboard();
     window.addEventListener('resize', syncBarToKeyboard);
@@ -411,7 +453,14 @@
 
   function onXtermReady(ta) {
     patchTextareaAttrs(ta);
-    if (touch) document.body.classList.add('bruh-is-touch');
+    if (touch) {
+      // Class lives on BOTH html and body so the iOS scroll-lock CSS
+      // applies to the document element too. Without that, iOS will
+      // scroll the html element when the keyboard opens and drag our
+      // `position: fixed` bar with it.
+      document.documentElement.classList.add('bruh-is-touch');
+      document.body.classList.add('bruh-is-touch');
+    }
     buildToolbar();
   }
 
