@@ -1,7 +1,7 @@
 ---
 name: "BRUH Minecraft Server"
 description: "Rock-solid Minecraft Java Edition server with ingress panel, RCON, git world backups, auto-updates, plugin management, and deep Home Assistant integration"
-version: "1.5.3"
+version: "1.5.4"
 slug: "bruh_minecraft_server"
 init: false
 
@@ -172,6 +172,17 @@ options:
   # Low values (e.g. 5) help clean up ghost sessions quickly in addition
   # to `auto_kick_ghost_sessions`.
   player_idle_timeout_minutes: 0
+  # Quarantine duplicate plugin jars on every boot (1.5.4). Plugins
+  # accumulate stale copies over time — for example, both
+  # `multiverse-core-5.6.2.jar` AND `multiverse-core-5.6.2-pre.jar`
+  # left over from the auto-installer's pre-release window. Paper logs
+  # an "Ambiguous plugin name" error every boot and one of the copies
+  # gets disabled randomly. With this on, the add-on reads each jar's
+  # `plugin.yml`, groups by plugin name, and moves all but the highest-
+  # semver release copy to `plugins/.quarantine/` (jars are NOT deleted
+  # — restore by moving them back). Off if you intentionally want
+  # multiple copies of a plugin in the folder.
+  auto_quarantine_duplicates: true
   # plugins: list of Bukkit plugin .jar URLs to install every boot into
   # the active world's plugins/ folder (Paper/Purpur/Folia only — Fabric
   # and Forge mods go in plugins/ manually or via the Dockerfile).
@@ -278,6 +289,7 @@ schema:
   auto_kick_ghost_sessions: bool
   connection_throttle_ms: "int(0,60000)"
   player_idle_timeout_minutes: "int(0,1440)"
+  auto_quarantine_duplicates: bool
   plugins:
     - url: "url"
       name: "str?"

@@ -117,6 +117,7 @@ load_config() {
     AUTO_KICK_GHOST_SESSIONS=$(bashio::config 'auto_kick_ghost_sessions' 'true')
     CONNECTION_THROTTLE_MS=$(bashio::config 'connection_throttle_ms' '4000')
     PLAYER_IDLE_TIMEOUT_MINUTES=$(bashio::config 'player_idle_timeout_minutes' '0')
+    AUTO_QUARANTINE_DUPLICATES=$(bashio::config 'auto_quarantine_duplicates' 'true')
     EXTRA_JVM_ARGS=$(bashio::config 'extra_jvm_args' '')
     LOG_LEVEL=$(bashio::config 'log_level' 'info')
 
@@ -179,6 +180,7 @@ load_config() {
            ANNOUNCE_HA_EVENTS ENABLE_BEDROCK_SUPPORT GEYSER_AUTH_TYPE \
            GEYSER_MTU AUTO_KICK_GHOST_SESSIONS CONNECTION_THROTTLE_MS \
            PLAYER_IDLE_TIMEOUT_MINUTES \
+           AUTO_QUARANTINE_DUPLICATES \
            EXTRA_JVM_ARGS LOG_LEVEL
 
     # HA integration — SUPERVISOR_TOKEN is injected by the Supervisor.
@@ -502,6 +504,23 @@ install_bedrock_support() {
 }
 
 # ----------------------------------------------------------------------------
+# Quarantine duplicate plugin jars so Paper doesn't log "Ambiguous plugin
+# name" / "Could not load" errors on every boot. Runs AFTER plugin
+# installs so we never quarantine a freshly-downloaded jar — the new
+# stable version always wins over a stale -pre / -snapshot copy.
+# ----------------------------------------------------------------------------
+cleanup_duplicate_plugins() {
+    if [ "${AUTO_QUARANTINE_DUPLICATES}" != "true" ]; then
+        bashio::log.debug "Duplicate-plugin quarantine disabled; skipping"
+        return 0
+    fi
+    PLUGINS_DIR="${MC_SERVER_DIR}/plugins" \
+        python3 "${SCRIPTS_DIR}/cleanup-plugins.py" \
+        || bashio::log.warning "cleanup-plugins.py returned non-zero (continuing)"
+    return 0
+}
+
+# ----------------------------------------------------------------------------
 # Background helpers — started before the JVM so the panel is reachable ASAP
 # ----------------------------------------------------------------------------
 start_ingress_panel() {
@@ -802,6 +821,7 @@ main() {
     install_plugins
     install_popular_plugins
     install_bedrock_support
+    cleanup_duplicate_plugins
 
     start_backup_watcher
     start_stats_collector

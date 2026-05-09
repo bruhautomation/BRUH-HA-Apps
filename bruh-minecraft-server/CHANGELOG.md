@@ -5,6 +5,62 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.5.4
+
+### Added: auto-quarantine for duplicate plugin jars
+
+A new boot step scans `plugins/`, reads each jar's `paper-plugin.yml` /
+`plugin.yml` metadata, groups jars by **plugin name**, and moves any
+duplicates into `plugins/.quarantine/`. The kept copy is the one with
+the highest semver, preferring stable releases over pre-releases /
+snapshots / RCs (and using filename mtime as the final tiebreaker).
+
+**Why:** plugin folders accumulate stale jars over time. The most
+common cause is that the popular-plugin auto-installer briefly served
+a `-pre` build (e.g. `multiverse-core-5.6.2-pre.jar`), then later the
+stable `5.6.2.jar`, leaving both files in the folder. Paper logged
+`Ambiguous plugin name 'Multiverse-Core'` on every boot and one of
+the copies got disabled randomly. The same pattern hit the user
+during the Mojang 26.1 transition with `ViaVersion-5.9.2-SNAPSHOT.jar`
+sitting next to a stable build.
+
+**Behaviour:**
+
+- Runs **after** all the install steps, so a jar we just downloaded
+  is always present and never accidentally quarantined.
+- Jars are **never deleted** — only moved into `plugins/.quarantine/`.
+  Restore a jar by moving it back to `plugins/` and restarting; free
+  the disk by deleting the whole `.quarantine/` folder.
+- A `plugins/.quarantine/QUARANTINE.md` log records every move with
+  timestamps, the plugin name, the kept version, and the moved
+  filename.
+- Library jars (no `plugin.yml` inside) and corrupt jars are ignored
+  — they never get touched.
+
+**New option:**
+
+```yaml
+auto_quarantine_duplicates: true   # default
+```
+
+Set to `false` if you intentionally want multiple copies of a plugin
+in the folder (rare; Bukkit can only run one at a time anyway).
+
+### Migration
+
+Restart the add-on. On the first boot you'll see one or two
+`[plugin-cleanup]` log lines per duplicate, e.g.:
+
+```
+[plugin-cleanup] Multiverse-Core: keeping multiverse-core-5.6.2.jar v5.6.2;
+                 quarantining multiverse-core-5.6.2-pre.jar v5.6.2-pre
+```
+
+`Ambiguous plugin name` errors should disappear from your logs after
+this. Stale-but-not-duplicated jars (e.g. a leftover Dynmap from
+before it was removed from the curated set) are NOT auto-removed —
+delete those manually from the panel's Plugins tab.
+
 ## 1.5.3
 
 ### Fixed: ViaVersion silently dropped on boot — Bedrock clients still kicked
