@@ -316,6 +316,7 @@
     var spec = [
       { k: 'esc',    l: 'ESC',     primary: true },
       { k: 'kbdown', l: '▾ Kbd'                  },
+      { k: 'hist',   l: '📜 Hist'                },
       { k: 'tab',    l: 'Tab'                    },
       { k: 'shtab',  l: '⇧Tab'                   },
       { k: 'up',     l: '↑'                      },
@@ -600,6 +601,25 @@
         if (ta && ta.blur) ta.blur();
         return;
       }
+      if (keyName === 'hist') {
+        // Enter tmux copy mode. tmux's copy mode captures the user's
+        // arrow keys / PgUp / PgDn as scroll commands across tmux's
+        // per-pane history — the only place Claude Code's alt-screen
+        // chat output is preserved.
+        //
+        // Sent as the literal `Ctrl+B [` sequence rather than enabling
+        // `set -g mouse on` in tmux.conf, because mouse mode disables
+        // native browser text-selection (xterm.js intercepts drag
+        // events and there's no shift key on mobile to bypass), which
+        // breaks the OAuth-URL-copy workflow.
+        //
+        // Once in copy mode the toolbar `↑ ↓ ← →` send arrow keys —
+        // in vi-mode tmux those scroll line-by-line. `ESC` exits.
+        // Scrolling past the live bottom auto-exits because the
+        // existing WheelUpPane binding uses `copy-mode -e`.
+        sendInput('\x02[');
+        return;
+      }
       if (keyName === 'paste') {
         if (navigator.clipboard && navigator.clipboard.readText) {
           navigator.clipboard.readText()
@@ -731,51 +751,37 @@
       lastY = currentY;
 
       if (increment !== 0) {
-        // Synthesise a wheel event on .terminal. xterm.js's wheel
-        // handler interprets it based on whether the PTY has enabled
-        // mouse reporting:
+        // Only dispatch wheel events to xterm when there's actually
+        // scrollback in xterm's own viewport (i.e. normal-screen
+        // mode at a bash prompt). In alternate-screen mode (Claude
+        // Code's TUI) xterm has no scrollback by spec, and with
+        // tmux mouse mode OFF (the 1.18.8 default — see
+        // scripts/tmux.conf for why) xterm's wheel fallback in
+        // alt-screen is to translate to ↑/↓ arrow key escape
+        // sequences. That spams Claude Code's input cursor instead
+        // of doing anything useful, which is what the user
+        // complained about between 1.18.4 and 1.18.7.
         //
-        //   - Mouse reporting ON (which tmux does via `set -g mouse
-        //     on` in scripts/tmux.conf since 1.18.7): xterm sends a
-        //     mouse-wheel escape sequence to the PTY. tmux receives
-        //     it and runs its WheelUpPane / WheelDownPane bindings,
-        //     which auto-enter copy mode and scroll through tmux's
-        //     per-pane history buffer. This is the ONLY thing that
-        //     captures Claude Code's alt-screen chat output, so
-        //     it's also the only thing that gives the user a way to
-        //     scroll back through past messages — both on touch
-        //     devices and on desktops with a real mouse wheel.
-        //
-        //   - Mouse reporting OFF: xterm falls back to native
-        //     behaviour — scroll scrollback in normal-screen mode,
-        //     dispatch ↑/↓ key sequences in alt-screen mode. Pre-
-        //     1.18.5 we gated the dispatch in alt-screen to avoid
-        //     spamming arrow keys, but with tmux mouse on the wheel
-        //     events go to tmux instead of Claude Code regardless
-        //     of alt-screen state, so the gate isn't needed anymore.
-        //     Leaving the dispatch unconditional means the touch
-        //     forwarder works even if tmux's mouse setting is
-        //     temporarily off (e.g. user disabled it manually).
-        var target = findWheelTarget();
-        if (target) {
-          try {
-            target.dispatchEvent(new WheelEvent('wheel', {
-              bubbles: true,
-              cancelable: true,
-              deltaX: 0,
-              deltaY: increment,
-              deltaMode: 0 /* DOM_DELTA_PIXEL */
-            }));
-          } catch (_err) { /* WheelEvent unsupported — fall through */ }
-        }
-        // Belt-and-suspenders: in normal-screen mode (bash prompt,
-        // not Claude Code's TUI), xterm-viewport actually has
-        // scrollback. Nudging scrollTop directly there is the
-        // canonical path and is harmless when mouse reporting is on
-        // (xterm intercepts the wheel before this code path matters
-        // anyway).
+        // For scrolling Claude Code's chat history (the alt-screen
+        // case), the `📜 Hist` toolbar button sends `Ctrl+B [`
+        // explicitly, which enters tmux copy mode without needing
+        // mouse reporting. From there the user scrolls with the
+        // toolbar ↑↓ buttons (vi line-by-line) and exits with ESC.
         var vp = findViewport();
-        if (vp && vp.scrollHeight > vp.clientHeight + 1) {
+        var hasScrollback = vp && (vp.scrollHeight - vp.clientHeight) > 1;
+        if (hasScrollback) {
+          var target = findWheelTarget();
+          if (target) {
+            try {
+              target.dispatchEvent(new WheelEvent('wheel', {
+                bubbles: true,
+                cancelable: true,
+                deltaX: 0,
+                deltaY: increment,
+                deltaMode: 0 /* DOM_DELTA_PIXEL */
+              }));
+            } catch (_err) { /* WheelEvent unsupported — fall through */ }
+          }
           var maxScroll = vp.scrollHeight - vp.clientHeight;
           var next = vp.scrollTop + increment;
           if (next < 0) next = 0;

@@ -1,5 +1,76 @@
 # Changelog
 
+## 1.18.8
+
+### Fixed: 1.18.7's `mouse on` broke text selection during OAuth
+
+1.18.7 turned on `set -g mouse on` in tmux to make wheel events
+route to copy mode (so the user could scroll Claude Code chat
+history). That worked, but it also broke **drag-to-select text**
+on iOS HA Companion app — which the user discovered while trying
+to copy an OAuth URL out of Claude Code.
+
+### Why mouse mode and text selection are incompatible
+
+Enabling `set -g mouse on` makes tmux ask xterm.js (via DECSET
+1000 / 1002 / 1006) to forward every mouse event — including
+drags — to the PTY as escape sequences. xterm.js disables its
+native text-selection handling whenever mouse tracking is on
+(mouse events belong to the application now, not to the user).
+On desktop the user can hold **Shift** while dragging to bypass
+that and use native selection. On mobile there's no shift key,
+so dragging produces a momentary "flash" (tmux enters copy mode
+and finishes immediately via the default
+`MouseDragEnd1Pane → copy-selection-and-cancel` binding) but
+nothing reaches the system clipboard.
+
+The trade-off is fundamental at the xterm.js layer:
+
+- Mouse tracking **on**: wheel-driven copy-mode scrolling works
+  on touch, native text selection broken on touch.
+- Mouse tracking **off**: native text selection works on touch,
+  wheel events fall back to xterm's arrow-key escape sequences
+  (which Claude Code interprets as "move cursor in input box",
+  not as "scroll chat").
+
+Since users **need to copy OAuth URLs and code snippets out of
+Claude Code more often than they need swipe-scroll of chat
+history**, 1.18.8 reverts the mouse-on setting and provides
+copy-mode scrolling via an explicit toolbar button instead.
+
+### Changes
+
+1. **`scripts/tmux.conf`**: restore the `if-shell '[ -z "$TTYD" ]'`
+   gate around `set -g mouse on`. Under ttyd, mouse mode is off
+   — selection works, scroll requires the toolbar button.
+2. **`ttyd-assets/inject.html`**: new `📜 Hist` toolbar button
+   between `▾ Kbd` and `Tab`. Sends the literal
+   `Ctrl+B [` (i.e. `\x02[`) sequence which enters tmux copy
+   mode. From there the existing `↑ ↓` toolbar buttons scroll
+   line-by-line (vi-mode tmux), `ESC` exits, scrolling past the
+   live bottom auto-exits via `copy-mode -e`.
+3. **`ttyd-assets/inject.html`**: re-introduce the
+   `scrollHeight > clientHeight + 1` gate on the touchmove wheel
+   dispatch. Without mouse mode on, an ungated dispatch would
+   spam arrow keys into Claude Code's input field on every swipe
+   in alt-screen — the regression we shipped between 1.18.4 and
+   1.18.7 and that the user explicitly didn't want.
+
+### How to scroll Claude Code history now
+
+1. Tap **📜 Hist** on the toolbar → tmux enters copy mode.
+2. Tap **↑ / ↓** on the toolbar (or use real keyboard arrows) to
+   scroll line-by-line. **PgUp / PgDn** (real keyboard) scroll a
+   page at a time.
+3. Tap **ESC** on the toolbar to exit copy mode and return to
+   typing — or scroll all the way down to the live view and tmux
+   auto-exits.
+
+Swipe-to-scroll is gone in alt-screen mode (Claude Code TUI)
+for the reasons above. In normal-screen mode (bash prompt with
+output) swipe still scrolls xterm's own scrollback — that path
+doesn't need mouse mode.
+
 ## 1.18.7
 
 ### Fixed: scrolling through Claude Code chat history (mobile *and* desktop)
