@@ -9,31 +9,33 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <span class="logo" aria-hidden="true">⛏️</span>
-      <div>
-        <h1>BRUH Minecraft Server</h1>
-        <p id="brand-subtitle">Loading…</p>
+  <div class="page-header">
+    <header class="topbar">
+      <div class="brand">
+        <span class="logo" aria-hidden="true">⛏️</span>
+        <div>
+          <h1>BRUH Minecraft Server</h1>
+          <p id="brand-subtitle">Loading…</p>
+        </div>
       </div>
-    </div>
-    <div class="actions">
-      <button id="btn-backup" class="btn btn-ghost" title="Backup now">Backup</button>
-      <button id="btn-update" class="btn btn-ghost" title="Check for server update">Update</button>
-      <button id="btn-restart" class="btn btn-warn" title="Restart the server">Restart</button>
-      <button id="btn-stop" class="btn btn-danger" title="Stop the server">Stop</button>
-    </div>
-  </header>
+      <div class="actions">
+        <button id="btn-backup" class="btn btn-ghost" title="Backup now">Backup</button>
+        <button id="btn-update" class="btn btn-ghost" title="Check for server update">Update</button>
+        <button id="btn-restart" class="btn btn-warn" title="Restart the server">Restart</button>
+        <button id="btn-stop" class="btn btn-danger" title="Stop the server">Stop</button>
+      </div>
+    </header>
 
-  <nav class="tabs" role="tablist">
-    <button class="tab active" data-tab="dashboard" role="tab">Dashboard</button>
-    <button class="tab" data-tab="console" role="tab">Console</button>
-    <button class="tab" data-tab="players" role="tab">Players</button>
-    <button class="tab" data-tab="properties" role="tab">Server Properties</button>
-    <button class="tab" data-tab="plugins" role="tab">Plugins</button>
-    <button class="tab" data-tab="backups" role="tab">Backups</button>
-    <button class="tab" data-tab="worlds" role="tab">Worlds</button>
-  </nav>
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-tab="dashboard" role="tab">Dashboard</button>
+      <button class="tab" data-tab="console" role="tab">Console</button>
+      <button class="tab" data-tab="players" role="tab">Players</button>
+      <button class="tab" data-tab="properties" role="tab">Server Properties</button>
+      <button class="tab" data-tab="plugins" role="tab">Plugins</button>
+      <button class="tab" data-tab="backups" role="tab">Backups</button>
+      <button class="tab" data-tab="worlds" role="tab">Worlds</button>
+    </nav>
+  </div>
 
   <main>
     <!-- Dashboard -->

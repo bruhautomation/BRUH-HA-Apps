@@ -706,8 +706,25 @@ run_server_loop() {
     local crash_window_seconds=300
     local crash_count=0
     local crash_window_start=0
+    local first_iteration=1
 
     while true; do
+        # Re-load config from /data/options.json and re-render server.properties
+        # on every JVM start AFTER the first. Without this, the panel's Restart
+        # button (which RCON-stops the JVM and lets this loop relaunch it)
+        # would keep the previous env vars and the previous server.properties —
+        # so changes made in the HA Configuration tab would only take effect on
+        # a full Supervisor-level container restart. The first iteration skips
+        # this work because main() already ran load_config + render_server_properties
+        # right before entering the loop.
+        if [ "${first_iteration}" -eq 0 ]; then
+            bashio::log.info "Reloading add-on configuration for restart"
+            load_config
+            ensure_rcon_password
+            render_server_properties
+        fi
+        first_iteration=0
+
         write_state "starting"
         bashio::log.info "Launching Minecraft server"
 

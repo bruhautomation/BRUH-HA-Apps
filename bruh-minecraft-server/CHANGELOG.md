@@ -5,6 +5,60 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.5.5
+
+### Fixed: Configuration tab edits never applied via panel's Restart button
+
+Two cooperating bugs meant that changes made in the HA add-on's
+**Configuration** tab silently failed to take effect when users clicked
+the panel's header **Restart** button. The Server Properties tab in the
+panel kept showing the old values, and the running Minecraft server
+kept running with the old settings — the only way to actually apply the
+change was a full Supervisor-level container restart from the HA add-on
+page, which users (reasonably) didn't realise they needed.
+
+**Root cause #1 — `run_server_loop` never re-rendered `server.properties`.**
+The panel's Restart button RCON-stops the JVM with `save-all flush; stop`,
+which is a clean exit. `run_server_loop` saw `rc=0` and immediately
+relaunched the JVM via `server-launcher.sh`. But `setup-server-properties.sh`
+only ran *once*, in `main()` before the loop started — so on the second,
+third, … JVM start, the server kept reading whatever `server.properties`
+was written at original container boot. Likewise the panel's `/api/properties`
+endpoint reads that same on-disk file, so the Server Properties tab
+mirrored the stale content.
+
+**Root cause #2 — env vars were frozen at container start.**
+`load_config` (the `bashio::config` reads) only ran once, in `main()`.
+Re-rendering `server.properties` from the same stale env vars wouldn't
+have helped — we needed fresh values from `/data/options.json`.
+
+**Fix:** at the top of every iteration of `run_server_loop` *after the first*,
+re-run `load_config` + `ensure_rcon_password` + `render_server_properties`.
+The first iteration skips the re-run because `main()` already did the work
+right before entering the loop (avoiding duplicate boot-time noise). Now
+every JVM restart picks up the latest `/data/options.json`, regenerates
+`server.properties`, and propagates the new values to both the running
+server and the panel's Server Properties tab.
+
+The panel's RCON password file is also refreshed each iteration, so a
+user who rotates `rcon_password` via the Configuration tab + panel
+Restart now sees the panel and server stay in sync.
+
+### Fixed: panel tabs became dead ends when scrolled
+
+On long tabs (Console, Backups, Worlds) the topbar and tab navigation
+scrolled out of view as soon as the user scrolled down into the
+content, with no way back to other tabs except scrolling all the way
+up. On phones — where the viewport is short and the Console tab is
+already 60vh tall — every tab effectively turned into a dead end the
+moment the user interacted with anything below the fold.
+
+**Fix:** wrap the topbar + nav in a `.page-header` container with
+`position: sticky; top: 0; z-index: 10;` so they stay pinned to the
+top of the viewport while the tab content scrolls underneath. The
+horizontal-scroll behavior of the tab row on narrow viewports is
+preserved.
+
 ## 1.5.4
 
 ### Added: auto-quarantine for duplicate plugin jars
