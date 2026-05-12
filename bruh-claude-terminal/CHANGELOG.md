@@ -1,5 +1,60 @@
 # Changelog
 
+## 1.18.3
+
+### Fixed: dragging the terminal scrolled the parent HA panel instead of the terminal scrollback
+
+On mobile, swiping up or down inside the terminal didn't move xterm's
+scrollback — instead the **entire HA panel** scrolled, sliding the
+"BRUH Claude Terminal" header off the top of the screen.
+
+Root cause: xterm.js builds its DOM like this —
+
+```
+.terminal
+  .xterm-viewport         (overflow-y: auto — the scrollable container
+                           behind the visible terminal)
+  .xterm-screen           (position: relative — sits ON TOP of
+    <canvas>              xterm-viewport, so this is what the user
+    <canvas>              actually touches)
+  .xterm-helper-textarea
+```
+
+`.xterm-viewport` is a **sibling** of `.xterm-screen`, not an
+ancestor. When the user drags inside the terminal, iOS walks up the
+ancestor chain (`canvas` → `.xterm-screen` → `.terminal` → `body` →
+`html`) looking for a scrollable container. Every one of those has
+`overflow: hidden` (since we locked the body in 1.18.1 to stop the
+auto-scroll-on-focus drift). With no scrollable container found
+inside the iframe, iOS delegates the gesture to the parent — HA's
+frontend — which has its own scrollable root and dutifully scrolls
+the BRUH panel away. The `touch-action: pan-y !important` we set on
+`.xterm-viewport` never had a chance: the touch never reached it.
+
+### Fix (all in `ttyd-assets/inject.html`)
+
+1. **`touch-action: none` on `body.bruh-is-touch`.** Blocks the
+   native delegation: with no panning gesture allowed on the body
+   chrome, iOS doesn't hand the touch up to the parent.
+2. **Document-level touchmove handler drives `xterm-viewport.scrollTop`
+   directly.** On `touchstart` we record `clientY` and the current
+   `scrollTop`; on `touchmove` we set `scrollTop = startScroll -
+   deltaY` and `preventDefault()` so the gesture is consumed inside
+   the iframe. An 8 px tap threshold means small finger jitter still
+   reaches xterm's tap-to-focus listener.
+3. **`touch-action: pan-x` on `#bruh-bar`.** The body-level `none`
+   would otherwise disable the toolbar's horizontal scroll; the bar
+   is its own scrolling container so its `pan-x` value wins for
+   touches that start inside it. The forwarder also early-returns on
+   touches whose `target.closest('#bruh-bar')` matches, so the two
+   gesture handlers never fight.
+
+Toolbar taps, tap-to-focus on the xterm helper-textarea, iOS voice
+dictation, the desktop keyboard path, and the bar's keyboard-aware
+positioning all keep working — every change is scoped to body-level
+panning + the new document-level touchmove listener, neither of
+which is reached by click / keyboard / input events.
+
 ## 1.18.2
 
 ### Fixed: toolbar floating mid-screen in the HA Companion app on mobile

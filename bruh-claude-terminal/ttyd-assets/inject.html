@@ -17,6 +17,11 @@
     -webkit-overflow-scrolling: touch;
     white-space: nowrap;
     scrollbar-width: none;
+    /* Body sets `touch-action: none` so the terminal scroll forwarder
+       has exclusive control of the gesture. Re-allow horizontal pan
+       inside the toolbar so the user can still swipe between keys when
+       the row overflows. */
+    touch-action: pan-x;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   }
   #bruh-bar::-webkit-scrollbar { display: none; }
@@ -64,6 +69,17 @@
     overflow: hidden;
     overscroll-behavior: none;
     -webkit-overflow-scrolling: auto;
+    /* Block ALL native touch panning in the body chrome. xterm-viewport
+       is a sibling of xterm-screen (not an ancestor of the canvas the
+       user actually touches), so iOS's "walk up the ancestor chain to
+       find a scrollable container" search runs past every overflow:
+       hidden element in the iframe and hands the gesture to the parent
+       HA frontend — which is why the HA panel header used to slide off
+       the screen when the user dragged inside the terminal. Our JS
+       below drives `.xterm-viewport.scrollTop` directly instead. The
+       toolbar and `.bruh-key` opt back in to `pan-x` / `manipulation`
+       respectively so they keep working. */
+    touch-action: none;
   }
 
   /* Scrollback lives on xterm's own viewport; make sure touch reaches
@@ -514,7 +530,84 @@
   }
 
   // ===================================================================
-  // 4. Bootstrap — wait for xterm to mount, then wire everything up.
+  // 4. Touch scroll forwarder for the terminal scrollback.
+  //
+  // xterm.js renders into a structure like this:
+  //
+  //   .terminal
+  //     .xterm-viewport       (overflow-y: auto — the scrollable
+  //                            container that backs the scrollback)
+  //     .xterm-screen         (position: relative — sits ON TOP of
+  //       <canvas>            xterm-viewport in document order, so
+  //       <canvas>            this is what the user actually touches)
+  //     .xterm-helper-textarea
+  //
+  // Because xterm-viewport is a *sibling* of xterm-screen (not an
+  // ancestor), iOS's "walk up the ancestor chain looking for a
+  // scrollable container" search runs past xterm-viewport entirely
+  // when the user drags the terminal. With body / html locked at
+  // overflow: hidden the search finds no scrollable container inside
+  // the iframe, so the gesture is delegated to the parent — the HA
+  // frontend — which has its own scrollable root and dutifully
+  // scrolls the BRUH Claude Terminal panel header off the top of
+  // the screen.
+  //
+  // body's `touch-action: none` (set in CSS above) blocks the native
+  // delegation. We then drive `xterm-viewport.scrollTop` ourselves
+  // from a document-level touchmove listener, preventDefault'ing the
+  // event so it can't propagate. Small movements (<8 px) are left
+  // alone so xterm's tap-to-focus-the-textarea still works.
+  // ===================================================================
+  function setupScrollForwarder() {
+    var vp = document.querySelector('.xterm-viewport');
+    if (!vp) return false;
+
+    var startY = 0;
+    var startScroll = 0;
+    var dragging = false;
+    var moved = false;
+
+    document.addEventListener('touchstart', function (e) {
+      dragging = false;
+      if (!e.touches || e.touches.length !== 1) return;
+      var t = e.target;
+      // Toolbar runs its own pan-x scroll; don't fight it.
+      if (t && t.closest && t.closest('#bruh-bar')) return;
+      startY = e.touches[0].clientY;
+      startScroll = vp.scrollTop;
+      dragging = true;
+      moved = false;
+    }, { passive: true, capture: true });
+
+    document.addEventListener('touchmove', function (e) {
+      if (!dragging || !e.touches || e.touches.length !== 1) return;
+      var deltaY = e.touches[0].clientY - startY;
+      // Tap threshold — below 8 px of vertical travel we treat this
+      // as still potentially a tap and let xterm see the events for
+      // focus / selection.
+      if (!moved && Math.abs(deltaY) < 8) return;
+      moved = true;
+      var maxScroll = vp.scrollHeight - vp.clientHeight;
+      if (maxScroll > 0) {
+        var next = startScroll - deltaY;
+        if (next < 0) next = 0;
+        if (next > maxScroll) next = maxScroll;
+        if (next !== vp.scrollTop) vp.scrollTop = next;
+      }
+      // Always preventDefault on a real drag, even if there's no
+      // scrollback yet — otherwise iOS bubbles the gesture up to the
+      // HA frontend and scrolls the panel header off the screen.
+      e.preventDefault();
+    }, { passive: false, capture: true });
+
+    function endDrag() { dragging = false; }
+    document.addEventListener('touchend', endDrag, { passive: true });
+    document.addEventListener('touchcancel', endDrag, { passive: true });
+    return true;
+  }
+
+  // ===================================================================
+  // 5. Bootstrap — wait for xterm to mount, then wire everything up.
   // ===================================================================
   var touch = ('ontouchstart' in window) || (navigator.maxTouchPoints | 0) > 0;
 
@@ -529,6 +622,14 @@
       // layout stays consistent under the keyboard.
       document.documentElement.classList.add('bruh-is-touch');
       document.body.classList.add('bruh-is-touch');
+      // xterm-viewport often lives a few mutations behind the helper
+      // textarea, so retry briefly until we can wire it.
+      if (!setupScrollForwarder()) {
+        var tries = 0;
+        var t = setInterval(function () {
+          if (setupScrollForwarder() || ++tries > 40) clearInterval(t);
+        }, 250);
+      }
     }
     buildToolbar();
   }
