@@ -58,16 +58,69 @@ from rcon_client import Rcon  # noqa: E402
 HERE = Path(__file__).resolve().parent
 STATIC = HERE
 MC_SERVER_DIR = Path(os.environ.get("MC_SERVER_DIR", "/config/minecraft"))
-MC_BACKUP_DIR = Path(os.environ.get("MC_BACKUP_DIR", "/config/minecraft-backups"))
+_MC_BACKUP_DIR_ENV = Path(os.environ.get("MC_BACKUP_DIR", "/config/minecraft-backups"))
 MC_PANEL_STATE = Path(os.environ.get("MC_PANEL_STATE", "/data/panel"))
 MC_CONSOLE_LOG = Path(os.environ.get("MC_CONSOLE_LOG", str(MC_PANEL_STATE / "console.log")))
 MC_INPUT_FIFO = Path(os.environ.get("MC_INPUT_FIFO", "/tmp/mc-stdin.fifo"))
 SCRIPTS_DIR = Path("/opt/bruh-mc/scripts")
 
+
+def _resolve_backup_dir() -> Path:
+    """Return the active world's backup directory.
+
+    `MC_BACKUP_DIR` is normally exported by run.sh pointing directly at
+    `/config/minecraft-backups/<active>/`. For belt-and-suspenders against
+    older deployments where the env var still points at the parent dir
+    (the legacy pre-1.5.6 layout), drop down into `<active>/` ourselves
+    when the parent looks like a profile container — that's where git/
+    and archives/ actually live.
+    """
+    base = _MC_BACKUP_DIR_ENV
+    if (base / "git").is_dir() or (base / "archives").is_dir():
+        return base
+    active = os.environ.get("ACTIVE_WORLD", "").strip()
+    if active and (base / active).is_dir():
+        return base / active
+    # No usable subdir — return as-is. Callers handle the missing case.
+    return base
+
+
+MC_BACKUP_DIR = _resolve_backup_dir()
+
 RCON_HOST = "127.0.0.1"
 RCON_PORT = 25575
 BIND_HOST = "0.0.0.0"
 BIND_PORT = 8099
+
+
+# ---------------------------------------------------------------------------
+# Console-stream noise filter
+# ---------------------------------------------------------------------------
+# stats-collector.py polls Paper over RCON every 15 seconds for /list and
+# (when supported) /tps and /version. Each RCON round-trip emits THREE log
+# lines into console.log:
+#
+#   [hh:mm:ss INFO]: Thread RCON Client /127.0.0.1 started
+#   [hh:mm:ss INFO]: [Essentials] Rcon issued server command: /list
+#   [hh:mm:ss INFO]: Thread RCON Client /127.0.0.1 shutting down
+#
+# So every minute the live console picks up 12 noise lines, drowning out
+# the actual server events users care about (joins, deaths, chat, plugin
+# warnings). Backup runs add three more lines per snapshot via save-off /
+# save-all flush / save-on. We strip these at the SSE boundary so the
+# console.log file on disk stays complete for offline debugging while
+# the live view stays useful. (See CHANGELOG 1.5.6 for the full story.)
+_RCON_NOISE_PATTERNS = (
+    re.compile(r"Thread RCON Client /127\.0\.0\.1 (started|shutting down)"),
+    re.compile(
+        r"\[Essentials\] Rcon issued server command: "
+        r"/(list|tps|version|save-all|save-off|save-on)\b"
+    ),
+)
+
+
+def _is_rcon_noise(line: str) -> bool:
+    return any(p.search(line) for p in _RCON_NOISE_PATTERNS)
 
 
 # ---------------------------------------------------------------------------
@@ -436,6 +489,8 @@ async def api_logs_sse(request: web.Request) -> web.StreamResponse:
                         chunk = await f.read(size - last_size)
                     last_size = size
                     for line in chunk.splitlines():
+                        if _is_rcon_noise(line):
+                            continue
                         payload = json.dumps({"line": line, "ts": time.time()})
                         await resp.write(f"data: {payload}\n\n".encode())
             await asyncio.sleep(1.0)
