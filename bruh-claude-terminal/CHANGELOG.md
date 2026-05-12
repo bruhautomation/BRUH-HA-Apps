@@ -1,5 +1,57 @@
 # Changelog
 
+## 1.18.4
+
+### Fixed: terminal didn't scroll *at all* on mobile after 1.18.3
+
+1.18.3 stopped the HA panel from scrolling when you dragged the
+terminal (correctly), but the replacement scroll path — setting
+`.xterm-viewport.scrollTop` directly — produced **no visible scroll**
+on ttyd's bundled xterm build. From the user's perspective the
+panel went from "scrolls the wrong thing" straight to "doesn't
+scroll at all". Same gesture, no movement.
+
+Looking at xterm.js's `Viewport.ts`, the wheel handler is registered
+on `Terminal._element` (i.e. `.terminal`), not on `.xterm-viewport`:
+
+```ts
+register(addDisposableDomListener(this._element, 'wheel',
+                                  (ev) => this._onWheel(ev)));
+```
+
+That's the same path mouse wheel uses to scroll the buffer, and it's
+the most reliable JS-driven scroll API xterm exposes. Driving the
+viewport's `scrollTop` directly *should* also work in principle (the
+viewport has its own `scroll` listener), but in ttyd's bundle it
+doesn't trigger a re-render that the canvas user can actually see —
+likely because of how ttyd configures the renderer.
+
+### Fix
+
+`setupScrollForwarder` in `ttyd-assets/inject.html` now forwards each
+incremental touchmove delta to a synthesised `WheelEvent` dispatched
+on `.terminal`:
+
+```js
+target.dispatchEvent(new WheelEvent('wheel', {
+  bubbles: true,
+  cancelable: true,
+  deltaY: increment,           // pixels since the last touchmove
+  deltaMode: 0                 // DOM_DELTA_PIXEL
+}));
+```
+
+This is the exact event shape xterm's `_onWheel` expects from a real
+mouse wheel, so the existing wheel-to-scrollback code path runs
+unmodified. `.xterm-viewport.scrollTop` is still nudged as a
+belt-and-suspenders for any renderer that drives the buffer off the
+viewport's `scroll` event rather than wheel.
+
+Everything else from 1.18.3 — the 8 px tap threshold, the
+`#bruh-bar` early-return, `touch-action: none` on body / `pan-x` on
+the toolbar, `preventDefault` to block parent delegation — is
+unchanged.
+
 ## 1.18.3
 
 ### Fixed: dragging the terminal scrolled the parent HA panel instead of the terminal scrollback

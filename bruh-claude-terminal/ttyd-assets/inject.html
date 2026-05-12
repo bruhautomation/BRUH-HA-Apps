@@ -534,12 +534,14 @@
   //
   // xterm.js renders into a structure like this:
   //
-  //   .terminal
-  //     .xterm-viewport       (overflow-y: auto — the scrollable
-  //                            container that backs the scrollback)
-  //     .xterm-screen         (position: relative — sits ON TOP of
-  //       <canvas>            xterm-viewport in document order, so
-  //       <canvas>            this is what the user actually touches)
+  //   .terminal                 (Terminal._element — wheel handler
+  //                              attached HERE)
+  //     .xterm-viewport         (overflow-y: auto — has its own
+  //                              `scroll` listener that drives the
+  //                              re-render)
+  //     .xterm-screen           (position: relative — sits ON TOP of
+  //       <canvas>              xterm-viewport in document order, so
+  //       <canvas>              this is what the user actually touches)
   //     .xterm-helper-textarea
   //
   // Because xterm-viewport is a *sibling* of xterm-screen (not an
@@ -548,24 +550,44 @@
   // when the user drags the terminal. With body / html locked at
   // overflow: hidden the search finds no scrollable container inside
   // the iframe, so the gesture is delegated to the parent — the HA
-  // frontend — which has its own scrollable root and dutifully
-  // scrolls the BRUH Claude Terminal panel header off the top of
-  // the screen.
+  // frontend — which has its own scrollable root and scrolls the
+  // BRUH Claude Terminal panel header off the top of the screen.
   //
   // body's `touch-action: none` (set in CSS above) blocks the native
-  // delegation. We then drive `xterm-viewport.scrollTop` ourselves
-  // from a document-level touchmove listener, preventDefault'ing the
-  // event so it can't propagate. Small movements (<8 px) are left
-  // alone so xterm's tap-to-focus-the-textarea still works.
+  // delegation. We then forward each touchmove to a synthesised
+  // `wheel` event dispatched on the `.terminal` element. xterm.js
+  // attaches its scrollback wheel handler directly there (Viewport.ts
+  // does `addDisposableDomListener(this._element, 'wheel', ...)`) so
+  // this is the same code path that mouse wheel goes through and is
+  // the most reliable way to drive xterm's scroll without depending
+  // on private internals. We also push `xterm-viewport.scrollTop` as
+  // a belt-and-suspenders for any renderer that drives the buffer off
+  // the viewport's scroll event rather than wheel.
+  //
+  // 1.18.3 set scrollTop directly and *only* scrollTop; on ttyd's
+  // bundled xterm that didn't produce any visible scroll (the user
+  // reported "doesn't scroll at all"), which is the symptom that
+  // motivated this 1.18.4 rewrite.
   // ===================================================================
   function setupScrollForwarder() {
-    var vp = document.querySelector('.xterm-viewport');
-    if (!vp) return false;
-
     var startY = 0;
-    var startScroll = 0;
+    var lastY = 0;
     var dragging = false;
     var moved = false;
+    var wheelTarget = null;
+
+    function findWheelTarget() {
+      // xterm's wheel handler lives on .terminal (Terminal._element).
+      // Cache the lookup but redo it if the cached element falls out
+      // of the DOM (ttyd may rebuild the tree on reconnect).
+      if (wheelTarget && wheelTarget.isConnected) return wheelTarget;
+      wheelTarget = document.querySelector('.terminal')
+                 || document.querySelector('.xterm');
+      return wheelTarget;
+    }
+    function findViewport() {
+      return document.querySelector('.xterm-viewport');
+    }
 
     document.addEventListener('touchstart', function (e) {
       dragging = false;
@@ -573,32 +595,63 @@
       var t = e.target;
       // Toolbar runs its own pan-x scroll; don't fight it.
       if (t && t.closest && t.closest('#bruh-bar')) return;
-      startY = e.touches[0].clientY;
-      startScroll = vp.scrollTop;
+      startY = lastY = e.touches[0].clientY;
       dragging = true;
       moved = false;
-    }, { passive: true, capture: true });
+    }, { passive: true });
 
     document.addEventListener('touchmove', function (e) {
       if (!dragging || !e.touches || e.touches.length !== 1) return;
-      var deltaY = e.touches[0].clientY - startY;
+      var currentY = e.touches[0].clientY;
+      var totalDelta = currentY - startY;
       // Tap threshold — below 8 px of vertical travel we treat this
       // as still potentially a tap and let xterm see the events for
       // focus / selection.
-      if (!moved && Math.abs(deltaY) < 8) return;
+      if (!moved && Math.abs(totalDelta) < 8) return;
       moved = true;
-      var maxScroll = vp.scrollHeight - vp.clientHeight;
-      if (maxScroll > 0) {
-        var next = startScroll - deltaY;
-        if (next < 0) next = 0;
-        if (next > maxScroll) next = maxScroll;
-        if (next !== vp.scrollTop) vp.scrollTop = next;
+
+      // Incremental pixel delta since the last touchmove. Positive
+      // when the finger moves UP (which means we want to scroll the
+      // terminal DOWN — same sign convention as `WheelEvent.deltaY`).
+      var increment = lastY - currentY;
+      lastY = currentY;
+
+      if (increment !== 0) {
+        // Primary: dispatch a wheel event on xterm's main element so
+        // its wheel handler scrolls the buffer.
+        var target = findWheelTarget();
+        if (target) {
+          try {
+            target.dispatchEvent(new WheelEvent('wheel', {
+              bubbles: true,
+              cancelable: true,
+              deltaX: 0,
+              deltaY: increment,
+              deltaMode: 0 /* DOM_DELTA_PIXEL */
+            }));
+          } catch (_err) { /* WheelEvent unsupported — fall through */ }
+        }
+
+        // Backup: also nudge xterm-viewport.scrollTop in case the
+        // wheel handler is a no-op in this build (e.g. when the
+        // viewport is the source of truth and wheel just delegates).
+        var vp = findViewport();
+        if (vp) {
+          var maxScroll = vp.scrollHeight - vp.clientHeight;
+          if (maxScroll > 0) {
+            var next = vp.scrollTop + increment;
+            if (next < 0) next = 0;
+            if (next > maxScroll) next = maxScroll;
+            if (next !== vp.scrollTop) vp.scrollTop = next;
+          }
+        }
       }
-      // Always preventDefault on a real drag, even if there's no
-      // scrollback yet — otherwise iOS bubbles the gesture up to the
-      // HA frontend and scrolls the panel header off the screen.
+
+      // Always preventDefault on a real drag, even if nothing
+      // actually scrolled — otherwise iOS bubbles the gesture up to
+      // the HA frontend and scrolls the panel header off the screen.
       e.preventDefault();
-    }, { passive: false, capture: true });
+    }, { passive: false });
 
     function endDrag() { dragging = false; }
     document.addEventListener('touchend', endDrag, { passive: true });
@@ -622,14 +675,10 @@
       // layout stays consistent under the keyboard.
       document.documentElement.classList.add('bruh-is-touch');
       document.body.classList.add('bruh-is-touch');
-      // xterm-viewport often lives a few mutations behind the helper
-      // textarea, so retry briefly until we can wire it.
-      if (!setupScrollForwarder()) {
-        var tries = 0;
-        var t = setInterval(function () {
-          if (setupScrollForwarder() || ++tries > 40) clearInterval(t);
-        }, 250);
-      }
+      // Listeners attach at the document level so they're safe to
+      // register before xterm finishes mounting — the wheel-target
+      // lookup runs on every touchmove and caches per-session.
+      setupScrollForwarder();
     }
     buildToolbar();
   }
