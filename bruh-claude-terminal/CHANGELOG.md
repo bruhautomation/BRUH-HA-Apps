@@ -1,5 +1,104 @@
 # Changelog
 
+## 1.18.6
+
+### Fixed: keyboard still covered the claude-code input row on iOS HA Companion
+
+1.18.5 detected the keyboard correctly (heuristic + visualViewport
+latch), but the input row in Claude Code still ended up *underneath*
+the on-screen keyboard. Same symptom as before, different layer.
+
+### Why 1.18.5 wasn't enough
+
+The fix in 1.18.1–1.18.5 widened body's `padding-bottom` whenever the
+keyboard came up. The intent was to shrink the area xterm draws into
+so claude-code's bottom row would land above the bar + keys. But:
+
+> ttyd's CSS (`html/src/style/index.scss`) does:
+>
+> ```scss
+> html, body { height: 100%; min-height: 100%; ... }
+> #terminal-container { width: auto; height: 100%; margin: 0 auto; padding: 0; }
+> .terminal { padding: 5px; height: calc(100% - 10px); }
+> ```
+>
+> Both `#terminal-container` and `.terminal` measure `height: 100%`
+> against body's **box**, not body's content area. `padding-bottom`
+> on body carves out content space *inside* body but leaves body's
+> box at the full viewport, so `#terminal-container { height: 100% }`
+> stays at full viewport too — every layer below it just kept
+> drawing.
+
+The whole chain `body content area → terminal container → .terminal →
+xterm.fit()` was broken at the very first link.
+
+### The actual stack (and why this layer matters)
+
+The user kindly reminded us: the rendered terminal is **deeply**
+nested. Top to bottom:
+
+```
+iOS  →  HA Companion (WKWebView)
+              ↓
+   HA frontend  →  <iframe>  ingress/<token>/
+                              ↓
+   ttyd's HTML  →  React  →  #terminal-container
+                                    ↓
+                  .terminal  →  xterm.js + FitAddon
+                                    ↓
+                  WebSocket  ↔  ttyd binary  →  PTY winsize
+                                                     ↓
+                                                  bash → tmux pane
+                                                            ↓
+                                                       claude-code TUI
+```
+
+For "input row stays above keyboard" to work, the size change has to
+propagate **all the way down** to the SIGWINCH that reaches claude-
+code inside tmux. Anywhere it gets dropped, claude-code keeps drawing
+at the unchanged bottom — exactly what the user was seeing.
+
+### Fix (single rule change in `ttyd-assets/inject.html`)
+
+Replace body's `padding-bottom: var(--bruh-bar-h)` with body's
+`height: calc(100% - var(--bruh-bar-h, 56px))`. (And drop the
+matching `inset: 0` from the lock rule, since `height` + `top` is
+now the constraint.)
+
+Now body's *box* shrinks, which means:
+
+| Layer                 | Reads against | Now sees                            |
+|-----------------------|---------------|-------------------------------------|
+| `#terminal-container` | body's box    | smaller height                      |
+| `.terminal`           | container     | smaller height                      |
+| xterm.js              | `.terminal`   | smaller `clientHeight`              |
+| FitAddon              | xterm element | recomputes `(cols, rows)` smaller   |
+| `xterm.resize()`      | —             | emits `onResize`                    |
+| ttyd's bundle         | onResize      | sends `{cols, rows}` over WebSocket |
+| ttyd binary           | WebSocket     | `ioctl(TIOCSWINSZ, ...)`            |
+| PTY                   | kernel        | SIGWINCH → tmux foreground process  |
+| tmux                  | SIGWINCH      | reflows pane, re-emits SIGWINCH     |
+| claude-code           | SIGWINCH      | redraws TUI, input row at new bot   |
+
+`syncHeight()` also dispatches a synthetic `window.resize` after
+flipping the CSS variable. xterm-fit-addon normally fits via
+ResizeObserver but older ttyd bundles re-fit on the window
+`resize` event — belt-and-suspenders so the chain runs no matter
+which path the bundled FitAddon takes.
+
+### What didn't change
+
+The 1.18.5 keyboard-detection logic (parent VV → own VV → phone-
+only heuristic → 0, with a "trust VV's gap=0 once it's shown a real
+keyboard" latch) is unchanged. The toolbar layout (with `▾ Kbd`),
+the `body { touch-action: none }` parent-scroll-leak block, the
+wheel-event gate that prevents arrow-key spam in claude-code's
+TUI — all unchanged.
+
+The fix here is structural: detection was already producing the
+right number, but nothing downstream was actually using it to
+shrink xterm.
+
 ## 1.18.5
 
 ### Fixed: three follow-on regressions from 1.18.2 – 1.18.4 on mobile
