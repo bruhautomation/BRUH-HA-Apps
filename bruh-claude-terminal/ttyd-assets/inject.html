@@ -37,20 +37,29 @@
      *with* the document on iOS, so the toolbar drifts to the middle of
      the screen and xterm's `.xterm-viewport` slides out from under the
      user's finger (which is why scrollback stops responding to touch).
-     Locking html+body in place blocks the auto-scroll, so the bar stays
-     anchored to the visual viewport and touch input keeps landing on
-     the terminal where xterm expects it. `overscroll-behavior: none`
-     kills the rubber-band bounce that made the whole page jump while
-     typing. */
-  html.bruh-is-touch,
+
+     Body lock blocks the auto-scroll so the bar stays anchored to the
+     visual viewport. `overscroll-behavior: none` kills the rubber-band
+     bounce. We keep position:fixed on <body> only — CSS treats
+     position:fixed on the root <html> inconsistently across WebViews
+     (works in Mobile Safari, ignored in some Android WebViews, breaks
+     the Android adjustResize keyboard reflow inside HA Companion).
+     overflow:hidden on <html> is enough to stop scrolling and is well-
+     supported everywhere. */
+  html.bruh-is-touch {
+    height: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
   body.bruh-is-touch {
     position: fixed;
+    /* Longhand first for browsers that don't recognise the `inset`
+       shorthand (Safari <14.5, Chrome <87). */
     top: 0;
-    left: 0;
     right: 0;
     bottom: 0;
-    width: 100%;
-    height: 100%;
+    left: 0;
+    inset: 0;
     margin: 0;
     overflow: hidden;
     overscroll-behavior: none;
@@ -84,6 +93,9 @@
     -webkit-tap-highlight-color: transparent;
     -webkit-user-select: none;
     user-select: none;
+    /* `manipulation` opts out of iOS's 300ms double-tap-zoom delay and
+       prevents the keyboard from being dismissed mid-tap. */
+    touch-action: manipulation;
     cursor: pointer;
     transition: background 0.08s, border-color 0.08s, color 0.08s;
   }
@@ -319,16 +331,30 @@
     // WKWebView, the keyboard event does NOT resize the inner frame's
     // visualViewport; only the top frame sees it. `window.visualViewport`
     // inside the iframe returns the unchanged frame size and `gap`
-    // comes out 0, so the bar stays pinned to the (layout) bottom and
-    // gets buried under the keyboard.
+    // comes out 0, so without help the bar would stay pinned to the
+    // (layout) bottom and get buried under the keyboard.
     //
     // HA ingress serves the iframe from the same origin as the main
-    // frontend (`/api/hassio_ingress/...` under the HA host), so we can
-    // legally walk up via `window.parent` and read the top viewport.
-    // When that path is unavailable (non-ingress browsing, or a future
-    // HA version changes the origin), we fall back to our own viewport
-    // and, failing that, to a focus-driven heuristic keyed off the
-    // xterm helper-textarea gaining focus.
+    // frontend (`/api/hassio_ingress/...` under the HA host), so we
+    // can legally walk up via `window.parent` and read the top
+    // viewport. When that path fails we look at our own visualViewport
+    // and, failing that, ask whether `window.innerHeight` has shrunk
+    // since the page settled — which is how we detect the HA Companion
+    // app's keyboard avoidance (it resizes the WebView frame rather
+    // than overlaying, so neither visualViewport reports a gap but
+    // the layout is already correct).
+    //
+    // Versions 1.17.3 – 1.18.1 also had a heuristic that translated
+    // the bar up by a hard-coded 310 / 210 px whenever the textarea
+    // had focus and neither viewport API reported anything. That
+    // misfired in the HA Companion app and on iPads with external
+    // keyboards: the bar floated 310 px above the visible bottom
+    // because there *was* no keyboard occluding it. Dropped in 1.18.2
+    // — if we genuinely cannot measure the keyboard we leave the bar
+    // at the bottom edge of the visual viewport (worst case: the user
+    // dismisses the keyboard via the device's own close affordance to
+    // reveal the bar), which is strictly better than the previous
+    // "float somewhere mid-screen" failure mode.
     function topWindow() {
       try {
         var w = window;
@@ -339,29 +365,65 @@
       } catch (_e) { return null; }
     }
 
-    // Heuristic fallback height for the keyboard when no viewport API
-    // reports it (e.g. cross-origin parent). Measured defaults that
-    // cover iPhone mini through Pro Max and most Android phones.
-    var FALLBACK_KB_PORTRAIT  = 310;
-    var FALLBACK_KB_LANDSCAPE = 210;
-    var taFocused = false;
+    // Anything below this in either visualViewport delta is almost
+    // certainly safe-area / toolbar chrome, not the on-screen keyboard.
+    // 80 px is just below the smallest plausible iPhone keyboard
+    // (landscape, no predictions: ~135 px) with margin for safe-area.
+    var MIN_KB_GAP = 80;
+
+    // Stable innerHeight measured per orientation. Tracked separately so
+    // flipping between portrait/landscape (very different natural heights)
+    // doesn't false-trip the shrink-for-keyboard check below.
+    //   - Used to detect WebViews that resize themselves for the
+    //     keyboard (HA Companion on Android, occasionally on iOS).
+    //     When that happens, the bar at bottom: 0 is already above the
+    //     keys; translating would float it mid-screen.
+    //   - Updated on every `resize`, but only ever *grows* — so a
+    //     resize triggered by the keyboard opening (smaller height)
+    //     is ignored as a baseline candidate, and a resize from the
+    //     keyboard closing or a rotation back to a larger orientation
+    //     pulls the baseline up to the new natural max.
+    var stableHeights = { portrait: 0, landscape: 0 };
+    function orientationKey() {
+      return window.innerHeight >= window.innerWidth ? 'portrait' : 'landscape';
+    }
+    function captureBaseline() {
+      var k = orientationKey();
+      if (window.innerHeight > stableHeights[k]) {
+        stableHeights[k] = window.innerHeight;
+      }
+    }
+    captureBaseline();
+    setTimeout(captureBaseline, 400);
+    setTimeout(captureBaseline, 1500);
+    window.addEventListener('resize', captureBaseline);
+
+    function viewportShrunkForKeyboard() {
+      // 60 px threshold so a status-bar reflow or device-rotation flicker
+      // doesn't get mistaken for the keyboard.
+      var stable = stableHeights[orientationKey()];
+      return stable > 0 && window.innerHeight < stable - 60;
+    }
 
     function computeGap() {
+      // The WebView already shrank to make room for the keyboard:
+      // bar at bottom:0 is correct, no translate.
+      if (viewportShrunkForKeyboard()) return 0;
+
       var top = topWindow();
       if (top && top.visualViewport) {
         var pvv = top.visualViewport;
         var pgap = top.innerHeight - pvv.height - pvv.offsetTop;
-        if (pgap > 0) return Math.round(pgap);
+        if (pgap >= MIN_KB_GAP) return Math.round(pgap);
       }
       if (window.visualViewport) {
         var vv = window.visualViewport;
         var ogap = window.innerHeight - vv.height - vv.offsetTop;
-        if (ogap > 0) return Math.round(ogap);
+        if (ogap >= MIN_KB_GAP) return Math.round(ogap);
       }
-      if (taFocused) {
-        var portrait = window.innerHeight >= window.innerWidth;
-        return portrait ? FALLBACK_KB_PORTRAIT : FALLBACK_KB_LANDSCAPE;
-      }
+      // No reliable signal. Leave the bar at the visual bottom; do
+      // NOT guess — guessing is what produced the floating-mid-screen
+      // bug in HA Companion app.
       return 0;
     }
 
@@ -389,14 +451,15 @@
       top.visualViewport.addEventListener('resize', syncBarToKeyboard);
       top.visualViewport.addEventListener('scroll', syncBarToKeyboard);
     }
-    // Focus/blur on the xterm textarea is our backstop signal — if the
-    // textarea has focus the keyboard is almost certainly up, regardless
-    // of what the viewport APIs report.
+    // The xterm textarea gaining or losing focus is roughly when the
+    // software keyboard opens / closes. We re-run syncBarToKeyboard on
+    // a couple of delays so we sample the visualViewport AFTER iOS
+    // finishes animating the keys in/out (the API is reactive on the
+    // event itself, but the measurement isn't accurate until the
+    // animation settles).
     document.addEventListener('focusin', function (e) {
       if (e.target && e.target.classList
           && e.target.classList.contains('xterm-helper-textarea')) {
-        taFocused = true;
-        // let iOS finish animating the keyboard in before we measure
         setTimeout(syncBarToKeyboard, 100);
         setTimeout(syncBarToKeyboard, 350);
       }
@@ -404,7 +467,6 @@
     document.addEventListener('focusout', function (e) {
       if (e.target && e.target.classList
           && e.target.classList.contains('xterm-helper-textarea')) {
-        taFocused = false;
         setTimeout(syncBarToKeyboard, 100);
       }
     }, true);
@@ -428,11 +490,16 @@
     }
 
     function onPointerDown(e) {
+      // preventDefault on EVERY pointerdown inside the bar — not just
+      // when we hit a key. Without this, tapping a gap between keys
+      // (or the bar's own padding) lets iOS treat the tap as "touched
+      // outside the focused field" and dismiss the keyboard. The
+      // bar's horizontal scroll keeps working because preventDefault
+      // on `pointerdown` doesn't suppress touch-scroll (that comes
+      // from touchmove + touch-action).
+      e.preventDefault();
       var el = e.target.closest && e.target.closest('.bruh-key');
       if (!el) return;
-      // preventDefault keeps xterm's textarea focused — otherwise iOS
-      // closes the keyboard when the toolbar is tapped.
-      e.preventDefault();
       el.classList.add('bruh-pressed');
       setTimeout(function () { el.classList.remove('bruh-pressed'); }, 120);
       handleKey(el.dataset.bruhKey);
@@ -454,10 +521,12 @@
   function onXtermReady(ta) {
     patchTextareaAttrs(ta);
     if (touch) {
-      // Class lives on BOTH html and body so the iOS scroll-lock CSS
-      // applies to the document element too. Without that, iOS will
-      // scroll the html element when the keyboard opens and drag our
-      // `position: fixed` bar with it.
+      // Class lives on BOTH html and body: the html rule applies
+      // overflow:hidden to the document element (so iOS can't auto-
+      // scroll it to bring the focused textarea into view, which
+      // would otherwise drag our `position: fixed` bar with it), the
+      // body rule clamps the body's box to the viewport so xterm's
+      // layout stays consistent under the keyboard.
       document.documentElement.classList.add('bruh-is-touch');
       document.body.classList.add('bruh-is-touch');
     }

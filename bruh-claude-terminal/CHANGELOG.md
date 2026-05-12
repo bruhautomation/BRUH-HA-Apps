@@ -1,5 +1,72 @@
 # Changelog
 
+## 1.18.2
+
+### Fixed: toolbar floating mid-screen in the HA Companion app on mobile
+
+The 1.18.1 fix anchored the `position: fixed` toolbar correctly on iOS
+Safari (HA ingress via the browser), but inside the **HA Companion app**
+on mobile the bar still floated up into the middle of the screen
+whenever the keyboard opened. Same symptom on iPads with an external
+keyboard attached: the bar would jump up the moment you tapped the
+terminal even though no software keyboard was occluding it.
+
+Root cause: a focus-driven fallback added in 1.17.3 that translated
+the bar up by a hard-coded `310 px` (portrait) / `210 px` (landscape)
+whenever **none** of the visualViewport-based detectors reported a
+gap. That was meant to keep the bar above the iOS keyboard inside
+ingress, but it fired far more often than intended:
+
+- HA Companion app on Android (`adjustResize` is default): the
+  WebView frame itself shrinks for the keyboard, so `window.innerHeight`
+  drops and the bar is **already** above the keys at `bottom: 0`.
+  Translating up by 310 px floated it 310 px above the visible bottom.
+- HA Companion app on iOS: same pattern when the app's keyboard
+  avoidance resizes the WebView frame rather than overlaying.
+- iPads with an external keyboard: tapping the terminal focuses the
+  textarea but no software keyboard ever appears. The heuristic still
+  fired and pushed the bar mid-screen.
+
+### Fix (all in `ttyd-assets/inject.html`)
+
+1. **Drop the 310 / 210 px focus-driven heuristic.** If neither
+   visualViewport API reports a meaningful gap, leave the bar at
+   `bottom: 0`. Worst case the user has to dismiss the keyboard via
+   the device's own affordance to interact with the bar; that's
+   strictly better than the bar floating mid-screen.
+2. **Detect the "WebView already shrank for the keyboard" case.**
+   Capture the stable `window.innerHeight` per orientation at page
+   settle. When the current height drops more than 60 px below that
+   baseline, treat the gap as `0` — the bar at `bottom: 0` is
+   already above the keys. (The baseline is tracked per portrait /
+   landscape and only ever grows, so rotating the device or closing
+   the keyboard pulls it back up cleanly.)
+3. **80 px minimum on visualViewport-reported gaps.** Tiny safe-
+   area-inset offsets (e.g. the iOS home-indicator strip) were
+   occasionally measured as a non-zero gap and bounced the bar up
+   by ~20 px. The keyboard is always taller than 80 px, so anything
+   below that threshold is chrome, not keys.
+4. **Drop `position: fixed` from `<html>`.** The spec is inconsistent
+   on whether root-element `position: fixed` is meaningful (Safari
+   honours it, Android WebView sometimes ignores it, and it
+   interfered with HA Companion's adjustResize on Android). Replaced
+   with `overflow: hidden; height: 100%` which is enough to stop the
+   iOS focus-driven auto-scroll and works the same everywhere. The
+   body is still locked with `position: fixed; inset: 0` as before.
+5. **`preventDefault` on every toolbar `pointerdown`, not just key
+   hits.** Tapping a gap between keys (or the bar's own padding)
+   was letting iOS treat the tap as "touched outside the focused
+   field" and dismiss the keyboard. Bar scrolling is unaffected
+   because horizontal scroll is driven by `touchmove` + `touch-action`,
+   not pointerdown.
+6. **`touch-action: manipulation` on `.bruh-key`.** Opts out of iOS's
+   300 ms double-tap-zoom delay and prevents the keyboard from
+   blinking shut mid-tap on slow taps.
+
+Desktop behaviour is unchanged — everything is still gated on the
+`bruh-is-touch` class which is only added on devices that report
+touch support.
+
 ## 1.18.1
 
 ### Fixed: mobile scroll & toolbar position on iOS
