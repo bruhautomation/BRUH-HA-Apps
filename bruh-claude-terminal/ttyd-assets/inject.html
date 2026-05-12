@@ -316,7 +316,6 @@
     var spec = [
       { k: 'esc',    l: 'ESC',     primary: true },
       { k: 'kbdown', l: '▾ Kbd'                  },
-      { k: 'hist',   l: '📜 Hist'                },
       { k: 'tab',    l: 'Tab'                    },
       { k: 'shtab',  l: '⇧Tab'                   },
       { k: 'up',     l: '↑'                      },
@@ -601,25 +600,6 @@
         if (ta && ta.blur) ta.blur();
         return;
       }
-      if (keyName === 'hist') {
-        // Enter tmux copy mode. tmux's copy mode captures the user's
-        // arrow keys / PgUp / PgDn as scroll commands across tmux's
-        // per-pane history — the only place Claude Code's alt-screen
-        // chat output is preserved.
-        //
-        // Sent as the literal `Ctrl+B [` sequence rather than enabling
-        // `set -g mouse on` in tmux.conf, because mouse mode disables
-        // native browser text-selection (xterm.js intercepts drag
-        // events and there's no shift key on mobile to bypass), which
-        // breaks the OAuth-URL-copy workflow.
-        //
-        // Once in copy mode the toolbar `↑ ↓ ← →` send arrow keys —
-        // in vi-mode tmux those scroll line-by-line. `ESC` exits.
-        // Scrolling past the live bottom auto-exits because the
-        // existing WheelUpPane binding uses `copy-mode -e`.
-        sendInput('\x02[');
-        return;
-      }
       if (keyName === 'paste') {
         if (navigator.clipboard && navigator.clipboard.readText) {
           navigator.clipboard.readText()
@@ -664,143 +644,56 @@
   }
 
   // ===================================================================
-  // 4. Touch scroll forwarder for the terminal scrollback.
+  // 4. Touch scroll: intentionally not implemented.
   //
-  // xterm.js renders into a structure like this:
+  // Claude Code's TUI runs in xterm's alternate-screen mode. By spec,
+  // alt-screen content is NOT added to xterm's scrollback. tmux does
+  // capture cell-by-cell output into its per-pane history buffer, but
+  // tmux only exposes the *normal-screen* portion of that history in
+  // copy mode — Claude Code's chat output, drawn in alt-screen, is
+  // never visible there. So there is NO surface anywhere on the
+  // (claude-code → tmux → ttyd → xterm.js) stack that has Claude
+  // Code's past chat preserved in a way the user can scroll to. We
+  // can't fix that from the JS layer.
   //
-  //   .terminal                 (Terminal._element — wheel handler
-  //                              attached HERE)
-  //     .xterm-viewport         (overflow-y: auto — has its own
-  //                              `scroll` listener that drives the
-  //                              re-render)
-  //     .xterm-screen           (position: relative — sits ON TOP of
-  //       <canvas>              xterm-viewport in document order, so
-  //       <canvas>              this is what the user actually touches)
-  //     .xterm-helper-textarea
+  // Previous releases (1.18.3 – 1.18.8) tried, in order, to:
   //
-  // Because xterm-viewport is a *sibling* of xterm-screen (not an
-  // ancestor), iOS's "walk up the ancestor chain looking for a
-  // scrollable container" search runs past xterm-viewport entirely
-  // when the user drags the terminal. With body / html locked at
-  // overflow: hidden the search finds no scrollable container inside
-  // the iframe, so the gesture is delegated to the parent — the HA
-  // frontend — which has its own scrollable root and scrolls the
-  // BRUH Claude Terminal panel header off the top of the screen.
+  //   * drive `xterm-viewport.scrollTop` directly — nothing to scroll
+  //     in alt-screen, no visible effect.
+  //   * dispatch a synthesised WheelEvent on `.terminal` — xterm's
+  //     wheel handler translates to ↑/↓ escape sequences in alt-
+  //     screen, which Claude Code interprets as "move cursor in the
+  //     input field", not "scroll chat". This is the "every swipe
+  //     arrow-keys around in Claude Code" complaint.
+  //   * `set -g mouse on` in tmux.conf so wheel events route to copy
+  //     mode — works for scrolling, but disables native drag-to-
+  //     select text on touch (xterm.js routes drags to the PTY when
+  //     mouse mode is on, with no Shift-bypass on mobile). Broke
+  //     OAuth-URL copy.
+  //   * the `📜 Hist` toolbar button that sent `Ctrl+B [` to enter
+  //     tmux copy mode — does enter copy mode, but copy mode shows
+  //     the *normal-screen* history (i.e. bash output from before
+  //     Claude Code started), not Claude Code's chat. So entering
+  //     copy mode and tapping ↑ scrolls through pre-Claude-Code
+  //     stuff that the user doesn't care about, while their input
+  //     cursor in Claude Code is unaffected. The user reported this
+  //     as confusing and broken — correctly so.
   //
-  // body's `touch-action: none` (set in CSS above) blocks the native
-  // delegation. We then forward each touchmove to a synthesised
-  // `wheel` event dispatched on the `.terminal` element. xterm.js
-  // attaches its scrollback wheel handler directly there (Viewport.ts
-  // does `addDisposableDomListener(this._element, 'wheel', ...)`) so
-  // this is the same code path that mouse wheel goes through and is
-  // the most reliable way to drive xterm's scroll without depending
-  // on private internals. We also push `xterm-viewport.scrollTop` as
-  // a belt-and-suspenders for any renderer that drives the buffer off
-  // the viewport's scroll event rather than wheel.
+  // 1.18.9 removes that whole code path. Swipes inside the terminal
+  // do nothing: `body { touch-action: none }` blocks native panning
+  // (so the HA panel doesn't scroll either — the original problem
+  // from 1.18.1), and there is no JS gesture handler. Native iOS
+  // long-press / drag selection works (mouse mode is off, so
+  // xterm.js leaves selection to the browser). Toolbar arrows
+  // remain for input-cursor navigation. Real keyboards still get
+  // xterm's built-in Shift+PageUp / Shift+PageDown for normal-screen
+  // scrollback when there is any.
   //
-  // 1.18.3 set scrollTop directly and *only* scrollTop; on ttyd's
-  // bundled xterm that didn't produce any visible scroll (the user
-  // reported "doesn't scroll at all"), which is the symptom that
-  // motivated this 1.18.4 rewrite.
+  // If Claude Code chat history scrolling is ever needed, it can't
+  // come from this layer — it has to come from claude-code itself
+  // (e.g. a `/scrollback` slash command or a Claude Code-side
+  // keybinding to switch to a paged view).
   // ===================================================================
-  function setupScrollForwarder() {
-    var startY = 0;
-    var lastY = 0;
-    var dragging = false;
-    var moved = false;
-    var wheelTarget = null;
-
-    function findWheelTarget() {
-      // xterm's wheel handler lives on .terminal (Terminal._element).
-      // Cache the lookup but redo it if the cached element falls out
-      // of the DOM (ttyd may rebuild the tree on reconnect).
-      if (wheelTarget && wheelTarget.isConnected) return wheelTarget;
-      wheelTarget = document.querySelector('.terminal')
-                 || document.querySelector('.xterm');
-      return wheelTarget;
-    }
-    function findViewport() {
-      return document.querySelector('.xterm-viewport');
-    }
-
-    document.addEventListener('touchstart', function (e) {
-      dragging = false;
-      if (!e.touches || e.touches.length !== 1) return;
-      var t = e.target;
-      // Toolbar runs its own pan-x scroll; don't fight it.
-      if (t && t.closest && t.closest('#bruh-bar')) return;
-      startY = lastY = e.touches[0].clientY;
-      dragging = true;
-      moved = false;
-    }, { passive: true });
-
-    document.addEventListener('touchmove', function (e) {
-      if (!dragging || !e.touches || e.touches.length !== 1) return;
-      var currentY = e.touches[0].clientY;
-      var totalDelta = currentY - startY;
-      // Tap threshold — below 8 px of vertical travel we treat this
-      // as still potentially a tap and let xterm see the events for
-      // focus / selection.
-      if (!moved && Math.abs(totalDelta) < 8) return;
-      moved = true;
-
-      // Incremental pixel delta since the last touchmove. Positive
-      // when the finger moves UP (which means we want to scroll the
-      // terminal DOWN — same sign convention as `WheelEvent.deltaY`).
-      var increment = lastY - currentY;
-      lastY = currentY;
-
-      if (increment !== 0) {
-        // Only dispatch wheel events to xterm when there's actually
-        // scrollback in xterm's own viewport (i.e. normal-screen
-        // mode at a bash prompt). In alternate-screen mode (Claude
-        // Code's TUI) xterm has no scrollback by spec, and with
-        // tmux mouse mode OFF (the 1.18.8 default — see
-        // scripts/tmux.conf for why) xterm's wheel fallback in
-        // alt-screen is to translate to ↑/↓ arrow key escape
-        // sequences. That spams Claude Code's input cursor instead
-        // of doing anything useful, which is what the user
-        // complained about between 1.18.4 and 1.18.7.
-        //
-        // For scrolling Claude Code's chat history (the alt-screen
-        // case), the `📜 Hist` toolbar button sends `Ctrl+B [`
-        // explicitly, which enters tmux copy mode without needing
-        // mouse reporting. From there the user scrolls with the
-        // toolbar ↑↓ buttons (vi line-by-line) and exits with ESC.
-        var vp = findViewport();
-        var hasScrollback = vp && (vp.scrollHeight - vp.clientHeight) > 1;
-        if (hasScrollback) {
-          var target = findWheelTarget();
-          if (target) {
-            try {
-              target.dispatchEvent(new WheelEvent('wheel', {
-                bubbles: true,
-                cancelable: true,
-                deltaX: 0,
-                deltaY: increment,
-                deltaMode: 0 /* DOM_DELTA_PIXEL */
-              }));
-            } catch (_err) { /* WheelEvent unsupported — fall through */ }
-          }
-          var maxScroll = vp.scrollHeight - vp.clientHeight;
-          var next = vp.scrollTop + increment;
-          if (next < 0) next = 0;
-          if (next > maxScroll) next = maxScroll;
-          if (next !== vp.scrollTop) vp.scrollTop = next;
-        }
-      }
-
-      // Always preventDefault on a real drag, even if nothing
-      // actually scrolled — otherwise iOS bubbles the gesture up to
-      // the HA frontend and scrolls the panel header off the screen.
-      e.preventDefault();
-    }, { passive: false });
-
-    function endDrag() { dragging = false; }
-    document.addEventListener('touchend', endDrag, { passive: true });
-    document.addEventListener('touchcancel', endDrag, { passive: true });
-    return true;
-  }
 
   // ===================================================================
   // 5. Bootstrap — wait for xterm to mount, then wire everything up.
@@ -815,13 +708,14 @@
       // scroll it to bring the focused textarea into view, which
       // would otherwise drag our `position: fixed` bar with it), the
       // body rule clamps the body's box to the viewport so xterm's
-      // layout stays consistent under the keyboard.
+      // layout stays consistent under the keyboard. Swipes inside
+      // the terminal are now intentionally a no-op — `body { touch-
+      // action: none }` blocks native panning so the HA panel
+      // doesn't scroll, and no JS gesture handler is registered. See
+      // the comment block above the (deleted) `setupScrollForwarder`
+      // section for the full reasoning.
       document.documentElement.classList.add('bruh-is-touch');
       document.body.classList.add('bruh-is-touch');
-      // Listeners attach at the document level so they're safe to
-      // register before xterm finishes mounting — the wheel-target
-      // lookup runs on every touchmove and caches per-session.
-      setupScrollForwarder();
     }
     buildToolbar();
   }
