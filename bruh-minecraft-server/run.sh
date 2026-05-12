@@ -20,13 +20,34 @@ set -o pipefail
 #
 # 1.3.0 introduced switchable server profiles. Each profile lives under
 # /config/minecraft-worlds/<name>/ with its own world, plugins, config,
-# and backups. /config/minecraft and /config/minecraft-backups are
-# symlinks to the active profile's dirs — keeps old scripts / docs
-# working unchanged. See scripts/world-manager.sh for the CRUD CLI.
+# and backups. /config/minecraft is a symlink to the active profile's
+# world dir so old scripts / docs keep working unchanged.
+#
+# /config/minecraft-backups stays a REGULAR directory that contains per-
+# profile children (<name>/git/, <name>/archives/). Until 1.5.5 the code
+# tried to also make /config/minecraft-backups a symlink to its own
+# <active>/ child, but a symlink that points at its own descendant is a
+# circular loop the kernel refuses to follow — so the install-time
+# `ln -s` failed and every subsequent boot logged
+# "/config/minecraft-backups is not a symlink but should be after
+# migration. Refusing to overwrite." (harmless but alarming) AND, more
+# importantly, downstream consumers reading MC_BACKUP_DIR still pointed
+# at the parent dir, so the panel's Backups tab and backup.sh both came
+# up empty even though snapshots were piling up under <active>/git/.
+#
+# 1.5.6 fixes this by:
+#   - Only creating the /config/minecraft symlink (which is well-defined).
+#   - Re-exporting MC_BACKUP_DIR to the active profile's backup dir
+#     (`<MC_BACKUPS_ROOT>/<active>/`) inside ensure_worlds_layout so the
+#     panel + backup scripts find git/ and archives/ in the right place.
+# See scripts/world-manager.sh for the CRUD CLI.
 # ----------------------------------------------------------------------------
 MC_WORLDS_DIR="/config/minecraft-worlds"
 MC_BACKUPS_ROOT="/config/minecraft-backups"
 MC_SERVER_DIR="/config/minecraft"
+# MC_BACKUP_DIR is re-pointed at the active profile's backup dir inside
+# ensure_worlds_layout. The default here keeps things sane for any
+# helper invoked before the layout step (none currently).
 MC_BACKUP_DIR="/config/minecraft-backups"
 MC_PANEL_STATE="/data/panel"
 MC_LOG_FIFO="/tmp/mc-console.fifo"
@@ -238,21 +259,28 @@ check_eula() {
 
 # ----------------------------------------------------------------------------
 # Ensure switchable-world layout under /config/minecraft-worlds/<name>/ and
-# point the canonical /config/minecraft + /config/minecraft-backups symlinks
-# at the active profile.
+# point /config/minecraft at the active profile.
 #
 # Migration (1.3.0): existing users have a real /config/minecraft/ directory
 # that predates the profile system. On first boot we:
 #   1. mkdir -p /config/minecraft-worlds
 #   2. If /config/minecraft/ is a plain directory (not a symlink), move
 #      it to /config/minecraft-worlds/${ACTIVE_WORLD}/ wholesale.
-#   3. Same for /config/minecraft-backups/ -> /config/minecraft-backups/
-#      flattened into <active>/git + <active>/archives.
+#   3. Same for /config/minecraft-backups/{git,archives} -> the active
+#      profile's <name>/git + <name>/archives subdirs.
 #   4. Create the /config/minecraft symlink pointing at the active profile.
 #
 # Subsequent boots: just ensure the symlink exists and points at the current
 # active profile. Switching worlds is a matter of updating the `active_world`
 # add-on option + restarting; this function handles the relinking.
+#
+# NOTE: /config/minecraft-backups is intentionally NOT a symlink. It is the
+# parent directory that holds every per-profile backup tree as a
+# subdirectory; a symlink pointing inside its own tree is circular and the
+# kernel refuses to follow it. Downstream consumers (panel/server.py and
+# scripts/backup.sh) read MC_BACKUP_DIR from the env, which this function
+# re-exports to the active profile's `<name>/` so they look at the right
+# git/ and archives/ subdirs.
 # ----------------------------------------------------------------------------
 ensure_worlds_layout() {
     mkdir -p "${MC_WORLDS_DIR}" "${MC_BACKUPS_ROOT}"
@@ -289,28 +317,30 @@ ensure_worlds_layout() {
     # Make sure the active profile's dirs exist
     mkdir -p "${world_dir}" "${backup_dir}"
 
-    # --- Symlinks: point /config/minecraft + /config/minecraft-backups at
-    # the active profile. Replace wrong-target symlinks silently.
-    for pair in "/config/minecraft:${world_dir}" "/config/minecraft-backups:${backup_dir}"; do
-        local link="${pair%%:*}"
-        local target="${pair##*:}"
-        if [ -L "${link}" ]; then
-            local current
-            current=$(readlink "${link}")
-            if [ "${current}" != "${target}" ]; then
-                bashio::log.info "Relinking ${link} -> ${target} (was ${current})"
-                rm -f "${link}"
-                ln -s "${target}" "${link}"
-            fi
-        elif [ -e "${link}" ]; then
-            # Shouldn't reach here after migration — but if we do, get out
-            # of the way with a loud warning rather than clobbering data.
-            bashio::log.error "${link} is not a symlink but should be after migration. Refusing to overwrite."
-        else
-            ln -s "${target}" "${link}"
-            bashio::log.info "Linked ${link} -> ${target}"
+    # --- /config/minecraft symlink → active world dir ----------------------
+    # /config/minecraft-backups stays a real directory holding all profiles
+    # (see the function header for why a symlink there can't work).
+    if [ -L "/config/minecraft" ]; then
+        local current
+        current=$(readlink "/config/minecraft")
+        if [ "${current}" != "${world_dir}" ]; then
+            bashio::log.info "Relinking /config/minecraft -> ${world_dir} (was ${current})"
+            rm -f "/config/minecraft"
+            ln -s "${world_dir}" "/config/minecraft"
         fi
-    done
+    elif [ -e "/config/minecraft" ]; then
+        bashio::log.error "/config/minecraft is not a symlink but should be after migration. Refusing to overwrite."
+    else
+        ln -s "${world_dir}" "/config/minecraft"
+        bashio::log.info "Linked /config/minecraft -> ${world_dir}"
+    fi
+
+    # Re-point MC_BACKUP_DIR at the active profile's backup dir so that
+    # the panel + backup.sh look for git/ and archives/ under the right
+    # subdirectory. Without this, both came up empty even though
+    # snapshots were piling up correctly under <active>/.
+    MC_BACKUP_DIR="${backup_dir}"
+    export MC_BACKUP_DIR
 
     chown -R minecraft:minecraft "${MC_WORLDS_DIR}" "${MC_BACKUPS_ROOT}" 2>/dev/null || true
     bashio::log.info "Active world: ${active}  (dir: ${world_dir})"
