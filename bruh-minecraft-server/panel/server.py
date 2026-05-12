@@ -63,6 +63,11 @@ MC_PANEL_STATE = Path(os.environ.get("MC_PANEL_STATE", "/data/panel"))
 MC_CONSOLE_LOG = Path(os.environ.get("MC_CONSOLE_LOG", str(MC_PANEL_STATE / "console.log")))
 MC_INPUT_FIFO = Path(os.environ.get("MC_INPUT_FIFO", "/tmp/mc-stdin.fifo"))
 SCRIPTS_DIR = Path("/opt/bruh-mc/scripts")
+# Add-on version, exported by run.sh via resolve_addon_version. Used to
+# cache-bust style.css + app.js so a HA add-on update is picked up by the
+# browser without users having to hard-refresh. Falls back to "dev" if the
+# var isn't set (test harness, local podman builds with broken templating).
+ADDON_VERSION = os.environ.get("ADDON_VERSION", "dev")
 
 
 def _resolve_backup_dir() -> Path:
@@ -206,8 +211,31 @@ VALID_PLAYER_NAME = re.compile(r"^[A-Za-z0-9_]{1,16}$")
 # ---------------------------------------------------------------------------
 # Routes: static
 # ---------------------------------------------------------------------------
+def _render_index_html() -> str:
+    """Return index.html with `__VERSION__` placeholders substituted for
+    the running add-on version. Used as a cheap cache-buster — every
+    release ships a new `?v=<version>` query string on style.css / app.js
+    links so the browser never sticks on a stale stylesheet from the
+    previous add-on version. (1.5.7's nav fix landed but users kept
+    seeing the broken 1.5.6 layout because their browsers cached the
+    old style.css — that's the bug this works around.) Read fresh per
+    request rather than at module load because tests rewrite index.html
+    in place; the cost is one ~12 KB file read, which is negligible
+    against the rest of the request pipeline.
+    """
+    html = (STATIC / "index.html").read_text()
+    return html.replace("__VERSION__", ADDON_VERSION)
+
+
 async def index(_: web.Request) -> web.Response:
-    return web.FileResponse(STATIC / "index.html")
+    return web.Response(
+        text=_render_index_html(),
+        content_type="text/html",
+        # Don't let the HTML itself get cached — without this the browser
+        # would happily reuse a cached index.html with last release's
+        # version string baked in, defeating the cache-busting query.
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 async def favicon(_: web.Request) -> web.Response:
