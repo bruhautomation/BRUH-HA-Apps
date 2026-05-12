@@ -5,6 +5,38 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.5.7
+
+### Fixed: nav bar STILL disappeared on Plugins / Server Properties tabs
+
+1.5.6 layered three reinforcements onto `position: sticky` (`flex-shrink: 0`,
+`isolation: isolate`, `-webkit-sticky` prefix, `z-index: 100`), but users on
+HA Companion still reported the nav vanishing when they scrolled into the
+**Plugins** and **Server Properties** tabs specifically. `position: sticky`
+inside HA's ingress iframe + WKWebView is genuinely fragile — the nested
+browsing context, the LitElement-driven HA shell that wraps it, and the
+shrink-to-fit behaviour of flex column children all conspire to occasionally
+collapse the sticky element's containing block out from under it.
+
+**Fix:** abandon `position: sticky` and use `position: fixed` instead.
+The header is now anchored to the iframe viewport regardless of any
+flex / stacking / transform context further up the tree:
+
+- `.page-header { position: fixed; top: 0; left: 0; right: 0; z-index: 100; }`
+- `body { padding-top: var(--header-height, 110px); }` — reserves space so
+  content never hides behind the header.
+- `panel/app.js` measures the header's actual rendered height on load,
+  on `window.resize`, and via `ResizeObserver`, and writes it to
+  `document.documentElement.style.--header-height`. The 110 px (desktop)
+  and 150 px (mobile-stacked-topbar) CSS fallbacks prevent a flash of
+  content under the header before JS runs.
+
+### Migration
+
+Restart the add-on. No config changes. Long tabs (Plugins, Server
+Properties, Console, Backups) keep the nav pinned to the top regardless
+of how far you scroll — including inside HA Companion's WKWebView.
+
 ## 1.5.6
 
 ### Fixed: live console drowning in RCON polling noise
@@ -55,6 +87,8 @@ zero height inside the flex column body.
 - `position: -webkit-sticky` prefix added for older iOS WebKit.
 - `z-index` bumped from `10` to `100` so a future overlay can't
   accidentally hide the nav.
+
+(See 1.5.7 — this didn't fully fix it; sticky was abandoned for fixed.)
 
 ### Fixed: misleading "Refusing to overwrite" backup-symlink error every boot
 
