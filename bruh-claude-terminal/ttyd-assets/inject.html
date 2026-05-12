@@ -731,48 +731,57 @@
       lastY = currentY;
 
       if (increment !== 0) {
-        // Only drive xterm's scroll path when there's actually
-        // scrollback to show. In Claude Code's TUI (xterm alternate-
-        // screen mode) the viewport has no scrollable area, and
-        // xterm's wheel handler in that mode translates wheel
-        // events into ↑/↓ arrow key escape sequences fed straight to
-        // the application — which is what produced the "every swipe
-        // arrow-keys around in Claude Code" complaint after 1.18.4.
+        // Synthesise a wheel event on .terminal. xterm.js's wheel
+        // handler interprets it based on whether the PTY has enabled
+        // mouse reporting:
         //
-        // `scrollHeight > clientHeight + 1` is a reliable proxy: in
-        // altscreen the scroll-area height equals the visible
-        // viewport, so the inequality is false and we skip the wheel
-        // dispatch. In normal-screen with output, scrollback grows
-        // scrollHeight past clientHeight and the user gets real
-        // scrolling.
+        //   - Mouse reporting ON (which tmux does via `set -g mouse
+        //     on` in scripts/tmux.conf since 1.18.7): xterm sends a
+        //     mouse-wheel escape sequence to the PTY. tmux receives
+        //     it and runs its WheelUpPane / WheelDownPane bindings,
+        //     which auto-enter copy mode and scroll through tmux's
+        //     per-pane history buffer. This is the ONLY thing that
+        //     captures Claude Code's alt-screen chat output, so
+        //     it's also the only thing that gives the user a way to
+        //     scroll back through past messages — both on touch
+        //     devices and on desktops with a real mouse wheel.
+        //
+        //   - Mouse reporting OFF: xterm falls back to native
+        //     behaviour — scroll scrollback in normal-screen mode,
+        //     dispatch ↑/↓ key sequences in alt-screen mode. Pre-
+        //     1.18.5 we gated the dispatch in alt-screen to avoid
+        //     spamming arrow keys, but with tmux mouse on the wheel
+        //     events go to tmux instead of Claude Code regardless
+        //     of alt-screen state, so the gate isn't needed anymore.
+        //     Leaving the dispatch unconditional means the touch
+        //     forwarder works even if tmux's mouse setting is
+        //     temporarily off (e.g. user disabled it manually).
+        var target = findWheelTarget();
+        if (target) {
+          try {
+            target.dispatchEvent(new WheelEvent('wheel', {
+              bubbles: true,
+              cancelable: true,
+              deltaX: 0,
+              deltaY: increment,
+              deltaMode: 0 /* DOM_DELTA_PIXEL */
+            }));
+          } catch (_err) { /* WheelEvent unsupported — fall through */ }
+        }
+        // Belt-and-suspenders: in normal-screen mode (bash prompt,
+        // not Claude Code's TUI), xterm-viewport actually has
+        // scrollback. Nudging scrollTop directly there is the
+        // canonical path and is harmless when mouse reporting is on
+        // (xterm intercepts the wheel before this code path matters
+        // anyway).
         var vp = findViewport();
-        var hasScrollback = vp
-            && (vp.scrollHeight - vp.clientHeight) > 1;
-        if (hasScrollback) {
-          var target = findWheelTarget();
-          if (target) {
-            try {
-              target.dispatchEvent(new WheelEvent('wheel', {
-                bubbles: true,
-                cancelable: true,
-                deltaX: 0,
-                deltaY: increment,
-                deltaMode: 0 /* DOM_DELTA_PIXEL */
-              }));
-            } catch (_err) { /* WheelEvent unsupported — fall through */ }
-          }
-          // Belt-and-suspenders: nudge scrollTop directly too so any
-          // renderer that drives the buffer off the viewport's
-          // `scroll` event also re-renders.
+        if (vp && vp.scrollHeight > vp.clientHeight + 1) {
           var maxScroll = vp.scrollHeight - vp.clientHeight;
           var next = vp.scrollTop + increment;
           if (next < 0) next = 0;
           if (next > maxScroll) next = maxScroll;
           if (next !== vp.scrollTop) vp.scrollTop = next;
         }
-        // Else: TUI mode (or no output yet). Don't synthesise wheel,
-        // don't move scrollTop — just preventDefault below so the
-        // gesture can't leak to the parent.
       }
 
       // Always preventDefault on a real drag, even if nothing
