@@ -5,30 +5,6 @@
   const $ = (sel) => document.querySelector(sel);
   const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
-  // ------------------------------------------------------------------
-  // Fixed-header height tracking (1.5.7)
-  // ------------------------------------------------------------------
-  // .page-header is `position: fixed` (see style.css for why), so body
-  // gets a matching padding-top driven by the --header-height CSS
-  // variable. Keep that variable pinned to the header's real rendered
-  // height so the reserved space tracks correctly across:
-  //   - desktop vs mobile (topbar stacks → taller header)
-  //   - HA Companion's URL-bar collapse on scroll (viewport height changes)
-  //   - browser zoom / font-size accessibility settings
-  // The 110/150 px CSS fallbacks cover the pre-JS flash; this JS sets
-  // the exact value as soon as the DOM is ready.
-  const updateHeaderOffset = () => {
-    const h = document.querySelector('.page-header');
-    if (!h) return;
-    document.documentElement.style.setProperty('--header-height', `${h.offsetHeight}px`);
-  };
-  updateHeaderOffset();
-  window.addEventListener('resize', updateHeaderOffset);
-  if (typeof ResizeObserver !== 'undefined') {
-    const hdr = document.querySelector('.page-header');
-    if (hdr) new ResizeObserver(updateHeaderOffset).observe(hdr);
-  }
-
   // Relative API paths work with HA ingress proxy automatically.
   const api = async (path, opts = {}) => {
     const headers = { 'Accept': 'application/json' };
@@ -54,6 +30,13 @@
       if (tab.dataset.tab === 'plugins')    loadPlugins();
       if (tab.dataset.tab === 'backups')    loadBackups();
       if (tab.dataset.tab === 'worlds')     loadWorlds();
+      // Reset main's scroll position when switching tabs so the user
+      // lands at the top of the new content. main is the page's single
+      // scroll container (see style.css for why); a plain
+      // window.scrollTo(0) wouldn't do anything because <body> doesn't
+      // scroll under this layout.
+      const m = document.querySelector('main');
+      if (m) m.scrollTop = 0;
     });
   });
 
