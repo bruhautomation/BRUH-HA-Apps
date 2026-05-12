@@ -9,33 +9,76 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed: nav bar STILL disappeared on Plugins / Server Properties tabs
 
-1.5.6 layered three reinforcements onto `position: sticky` (`flex-shrink: 0`,
-`isolation: isolate`, `-webkit-sticky` prefix, `z-index: 100`), but users on
-HA Companion still reported the nav vanishing when they scrolled into the
-**Plugins** and **Server Properties** tabs specifically. `position: sticky`
-inside HA's ingress iframe + WKWebView is genuinely fragile — the nested
-browsing context, the LitElement-driven HA shell that wraps it, and the
-shrink-to-fit behaviour of flex column children all conspire to occasionally
-collapse the sticky element's containing block out from under it.
+1.5.6 reinforced `position: sticky` with `flex-shrink: 0` /
+`isolation: isolate` / `-webkit-sticky` / `z-index: 100`. Users on HA
+Companion **still** reported the nav vanishing when they scrolled into
+the **Plugins** and **Server Properties** tabs specifically. After
+research into HA's ingress iframe + WKWebView behaviour, the root cause
+is a combination of three browser bugs:
 
-**Fix:** abandon `position: sticky` and use `position: fixed` instead.
-The header is now anchored to the iframe viewport regardless of any
-flex / stacking / transform context further up the tree:
+- **WebKit bug 154399** — `position: sticky` gets confused when a
+  descendant has its own scroll container (`overflow: auto`). Plugins
+  and Server Properties have tables that on mobile become
+  `display: block; overflow-x: auto`; Console has a `<pre>` with
+  `overflow: auto`. The tabs without inner scrollers (Dashboard,
+  Players, Backups, Worlds) didn't trigger the bug — that's why this
+  was tab-specific.
+- **WebKit bug 297779** — iOS 26 broke `position: fixed` inside iframes;
+  Safari 26.1 fixed it but **WKWebView (which HA Companion uses) is
+  still affected**. Switching to `position: fixed` would have made
+  things actively worse.
+- **WKWebView's `vh` resolution against the outer window**, not the
+  iframe — `body { min-height: 100vh }` desynchronises on tab switches
+  / orientation changes, leaving sticky elements computing stale
+  thresholds.
 
-- `.page-header { position: fixed; top: 0; left: 0; right: 0; z-index: 100; }`
-- `body { padding-top: var(--header-height, 110px); }` — reserves space so
-  content never hides behind the header.
-- `panel/app.js` measures the header's actual rendered height on load,
-  on `window.resize`, and via `ResizeObserver`, and writes it to
-  `document.documentElement.style.--header-height`. The 110 px (desktop)
-  and 150 px (mobile-stacked-topbar) CSS fallbacks prevent a flash of
-  content under the header before JS runs.
+**Fix:** abandon both `sticky` and `fixed`. Adopt the "inner scroll
+wrapper" pattern instead — `<body>` itself never scrolls, and `<main>`
+becomes the single vertical scroll container. The header is then
+**statically** placed at the top of a non-scrolling body and literally
+cannot scroll off-screen. This side-steps every WebKit positioning bug
+class at once.
+
+```css
+html, body { height: 100%; overflow: hidden; }
+body { display: flex; flex-direction: column; }
+.page-header { flex: 0 0 auto; /* static */ }
+main {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  min-height: 0;  /* required so the flex child can shrink */
+}
+footer { flex: 0 0 auto; }
+```
+
+Additional defensive changes:
+
+- `.console` `max-height` now uses `min(70vh, 600px)` instead of `70vh`
+  alone — defends against WKWebView's stale-`vh` resolution after
+  orientation / URL-bar animations.
+- `panel/app.js` resets `main.scrollTop = 0` when switching tabs so
+  users land at the top of new tab content (a plain `window.scrollTo`
+  wouldn't work under this layout because `<body>` doesn't scroll).
 
 ### Migration
 
-Restart the add-on. No config changes. Long tabs (Plugins, Server
-Properties, Console, Backups) keep the nav pinned to the top regardless
-of how far you scroll — including inside HA Companion's WKWebView.
+Restart the add-on. No config changes. The nav bar stays pinned at
+the top regardless of which tab is open or how far it's scrolled —
+including on iOS HA Companion and the iOS 26 / WKWebView family of
+bugs the previous two attempts couldn't work around.
+
+### References
+
+- [WebKit Bug 154399](https://bugs.webkit.org/show_bug.cgi?id=154399)
+  — `position: fixed`/`sticky` buggy with `overflow: auto` inside iframes.
+- [WebKit Bug 297779](https://bugs.webkit.org/show_bug.cgi?id=297779)
+  — iOS 26 fixed-positioning regression (WKWebView still affected).
+- [PierBover/ios-iframe-fix](https://github.com/PierBover/ios-iframe-fix)
+  — the wrapper-scrolls pattern this layout adopts.
+- [HA frontend #779](https://github.com/home-assistant/frontend/issues/779) /
+  [HA core #10772](https://github.com/home-assistant/core/issues/10772)
+  — historic context on `panel_iframe` scrolling on iOS.
 
 ## 1.5.6
 
@@ -88,7 +131,9 @@ zero height inside the flex column body.
 - `z-index` bumped from `10` to `100` so a future overlay can't
   accidentally hide the nav.
 
-(See 1.5.7 — this didn't fully fix it; sticky was abandoned for fixed.)
+(See 1.5.7 — this didn't fully fix it on Plugins / Server Properties;
+the whole sticky-vs-fixed approach was wrong and was replaced with
+the inner-scroll-wrapper pattern.)
 
 ### Fixed: misleading "Refusing to overwrite" backup-symlink error every boot
 
