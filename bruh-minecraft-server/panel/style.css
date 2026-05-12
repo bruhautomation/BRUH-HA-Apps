@@ -38,14 +38,34 @@ body {
 }
 
 /* Page header (topbar + tabs) sticks to the top so the navigation never
-   scrolls off-screen on long tabs (Console, Backups, Worlds). Before this,
-   users who scrolled into a tab's content could no longer reach the other
-   tabs without scrolling back up — the tab they were on became a dead end. */
+   scrolls off-screen on long tabs (Console, Plugins, Backups, Worlds).
+   Before 1.5.5 the nav was a regular flow element and any tab with
+   scrollable content turned into a dead end the moment users scrolled
+   down — they could only get back to other tabs by scrolling all the way
+   up. 1.5.5 made the wrapper sticky, but users on HA Companion (iOS
+   WKWebView) and on the Plugins / Console tabs specifically still
+   reported the nav vanishing when they scrolled, because:
+
+     1. The body is a flex column container with `min-height: 100vh`, and
+        WKWebView's sticky-in-flex implementation collapses the sticky
+        element to zero height when its parent flex container has no
+        explicit `flex-shrink` on its children. Forcing `flex-shrink: 0`
+        keeps the header at its content size regardless of how tall the
+        flex container grows.
+     2. The horizontal-scrolling `.tabs` row + the mask-image gradient
+        on it create a stacking context inside the header; on long pages
+        the scrolled content could paint above the header if there wasn't
+        a separate stacking context on `.page-header` itself. `isolation:
+        isolate` creates one explicitly.
+     3. Older iOS WebKit still needs the `-webkit-sticky` prefix. */
 .page-header {
+  position: -webkit-sticky;
   position: sticky;
   top: 0;
-  z-index: 10;
+  z-index: 100;
   background: var(--bg-card);
+  flex-shrink: 0;
+  isolation: isolate;
 }
 
 /* Topbar */
