@@ -5,6 +5,111 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.5.6
+
+### Fixed: live console drowning in RCON polling noise
+
+`scripts/stats-collector.py` polls the running Paper server via RCON
+every 15 seconds for `/list` (and, when supported, `/tps` and
+`/version`) so the Dashboard tab and the HA sensors can show live
+player counts + TPS. Each round-trip writes **three** lines into
+`console.log`:
+
+```
+[hh:mm:ss INFO]: Thread RCON Client /127.0.0.1 started
+[hh:mm:ss INFO]: [Essentials] Rcon issued server command: /list
+[hh:mm:ss INFO]: Thread RCON Client /127.0.0.1 shutting down
+```
+
+So every minute the live Console tab pulled in **12 noise lines**,
+drowning out actual server events (joins, deaths, chat, plugin
+warnings). Backup runs added three more lines per snapshot via
+`save-off` / `save-all flush` / `save-on`.
+
+**Fix:** strip these specific patterns at the SSE boundary in
+`panel/server.py::api_logs_sse`. The `/data/panel/console.log` file
+on disk still contains the full history for offline debugging — only
+the live `/api/logs/tail` stream is filtered. The filter covers the
+two `Thread RCON Client /127.0.0.1` lifecycle lines and the Essentials
+handler's `Rcon issued server command:` lines for `list`, `tps`,
+`version`, `save-all`, `save-off`, and `save-on` only. User commands
+typed into the panel's Console tab are still echoed normally.
+
+### Fixed: nav bar disappeared on Plugins / Console tabs
+
+After 1.5.5 wrapped the topbar + tabs in a sticky `.page-header`,
+users on HA Companion (iOS WKWebView) still reported the nav
+vanishing when they scrolled into the Plugins and Console tabs
+specifically — these tabs have the longest scrollable content
+(plugin list, live console) and the sticky element was collapsing to
+zero height inside the flex column body.
+
+**Fix:** harden `.page-header` against the flex-shrink edge case:
+
+- `flex-shrink: 0` so the header keeps its content height regardless
+  of how tall the flex container grows.
+- `isolation: isolate` so the sticky element gets its own stacking
+  context (the horizontally-scrolling tab row's `mask-image` already
+  creates one inside the header, which on long pages could otherwise
+  paint scrolled content above the header).
+- `position: -webkit-sticky` prefix added for older iOS WebKit.
+- `z-index` bumped from `10` to `100` so a future overlay can't
+  accidentally hide the nav.
+
+### Fixed: misleading "Refusing to overwrite" backup-symlink error every boot
+
+Every 1.5.5 boot logged:
+
+```
+ERROR: /config/minecraft-backups is not a symlink but should be after
+migration. Refusing to overwrite.
+```
+
+`ensure_worlds_layout` tried to make `/config/minecraft-backups` a
+symlink pointing at its own `<active>/` subdirectory — but a symlink
+that points inside its own tree is a circular loop the kernel won't
+follow, so the install-time `ln -s` failed and the error fired on
+every restart. More importantly: downstream consumers
+(`panel/server.py::api_backups_list`, `scripts/backup.sh`) read
+`MC_BACKUP_DIR` from the env, which still pointed at the parent
+directory — so the panel's Backups tab came up empty and the auto-
+backup watcher re-created a fresh `git/` repo at the *parent* level
+instead of writing under the active profile.
+
+**Fix:**
+
+- Stop trying to make `/config/minecraft-backups` a symlink. It is
+  the legitimate parent directory of every per-profile backup tree
+  (`<name>/git/`, `<name>/archives/`).
+- Re-export `MC_BACKUP_DIR=<MC_BACKUPS_ROOT>/<active>` from
+  `ensure_worlds_layout` so the panel + backup scripts find the
+  active profile's `git/` and `archives/` in the right place.
+- `panel/server.py` gained a defensive fallback: if `MC_BACKUP_DIR`
+  still points at the parent dir (older deployments that haven't yet
+  rebooted onto 1.5.6), it auto-descends into `<ACTIVE_WORLD>/` when
+  that subdir contains `git/` or `archives/`.
+
+### Migration
+
+Restart the add-on. No config changes.
+
+**Heads-up for users coming from 1.5.5:** if your auto-backup watcher
+ran while the symlink was broken (it almost certainly did), some
+snapshots may have been written to the *parent* directory instead of
+under the active profile. After restarting onto 1.5.6 you may see:
+
+```
+/config/minecraft-backups/git/          ← orphan snapshots from 1.5.5
+/config/minecraft-backups/<active>/git/ ← visible in the panel
+```
+
+To merge the orphans into the visible history, stop the add-on, copy
+`/config/minecraft-backups/git/.git/refs/heads/main`-worth of commits
+into the `<active>/git/` repo via `git fetch ../git refs/heads/main`,
+then restart. If you don't care about pre-1.5.6 snapshots, just delete
+`/config/minecraft-backups/git/` and the matching `archives/` folder.
+1.5.6 onwards always writes to the right place.
+
 ## 1.5.5
 
 ### Fixed: Configuration tab edits never applied via panel's Restart button
