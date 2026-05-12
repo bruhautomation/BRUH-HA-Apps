@@ -29,12 +29,27 @@
   body.bruh-is-touch #bruh-bar { display: block; }
   body.bruh-bar-hidden #bruh-bar { display: none !important; }
 
-  /* Lift the terminal above the toolbar on touch devices so the last
-     line isn't covered. JS sets --bruh-bar-h to (bar height + keyboard
-     gap) so the padded area also accounts for the on-screen keyboard,
-     not just the bar itself. */
-  body.bruh-is-touch { padding-bottom: var(--bruh-bar-h, 56px); box-sizing: border-box; }
-  body.bruh-is-touch.bruh-bar-hidden { padding-bottom: 0; }
+  /* Reserve space at the bottom of the viewport for the toolbar +
+     on-screen keyboard. We do this by SHRINKING THE BODY'S BOX, not
+     by padding body's content area.
+     Why this matters: ttyd's CSS does `#terminal-container { height:
+     100% }` and `.terminal { height: calc(100% - 10px) }`, both
+     measured against body's *box*, not body's content box. So body
+     `padding-bottom` carves space inside body but leaves
+     terminal-container the full height of body — xterm.fit() never
+     sees the smaller area, ttyd never sends new (cols, rows) to the
+     PTY, tmux doesn't reflow, and claude-code's input row stays
+     drawn below the keyboard.
+     Shrinking body itself propagates the resize through ttyd's
+     terminal-container → .terminal → xterm.fit() ResizeObserver →
+     ttyd's WebSocket-side resize message → PTY winsize → tmux
+     SIGWINCH → claude-code re-render, so the input row lands above
+     the bar + keyboard. */
+  body.bruh-is-touch {
+    height: calc(100% - var(--bruh-bar-h, 56px));
+    min-height: 0;
+  }
+  body.bruh-is-touch.bruh-bar-hidden { height: 100%; }
 
   /* iOS Safari (especially inside HA ingress' iframe) auto-scrolls the
      iframe document when the keyboard opens to keep the focused xterm
@@ -57,14 +72,15 @@
     overscroll-behavior: none;
   }
   body.bruh-is-touch {
+    /* Anchored to top of viewport; the previous rule above sets
+       height: calc(100% - var(--bruh-bar-h, 56px)) so body's box ends
+       above where the toolbar + keyboard will be. No `bottom` /
+       `inset` here — height + top is the constraint that produces the
+       layout, and adding bottom would over-constrain. */
     position: fixed;
-    /* Longhand first for browsers that don't recognise the `inset`
-       shorthand (Safari <14.5, Chrome <87). */
     top: 0;
-    right: 0;
-    bottom: 0;
     left: 0;
-    inset: 0;
+    right: 0;
     margin: 0;
     overflow: hidden;
     overscroll-behavior: none;
@@ -329,17 +345,33 @@
     });
     document.body.appendChild(bar);
 
-    // Expose toolbar height + keyboard gap so the body padding-bottom
-    // shrinks the terminal area to end exactly above the visible bar.
-    // Without the gap addend the bar sits *over* the last terminal line
-    // whenever the keyboard is up, because body padding only accounts
-    // for the bar's own height, not the keyboard underneath.
+    // Update `--bruh-bar-h` to (bar height + keyboard gap). The body
+    // CSS rule above turns that into `height: calc(100% - var(...))`,
+    // which shrinks body's box so ttyd's `#terminal-container { height:
+    // 100% }` and `.terminal { height: calc(100% - 10px) }` (both
+    // measured against body's box) shrink in lockstep — which is what
+    // makes xterm.fit() pick up the smaller area and tell ttyd to
+    // resize the PTY (SIGWINCH → tmux reflow → claude-code redraw
+    // above the keyboard).
+    //
+    // After updating the variable we also dispatch a `resize` event on
+    // the window. Most modern xterm-fit-addon integrations attach a
+    // ResizeObserver to the terminal element and re-fit automatically
+    // when its size changes, but the ttyd bundle has historically
+    // re-fit on the standard window `resize` event — belt-and-
+    // suspenders so the chain runs no matter which path the bundled
+    // version uses.
     function syncHeight(gap) {
       if (!bar.isConnected) return;
       var h = bar.offsetHeight;
       if (!h) return;
       var total = h + (gap > 0 ? gap : 0);
+      var prev = parseFloat(
+        document.documentElement.style.getPropertyValue('--bruh-bar-h')
+      ) || 0;
+      if (Math.abs(total - prev) < 0.5) return;
       document.documentElement.style.setProperty('--bruh-bar-h', total + 'px');
+      try { window.dispatchEvent(new Event('resize')); } catch (_e) { /* IE fallback not needed */ }
     }
 
     // Keep the bar above the software keyboard.
