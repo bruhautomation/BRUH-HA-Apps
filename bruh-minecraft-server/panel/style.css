@@ -25,7 +25,42 @@
 }
 
 * { box-sizing: border-box; }
-html, body { margin: 0; padding: 0; height: 100%; }
+
+/* The "inner scroll wrapper" layout (1.5.7).
+   ----------------------------------------------------------------------
+   Why we DON'T use position: sticky or position: fixed for the nav:
+
+   1.5.5 used `position: sticky`. WebKit bug 154399 + the
+      sticky-with-nested-overflow trap meant the header silently dropped
+      on tabs that contain an `overflow: auto` descendant (Plugins /
+      Server Properties tables have horizontal-scroll on mobile; Console
+      <pre> has vertical-scroll). Sticky's containing block resolution
+      gets confused in nested-scroller iframes inside WKWebView.
+   1.5.6 layered flex-shrink: 0 / isolation: isolate / -webkit-sticky.
+      Didn't fix it — the root cause isn't the stacking context.
+   1.5.7-fixed tried `position: fixed`. ACTIVELY worse: WebKit bug 297779
+      (still unpatched in iOS 26 WKWebView, which HA Companion uses)
+      makes fixed elements flicker / jump / vanish during scroll inside
+      iframes. Rick Strahl and muffinman.io documented this years ago.
+
+   The bulletproof pattern: make <body> never scroll, and make <main>
+   the single scroll container. The header is then statically placed at
+   the top of a non-scrolling body — it CANNOT scroll off-screen because
+   nothing scrolls past it. This is the same pattern PierBover/ios-iframe-fix
+   recommends for iframe panels inside iOS WebViews, and it side-steps
+   every WebKit sticky / fixed bug class at once. */
+html, body {
+  margin: 0;
+  padding: 0;
+  /* height: 100% — NOT 100vh. WKWebView resolves `vh` against the OUTER
+     window (HA's host page), not the iframe's frame, and can leave the
+     iframe's body sized inconsistently after orientation / URL-bar
+     animations. `height: 100%` measures the iframe's own viewport,
+     which is what we actually want. */
+  height: 100%;
+  /* body itself never scrolls — main below is the one scroll container. */
+  overflow: hidden;
+}
 body {
   background: var(--bg);
   color: var(--fg);
@@ -34,37 +69,17 @@ body {
   line-height: 1.45;
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
 }
 
-/* Page header (topbar + tabs) sticks to the top so the navigation never
-   scrolls off-screen on long tabs (Console, Plugins, Backups, Worlds).
-   Before 1.5.5 the nav was a regular flow element and any tab with
-   scrollable content turned into a dead end the moment users scrolled
-   down — they could only get back to other tabs by scrolling all the way
-   up. 1.5.5 made the wrapper sticky, but users on HA Companion (iOS
-   WKWebView) and on the Plugins / Console tabs specifically still
-   reported the nav vanishing when they scrolled, because:
-
-     1. The body is a flex column container with `min-height: 100vh`, and
-        WKWebView's sticky-in-flex implementation collapses the sticky
-        element to zero height when its parent flex container has no
-        explicit `flex-shrink` on its children. Forcing `flex-shrink: 0`
-        keeps the header at its content size regardless of how tall the
-        flex container grows.
-     2. The horizontal-scrolling `.tabs` row + the mask-image gradient
-        on it create a stacking context inside the header; on long pages
-        the scrolled content could paint above the header if there wasn't
-        a separate stacking context on `.page-header` itself. `isolation:
-        isolate` creates one explicitly.
-     3. Older iOS WebKit still needs the `-webkit-sticky` prefix. */
+/* Topbar + tabs sit STATICALLY at the top of body's flex column. No
+   sticky / fixed positioning at all — body doesn't scroll, so the
+   header cannot scroll off-screen. The z-index + isolation just defend
+   against future stylesheets putting a positioned element from inside
+   <main> visually above the header. */
 .page-header {
-  position: -webkit-sticky;
-  position: sticky;
-  top: 0;
-  z-index: 100;
+  flex: 0 0 auto;
   background: var(--bg-card);
-  flex-shrink: 0;
+  z-index: 100;
   isolation: isolate;
 }
 
@@ -128,7 +143,22 @@ body {
 .tabs::-webkit-scrollbar { height: 2px; }
 .tabs::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 
-main { flex: 1; padding: 20px; }
+/* <main> is the SINGLE scrollable container.
+   - `flex: 1 1 auto` makes it fill the space between the static header
+     and footer.
+   - `overflow-y: auto` enables vertical scrolling internally.
+   - `-webkit-overflow-scrolling: touch` gives iOS momentum scroll.
+   - `min-height: 0` is REQUIRED for a flex child to shrink below its
+     content size; without it, main expands to fit its content and the
+     page itself (body) would start scrolling — exactly the failure
+     mode we're avoiding. (See https://css-tricks.com/flexbox-truncated-text/) */
+main {
+  flex: 1 1 auto;
+  padding: 20px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  min-height: 0;
+}
 .tab-panel { display: none; }
 .tab-panel.active { display: block; }
 
@@ -232,6 +262,14 @@ dd { margin: 0; font-variant-numeric: tabular-nums; }
   flex-wrap: wrap;
 }
 .console-toolbar form { flex: 1; margin: 0; }
+/* `.console` is itself a scroll container (overflow: auto). It lives
+   inside <main> which is the page's scroll container — that's two
+   nested scrollers, which used to break sticky/fixed on the header
+   but is fine now that the header is static. The max-height is given
+   as `min(70vh, 600px)` rather than just `70vh` because WKWebView's
+   vh resolution against the outer window can yield a stale value
+   right after orientation changes; the px cap keeps the console from
+   ever consuming the whole viewport on phones in landscape. */
 .console {
   background: #07090d;
   color: #d4d8dd;
@@ -242,7 +280,7 @@ dd { margin: 0; font-variant-numeric: tabular-nums; }
   border-radius: 0 0 8px 8px;
   padding: 12px 14px;
   min-height: 420px;
-  max-height: 70vh;
+  max-height: min(70vh, 600px);
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;
@@ -257,7 +295,9 @@ dd { margin: 0; font-variant-numeric: tabular-nums; }
    `.table-wrap` element wraps the table in JS-added lists; for
    backwards compat with existing markup the .table itself also
    gets `display: block` + overflow on small screens via the media
-   query at the bottom of this file. */
+   query at the bottom of this file. Now that <main> is the page
+   scroller, the table's internal horizontal scroll is a separate
+   axis and doesn't interfere. */
 .table-wrap {
   width: 100%;
   overflow-x: auto;
@@ -296,6 +336,7 @@ dd { margin: 0; font-variant-numeric: tabular-nums; }
 #backups-panel h3 { margin: 18px 0 6px; font-size: 14px; color: var(--muted); }
 
 footer {
+  flex: 0 0 auto;
   padding: 10px 20px;
   font-size: 12px;
   color: var(--muted);
@@ -330,8 +371,9 @@ footer {
   .tab { padding: 14px 16px; font-size: 14px; }
 
   /* Console sits above the fold nicely at ~280px min-height on
-     phones; the 70vh cap still applies so landscape still looks ok. */
-  .console { min-height: 240px; max-height: 60vh; font-size: 12px; }
+     phones; the 60vh cap (capped at 480px to handle vh quirks) still
+     leaves room for the toolbar above it. */
+  .console { min-height: 240px; max-height: min(60vh, 480px); font-size: 12px; }
   .console-toolbar { padding: 10px; gap: 8px; }
   .console-toolbar form { width: 100%; }
 
@@ -349,7 +391,8 @@ footer {
 
   /* Tables overflow horizontally on their own so a long backup SHA
      or plugin filename doesn't force the rest of the layout wider
-     than the viewport. */
+     than the viewport. The horizontal scroll axis is independent of
+     <main>'s vertical scroll axis — no conflict. */
   .table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
   .table td.actions { flex-wrap: wrap; }
 

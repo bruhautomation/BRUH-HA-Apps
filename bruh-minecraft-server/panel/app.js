@@ -30,6 +30,13 @@
       if (tab.dataset.tab === 'plugins')    loadPlugins();
       if (tab.dataset.tab === 'backups')    loadBackups();
       if (tab.dataset.tab === 'worlds')     loadWorlds();
+      // Reset main's scroll position when switching tabs so the user
+      // lands at the top of the new content. main is the page's single
+      // scroll container (see style.css for why); a plain
+      // window.scrollTo(0) wouldn't do anything because <body> doesn't
+      // scroll under this layout.
+      const m = document.querySelector('main');
+      if (m) m.scrollTop = 0;
     });
   });
 
