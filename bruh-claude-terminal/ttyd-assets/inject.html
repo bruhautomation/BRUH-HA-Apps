@@ -295,25 +295,28 @@
 
     // Dedicated one-tap buttons, scrollable horizontally.  No sticky
     // modifiers — every tap sends a complete command on its own.
+    // Special keys ('kbdown', 'paste', 'hide') don't have entries in
+    // KEYS; handleKey() dispatches them directly.
     var spec = [
-      { k: 'esc',   l: 'ESC',   primary: true },
-      { k: 'tab',   l: 'Tab'    },
-      { k: 'shtab', l: '⇧Tab'   },
-      { k: 'up',    l: '↑' },
-      { k: 'down',  l: '↓' },
-      { k: 'left',  l: '←' },
-      { k: 'right', l: '→' },
-      { k: 'ctrlc', l: '^C' },
-      { k: 'ctrld', l: '^D' },
-      { k: 'ctrll', l: '^L' },
-      { k: 'ctrlu', l: '^U' },
-      { k: 'slash', l: '/'  },
-      { k: 'at',    l: '@'  },
-      { k: 'hash',  l: '#'  },
-      { k: 'bang',  l: '!'  },
-      { k: 'pipe',  l: '|'  },
-      { k: 'paste', l: 'Paste' },
-      { k: 'hide',  l: '×', hide: true }
+      { k: 'esc',    l: 'ESC',     primary: true },
+      { k: 'kbdown', l: '▾ Kbd'                  },
+      { k: 'tab',    l: 'Tab'                    },
+      { k: 'shtab',  l: '⇧Tab'                   },
+      { k: 'up',     l: '↑'                      },
+      { k: 'down',   l: '↓'                      },
+      { k: 'left',   l: '←'                      },
+      { k: 'right',  l: '→'                      },
+      { k: 'ctrlc',  l: '^C'                     },
+      { k: 'ctrld',  l: '^D'                     },
+      { k: 'ctrll',  l: '^L'                     },
+      { k: 'ctrlu',  l: '^U'                     },
+      { k: 'slash',  l: '/'                      },
+      { k: 'at',     l: '@'                      },
+      { k: 'hash',   l: '#'                      },
+      { k: 'bang',   l: '!'                      },
+      { k: 'pipe',   l: '|'                      },
+      { k: 'paste',  l: 'Paste'                  },
+      { k: 'hide',   l: '×',       hide: true    }
     ];
     spec.forEach(function (s) {
       var key = document.createElement('span');
@@ -383,9 +386,32 @@
 
     // Anything below this in either visualViewport delta is almost
     // certainly safe-area / toolbar chrome, not the on-screen keyboard.
-    // 80 px is just below the smallest plausible iPhone keyboard
-    // (landscape, no predictions: ~135 px) with margin for safe-area.
-    var MIN_KB_GAP = 80;
+    // 40 px clears the iPhone home-indicator inset (~34 px) with a
+    // little margin and is still well below the smallest plausible
+    // mobile keyboard (landscape iPhone, no predictions: ~135 px).
+    // Lowered from 80 in 1.18.5 because the HA Companion app on iOS
+    // was occasionally reporting smaller-than-expected gaps that
+    // 80 px discarded — letting the keyboard cover the last terminal
+    // line.
+    var MIN_KB_GAP = 40;
+
+    // Tracks whether the xterm helper-textarea currently has focus.
+    // Used by the last-resort phone-only keyboard heuristic in
+    // computeGap() below — see the comment there for the full
+    // rationale.
+    var taFocused = false;
+
+    // Latches that flip true the first time each visualViewport
+    // surface reports a real keyboard (gap >= MIN_KB_GAP). Used by
+    // computeGap() to decide whether to *trust* a subsequent gap=0
+    // report from that surface ("keyboard is down") or treat it as
+    // "no signal yet, fall through to the heuristic". Once we've
+    // proven a VV is responsive in this session, gap=0 from it means
+    // the keyboard really did close — this is what closes the gap
+    // where focusout doesn't fire when the user dismisses the iOS
+    // keyboard via its own ▼ button.
+    var topVVResponsive = false;
+    var ownVVResponsive = false;
 
     // Stable innerHeight measured per orientation. Tracked separately so
     // flipping between portrait/landscape (very different natural heights)
@@ -430,16 +456,54 @@
       if (top && top.visualViewport) {
         var pvv = top.visualViewport;
         var pgap = top.innerHeight - pvv.height - pvv.offsetTop;
-        if (pgap >= MIN_KB_GAP) return Math.round(pgap);
+        if (pgap >= MIN_KB_GAP) {
+          // Latch — VV is provably responsive in this session, so a
+          // future gap=0 report from it means the keyboard genuinely
+          // closed (not "API is silent, guess").
+          topVVResponsive = true;
+          return Math.round(pgap);
+        }
+        // Trust gap=0 ONLY after VV has shown us a real keyboard at
+        // least once. Otherwise some HA Companion builds whose parent
+        // VV never updates would leave the bar buried under the keys.
+        if (topVVResponsive) return 0;
       }
       if (window.visualViewport) {
         var vv = window.visualViewport;
         var ogap = window.innerHeight - vv.height - vv.offsetTop;
-        if (ogap >= MIN_KB_GAP) return Math.round(ogap);
+        if (ogap >= MIN_KB_GAP) {
+          ownVVResponsive = true;
+          return Math.round(ogap);
+        }
+        if (ownVVResponsive) return 0;
       }
-      // No reliable signal. Leave the bar at the visual bottom; do
-      // NOT guess — guessing is what produced the floating-mid-screen
-      // bug in HA Companion app.
+
+      // Last-resort phone-only heuristic. When the textarea has focus
+      // AND we're on a phone-sized viewport AND no VV surface has yet
+      // proven itself responsive, we're almost certainly inside an HA
+      // Companion app build whose keyboard avoidance doesn't update
+      // the iframe's view of the visual viewport. Use a conservative
+      // keyboard height that covers iPhone mini through Pro Max.
+      //
+      // Constrained to phone-sized viewports (`innerWidth < 500`
+      // covers portrait phones up to Pro Max @ 430 px; `innerHeight
+      // < 500` covers the same phones in landscape ≤ ~430 px high)
+      // so iPads + external keyboards — where focusing doesn't open
+      // a software keyboard — don't get the 1.18.2 floating-mid-
+      // screen regression.
+      //
+      // 1.18.2 dropped this heuristic entirely and the iPhone HA
+      // Companion app then left the bar buried under the keyboard;
+      // 1.18.5 brought it back but bounded it, and now also defers
+      // to a responsive VV's gap=0 (above) so the bar drops cleanly
+      // when the user dismisses the iOS keyboard via its own ▼ button
+      // (which doesn't fire focusout, so taFocused stays true).
+      if (taFocused
+          && (window.innerWidth < 500 || window.innerHeight < 500)) {
+        var portrait = window.innerHeight >= window.innerWidth;
+        return portrait ? 290 : 200;
+      }
+
       return 0;
     }
 
@@ -476,6 +540,7 @@
     document.addEventListener('focusin', function (e) {
       if (e.target && e.target.classList
           && e.target.classList.contains('xterm-helper-textarea')) {
+        taFocused = true;
         setTimeout(syncBarToKeyboard, 100);
         setTimeout(syncBarToKeyboard, 350);
       }
@@ -483,6 +548,7 @@
     document.addEventListener('focusout', function (e) {
       if (e.target && e.target.classList
           && e.target.classList.contains('xterm-helper-textarea')) {
+        taFocused = false;
         setTimeout(syncBarToKeyboard, 100);
       }
     }, true);
@@ -491,6 +557,15 @@
       if (keyName === 'hide') {
         document.body.classList.add('bruh-bar-hidden');
         window.dispatchEvent(new Event('resize'));
+        return;
+      }
+      if (keyName === 'kbdown') {
+        // Dismiss the iOS / Android software keyboard by blurring
+        // the xterm helper-textarea. The user can tap back into the
+        // terminal to reopen it. We intentionally do NOT add a class
+        // / set a flag — focus state is the single source of truth.
+        var ta = document.querySelector('.xterm-helper-textarea');
+        if (ta && ta.blur) ta.blur();
         return;
       }
       if (keyName === 'paste') {
@@ -518,9 +593,16 @@
       if (!el) return;
       el.classList.add('bruh-pressed');
       setTimeout(function () { el.classList.remove('bruh-pressed'); }, 120);
-      handleKey(el.dataset.bruhKey);
-      var ta = document.querySelector('.xterm-helper-textarea');
-      if (ta) ta.focus();
+      var keyName = el.dataset.bruhKey;
+      handleKey(keyName);
+      // Restore focus to the xterm helper-textarea after every tap so
+      // typing continues — *except* for the close-keyboard button,
+      // which just called blur() and would otherwise be instantly
+      // undone by this re-focus.
+      if (keyName !== 'kbdown') {
+        var ta = document.querySelector('.xterm-helper-textarea');
+        if (ta) ta.focus();
+      }
     }
     bar.addEventListener('pointerdown', onPointerDown);
     if (!window.PointerEvent) {
@@ -617,34 +699,48 @@
       lastY = currentY;
 
       if (increment !== 0) {
-        // Primary: dispatch a wheel event on xterm's main element so
-        // its wheel handler scrolls the buffer.
-        var target = findWheelTarget();
-        if (target) {
-          try {
-            target.dispatchEvent(new WheelEvent('wheel', {
-              bubbles: true,
-              cancelable: true,
-              deltaX: 0,
-              deltaY: increment,
-              deltaMode: 0 /* DOM_DELTA_PIXEL */
-            }));
-          } catch (_err) { /* WheelEvent unsupported — fall through */ }
-        }
-
-        // Backup: also nudge xterm-viewport.scrollTop in case the
-        // wheel handler is a no-op in this build (e.g. when the
-        // viewport is the source of truth and wheel just delegates).
+        // Only drive xterm's scroll path when there's actually
+        // scrollback to show. In Claude Code's TUI (xterm alternate-
+        // screen mode) the viewport has no scrollable area, and
+        // xterm's wheel handler in that mode translates wheel
+        // events into ↑/↓ arrow key escape sequences fed straight to
+        // the application — which is what produced the "every swipe
+        // arrow-keys around in Claude Code" complaint after 1.18.4.
+        //
+        // `scrollHeight > clientHeight + 1` is a reliable proxy: in
+        // altscreen the scroll-area height equals the visible
+        // viewport, so the inequality is false and we skip the wheel
+        // dispatch. In normal-screen with output, scrollback grows
+        // scrollHeight past clientHeight and the user gets real
+        // scrolling.
         var vp = findViewport();
-        if (vp) {
-          var maxScroll = vp.scrollHeight - vp.clientHeight;
-          if (maxScroll > 0) {
-            var next = vp.scrollTop + increment;
-            if (next < 0) next = 0;
-            if (next > maxScroll) next = maxScroll;
-            if (next !== vp.scrollTop) vp.scrollTop = next;
+        var hasScrollback = vp
+            && (vp.scrollHeight - vp.clientHeight) > 1;
+        if (hasScrollback) {
+          var target = findWheelTarget();
+          if (target) {
+            try {
+              target.dispatchEvent(new WheelEvent('wheel', {
+                bubbles: true,
+                cancelable: true,
+                deltaX: 0,
+                deltaY: increment,
+                deltaMode: 0 /* DOM_DELTA_PIXEL */
+              }));
+            } catch (_err) { /* WheelEvent unsupported — fall through */ }
           }
+          // Belt-and-suspenders: nudge scrollTop directly too so any
+          // renderer that drives the buffer off the viewport's
+          // `scroll` event also re-renders.
+          var maxScroll = vp.scrollHeight - vp.clientHeight;
+          var next = vp.scrollTop + increment;
+          if (next < 0) next = 0;
+          if (next > maxScroll) next = maxScroll;
+          if (next !== vp.scrollTop) vp.scrollTop = next;
         }
+        // Else: TUI mode (or no output yet). Don't synthesise wheel,
+        // don't move scrollTop — just preventDefault below so the
+        // gesture can't leak to the parent.
       }
 
       // Always preventDefault on a real drag, even if nothing

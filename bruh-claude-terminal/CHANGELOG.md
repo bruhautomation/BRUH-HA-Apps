@@ -1,5 +1,103 @@
 # Changelog
 
+## 1.18.5
+
+### Fixed: three follow-on regressions from 1.18.2 – 1.18.4 on mobile
+
+After merging 1.18.4 the BRUH terminal in the HA Companion app on
+mobile still had three rough edges that the previous fixes hadn't
+fully covered:
+
+1. **Keyboard overlapping the bottom of the terminal.** When the
+   keyboard opened, the last few rows of output were hidden behind
+   the keys. The toolbar usually anchored above the keyboard
+   correctly, but the body's `padding-bottom` was too small to
+   reserve space for both bar *and* keyboard.
+2. **Swipes acting like arrow keys instead of scrolling.** 1.18.4
+   forwarded every touchmove to a synthesised `WheelEvent` on
+   `.terminal`. That's exactly right in normal-screen mode (it
+   scrolls the scrollback), but in Claude Code's TUI (xterm
+   alternate-screen mode) xterm's wheel handler translates wheel
+   events to ↑/↓ arrow key escape sequences fed straight to the
+   application. Every accidental swipe was navigating Claude Code's
+   UI a row at a time.
+3. **No close-keyboard button.** Once the iOS / Android software
+   keyboard is up, the user had no way to dismiss it short of
+   tapping outside the textarea (which the body's
+   `touch-action: none` happily eats so the keyboard never closes).
+
+### Fix (all in `ttyd-assets/inject.html`)
+
+1. **Phone-only keyboard-gap heuristic.** `computeGap()` previously
+   returned `0` whenever neither visualViewport API reported a gap.
+   That left the bar buried under the keyboard in HA Companion app
+   builds whose keyboard avoidance doesn't update the inner frame's
+   visual viewport. The heuristic is back but **only fires when the
+   xterm textarea has focus AND we're on a phone-sized viewport**
+   (`innerWidth < 500` *or* `innerHeight < 500`). Returns 290 px
+   (portrait) / 200 px (landscape) — sized to cover iPhone mini
+   through Pro Max. iPads + external keyboards skip the heuristic
+   and stay at `bottom: 0`, so the 1.18.2 floating-mid-screen
+   regression doesn't come back.
+2. **Lowered `MIN_KB_GAP` from 80 → 40 px.** The 80 px floor was
+   discarding small-but-real visualViewport gap reports in some HA
+   Companion app builds. 40 px clears the iPhone home-indicator
+   inset (~34 px) with margin and is still well below the smallest
+   plausible mobile keyboard (~135 px landscape iPhone).
+3. **Skip wheel-event dispatch in alternate-screen mode.** Touch
+   forwarding now checks `vp.scrollHeight > vp.clientHeight` and
+   only synthesises a `WheelEvent` when there's actual scrollback.
+   In Claude Code's TUI the inequality is false (alt-screen has no
+   scrollable area), so swipes no longer turn into arrow-key bursts.
+   The body-level `touch-action: none` + `preventDefault` still
+   keeps the gesture from leaking to the parent HA frontend.
+4. **`▾ Kbd` close-keyboard button** added to the toolbar between
+   `ESC` and `Tab` (so it stays visible on narrow screens without
+   the user having to scroll the toolbar). Tapping it blurs the
+   xterm helper-textarea, which dismisses the on-screen keyboard.
+   `onPointerDown` skips its usual focus-restore for this key, so
+   the blur isn't immediately undone.
+
+### Also: trust visualViewport's "no keyboard" report once it's proven responsive
+
+The phone-only heuristic from #1 above had its own corner case:
+when the user dismisses the iOS keyboard via the **iOS keyboard's
+own ▼ button** (rather than tapping our `▾ Kbd` button), iOS
+doesn't fire `focusout` on the xterm helper-textarea — so
+`taFocused` stays true and the heuristic kept lifting the bar
+290 px above an empty bottom edge.
+
+`computeGap()` now latches a `topVVResponsive` / `ownVVResponsive`
+flag the first time the corresponding `visualViewport` reports a
+real keyboard (`pgap >= MIN_KB_GAP`). After that flag is set,
+`computeGap()` *trusts* a subsequent `gap = 0` from the same surface
+as authoritative ("the keyboard really did close") and short-
+circuits to `return 0` instead of falling through to the heuristic.
+
+The latch matters because:
+
+- HA ingress in mobile Safari → parent VV reports the keyboard →
+  flag latches → dismissing the keyboard via iOS's ▼ correctly
+  drops the bar.
+- HA Companion app builds whose parent VV never sees the keyboard
+  → flag never latches → heuristic still kicks in → bar still sits
+  above the keys (the failure mode this whole iteration was about).
+- iPad with an external keyboard → no VV signal, no heuristic
+  (phone-only width gate) → bar at `bottom: 0`. Unchanged.
+
+### Known limitations / future work
+
+- **Context-aware toolbar** (different keys depending on whether
+  the user is at a bash prompt vs in Claude Code's TUI) is the
+  obvious next step but requires inspecting xterm internals
+  (alternate-screen state) that ttyd doesn't expose publicly.
+  Punted for now — the current bar covers both cases reasonably.
+- **iPhone with an external keyboard** is a corner case the
+  heuristic will mis-fire on **on the first focus** (textarea has
+  focus, no software keyboard, viewport is phone-sized → bar will
+  sit ~290 px above the bottom). After any subsequent VV-reported
+  keyboard event the responsiveness latch will fix it.
+
 ## 1.18.4
 
 ### Fixed: terminal didn't scroll *at all* on mobile after 1.18.3
