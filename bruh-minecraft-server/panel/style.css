@@ -37,6 +37,17 @@ body {
   min-height: 100vh;
 }
 
+/* Page header (topbar + tabs) sticks to the top so the navigation never
+   scrolls off-screen on long tabs (Console, Backups, Worlds). Before this,
+   users who scrolled into a tab's content could no longer reach the other
+   tabs without scrolling back up — the tab they were on became a dead end. */
+.page-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--bg-card);
+}
+
 /* Topbar */
 .topbar {
   display: flex;
