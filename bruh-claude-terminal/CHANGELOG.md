@@ -58,6 +58,33 @@ fully covered:
    `onPointerDown` skips its usual focus-restore for this key, so
    the blur isn't immediately undone.
 
+### Also: trust visualViewport's "no keyboard" report once it's proven responsive
+
+The phone-only heuristic from #1 above had its own corner case:
+when the user dismisses the iOS keyboard via the **iOS keyboard's
+own ▼ button** (rather than tapping our `▾ Kbd` button), iOS
+doesn't fire `focusout` on the xterm helper-textarea — so
+`taFocused` stays true and the heuristic kept lifting the bar
+290 px above an empty bottom edge.
+
+`computeGap()` now latches a `topVVResponsive` / `ownVVResponsive`
+flag the first time the corresponding `visualViewport` reports a
+real keyboard (`pgap >= MIN_KB_GAP`). After that flag is set,
+`computeGap()` *trusts* a subsequent `gap = 0` from the same surface
+as authoritative ("the keyboard really did close") and short-
+circuits to `return 0` instead of falling through to the heuristic.
+
+The latch matters because:
+
+- HA ingress in mobile Safari → parent VV reports the keyboard →
+  flag latches → dismissing the keyboard via iOS's ▼ correctly
+  drops the bar.
+- HA Companion app builds whose parent VV never sees the keyboard
+  → flag never latches → heuristic still kicks in → bar still sits
+  above the keys (the failure mode this whole iteration was about).
+- iPad with an external keyboard → no VV signal, no heuristic
+  (phone-only width gate) → bar at `bottom: 0`. Unchanged.
+
 ### Known limitations / future work
 
 - **Context-aware toolbar** (different keys depending on whether
@@ -66,10 +93,10 @@ fully covered:
   (alternate-screen state) that ttyd doesn't expose publicly.
   Punted for now — the current bar covers both cases reasonably.
 - **iPhone with an external keyboard** is a corner case the
-  heuristic will mis-fire on (textarea has focus, no software
-  keyboard, viewport is phone-sized → bar will sit ~290 px above
-  the bottom). Trading that off against the much more common
-  "keyboard covers the bar in HA Companion app" looks correct.
+  heuristic will mis-fire on **on the first focus** (textarea has
+  focus, no software keyboard, viewport is phone-sized → bar will
+  sit ~290 px above the bottom). After any subsequent VV-reported
+  keyboard event the responsiveness latch will fix it.
 
 ## 1.18.4
 

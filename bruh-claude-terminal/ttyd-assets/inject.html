@@ -401,6 +401,18 @@
     // rationale.
     var taFocused = false;
 
+    // Latches that flip true the first time each visualViewport
+    // surface reports a real keyboard (gap >= MIN_KB_GAP). Used by
+    // computeGap() to decide whether to *trust* a subsequent gap=0
+    // report from that surface ("keyboard is down") or treat it as
+    // "no signal yet, fall through to the heuristic". Once we've
+    // proven a VV is responsive in this session, gap=0 from it means
+    // the keyboard really did close — this is what closes the gap
+    // where focusout doesn't fire when the user dismisses the iOS
+    // keyboard via its own ▼ button.
+    var topVVResponsive = false;
+    var ownVVResponsive = false;
+
     // Stable innerHeight measured per orientation. Tracked separately so
     // flipping between portrait/landscape (very different natural heights)
     // doesn't false-trip the shrink-for-keyboard check below.
@@ -444,17 +456,31 @@
       if (top && top.visualViewport) {
         var pvv = top.visualViewport;
         var pgap = top.innerHeight - pvv.height - pvv.offsetTop;
-        if (pgap >= MIN_KB_GAP) return Math.round(pgap);
+        if (pgap >= MIN_KB_GAP) {
+          // Latch — VV is provably responsive in this session, so a
+          // future gap=0 report from it means the keyboard genuinely
+          // closed (not "API is silent, guess").
+          topVVResponsive = true;
+          return Math.round(pgap);
+        }
+        // Trust gap=0 ONLY after VV has shown us a real keyboard at
+        // least once. Otherwise some HA Companion builds whose parent
+        // VV never updates would leave the bar buried under the keys.
+        if (topVVResponsive) return 0;
       }
       if (window.visualViewport) {
         var vv = window.visualViewport;
         var ogap = window.innerHeight - vv.height - vv.offsetTop;
-        if (ogap >= MIN_KB_GAP) return Math.round(ogap);
+        if (ogap >= MIN_KB_GAP) {
+          ownVVResponsive = true;
+          return Math.round(ogap);
+        }
+        if (ownVVResponsive) return 0;
       }
 
       // Last-resort phone-only heuristic. When the textarea has focus
-      // AND we're on a phone-sized viewport AND neither visualViewport
-      // API reports a gap, we're almost certainly inside an HA
+      // AND we're on a phone-sized viewport AND no VV surface has yet
+      // proven itself responsive, we're almost certainly inside an HA
       // Companion app build whose keyboard avoidance doesn't update
       // the iframe's view of the visual viewport. Use a conservative
       // keyboard height that covers iPhone mini through Pro Max.
@@ -468,7 +494,10 @@
       //
       // 1.18.2 dropped this heuristic entirely and the iPhone HA
       // Companion app then left the bar buried under the keyboard;
-      // 1.18.5 brought it back but bounded it.
+      // 1.18.5 brought it back but bounded it, and now also defers
+      // to a responsive VV's gap=0 (above) so the bar drops cleanly
+      // when the user dismisses the iOS keyboard via its own ▼ button
+      // (which doesn't fire focusout, so taFocused stays true).
       if (taFocused
           && (window.innerWidth < 500 || window.innerHeight < 500)) {
         var portrait = window.innerHeight >= window.innerWidth;
