@@ -1,5 +1,104 @@
 # Changelog
 
+## 1.18.7
+
+### Fixed: scrolling through Claude Code chat history (mobile *and* desktop)
+
+After 1.18.6 the keyboard no longer covered the input row, but
+swiping (mobile) or scrolling the mouse wheel (desktop) still did
+nothing useful in Claude Code. Most attempts ended up moving the
+cursor inside the input box one character at a time instead of
+scrolling back through the chat.
+
+### Why this is a tmux configuration issue, not a JS one
+
+Claude Code's TUI runs in **alternate-screen** mode. That has two
+consequences that are easy to miss:
+
+1. **xterm.js (browser-side) has no scrollback for alt-screen.** By
+   spec, the alt-screen buffer doesn't get added to the terminal
+   emulator's scrollback history. So `xterm-viewport.scrollHeight ===
+   xterm-viewport.clientHeight` — there is genuinely nothing for
+   xterm to scroll. Setting `.scrollTop` does nothing. PgUp / PgDn
+   do nothing.
+2. **Claude Code itself doesn't implement chat history scrolling**
+   on PgUp / PgDn or any other terminal-level key. Once a message
+   scrolls off the top of the visible area, the only thing on the
+   whole stack that still has it in memory is **tmux's per-pane
+   history**, which captures every printed cell regardless of
+   normal-vs-alt-screen state.
+
+So "scroll back through Claude Code chat" can only mean **tmux copy
+mode** — there is literally no other surface on the system that
+has the data.
+
+### The fix: turn on tmux's mouse mode
+
+`scripts/tmux.conf` was already set up correctly for wheel-driven
+copy-mode entry —
+
+```tmux
+bind -n WheelUpPane if-shell -F -t = "#{mouse_any_flag}" \
+    "send-keys -M" \
+    "if -Ft= '#{pane_in_mode}' 'send-keys -M' \
+       'select-pane -t=; copy-mode -e; send-keys -M'"
+bind -n WheelDownPane select-pane -t= \; send-keys -M
+```
+
+— but the master switch `set -g mouse on` was gated behind
+`if-shell '[ -z "$TTYD" ]'`. Since ttyd's startup exports
+`TTYD=1`, that condition was always false, and the WheelUp /
+WheelDown bindings never fired. Wheel events fell through to
+xterm's default alt-screen behaviour (translate to ↑/↓ arrow
+escape sequences fed into the application), which is what produced
+the "every swipe moves the cursor" complaint.
+
+This release removes the gate. tmux now requests mouse reporting
+from xterm via the standard DECSET 1000 / 1002 / 1006 escape
+sequences as soon as it starts, xterm sends mouse events back over
+the WebSocket, and tmux's WheelUpPane binding takes over: the
+first wheel event auto-enters copy mode (`copy-mode -e`), and
+subsequent wheel events scroll through tmux's pane history.
+
+`copy-mode -e` means tmux automatically exits copy mode when the
+user scrolls back down to the live view, so scrolling forward
+seamlessly returns to typing. Tapping `ESC` on the toolbar also
+exits copy mode at any point (in normal mode `ESC` still sends
+escape to Claude Code as before).
+
+### Companion JS change in `ttyd-assets/inject.html`
+
+`setupScrollForwarder` previously gated its `WheelEvent` dispatch
+on `vp.scrollHeight > vp.clientHeight + 1` to avoid arrow-key spam
+in alt-screen mode. With mouse reporting on, xterm sends wheel
+events to tmux instead of converting them to arrow keys — so the
+gate isn't needed anymore. Removed.
+
+The bash-mode `scrollTop` nudge is kept as a belt-and-suspenders
+in case mouse reporting is ever disabled manually.
+
+### What this also fixes
+
+- **Desktop mouse wheel** scrolling through Claude Code chat. The
+  user noted this was broken even with a real mouse; same root
+  cause, same fix.
+- **Touch text selection** in tmux copy mode (long-press +
+  drag → selects). `tmux.conf`'s existing
+  `MouseDragEnd1Pane → send-keys -X copy-selection-and-cancel`
+  binding finally works.
+- **Double-tap to select word / triple-tap to select line** —
+  also already in `tmux.conf`, also activated by this change.
+
+### Side effects of `set -g mouse on`
+
+A single tap inside the terminal now sends a mouse-press +
+release event to tmux in addition to xterm's existing focus-on-
+click. tmux's default `MouseDown1Pane`/`MouseUp1Pane` bindings
+are "select-pane" — a no-op in our single-pane setup — so taps
+remain harmless and the keyboard still opens. If a future change
+adds multiple tmux panes, taps would also select the tapped pane
+(generally what users expect).
+
 ## 1.18.6
 
 ### Fixed: keyboard still covered the claude-code input row on iOS HA Companion
