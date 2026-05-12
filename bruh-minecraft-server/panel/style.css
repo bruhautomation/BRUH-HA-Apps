@@ -35,36 +35,33 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+  /* Reserve space at the top for the fixed .page-header below so content
+     isn't hidden behind it. JS updates --header-height to the actual
+     rendered value (see app.js); the 110px / 150px fallbacks cover the
+     desktop and mobile (stacked topbar) layouts before JS runs. */
+  padding-top: var(--header-height, 110px);
 }
 
-/* Page header (topbar + tabs) sticks to the top so the navigation never
-   scrolls off-screen on long tabs (Console, Plugins, Backups, Worlds).
-   Before 1.5.5 the nav was a regular flow element and any tab with
-   scrollable content turned into a dead end the moment users scrolled
-   down — they could only get back to other tabs by scrolling all the way
-   up. 1.5.5 made the wrapper sticky, but users on HA Companion (iOS
-   WKWebView) and on the Plugins / Console tabs specifically still
-   reported the nav vanishing when they scrolled, because:
-
-     1. The body is a flex column container with `min-height: 100vh`, and
-        WKWebView's sticky-in-flex implementation collapses the sticky
-        element to zero height when its parent flex container has no
-        explicit `flex-shrink` on its children. Forcing `flex-shrink: 0`
-        keeps the header at its content size regardless of how tall the
-        flex container grows.
-     2. The horizontal-scrolling `.tabs` row + the mask-image gradient
-        on it create a stacking context inside the header; on long pages
-        the scrolled content could paint above the header if there wasn't
-        a separate stacking context on `.page-header` itself. `isolation:
-        isolate` creates one explicitly.
-     3. Older iOS WebKit still needs the `-webkit-sticky` prefix. */
+/* Pin the topbar + tabs to the top of the iframe viewport so they stay
+   reachable no matter how far the user scrolls into a tab's content.
+   1.5.5 made this `position: sticky`, but on HA Companion (iOS
+   WKWebView) the sticky element kept collapsing to zero height inside
+   body's flex column on tabs with long scrollable content (Plugins,
+   Server Properties, Console). 1.5.6's first attempt added
+   `flex-shrink: 0` + `isolation: isolate` + `-webkit-sticky` and still
+   didn't fully fix it — sticky positioning is genuinely fragile inside
+   nested HA ingress iframes + WKWebView. 1.5.7 switches to
+   `position: fixed` so the header is anchored to the viewport
+   regardless of any flex / stacking / transform context further up
+   the tree. Body gets a matching `padding-top` (above) so content
+   never slides under the header. */
 .page-header {
-  position: -webkit-sticky;
-  position: sticky;
+  position: fixed;
   top: 0;
+  left: 0;
+  right: 0;
   z-index: 100;
   background: var(--bg-card);
-  flex-shrink: 0;
   isolation: isolate;
 }
 
@@ -324,6 +321,11 @@ footer {
   .brand h1 { font-size: 15px; }
   .actions { width: 100%; justify-content: stretch; }
   .actions .btn { flex: 1 1 0; min-width: 0; }
+
+  /* Mobile fallback for the fixed-header offset. JS updates the
+     real value once it runs; this just prevents content flashing
+     under the (taller, because-stacked) topbar before that happens. */
+  body { padding-top: var(--header-height, 150px); }
 
   /* Tabs already scroll horizontally; bump the typing target size a
      bit so a fat finger can tap without zooming in. */
