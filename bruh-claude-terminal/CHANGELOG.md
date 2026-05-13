@@ -1,5 +1,55 @@
 # Changelog
 
+## 2.0.1
+
+**Chat UI asset URLs + CI version-bump guard.** Two unrelated fixes that
+went out together because they were caught in the same release cycle.
+
+### Chat UI: SPA asset URLs now work inside HA ingress (#103)
+
+2.0.0 shipped the chat UI but it loaded as unstyled DOM stuck on
+"connecting…" forever. Astro emits absolute asset references in the SPA
+HTML:
+
+```html
+<link rel="stylesheet" href="/assets/index.HASH.css">
+<astro-island component-url="/assets/Chat.HASH.js"
+              renderer-url="/assets/client.HASH.js" ...>
+```
+
+Inside HA's ingress iframe the browser is at
+`/api/hassio_ingress/<token>/` but resolves those absolute paths against
+the HA host root, so every asset 404s before reaching the add-on. CSS
+doesn't load → unstyled DOM. JS doesn't load → no hydration → WSClient
+never starts → stuck "connecting…".
+
+The fix: FastAPI reads HA's `X-Ingress-Path` header on each request and
+rewrites `"/assets/` and `"/_astro/` prefixes in the served HTML to
+include it. Direct-port access (no ingress) has no header → no rewrite
+→ absolute URLs already work because they hit the same FastAPI mount.
+
+Five unit tests pin the rewrite against the actual HTML fragment Astro
+emits so a future SPA build change surfaces here instead of as a black
+page in production.
+
+### CI: enforce version bumps on addon changes
+
+2.0.0 shipped chat-UI code that 2.0.1 fixes. The fix sat on `main` for
+a while invisible to users — Home Assistant only pulls a new add-on
+image when the version in `config.yaml` changes, and we'd merged the
+fix without bumping it.
+
+New CI job `version-bump`: on every PR, diff the addon directory
+against the PR base. If any version-relevant file changed (anything
+except `CHANGELOG.md` / `README.md` / `DOCS.md`) and `config.yaml`
+version is unchanged from base, fail the build with a clear error
+pointing at the file to edit.
+
+The check is factored into `.github/scripts/check-version-bump.sh`
+with a Python test suite that spins up tiny temp git repos to verify
+each branch of the logic. Runs against both `bruh-claude-terminal`
+and `bruh-minecraft-server`.
+
 ## 2.0.0
 
 **New chat UI surface (opt-in). The 2.0 milestone reframes the addon from

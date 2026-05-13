@@ -125,3 +125,24 @@ jobs:
             echo "::error::Minecraft add-on ($addon_version) and integration manifest ($manifest_version) versions disagree"
             exit 1
           fi
+
+  version-bump:
+    # On every PR that touches addon files, verify the version in
+    # config.yaml has bumped vs. the base branch. HA only picks up new
+    # add-on images when the version changes — shipping a fix without a
+    # bump means users don't get it. Pre-2.0.1 we had no enforcement,
+    # which is exactly how 2.0.0's broken chat UI hit production.
+    name: Version bump on addon changes
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Need git history to diff HEAD against the PR base.
+          fetch-depth: 0
+
+      - name: Verify Claude Terminal version bumped if files changed
+        run: .github/scripts/check-version-bump.sh "origin/${{ github.base_ref }}" bruh-claude-terminal
+
+      - name: Verify Minecraft Server version bumped if files changed
+        run: .github/scripts/check-version-bump.sh "origin/${{ github.base_ref }}" bruh-minecraft-server
