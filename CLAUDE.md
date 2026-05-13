@@ -16,11 +16,11 @@ BRUH-HA-Apps/
 │   ├── build.yaml               # Multi-arch build config
 │   ├── Dockerfile               # Container build definition (multi-stage)
 │   ├── run.sh                   # Main startup/entrypoint script
-│   ├── chat-server/             # 1.19.0+ FastAPI chat server (opt-in)
+│   ├── chat-server/             # 2.0.0+ FastAPI chat server (opt-in)
 │   │   ├── app.py               # FastAPI app, WS /ws/chat, static SPA serve
 │   │   ├── claude_session.py    # One claude subprocess per chat session
 │   │   └── requirements.txt
-│   ├── chat-ui/                 # 1.19.0+ Astro + Preact chat SPA (opt-in)
+│   ├── chat-ui/                 # 2.0.0+ Astro + Preact chat SPA (opt-in)
 │   │   ├── astro.config.mjs
 │   │   ├── package.json
 │   │   ├── tsconfig.json
@@ -89,7 +89,7 @@ BRUH-HA-Apps/
     `enable_chat_ui: true`) **or** `start_web_terminal` (ttyd + xterm.js +
     inject.html mobile shim, default).
 
-### Chat UI (1.19.0+, opt-in)
+### Chat UI (2.0.0+, opt-in)
 - Opt-in via `enable_chat_ui: true` in add-on config. Default off.
 - FastAPI/uvicorn serves the Astro+Preact static bundle at `/` and a single
   `/ws/chat` WebSocket. Each WS connection spawns one `claude` subprocess

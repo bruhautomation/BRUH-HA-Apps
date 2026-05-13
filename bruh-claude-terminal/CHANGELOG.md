@@ -1,18 +1,22 @@
 # Changelog
 
-## 1.19.0
+## 2.0.0
 
-**New chat UI surface (opt-in).** The 1.18.x line spent four releases trying
-to make Claude Code's TUI work inside a browser: OSC 52 interception, wheel→
-PgUp/PgDn translation, iOS dictation diff-fix, keyboard avoidance inside the
-ingress iframe, mobile toolbar, body-box shrinkage to drive PTY winsize. Each
-fix sat on top of the prior one; the structural problem — Claude Code runs in
-xterm's alt-screen, which has no scrollback by spec — could not be solved at
-the inject.html layer.
+**New chat UI surface (opt-in). The 2.0 milestone reframes the addon from
+"Claude Code in a web terminal" to "Claude Code in your home, surface of
+your choice."**
 
-1.19.0 stops fighting that boundary. When `enable_chat_ui: true` is set, the
-ingress panel is served by a new FastAPI app (`/opt/chat-server/app.py`) that
-spawns `claude` in headless streaming mode and bridges its NDJSON event
+The 1.18.x line spent four releases trying to make Claude Code's TUI work
+inside a browser: OSC 52 interception, wheel→PgUp/PgDn translation, iOS
+dictation diff-fix, keyboard avoidance inside the ingress iframe, mobile
+toolbar, body-box shrinkage to drive PTY winsize. Each fix sat on top of
+the prior one; the structural problem — Claude Code runs in xterm's
+alt-screen, which has no scrollback by spec — could not be solved at the
+inject.html layer.
+
+2.0.0 stops fighting that boundary. When `enable_chat_ui: true` is set, the
+ingress panel is served by a new FastAPI app (`/opt/chat-server/app.py`)
+that spawns `claude` in headless streaming mode and bridges its NDJSON event
 stream to a Preact SPA over a single WebSocket. The chat surface is plain
 DOM: native scroll, native selection, native clipboard, real `<textarea>`
 keyboard avoidance. The bug class the previous releases were chasing
@@ -21,6 +25,13 @@ disappears at the layer change.
 Default is **off**. Existing users keep ttyd + xterm.js + the 1.18.10
 mobile shim. Opt in via the add-on options panel; the legacy terminal stays
 available by flipping the flag back off.
+
+### Why 2.0 (not 1.19)
+
+The on-disk runtime is backwards-compatible — flag default off = byte-for-
+byte 1.18.10 behaviour, no migration needed. We chose `2.0.0` because the
+addon now ships **two distinct UX surfaces** sharing one runtime, and that
+identity shift is the headline. Functional compatibility is preserved.
 
 ### New components
 
@@ -47,7 +58,7 @@ available by flipping the flag back off.
   subprocess launch. Background listeners' pre-grants in
   `/config/.claude/settings.local.json` apply as usual.
 
-### What the chat UI does NOT do in 1.19.0
+### What the chat UI does NOT do in 2.0.0
 
 - No interactive permission-prompt UI yet. Tools are either pre-granted via
   `settings.local.json` + `chat_ui_permission_mode`, or refused by claude.
@@ -61,13 +72,18 @@ available by flipping the flag back off.
 
 ### Migration notes
 
-- `version` bumped to 1.19.0 in `config.yaml` and `manifest.json`.
+- `version` bumped to 2.0.0 in `config.yaml` and `manifest.json`.
 - The mobile inject.html layer is untouched — when `enable_chat_ui: false`
   (the default) the runtime is byte-for-byte the 1.18.10 ttyd experience.
 - New Python deps in the runtime image: `fastapi==0.115.5`,
-  `uvicorn==0.32.1`.
+  `uvicorn==0.32.1`. **Soft-failed at install time** — if pip can't fetch
+  them the addon still builds; the runtime falls back to ttyd.
 - New Node deps (build-time only): `astro@^5.0.5`, `@astrojs/preact@^4.0.1`,
-  `preact@^10.25.1`.
+  `preact@^10.25.1`. **Soft-failed at build time** in a multi-stage Docker
+  builder — if npm install or `npm run build` fails the addon image still
+  ships with an empty `dist/`; `start_chat_server` detects the missing
+  bundle and falls back to ttyd. The default-off install is unaffected by
+  npm registry availability.
 
 ## 1.18.10
 

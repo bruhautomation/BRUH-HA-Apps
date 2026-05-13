@@ -1340,7 +1340,7 @@ get_claude_launch_command() {
 }
 
 # ============================================================================
-# Chat Server (v1.19.0)
+# Chat Server (v2.0.0)
 # ============================================================================
 #
 # When `enable_chat_ui: true`, the ingress panel is served by a FastAPI app
@@ -1358,7 +1358,7 @@ get_claude_launch_command() {
 # rendering claude-code's stream-json events as plain DOM nodes — native
 # everything.
 #
-# Default is OFF in 1.19.0 so existing users keep the terminal they're
+# Default is OFF in 2.0.0 so existing users keep the terminal they're
 # used to. After this opt-in path is validated on real hardware we flip
 # the default in a subsequent release.
 
@@ -1372,15 +1372,26 @@ start_chat_server() {
     bashio::log.info "  Static bundle: /opt/chat-ui-dist"
     bashio::log.info "  Claude wrapper: /usr/local/bin/claude-run"
 
+    # Soft-fail guards. Any of these missing means the image was built with a
+    # chat-ui or chat-server build failure (the Dockerfile soft-fails both
+    # because the feature is opt-in). Fall back to the ttyd surface so the
+    # addon still runs — the user just doesn't get the new UI.
     if [ ! -f /opt/chat-ui-dist/index.html ]; then
         bashio::log.error "Chat UI bundle missing at /opt/chat-ui-dist/index.html."
-        bashio::log.error "  This indicates an image build problem; falling back to ttyd."
+        bashio::log.error "  Image build likely failed at the Astro stage; falling back to ttyd."
         start_web_terminal
         return
     fi
 
     if [ ! -f /opt/chat-server/app.py ]; then
         bashio::log.error "Chat server missing at /opt/chat-server/app.py; falling back to ttyd."
+        start_web_terminal
+        return
+    fi
+
+    if ! python3 -c "import fastapi, uvicorn" 2>/dev/null; then
+        bashio::log.error "fastapi/uvicorn not installed in this image; falling back to ttyd."
+        bashio::log.error "  This is a build-time soft-fail; rebuild the addon to recover."
         start_web_terminal
         return
     fi
@@ -1505,7 +1516,7 @@ trap cleanup SIGTERM SIGINT EXIT
 
 main() {
     bashio::log.info "============================================"
-    bashio::log.info "  BRUH Claude Terminal v1.19.0"
+    bashio::log.info "  BRUH Claude Terminal v2.0.0"
     bashio::log.info "  Enhanced Claude Code for Home Assistant"
     bashio::log.info "============================================"
 

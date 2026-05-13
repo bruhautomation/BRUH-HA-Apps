@@ -4,14 +4,25 @@ ARG BUILD_FROM
 # Astro + Preact static bundle. We compile in a clean node image and copy the
 # `dist/` output into the runtime image — keeps node_modules out of the final
 # layer.
+#
+# IMPORTANT: this build SOFT-FAILS. The chat UI is opt-in
+# (`enable_chat_ui: false` by default) so a transient npm registry hiccup or
+# a dep-resolution issue must NOT block the whole addon image from shipping.
+# On any failure here we emit an empty `dist/` directory; the runtime
+# `start_chat_server` in run.sh detects the missing `index.html` and falls
+# back to ttyd. Users on the default config see zero change.
 FROM node:20-alpine AS chat-ui-builder
 WORKDIR /build
-COPY chat-ui/package.json ./
-# `npm install` (not `npm ci`) so the build works without a checked-in
-# package-lock.json. If one ends up committed, npm respects it automatically.
-RUN npm install --no-audit --no-fund --loglevel=error
 COPY chat-ui/ ./
-RUN npm run build && ls -la dist
+RUN if npm install --no-audit --no-fund --loglevel=error \
+      && npm run build; then \
+        echo "[chat-ui] build ok ($(du -sh dist | cut -f1))"; \
+        ls -la dist; \
+    else \
+        echo "[chat-ui] WARN: chat UI build failed — emitting empty dist; runtime will fall back to ttyd" >&2; \
+        rm -rf dist; \
+        mkdir -p dist; \
+    fi
 
 # ---------- Stage 2: runtime image ----------
 FROM ${BUILD_FROM}
@@ -48,17 +59,22 @@ RUN apk add --no-cache \
 RUN apk add --no-cache --repository=https://dl-cdn.alpinelinux.org/alpine/edge/community \
     websocat 2>/dev/null || true
 
-# Install Python packages for HA MCP server, integrations, YAML validation,
-# and the chat-server (FastAPI + uvicorn). Pinning fastapi/uvicorn so the
-# Alpine wheel availability matches and the WS event shapes don't drift
-# between addon releases.
+# Install Python packages for HA MCP server, integrations, and YAML validation.
+# These are required for the default ttyd surface and HA integrations, so a
+# failure here is a hard build failure (no soft-fail).
 RUN pip3 install --break-system-packages --no-cache-dir \
     websockets \
     aiohttp \
     pyyaml \
-    yamllint \
-    fastapi==0.115.5 \
-    uvicorn==0.32.1
+    yamllint
+
+# Install chat-server deps (FastAPI + uvicorn). Soft-fail because the chat UI
+# is opt-in; a registry hiccup must not block the addon image. run.sh checks
+# for the modules at startup before launching the chat server and falls back
+# to ttyd if either is missing.
+RUN pip3 install --break-system-packages --no-cache-dir \
+        fastapi==0.115.5 uvicorn==0.32.1 \
+    || echo "[chat-server] WARN: fastapi/uvicorn install failed; chat UI will be unavailable" >&2
 
 # Install Claude Code CLI via npm (not the binary installer).
 # The binary installer downloads a native musl build that may require
