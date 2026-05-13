@@ -2,3 +2,9 @@ aiofiles
 aiohttp
 pytest
 pyyaml
+# fastapi is imported by bruh-claude-terminal/chat-server/app.py at module
+# load time; tests for the chat-server (test_chat_server.py) load that
+# module via importlib and would fail with ModuleNotFoundError without it.
+# uvicorn is only used at runtime (not imported by app.py) and is not
+# needed for tests.
+fastapi==0.115.5
