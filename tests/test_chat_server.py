@@ -249,3 +249,66 @@ def test_dispatcher_flattens_rich_user_content(app_mod):
         ],
     }))
     assert stub.sent == ["part 1 part 2"]
+
+
+# --------------------------------------------------------------------------
+# Asset URL rewrite — see app.py rewrite_asset_urls docstring for the why.
+# These tests use a snippet of the actual HTML Astro emits so a regression
+# in the SPA build output (new attribute name, different asset dir) shows
+# up here instead of as a black page in production.
+# --------------------------------------------------------------------------
+
+REAL_ASTRO_HTML_FRAGMENT = (
+    '<link rel="stylesheet" href="/assets/index.B8spJlff.css">'
+    '<astro-island uid="J2juE" '
+    'component-url="/assets/Chat.RyoiKyJC.js" '
+    'component-export="Chat" '
+    'renderer-url="/assets/client.CGBE-6eU.js" '
+    'props="{}" ssr client="load">'
+    '</astro-island>'
+)
+
+
+def test_rewrite_asset_urls_injects_ingress_prefix(app_mod):
+    out = app_mod.rewrite_asset_urls(
+        REAL_ASTRO_HTML_FRAGMENT,
+        "/api/hassio_ingress/abc123",
+    )
+    assert 'href="/api/hassio_ingress/abc123/assets/index.B8spJlff.css"' in out
+    assert 'component-url="/api/hassio_ingress/abc123/assets/Chat.RyoiKyJC.js"' in out
+    assert 'renderer-url="/api/hassio_ingress/abc123/assets/client.CGBE-6eU.js"' in out
+
+
+def test_rewrite_asset_urls_handles_trailing_slash_on_prefix(app_mod):
+    """HA usually sends X-Ingress-Path without trailing slash, but in case
+    that ever changes we shouldn't double up the separator."""
+    out = app_mod.rewrite_asset_urls(
+        REAL_ASTRO_HTML_FRAGMENT,
+        "/api/hassio_ingress/abc123/",
+    )
+    assert "//assets/" not in out
+    assert 'href="/api/hassio_ingress/abc123/assets/index.B8spJlff.css"' in out
+
+
+def test_rewrite_asset_urls_empty_prefix_is_noop(app_mod):
+    """Direct-port access (no ingress in front) gets no X-Ingress-Path
+    header — the absolute URLs already work because they resolve to the
+    same FastAPI mount. Don't touch them."""
+    out = app_mod.rewrite_asset_urls(REAL_ASTRO_HTML_FRAGMENT, "")
+    assert out == REAL_ASTRO_HTML_FRAGMENT
+
+
+def test_rewrite_asset_urls_handles_both_quote_styles(app_mod):
+    """HTML can technically come back with single-quoted attributes (e.g. if
+    a future Astro version flips minification). Cover both."""
+    src = "<link href='/assets/foo.css'>"
+    out = app_mod.rewrite_asset_urls(src, "/api/hassio_ingress/T")
+    assert out == "<link href='/api/hassio_ingress/T/assets/foo.css'>"
+
+
+def test_rewrite_asset_urls_leaves_unrelated_paths_alone(app_mod):
+    """Don't rewrite anchor hrefs, API URLs, or other absolute paths that
+    aren't actual SPA assets."""
+    src = '<a href="/something/else">link</a> <img src="/img/foo.png">'
+    out = app_mod.rewrite_asset_urls(src, "/api/hassio_ingress/T")
+    assert out == src
