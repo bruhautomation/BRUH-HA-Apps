@@ -5,6 +5,53 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.5.8
+
+### Fixed: 1.5.7's nav fix was invisible to users with cached CSS
+
+1.5.7 landed the correct inner-scroll-wrapper layout that solves the
+nav-bar-disappears-on-scroll bug — but in the field, users reported
+the fix didn't work even after updating. Root cause: `panel/index.html`
+referenced `style.css` and `app.js` without any cache-busting query
+string, so HA's ingress proxy + the browser's default heuristic kept
+serving the **1.5.6** stylesheet (with the still-broken sticky
+positioning) until a manual hard refresh.
+
+**Fix:** template the running add-on version into the asset links
+on every request:
+
+```html
+<link rel="stylesheet" href="style.css?v=1.5.8" />
+<script src="app.js?v=1.5.8"></script>
+```
+
+`panel/server.py::index` reads `index.html` per request and substitutes
+`__VERSION__` placeholders for the live `ADDON_VERSION`. The index
+itself is served with `Cache-Control: no-store` so the page can never
+be cached with last release's version string baked in. Every future
+release now bursts the browser cache automatically — users no longer
+need to know to hard-refresh.
+
+### Added: version badge in the footer
+
+The footer now shows `v<version>` (e.g. `v1.5.8`) so users can confirm
+at a glance which build they're actually running. If the badge says
+1.5.6 after updating to 1.5.8, hit Ctrl/Cmd-Shift-R to force a refresh
+(should only be needed once — the cache-buster handles future
+upgrades).
+
+### Migration
+
+Restart the add-on. If the footer doesn't show **v1.5.8** after the
+restart, hard-refresh the panel once:
+
+- **Desktop:** Ctrl-Shift-R (Win/Linux) or Cmd-Shift-R (Mac).
+- **HA Companion (iOS / Android):** pull down to refresh inside the
+  panel; if that doesn't help, force-quit the app and reopen.
+
+After this single refresh the cache-buster takes over and every
+future update is picked up automatically.
+
 ## 1.5.7
 
 ### Fixed: nav bar STILL disappeared on Plugins / Server Properties tabs

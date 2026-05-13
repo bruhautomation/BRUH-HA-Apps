@@ -6,7 +6,10 @@
   <meta name="color-scheme" content="dark light" />
   <title>BRUH Minecraft Server</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
-  <link rel="stylesheet" href="style.css" />
+  <!-- __VERSION__ is rendered to the actual add-on version by panel/server.py
+       at request time so each release bursts the browser cache for the
+       CSS / JS, even when HA's ingress proxy keeps long-lived headers. -->
+  <link rel="stylesheet" href="style.css?v=__VERSION__" />
 </head>
 <body>
   <div class="page-header">
@@ -197,9 +200,9 @@
   <footer>
     <span id="last-refresh">—</span>
     <span class="sep">·</span>
-    <span>Panel updates every 5s · Console streams live</span>
+    <span>Panel updates every 5s · Console streams live · v__VERSION__</span>
   </footer>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=__VERSION__"></script>
 </body>
 </html>
