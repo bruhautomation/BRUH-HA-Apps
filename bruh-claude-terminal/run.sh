@@ -1340,79 +1340,6 @@ get_claude_launch_command() {
 }
 
 # ============================================================================
-# Chat Server (v2.0.0)
-# ============================================================================
-#
-# When `enable_chat_ui: true`, the ingress panel is served by a FastAPI app
-# at /opt/chat-server/app.py instead of ttyd. The chat UI is a DOM-rendered
-# Preact SPA bundled into /opt/chat-ui-dist at image build time; FastAPI
-# serves it statically and exposes a /ws/chat WebSocket that bridges to
-# `claude -p --output-format stream-json --input-format stream-json`.
-#
-# Why this is a separate code path from start_web_terminal: ttyd, xterm.js,
-# and the inject.html mobile shim were all attempts to make Claude Code's
-# alt-screen TUI scroll/select/copy correctly inside a browser. The
-# fundamental layer mismatch (alt-screen has no scrollback by spec, OSC 52
-# needs transient activation, tmux mouse mode disables native text
-# selection, etc.) couldn't be patched. The chat UI sidesteps all of it by
-# rendering claude-code's stream-json events as plain DOM nodes — native
-# everything.
-#
-# Default is OFF in 2.0.0 so existing users keep the terminal they're
-# used to. After this opt-in path is validated on real hardware we flip
-# the default in a subsequent release.
-
-start_chat_server() {
-    local port=7681
-    local perm_mode
-    perm_mode=$(bashio::config 'chat_ui_permission_mode' 'acceptEdits')
-
-    bashio::log.info "Starting BRUH Claude Chat UI on port ${port}..."
-    bashio::log.info "  Permission mode: ${perm_mode}"
-    bashio::log.info "  Static bundle: /opt/chat-ui-dist"
-    bashio::log.info "  Claude wrapper: /usr/local/bin/claude-run"
-
-    # Soft-fail guards. Any of these missing means the image was built with a
-    # chat-ui or chat-server build failure (the Dockerfile soft-fails both
-    # because the feature is opt-in). Fall back to the ttyd surface so the
-    # addon still runs — the user just doesn't get the new UI.
-    if [ ! -f /opt/chat-ui-dist/index.html ]; then
-        bashio::log.error "Chat UI bundle missing at /opt/chat-ui-dist/index.html."
-        bashio::log.error "  Image build likely failed at the Astro stage; falling back to ttyd."
-        start_web_terminal
-        return
-    fi
-
-    if [ ! -f /opt/chat-server/app.py ]; then
-        bashio::log.error "Chat server missing at /opt/chat-server/app.py; falling back to ttyd."
-        start_web_terminal
-        return
-    fi
-
-    if ! python3 -c "import fastapi, uvicorn" 2>/dev/null; then
-        bashio::log.error "fastapi/uvicorn not installed in this image; falling back to ttyd."
-        bashio::log.error "  This is a build-time soft-fail; rebuild the addon to recover."
-        start_web_terminal
-        return
-    fi
-
-    export BRUH_CHAT_UI_DIST=/opt/chat-ui-dist
-    export BRUH_CHAT_CWD=/config
-    export BRUH_CLAUDE_BIN=/usr/local/bin/claude-run
-    export BRUH_CHAT_PERMISSION_MODE="${perm_mode}"
-
-    cd /opt/chat-server
-    python3 -m uvicorn app:app \
-        --host 0.0.0.0 \
-        --port "${port}" \
-        --log-level "$(bashio::config 'log_level' 'info')" \
-        --no-access-log \
-        &
-
-    wait $!
-}
-
-# ============================================================================
 # Web Terminal
 # ============================================================================
 
@@ -1516,7 +1443,7 @@ trap cleanup SIGTERM SIGINT EXIT
 
 main() {
     bashio::log.info "============================================"
-    bashio::log.info "  BRUH Claude Terminal v2.0.1"
+    bashio::log.info "  BRUH Claude Terminal v2.0.2"
     bashio::log.info "  Enhanced Claude Code for Home Assistant"
     bashio::log.info "============================================"
 
@@ -1536,15 +1463,7 @@ main() {
     start_usage_limits_tracker
     setup_assist_integration
     setup_automation_integration
-
-    local enable_chat_ui
-    enable_chat_ui=$(bashio::config 'enable_chat_ui' 'false')
-    if [ "$enable_chat_ui" = "true" ]; then
-        bashio::log.info "enable_chat_ui=true: serving chat UI (FastAPI + Preact)"
-        start_chat_server
-    else
-        start_web_terminal
-    fi
+    start_web_terminal
 }
 
 main "$@"
