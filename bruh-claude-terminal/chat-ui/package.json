@@ -1,0 +1,20 @@
+{
+  "name": "bruh-claude-chat-ui",
+  "type": "module",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview"
+  },
+  "dependencies": {
+    "@astrojs/preact": "^4.0.1",
+    "astro": "^5.0.5",
+    "preact": "^10.25.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "typescript": "^5.7.2"
+  }
+}

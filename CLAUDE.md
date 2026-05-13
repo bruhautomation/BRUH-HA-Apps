@@ -14,8 +14,21 @@ BRUH-HA-Apps/
 ├── bruh-claude-terminal/        # Main add-on
 │   ├── config.yaml              # HA add-on configuration manifest
 │   ├── build.yaml               # Multi-arch build config
-│   ├── Dockerfile               # Container build definition
+│   ├── Dockerfile               # Container build definition (multi-stage)
 │   ├── run.sh                   # Main startup/entrypoint script
+│   ├── chat-server/             # 1.19.0+ FastAPI chat server (opt-in)
+│   │   ├── app.py               # FastAPI app, WS /ws/chat, static SPA serve
+│   │   ├── claude_session.py    # One claude subprocess per chat session
+│   │   └── requirements.txt
+│   ├── chat-ui/                 # 1.19.0+ Astro + Preact chat SPA (opt-in)
+│   │   ├── astro.config.mjs
+│   │   ├── package.json
+│   │   ├── tsconfig.json
+│   │   └── src/
+│   │       ├── components/      # Chat, MessageList, Composer, ToolBlock
+│   │       ├── lib/             # ws.ts, events.ts, chatState.ts (reducer)
+│   │       ├── pages/index.astro
+│   │       └── styles/global.css
 │   ├── ha-mcp-server/           # MCP server for HA API access
 │   │   └── ha_mcp_server.py     # Python MCP server (stdio-based)
 │   ├── scripts/                 # Shell scripts and tools
@@ -72,7 +85,29 @@ BRUH-HA-Apps/
 11. Custom integration deployment to `/config/custom_components/bruh_claude/`
 12. Token stats tracker (background daemon scanning session JSONL files)
 13. Optional: Assist + Automation integrations
-14. ttyd web terminal launch
+14. Ingress surface: `start_chat_server` (FastAPI + Preact, when
+    `enable_chat_ui: true`) **or** `start_web_terminal` (ttyd + xterm.js +
+    inject.html mobile shim, default).
+
+### Chat UI (1.19.0+, opt-in)
+- Opt-in via `enable_chat_ui: true` in add-on config. Default off.
+- FastAPI/uvicorn serves the Astro+Preact static bundle at `/` and a single
+  `/ws/chat` WebSocket. Each WS connection spawns one `claude` subprocess
+  in headless streaming mode (`-p --output-format stream-json --input-format
+  stream-json --session-id <uuid> --verbose --include-partial-messages
+  --replay-user-messages --permission-mode <mode>`).
+- The client reducer (`chat-ui/src/lib/chatState.ts`) consumes the NDJSON
+  event stream: `stream_event` (content_block_delta) appends to the active
+  text block; `assistant` events canonicalise full-turn content; `tool_result`
+  attaches to the matching `tool_use` by ID.
+- Permission mode is set per-session via `chat_ui_permission_mode`
+  (default `acceptEdits`); pre-grants in `/config/.claude/settings.local.json`
+  apply identically to interactive and chat-UI sessions.
+- Native everything: scroll = `overflow-y: auto`, selection = browser, copy
+  = `navigator.clipboard.writeText` + per-code-block Copy button.
+- The legacy ttyd surface is unchanged when the flag is off; users can
+  toggle freely between the two without losing state (sessions persist
+  to `~/.claude/projects/<encoded-cwd>/<session-id>.jsonl`).
 
 ### Custom Integration (`custom_components/bruh_claude/`)
 - Deployed automatically to `/config/custom_components/` by the add-on at startup

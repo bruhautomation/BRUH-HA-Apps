@@ -1,4 +1,19 @@
 ARG BUILD_FROM
+
+# ---------- Stage 1: build the chat UI ----------
+# Astro + Preact static bundle. We compile in a clean node image and copy the
+# `dist/` output into the runtime image — keeps node_modules out of the final
+# layer.
+FROM node:20-alpine AS chat-ui-builder
+WORKDIR /build
+COPY chat-ui/package.json ./
+# `npm install` (not `npm ci`) so the build works without a checked-in
+# package-lock.json. If one ends up committed, npm respects it automatically.
+RUN npm install --no-audit --no-fund --loglevel=error
+COPY chat-ui/ ./
+RUN npm run build && ls -la dist
+
+# ---------- Stage 2: runtime image ----------
 FROM ${BUILD_FROM}
 
 # Install system packages and development tools
@@ -33,12 +48,17 @@ RUN apk add --no-cache \
 RUN apk add --no-cache --repository=https://dl-cdn.alpinelinux.org/alpine/edge/community \
     websocat 2>/dev/null || true
 
-# Install Python packages for HA MCP server, integrations, and YAML validation
+# Install Python packages for HA MCP server, integrations, YAML validation,
+# and the chat-server (FastAPI + uvicorn). Pinning fastapi/uvicorn so the
+# Alpine wheel availability matches and the WS event shapes don't drift
+# between addon releases.
 RUN pip3 install --break-system-packages --no-cache-dir \
     websockets \
     aiohttp \
     pyyaml \
-    yamllint
+    yamllint \
+    fastapi==0.115.5 \
+    uvicorn==0.32.1
 
 # Install Claude Code CLI via npm (not the binary installer).
 # The binary installer downloads a native musl build that may require
@@ -69,7 +89,9 @@ RUN adduser -D -s /bin/bash -u 1000 claude
 RUN mkdir -p /config/claude-config \
     && mkdir -p /opt/scripts \
     && mkdir -p /opt/ha-mcp-server \
-    && mkdir -p /opt/integrations
+    && mkdir -p /opt/integrations \
+    && mkdir -p /opt/chat-server \
+    && mkdir -p /opt/chat-ui-dist
 
 WORKDIR /config
 
@@ -93,6 +115,15 @@ COPY custom_components/ /opt/custom_components/
 # so ttyd --index can serve a mobile toolbar + iOS dictation fix on top
 # of whatever frontend bundle ttyd happens to ship this version.
 COPY ttyd-assets/ /opt/ttyd-assets/
+
+# Copy chat server (FastAPI). Mounted at /opt/chat-server; uvicorn is
+# launched from run.sh when `enable_chat_ui` is true.
+COPY chat-server/ /opt/chat-server/
+
+# Copy the chat UI bundle from the builder stage. STATIC_DIR in app.py
+# (/opt/chat-ui-dist) points here; missing index.html surfaces a clean
+# 500 with a hint instead of a silent black screen.
+COPY --from=chat-ui-builder /build/dist /opt/chat-ui-dist
 
 # Set permissions
 RUN chmod +x /run.sh \
