@@ -1516,7 +1516,7 @@ trap cleanup SIGTERM SIGINT EXIT
 
 main() {
     bashio::log.info "============================================"
-    bashio::log.info "  BRUH Claude Terminal v2.0.0"
+    bashio::log.info "  BRUH Claude Terminal v2.0.1"
     bashio::log.info "  Enhanced Claude Code for Home Assistant"
     bashio::log.info "============================================"
 
