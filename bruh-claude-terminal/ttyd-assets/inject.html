@@ -142,18 +142,52 @@
   'use strict';
 
   // ===================================================================
-  // 1. Capture ttyd's WebSocket so the toolbar can send raw stdin.
+  // 1. Capture ttyd's WebSocket so the toolbar can send raw stdin —
+  //    AND intercept OSC 52 clipboard escape sequences from the PTY
+  //    so Claude Code's "press c to copy" actually puts text in the
+  //    user's clipboard.
+  //
   //    Runs before ttyd's inline bundle (<head> vs <body>), so the
   //    constructor wrap is in place when ttyd calls `new WebSocket(...)`.
   //    ttyd stdin protocol: binary frame `TextEncoder.encode('0' + data)`.
+  //    ttyd stdout protocol: binary or text frame, first byte '0' for
+  //    raw PTY output, followed by the bytes the PTY printed.
+  //
+  //    OSC 52 background: the standard terminal-clipboard protocol.
+  //    Claude Code's `c`-to-copy feature emits `ESC ] 52 ; <targets>
+  //    ; <base64-text> BEL` (or ST) to ask the terminal emulator to
+  //    set the system clipboard. tmux's `set -g set-clipboard on`
+  //    (already in scripts/tmux.conf) forwards the sequence to us.
+  //    xterm.js v5 has OSC 52 support but only behind
+  //    `allowProposedApi: true` which ttyd doesn't enable, so the
+  //    sequence currently gets ignored — which is what produced the
+  //    "press c to copy doesn't work" report.
+  //
+  //    We intercept the sequence ourselves before it reaches xterm,
+  //    decode the base64, and call `navigator.clipboard.writeText()`.
+  //    On iOS / WKWebView, that requires "transient user activation"
+  //    — which the user's keypress that triggered Claude Code's `c`
+  //    handler already provides for ~5 seconds, so the write
+  //    succeeds in the common case. On failure (no activation, no
+  //    Clipboard API, etc.) we surface a "Tap to copy" toast that
+  //    retries from the tap's own user-gesture context.
   // ===================================================================
   var ttydSocket = null;
   var OrigWS = window.WebSocket;
   var enc = new TextEncoder();
+  var dec = new TextDecoder('utf-8', { fatal: false });
 
   function WrappedWS(url, protocols) {
     var ws = protocols === undefined ? new OrigWS(url) : new OrigWS(url, protocols);
-    if (String(url).indexOf('/ws') !== -1) ttydSocket = ws;
+    if (String(url).indexOf('/ws') !== -1) {
+      ttydSocket = ws;
+      // Listen on the same socket xterm will, but our handler runs
+      // first (registration order) so we see every PTY output frame
+      // before xterm does. We don't stopPropagation — xterm still
+      // gets the frame and renders it normally; we just *also* peek
+      // at it for OSC 52.
+      ws.addEventListener('message', oscMessageHandler);
+    }
     return ws;
   }
   WrappedWS.prototype = OrigWS.prototype;
@@ -166,6 +200,200 @@
   function sendInput(data) {
     if (!ttydSocket || ttydSocket.readyState !== 1) return;
     try { ttydSocket.send(enc.encode('0' + data)); } catch (e) { /* closed */ }
+  }
+
+  // ---------------- OSC 52 incoming-message interceptor ----------------
+
+  // Buffer for OSC 52 sequences split across multiple WebSocket frames.
+  // OSC 52 payloads are usually short (URLs, tokens) and typically fit
+  // in one PTY chunk, but tmux can flush mid-sequence under load — so
+  // we hold a small rolling window across frames.
+  var oscBuffer = '';
+  var OSC_BUFFER_MAX = 65536;   // hard cap, ~64 KB
+  var OSC_TAIL_KEEP  = 8;       // bytes kept across frames when no
+                                // partial sequence is in flight (just
+                                // enough to detect a `\x1b]52;` start
+                                // marker that straddles a frame boundary)
+
+  function oscMessageHandler(event) {
+    var text = extractOutputBytes(event.data);
+    if (text === null) return;
+    oscBuffer += text;
+    if (oscBuffer.length > OSC_BUFFER_MAX) {
+      // Defensive: don't let a misbehaving stream grow us forever.
+      oscBuffer = oscBuffer.slice(-OSC_BUFFER_MAX);
+    }
+    drainOsc52();
+  }
+
+  function extractOutputBytes(data) {
+    // ttyd's protocol: frame's first byte ('0' = output, others =
+    // metadata like title set / preferences). We only care about '0'.
+    if (data instanceof ArrayBuffer) {
+      var arr = new Uint8Array(data);
+      if (arr.length === 0 || arr[0] !== 0x30 /* '0' */) return null;
+      try { return dec.decode(arr.subarray(1)); } catch (e) { return null; }
+    }
+    if (typeof data === 'string') {
+      if (data.length === 0 || data.charCodeAt(0) !== 0x30) return null;
+      return data.substring(1);
+    }
+    if (data && typeof data.text === 'function') {
+      // Blob — ttyd typically uses ArrayBuffer but be defensive.
+      // We can't await here, so skip; a follow-up frame is probably
+      // an ArrayBuffer anyway.
+      return null;
+    }
+    return null;
+  }
+
+  function drainOsc52() {
+    var startMarker = '\x1b]52;';
+    while (true) {
+      var startIdx = oscBuffer.indexOf(startMarker);
+      if (startIdx < 0) {
+        // No (more) OSC 52 in the buffer. Trim to a small tail to
+        // catch a start marker that straddles two frames.
+        if (oscBuffer.length > OSC_TAIL_KEEP) {
+          oscBuffer = oscBuffer.slice(-OSC_TAIL_KEEP);
+        }
+        return;
+      }
+      // OSC sequences end with BEL (\x07) or ST (\x1b\\). Find the
+      // earliest of the two.
+      var bel = oscBuffer.indexOf('\x07', startIdx);
+      var st  = oscBuffer.indexOf('\x1b\\', startIdx);
+      var endIdx = -1;
+      var endLen = 1;
+      if (bel >= 0 && (st < 0 || bel < st)) {
+        endIdx = bel;
+        endLen = 1;
+      } else if (st >= 0) {
+        endIdx = st;
+        endLen = 2;
+      }
+      if (endIdx < 0) {
+        // Incomplete sequence — wait for the next frame. Drop
+        // everything before the start marker so the buffer stays
+        // bounded.
+        if (startIdx > 0) oscBuffer = oscBuffer.substring(startIdx);
+        return;
+      }
+      var body = oscBuffer.substring(startIdx + startMarker.length, endIdx);
+      handleOsc52Body(body);
+      oscBuffer = oscBuffer.substring(endIdx + endLen);
+    }
+  }
+
+  // Parse the part between `ESC ] 52 ;` and the terminator. Format:
+  //     <targets> ; <base64-text>
+  // <targets> is a string like "c" (clipboard), "p" (primary), or
+  // "cp" (both). We treat any target string as "user wants this text"
+  // and write it to the system clipboard.
+  function handleOsc52Body(body) {
+    var semi = body.indexOf(';');
+    if (semi < 0) return;
+    var b64 = body.substring(semi + 1).trim();
+    // Empty / "?" payloads are clipboard *queries* per the spec; we
+    // can't satisfy those (browsers don't let pages read the system
+    // clipboard without explicit user gesture + permission), so skip.
+    if (!b64 || b64 === '?') return;
+    var text = decodeBase64Utf8(b64);
+    if (text === null) return;
+    writeClipboardWithFallback(text);
+  }
+
+  function decodeBase64Utf8(b64) {
+    try {
+      var binary = atob(b64);
+      var bytes = new Uint8Array(binary.length);
+      for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      return dec.decode(bytes);
+    } catch (_e) {
+      return null;
+    }
+  }
+
+  // Attempt to write to the system clipboard. If the API rejects
+  // (typically because the page no longer has transient user
+  // activation), stash the text and surface a "Tap to copy" toast
+  // that retries on tap (the tap *does* count as activation).
+  var pendingClipboardText = null;
+  function writeClipboardWithFallback(text) {
+    if (!navigator.clipboard || !navigator.clipboard.writeText) {
+      // No Clipboard API at all — surface so the user knows it
+      // didn't go through.
+      pendingClipboardText = text;
+      showCopyToast('Clipboard API unavailable', text, /*tapRetries*/ false);
+      return;
+    }
+    navigator.clipboard.writeText(text).then(function () {
+      showCopyToast('Copied to clipboard', text, false);
+    }, function () {
+      pendingClipboardText = text;
+      showCopyToast('Tap to copy', text, true);
+    });
+  }
+
+  function retryPendingClipboard() {
+    if (!pendingClipboardText) return;
+    if (!navigator.clipboard || !navigator.clipboard.writeText) return;
+    var text = pendingClipboardText;
+    navigator.clipboard.writeText(text).then(function () {
+      pendingClipboardText = null;
+      showCopyToast('Copied to clipboard', text, false);
+    }, function () {
+      showCopyToast('Copy failed', text, true);
+    });
+  }
+
+  // Minimal toast: a fixed-position div near the top of the visible
+  // viewport. Auto-hides after a few seconds, or stays until tapped
+  // when in "Tap to copy" mode.
+  function showCopyToast(message, text, tapRetries) {
+    var toast = document.getElementById('bruh-toast');
+    if (!toast) {
+      toast = document.createElement('div');
+      toast.id = 'bruh-toast';
+      // styled inline so we don't have to coordinate with the
+      // top-of-file CSS block and don't risk the toast being hidden by ttyd's
+      // own CSS (z-index is well above the toolbar).
+      toast.style.cssText = [
+        'position:fixed',
+        'top:calc(env(safe-area-inset-top, 0px) + 12px)',
+        'left:50%',
+        'transform:translateX(-50%)',
+        'max-width:80vw',
+        'background:#a85638',
+        'color:#fff',
+        'padding:10px 16px',
+        'border-radius:6px',
+        'font:500 14px/1.3 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif',
+        'z-index:2147483647',
+        'box-shadow:0 2px 12px rgba(0,0,0,0.4)',
+        '-webkit-tap-highlight-color:transparent',
+        'cursor:pointer',
+        'text-align:center',
+        'white-space:nowrap',
+        'overflow:hidden',
+        'text-overflow:ellipsis'
+      ].join(';');
+      document.body.appendChild(toast);
+    }
+    // Show a short preview of the text so the user can confirm what
+    // was copied without having to paste somewhere first.
+    var preview = (text || '').replace(/\s+/g, ' ').slice(0, 40);
+    if ((text || '').length > 40) preview += '…';
+    toast.textContent = preview ? message + ': ' + preview : message;
+    toast.style.display = 'block';
+    toast.onclick = tapRetries ? function () {
+      retryPendingClipboard();
+    } : null;
+    clearTimeout(toast._timer);
+    toast._timer = setTimeout(function () {
+      toast.style.display = 'none';
+      toast.onclick = null;
+    }, tapRetries ? 8000 : 2000);
   }
 
   // ===================================================================
@@ -273,7 +501,69 @@
   }
 
   // ===================================================================
-  // 3. Mobile toolbar.  React renders into `document.body` (wiping
+  // 3. Wheel-to-PgUp/PgDn translator (Claude Code chat scrolling on
+  //    desktop, and the basis for the toolbar's `PgUp` / `PgDn` keys
+  //    on mobile).
+  //
+  //    xterm.js's default behaviour for mouse-wheel events in the
+  //    alternate-screen mode (which Claude Code's TUI uses) is to
+  //    translate them into ↑ / ↓ arrow key escape sequences sent to
+  //    the application. Claude Code interprets those as "move cursor
+  //    in input box" — NOT as "scroll chat history" — and helpfully
+  //    prints a banner in its UI:
+  //
+  //       Scroll wheel is sending arrow keys · use PgUp/PgDn to scroll
+  //
+  //    So the user wants mouse wheel scrolling Claude Code chat the
+  //    way it scrolls every other chat UI. We intercept the wheel
+  //    event before xterm sees it, send the corresponding `PgUp` /
+  //    `PgDn` escape sequence (which Claude Code DOES bind to chat
+  //    scrolling), and `preventDefault` so xterm's own wheel handler
+  //    doesn't also fire and send the spurious arrow keys.
+  //
+  //    In normal-screen mode (bash prompt with real xterm scrollback)
+  //    we step aside and let xterm handle the wheel natively — that
+  //    way Shift-wheel / wheel-over-empty-area / etc. continue to
+  //    scroll xterm's own scrollback buffer. The proxy for "normal
+  //    screen" is `xterm-viewport.scrollHeight > clientHeight`: in
+  //    alt-screen the scroll-area equals the visible viewport by
+  //    spec, so the inequality is false; in normal-screen with
+  //    output it's true.
+  //
+  //    This is intentionally desktop-mouse-only (1.18.10 doesn't
+  //    re-introduce a touch wheel forwarder — the 1.18.9 reasoning
+  //    for removing that still applies). The PgUp / PgDn toolbar
+  //    buttons added in 1.18.10 are how mobile users scroll chat;
+  //    the wheel handler is how desktop users do it.
+  // ===================================================================
+  function onWheel(e) {
+    if (!e || !e.deltaY) return;
+    // Only intercept when the gesture started inside the terminal —
+    // the toolbar has its own pan-x scroll for the keys themselves
+    // and shouldn't be touched.
+    var t = e.target;
+    if (t && t.closest && t.closest('#bruh-bar')) return;
+    if (t && t.closest && !t.closest('.terminal') && !t.closest('.xterm')) return;
+    var vp = document.querySelector('.xterm-viewport');
+    if (vp && vp.scrollHeight > vp.clientHeight + 1) {
+      // Normal-screen mode with real scrollback — let xterm.js's own
+      // wheel handler do its thing.
+      return;
+    }
+    // Alt-screen (or no scrollback yet). Send PgUp / PgDn to the PTY
+    // instead of letting xterm translate to ↑ / ↓.
+    sendInput(e.deltaY < 0 ? '\x1b[5~' : '\x1b[6~');
+    e.preventDefault();
+    e.stopPropagation();
+  }
+  // Capture phase + document-level so we fire BEFORE xterm.js's own
+  // `.terminal` wheel listener (which runs in bubble phase by
+  // default). preventDefault + stopPropagation then keeps xterm's
+  // listener from running at all, which is the whole point.
+  document.addEventListener('wheel', onWheel, { passive: false, capture: true });
+
+  // ===================================================================
+  // 4. Mobile toolbar.  React renders into `document.body` (wiping
   //    anything we put there) so we can't ship DOM in the HTML.  We
   //    wait until xterm's `.xterm-helper-textarea` appears, then append
   //    a `position: fixed` toolbar — React won't touch it because it
@@ -290,6 +580,8 @@
     'down':  '\x1b[B',
     'right': '\x1b[C',
     'left':  '\x1b[D',
+    'pgup':  '\x1b[5~',  // Claude Code chat scrollback up
+    'pgdn':  '\x1b[6~',  // Claude Code chat scrollback down
     'ctrlc': '\x03',     // interrupt
     'ctrld': '\x04',     // EOF / exit
     'ctrll': '\x0c',     // clear screen
@@ -322,6 +614,12 @@
       { k: 'down',   l: '↓'                      },
       { k: 'left',   l: '←'                      },
       { k: 'right',  l: '→'                      },
+      // PgUp / PgDn for Claude Code chat scrollback (touch users
+      // can't easily produce a wheel event, so these are the
+      // touch-side equivalent of the wheel→PgUp/PgDn handler in
+      // section 3).
+      { k: 'pgup',   l: 'PgUp'                   },
+      { k: 'pgdn',   l: 'PgDn'                   },
       { k: 'ctrlc',  l: '^C'                     },
       { k: 'ctrld',  l: '^D'                     },
       { k: 'ctrll',  l: '^L'                     },
@@ -483,6 +781,18 @@
       // The WebView already shrank to make room for the keyboard:
       // bar at bottom:0 is correct, no translate.
       if (viewportShrunkForKeyboard()) return 0;
+
+      // Pre-1.18.10 the visualViewport-based paths below returned
+      // their reported gap regardless of whether the textarea was
+      // focused. That caused the "white cutout at first load" bug:
+      // on iOS the parent's visualViewport reports a non-zero gap at
+      // page load (status bar / notch safe-area inset) which our
+      // > 40 px threshold treated as a keyboard, shrinking the
+      // terminal before the user ever tapped to focus. Gating
+      // ALL gap detection on `taFocused` means "no keyboard = no
+      // shrink", which is what the user actually expects: the
+      // terminal fills the panel until they tap into it.
+      if (!taFocused) return 0;
 
       var top = topWindow();
       if (top && top.visualViewport) {

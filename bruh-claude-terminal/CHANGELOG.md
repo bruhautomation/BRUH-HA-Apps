@@ -1,5 +1,225 @@
 # Changelog
 
+## 1.18.10
+
+Four user-reported issues in one release, plus tests for each:
+
+1. **"Press c to copy" silently dropped the copy** (OSC 52 not wired)
+2. **Mouse-wheel scrolled cursor instead of chat** in Claude Code
+3. **No way to scroll chat history on mobile** at all
+4. **White cutout for the keyboard at page load** (panel shrank before
+   the user tapped to focus)
+
+### 1. OSC 52 — Claude Code's "press c to copy" silently dropped the copy
+
+When Claude Code prints a URL or token and prompts the user with
+"press c to copy", pressing `c` did nothing visible — the URL was
+not in the system clipboard. This came up most painfully during
+OAuth, when the URL is the one piece of text you actually need
+out of the terminal.
+
+Claude Code copies via OSC 52 — the standard terminal-clipboard
+escape sequence:
+
+```
+ESC ] 52 ; <targets> ; <base64-encoded-text> BEL
+```
+
+The chain looks like:
+
+```
+claude-code  →  prints OSC 52
+   tmux      →  set -g set-clipboard on (already in tmux.conf)
+                forwards OSC 52 to the outer terminal
+   ttyd      →  passes the bytes through to the WebSocket
+   xterm.js  →  v5 supports OSC 52, BUT only when constructed with
+                `allowProposedApi: true`. ttyd doesn't enable that
+                option, so xterm silently ignores the sequence and
+                nothing reaches `navigator.clipboard`.
+```
+
+The fix is in the JS layer; tmux + ttyd were already passing the
+bytes correctly.
+
+### Fix
+
+`ttyd-assets/inject.html` now intercepts OSC 52 from the WebSocket
+stream itself and calls `navigator.clipboard.writeText()`:
+
+1. The WebSocket constructor wrap (already in place since 1.17.1
+   for stdin) now also attaches a `message` listener that watches
+   for `ESC ]52;<targets>;<base64> BEL` (or `... ESC \`) framings
+   in incoming PTY output.
+2. A small rolling buffer stitches sequences that straddle frame
+   boundaries (uncommon — OSC 52 payloads are usually short
+   enough to fit in one ttyd flush — but cheap insurance).
+3. The base64 payload is decoded as UTF-8 and handed to
+   `navigator.clipboard.writeText()`.
+4. On iOS / WKWebView, `clipboard.writeText` requires "transient
+   user activation" — which the keypress that triggered Claude
+   Code's `c` handler already provides for ~5 seconds. So the
+   write succeeds in the common case (user pressed `c` themselves;
+   OSC 52 echoes back within a few ms).
+5. On rejection (no transient activation, no Clipboard API,
+   permission denied, etc.) we surface a "Tap to copy" toast.
+   Tapping the toast retries the write from the tap's own user-
+   gesture context — works as a manual escape hatch.
+6. Spec-mandated query payloads (`ESC ]52;c;? BEL` — application
+   asks the terminal what's on the clipboard) are recognised and
+   skipped. Browsers don't allow page → clipboard READS without
+   explicit permission and a user gesture, so we can't satisfy
+   them, and a `?` payload was previously feeding `atob('?')`
+   producing garbage.
+
+The OSC 52 handler doesn't `stopPropagation` — xterm still
+receives every PTY output frame and renders normally. We only
+*also* peek at the bytes for clipboard sequences.
+
+### What this fixes besides "press c"
+
+Anything that uses OSC 52: the same code path will now work for
+`tmux save-buffer`, vim's `+` register clipboard yanks, `printf
+'\\033]52;c;%s\\007' "$(echo hi | base64)"` from the shell, etc.
+All of them used to silently drop the bytes.
+
+### New tests
+
+`tests/test_inject_html.py` gains 8 new structural assertions:
+
+- The captured WebSocket has a `message` listener (without it,
+  no OSC 52 ever gets seen).
+- The literal `'\\x1b]52;'` start marker is present (catches a
+  refactor that accidentally widens the OSC matching to other
+  numeric codes).
+- Both BEL (`\\x07`) and ST (`\\x1b\\\\`) terminators are present
+  — Claude Code emits BEL but other clients use ST.
+- `navigator.clipboard.writeText` is actually called.
+- `atob(` is present (base64 decode).
+- `OSC_BUFFER_MAX` cap exists (bounded memory under a misbehaving
+  PTY stream).
+- The `?` query payload is checked for and skipped (`atob('?')`
+  produces garbage otherwise).
+- A user-facing failure path exists (`pendingClipboardText` +
+  `bruh-toast`) so a denied write doesn't fail silently.
+
+### 2. Mouse-wheel scrolls Claude Code chat instead of moving the cursor
+
+xterm.js's default behaviour for mouse-wheel events in alternate-
+screen mode is to translate them to `↑ / ↓` arrow key escape
+sequences and send those to the application. Claude Code's TUI
+interprets arrow keys as "move cursor in input box" and helpfully
+prints a banner explaining the mismatch:
+
+```
+Scroll wheel is sending arrow keys · use PgUp/PgDn to scroll
+```
+
+`PgUp / PgDn` ARE bound to chat-history scrolling in Claude Code,
+but xterm never sends those — it sends `↑ / ↓`.
+
+`ttyd-assets/inject.html` now has a document-level **capture-phase**
+`wheel` listener that fires *before* xterm.js's own bubble-phase
+wheel handler:
+
+```js
+function onWheel(e) {
+  if (!e.deltaY) return;
+  // …only intercept inside the terminal, not the toolbar…
+  var vp = document.querySelector('.xterm-viewport');
+  if (vp && vp.scrollHeight > vp.clientHeight + 1) {
+    // Normal-screen mode has real scrollback — let xterm handle it.
+    return;
+  }
+  // Alt-screen mode: send PgUp / PgDn instead of letting xterm
+  // translate to ↑ / ↓.
+  sendInput(e.deltaY < 0 ? '\x1b[5~' : '\x1b[6~');
+  e.preventDefault();
+  e.stopPropagation();
+}
+document.addEventListener('wheel', onWheel, { passive: false, capture: true });
+```
+
+In normal-screen mode (bash prompt with output) we step aside and
+let xterm's native wheel handler scroll the real xterm scrollback —
+that path is correct there and we don't want to override it.
+
+### 3. Mobile users had no way to scroll chat history
+
+Mobile users can't produce a wheel event from their finger
+(`touch-action: none` blocks native scroll-pan, and the
+`setupScrollForwarder` that synthesised wheel events from touchmove
+was removed in 1.18.9 because it produced the "every swipe moves
+the cursor" symptom). With no wheel and no synthetic gesture, there
+was no way at all to scroll back through Claude Code chat on touch.
+
+1.18.10 adds **`PgUp` / `PgDn` toolbar buttons** between the arrow
+keys and the `^C/^D/^L/^U` group:
+
+```
+ESC · ▾ Kbd · Tab · ⇧Tab · ↑ ↓ ← →  ·  PgUp PgDn  ·  ^C ^D ^L ^U  ·  / @ # ! |  ·  Paste  ·  ×
+```
+
+Tapping `PgUp` sends `\x1b[5~`, tapping `PgDn` sends `\x1b[6~`.
+Same escape sequences Claude Code's "use PgUp/PgDn to scroll" hint
+suggests; same code path as the desktop wheel handler above.
+
+### 4. White cutout for the keyboard at first load
+
+When the panel first loaded on mobile (no tap yet, keyboard not
+deployed), the bottom of the panel had a white space where the
+keyboard would be. Cause: `computeGap()` returned a non-zero gap
+based on the parent's `visualViewport` — which on iOS reports a
+small offset at page load for the status bar / notch safe-area
+inset. Our `MIN_KB_GAP = 40` threshold treated that ~44 px offset
+as "keyboard up", body shrank, the area below body was the page
+background colour (white).
+
+1.18.10 gates **all** gap detection on the xterm helper-textarea
+having focus:
+
+```js
+function computeGap() {
+  if (viewportShrunkForKeyboard()) return 0;
+  // 1.18.10: no focus = no keyboard = no shrink.
+  if (!taFocused) return 0;
+  // …rest of the parent-VV / own-VV / phone heuristic chain…
+}
+```
+
+`taFocused` is already set/cleared by the existing
+`focusin` / `focusout` listeners on `xterm-helper-textarea`, so
+the only thing changed here is the early return. After the user
+taps to focus, the keyboard-detection chain runs as before.
+
+### New tests (8 added on top of 1.18.9's 21 + the OSC 52 batch)
+
+`tests/test_inject_html.py` is now **37 tests**, covering:
+
+- All 1.18.9 structural assertions (CSS / JS syntax / canonical
+  toolbar / no-Hist / no-setupScrollForwarder etc.).
+- The 8 OSC 52 assertions from earlier in this changelog.
+- **`test_toolbar_canonical_buttons`** — pins the new
+  ESC / ▾ Kbd / Tab / ⇧Tab / ↑↓←→ / **PgUp / PgDn** / ^C^D^L^U /
+  `/@#!|` / Paste / × ordering exactly.
+- **`test_toolbar_has_pgup_pgdn_buttons`** + **`test_keys_map_has_pgup_pgdn`**
+  — `pgup` / `pgdn` are in `spec` AND in `KEYS` with the canonical
+  `\x1b[5~` / `\x1b[6~` sequences (catches a typo'd CSI).
+- **`test_wheel_handler_attached`** — a document-level `wheel`
+  listener exists.
+- **`test_wheel_handler_uses_capture_phase`** — registered with
+  `capture: true` (otherwise xterm sees the event first and we
+  can't preventDefault meaningfully).
+- **`test_wheel_handler_sends_pgup_pgdn`** + **`test_wheel_handler_steps_aside_when_xterm_has_scrollback`**
+  — the handler dispatches the right escape sequences AND yields
+  to xterm in normal-screen mode.
+- **`test_compute_gap_gates_on_focus`** — `computeGap()` has the
+  `if (!taFocused) return 0;` early-return at the top (regression
+  test for the white-cutout-at-load bug).
+
+`node --check` on the extracted script: still clean. Full
+`pytest tests/` run: green except for one unrelated network-dependent
+Minecraft test that flakes on `api.geysermc.org` SSL timeouts.
+
 ## 1.18.9
 
 ### Refactor: mobile UI simplification + structural tests

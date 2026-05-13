@@ -336,11 +336,16 @@ def _toolbar_keys(script_block: str) -> list[str]:
 
 
 def test_toolbar_canonical_buttons(script_block: str):
-    """The exact, ordered button set we ship in 1.18.9.
+    """The exact, ordered button set we ship today.
 
     Hard-coded so an accidental reorder / addition / deletion fails CI.
     If the toolbar genuinely should change, update this expectation in
     the same PR — that's the point.
+
+    1.18.10 added `pgup` / `pgdn` between the arrow keys and the
+    `^C/^D/^L/^U` group so mobile users can scroll Claude Code chat
+    history (the desktop wheel→PgUp/PgDn handler in section 3 covers
+    desktop).
     """
     expected = [
         "esc",
@@ -351,6 +356,8 @@ def test_toolbar_canonical_buttons(script_block: str):
         "down",
         "left",
         "right",
+        "pgup",
+        "pgdn",
         "ctrlc",
         "ctrld",
         "ctrll",
@@ -364,6 +371,30 @@ def test_toolbar_canonical_buttons(script_block: str):
         "hide",
     ]
     assert _toolbar_keys(script_block) == expected
+
+
+def test_toolbar_has_pgup_pgdn_buttons(script_block: str):
+    """Regression test for 1.18.10.
+
+    Mobile users can't produce a wheel event with their finger, so
+    the only way they can scroll through Claude Code chat history
+    is via these toolbar buttons. If anyone removes them, scrolling
+    on touch silently breaks again."""
+    keys = _toolbar_keys(script_block)
+    assert "pgup" in keys, "PgUp toolbar button missing — mobile loses chat scroll-up"
+    assert "pgdn" in keys, "PgDn toolbar button missing — mobile loses chat scroll-down"
+
+
+def test_keys_map_has_pgup_pgdn(script_block: str):
+    r"""The PgUp / PgDn buttons need real escape sequence entries in
+    the KEYS map; the toolbar otherwise silently no-ops. Pin the
+    canonical CSI ~5/~6 sequences so a typo doesn't ship."""
+    assert re.search(r"'pgup':\s*'\\x1b\[5~'", script_block), (
+        "'pgup' KEYS entry must be '\\x1b[5~'"
+    )
+    assert re.search(r"'pgdn':\s*'\\x1b\[6~'", script_block), (
+        "'pgdn' KEYS entry must be '\\x1b[6~'"
+    )
 
 
 def test_toolbar_has_close_keyboard_button(script_block: str):
@@ -463,3 +494,199 @@ def test_handle_key_handles_every_button(script_block: str):
             f"toolbar key {k!r} has no KEYS entry and no handleKey() "
             f"branch — tapping it would do nothing"
         )
+
+
+# ---------------------------------------------------------------------
+# OSC 52 clipboard interceptor (added in 1.18.10)
+# ---------------------------------------------------------------------
+
+
+def test_websocket_message_listener_attached(script_block: str):
+    """The OSC 52 interceptor needs an `addEventListener('message', ...)`
+    on the captured ttyd socket. If anyone refactors the WebSocket wrap
+    and forgets to re-attach the listener, OSC 52 silently drops on
+    the floor again — exactly the failure mode this test guards against.
+    """
+    # Look for a message listener attached to a `ws.` reference inside
+    # the WebSocket wrap. We don't pin the exact handler name to allow
+    # safe renaming.
+    assert re.search(
+        r"ws\.addEventListener\(\s*['\"]message['\"]",
+        script_block,
+    ), (
+        "the captured ttyd WebSocket must have a 'message' listener "
+        "for OSC 52 interception (1.18.10)"
+    )
+
+
+def test_osc52_start_marker_present(script_block: str):
+    r"""The OSC 52 detection looks for the literal `\x1b]52;` start
+    marker. If anyone changes that to a different escape framing
+    (e.g. trying to also match OSC 7, 8, etc. and accidentally
+    losing 52), the parser silently stops working — this test pins
+    the exact marker so the failure becomes a CI failure.
+    """
+    assert "'\\x1b]52;'" in script_block, (
+        r"OSC 52 start marker '\x1b]52;' missing — Claude Code's "
+        "press-c-to-copy will silently no-op (1.18.10)"
+    )
+
+
+def test_osc52_end_terminators_present(script_block: str):
+    r"""OSC sequences end with BEL (`\x07`) or ST (`\x1b\\`). The
+    parser has to handle both — Claude Code historically emits BEL
+    but other clients use ST."""
+    assert "'\\x07'" in script_block, "OSC BEL terminator missing"
+    assert "'\\x1b\\\\'" in script_block, "OSC ST terminator missing"
+
+
+def test_osc52_writes_to_clipboard(script_block: str):
+    """The interceptor must actually call `navigator.clipboard
+    .writeText` — otherwise it parses OSC 52 sequences and throws
+    them away. Pin the call so a refactor can't accidentally drop
+    it."""
+    assert (
+        "navigator.clipboard.writeText" in script_block
+        or "navigator.clipboard\n" in script_block
+    ), "navigator.clipboard.writeText call missing from OSC 52 path"
+
+
+def test_osc52_decodes_base64(script_block: str):
+    """`atob` is the canonical base64 decode in browsers. The
+    OSC 52 payload is base64-encoded text and we have to decode
+    before writing to the clipboard."""
+    assert "atob(" in script_block, "atob() call missing from OSC 52 decoder"
+
+
+def test_osc52_buffer_is_bounded(script_block: str):
+    """Defence against a misbehaving PTY stream: the cross-frame OSC 52
+    buffer has to have a hard cap so a malicious / broken stream can't
+    grow our memory unbounded. Pin the constant name so its existence
+    is checked even if the value gets re-tuned."""
+    assert "OSC_BUFFER_MAX" in script_block, (
+        "OSC_BUFFER_MAX cap missing — OSC 52 buffer could grow "
+        "unbounded (1.18.10)"
+    )
+
+
+def test_osc52_handles_query_payload(script_block: str):
+    """Per the OSC 52 spec, a payload of `?` is a clipboard *query*
+    (the application asks the terminal what's on the clipboard).
+    Browsers don't allow page → clipboard reads without explicit
+    permission and a user gesture, so we can't satisfy queries —
+    must skip them rather than treating `?` as a base64 payload."""
+    assert "'?'" in script_block, (
+        "OSC 52 query payload check missing — `?` would be passed "
+        "to atob() and produce garbage (1.18.10)"
+    )
+
+
+def test_osc52_has_user_facing_failure_path(script_block: str):
+    """clipboard.writeText() can reject (no transient user activation,
+    permission denied, etc.). We must surface the failure to the user
+    rather than silently dropping the copy — otherwise they think
+    "press c" worked when it didn't."""
+    # Look for a fallback that stashes the text and surfaces a UI.
+    assert "pendingClipboardText" in script_block, (
+        "no fallback for clipboard.writeText rejection — copy can "
+        "fail silently (1.18.10)"
+    )
+    # And there must be SOME visible affordance — the toast.
+    assert "bruh-toast" in script_block, (
+        "OSC 52 toast UI element missing"
+    )
+
+
+# ---------------------------------------------------------------------
+# Wheel → PgUp/PgDn translator (1.18.10)
+# ---------------------------------------------------------------------
+
+
+def test_wheel_handler_attached(script_block: str):
+    """The desktop scroll-chat-history fix relies on intercepting
+    `wheel` events at the document level *before* xterm.js's own
+    wheel handler runs. If the listener disappears, Claude Code's
+    "Scroll wheel is sending arrow keys" banner reappears."""
+    assert re.search(
+        r"document\.addEventListener\(\s*['\"]wheel['\"]",
+        script_block,
+    ), "document-level wheel listener missing (1.18.10)"
+
+
+def test_wheel_handler_uses_capture_phase(script_block: str):
+    """Capture phase is what makes our wheel listener fire BEFORE
+    xterm's own `.terminal` wheel listener (which lives in bubble
+    phase). Without capture, xterm sees the wheel first and translates
+    to arrow keys before we get a chance to preventDefault."""
+    # Find the wheel listener registration and check it uses capture.
+    m = re.search(
+        r"document\.addEventListener\(\s*['\"]wheel['\"],[^)]*?\{([^}]*)\}",
+        script_block,
+    )
+    assert m, "wheel listener registration not found (or no options object)"
+    assert "capture: true" in m.group(1) or "capture:true" in m.group(1), (
+        "wheel listener must register with capture: true so it fires "
+        "before xterm.js's bubble-phase wheel handler (1.18.10)"
+    )
+
+
+def test_wheel_handler_sends_pgup_pgdn(script_block: str):
+    r"""Pin the exact PgUp / PgDn sequences. If a regression sends
+    arrow keys here (the symptom we're fixing) or PageDown CSI 22~
+    instead of 6~ (a common typo), tests fail."""
+    # Find the wheel handler body and check it sends both sequences.
+    # The handler decides based on deltaY sign.
+    assert "\\x1b[5~" in script_block, "PgUp escape sequence missing"
+    assert "\\x1b[6~" in script_block, "PgDn escape sequence missing"
+
+
+def test_wheel_handler_steps_aside_when_xterm_has_scrollback(script_block: str):
+    """In normal-screen mode (bash with real xterm scrollback), wheel
+    events should NOT be intercepted — xterm's own scrollback path is
+    correct there. The handler must early-return when scrollHeight >
+    clientHeight."""
+    # The condition lives inside the wheel handler. Look for the
+    # scrollHeight vs clientHeight check.
+    assert re.search(
+        r"vp\.scrollHeight\s*>\s*vp\.clientHeight",
+        script_block,
+    ), (
+        "wheel handler must skip intercepting when xterm has its "
+        "own scrollback (bash normal-screen mode) (1.18.10)"
+    )
+
+
+# ---------------------------------------------------------------------
+# Don't shrink the body before the keyboard is up (1.18.10)
+# ---------------------------------------------------------------------
+
+
+def test_compute_gap_gates_on_focus(script_block: str):
+    """Regression test for the "white cutout at first load" bug.
+
+    Pre-1.18.10, computeGap() used the visualViewport's reported gap
+    even when the textarea wasn't focused. On iOS the parent's VV
+    reports a small offset at page load (status bar / notch safe-
+    area inset) that exceeded our 40 px threshold, so we shrank the
+    terminal and left a gap-sized white space at the bottom of the
+    panel *before* the user ever tapped to focus.
+
+    1.18.10 gates ALL gap detection on `taFocused === true`: no
+    focus → no keyboard → no shrink, regardless of what VV reports.
+    """
+    # Find computeGap() and assert there's an early `if (!taFocused)
+    # return 0;` near the top.
+    m = re.search(
+        r"function\s+computeGap\s*\(\)\s*\{(.*?)\n\s{4}\}",
+        script_block,
+        re.DOTALL,
+    )
+    assert m, "computeGap function not found"
+    body = m.group(1)
+    # The first ~25 lines of computeGap should contain the gate.
+    head = "\n".join(body.split("\n")[:25])
+    assert re.search(r"if\s*\(\s*!\s*taFocused\s*\)\s*return\s+0", head), (
+        "computeGap() must early-return 0 when !taFocused — "
+        "otherwise the terminal shrinks at page load before the "
+        "user has tapped into it (1.18.10 white-cutout regression)"
+    )
