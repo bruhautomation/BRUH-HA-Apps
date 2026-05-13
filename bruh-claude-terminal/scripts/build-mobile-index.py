@@ -104,6 +104,36 @@ def probe_ttyd_html() -> tuple[str | None, str]:
                 pass
 
 
+class SpliceError(ValueError):
+    """Raised when `splice_inject_into_html` can't find `</head>`."""
+
+
+def splice_inject_into_html(html: str, snippet: str) -> str:
+    """Return a copy of `html` with `snippet` inserted before `</head>`.
+
+    Pure string operation, no I/O — kept separate from `build()` and
+    `probe_ttyd_html()` so the failure modes can be unit-tested without
+    spawning a real ttyd process.
+
+    The splice position matters: our `<script>` has to run BEFORE
+    ttyd's inline bundle so we can replace `window.WebSocket` before
+    ttyd calls `new WebSocket(...)`. ttyd's bundle is inline at the
+    end of <head> or the start of <body>; either way, putting our
+    block just before `</head>` is early enough.
+
+    Uses `.rfind("</head>")` (not `.find`) so a stray "</head>" inside
+    an inline string literal in ttyd's bundle (highly unlikely but
+    defensive) doesn't cause us to splice in the wrong place.
+    """
+    head_close = html.lower().rfind("</head>")
+    if head_close < 0:
+        raise SpliceError(
+            f"no </head> in input HTML "
+            f"(len={len(html)}, preview={html[:120]!r})"
+        )
+    return html[:head_close] + snippet + html[head_close:]
+
+
 def build() -> int:
     if not INJECT_SNIPPET_PATH.exists():
         print(
@@ -117,20 +147,14 @@ def build() -> int:
         print(f"[bruh-mobile-ui] probe failed: {err}", file=sys.stderr)
         return 1
 
-    lower = html.lower()
-    head_close = lower.rfind("</head>")
-    if head_close < 0:
-        print(
-            f"[bruh-mobile-ui] probed HTML has no </head> "
-            f"(len={len(html)}, preview={html[:120]!r})",
-            file=sys.stderr,
-        )
+    snippet = INJECT_SNIPPET_PATH.read_text()
+    try:
+        merged = splice_inject_into_html(html, snippet)
+    except SpliceError as e:
+        print(f"[bruh-mobile-ui] {e}", file=sys.stderr)
         return 1
 
-    snippet = INJECT_SNIPPET_PATH.read_text()
-    merged = html[:head_close] + snippet + html[head_close:]
     OUTPUT_PATH.write_text(merged)
-
     print(
         f"[bruh-mobile-ui] built {OUTPUT_PATH} "
         f"(ttyd base: {len(html)} bytes, injected: {len(snippet)} bytes)"

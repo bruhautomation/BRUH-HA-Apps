@@ -1,5 +1,118 @@
 # Changelog
 
+## 1.18.9
+
+### Refactor: mobile UI simplification + structural tests
+
+Five releases (1.18.3 → 1.18.8) tried to make swipe gestures and the
+`📜 Hist` button scroll through Claude Code's chat history. **None of
+them worked**, and each one left a subtly broken UX behind: swipes
+sending arrow keys, the keyboard covering the input, drag-to-select
+breaking during OAuth, the Hist button entering a copy mode that
+showed the wrong content. This release cuts that whole feature back
+to what's actually achievable and adds structural tests so the
+working parts can't silently regress again.
+
+### What's actually possible (and what isn't)
+
+Claude Code's TUI runs in xterm's **alternate-screen** mode. By
+spec:
+
+- xterm.js does NOT add alt-screen content to its scrollback buffer.
+  So `xterm-viewport.scrollHeight === xterm-viewport.clientHeight` —
+  there is literally nothing for xterm to scroll.
+- tmux DOES capture every printed cell into its per-pane history,
+  but its copy mode only exposes the *normal-screen* portion of that
+  history (pre-Claude-Code bash output) — Claude Code's chat drawn
+  in alt-screen is never visible there.
+
+So **no surface anywhere on the** `claude-code → tmux → ttyd →
+xterm.js` **stack has Claude Code's past chat preserved in a
+scrollable form**. The JS / CSS layer can't conjure scrollback
+that doesn't exist downstream. If chat history scrolling is ever
+needed, it has to come from claude-code itself (a slash command, a
+paged history view) — not from BRUH.
+
+### Removed
+
+- **`📜 Hist` toolbar button** that sent `Ctrl+B [` to enter tmux
+  copy mode. tmux does enter copy mode, but the user sees
+  pre-Claude-Code bash output, not Claude Code's chat. The toolbar
+  ↑↓ buttons in that state scroll bash output rather than what the
+  user expected, which they (rightly) reported as confusing.
+- **`setupScrollForwarder`** — the document-level touchmove handler
+  that dispatched synthetic `WheelEvent`s on `.terminal`. With tmux
+  mouse mode off (the 1.18.8 default, see below), those wheel
+  events translated to ↑/↓ key escape sequences in alt-screen mode,
+  fed straight into Claude Code's input field — the "every swipe
+  moves the cursor" symptom.
+
+### What's kept
+
+- The full toolbar (ESC, ▾ Kbd, Tab, ⇧Tab, ↑↓←→, ^C/^D/^L/^U,
+  `/`/`@`/`#`/`!`/`|`, Paste, ×) — every button has an unambiguous
+  effect, no dependency on hidden mode state.
+- The 1.18.6 body-shrink-via-height fix that makes the input row
+  visible when the keyboard opens (xterm.fit → ttyd → SIGWINCH →
+  tmux → claude-code chain). Confirmed working.
+- The 1.18.5 phone-only keyboard-height heuristic with the 1.18.5
+  `topVVResponsive` latch for the iOS-keyboard-dismiss-button case.
+- The 1.18.0 iOS dictation diff-fix (WebKit bug 261764).
+- `body { touch-action: none }` so swipes can't leak to the HA
+  panel — but no JS gesture handler. Body's box absorbs the
+  gesture, end of story.
+- tmux mouse mode stays gated off under ttyd (`set -g mouse on`
+  breaks native drag-to-select on touch, broke OAuth in 1.18.7).
+  Native iOS text selection works.
+
+### Touch behaviour, summarised
+
+| Gesture                       | Effect                                |
+|-------------------------------|---------------------------------------|
+| Tap inside the terminal       | Focus textarea, open soft keyboard    |
+| Tap toolbar key               | Send key, keep keyboard up            |
+| Tap `▾ Kbd`                   | Blur textarea, close keyboard         |
+| Long-press + drag             | Native iOS text selection             |
+| Two-finger tap / pinch        | Blocked (terminal doesn't pinch-zoom) |
+| Swipe up / down in terminal   | Nothing (no scrollback to scroll)     |
+| Real keyboard: Shift+PageUp   | xterm normal-screen scrollback        |
+
+### New tests
+
+Two new test modules under `tests/`:
+
+- **`test_inject_html.py`** (21 tests): asserts inject.html's CSS
+  contains the required selectors, body shrinks via `height:
+  calc(100% - var(...))` (NOT padding-bottom — the 1.18.6 ttyd
+  container resize gotcha), `body { touch-action: none }` is
+  present (1.18.3 parent-scroll leak block), `html.bruh-is-touch`
+  uses `overflow: hidden` instead of `position: fixed` (1.18.2
+  WebView consistency), `.bruh-key { touch-action: manipulation }`
+  is present (1.18.2 iOS 300 ms tap delay), the JS parses cleanly
+  under `node --check`, the WebSocket wrap and iOS dictation diff-
+  fix are still in place, the toolbar's `spec` array matches the
+  canonical ordered list (and explicitly does NOT contain `hist`
+  or `setupScrollForwarder` — regression test for 1.18.9's
+  removals), and every toolbar button has either a `KEYS` entry or
+  a `handleKey()` branch (so silent no-op buttons fail CI).
+
+- **`test_build_mobile_index.py`** (8 tests): the splice logic in
+  `build-mobile-index.py` is extracted into a pure
+  `splice_inject_into_html(html, snippet)` function and tested
+  directly — happy path, missing `</head>` raises `SpliceError`
+  (instead of silently writing a corrupt index), `rfind` is used so
+  a stray `</head>` inside an inline string literal in ttyd's
+  bundle doesn't divert the splice, casing is preserved, error
+  preview is bounded so corrupt input doesn't dump a megabyte into
+  the addon log, and a smoke test with the real inject.html merged
+  into a plausible ttyd HTML shape verifies our `<script>` ends up
+  before ttyd's inline bundle in document order.
+
+Both files are picked up automatically by the existing
+`pytest tests/ -q` step in `.github/workflows/ci.yml`. Total: **29
+new tests, all green**, plus the existing 600+ project tests still
+passing.
+
 ## 1.18.8
 
 ### Fixed: 1.18.7's `mouse on` broke text selection during OAuth
