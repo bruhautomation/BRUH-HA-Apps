@@ -1,7 +1,7 @@
 ---
 name: "BRUH Claude Terminal"
 description: "Enhanced Claude Code terminal for Home Assistant with native HA API access, auto-backup, context generation, and Assist integration"
-version: "1.18.10"
+version: "2.0.0"
 slug: "bruh_claude_terminal"
 init: false
 
@@ -36,6 +36,11 @@ options:
   enable_assist_integration: true
   enable_automation_integration: true
   enable_mobile_ui: true
+  # 2.0.0: opt-in chat UI. When true the ingress panel serves a chat-style
+  # interface (DOM-rendered, native scroll/select/clipboard) instead of the
+  # ttyd terminal. Default off so existing users keep the terminal.
+  enable_chat_ui: false
+  chat_ui_permission_mode: acceptEdits
   dangerously_skip_permissions: false
   assist_max_turns: 5
   automation_max_turns: 10
@@ -57,6 +62,8 @@ schema:
   enable_assist_integration: bool?
   enable_automation_integration: bool?
   enable_mobile_ui: bool?
+  enable_chat_ui: bool?
+  chat_ui_permission_mode: "list(default|acceptEdits|plan|bypassPermissions)?"
   dangerously_skip_permissions: bool?
   assist_max_turns: "int(1,20)?"
   automation_max_turns: "int(1,50)?"

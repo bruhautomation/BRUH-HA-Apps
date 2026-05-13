@@ -1,4 +1,30 @@
 ARG BUILD_FROM
+
+# ---------- Stage 1: build the chat UI ----------
+# Astro + Preact static bundle. We compile in a clean node image and copy the
+# `dist/` output into the runtime image — keeps node_modules out of the final
+# layer.
+#
+# IMPORTANT: this build SOFT-FAILS. The chat UI is opt-in
+# (`enable_chat_ui: false` by default) so a transient npm registry hiccup or
+# a dep-resolution issue must NOT block the whole addon image from shipping.
+# On any failure here we emit an empty `dist/` directory; the runtime
+# `start_chat_server` in run.sh detects the missing `index.html` and falls
+# back to ttyd. Users on the default config see zero change.
+FROM node:20-alpine AS chat-ui-builder
+WORKDIR /build
+COPY chat-ui/ ./
+RUN if npm install --no-audit --no-fund --loglevel=error \
+      && npm run build; then \
+        echo "[chat-ui] build ok ($(du -sh dist | cut -f1))"; \
+        ls -la dist; \
+    else \
+        echo "[chat-ui] WARN: chat UI build failed — emitting empty dist; runtime will fall back to ttyd" >&2; \
+        rm -rf dist; \
+        mkdir -p dist; \
+    fi
+
+# ---------- Stage 2: runtime image ----------
 FROM ${BUILD_FROM}
 
 # Install system packages and development tools
@@ -33,12 +59,22 @@ RUN apk add --no-cache \
 RUN apk add --no-cache --repository=https://dl-cdn.alpinelinux.org/alpine/edge/community \
     websocat 2>/dev/null || true
 
-# Install Python packages for HA MCP server, integrations, and YAML validation
+# Install Python packages for HA MCP server, integrations, and YAML validation.
+# These are required for the default ttyd surface and HA integrations, so a
+# failure here is a hard build failure (no soft-fail).
 RUN pip3 install --break-system-packages --no-cache-dir \
     websockets \
     aiohttp \
     pyyaml \
     yamllint
+
+# Install chat-server deps (FastAPI + uvicorn). Soft-fail because the chat UI
+# is opt-in; a registry hiccup must not block the addon image. run.sh checks
+# for the modules at startup before launching the chat server and falls back
+# to ttyd if either is missing.
+RUN pip3 install --break-system-packages --no-cache-dir \
+        fastapi==0.115.5 uvicorn==0.32.1 \
+    || echo "[chat-server] WARN: fastapi/uvicorn install failed; chat UI will be unavailable" >&2
 
 # Install Claude Code CLI via npm (not the binary installer).
 # The binary installer downloads a native musl build that may require
@@ -69,7 +105,9 @@ RUN adduser -D -s /bin/bash -u 1000 claude
 RUN mkdir -p /config/claude-config \
     && mkdir -p /opt/scripts \
     && mkdir -p /opt/ha-mcp-server \
-    && mkdir -p /opt/integrations
+    && mkdir -p /opt/integrations \
+    && mkdir -p /opt/chat-server \
+    && mkdir -p /opt/chat-ui-dist
 
 WORKDIR /config
 
@@ -93,6 +131,15 @@ COPY custom_components/ /opt/custom_components/
 # so ttyd --index can serve a mobile toolbar + iOS dictation fix on top
 # of whatever frontend bundle ttyd happens to ship this version.
 COPY ttyd-assets/ /opt/ttyd-assets/
+
+# Copy chat server (FastAPI). Mounted at /opt/chat-server; uvicorn is
+# launched from run.sh when `enable_chat_ui` is true.
+COPY chat-server/ /opt/chat-server/
+
+# Copy the chat UI bundle from the builder stage. STATIC_DIR in app.py
+# (/opt/chat-ui-dist) points here; missing index.html surfaces a clean
+# 500 with a hint instead of a silent black screen.
+COPY --from=chat-ui-builder /build/dist /opt/chat-ui-dist
 
 # Set permissions
 RUN chmod +x /run.sh \
