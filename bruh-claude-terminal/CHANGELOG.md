@@ -1,5 +1,68 @@
 # Changelog
 
+## 2.0.2
+
+**Revert the 2.0.x custom chat UI. Back to native Claude Code in ttyd.**
+
+The 2.0.0 chat UI experiment failed on the substance: the headless input
+format I built against (`{"type":"user","content":"..."}`) is wrong —
+claude-code's stream-json input actually requires the full Anthropic
+Message shape (`{"type":"user","message":{"role":"user","content":"..."}}`),
+which surfaced in production as `$.message.role` errors on the very first
+turn and a dead session before the user could even retry. Combined with
+the unstyled SPA on first load and the WS lifecycle complexity, the
+custom UI was a worse experience than the terminal it tried to replace.
+
+Even if the input format were fixed, the deeper problem is that the
+custom UI is a worse fit for what users actually want: the native
+Claude Code experience, the way it works on every other terminal. The
+ttyd surface (with the 1.18.10 mobile shim) was already that.
+
+### What's removed
+
+- `bruh-claude-terminal/chat-server/` (FastAPI app, claude subprocess
+  manager) — deleted in full.
+- `bruh-claude-terminal/chat-ui/` (Astro + Preact SPA) — deleted in full.
+- Dockerfile: the multi-stage `node:20-alpine` chat-ui builder, the
+  `fastapi==0.115.5 uvicorn==0.32.1` pip install, the `/opt/chat-server/`
+  + `/opt/chat-ui-dist/` mkdir/COPY steps. Image build no longer depends
+  on npm registry availability.
+- `config.yaml`: `enable_chat_ui` and `chat_ui_permission_mode` options
+  (and their schema entries) — gone.
+- `run.sh`: the `start_chat_server` function and the `enable_chat_ui`
+  branch in `main()`. `main()` now calls `start_web_terminal` directly,
+  same as 1.18.x and earlier.
+- `tests/test_chat_server.py` and `fastapi` from
+  `tests/requirements-dev.txt`.
+- `CLAUDE.md` chat-server/chat-ui references.
+
+### What's kept
+
+- All 1.18.10 ttyd + xterm.js + inject.html mobile UI work — that's the
+  surface users get back.
+- The HA MCP server, custom integration, Assist/Automation listeners,
+  auto-backup, context generation, token-stats tracker — all untouched
+  by both the 2.0.x add and this revert.
+- **The `version-bump` CI guard introduced in 2.0.1.** That infra is
+  unrelated to the chat UI and prevents the exact "fix shipped without
+  version bump" failure mode that left users stuck on the broken 2.0.0
+  for hours.
+- `.github/scripts/check-version-bump.sh` and its 10 unit tests.
+
+### Migration
+
+- Existing config doesn't need changes. `enable_chat_ui` and
+  `chat_ui_permission_mode` were defaulted off; removing them is a
+  no-op for the 2.0.1 default config.
+- Users who flipped `enable_chat_ui: true` and saved it: the option no
+  longer exists. HA will warn on schema validation; remove the key from
+  the add-on options panel.
+- Anyone who authenticated via the chat UI session at
+  `~/.claude/projects/<encoded-cwd>/<chat-ui-session-uuid>.jsonl` keeps
+  that session JSONL on disk; it's just not reachable through the new
+  ingress surface. Use the terminal's `/resume` or the session picker
+  to access it.
+
 ## 2.0.1
 
 **Chat UI asset URLs + CI version-bump guard.** Two unrelated fixes that
