@@ -55,6 +55,14 @@ declare -A MANAGED=(
     [level-name]="${LEVEL_NAME:-world}"
     [level-seed]="${LEVEL_SEED:-}"
     [level-type]="${LEVEL_TYPE:-minecraft:normal}"
+    # Experimental feature flags. Mojang gates new/experimental content —
+    # and the game rules that come with it — behind "feature packs" that the
+    # server enables at world-generation time via initial-enabled-packs
+    # (comma-separated, e.g. "vanilla,minecart_improvements,redstone_experiments").
+    # Must always include "vanilla" or the base game pack is disabled, so the
+    # default falls back to "vanilla" when the option is blank.
+    [initial-enabled-packs]="${INITIAL_ENABLED_PACKS:-vanilla}"
+    [initial-disabled-packs]="${INITIAL_DISABLED_PACKS:-}"
     [enable-command-block]="${ENABLE_COMMAND_BLOCK_VALUE}"
     [op-permission-level]="${OP_PERMISSION_LEVEL_VALUE}"
     [server-port]="25565"

@@ -5,6 +5,28 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.6.0
+
+### Added: enable experiments for the latest game rule options
+
+Mojang gates experimental content — and the newest experimental game
+rules that come with it — behind named *feature packs* the server has to
+enable when a world is first generated. The add-on now exposes this via
+two new options that map straight onto the vanilla
+`initial-enabled-packs` / `initial-disabled-packs` server properties:
+
+- **`initial_enabled_packs`** (default `vanilla`): comma-separated list of
+  feature packs to enable at world creation, e.g.
+  `vanilla,minecart_improvements,redstone_experiments`. Always keep
+  `vanilla` in the list or the base game pack is disabled.
+- **`initial_disabled_packs`** (default empty): packs to force-disable.
+
+Both keys are also editable from the panel's **Server Properties** tab.
+
+> Experiments are baked into a world at **creation** time, so enabling one
+> only affects newly generated worlds. To use an experiment on an existing
+> save, create a fresh world from the **Worlds** tab with the pack enabled.
+
 ## 1.5.8
 
 ### Fixed: 1.5.7's nav fix was invisible to users with cached CSS

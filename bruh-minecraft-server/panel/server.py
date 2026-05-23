@@ -203,6 +203,8 @@ EDITABLE_PROPS = {
     "level-seed",
     "level-type",
     "level-name",
+    "initial-enabled-packs",
+    "initial-disabled-packs",
 }
 
 VALID_PLAYER_NAME = re.compile(r"^[A-Za-z0-9_]{1,16}$")

@@ -134,6 +134,29 @@ class TestSetupServerProperties(unittest.TestCase):
             self.assertEqual(props["enable-command-block"], "false")
             self.assertEqual(props["op-permission-level"], "4")
 
+    def test_initial_enabled_packs_defaults_to_vanilla(self):
+        # With no override the base game pack must still be enabled — an empty
+        # initial-enabled-packs disables vanilla and the server won't generate.
+        with tempfile.TemporaryDirectory() as tmp:
+            _run(tmp)
+            props = _parse(os.path.join(tmp, "server.properties"))
+            self.assertEqual(props["initial-enabled-packs"], "vanilla")
+            self.assertEqual(props["initial-disabled-packs"], "")
+
+    def test_initial_enabled_packs_enables_experiments(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _run(
+                tmp,
+                INITIAL_ENABLED_PACKS="vanilla,minecart_improvements,redstone_experiments",
+                INITIAL_DISABLED_PACKS="trade_rebalance",
+            )
+            props = _parse(os.path.join(tmp, "server.properties"))
+            self.assertEqual(
+                props["initial-enabled-packs"],
+                "vanilla,minecart_improvements,redstone_experiments",
+            )
+            self.assertEqual(props["initial-disabled-packs"], "trade_rebalance")
+
     def test_connection_throttle_passthrough(self):
         with tempfile.TemporaryDirectory() as tmp:
             _run(tmp, CONNECTION_THROTTLE_MS="0")

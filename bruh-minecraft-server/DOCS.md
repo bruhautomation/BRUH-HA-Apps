@@ -163,6 +163,8 @@ Forge uses an installer and may need a few extra minutes on the first boot while
 | `level_name` | string | `world` |
 | `level_seed` | string | `""` (random) |
 | `level_type` | string | `minecraft:normal` |
+| `initial_enabled_packs` | string | `vanilla` | Comma-separated experimental feature packs to enable at world creation (e.g. `vanilla,minecart_improvements,redstone_experiments`). This is how you turn on **experiments** and the newest experimental **game rules**. Always keep `vanilla` in the list. See note below. |
+| `initial_disabled_packs` | string | `""` | Comma-separated feature packs to force-disable at world creation. Usually left blank. |
 | `allow_nether` | bool | `true` |
 | `generate_structures` | bool | `true` |
 | `spawn_monsters` / `spawn_animals` / `spawn_npcs` | bool | `true` |
@@ -180,6 +182,8 @@ Forge uses an installer and may need a few extra minutes on the first boot while
 | `initial_ops` | list of player names | `[]` | Auto-OP these names at boot via RCON (handles UUID lookup in both online and offline mode). |
 
 > **Heads-up:** changing `level_name` or `level_seed` only takes effect when a fresh world is being generated. To reset a world, move the world directory aside under `/config/minecraft/` and restart.
+
+> **Enabling experiments:** Mojang gates experimental content — and the newest experimental game rules that ship with it — behind named *feature packs*. Add them to `initial_enabled_packs` (comma-separated, keep `vanilla`). The exact pack names change with each Minecraft version; recent examples are `minecart_improvements`, `redstone_experiments`, and `trade_rebalance` on 1.21.x. Because experiments are baked into a world at **creation** time, turning one on only affects **newly generated** worlds — existing worlds keep whatever packs they were created with. To use an experiment on an existing save, create a fresh world from the **Worlds** tab with the pack enabled.
 
 #### "Please log into Xbox to join this server" / "You are not permitted to join…"
 
