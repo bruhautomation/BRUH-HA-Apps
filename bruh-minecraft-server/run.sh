@@ -97,6 +97,8 @@ load_config() {
     LEVEL_NAME=$(bashio::config 'level_name' 'world')
     LEVEL_SEED=$(bashio::config 'level_seed' '')
     LEVEL_TYPE=$(bashio::config 'level_type' 'minecraft:normal')
+    INITIAL_ENABLED_PACKS=$(bashio::config 'initial_enabled_packs' 'vanilla')
+    INITIAL_DISABLED_PACKS=$(bashio::config 'initial_disabled_packs' '')
     ALLOW_NETHER=$(bashio::config 'allow_nether' 'true')
     GENERATE_STRUCTURES=$(bashio::config 'generate_structures' 'true')
     SPAWN_MONSTERS=$(bashio::config 'spawn_monsters' 'true')
@@ -187,7 +189,8 @@ load_config() {
            MAX_PLAYERS VIEW_DISTANCE SIM_DISTANCE ONLINE_MODE \
            ENFORCE_SECURE_PROFILE PVP HARDCORE \
            ALLOW_FLIGHT WHITE_LIST SPAWN_PROTECTION LEVEL_NAME LEVEL_SEED \
-           LEVEL_TYPE ALLOW_NETHER GENERATE_STRUCTURES SPAWN_MONSTERS \
+           LEVEL_TYPE INITIAL_ENABLED_PACKS INITIAL_DISABLED_PACKS \
+           ALLOW_NETHER GENERATE_STRUCTURES SPAWN_MONSTERS \
            SPAWN_ANIMALS SPAWN_NPCS PREVENT_PROXY_CONNECTIONS \
            HIDE_ONLINE_PLAYERS RESOURCE_PACK RESOURCE_PACK_SHA1 \
            REQUIRE_RESOURCE_PACK MAX_WORLD_SIZE \

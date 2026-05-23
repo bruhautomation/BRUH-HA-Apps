@@ -1,7 +1,7 @@
 ---
 name: "BRUH Minecraft Server"
 description: "Rock-solid Minecraft Java Edition server with ingress panel, RCON, git world backups, auto-updates, plugin management, and deep Home Assistant integration"
-version: "1.5.8"
+version: "1.6.0"
 slug: "bruh_minecraft_server"
 init: false
 
@@ -100,6 +100,22 @@ options:
   level_name: world
   level_seed: ""
   level_type: minecraft:normal
+  # Experimental feature packs (server.properties initial-enabled-packs).
+  # Mojang gates experimental content — and the newest game rules that ship
+  # with it — behind named feature packs that the server must enable when a
+  # world is first generated. Comma-separated; ALWAYS keep "vanilla" or the
+  # base game is disabled. Examples by version:
+  #   1.21.x: vanilla,minecart_improvements,redstone_experiments,trade_rebalance
+  #   1.20.x: vanilla,update_1_21,bundle
+  # NOTE: experiments are baked into a world at CREATION time. Turning one on
+  # here only affects newly generated worlds — existing worlds keep whatever
+  # packs they were created with. To enable an experiment on an existing world,
+  # create a fresh world (Worlds tab) with the pack enabled, or import a world
+  # that already has it.
+  initial_enabled_packs: vanilla
+  # Feature packs to force-disable at world generation. Comma-separated;
+  # usually left blank.
+  initial_disabled_packs: ""
   # World-generation / gameplay toggles (server.properties passthroughs)
   allow_nether: true
   generate_structures: true
@@ -253,6 +269,8 @@ schema:
   level_name: str
   level_seed: "str?"
   level_type: "str?"
+  initial_enabled_packs: "str?"
+  initial_disabled_packs: "str?"
   allow_nether: bool
   generate_structures: bool
   spawn_monsters: bool
