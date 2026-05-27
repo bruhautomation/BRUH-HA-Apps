@@ -192,9 +192,10 @@ options:
   # size. Set false only if you supply your own GC tuning via extra_jvm_args.
   use_aikar_flags: true
   # network_compression_threshold: packets larger than this many bytes are
-  # compressed before sending. 256 is the vanilla default. -1 disables
-  # compression (good for an all-LAN server where CPU matters more than
-  # bandwidth). Range -1–65536.
+  # compressed before sending. 256 is this add-on's default (Paper's
+  # recommended value); vanilla's own default is 64. -1 disables compression
+  # (good for an all-LAN server where CPU matters more than bandwidth).
+  # Range -1–65536.
   network_compression_threshold: 256
   # entity_broadcast_range_percentage: how far away entities (mobs, items) are
   # sent to clients, as a % of the default range. 100 = vanilla. Lower it

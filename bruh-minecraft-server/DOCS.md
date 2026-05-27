@@ -26,7 +26,7 @@ A bird's-eye view so you can skim to the sections that matter to you:
 - **Self-healing.** Ghost-session auto-kicker clears stuck Bedrock handshakes; RCON client is thread-safe (fixes the `signal only works in main thread` panel crash); bad plugin URLs log a warning instead of tanking startup.
 - **Zero-dependency architecture.** Everything runs inside the one add-on container — no separate proxy jars, no VPS, no external broker.
 
-Version 1.2.6 at time of writing; see CHANGELOG.md for the full evolution.
+See CHANGELOG.md for the full version history.
 
 ---
 

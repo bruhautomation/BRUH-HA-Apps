@@ -187,7 +187,10 @@ PROP_OPTION_MAP: dict[str, tuple[str, str]] = {
     "pvp": ("pvp", "bool"),
     "allow-flight": ("allow_flight", "bool"),
     "white-list": ("white_list", "bool"),
-    "enforce-whitelist": ("white_list", "bool"),
+    # NOTE: enforce-whitelist is intentionally NOT editable here. It has no
+    # dedicated add-on option — setup-server-properties.sh always derives it
+    # from white_list — so exposing it would let the user think they could set
+    # it independently when they can't. It shows up read-only in the panel.
     "spawn-protection": ("spawn_protection", "int"),
     "enable-command-block": ("enable_command_block", "bool"),
     "online-mode": ("online_mode", "bool"),
@@ -220,15 +223,70 @@ EDITABLE_PROPS = set(PROP_OPTION_MAP)
 
 
 def _coerce_option(value: str, type_: str):
-    """Coerce a panel string value to the type the add-on schema expects."""
+    """Coerce a panel string value to the type the add-on schema expects.
+
+    Only ever called on values that already passed `_validate_prop_value`,
+    so the int parse and bool mapping below can't see junk."""
     if type_ == "bool":
-        return str(value).strip().lower() in ("true", "1", "yes", "on")
+        return str(value).strip().lower() == "true"
+    if type_ == "int":
+        return int(str(value).strip())
+    return str(value)
+
+
+# Allowed values for the list-type editable properties (mirrors config.yaml's
+# schema). Validating against these BEFORE we touch RCON or persist anything
+# (a) gives the user a clear error instead of a silently-reverted edit, and
+# (b) stops a value with spaces (e.g. "creative SomeProbe") from smuggling
+# extra arguments into the `gamemode <v> @a` RCON command.
+_PROP_ENUMS = {
+    "difficulty": {"peaceful", "easy", "normal", "hard"},
+    "gamemode": {"survival", "creative", "adventure", "spectator"},
+    "level-type": {
+        "minecraft:normal", "minecraft:flat", "minecraft:large_biomes",
+        "minecraft:amplified", "minecraft:single_biome_surface",
+        # Allow legacy short forms too.
+        "default", "flat", "largebiomes", "amplified",
+    },
+}
+# Int ranges for editable int properties (mirrors config.yaml schema bounds).
+_PROP_INT_RANGE = {
+    "max-players": (1, 1000),
+    "view-distance": (3, 32),
+    "simulation-distance": (3, 32),
+    "spawn-protection": (0, 10000),
+    "max-world-size": (1, 29999984),
+    "network-compression-threshold": (-1, 65536),
+    "entity-broadcast-range-percentage": (10, 1000),
+    "op-permission-level": (1, 4),
+}
+
+
+def _validate_prop_value(key: str, value: str, type_: str) -> str | None:
+    """Return None if `value` is acceptable for `key`, else an error string.
+
+    Rejects anything that would corrupt server.properties (newlines), violate
+    the option schema (out-of-range ints, bad enums, non-bool bools), and
+    thereby also closes RCON argument-smuggling on the live-applied keys."""
+    if "\n" in value or "\r" in value:
+        return "value may not contain line breaks"
+    if type_ == "bool":
+        if value.strip().lower() not in ("true", "false"):
+            return f"{key} must be true or false"
+        return None
     if type_ == "int":
         try:
-            return int(str(value).strip())
+            n = int(value.strip())
         except ValueError:
-            return 0
-    return str(value)
+            return f"{key} must be a whole number"
+        lo, hi = _PROP_INT_RANGE.get(key, (None, None))
+        if lo is not None and (n < lo or n > hi):
+            return f"{key} must be between {lo} and {hi}"
+        return None
+    allowed = _PROP_ENUMS.get(key)
+    if allowed is not None and value not in allowed:
+        return f"{key} must be one of: {', '.join(sorted(allowed))}"
+    return None
 
 VALID_PLAYER_NAME = re.compile(r"^[A-Za-z0-9_]{1,16}$")
 
@@ -312,6 +370,15 @@ async def api_properties_post(request: web.Request) -> web.Response:
     if key not in EDITABLE_PROPS:
         return web.json_response({"error": f"key '{key}' not editable"}, status=400)
 
+    # Validate BEFORE we write anything: rejects newline-injection into
+    # server.properties, out-of-range ints / bad enums (which the Supervisor
+    # would otherwise reject, silently reverting the edit), and value-with-
+    # spaces RCON argument smuggling on the live-applied keys.
+    option_key, option_type = PROP_OPTION_MAP[key]
+    err = _validate_prop_value(key, value, option_type)
+    if err:
+        return web.json_response({"error": err}, status=400)
+
     # Write server.properties immediately so the running file + the panel's
     # own GET reflect the change right away. On the next restart run.sh
     # re-renders this file from the add-on options — which is exactly why we
@@ -329,7 +396,6 @@ async def api_properties_post(request: web.Request) -> web.Response:
     tmp.replace(MC_SERVER_DIR / "server.properties")
 
     # Persist to the add-on options so the change survives restarts.
-    option_key, option_type = PROP_OPTION_MAP[key]
     persist_warning = await _persist_option(option_key, _coerce_option(value, option_type))
 
     # Live-apply a handful of keys via RCON where possible
@@ -343,7 +409,7 @@ async def api_properties_post(request: web.Request) -> web.Response:
             # joined, which is the whole reason creative "didn't stick".
             await _rcon_command(f"defaultgamemode {value}")
             live_reply = await _rcon_command(f"gamemode {value} @a")
-        elif key in ("white-list", "enforce-whitelist"):
+        elif key == "white-list":
             live_reply = await _rcon_command(f"whitelist {'on' if value == 'true' else 'off'}")
     except Exception as exc:  # noqa: BLE001
         live_reply = f"live-apply failed: {exc}"
@@ -594,6 +660,10 @@ async def api_plugin_install(request: web.Request) -> web.Response:
     name = str(body.get("name", "")).strip()
     if not url.startswith(("https://", "http://")):
         return web.json_response({"error": "url must be http(s)"}, status=400)
+    # Guard the optional on-disk filename against path traversal — it's passed
+    # straight to install-plugin.sh which writes into plugins/.
+    if name and ("/" in name or "\\" in name or ".." in name):
+        return web.json_response({"error": "invalid name"}, status=400)
     args = [str(SCRIPTS_DIR / "install-plugin.sh"), url]
     if name:
         args.append(name)

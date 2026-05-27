@@ -82,7 +82,7 @@ declare -A MANAGED=(
     [query.port]="25565"
     [enable-rcon]="true"
     [rcon.port]="25575"
-    [rcon.password]="${RCON_PASSWORD}"
+    [rcon.password]="${RCON_PASSWORD:-}"
     [broadcast-rcon-to-ops]="true"
     [enable-query]="true"
     [enable-status]="true"
@@ -145,7 +145,11 @@ fi
     printf '# Hand-edited keys not managed by the UI are preserved on restart.\n'
     printf '# Last rendered: %s\n' "$(date -Iseconds)"
     for k in $(printf '%s\n' "${!CURRENT[@]}" | sort); do
-        printf '%s=%s\n' "${k}" "${CURRENT[$k]}"
+        # Strip any CR/LF from values defensively so a stray newline (e.g. a
+        # multi-line motd set in the HA config) can't inject extra
+        # server.properties lines. The panel already rejects newlines on its
+        # side; this covers the direct-config path too.
+        printf '%s=%s\n' "${k}" "${CURRENT[$k]//[$'\r\n']/}"
     done
 } > "${PROPS}.tmp"
 

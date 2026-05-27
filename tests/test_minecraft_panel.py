@@ -193,6 +193,48 @@ class TestPropertiesEditing(PanelTestBase):
         self.assertEqual(resp.status, 200)
         self.assertIn(("pvp", False), persisted)
 
+    async def test_rejects_newline_injection(self):
+        # A newline in the value must be rejected — otherwise it injects an
+        # extra server.properties line (and persists via the str option).
+        resp = await self.client.request("POST", "/api/properties", json={
+            "key": "motd", "value": "hi\nrcon.password=pwned",
+        })
+        self.assertEqual(resp.status, 400)
+        # server.properties must be untouched (no injected key).
+        content = (self.server_dir / "server.properties").read_text()
+        self.assertNotIn("pwned", content)
+
+    async def test_rejects_out_of_range_int(self):
+        resp = await self.client.request("POST", "/api/properties", json={
+            "key": "view-distance", "value": "2",  # schema min is 3
+        })
+        self.assertEqual(resp.status, 400)
+        data = await resp.json()
+        self.assertIn("between 3 and 32", data["error"])
+
+    async def test_rejects_non_numeric_int(self):
+        resp = await self.client.request("POST", "/api/properties", json={
+            "key": "max-players", "value": "lots",
+        })
+        self.assertEqual(resp.status, 400)
+
+    async def test_rejects_unknown_enum(self):
+        resp = await self.client.request("POST", "/api/properties", json={
+            "key": "gamemode", "value": "creative; op @a",
+        })
+        self.assertEqual(resp.status, 400)
+
+    async def test_rejects_non_bool(self):
+        resp = await self.client.request("POST", "/api/properties", json={
+            "key": "pvp", "value": "maybe",
+        })
+        self.assertEqual(resp.status, 400)
+
+    async def test_enforce_whitelist_not_editable(self):
+        resp = await self.client.request("GET", "/api/properties")
+        data = await resp.json()
+        self.assertNotIn("enforce-whitelist", data["editable"])
+
     async def test_persist_failure_surfaces_warning(self):
         async def fake_persist(option_key, value):
             return "Supervisor HTTP 403"

@@ -707,13 +707,15 @@ announce_ha_discovery() {
 graceful_shutdown() {
     bashio::log.warning "Shutdown signal received; saving and stopping the server"
 
-    # The JVM wrapper records its PID in launcher.pid (see
-    # server-launcher.sh). Earlier releases looked for server.pid here, which
-    # the launcher never writes — so this whole block was dead and the world
-    # was never RCON-saved on a Supervisor stop, risking an unclean shutdown.
+    # server-launcher.sh records its PID in launcher.pid (the launcher wrapper
+    # script; the JVM is its child, stopped here over RCON). Earlier releases
+    # looked for server.pid, which the launcher never writes — so this whole
+    # block was dead and the world was never RCON-saved on a Supervisor stop,
+    # risking an unclean shutdown. We deliberately do NOT touch the no_restart
+    # flag: this trap ends in `exit 0`, which tears down run_server_loop with
+    # us, so relaunch can't happen — and a lingering no_restart file would
+    # wrongly suppress the next legitimate restart after the container starts.
     if [ -f "${MC_PANEL_STATE}/launcher.pid" ]; then
-        # Don't let run_server_loop relaunch the JVM after we stop it.
-        touch "${MC_PANEL_STATE}/no_restart"
         local pid
         pid=$(cat "${MC_PANEL_STATE}/launcher.pid")
         if kill -0 "${pid}" 2>/dev/null; then
