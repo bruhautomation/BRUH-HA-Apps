@@ -311,21 +311,6 @@
     });
   }
 
-  // Build / survival mode presets (the practical stand-in for "editor mode",
-  // which Minecraft Java Edition does not have).
-  async function applyPreset(name, label) {
-    if (!confirm(`Apply ${label}? This changes the add-on configuration and applies live to everyone online.`)) return;
-    const resp = await api(`api/preset/${encodeURIComponent(name)}`, { method: 'POST' });
-    if (resp.error) { alert(resp.error); return; }
-    if (resp.persisted) alert(`${label} applied and saved.`);
-    else alert(`${label} applied live, but could not save permanently:\n${resp.warning || 'unknown'}`);
-    if ($('#tab-properties').classList.contains('active')) loadProperties();
-  }
-  const buildBtn = $('#btn-build-mode');
-  if (buildBtn) buildBtn.addEventListener('click', () => applyPreset('build', 'Build mode (creative + flight)'));
-  const survivalBtn = $('#btn-survival-mode');
-  if (survivalBtn) survivalBtn.addEventListener('click', () => applyPreset('survival', 'Survival mode'));
-
   // ------------------------------------------------------------------
   // Plugins tab
   // ------------------------------------------------------------------

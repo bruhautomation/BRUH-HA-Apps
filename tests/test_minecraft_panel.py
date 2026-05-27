@@ -224,31 +224,6 @@ class TestPropertiesEditing(PanelTestBase):
         # Must move existing online players, not just set the default.
         self.assertIn("gamemode creative @a", rcon_calls)
 
-    async def test_build_preset_persists_and_applies(self):
-        persisted = []
-        rcon_calls = []
-
-        async def fake_persist(option_key, value):
-            persisted.append((option_key, value))
-            return None
-
-        async def fake_rcon(cmd):
-            rcon_calls.append(cmd)
-            return "ok"
-
-        self.panel._persist_option = fake_persist
-        self.panel._rcon_command = fake_rcon
-        resp = await self.client.request("POST", "/api/preset/build")
-        self.assertEqual(resp.status, 200)
-        data = await resp.json()
-        self.assertTrue(data["persisted"])
-        self.assertIn(("gamemode", "creative"), persisted)
-        self.assertIn(("allow_flight", True), persisted)
-        self.assertIn("gamemode creative @a", rcon_calls)
-
-    async def test_unknown_preset_rejected(self):
-        resp = await self.client.request("POST", "/api/preset/bogus")
-        self.assertEqual(resp.status, 400)
 
 
 class TestPluginManagement(PanelTestBase):

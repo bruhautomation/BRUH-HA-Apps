@@ -50,9 +50,32 @@ ports_description:
   19132/udp: "Minecraft Bedrock / Geyser (optional)"
   24454/udp: "Simple Voice Chat (optional)"
 
+# ============================================================================
 # App configuration options
+# ----------------------------------------------------------------------------
+# Every option below is documented inline: what it does, the valid range, and
+# WHY the default is what it is. Options are grouped into labelled sections.
+# The matching validation rules live in the `schema:` block further down.
+#
+# Source of truth: these options are the canonical config. On every boot the
+# add-on renders server.properties from them, so a value you set here always
+# wins over a hand-edit to server.properties. The ingress panel's "Server
+# Properties" tab writes edits back here (via the Supervisor API) so panel
+# changes persist too.
+# ============================================================================
 options:
+  # ──────────────────────────────────────────────────────────────────────
+  # Licensing — required before the server will start
+  # ──────────────────────────────────────────────────────────────────────
+  # You must accept Mojang's EULA (https://www.minecraft.net/eula) to run a
+  # server. Left false by default because silently accepting a legal
+  # agreement on the user's behalf isn't ours to do — the add-on refuses to
+  # start until you flip this to true.
   eula: false
+
+  # ──────────────────────────────────────────────────────────────────────
+  # World profile selection
+  # ──────────────────────────────────────────────────────────────────────
   # active_world: which saved server profile is currently live. Each profile
   # lives at /config/minecraft-worlds/<name>/ with its own world folder,
   # server.properties, plugins/ contents, ops/whitelist/bans, and backup
@@ -61,21 +84,60 @@ options:
   #
   # IMPORTANT: every other setting in this file is SHARED across all
   # profiles (difficulty, gamemode, memory_mb, motd, level_name, the
-  # plugins: URL list, etc.). So if you want per-world difficulty, you'll
-  # need to hand-edit that profile's server.properties via the panel's
-  # Server Properties tab; add-on options override it every boot.
+  # plugins: URL list, etc.) — they live here, not inside a profile, so
+  # they apply to whichever world is active. Per-world *managed* settings
+  # aren't supported; switch the shared option when you switch worlds.
   #
   # Two ways to change this value:
   #   1. Panel → Worlds tab → "Switch". Writes this option for you via
-  #      the Supervisor API, then you click Restart to actually boot in.
+  #      the Supervisor API and restarts the add-on so the switch takes
+  #      effect (the /config/minecraft symlink is repointed on boot).
   #   2. Edit this value here and click Restart.
   # The legacy /config/minecraft/ directory migrates to "default" on first
   # boot of 1.3.0, so existing installs keep their world unchanged.
   active_world: default
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Server software & version
+  # ──────────────────────────────────────────────────────────────────────
+  # server_type: which server software to download and run.
+  #   paper   — Spigot/Bukkit-compatible, high-performance, supports plugins.
+  #             The default: best all-round choice for a home server.
+  #   purpur  — Paper fork with extra gameplay-tweaking config; plugin-compatible.
+  #   folia   — Paper's regionised-threading fork for very large player counts;
+  #             niche — most plugins aren't Folia-compatible yet.
+  #   vanilla — Mojang's official server. No plugins. Use if you want a pure
+  #             unmodified experience.
+  #   fabric  — Lightweight mod loader (server-side mods go in mods/).
+  #   forge   — The classic mod loader (heavier; many large modpacks target it).
+  # Paper is the default because it runs faster than vanilla, accepts the huge
+  # Bukkit plugin ecosystem, and is what this add-on's plugin features target.
   server_type: paper
+  # minecraft_version: which game version to run.
+  #   LATEST   — newest STABLE release of the chosen server_type (recommended).
+  #   SNAPSHOT — newest build including pre-releases (bleeding edge; may break).
+  #   x.y.z    — pin an exact version, e.g. "1.21.4". Useful when a plugin or
+  #              modpack only supports a specific version.
+  # Defaults to LATEST so a fresh install is current and auto_update_server
+  # keeps it that way.
   minecraft_version: LATEST
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Core gameplay
+  # ──────────────────────────────────────────────────────────────────────
+  # motd: the "message of the day" shown under the server name in the
+  # multiplayer list. Cosmetic only.
   motd: "A BRUH Minecraft Server"
+  # difficulty: peaceful (no hostile mobs, no hunger) | easy | normal | hard.
+  # normal is vanilla's default and the balanced choice for most players.
   difficulty: normal
+  # gamemode: the gameplay mode players join in.
+  #   survival   — gather/craft/take damage (the default Minecraft experience).
+  #   creative   — unlimited blocks, flight, invulnerable (building sandbox).
+  #   adventure  — survival without being able to break/place most blocks
+  #                (for adventure maps).
+  #   spectator  — fly through blocks, can't interact (observe only).
+  # survival is the default because it's what most people mean by "Minecraft".
   gamemode: survival
   # force_gamemode: when true, every player is put back into the configured
   # `gamemode` each time they join. Minecraft otherwise saves each player's
@@ -84,15 +146,75 @@ options:
   # anyone who had already joined (the classic "it's always survival until I
   # run /gamemode" bug). Default true so the panel/Configuration gamemode is
   # authoritative. Set false if you want players to keep whatever mode they
-  # last switched themselves to.
+  # last switched themselves to. (Note: hardcore=true always overrides this
+  # to survival — that's a Minecraft rule, not the add-on.)
   force_gamemode: true
+  # pvp: allow players to damage each other. Default true (vanilla default).
+  # Turn off for a purely cooperative/family server.
+  pvp: true
+  # hardcore: locks difficulty to hard and, on death, bans the player /
+  # switches them to spectator — the world is "one life". Default false
+  # because it's an intense, opt-in mode. WARNING: when true, every player is
+  # forced into survival regardless of the `gamemode` option above.
+  hardcore: false
+  # allow_flight: permit survival-mode flight (e.g. from plugins/elytra
+  # exploits) without the server kicking players for "flying is not enabled".
+  # Default false: vanilla anti-cheat catches unexpected flight. Set true if
+  # you run a flight plugin or want creative-style flying in survival.
+  allow_flight: false
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Capacity & performance
+  # ──────────────────────────────────────────────────────────────────────
+  # max_players: hard cap on simultaneous players. Default 20 (vanilla
+  # default). Raise for a community server; each player adds RAM/CPU load.
   max_players: 20
+  # view_distance: how many chunks (16-block squares) the server sends around
+  # each player. 10 is the vanilla default — a good balance. Higher = farther
+  # sightlines but much more RAM/CPU and bandwidth. Lower to relieve a
+  # struggling server. Range 3–32.
   view_distance: 10
+  # simulation_distance: how many chunks around a player the server actively
+  # ticks (mobs, crops, redstone). 10 is vanilla default. This is usually the
+  # bigger performance lever than view_distance — drop it (e.g. to 6) first if
+  # TPS is low. Range 3–32.
   simulation_distance: 10
-  # online_mode=false lets clients connect without a Microsoft/Mojang account
-  # (cracked/offline mode). Safe for LAN-only servers and for kids who don't
-  # have Xbox Live sign-in. Required alongside enforce_secure_profile=false
-  # to avoid the "Please log into Xbox" / signed-profile messages.
+  # memory_mb: heap size (both -Xms and -Xmx) handed to the JVM. 2048 (2 GB)
+  # comfortably runs a small survival world. Rule of thumb: 1–2 GB for a few
+  # friends, 4–6 GB for a busy server with plugins, more for big modpacks.
+  # Don't set this near your host's total RAM — leave headroom for the OS and
+  # Home Assistant. Range 512–65536.
+  memory_mb: 2048
+  # use_aikar_flags: launch the JVM with "Aikar's flags" — a well-known set of
+  # G1GC tuning options that reduce lag spikes from garbage collection on
+  # Minecraft servers (https://docs.papermc.io/paper/aikars-flags). Default
+  # true: they're the community best-practice and help on almost any heap
+  # size. Set false only if you supply your own GC tuning via extra_jvm_args.
+  use_aikar_flags: true
+  # network_compression_threshold: packets larger than this many bytes are
+  # compressed before sending. 256 is the vanilla default. -1 disables
+  # compression (good for an all-LAN server where CPU matters more than
+  # bandwidth). Range -1–65536.
+  network_compression_threshold: 256
+  # entity_broadcast_range_percentage: how far away entities (mobs, items) are
+  # sent to clients, as a % of the default range. 100 = vanilla. Lower it
+  # (e.g. 50) to cut network/CPU load on a crowded server at the cost of mobs
+  # popping in closer. Range 10–1000.
+  entity_broadcast_range_percentage: 100
+  # max_world_size: world border radius in blocks. 29999984 is the vanilla
+  # maximum (the actual world edge). Lower it to deliberately constrain a
+  # world's size on disk. Range 1–29999984.
+  max_world_size: 29999984
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Authentication & access control
+  # ──────────────────────────────────────────────────────────────────────
+  # online_mode: verify every login against Microsoft/Mojang's auth servers.
+  # Default true — this is what prevents name-spoofing and is correct for any
+  # internet-facing server. Set false for "cracked"/offline mode so clients
+  # can connect without an Xbox/Microsoft account (e.g. kids without sign-in,
+  # strictly LAN-only sessions). Offline mode is INSECURE on a public server:
+  # anyone can join as any username.
   online_mode: true
   # enforce_secure_profile: since Minecraft 1.19+, the server can require
   # every client to present a Mojang-signed chat profile. When online_mode
@@ -101,13 +223,43 @@ options:
   # to false so offline accounts work out-of-the-box; also auto-forced to
   # false whenever online_mode=false regardless of this setting.
   enforce_secure_profile: false
-  pvp: true
-  hardcore: false
-  allow_flight: false
+  # white_list: when true, only players on the whitelist may join (manage
+  # names from the panel's Players tab). Default false — open to anyone who
+  # knows the address. Turn on for a private server. (The add-on writes both
+  # white-list and enforce-whitelist together so the toggle "just works".)
   white_list: false
+  # spawn_protection: radius (in blocks) around world spawn that only OPs can
+  # build in. 16 is the vanilla default. Set 0 to let anyone build at spawn
+  # (common on small friendly servers). Range 0–10000.
   spawn_protection: 16
+  # prevent_proxy_connections: kick clients whose ISP-reported location
+  # doesn't match their Mojang auth location (a weak anti-VPN measure).
+  # Default false — it produces false positives for legitimate VPN/CGNAT
+  # users. Only meaningful with online_mode=true.
+  prevent_proxy_connections: false
+  # hide_online_players: omit the player sample list from the server status
+  # ping so the multiplayer list doesn't reveal who's online. Default false.
+  # Purely a privacy/cosmetic choice.
+  hide_online_players: false
+
+  # ──────────────────────────────────────────────────────────────────────
+  # World generation (applies when a world is first created)
+  # ──────────────────────────────────────────────────────────────────────
+  # level_name: the folder name of the world save under the active profile.
+  # Default "world". Changing it on an existing install generates/loads a
+  # DIFFERENT world — your original save still exists under its old name.
   level_name: world
+  # level_seed: fixed seed for terrain generation. Blank = random seed.
+  # Only affects a world the first time it's generated; an existing world
+  # ignores changes here. (The panel's "Create world" form stages a per-world
+  # seed that is honoured when this global option is left blank.)
   level_seed: ""
+  # level_type: the world generator preset.
+  #   minecraft:normal     — standard terrain (default).
+  #   minecraft:flat       — superflat (great for creative/redstone testing).
+  #   minecraft:large_biomes — same biomes, scaled up.
+  #   minecraft:amplified  — extreme mountainous terrain (CPU-heavy).
+  # Only applies at world creation.
   level_type: minecraft:normal
   # Experimental feature packs (server.properties initial-enabled-packs).
   # Mojang gates experimental content — and the newest game rules that ship
@@ -125,48 +277,126 @@ options:
   # Feature packs to force-disable at world generation. Comma-separated;
   # usually left blank.
   initial_disabled_packs: ""
-  # World-generation / gameplay toggles (server.properties passthroughs)
+  # allow_nether: enable the Nether dimension and portals. Default true
+  # (vanilla). Set false to confine players to the Overworld.
   allow_nether: true
+  # generate_structures: generate villages, strongholds, temples, etc.
+  # Default true. False yields terrain with no generated buildings.
   generate_structures: true
+  # spawn_monsters: allow hostile mobs (zombies, creepers…) to spawn.
+  # Default true. (Note: difficulty=peaceful already removes hostile mobs.)
   spawn_monsters: true
+  # spawn_animals: allow passive animals (cows, sheep…) to spawn. Default true.
   spawn_animals: true
+  # spawn_npcs: allow villagers to spawn. Default true.
   spawn_npcs: true
-  prevent_proxy_connections: false
-  hide_online_players: false
-  resource_pack: ""
-  resource_pack_sha1: ""
-  require_resource_pack: false
-  max_world_size: 29999984
-  network_compression_threshold: 256
-  entity_broadcast_range_percentage: 100
-  memory_mb: 2048
-  use_aikar_flags: true
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Cheats & operators
+  # ──────────────────────────────────────────────────────────────────────
+  # enable_command_block: allow command blocks to run commands. Default false
+  # (vanilla). Needed for many adventure maps and redstone contraptions.
+  # allow_cheats below force-enables this when on.
   enable_command_block: false
+  # op_permission_level: power level granted to OPs (1–4). 4 = full access
+  # (all commands incl. /stop, /op). Default 4 so an OP can do everything,
+  # which is what a home-server host usually wants. Lower it on a public
+  # server where you OP trusted-but-not-fully-trusted moderators.
   op_permission_level: 4
   # allow_cheats: convenience toggle that guarantees the "cheat" commands
   # (/gamemode, /give, /tp, /summon, /fill, …) are usable for OP'd players.
   # When true, forces enable-command-block=true and ensures
   # op-permission-level is at least 2 regardless of the raw option above.
-  # Players still need to be OP'd to actually use the commands; use the
-  # initial_ops list (or the panel → Players tab) to OP someone.
+  # Default false. Players still need to be OP'd to actually use the commands;
+  # use the initial_ops list (or the panel → Players tab) to OP someone.
   allow_cheats: false
   # initial_ops: auto-OP these player names once the server starts. Handy
   # for a host who wants cheats on themselves (and their kids) without
   # having to run `op <name>` manually after every fresh install. Entries
   # are applied via RCON, so UUID lookup works in online and offline mode.
+  # Empty by default. Example: ["Steve", "Alex"].
   initial_ops: []
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Resource pack (optional server-suggested texture/asset pack)
+  # ──────────────────────────────────────────────────────────────────────
+  # resource_pack: a direct download URL for a server resource pack offered
+  # to clients on join. Blank = none.
+  resource_pack: ""
+  # resource_pack_sha1: the pack's SHA-1 hash. Strongly recommended when
+  # resource_pack is set — clients cache by hash, so without it they
+  # re-download the pack every join and may not pick up updates.
+  resource_pack_sha1: ""
+  # require_resource_pack: when true, players who decline the pack are kicked.
+  # Default false (the pack is merely offered). Only meaningful with
+  # resource_pack set.
+  require_resource_pack: false
+
+  # ──────────────────────────────────────────────────────────────────────
+  # RCON (remote console — how the panel and HA talk to the server)
+  # ──────────────────────────────────────────────────────────────────────
+  # rcon_password: password for the RCON admin channel the ingress panel,
+  # stats collector, and HA integration use to run commands. Leave BLANK and
+  # the add-on generates a strong random password and stores it privately —
+  # the recommended setup, since RCON only listens on localhost inside the
+  # container. Set an explicit value only if you have an external tool that
+  # must connect.
   rcon_password: ""
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Updates, backups & crash recovery
+  # ──────────────────────────────────────────────────────────────────────
+  # auto_update_server: re-resolve and download the latest server jar for the
+  # chosen type/version on every boot. Default true so you stay current. Set
+  # false to freeze on the currently-installed jar (e.g. while waiting for a
+  # plugin to catch up to a new Minecraft release).
   auto_update_server: true
+  # auto_backup: run the background backup watcher. Default true — backups are
+  # cheap insurance against a corrupted world or a bad /fill.
   auto_backup: true
+  # backup_interval_minutes: how often the watcher snapshots the world.
+  # Default 60. Lower = more frequent safety net, more disk churn. Range 5–1440.
   backup_interval_minutes: 60
+  # backup_keep_count: how many snapshots to retain before pruning the oldest.
+  # Default 48 (≈ 2 days at hourly backups). Range 1–500.
   backup_keep_count: 48
+  # backup_use_git: store backups as incremental git commits (space-efficient,
+  # full history, restore any point) rather than full tar archives. Default
+  # true. Git only stores what changed between snapshots, so it's far smaller
+  # for a slowly-changing world.
   backup_use_git: true
+  # auto_restart_on_crash: automatically relaunch the JVM if it exits
+  # unexpectedly. Default true. A crash loop is rate-limited (5 crashes in
+  # 5 minutes => give up) so a hard-broken server doesn't thrash forever.
   auto_restart_on_crash: true
+  # auto_restart_schedule: cron expression for a scheduled restart (e.g.
+  # "0 4 * * *" for 4 AM daily). Blank = no scheduled restart. A nightly
+  # restart can clear memory fragmentation on long-running servers.
   auto_restart_schedule: ""
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Home Assistant integration
+  # ──────────────────────────────────────────────────────────────────────
+  # enable_ha_integration: deploy the companion `bruh_minecraft` custom
+  # integration and run the file-IPC bridge, exposing sensors (players, TPS,
+  # version…) and services (run command, say, backup) to Home Assistant.
+  # Default true — it's the point of running this inside HA.
   enable_ha_integration: true
+  # announce_ha_events: let HA automations broadcast in-game messages (e.g.
+  # "front door opened") via the integration. Default true. Set false if you
+  # want the sensors/services but not chat announcements.
   announce_ha_events: true
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Bedrock cross-play (Geyser + Floodgate)
+  # ──────────────────────────────────────────────────────────────────────
+  # enable_bedrock_support: auto-install Geyser (protocol translation) and
+  # Floodgate (auth bridge) so Bedrock clients — iOS, Android, consoles,
+  # Win10/11 — can join this Java server. Default true. Requires a
+  # Paper/Purpur/Folia server_type (Geyser is a plugin). With host networking
+  # (configured above) Bedrock devices even auto-discover the server on LAN.
   enable_bedrock_support: true
-  # Geyser Bedrock auth-type:
+  # geyser_auth_type: how Bedrock clients authenticate.
   #   auto      — pick automatically: `offline` when online_mode=false,
   #               `floodgate` when online_mode=true (recommended default).
   #   floodgate — Bedrock client must be signed in to Xbox Live (XUID
@@ -178,35 +408,46 @@ options:
   #               joins with whatever username is set on their client.
   #               The right choice for LAN-only / family servers where
   #               the kids don't have Xbox accounts.
+  # `auto` is the default because it does the right thing based on online_mode
+  # without you having to reason about it.
   geyser_auth_type: auto
-  # Geyser Bedrock MTU. Lowering from the default 1400 to 1200 fixes the
-  # iOS "Connecting multiplayer server..." hang on flaky home Wi-Fi by
-  # sidestepping UDP fragmentation. Range 576–1492.
+  # geyser_mtu: max UDP packet size Geyser uses for Bedrock. 1400 is Geyser's
+  # default. Lowering to 1200 fixes the iOS "Connecting to multiplayer
+  # server..." hang on flaky home Wi-Fi by sidestepping UDP fragmentation.
+  # Range 576–1492.
   geyser_mtu: 1400
-  # Auto-kick ghost sessions: when Paper rejects a new login with
-  # "You are already connected to this server!" (because the previous
-  # connection hung and hasn't timed out yet), kick the stale session
-  # over RCON so the next retry succeeds. No plugin needed — a
-  # background daemon tails the server log and issues /kick.
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Connection reliability (mostly for flaky Wi-Fi / mobile clients)
+  # ──────────────────────────────────────────────────────────────────────
+  # auto_kick_ghost_sessions: when Paper rejects a new login with "You are
+  # already connected to this server!" (because the previous connection hung
+  # and hasn't timed out yet), kick the stale session over RCON so the next
+  # retry succeeds. Default true. No plugin needed — a background daemon tails
+  # the server log and issues /kick. Especially helps iOS Bedrock reconnects.
   auto_kick_ghost_sessions: true
-  # Paper connection-throttle (ms). Default 4000; 0 disables and avoids
-  # the "Slow down, you're connecting too fast!" kick on rapid iOS
-  # retries. Safe to leave on for public servers, fine to turn off on LAN.
+  # connection_throttle_ms: minimum gap between connection attempts from one
+  # IP, in milliseconds. Default 4000 (Paper default). 0 disables the throttle
+  # and avoids the "Slow down, you're connecting too fast!" kick on rapid iOS
+  # retries. Safe to leave on for a public server; fine to turn off on LAN.
+  # Range 0–60000.
   connection_throttle_ms: 4000
-  # Auto-kick a player after N minutes of being idle. 0 disables.
-  # Low values (e.g. 5) help clean up ghost sessions quickly in addition
-  # to `auto_kick_ghost_sessions`.
+  # player_idle_timeout_minutes: auto-kick a player after this many minutes of
+  # inactivity. 0 disables (default). A low value (e.g. 5) also helps clean up
+  # ghost sessions quickly. Range 0–1440.
   player_idle_timeout_minutes: 0
-  # Quarantine duplicate plugin jars on every boot (1.5.4). Plugins
-  # accumulate stale copies over time — for example, both
-  # `multiverse-core-5.6.2.jar` AND `multiverse-core-5.6.2-pre.jar`
-  # left over from the auto-installer's pre-release window. Paper logs
-  # an "Ambiguous plugin name" error every boot and one of the copies
-  # gets disabled randomly. With this on, the add-on reads each jar's
-  # `plugin.yml`, groups by plugin name, and moves all but the highest-
-  # semver release copy to `plugins/.quarantine/` (jars are NOT deleted
-  # — restore by moving them back). Off if you intentionally want
-  # multiple copies of a plugin in the folder.
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Plugin management (Paper / Purpur / Folia only)
+  # ──────────────────────────────────────────────────────────────────────
+  # auto_quarantine_duplicates: on every boot, detect duplicate plugin jars
+  # (e.g. both `multiverse-core-5.6.2.jar` AND a leftover
+  # `multiverse-core-5.6.2-pre.jar`) that make Paper log "Ambiguous plugin
+  # name" and randomly disable one copy. With this on, the add-on reads each
+  # jar's plugin.yml, groups by plugin name, and MOVES all but the
+  # highest-semver copy to plugins/.quarantine/ (jars are NOT deleted —
+  # restore by moving them back). Default true. Turn off only if you
+  # intentionally keep multiple copies of a plugin in the folder.
   auto_quarantine_duplicates: true
   # plugins: list of Bukkit plugin .jar URLs to install every boot into
   # the active world's plugins/ folder (Paper/Purpur/Folia only — Fabric
@@ -224,27 +465,27 @@ options:
   # and the server still starts. Note: deleting a jar via the panel's
   # Plugins tab is temporary — if the URL is still here, it comes back
   # on the next boot. To remove a plugin permanently, remove the entry
-  # here AND delete the jar from the panel.
+  # here AND delete the jar from the panel. Empty by default.
   plugins: []
-  # Popular plugin one-click installers (1.4.0).
-  # Each toggle below maps to a curated, well-known plugin. When set to
-  # `true`, the add-on resolves the latest Paper/Spigot/Folia-compatible
-  # build via the Modrinth API on every boot and installs it into the
-  # active world's plugins/ folder. Same caching & ZIP-validation as the
-  # plugins: URL list above. Toggling back to `false` does NOT remove the
-  # jar — delete it from the panel's Plugins tab to remove.
-  install_essentialsx: false
-  install_essentialsx_chat: false
-  install_luckperms: false
-  install_worldedit: false
-  install_worldguard: false
-  install_coreprotect: false
-  install_multiverse_core: false
-  install_griefprevention: false
-  install_mcmmo: false
-  install_chestsort: false
-  install_veinminer: false
-  install_spark: false
+  # Popular-plugin one-click installers. Each toggle below maps to a curated,
+  # well-known plugin. When set to true, the add-on resolves the latest
+  # Paper/Spigot/Folia-compatible build via the Modrinth API on every boot and
+  # installs it into the active world's plugins/ folder (same caching &
+  # ZIP-validation as the plugins: URL list above). All default false — opt in
+  # to only what you want. Toggling back to false does NOT remove the jar;
+  # delete it from the panel's Plugins tab to remove.
+  install_essentialsx: false         # core commands: /home, /tpa, /kit, economy
+  install_essentialsx_chat: false    # chat formatting/prefixes (needs EssentialsX)
+  install_luckperms: false           # the standard permissions manager
+  install_worldedit: false           # in-game mass block editing (//set, //copy)
+  install_worldguard: false          # region protection (needs WorldEdit)
+  install_coreprotect: false         # block-logging + griefing rollback
+  install_multiverse_core: false     # multiple worlds within one server
+  install_griefprevention: false     # claim-based land protection
+  install_mcmmo: false               # RPG skills/leveling
+  install_chestsort: false           # auto-sort chests/inventories
+  install_veinminer: false           # mine a whole ore vein at once
+  install_spark: false               # performance profiler/diagnostics
   # Cross-version protocol bridges (default ON). ViaVersion lets clients on
   # a NEWER Minecraft version connect to an older server (e.g. a 26.1
   # client joining a 1.21.11 Paper server). ViaBackwards lets OLDER
@@ -255,7 +496,18 @@ options:
   # surfaces for Bedrock clients). Lightweight; safe to leave on.
   install_viaversion: true
   install_viabackwards: true
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Advanced
+  # ──────────────────────────────────────────────────────────────────────
+  # extra_jvm_args: additional flags appended to the java command line, space
+  # separated (e.g. "-Dpaper.playerconnection.keepalive=30"). Blank by
+  # default. For experts — bad flags can stop the server booting.
   extra_jvm_args: ""
+  # log_level: verbosity of the ADD-ON's own logging (not Minecraft's).
+  #   trace/debug — diagnosing add-on problems.
+  #   info        — normal (default).
+  #   notice/warning/error/fatal — progressively quieter.
   log_level: info
 schema:
   eula: bool

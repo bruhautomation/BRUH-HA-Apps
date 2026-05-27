@@ -356,57 +356,6 @@ async def api_properties_post(request: web.Request) -> web.Response:
     })
 
 
-# Build-mode / survival-mode presets. Minecraft Java Edition has no "editor
-# mode" (that's a Bedrock-only single-player feature), so the practical
-# equivalent for free-building is a one-click flip to creative + flight +
-# command blocks. Each preset is a set of (option_key, value) the panel
-# persists exactly like a Server-Properties edit.
-_PRESETS: dict[str, dict[str, object]] = {
-    "build": {
-        "gamemode": "creative",
-        "force_gamemode": True,
-        "allow_flight": True,
-        "enable_command_block": True,
-    },
-    "survival": {
-        "gamemode": "survival",
-        "force_gamemode": True,
-        "allow_flight": False,
-    },
-}
-
-
-async def api_preset(request: web.Request) -> web.Response:
-    name = request.match_info.get("name", "")
-    preset = _PRESETS.get(name)
-    if preset is None:
-        return web.json_response({"error": "unknown preset"}, status=400)
-
-    warnings = []
-    for option_key, value in preset.items():
-        warn = await _persist_option(option_key, value)
-        if warn:
-            warnings.append(f"{option_key}: {warn}")
-
-    # Live-apply the gamemode so it takes effect without a restart.
-    live_reply = None
-    gamemode = preset.get("gamemode")
-    if gamemode:
-        try:
-            await _rcon_command(f"defaultgamemode {gamemode}")
-            live_reply = await _rcon_command(f"gamemode {gamemode} @a")
-        except Exception as exc:  # noqa: BLE001
-            live_reply = f"live-apply failed: {exc}"
-
-    return web.json_response({
-        "ok": True,
-        "applied": preset,
-        "persisted": not warnings,
-        "warning": "; ".join(warnings) if warnings else None,
-        "live": live_reply,
-    })
-
-
 # ---------------------------------------------------------------------------
 # Routes: API — commands / player management
 # ---------------------------------------------------------------------------
@@ -872,7 +821,6 @@ def build_app() -> web.Application:
     app.router.add_get("/api/players", api_players)
     app.router.add_get("/api/properties", api_properties_get)
     app.router.add_post("/api/properties", api_properties_post)
-    app.router.add_post("/api/preset/{name}", api_preset)
     app.router.add_post("/api/command", api_command)
     app.router.add_post("/api/say", api_say)
     app.router.add_post("/api/player/{name}/{action}", api_player_action)

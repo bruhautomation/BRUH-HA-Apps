@@ -369,7 +369,6 @@ The panel is reachable from the **Minecraft** entry in HA's sidebar (or directly
 - Shows all resolved `server.properties` keys.
 - Keys marked **editable** (MOTD, difficulty, gamemode, PVP, whitelist, etc.) can be changed from the panel; the change is written **back to the add-on Configuration options** (so it persists across restarts) and applied live via RCON where possible.
 - Non-editable keys are rendered read-only — change them via the add-on **Configuration** tab.
-- **Build mode / Survival mode** buttons: one-click presets. *Build mode* flips the world to creative + flight + command blocks for free building (the practical stand-in for an editor, which Java Edition doesn't have); *Survival mode* flips back. Both persist like any other setting.
 
 ### Plugins
 
