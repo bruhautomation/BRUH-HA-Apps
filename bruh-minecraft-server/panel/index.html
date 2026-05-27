@@ -128,8 +128,8 @@
     <!-- Properties -->
     <section id="tab-properties" class="tab-panel">
       <p class="muted">
-        <strong>Live tweaks, not permanent changes.</strong>
-        Editing a <em>managed</em> key here (MOTD, difficulty, gamemode, max-players, pvp, whitelist, etc.) writes to <code>server.properties</code> and applies live via RCON so it takes effect right away — but the next add-on restart rewrites that key from the <strong>Configuration</strong> tab. For persistent changes, edit the add-on's <strong>Configuration</strong> tab (the source of truth). Non-managed keys you add by hand persist across restarts.
+        <strong>Edits here are permanent.</strong>
+        Changing an editable key writes the value back to the add-on's <strong>Configuration</strong> options (the single source of truth) and applies live via RCON where possible — so it takes effect right away <em>and</em> survives restarts. The greyed-out <code>config.yaml</code> rows are not panel-editable; change those from the Configuration tab.
       </p>
       <table class="table" id="props-table">
         <thead><tr><th>Key</th><th>Value</th><th></th></tr></thead>

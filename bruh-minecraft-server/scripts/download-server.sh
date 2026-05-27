@@ -22,7 +22,6 @@ MC_SERVER_DIR="${MC_SERVER_DIR:-/config/minecraft}"
 SERVER_CACHE="${SERVER_CACHE:-/data/server-cache}"
 MC_PANEL_STATE="${MC_PANEL_STATE:-/data/panel}"
 
-mkdir -p "${MC_SERVER_DIR}" "${SERVER_CACHE}"
 JAR_PATH="${MC_SERVER_DIR}/server.jar"
 META_PATH="${MC_SERVER_DIR}/.server-meta.json"
 
@@ -43,8 +42,6 @@ read_installed_version() {
         printf 'unknown'
     fi
 }
-INSTALLED_BEFORE=$(read_installed_version)
-log "Currently installed: ${INSTALLED_BEFORE} (request: ${SERVER_TYPE} ${VERSION_REQ})"
 
 write_meta() {
     local version="$1" build="$2" src_url="$3"
@@ -61,55 +58,122 @@ JSON
 
 # ------------------------- version resolvers -------------------------
 
-resolve_paper_version() {
-    local project="$1"  # paper | folia
-    # PaperMC publishes pre-releases (`1.21.11-pre5`) and release candidates
-    # (`1.21.11-rc3`) into the same `versions[]` array as stable releases,
-    # in roughly chronological order. A naive `.versions[-1]` grabs a
-    # pre-release whenever one is out — whose network protocol differs from
-    # the stable client on the same MC version, so vanilla clients reject
-    # the server with "Outdated server! I'm still on X.Y.Z".
-    # For LATEST we filter to MC-shaped 1.x stable strings and pick the
-    # highest by numeric semver — so we're robust to the API ever shipping
-    # an out-of-order entry (Purpur has done this with non-MC rebuild
-    # markers like `26.1.2`).
-    # SNAPSHOT preserves the old behaviour and opts into pre-releases.
-    if [ "${VERSION_REQ}" = "LATEST" ]; then
-        curl -fsSL "https://api.papermc.io/v2/projects/${project}" \
-            | jq -r '[.versions[] | select(test("^1\\.[0-9]+(\\.[0-9]+)?$"))]
-                     | sort_by(split(".") | map(tonumber)) | .[-1]'
-    elif [ "${VERSION_REQ}" = "SNAPSHOT" ]; then
-        curl -fsSL "https://api.papermc.io/v2/projects/${project}" \
-            | jq -r '.versions[-1]'
-    else
-        echo "${VERSION_REQ}"
-    fi
+# PaperMC's v2 API (api.papermc.io/v2) is deprecated in favour of the v3
+# "fill" API (fill.papermc.io/v3). v3 enforces a descriptive User-Agent and
+# returns full download URLs + sha256 checksums per build. We resolve through
+# v3 first and fall back to v2 if anything about the v3 response surprises us,
+# so a download never silently fails while v2 is still served.
+PAPER_V3="https://fill.papermc.io/v3/projects"
+PAPER_V2="https://api.papermc.io/v2/projects"
+PAPER_UA="BRUH-Minecraft-Server/${ADDON_VERSION:-dev} (+https://github.com/bruhautomation/BRUH-HA-Apps)"
+
+# Pick the version string to install for a paper-like project, given the v3
+# project JSON on stdin. LATEST/SNAPSHOT resolve to the highest MC-shaped
+# (1.x[.y]) version; an explicit version passes through unchanged.
+# Exposed as a function so tests can feed it captured API JSON.
+paper_pick_version() {
+    # Reads project JSON on stdin. v3 shape: {"versions":{"1.21":["1.21.4",...]}}
+    # (object of arrays). v2 shape: {"versions":["1.21","1.21.1",...]} (flat
+    # array). Flatten both, keep MC-shaped releases, pick the highest semver.
+    jq -r '
+        (.versions
+            | if type == "object" then [.[][]] else . end)
+        | map(select(type == "string" and test("^1\\.[0-9]+(\\.[0-9]+)?$")))
+        | sort_by(split(".") | map(tonumber))
+        | last // empty
+    '
 }
 
-download_paper_like() {
-    local project="$1"  # paper | folia
-    local version build url
-    version=$(resolve_paper_version "${project}")
-    [ -n "${version}" ] || { log "Could not resolve ${project} version"; return 1; }
-    build=$(curl -fsSL "https://api.papermc.io/v2/projects/${project}/versions/${version}" \
-            | jq -r '.builds[-1]')
-    [ -n "${build}" ] && [ "${build}" != "null" ] \
-        || { log "Could not resolve ${project} build for ${version}"; return 1; }
+# Given builds JSON on stdin (v3), emit "<build_id>\t<url>\t<sha256>" for the
+# newest STABLE build (or newest of any channel when no stable exists, e.g.
+# right after a fresh MC release). v3 builds endpoint returns either a bare
+# array or {"builds":[...]}; handle both.
+paper_pick_build_v3() {
+    jq -r '
+        (if type == "object" then (.builds // []) else . end)
+        | (map(select(.channel == "STABLE"))) as $stable
+        | (if ($stable | length) > 0 then $stable else . end)
+        | sort_by(.id)
+        | last
+        | (.downloads["server:default"] // .downloads.application) as $d
+        | "\(.id)\t\($d.url)\t\($d.checksums.sha256 // "")"
+    '
+}
+
+download_paper_v3() {
+    local project="$1" version="$2"
+    local builds_json line build url sha256
+    builds_json=$(curl -fsSL -A "${PAPER_UA}" \
+        "${PAPER_V3}/${project}/versions/${version}/builds" 2>/dev/null) || return 1
+    line=$(printf '%s' "${builds_json}" | paper_pick_build_v3) || return 1
+    build=$(printf '%s' "${line}" | cut -f1)
+    url=$(printf '%s' "${line}" | cut -f2)
+    sha256=$(printf '%s' "${line}" | cut -f3)
+    [ -n "${build}" ] && [ "${build}" != "null" ] && [ -n "${url}" ] && [ "${url}" != "null" ] \
+        || return 1
 
     local jar_name="${project}-${version}-${build}.jar"
-    url="https://api.papermc.io/v2/projects/${project}/versions/${version}/builds/${build}/downloads/${jar_name}"
     local cache="${SERVER_CACHE}/${jar_name}"
-
     if [ ! -f "${cache}" ]; then
-        log "Downloading ${project} ${version} build ${build}"
-        curl -fsSL -o "${cache}.tmp" "${url}"
+        log "Downloading ${project} ${version} build ${build} (v3)"
+        curl -fsSL -A "${PAPER_UA}" -o "${cache}.tmp" "${url}" || return 1
+        if [ -n "${sha256}" ] && command -v sha256sum >/dev/null 2>&1; then
+            if ! echo "${sha256}  ${cache}.tmp" | sha256sum -c - >/dev/null 2>&1; then
+                log "Checksum mismatch for ${jar_name}; discarding"
+                rm -f "${cache}.tmp"
+                return 1
+            fi
+        fi
         mv "${cache}.tmp" "${cache}"
     else
         log "Using cached ${jar_name}"
     fi
-
     cp -f "${cache}" "${JAR_PATH}"
     write_meta "${version}" "${build}" "${url}"
+}
+
+download_paper_v2() {
+    local project="$1" version="$2"
+    local build url
+    build=$(curl -fsSL "${PAPER_V2}/${project}/versions/${version}" \
+            | jq -r '.builds[-1]')
+    [ -n "${build}" ] && [ "${build}" != "null" ] \
+        || { log "Could not resolve ${project} build for ${version} (v2)"; return 1; }
+    local jar_name="${project}-${version}-${build}.jar"
+    url="${PAPER_V2}/${project}/versions/${version}/builds/${build}/downloads/${jar_name}"
+    local cache="${SERVER_CACHE}/${jar_name}"
+    if [ ! -f "${cache}" ]; then
+        log "Downloading ${project} ${version} build ${build} (v2 fallback)"
+        curl -fsSL -o "${cache}.tmp" "${url}" || return 1
+        mv "${cache}.tmp" "${cache}"
+    else
+        log "Using cached ${jar_name}"
+    fi
+    cp -f "${cache}" "${JAR_PATH}"
+    write_meta "${version}" "${build}" "${url}"
+}
+
+download_paper_like() {
+    local project="$1"  # paper | folia
+    local version proj_json
+
+    if [ "${VERSION_REQ}" = "LATEST" ] || [ "${VERSION_REQ}" = "SNAPSHOT" ]; then
+        proj_json=$(curl -fsSL -A "${PAPER_UA}" "${PAPER_V3}/${project}" 2>/dev/null)
+        version=$(printf '%s' "${proj_json}" | paper_pick_version 2>/dev/null)
+        if [ -z "${version}" ]; then
+            # v3 unreachable / shape changed — resolve the version off v2.
+            version=$(curl -fsSL "${PAPER_V2}/${project}" | paper_pick_version)
+        fi
+    else
+        version="${VERSION_REQ}"
+    fi
+    [ -n "${version}" ] || { log "Could not resolve ${project} version"; return 1; }
+
+    if download_paper_v3 "${project}" "${version}"; then
+        return 0
+    fi
+    log "v3 download failed for ${project} ${version}; trying deprecated v2 API"
+    download_paper_v2 "${project}" "${version}"
 }
 
 download_purpur() {
@@ -262,27 +326,41 @@ download_forge() {
 
 # ------------------------- dispatch -------------------------
 
-case "${SERVER_TYPE}" in
-    paper)   download_paper_like paper ;;
-    folia)   download_paper_like folia ;;
-    purpur)  download_purpur ;;
-    vanilla) download_vanilla ;;
-    fabric)  download_fabric ;;
-    forge)   download_forge ;;
-    *)
-        log "Unsupported server_type: ${SERVER_TYPE}"
-        exit 1
-        ;;
-esac
+main() {
+    mkdir -p "${MC_SERVER_DIR}" "${SERVER_CACHE}"
+    local installed_before
+    installed_before=$(read_installed_version)
+    log "Currently installed: ${installed_before} (request: ${SERVER_TYPE} ${VERSION_REQ})"
 
-if [ ! -s "${JAR_PATH}" ]; then
-    log "server.jar is missing or empty after download"
-    exit 1
+    case "${SERVER_TYPE}" in
+        paper)   download_paper_like paper ;;
+        folia)   download_paper_like folia ;;
+        purpur)  download_purpur ;;
+        vanilla) download_vanilla ;;
+        fabric)  download_fabric ;;
+        forge)   download_forge ;;
+        *)
+            log "Unsupported server_type: ${SERVER_TYPE}"
+            exit 1
+            ;;
+    esac
+
+    if [ ! -s "${JAR_PATH}" ]; then
+        log "server.jar is missing or empty after download"
+        exit 1
+    fi
+    local installed_after
+    installed_after=$(read_installed_version)
+    if [ "${installed_before}" != "${installed_after}" ] && [ "${installed_before}" != "none" ]; then
+        log "Updated: ${installed_before} -> ${installed_after}"
+    else
+        log "Active: ${installed_after}"
+    fi
+    log "Installed $(basename "${JAR_PATH}") ($(du -h "${JAR_PATH}" | cut -f1))"
+}
+
+# Only run the downloader when executed directly — sourcing (e.g. from the
+# test suite) just loads the resolver functions.
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+    main "$@"
 fi
-INSTALLED_AFTER=$(read_installed_version)
-if [ "${INSTALLED_BEFORE}" != "${INSTALLED_AFTER}" ] && [ "${INSTALLED_BEFORE}" != "none" ]; then
-    log "Updated: ${INSTALLED_BEFORE} -> ${INSTALLED_AFTER}"
-else
-    log "Active: ${INSTALLED_AFTER}"
-fi
-log "Installed $(basename "${JAR_PATH}") ($(du -h "${JAR_PATH}" | cut -f1))"

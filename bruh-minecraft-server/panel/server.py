@@ -168,44 +168,125 @@ def _read_properties() -> dict[str, str]:
     return props
 
 
-# Keys the panel is allowed to edit directly. Other keys require editing the
-# add-on options to avoid surprising overrides.
-EDITABLE_PROPS = {
-    "motd",
-    "difficulty",
-    "gamemode",
-    "max-players",
-    "view-distance",
-    "simulation-distance",
-    "pvp",
-    "allow-flight",
-    "white-list",
-    "enforce-whitelist",
-    "spawn-protection",
-    "enable-command-block",
-    "online-mode",
-    "enforce-secure-profile",
-    "hardcore",
-    "allow-nether",
-    "generate-structures",
-    "spawn-monsters",
-    "spawn-animals",
-    "spawn-npcs",
-    "prevent-proxy-connections",
-    "hide-online-players",
-    "resource-pack",
-    "resource-pack-sha1",
-    "require-resource-pack",
-    "max-world-size",
-    "network-compression-threshold",
-    "entity-broadcast-range-percentage",
-    "op-permission-level",
-    "level-seed",
-    "level-type",
-    "level-name",
-    "initial-enabled-packs",
-    "initial-disabled-packs",
+# Map a server.properties key the panel exposes -> (add-on option key, type).
+# Editing one of these in the panel now writes the value straight back to the
+# add-on's Configuration options via the Supervisor API, so the change is the
+# single source of truth and SURVIVES restarts. Before 1.7.0 the panel only
+# wrote server.properties, which run.sh re-rendered from the add-on options on
+# every restart — so every panel edit silently reverted. `type` drives the
+# coercion needed for the Supervisor schema (booleans/ints must not be sent as
+# strings or validation rejects the whole options object).
+PROP_OPTION_MAP: dict[str, tuple[str, str]] = {
+    "motd": ("motd", "str"),
+    "difficulty": ("difficulty", "str"),
+    "gamemode": ("gamemode", "str"),
+    "force-gamemode": ("force_gamemode", "bool"),
+    "max-players": ("max_players", "int"),
+    "view-distance": ("view_distance", "int"),
+    "simulation-distance": ("simulation_distance", "int"),
+    "pvp": ("pvp", "bool"),
+    "allow-flight": ("allow_flight", "bool"),
+    "white-list": ("white_list", "bool"),
+    # NOTE: enforce-whitelist is intentionally NOT editable here. It has no
+    # dedicated add-on option — setup-server-properties.sh always derives it
+    # from white_list — so exposing it would let the user think they could set
+    # it independently when they can't. It shows up read-only in the panel.
+    "spawn-protection": ("spawn_protection", "int"),
+    "enable-command-block": ("enable_command_block", "bool"),
+    "online-mode": ("online_mode", "bool"),
+    "enforce-secure-profile": ("enforce_secure_profile", "bool"),
+    "hardcore": ("hardcore", "bool"),
+    "allow-nether": ("allow_nether", "bool"),
+    "generate-structures": ("generate_structures", "bool"),
+    "spawn-monsters": ("spawn_monsters", "bool"),
+    "spawn-animals": ("spawn_animals", "bool"),
+    "spawn-npcs": ("spawn_npcs", "bool"),
+    "prevent-proxy-connections": ("prevent_proxy_connections", "bool"),
+    "hide-online-players": ("hide_online_players", "bool"),
+    "resource-pack": ("resource_pack", "str"),
+    "resource-pack-sha1": ("resource_pack_sha1", "str"),
+    "require-resource-pack": ("require_resource_pack", "bool"),
+    "max-world-size": ("max_world_size", "int"),
+    "network-compression-threshold": ("network_compression_threshold", "int"),
+    "entity-broadcast-range-percentage": ("entity_broadcast_range_percentage", "int"),
+    "op-permission-level": ("op_permission_level", "int"),
+    "level-seed": ("level_seed", "str"),
+    "level-type": ("level_type", "str"),
+    "level-name": ("level_name", "str"),
+    "initial-enabled-packs": ("initial_enabled_packs", "str"),
+    "initial-disabled-packs": ("initial_disabled_packs", "str"),
 }
+
+# Keys the panel is allowed to edit. Each maps to an add-on option (above) so
+# the edit persists. Other keys require editing the add-on options directly.
+EDITABLE_PROPS = set(PROP_OPTION_MAP)
+
+
+def _coerce_option(value: str, type_: str):
+    """Coerce a panel string value to the type the add-on schema expects.
+
+    Only ever called on values that already passed `_validate_prop_value`,
+    so the int parse and bool mapping below can't see junk."""
+    if type_ == "bool":
+        return str(value).strip().lower() == "true"
+    if type_ == "int":
+        return int(str(value).strip())
+    return str(value)
+
+
+# Allowed values for the list-type editable properties (mirrors config.yaml's
+# schema). Validating against these BEFORE we touch RCON or persist anything
+# (a) gives the user a clear error instead of a silently-reverted edit, and
+# (b) stops a value with spaces (e.g. "creative SomeProbe") from smuggling
+# extra arguments into the `gamemode <v> @a` RCON command.
+_PROP_ENUMS = {
+    "difficulty": {"peaceful", "easy", "normal", "hard"},
+    "gamemode": {"survival", "creative", "adventure", "spectator"},
+    "level-type": {
+        "minecraft:normal", "minecraft:flat", "minecraft:large_biomes",
+        "minecraft:amplified", "minecraft:single_biome_surface",
+        # Allow legacy short forms too.
+        "default", "flat", "largebiomes", "amplified",
+    },
+}
+# Int ranges for editable int properties (mirrors config.yaml schema bounds).
+_PROP_INT_RANGE = {
+    "max-players": (1, 1000),
+    "view-distance": (3, 32),
+    "simulation-distance": (3, 32),
+    "spawn-protection": (0, 10000),
+    "max-world-size": (1, 29999984),
+    "network-compression-threshold": (-1, 65536),
+    "entity-broadcast-range-percentage": (10, 1000),
+    "op-permission-level": (1, 4),
+}
+
+
+def _validate_prop_value(key: str, value: str, type_: str) -> str | None:
+    """Return None if `value` is acceptable for `key`, else an error string.
+
+    Rejects anything that would corrupt server.properties (newlines), violate
+    the option schema (out-of-range ints, bad enums, non-bool bools), and
+    thereby also closes RCON argument-smuggling on the live-applied keys."""
+    if "\n" in value or "\r" in value:
+        return "value may not contain line breaks"
+    if type_ == "bool":
+        if value.strip().lower() not in ("true", "false"):
+            return f"{key} must be true or false"
+        return None
+    if type_ == "int":
+        try:
+            n = int(value.strip())
+        except ValueError:
+            return f"{key} must be a whole number"
+        lo, hi = _PROP_INT_RANGE.get(key, (None, None))
+        if lo is not None and (n < lo or n > hi):
+            return f"{key} must be between {lo} and {hi}"
+        return None
+    allowed = _PROP_ENUMS.get(key)
+    if allowed is not None and value not in allowed:
+        return f"{key} must be one of: {', '.join(sorted(allowed))}"
+    return None
 
 VALID_PLAYER_NAME = re.compile(r"^[A-Za-z0-9_]{1,16}$")
 
@@ -289,6 +370,19 @@ async def api_properties_post(request: web.Request) -> web.Response:
     if key not in EDITABLE_PROPS:
         return web.json_response({"error": f"key '{key}' not editable"}, status=400)
 
+    # Validate BEFORE we write anything: rejects newline-injection into
+    # server.properties, out-of-range ints / bad enums (which the Supervisor
+    # would otherwise reject, silently reverting the edit), and value-with-
+    # spaces RCON argument smuggling on the live-applied keys.
+    option_key, option_type = PROP_OPTION_MAP[key]
+    err = _validate_prop_value(key, value, option_type)
+    if err:
+        return web.json_response({"error": err}, status=400)
+
+    # Write server.properties immediately so the running file + the panel's
+    # own GET reflect the change right away. On the next restart run.sh
+    # re-renders this file from the add-on options — which is exactly why we
+    # ALSO persist to the options below, so the two always agree.
     props = _read_properties()
     props[key] = value
     lines = [
@@ -301,18 +395,31 @@ async def api_properties_post(request: web.Request) -> web.Response:
     tmp.write_text("\n".join(lines) + "\n")
     tmp.replace(MC_SERVER_DIR / "server.properties")
 
+    # Persist to the add-on options so the change survives restarts.
+    persist_warning = await _persist_option(option_key, _coerce_option(value, option_type))
+
     # Live-apply a handful of keys via RCON where possible
     live_reply = None
     try:
-        if key in ("difficulty",):
+        if key == "difficulty":
             live_reply = await _rcon_command(f"difficulty {value}")
         elif key == "gamemode":
-            live_reply = await _rcon_command(f"defaultgamemode {value}")
-        elif key in ("white-list", "enforce-whitelist"):
+            # Set the default for new players AND move every online player —
+            # `defaultgamemode` alone never touches players who have already
+            # joined, which is the whole reason creative "didn't stick".
+            await _rcon_command(f"defaultgamemode {value}")
+            live_reply = await _rcon_command(f"gamemode {value} @a")
+        elif key == "white-list":
             live_reply = await _rcon_command(f"whitelist {'on' if value == 'true' else 'off'}")
     except Exception as exc:  # noqa: BLE001
         live_reply = f"live-apply failed: {exc}"
-    return web.json_response({"ok": True, "live": live_reply})
+
+    return web.json_response({
+        "ok": True,
+        "persisted": persist_warning is None,
+        "warning": persist_warning,
+        "live": live_reply,
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -553,6 +660,10 @@ async def api_plugin_install(request: web.Request) -> web.Response:
     name = str(body.get("name", "")).strip()
     if not url.startswith(("https://", "http://")):
         return web.json_response({"error": "url must be http(s)"}, status=400)
+    # Guard the optional on-disk filename against path traversal — it's passed
+    # straight to install-plugin.sh which writes into plugins/.
+    if name and ("/" in name or "\\" in name or ".." in name):
+        return web.json_response({"error": "invalid name"}, status=400)
     args = [str(SCRIPTS_DIR / "install-plugin.sh"), url]
     if name:
         args.append(name)
@@ -679,6 +790,45 @@ async def api_worlds_switch(request: web.Request) -> web.Response:
             f"world loads."
         ),
     })
+
+
+async def _persist_option(option_key: str, value) -> str | None:
+    """Write a single add-on option back to the Supervisor so the change
+    persists across restarts. Returns None on success or a short error string.
+
+    The Supervisor's POST /addons/self/options REPLACES the entire options
+    object and validates it against the full schema, so we must fetch the
+    current options, merge our one key in, and POST the merged object —
+    otherwise every other required field reads as "missing" (the same trap
+    world-manager.sh's switch hit). Best-effort: callers treat a returned
+    error as a non-fatal warning (the live RCON apply still happened, the
+    value just won't survive the next restart)."""
+    token = os.environ.get("SUPERVISOR_TOKEN", "")
+    if not token:
+        return "SUPERVISOR_TOKEN not set"
+    base = os.environ.get("SUPERVISOR_API_URL", "http://supervisor")
+    import aiohttp
+    try:
+        timeout = aiohttp.ClientTimeout(total=8)
+        headers = {"Authorization": f"Bearer {token}"}
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(f"{base}/addons/self/info", headers=headers) as resp:
+                if resp.status != 200:
+                    return f"info HTTP {resp.status}"
+                info = await resp.json()
+            options = (info.get("data") or {}).get("options") or {}
+            options[option_key] = value
+            async with session.post(
+                f"{base}/addons/self/options",
+                headers=headers,
+                json={"options": options},
+            ) as resp:
+                if resp.status == 200:
+                    return None
+                body = (await resp.text())[:200]
+                return f"Supervisor HTTP {resp.status}: {body}"
+    except Exception as exc:  # noqa: BLE001
+        return f"{type(exc).__name__}: {exc}"
 
 
 async def _supervisor_restart_self() -> str | None:

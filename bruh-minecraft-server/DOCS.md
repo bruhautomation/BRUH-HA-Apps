@@ -26,7 +26,7 @@ A bird's-eye view so you can skim to the sections that matter to you:
 - **Self-healing.** Ghost-session auto-kicker clears stuck Bedrock handshakes; RCON client is thread-safe (fixes the `signal only works in main thread` panel crash); bad plugin URLs log a warning instead of tanking startup.
 - **Zero-dependency architecture.** Everything runs inside the one add-on container — no separate proxy jars, no VPS, no external broker.
 
-Version 1.2.6 at time of writing; see CHANGELOG.md for the full evolution.
+See CHANGELOG.md for the full version history.
 
 ---
 
@@ -80,7 +80,7 @@ These things **are shared across all profiles** — change them once and every p
 | RCON password | Single secret per install, stored at `/data/panel/rcon.secret`. |
 | Geyser / Floodgate configuration | Regenerated per profile on boot, but from the same add-on options. |
 
-**Implication:** if you want a peaceful creative world and a hard survival world, you currently cannot set `difficulty: peaceful` for one and `difficulty: hard` for the other — they share that option. Workaround: edit the profile's `server.properties` directly via the panel's **Server Properties** tab; those changes persist until you restart the add-on (see **Settings precedence** below).
+**Implication:** managed settings (`difficulty`, `gamemode`, `level_name`, etc.) are **shared across all worlds** — they live in the add-on options, not in any one profile. You can't currently set `difficulty: peaceful` for one world and `difficulty: hard` for another; switch the shared option when you switch worlds. (Per-world managed settings aren't supported because the add-on re-renders those keys from the options on every boot.)
 
 ### Switching — how it works (one click, since 1.2.9)
 
@@ -119,7 +119,7 @@ If a page feels cramped, pull the companion app's **Sidebar → Minecraft** tile
 
 Every option can be set from the add-on's **Configuration** tab. All options are validated against the schema in `config.yaml`; invalid values will be rejected by the Supervisor before the add-on starts.
 
-> **Which surface do I change a setting on?** Read **Settings precedence** (below) before editing anything. Short version: add-on Configuration tab = source of truth, panel Server-Properties tab = live tweaks that don't survive a restart.
+> **Which surface do I change a setting on?** Either works for editable keys — since 1.7.0 the panel's Server-Properties tab writes back to the add-on Configuration options, so panel edits persist across restarts too. Read **Settings precedence** (below) for the full picture.
 
 ### Required
 
@@ -150,6 +150,7 @@ Forge uses an installer and may need a few extra minutes on the first boot while
 | `motd` | string | `A BRUH Minecraft Server` |
 | `difficulty` | `peaceful \| easy \| normal \| hard` | `normal` |
 | `gamemode` | `survival \| creative \| adventure \| spectator` | `survival` |
+| `force_gamemode` | bool | `true` | Put every player back into `gamemode` on each join. Default `true` so the configured gamemode is authoritative (this is the fix for "I set creative but it keeps loading survival"). Set `false` to let players keep whatever mode they last switched to. |
 | `max_players` | 1–1000 | `20` |
 | `view_distance` | 3–32 | `10` |
 | `simulation_distance` | 3–32 | `10` |
@@ -294,13 +295,13 @@ You can mix the two forms in one list. Only `paper`, `purpur`, and `folia` load 
 
 This is the single-most-confusing thing about the add-on, so here's the exact rule:
 
-1. **Add-on Configuration tab = source of truth.** On every add-on boot, `setup-server-properties.sh` renders `server.properties` from your add-on options. Any **managed key** (MOTD, difficulty, gamemode, max-players, view-distance, pvp, whitelist, etc. — see `scripts/setup-server-properties.sh` for the complete list) is overwritten.
-2. **Panel → Server Properties tab = live tweaks.** Editing a managed key here writes to `server.properties` AND (where possible) applies live via RCON, so the change takes effect immediately without a restart. **But it's transient** — the next add-on restart rewrites that key from step 1.
+1. **Add-on Configuration tab = source of truth.** On every add-on boot, `setup-server-properties.sh` renders `server.properties` from your add-on options. Any **managed key** (MOTD, difficulty, gamemode, max-players, view-distance, pvp, whitelist, etc. — see `scripts/setup-server-properties.sh` for the complete list) is rendered from the options.
+2. **Panel → Server Properties tab also writes the options (since 1.7.0).** Editing an editable key in the panel writes the value **back to the add-on Configuration options** via the Supervisor API *and* applies it live via RCON where possible. So a panel edit takes effect immediately **and persists across restarts** — the panel and the Configuration tab can no longer disagree. (Before 1.7.0 the panel only wrote `server.properties`, which step 1 reverted on the next restart — that's the "my panel changes don't stick" bug, now fixed.) Keys that can't be applied live (e.g. `view-distance`, `level-seed`) take effect on the next restart.
 3. **Non-managed keys are preserved.** Any key you add to `server.properties` that isn't in the managed set (exotic Paper-only keys, plugin-specific settings, etc.) survives across restarts. The panel also preserves them.
 4. **`initial_ops` vs the panel Players tab.** `initial_ops` runs once per boot via RCON. Using the Players tab to op/deop someone applies immediately and persists in `ops.json` — the next restart doesn't un-op them (ops.json is not rewritten from add-on options).
 5. **Plugin list (`plugins:`) vs the panel Plugins tab.** The add-on downloads every URL in `plugins:` on boot (with `If-Modified-Since`, so it's cheap). Deleting a plugin from the panel removes the jar from disk, but if the URL is still in `plugins:`, the add-on re-downloads it on next restart. Want it gone? Remove the entry from `plugins:` AND delete the jar.
 
-**Rule of thumb:** if you want the change to persist across add-on restarts, put it in the Configuration tab. Use the panel for "try this now" or for keys the Configuration tab doesn't manage.
+**Rule of thumb:** editable keys can be changed from either the Configuration tab or the panel's Server Properties tab — both persist now. Use the Configuration tab for keys the panel marks read-only.
 
 ### HA integration
 
@@ -366,8 +367,8 @@ The panel is reachable from the **Minecraft** entry in HA's sidebar (or directly
 ### Server properties
 
 - Shows all resolved `server.properties` keys.
-- Keys marked **editable** (MOTD, difficulty, gamemode, PVP, whitelist, etc.) can be changed from the panel; the change is written to `server.properties` and (where possible) applied live via RCON.
-- Non-editable keys are rendered read-only — change them via the add-on **Configuration** tab, which is the canonical source of truth for those settings.
+- Keys marked **editable** (MOTD, difficulty, gamemode, PVP, whitelist, etc.) can be changed from the panel; the change is written **back to the add-on Configuration options** (so it persists across restarts) and applied live via RCON where possible.
+- Non-editable keys are rendered read-only — change them via the add-on **Configuration** tab.
 
 ### Plugins
 

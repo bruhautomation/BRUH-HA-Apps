@@ -5,6 +5,13 @@
   const $ = (sel) => document.querySelector(sel);
   const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
+  // Escape anything server-provided before it goes into innerHTML. Player
+  // names, MOTD/property values, plugin filenames, etc. are user-controlled
+  // and must not be able to inject markup or break out of an attribute.
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+
   // Relative API paths work with HA ingress proxy automatically.
   const api = async (path, opts = {}) => {
     const headers = { 'Accept': 'application/json' };
@@ -233,9 +240,9 @@
     (data.players || []).forEach((name) => {
       const tr = document.createElement('tr');
       const actions = ['op', 'kick', 'ban', 'whitelist_add']
-        .map((a) => `<button class="btn btn-ghost" data-name="${name}" data-action="${a}">${a}</button>`)
+        .map((a) => `<button class="btn btn-ghost" data-name="${esc(name)}" data-action="${a}">${a}</button>`)
         .join('');
-      tr.innerHTML = `<td>${name}</td><td class="actions">${actions}</td>`;
+      tr.innerHTML = `<td>${esc(name)}</td><td class="actions">${actions}</td>`;
       tbody.appendChild(tr);
     });
     tbody.querySelectorAll('button').forEach((b) => {
@@ -274,12 +281,12 @@
       const isEditable = editable.has(k);
       const tr = document.createElement('tr');
       const valCell = isEditable
-        ? `<input type="text" value="${String(v).replace(/"/g, '&quot;')}" data-key="${k}" />`
-        : `<code>${v}</code>`;
+        ? `<input type="text" value="${esc(v)}" data-key="${esc(k)}" />`
+        : `<code>${esc(v)}</code>`;
       const actionCell = isEditable
-        ? `<button class="btn btn-primary" data-save-key="${k}">Save</button>`
+        ? `<button class="btn btn-primary" data-save-key="${esc(k)}">Save</button>`
         : '<span class="muted">config.yaml</span>';
-      tr.innerHTML = `<td><code>${k}</code></td><td>${valCell}</td><td>${actionCell}</td>`;
+      tr.innerHTML = `<td><code>${esc(k)}</code></td><td>${valCell}</td><td>${actionCell}</td>`;
       tbody.appendChild(tr);
     });
     tbody.querySelectorAll('button[data-save-key]').forEach((b) => {
@@ -287,11 +294,26 @@
         const key = b.dataset.saveKey;
         const input = tbody.querySelector(`input[data-key="${key}"]`);
         if (!input) return;
+        b.disabled = true;
+        const original = b.textContent;
+        b.textContent = 'Saving…';
         const resp = await api('api/properties', {
           method: 'POST',
           body: JSON.stringify({ key, value: input.value }),
         });
-        if (resp.error) alert(resp.error);
+        b.disabled = false;
+        if (resp.error) {
+          alert(resp.error);
+          b.textContent = original;
+        } else if (resp.persisted) {
+          b.textContent = 'Saved ✓';
+          setTimeout(() => { b.textContent = original; }, 2000);
+        } else {
+          // Live-applied but couldn't write back to the add-on options —
+          // it'll revert on the next restart. Tell the user why.
+          alert(`Applied live, but could not save permanently:\n${resp.warning || 'unknown error'}\n\nThis change will revert on the next restart.`);
+          b.textContent = original;
+        }
       });
     });
   }
@@ -306,10 +328,10 @@
     (data.plugins || []).forEach((p) => {
       const tr = document.createElement('tr');
       tr.innerHTML = `
-        <td><code>${p.name}</code></td>
+        <td><code>${esc(p.name)}</code></td>
         <td>${fmtSize(p.size)}</td>
         <td>${new Date(p.mtime * 1000).toLocaleString()}</td>
-        <td><button class="btn btn-danger" data-plugin-del="${p.name}">Delete</button></td>
+        <td><button class="btn btn-danger" data-plugin-del="${esc(p.name)}">Delete</button></td>
       `;
       tbody.appendChild(tr);
     });
@@ -352,11 +374,11 @@
       const actions = w.active
         ? '<span class="muted">—</span>'
         : `
-          <button class="btn btn-primary" data-switch="${w.name}">Switch</button>
-          <button class="btn btn-danger" data-delete="${w.name}">Delete</button>
+          <button class="btn btn-primary" data-switch="${esc(w.name)}">Switch</button>
+          <button class="btn btn-danger" data-delete="${esc(w.name)}">Delete</button>
         `;
       tr.innerHTML = `
-        <td><code>${w.name}</code></td>
+        <td><code>${esc(w.name)}</code></td>
         <td>${fmtSize(w.size_bytes)}</td>
         <td>${activeBadge}</td>
         <td class="actions">${actions}</td>
@@ -366,13 +388,13 @@
     tbody.querySelectorAll('button[data-switch]').forEach((b) => {
       b.addEventListener('click', async () => {
         const name = b.dataset.switch;
-        if (!confirm(`Switch active world to "${name}"? The add-on needs a restart for the new world to load — you'll be prompted to restart after this.`)) return;
+        if (!confirm(`Switch active world to "${name}"? The add-on will restart itself to load it — this panel is unreachable for ~30s while it comes back.`)) return;
+        // The switch endpoint already restarts the whole add-on via the
+        // Supervisor (which re-points the world symlink). Do NOT also fire an
+        // RCON restart here — that races against the container teardown and
+        // was part of why switching felt broken.
         const resp = await api(`api/worlds/${encodeURIComponent(name)}/switch`, { method: 'POST' });
-        const msg = resp.message || resp.error || 'unknown error';
-        alert(msg);
-        if (resp.ok && confirm('Restart the server now so the new world loads?')) {
-          await api('api/restart', { method: 'POST' });
-        }
+        alert(resp.message || resp.warning || resp.error || 'unknown error');
         loadWorlds();
       });
     });
@@ -414,10 +436,10 @@
       if (!git.length) return '<p class="muted">No git snapshots yet.</p>';
       const rows = git.map((c) => `
         <tr>
-          <td><code>${c.sha.substring(0, 8)}</code></td>
+          <td><code>${esc(c.sha.substring(0, 8))}</code></td>
           <td>${new Date(c.ts * 1000).toLocaleString()}</td>
-          <td>${c.subject}</td>
-          <td><button class="btn btn-warn" data-restore="${c.sha}">Restore</button></td>
+          <td>${esc(c.subject)}</td>
+          <td><button class="btn btn-warn" data-restore="${esc(c.sha)}">Restore</button></td>
         </tr>
       `).join('');
       return `<table class="table">
@@ -430,10 +452,10 @@
       if (!arc.length) return '<p class="muted">No archive backups yet.</p>';
       const rows = arc.map((a) => `
         <tr>
-          <td><code>${a.name}</code></td>
+          <td><code>${esc(a.name)}</code></td>
           <td>${fmtSize(a.size)}</td>
           <td>${new Date(a.ts * 1000).toLocaleString()}</td>
-          <td><button class="btn btn-warn" data-restore="${a.name}">Restore</button></td>
+          <td><button class="btn btn-warn" data-restore="${esc(a.name)}">Restore</button></td>
         </tr>
       `).join('');
       return `<table class="table">

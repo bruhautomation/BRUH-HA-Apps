@@ -78,7 +78,6 @@ jobs:
           ignore_paths: >-
             bruh-minecraft-server/custom_components
             bruh-minecraft-server/panel
-            bruh-minecraft-server/scripts
 
   hadolint:
     name: Dockerfile lint

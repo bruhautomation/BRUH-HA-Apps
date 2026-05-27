@@ -36,8 +36,22 @@ valid_name() {
     printf '%s' "$1" | grep -Eq '^[A-Za-z0-9_-]{1,32}$'
 }
 
+MC_OPTIONS_FILE="${MC_OPTIONS_FILE:-/data/options.json}"
+
+# The active world is whatever the add-on option says (the source of truth
+# run.sh boots from), falling back to the live /config/minecraft symlink and
+# finally "default". Reading the option first fixes a stale-state bug: on a
+# legacy install /config/minecraft is still a plain directory (not yet a
+# symlink), so the old symlink-only logic always returned the literal
+# "default" even when the operator had switched to another profile.
 active_world() {
-    if [ -L "${MC_SERVER_LINK}" ]; then
+    local from_option=""
+    if [ -r "${MC_OPTIONS_FILE}" ]; then
+        from_option=$(jq -r '.active_world // empty' "${MC_OPTIONS_FILE}" 2>/dev/null || true)
+    fi
+    if [ -n "${from_option}" ] && valid_name "${from_option}"; then
+        printf '%s' "${from_option}"
+    elif [ -L "${MC_SERVER_LINK}" ]; then
         basename "$(readlink "${MC_SERVER_LINK}")"
     else
         printf 'default'

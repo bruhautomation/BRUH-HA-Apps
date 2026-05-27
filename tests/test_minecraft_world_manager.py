@@ -38,6 +38,9 @@ def _run_manager(root: Path, *args: str, env_extra: dict[str, str] | None = None
         **os.environ,
         "MC_WORLDS_DIR": str(root / "minecraft-worlds"),
         "MC_BACKUPS_ROOT": str(root / "minecraft-backups"),
+        # Default to a non-existent options file so `active` is deterministic
+        # regardless of any real /data/options.json on the host running tests.
+        "MC_OPTIONS_FILE": str(root / "options.json"),
     }
     if env_extra:
         env.update(env_extra)
@@ -115,6 +118,46 @@ class TestWorldManagerList(unittest.TestCase):
             for line in proc.stdout.strip().splitlines():
                 parts = line.split("\t")
                 self.assertEqual(parts[2], "false")
+
+
+class TestWorldManagerActive(unittest.TestCase):
+    """1.7.0: `active` reads the add-on option (the source of truth run.sh
+    boots from) before falling back to the symlink — fixing a stale-state
+    bug where a legacy install (no symlink yet) always reported 'default'
+    even after the operator switched profiles."""
+
+    def test_active_reads_options_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            opts = root / "options.json"
+            opts.write_text('{"active_world": "creative", "eula": true}')
+            proc = _run_manager(
+                root, "active",
+                env_extra={"MC_OPTIONS_FILE": str(opts)},
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(proc.stdout.strip(), "creative")
+
+    def test_active_falls_back_to_default_without_option(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            proc = _run_manager(
+                root, "active",
+                env_extra={"MC_OPTIONS_FILE": str(root / "missing.json")},
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(proc.stdout.strip(), "default")
+
+    def test_active_ignores_invalid_option_value(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            opts = root / "options.json"
+            opts.write_text('{"active_world": "bad name/with slash"}')
+            proc = _run_manager(
+                root, "active",
+                env_extra={"MC_OPTIONS_FILE": str(opts)},
+            )
+            self.assertEqual(proc.stdout.strip(), "default")
 
 
 class TestWorldManagerDelete(unittest.TestCase):

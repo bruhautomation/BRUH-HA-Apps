@@ -157,6 +157,41 @@ class TestSetupServerProperties(unittest.TestCase):
             )
             self.assertEqual(props["initial-disabled-packs"], "trade_rebalance")
 
+    def test_force_gamemode_defaults_true(self):
+        # Regression for the "creative world keeps loading as survival" bug:
+        # without force-gamemode, returning players keep their saved mode.
+        with tempfile.TemporaryDirectory() as tmp:
+            _run(tmp)
+            props = _parse(os.path.join(tmp, "server.properties"))
+            self.assertEqual(props["force-gamemode"], "true")
+
+    def test_force_gamemode_can_be_disabled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _run(tmp, FORCE_GAMEMODE="false")
+            props = _parse(os.path.join(tmp, "server.properties"))
+            self.assertEqual(props["force-gamemode"], "false")
+
+    def test_blank_seed_preserves_staged_per_world_seed(self):
+        # world-manager stages a per-world level-seed; a blank global
+        # LEVEL_SEED option must NOT clobber it (else the panel's create-world
+        # seed is silently discarded on first boot).
+        with tempfile.TemporaryDirectory() as tmp:
+            props_path = os.path.join(tmp, "server.properties")
+            with open(props_path, "w") as f:
+                f.write("level-seed=987654321\n")
+            _run(tmp, LEVEL_SEED="")
+            props = _parse(props_path)
+            self.assertEqual(props["level-seed"], "987654321")
+
+    def test_global_seed_overrides_staged_seed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            props_path = os.path.join(tmp, "server.properties")
+            with open(props_path, "w") as f:
+                f.write("level-seed=987654321\n")
+            _run(tmp, LEVEL_SEED="111")
+            props = _parse(props_path)
+            self.assertEqual(props["level-seed"], "111")
+
     def test_connection_throttle_passthrough(self):
         with tempfile.TemporaryDirectory() as tmp:
             _run(tmp, CONNECTION_THROTTLE_MS="0")

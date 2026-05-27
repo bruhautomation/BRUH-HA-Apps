@@ -84,6 +84,7 @@ load_config() {
     MOTD=$(bashio::config 'motd' 'A BRUH Minecraft Server')
     DIFFICULTY=$(bashio::config 'difficulty' 'normal')
     GAMEMODE=$(bashio::config 'gamemode' 'survival')
+    FORCE_GAMEMODE=$(bashio::config 'force_gamemode' 'true')
     MAX_PLAYERS=$(bashio::config 'max_players' '20')
     VIEW_DISTANCE=$(bashio::config 'view_distance' '10')
     SIM_DISTANCE=$(bashio::config 'simulation_distance' '10')
@@ -186,6 +187,7 @@ load_config() {
     RCON_PASSWORD=""
 
     export EULA SERVER_TYPE MINECRAFT_VERSION MOTD DIFFICULTY GAMEMODE \
+           FORCE_GAMEMODE \
            MAX_PLAYERS VIEW_DISTANCE SIM_DISTANCE ONLINE_MODE \
            ENFORCE_SECURE_PROFILE PVP HARDCORE \
            ALLOW_FLIGHT WHITE_LIST SPAWN_PROTECTION LEVEL_NAME LEVEL_SEED \
@@ -705,9 +707,17 @@ announce_ha_discovery() {
 graceful_shutdown() {
     bashio::log.warning "Shutdown signal received; saving and stopping the server"
 
-    if [ -f "${MC_PANEL_STATE}/server.pid" ]; then
+    # server-launcher.sh records its PID in launcher.pid (the launcher wrapper
+    # script; the JVM is its child, stopped here over RCON). Earlier releases
+    # looked for server.pid, which the launcher never writes — so this whole
+    # block was dead and the world was never RCON-saved on a Supervisor stop,
+    # risking an unclean shutdown. We deliberately do NOT touch the no_restart
+    # flag: this trap ends in `exit 0`, which tears down run_server_loop with
+    # us, so relaunch can't happen — and a lingering no_restart file would
+    # wrongly suppress the next legitimate restart after the container starts.
+    if [ -f "${MC_PANEL_STATE}/launcher.pid" ]; then
         local pid
-        pid=$(cat "${MC_PANEL_STATE}/server.pid")
+        pid=$(cat "${MC_PANEL_STATE}/launcher.pid")
         if kill -0 "${pid}" 2>/dev/null; then
             python3 "${SCRIPTS_DIR}/rcon.py" "save-all" >/dev/null 2>&1 || true
             python3 "${SCRIPTS_DIR}/rcon.py" "stop" >/dev/null 2>&1 || true
