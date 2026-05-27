@@ -5,6 +5,79 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.7.0
+
+A reliability + simplification release focused on the three things that
+felt broken: settings that didn't stick, the panel's non-persistent
+options, and world switching.
+
+### Fixed: creative (and other gamemodes) finally stick
+
+Setting `gamemode: creative` used to keep loading as survival for anyone
+who had already joined — you had to run `/gamemode creative <name>` by
+hand every time. Minecraft only applies the `gamemode` property to
+*brand-new* players; returning players keep the mode saved in their
+player data. The add-on now writes **`force-gamemode`** (new
+`force_gamemode` option, default `true`), which puts every player into
+the configured gamemode on join. Set `force_gamemode: false` if you want
+players to keep whatever mode they last switched to. The panel's live
+gamemode change also now runs `gamemode <mode> @a` so everyone online
+flips immediately, not just future joiners.
+
+### Fixed: the panel's Server Properties tab is now permanent
+
+Previously every edit in the panel's **Server Properties** tab wrote only
+to `server.properties`, which the add-on re-rendered from your
+Configuration options on the next restart — so **every panel edit
+silently reverted**. Edits now write straight back to the add-on
+Configuration options (the single source of truth) via the Supervisor
+API, so they persist across restarts *and* apply live. The tab's copy
+was updated to say so.
+
+### Fixed: world switching
+
+- **One restart, not three.** Clicking *Switch* used to fire an options
+  write, a Supervisor add-on restart, *and* a racing RCON stop — the
+  extra restart fought the container teardown and made switching feel
+  flaky. It now does exactly one clean Supervisor restart.
+- **Correct active-world detection.** `world-manager.sh active` now reads
+  the add-on option (what the server actually boots from) before falling
+  back to the symlink, fixing a legacy-install case where it always
+  reported `default` even after you switched.
+- **Per-world create seed honoured.** The seed you type into *Create a
+  new world* is no longer discarded on first boot when the global
+  `level_seed` option is blank.
+
+### Added: one-click Build mode (the practical "editor")
+
+Minecraft *Java* Edition has no editor mode — the Minecraft Editor is a
+Bedrock-only, single-player feature and can't run on a Paper/Java server.
+The closest practical equivalent for free-building is the new **Build
+mode** button on the Server Properties tab: one click flips the world to
+creative + flight + command blocks (persisted like any other setting),
+with a **Survival mode** button to flip back.
+
+### Changed: PaperMC downloads use the new v3 API
+
+PaperMC deprecated its v2 download API in favour of the v3 "fill" API.
+Paper/Folia now resolve through `fill.papermc.io/v3` (with sha256
+verification and a descriptive User-Agent), falling back to v2 only if v3
+is unreachable so downloads can't break during the transition.
+
+### Fixed: clean save on add-on stop
+
+The graceful-shutdown handler looked for a PID file the JVM launcher
+never wrote (`server.pid` vs `launcher.pid`), so stopping the add-on
+never RCON-saved the world. It now finds the JVM and saves + stops it
+cleanly before exit.
+
+### Internal
+
+- CI now shellchecks the `scripts/` directory (previously excluded).
+- New tests cover force-gamemode, seed preservation, panel option
+  persistence, the Build-mode preset, v3 download resolution, and
+  option-based active-world detection.
+
 ## 1.6.0
 
 ### Added: enable experiments for the latest game rule options

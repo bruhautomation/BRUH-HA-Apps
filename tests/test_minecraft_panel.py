@@ -160,6 +160,96 @@ class TestPropertiesEditing(PanelTestBase):
         data = await resp.json()
         self.assertIn("not editable", data["error"])
 
+    async def test_edit_persists_to_addon_option(self):
+        # 1.7.0: panel edits must write back to the add-on options so they
+        # survive a restart. Capture the (option_key, value) and the coercion.
+        persisted = []
+
+        async def fake_persist(option_key, value):
+            persisted.append((option_key, value))
+            return None  # success
+
+        self.panel._persist_option = fake_persist
+        # int option: max-players -> max_players coerced to int
+        resp = await self.client.request("POST", "/api/properties", json={
+            "key": "max-players", "value": "33",
+        })
+        self.assertEqual(resp.status, 200)
+        data = await resp.json()
+        self.assertTrue(data["persisted"])
+        self.assertIn(("max_players", 33), persisted)
+
+    async def test_bool_option_coerced(self):
+        persisted = []
+
+        async def fake_persist(option_key, value):
+            persisted.append((option_key, value))
+            return None
+
+        self.panel._persist_option = fake_persist
+        resp = await self.client.request("POST", "/api/properties", json={
+            "key": "pvp", "value": "false",
+        })
+        self.assertEqual(resp.status, 200)
+        self.assertIn(("pvp", False), persisted)
+
+    async def test_persist_failure_surfaces_warning(self):
+        async def fake_persist(option_key, value):
+            return "Supervisor HTTP 403"
+
+        self.panel._persist_option = fake_persist
+        resp = await self.client.request("POST", "/api/properties", json={
+            "key": "motd", "value": "Hi",
+        })
+        data = await resp.json()
+        self.assertFalse(data["persisted"])
+        self.assertIn("403", data["warning"])
+
+    async def test_gamemode_live_applies_to_all_players(self):
+        rcon_calls = []
+
+        async def fake_rcon(cmd):
+            rcon_calls.append(cmd)
+            return "ok"
+
+        async def fake_persist(option_key, value):
+            return None
+
+        self.panel._rcon_command = fake_rcon
+        self.panel._persist_option = fake_persist
+        resp = await self.client.request("POST", "/api/properties", json={
+            "key": "gamemode", "value": "creative",
+        })
+        self.assertEqual(resp.status, 200)
+        # Must move existing online players, not just set the default.
+        self.assertIn("gamemode creative @a", rcon_calls)
+
+    async def test_build_preset_persists_and_applies(self):
+        persisted = []
+        rcon_calls = []
+
+        async def fake_persist(option_key, value):
+            persisted.append((option_key, value))
+            return None
+
+        async def fake_rcon(cmd):
+            rcon_calls.append(cmd)
+            return "ok"
+
+        self.panel._persist_option = fake_persist
+        self.panel._rcon_command = fake_rcon
+        resp = await self.client.request("POST", "/api/preset/build")
+        self.assertEqual(resp.status, 200)
+        data = await resp.json()
+        self.assertTrue(data["persisted"])
+        self.assertIn(("gamemode", "creative"), persisted)
+        self.assertIn(("allow_flight", True), persisted)
+        self.assertIn("gamemode creative @a", rcon_calls)
+
+    async def test_unknown_preset_rejected(self):
+        resp = await self.client.request("POST", "/api/preset/bogus")
+        self.assertEqual(resp.status, 400)
+
 
 class TestPluginManagement(PanelTestBase):
     async def test_delete_plugin_succeeds(self):

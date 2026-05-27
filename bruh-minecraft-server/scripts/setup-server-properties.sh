@@ -24,6 +24,15 @@ if [ "${ONLINE_MODE_VALUE}" != "true" ]; then
     ENFORCE_SECURE_PROFILE_VALUE="false"
 fi
 
+# Hardcore mode forces every player into survival regardless of `gamemode`.
+# Warn loudly if the operator asked for a non-survival gamemode AND hardcore,
+# so a "creative world that stays survival" isn't a silent mystery.
+GAMEMODE_VALUE="${GAMEMODE:-survival}"
+if [ "${HARDCORE:-false}" = "true" ] && [ "${GAMEMODE_VALUE}" != "survival" ]; then
+    printf '[setup-server-properties] WARNING: hardcore=true forces survival; gamemode=%s will be ignored by Minecraft.\n' \
+        "${GAMEMODE_VALUE}" >&2
+fi
+
 # allow_cheats is a convenience knob: flip it on and the "cheat" commands
 # (/gamemode, /give, /tp, /summon, /fill, …) will actually be usable for OP'd
 # players. Translate it into the two underlying server.properties keys.
@@ -41,6 +50,11 @@ declare -A MANAGED=(
     [motd]="${MOTD:-A BRUH Minecraft Server}"
     [difficulty]="${DIFFICULTY:-normal}"
     [gamemode]="${GAMEMODE:-survival}"
+    # force-gamemode puts returning players back into the configured gamemode
+    # on every join. Without it, Minecraft only applies `gamemode` to players
+    # who have never joined — so a world flipped to creative kept loading as
+    # survival for everyone who'd already played. Default true.
+    [force-gamemode]="${FORCE_GAMEMODE:-true}"
     [max-players]="${MAX_PLAYERS:-20}"
     [view-distance]="${VIEW_DISTANCE:-10}"
     [simulation-distance]="${SIM_DISTANCE:-10}"
@@ -53,7 +67,6 @@ declare -A MANAGED=(
     [enforce-whitelist]="${WHITE_LIST:-false}"
     [spawn-protection]="${SPAWN_PROTECTION:-16}"
     [level-name]="${LEVEL_NAME:-world}"
-    [level-seed]="${LEVEL_SEED:-}"
     [level-type]="${LEVEL_TYPE:-minecraft:normal}"
     # Experimental feature flags. Mojang gates new/experimental content —
     # and the game rules that come with it — behind "feature packs" that the
@@ -114,6 +127,18 @@ fi
 for k in "${!MANAGED[@]}"; do
     CURRENT["${k}"]="${MANAGED[$k]}"
 done
+
+# level-seed is handled out-of-band so a per-world seed survives. When the
+# global LEVEL_SEED option is set, it wins (managed). When it's blank, we
+# DON'T overwrite a seed that world-manager staged into the profile's
+# server.properties at create time — otherwise the seed typed into the
+# panel's "Create world" form was silently discarded on first boot and the
+# world generated random terrain instead.
+if [ -n "${LEVEL_SEED:-}" ]; then
+    CURRENT["level-seed"]="${LEVEL_SEED}"
+elif [ -z "${CURRENT[level-seed]:-}" ]; then
+    CURRENT["level-seed"]=""
+fi
 
 {
     printf '# server.properties — managed by BRUH Minecraft Server add-on\n'

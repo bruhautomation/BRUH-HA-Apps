@@ -1,7 +1,7 @@
 ---
 name: "BRUH Minecraft Server"
 description: "Rock-solid Minecraft Java Edition server with ingress panel, RCON, git world backups, auto-updates, plugin management, and deep Home Assistant integration"
-version: "1.6.0"
+version: "1.7.0"
 slug: "bruh_minecraft_server"
 init: false
 
@@ -77,6 +77,15 @@ options:
   motd: "A BRUH Minecraft Server"
   difficulty: normal
   gamemode: survival
+  # force_gamemode: when true, every player is put back into the configured
+  # `gamemode` each time they join. Minecraft otherwise saves each player's
+  # gamemode in the world and only applies `gamemode` to brand-new players —
+  # which is why a world set to "creative" kept loading as survival for
+  # anyone who had already joined (the classic "it's always survival until I
+  # run /gamemode" bug). Default true so the panel/Configuration gamemode is
+  # authoritative. Set false if you want players to keep whatever mode they
+  # last switched themselves to.
+  force_gamemode: true
   max_players: 20
   view_distance: 10
   simulation_distance: 10
@@ -256,6 +265,7 @@ schema:
   motd: str
   difficulty: "list(peaceful|easy|normal|hard)"
   gamemode: "list(survival|creative|adventure|spectator)"
+  force_gamemode: bool
   max_players: "int(1,1000)"
   view_distance: "int(3,32)"
   simulation_distance: "int(3,32)"

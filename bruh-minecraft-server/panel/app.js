@@ -287,14 +287,44 @@
         const key = b.dataset.saveKey;
         const input = tbody.querySelector(`input[data-key="${key}"]`);
         if (!input) return;
+        b.disabled = true;
+        const original = b.textContent;
+        b.textContent = 'Saving…';
         const resp = await api('api/properties', {
           method: 'POST',
           body: JSON.stringify({ key, value: input.value }),
         });
-        if (resp.error) alert(resp.error);
+        b.disabled = false;
+        if (resp.error) {
+          alert(resp.error);
+          b.textContent = original;
+        } else if (resp.persisted) {
+          b.textContent = 'Saved ✓';
+          setTimeout(() => { b.textContent = original; }, 2000);
+        } else {
+          // Live-applied but couldn't write back to the add-on options —
+          // it'll revert on the next restart. Tell the user why.
+          alert(`Applied live, but could not save permanently:\n${resp.warning || 'unknown error'}\n\nThis change will revert on the next restart.`);
+          b.textContent = original;
+        }
       });
     });
   }
+
+  // Build / survival mode presets (the practical stand-in for "editor mode",
+  // which Minecraft Java Edition does not have).
+  async function applyPreset(name, label) {
+    if (!confirm(`Apply ${label}? This changes the add-on configuration and applies live to everyone online.`)) return;
+    const resp = await api(`api/preset/${encodeURIComponent(name)}`, { method: 'POST' });
+    if (resp.error) { alert(resp.error); return; }
+    if (resp.persisted) alert(`${label} applied and saved.`);
+    else alert(`${label} applied live, but could not save permanently:\n${resp.warning || 'unknown'}`);
+    if ($('#tab-properties').classList.contains('active')) loadProperties();
+  }
+  const buildBtn = $('#btn-build-mode');
+  if (buildBtn) buildBtn.addEventListener('click', () => applyPreset('build', 'Build mode (creative + flight)'));
+  const survivalBtn = $('#btn-survival-mode');
+  if (survivalBtn) survivalBtn.addEventListener('click', () => applyPreset('survival', 'Survival mode'));
 
   // ------------------------------------------------------------------
   // Plugins tab
@@ -366,13 +396,13 @@
     tbody.querySelectorAll('button[data-switch]').forEach((b) => {
       b.addEventListener('click', async () => {
         const name = b.dataset.switch;
-        if (!confirm(`Switch active world to "${name}"? The add-on needs a restart for the new world to load — you'll be prompted to restart after this.`)) return;
+        if (!confirm(`Switch active world to "${name}"? The add-on will restart itself to load it — this panel is unreachable for ~30s while it comes back.`)) return;
+        // The switch endpoint already restarts the whole add-on via the
+        // Supervisor (which re-points the world symlink). Do NOT also fire an
+        // RCON restart here — that races against the container teardown and
+        // was part of why switching felt broken.
         const resp = await api(`api/worlds/${encodeURIComponent(name)}/switch`, { method: 'POST' });
-        const msg = resp.message || resp.error || 'unknown error';
-        alert(msg);
-        if (resp.ok && confirm('Restart the server now so the new world loads?')) {
-          await api('api/restart', { method: 'POST' });
-        }
+        alert(resp.message || resp.warning || resp.error || 'unknown error');
         loadWorlds();
       });
     });
