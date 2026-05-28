@@ -273,6 +273,89 @@ def _validate_prop_value(key: str, value: str, type_: str) -> str | None:
             return f"{key} must be one of: {', '.join(sorted(allowed))}"
     return None
 
+# ---------------------------------------------------------------------------
+# Hardware-aware settings recommender
+# ---------------------------------------------------------------------------
+# Inspects host RAM and CPU count and proposes sensible values for the keys
+# that actually move performance: memory_mb (global add-on option),
+# view-distance + simulation-distance (per-world server.properties). Reads
+# /proc/meminfo (which inside an HA add-on container reports HOST memory).
+# An override path (MEMINFO_PATH env) keeps it unit-testable.
+def _host_total_memory_mb() -> int:
+    path = os.environ.get("MEMINFO_PATH", "/proc/meminfo")
+    try:
+        with open(path) as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    return int(line.split()[1]) // 1024
+    except (OSError, ValueError):
+        pass
+    return 0
+
+
+def _recommend_settings() -> dict:
+    """Return a dict of recommended values + rationale for the panel UI."""
+    host_mb = _host_total_memory_mb()
+    cpu_count = os.cpu_count() or 2
+
+    # Reserve at least 2 GB for the HA OS / Core / other add-ons. The rest is
+    # what we'd consider safe to hand to the JVM, but we also cap so we don't
+    # gift a small server a runaway 16 GB heap with diminishing returns past
+    # the point Aikar's flags can keep GC pauses sane.
+    headroom_mb = 2048
+    available_mb = max(host_mb - headroom_mb, 1024) if host_mb else 2048
+    if available_mb >= 16384:
+        memory_mb = 8192
+    elif available_mb >= 8192:
+        memory_mb = 6144
+    elif available_mb >= 6144:
+        memory_mb = 4096
+    elif available_mb >= 4096:
+        memory_mb = 3072
+    elif available_mb >= 3072:
+        memory_mb = 2048
+    else:
+        memory_mb = max(1024, available_mb)
+    # Round down to the nearest 256 MB so the value looks deliberate.
+    memory_mb = (memory_mb // 256) * 256
+    # Clamp to schema bounds (int(512,65536)).
+    memory_mb = max(512, min(65536, memory_mb))
+
+    # View / sim distance scale with the heap we recommended. simulation
+    # distance is the bigger TPS lever, so keep it ≤ view-distance.
+    if memory_mb >= 6144:
+        view_distance, simulation_distance = 12, 10
+    elif memory_mb >= 3072:
+        view_distance, simulation_distance = 10, 8
+    elif memory_mb >= 2048:
+        view_distance, simulation_distance = 8, 6
+    else:
+        view_distance, simulation_distance = 6, 5
+
+    return {
+        "host_total_mb": host_mb,
+        "cpu_count": cpu_count,
+        "memory_mb": memory_mb,
+        "view_distance": view_distance,
+        "simulation_distance": simulation_distance,
+        "rationale": {
+            "memory": (
+                f"Host has {host_mb} MB; reserving {headroom_mb} MB for HA / OS / "
+                f"other add-ons leaves ~{available_mb} MB. Capped at sensible "
+                f"diminishing-returns ceilings so the JVM heap stays GC-friendly."
+                if host_mb else
+                "Couldn't detect host memory — defaulting to a safe 2 GB heap."
+            ),
+            "distances": (
+                f"Picked to keep memory pressure low at {memory_mb} MB. "
+                f"simulation-distance is the bigger TPS lever so it's kept "
+                f"≤ view-distance."
+            ),
+            "cpus": f"Detected {cpu_count} CPU(s); Aikar's flags handle the rest.",
+        },
+    }
+
+
 VALID_PLAYER_NAME = re.compile(r"^[A-Za-z0-9_]{1,16}$")
 
 
@@ -395,6 +478,69 @@ async def api_properties_post(request: web.Request) -> web.Response:
         live_reply = f"live-apply failed: {exc}"
 
     return web.json_response({"ok": True, "live": live_reply})
+
+
+# ---------------------------------------------------------------------------
+# Routes: API — settings recommender ("Tune for my hardware")
+# ---------------------------------------------------------------------------
+async def api_recommend_get(_: web.Request) -> web.Response:
+    return web.json_response(_recommend_settings())
+
+
+async def api_recommend_apply(_: web.Request) -> web.Response:
+    """Apply the current recommendation.
+
+    Splits the writes by scope:
+      * memory_mb is a GLOBAL add-on option (one JVM runs at a time) — written
+        back to the Supervisor.
+      * view-distance and simulation-distance are PER-WORLD server.properties
+        keys — written to the ACTIVE world's file. (Switching worlds later
+        won't inherit them; that's the per-world model.)
+    Returns what was applied and where, plus a hint that the JVM needs a
+    restart for any of it to take effect."""
+    rec = _recommend_settings()
+    applied: dict[str, object] = {}
+    warnings: list[str] = []
+
+    warn = await _persist_option("memory_mb", rec["memory_mb"])
+    if warn:
+        warnings.append(f"memory_mb: {warn}")
+    else:
+        applied["memory_mb"] = rec["memory_mb"]
+
+    # Per-world: write view/sim distance straight into the active world's
+    # server.properties. We re-use the property writer's preserve-existing
+    # behaviour by reading first, merging, then writing.
+    props = _read_properties()
+    props["view-distance"] = str(rec["view_distance"])
+    props["simulation-distance"] = str(rec["simulation_distance"])
+    lines = [
+        "# server.properties — active world is the source of truth.",
+        "# Gameplay keys are edited here / from the panel and preserved on boot.",
+        f"# Last edited via panel (recommend/apply): {time.strftime('%Y-%m-%dT%H:%M:%S%z')}",
+    ]
+    lines.extend(f"{k}={props[k]}" for k in sorted(props))
+    tmp = MC_SERVER_DIR / "server.properties.tmp"
+    tmp.write_text("\n".join(lines) + "\n")
+    tmp.replace(MC_SERVER_DIR / "server.properties")
+    applied["view-distance"] = rec["view_distance"]
+    applied["simulation-distance"] = rec["simulation_distance"]
+
+    return web.json_response({
+        "ok": True,
+        "applied": applied,
+        "scope": {
+            "memory_mb": "global (add-on option)",
+            "view-distance": "active world only",
+            "simulation-distance": "active world only",
+        },
+        "warnings": warnings or None,
+        "restart_required": True,
+        "note": (
+            "Memory change takes effect on the next add-on restart; "
+            "view/sim distance on the next JVM restart."
+        ),
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -768,6 +914,42 @@ async def api_worlds_switch(request: web.Request) -> web.Response:
     })
 
 
+async def _persist_option(option_key: str, value) -> str | None:
+    """Write a single add-on option (e.g. memory_mb) via the Supervisor API.
+    Returns None on success or a short error string.
+
+    Supervisor's POST /addons/self/options REPLACES the entire options object
+    and validates it against the schema, so we must GET the current options,
+    merge our key in, and POST the merged object — otherwise every other
+    required field reads as "missing" and the call is rejected."""
+    token = os.environ.get("SUPERVISOR_TOKEN", "")
+    if not token:
+        return "SUPERVISOR_TOKEN not set"
+    base = os.environ.get("SUPERVISOR_API_URL", "http://supervisor")
+    import aiohttp
+    try:
+        timeout = aiohttp.ClientTimeout(total=8)
+        headers = {"Authorization": f"Bearer {token}"}
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(f"{base}/addons/self/info", headers=headers) as resp:
+                if resp.status != 200:
+                    return f"info HTTP {resp.status}"
+                info = await resp.json()
+            options = (info.get("data") or {}).get("options") or {}
+            options[option_key] = value
+            async with session.post(
+                f"{base}/addons/self/options",
+                headers=headers,
+                json={"options": options},
+            ) as resp:
+                if resp.status == 200:
+                    return None
+                body = (await resp.text())[:200]
+                return f"Supervisor HTTP {resp.status}: {body}"
+    except Exception as exc:  # noqa: BLE001
+        return f"{type(exc).__name__}: {exc}"
+
+
 async def _supervisor_restart_self() -> str | None:
     """Ask the Supervisor to restart this add-on. Returns None on success
     or a short error string on failure. Fire-and-forget: the Supervisor
@@ -828,6 +1010,8 @@ def build_app() -> web.Application:
     app.router.add_get("/api/players", api_players)
     app.router.add_get("/api/properties", api_properties_get)
     app.router.add_post("/api/properties", api_properties_post)
+    app.router.add_get("/api/recommend", api_recommend_get)
+    app.router.add_post("/api/recommend/apply", api_recommend_apply)
     app.router.add_post("/api/command", api_command)
     app.router.add_post("/api/say", api_say)
     app.router.add_post("/api/player/{name}/{action}", api_player_action)

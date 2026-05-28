@@ -7,6 +7,26 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## 1.9.0
 
+### Added: "Tune for my hardware" + TPS health badge
+
+The Dashboard's **Performance** card now does two new things:
+
+- **Health badge.** Each TPS value (1m/5m/15m) is colored — green at 19.5+,
+  yellow at 17–19.5, red below 17 — and the card header shows an at-a-glance
+  *healthy / degraded / struggling* badge driven by the 5-minute average. No
+  more squinting at the numbers to tell if something's off.
+- **Tune for my hardware button.** Inspects the host's RAM (via
+  `/proc/meminfo`) and CPU count, then proposes sensible values for
+  `memory_mb` (global add-on option), `view-distance`, and
+  `simulation-distance` (per-world `server.properties`). One click applies
+  them — `memory_mb` writes back to the add-on Configuration via the
+  Supervisor API (since it's global, one JVM at a time); the distances
+  write to the **active world's** `server.properties`. A confirm dialog
+  shows the proposed values and the rationale before anything is changed.
+
+New endpoints: `GET /api/recommend` (preview) and
+`POST /api/recommend/apply` (apply).
+
 ### Changed: popular-plugin tidy-up
 
 - **Removed `install_worldguard` and `install_multiverse_core`.** WorldGuard

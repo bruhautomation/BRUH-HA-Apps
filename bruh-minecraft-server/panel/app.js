@@ -89,9 +89,32 @@
       $('#m-uptime').textContent = stats.uptime_seconds
         ? fmtDuration(stats.uptime_seconds) : '—';
       $('#m-memory').textContent = state.memory_mb ? `${state.memory_mb} MB` : '—';
-      $('#m-tps1').textContent = stats.tps_1m ?? '—';
-      $('#m-tps5').textContent = stats.tps_5m ?? '—';
-      $('#m-tps15').textContent = stats.tps_15m ?? '—';
+      // TPS health colors. 20 is perfect; under ~17 sustained means the
+      // server can't keep up. Apply per-cell so the eye can tell which
+      // window slipped first.
+      const tpsClass = (v) => {
+        if (v == null) return 'tps-unknown';
+        if (v >= 19.5) return 'tps-good';
+        if (v >= 17.0) return 'tps-warn';
+        return 'tps-bad';
+      };
+      const setTps = (id, v) => {
+        const el = $(id);
+        el.textContent = v ?? '—';
+        el.className = `tps ${tpsClass(v)}`;
+      };
+      setTps('#m-tps1', stats.tps_1m);
+      setTps('#m-tps5', stats.tps_5m);
+      setTps('#m-tps15', stats.tps_15m);
+      const badge = $('#m-tps-badge');
+      const cls = tpsClass(stats.tps_5m);
+      badge.className = `tps-badge ${cls}`;
+      badge.textContent = ({
+        'tps-good': '● healthy',
+        'tps-warn': '● degraded',
+        'tps-bad': '● struggling',
+        'tps-unknown': '',
+      })[cls];
       $('#m-latency').textContent = stats.latency_ms != null ? `${stats.latency_ms} ms` : '—';
       $('#m-online').textContent = stats.online ?? 0;
       $('#m-max').textContent = stats.max_players ?? state.max_players ?? 0;
@@ -164,6 +187,36 @@
   $('#btn-stop').addEventListener('click', async () => {
     if (!confirmAction('Stop the Minecraft server? The add-on will stay running.')) return;
     await api('api/stop', { method: 'POST' });
+  });
+
+  // Tune-for-my-hardware. Fetches the recommendation, shows what would be
+  // applied + the rationale, then writes memory_mb to the add-on options and
+  // view/sim distance to the active world's server.properties on confirm.
+  $('#btn-tune').addEventListener('click', async () => {
+    const r = await api('api/recommend');
+    if (r._raw || !r.memory_mb) { alert('Could not read recommendation:\n' + (r._raw || 'unknown')); return; }
+    const msg =
+      'Detected:\n' +
+      `  host RAM: ${r.host_total_mb} MB\n` +
+      `  CPUs: ${r.cpu_count}\n\n` +
+      'Recommended:\n' +
+      `  memory_mb (global): ${r.memory_mb}\n` +
+      `  view-distance (active world): ${r.view_distance}\n` +
+      `  simulation-distance (active world): ${r.simulation_distance}\n\n` +
+      'Why:\n' +
+      `  • ${r.rationale.memory}\n` +
+      `  • ${r.rationale.distances}\n\n` +
+      'Apply now? (Takes effect on the next restart.)';
+    if (!confirmAction(msg)) return;
+    const out = await api('api/recommend/apply', { method: 'POST' });
+    if (out.error) { alert('Apply failed: ' + out.error); return; }
+    let summary = 'Applied:\n';
+    for (const [k, v] of Object.entries(out.applied || {})) summary += `  ${k} = ${v}\n`;
+    if (out.warnings && out.warnings.length) {
+      summary += '\nWarnings (these did NOT save permanently):\n' + out.warnings.map(w => '  ' + w).join('\n');
+    }
+    if (out.note) summary += '\n' + out.note;
+    alert(summary);
   });
 
   // ------------------------------------------------------------------

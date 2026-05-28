@@ -361,5 +361,83 @@ class TestRestoreValidation(PanelTestBase):
         self.assertEqual(resp.status, 400)
 
 
+class TestRecommender(PanelTestBase):
+    """1.10.0: 'Tune for my hardware' reads host RAM and proposes settings.
+
+    The recommender uses a MEMINFO_PATH env override so we can stage a fake
+    /proc/meminfo in a tempfile and exercise the math hermetically."""
+
+    def _set_meminfo(self, mb: int) -> None:
+        # The recommender reads MEMINFO_PATH at call time, so we just point it
+        # at a temp file. kibibytes in /proc/meminfo are `MemTotal: <kB> kB`.
+        path = self.state_dir / "fake_meminfo"
+        path.write_text(f"MemTotal:    {mb * 1024} kB\nMemFree:     1234 kB\n")
+        os.environ["MEMINFO_PATH"] = str(path)
+        self.addCleanup(lambda: os.environ.pop("MEMINFO_PATH", None))
+
+    async def test_recommend_scales_with_host_ram(self):
+        # 16 GB host -> 6 GB heap (one of the upper-tier ceilings).
+        self._set_meminfo(16384)
+        resp = await self.client.request("GET", "/api/recommend")
+        data = await resp.json()
+        # Memory is rounded to 256 MB.
+        self.assertEqual(data["memory_mb"] % 256, 0)
+        self.assertGreaterEqual(data["memory_mb"], 4096)
+        # 2 GB headroom reserved for HA/OS.
+        self.assertLessEqual(data["memory_mb"], 16384 - 2048)
+        # Distances scale with heap; simulation ≤ view.
+        self.assertGreater(data["view_distance"], 0)
+        self.assertLessEqual(data["simulation_distance"], data["view_distance"])
+
+    async def test_recommend_tiny_host_falls_back_to_floor(self):
+        # 2 GB host with 2 GB reserved leaves nothing — recommender should
+        # still propose a usable >=1 GB heap rather than 0.
+        self._set_meminfo(2048)
+        resp = await self.client.request("GET", "/api/recommend")
+        data = await resp.json()
+        self.assertGreaterEqual(data["memory_mb"], 512)
+
+    async def test_apply_writes_global_and_per_world(self):
+        # Persist option is captured (no Supervisor in tests); server.properties
+        # is checked on disk.
+        self._set_meminfo(8192)
+        persisted: list[tuple[str, object]] = []
+
+        async def fake_persist(option_key, value):
+            persisted.append((option_key, value))
+            return None
+
+        self.panel._persist_option = fake_persist
+        resp = await self.client.request("POST", "/api/recommend/apply")
+        self.assertEqual(resp.status, 200)
+        data = await resp.json()
+        # Global write
+        self.assertEqual(len(persisted), 1)
+        self.assertEqual(persisted[0][0], "memory_mb")
+        self.assertIsInstance(persisted[0][1], int)
+        # Per-world write
+        content = (self.server_dir / "server.properties").read_text()
+        self.assertRegex(content, r"(?m)^view-distance=\d+")
+        self.assertRegex(content, r"(?m)^simulation-distance=\d+")
+        self.assertIn("memory_mb", data["applied"])
+        self.assertIn("view-distance", data["applied"])
+
+    async def test_apply_surfaces_supervisor_failure(self):
+        self._set_meminfo(8192)
+
+        async def fake_persist(option_key, value):
+            return "Supervisor HTTP 403"
+
+        self.panel._persist_option = fake_persist
+        resp = await self.client.request("POST", "/api/recommend/apply")
+        data = await resp.json()
+        # Per-world write still happens; the global write reports a warning.
+        self.assertTrue(data["ok"])
+        self.assertTrue(data["warnings"])
+        self.assertIn("403", data["warnings"][0])
+        # memory_mb did NOT get added to applied{}.
+        self.assertNotIn("memory_mb", data["applied"])
+
+
 if __name__ == "__main__":
     unittest.main()
