@@ -2,10 +2,23 @@
 # ============================================================================
 # setup-server-properties.sh
 # ----------------------------------------------------------------------------
-# Render /config/minecraft/server.properties from the add-on options.
-# - Preserves unknown keys on subsequent runs so operators can hand-edit
-#   exotic settings without losing them on reload.
-# - Always (re)writes the managed keys so the UI is the source of truth.
+# Maintain the ACTIVE world's server.properties.
+#
+# As of 1.8.0 gameplay settings are PER-WORLD: each world owns its own
+# server.properties (gamemode, difficulty, world-gen, etc.), edited from the
+# ingress panel. This script therefore:
+#
+#   * Always (re)writes the INFRA keys (RCON / query / ports / transport) —
+#     these are container-level and must stay correct so the panel + HA can
+#     talk to the server. They are NOT user-editable.
+#   * SEEDS each gameplay key with a sensible default ONLY when it is absent
+#     (a brand-new world). Existing values are PRESERVED untouched — that's
+#     what lets a panel edit stick and lets a creative world and a survival
+#     world keep different settings.
+#   * Preserves any unknown / hand-edited keys.
+#
+# The add-on no longer renders gameplay from global options (there are none) —
+# server.properties is the source of truth for the active world.
 # ============================================================================
 
 set -euo pipefail
@@ -13,71 +26,8 @@ set -euo pipefail
 MC_SERVER_DIR="${MC_SERVER_DIR:-/config/minecraft}"
 PROPS="${MC_SERVER_DIR}/server.properties"
 
-# Secure-profile enforcement only makes sense when the server is authenticating
-# players against Mojang (online-mode=true). With online-mode=false nobody has
-# a signed profile, and leaving enforce-secure-profile=true bounces every
-# client with "You are not permitted to join due to the enforce-secure-profile
-# setting." Auto-force it false in offline mode regardless of the raw option.
-ONLINE_MODE_VALUE="${ONLINE_MODE:-true}"
-ENFORCE_SECURE_PROFILE_VALUE="${ENFORCE_SECURE_PROFILE:-false}"
-if [ "${ONLINE_MODE_VALUE}" != "true" ]; then
-    ENFORCE_SECURE_PROFILE_VALUE="false"
-fi
-
-# Hardcore mode forces every player into survival regardless of `gamemode`.
-# Warn loudly if the operator asked for a non-survival gamemode AND hardcore,
-# so a "creative world that stays survival" isn't a silent mystery.
-GAMEMODE_VALUE="${GAMEMODE:-survival}"
-if [ "${HARDCORE:-false}" = "true" ] && [ "${GAMEMODE_VALUE}" != "survival" ]; then
-    printf '[setup-server-properties] WARNING: hardcore=true forces survival; gamemode=%s will be ignored by Minecraft.\n' \
-        "${GAMEMODE_VALUE}" >&2
-fi
-
-# allow_cheats is a convenience knob: flip it on and the "cheat" commands
-# (/gamemode, /give, /tp, /summon, /fill, …) will actually be usable for OP'd
-# players. Translate it into the two underlying server.properties keys.
-ALLOW_CHEATS_VALUE="${ALLOW_CHEATS:-false}"
-ENABLE_COMMAND_BLOCK_VALUE="${ENABLE_COMMAND_BLOCK:-false}"
-OP_PERMISSION_LEVEL_VALUE="${OP_PERMISSION_LEVEL:-4}"
-if [ "${ALLOW_CHEATS_VALUE}" = "true" ]; then
-    ENABLE_COMMAND_BLOCK_VALUE="true"
-    if [ "${OP_PERMISSION_LEVEL_VALUE}" -lt 2 ] 2>/dev/null; then
-        OP_PERMISSION_LEVEL_VALUE=2
-    fi
-fi
-
-declare -A MANAGED=(
-    [motd]="${MOTD:-A BRUH Minecraft Server}"
-    [difficulty]="${DIFFICULTY:-normal}"
-    [gamemode]="${GAMEMODE:-survival}"
-    # force-gamemode puts returning players back into the configured gamemode
-    # on every join. Without it, Minecraft only applies `gamemode` to players
-    # who have never joined — so a world flipped to creative kept loading as
-    # survival for everyone who'd already played. Default true.
-    [force-gamemode]="${FORCE_GAMEMODE:-true}"
-    [max-players]="${MAX_PLAYERS:-20}"
-    [view-distance]="${VIEW_DISTANCE:-10}"
-    [simulation-distance]="${SIM_DISTANCE:-10}"
-    [online-mode]="${ONLINE_MODE_VALUE}"
-    [enforce-secure-profile]="${ENFORCE_SECURE_PROFILE_VALUE}"
-    [pvp]="${PVP:-true}"
-    [hardcore]="${HARDCORE:-false}"
-    [allow-flight]="${ALLOW_FLIGHT:-false}"
-    [white-list]="${WHITE_LIST:-false}"
-    [enforce-whitelist]="${WHITE_LIST:-false}"
-    [spawn-protection]="${SPAWN_PROTECTION:-16}"
-    [level-name]="${LEVEL_NAME:-world}"
-    [level-type]="${LEVEL_TYPE:-minecraft:normal}"
-    # Experimental feature flags. Mojang gates new/experimental content —
-    # and the game rules that come with it — behind "feature packs" that the
-    # server enables at world-generation time via initial-enabled-packs
-    # (comma-separated, e.g. "vanilla,minecart_improvements,redstone_experiments").
-    # Must always include "vanilla" or the base game pack is disabled, so the
-    # default falls back to "vanilla" when the option is blank.
-    [initial-enabled-packs]="${INITIAL_ENABLED_PACKS:-vanilla}"
-    [initial-disabled-packs]="${INITIAL_DISABLED_PACKS:-}"
-    [enable-command-block]="${ENABLE_COMMAND_BLOCK_VALUE}"
-    [op-permission-level]="${OP_PERMISSION_LEVEL_VALUE}"
+# Infra keys — always enforced from the container, never user-editable.
+declare -A INFRA=(
     [server-port]="25565"
     [query.port]="25565"
     [enable-rcon]="true"
@@ -90,25 +40,52 @@ declare -A MANAGED=(
     [function-permission-level]="2"
     [max-tick-time]="60000"
     [use-native-transport]="true"
-    [network-compression-threshold]="${NETWORK_COMPRESSION_THRESHOLD:-256}"
-    [max-world-size]="${MAX_WORLD_SIZE:-29999984}"
-    [spawn-monsters]="${SPAWN_MONSTERS:-true}"
-    [spawn-animals]="${SPAWN_ANIMALS:-true}"
-    [spawn-npcs]="${SPAWN_NPCS:-true}"
-    [generate-structures]="${GENERATE_STRUCTURES:-true}"
-    [allow-nether]="${ALLOW_NETHER:-true}"
-    [entity-broadcast-range-percentage]="${ENTITY_BROADCAST_RANGE_PERCENTAGE:-100}"
     [enable-jmx-monitoring]="false"
-    [prevent-proxy-connections]="${PREVENT_PROXY_CONNECTIONS:-false}"
-    [hide-online-players]="${HIDE_ONLINE_PLAYERS:-false}"
-    [connection-throttle]="${CONNECTION_THROTTLE_MS:-4000}"
-    [player-idle-timeout]="${PLAYER_IDLE_TIMEOUT_MINUTES:-0}"
-    [resource-pack]="${RESOURCE_PACK:-}"
-    [resource-pack-sha1]="${RESOURCE_PACK_SHA1:-}"
-    [require-resource-pack]="${REQUIRE_RESOURCE_PACK:-false}"
 )
 
-# Load any existing properties into a map so we can preserve hand-edited keys
+# Gameplay defaults — seeded ONLY when the key is absent from the world's
+# existing server.properties. Edit these from the panel per world; they are
+# never overwritten here once present.
+declare -A DEFAULTS=(
+    [motd]="A BRUH Minecraft Server"
+    [difficulty]="normal"
+    [gamemode]="survival"
+    [force-gamemode]="true"
+    [max-players]="20"
+    [view-distance]="10"
+    [simulation-distance]="10"
+    [online-mode]="true"
+    [enforce-secure-profile]="false"
+    [pvp]="true"
+    [hardcore]="false"
+    [allow-flight]="false"
+    [white-list]="false"
+    [spawn-protection]="16"
+    [level-name]="world"
+    [level-seed]=""
+    [level-type]="minecraft:normal"
+    [initial-enabled-packs]="vanilla"
+    [initial-disabled-packs]=""
+    [allow-nether]="true"
+    [generate-structures]="true"
+    [spawn-monsters]="true"
+    [spawn-animals]="true"
+    [spawn-npcs]="true"
+    [prevent-proxy-connections]="false"
+    [hide-online-players]="false"
+    [resource-pack]=""
+    [resource-pack-sha1]=""
+    [require-resource-pack]="false"
+    [max-world-size]="29999984"
+    [network-compression-threshold]="256"
+    [entity-broadcast-range-percentage]="100"
+    [enable-command-block]="false"
+    [op-permission-level]="4"
+    [connection-throttle]="4000"
+    [player-idle-timeout]="0"
+)
+
+# Load existing properties so we can preserve everything already set.
 declare -A CURRENT
 if [ -f "${PROPS}" ]; then
     while IFS= read -r line || [ -n "${line}" ]; do
@@ -123,32 +100,47 @@ if [ -f "${PROPS}" ]; then
     done < "${PROPS}"
 fi
 
-# Merge managed keys into the current set
-for k in "${!MANAGED[@]}"; do
-    CURRENT["${k}"]="${MANAGED[$k]}"
+# Seed gameplay defaults only where the key is not already present (a missing
+# key, not merely an empty value — an explicit `resource-pack=` is preserved).
+for k in "${!DEFAULTS[@]}"; do
+    if [ -z "${CURRENT[$k]+set}" ]; then
+        CURRENT["${k}"]="${DEFAULTS[$k]}"
+    fi
 done
 
-# level-seed is handled out-of-band so a per-world seed survives. When the
-# global LEVEL_SEED option is set, it wins (managed). When it's blank, we
-# DON'T overwrite a seed that world-manager staged into the profile's
-# server.properties at create time — otherwise the seed typed into the
-# panel's "Create world" form was silently discarded on first boot and the
-# world generated random terrain instead.
-if [ -n "${LEVEL_SEED:-}" ]; then
-    CURRENT["level-seed"]="${LEVEL_SEED}"
-elif [ -z "${CURRENT[level-seed]:-}" ]; then
-    CURRENT["level-seed"]=""
+# Infra keys always win.
+for k in "${!INFRA[@]}"; do
+    CURRENT["${k}"]="${INFRA[$k]}"
+done
+
+# enforce-whitelist always mirrors white-list — it has no independent meaning
+# for this add-on, so it's derived rather than editable.
+CURRENT["enforce-whitelist"]="${CURRENT[white-list]:-false}"
+
+# Secure-profile enforcement only makes sense with online-mode=true. In
+# offline mode nobody has a Mojang-signed profile, so enforce-secure-profile
+# MUST be false or every client is kicked with "You are not permitted to join
+# due to the enforce-secure-profile setting". Force it regardless of the
+# stored value.
+if [ "${CURRENT[online-mode]:-true}" != "true" ]; then
+    CURRENT["enforce-secure-profile"]="false"
+fi
+
+# Hardcore forces survival regardless of gamemode — warn so a "creative world
+# that stays survival" isn't a silent mystery.
+if [ "${CURRENT[hardcore]:-false}" = "true" ] && [ "${CURRENT[gamemode]:-survival}" != "survival" ]; then
+    printf '[setup-server-properties] WARNING: hardcore=true forces survival; gamemode=%s will be ignored by Minecraft.\n' \
+        "${CURRENT[gamemode]}" >&2
 fi
 
 {
-    printf '# server.properties — managed by BRUH Minecraft Server add-on\n'
-    printf '# Hand-edited keys not managed by the UI are preserved on restart.\n'
+    printf '# server.properties — active world is the source of truth.\n'
+    printf '# Gameplay keys are seeded once then preserved; edit them from the panel.\n'
+    printf '# Infra keys (rcon/query/ports) are managed by the add-on.\n'
     printf '# Last rendered: %s\n' "$(date -Iseconds)"
     for k in $(printf '%s\n' "${!CURRENT[@]}" | sort); do
-        # Strip any CR/LF from values defensively so a stray newline (e.g. a
-        # multi-line motd set in the HA config) can't inject extra
-        # server.properties lines. The panel already rejects newlines on its
-        # side; this covers the direct-config path too.
+        # Strip any CR/LF from values defensively so a stray newline can't
+        # inject extra server.properties lines.
         printf '%s=%s\n' "${k}" "${CURRENT[$k]//[$'\r\n']/}"
     done
 } > "${PROPS}.tmp"

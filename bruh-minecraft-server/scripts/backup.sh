@@ -21,6 +21,9 @@ MC_SERVER_DIR="${MC_SERVER_DIR:-/config/minecraft}"
 MC_BACKUP_DIR="${MC_BACKUP_DIR:-/config/minecraft-backups}"
 BACKUP_USE_GIT="${BACKUP_USE_GIT:-true}"
 BACKUP_KEEP_COUNT="${BACKUP_KEEP_COUNT:-48}"
+# level-name is a per-world server.properties setting now (no global env), so
+# read it from the active world's file to find the right world dirs to snapshot.
+LEVEL_NAME=$(grep -E '^level-name=' "${MC_SERVER_DIR}/server.properties" 2>/dev/null | head -n 1 | cut -d= -f2-)
 LEVEL_NAME="${LEVEL_NAME:-world}"
 SCRIPTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
 

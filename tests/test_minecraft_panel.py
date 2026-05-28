@@ -160,42 +160,21 @@ class TestPropertiesEditing(PanelTestBase):
         data = await resp.json()
         self.assertIn("not editable", data["error"])
 
-    async def test_edit_persists_to_addon_option(self):
-        # 1.7.0: panel edits must write back to the add-on options so they
-        # survive a restart. Capture the (option_key, value) and the coercion.
-        persisted = []
-
-        async def fake_persist(option_key, value):
-            persisted.append((option_key, value))
-            return None  # success
-
-        self.panel._persist_option = fake_persist
-        # int option: max-players -> max_players coerced to int
+    async def test_edit_writes_to_active_world_properties(self):
+        # 1.8.0: panel edits write to the active world's server.properties
+        # (the per-world source of truth) — no add-on option round-trip.
         resp = await self.client.request("POST", "/api/properties", json={
-            "key": "max-players", "value": "33",
+            "key": "gamemode", "value": "creative",
         })
         self.assertEqual(resp.status, 200)
-        data = await resp.json()
-        self.assertTrue(data["persisted"])
-        self.assertIn(("max_players", 33), persisted)
-
-    async def test_bool_option_coerced(self):
-        persisted = []
-
-        async def fake_persist(option_key, value):
-            persisted.append((option_key, value))
-            return None
-
-        self.panel._persist_option = fake_persist
-        resp = await self.client.request("POST", "/api/properties", json={
-            "key": "pvp", "value": "false",
-        })
-        self.assertEqual(resp.status, 200)
-        self.assertIn(("pvp", False), persisted)
+        content = (self.server_dir / "server.properties").read_text()
+        self.assertIn("gamemode=creative", content)
+        # Unrelated keys preserved.
+        self.assertIn("resource-pack=https://my.cdn/pack.zip", content)
 
     async def test_rejects_newline_injection(self):
         # A newline in the value must be rejected — otherwise it injects an
-        # extra server.properties line (and persists via the str option).
+        # extra server.properties line.
         resp = await self.client.request("POST", "/api/properties", json={
             "key": "motd", "value": "hi\nrcon.password=pwned",
         })
@@ -235,18 +214,6 @@ class TestPropertiesEditing(PanelTestBase):
         data = await resp.json()
         self.assertNotIn("enforce-whitelist", data["editable"])
 
-    async def test_persist_failure_surfaces_warning(self):
-        async def fake_persist(option_key, value):
-            return "Supervisor HTTP 403"
-
-        self.panel._persist_option = fake_persist
-        resp = await self.client.request("POST", "/api/properties", json={
-            "key": "motd", "value": "Hi",
-        })
-        data = await resp.json()
-        self.assertFalse(data["persisted"])
-        self.assertIn("403", data["warning"])
-
     async def test_gamemode_live_applies_to_all_players(self):
         rcon_calls = []
 
@@ -254,18 +221,13 @@ class TestPropertiesEditing(PanelTestBase):
             rcon_calls.append(cmd)
             return "ok"
 
-        async def fake_persist(option_key, value):
-            return None
-
         self.panel._rcon_command = fake_rcon
-        self.panel._persist_option = fake_persist
         resp = await self.client.request("POST", "/api/properties", json={
             "key": "gamemode", "value": "creative",
         })
         self.assertEqual(resp.status, 200)
         # Must move existing online players, not just set the default.
         self.assertIn("gamemode creative @a", rcon_calls)
-
 
 
 class TestPluginManagement(PanelTestBase):

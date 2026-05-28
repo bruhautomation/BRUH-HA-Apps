@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Behavioral test for setup-server-properties.sh.
+"""Behavioral test for setup-server-properties.sh (per-world model, 1.8.0+).
 
-Runs the actual script against a tempdir and verifies:
-* All managed keys are rendered from environment variables
-* Pre-existing, hand-edited, non-managed keys are preserved across reruns
-* File is created with 600 permissions
-* The rendered file is deterministic (sorted keys, same input → same output)
+Gameplay settings are PER-WORLD now: this script no longer renders them from
+add-on options/env. Instead it:
+  * always enforces the INFRA keys (rcon/query/ports),
+  * SEEDS gameplay defaults only when a key is absent,
+  * PRESERVES any existing gameplay value (panel edits / per-world differences),
+  * derives enforce-whitelist from white-list,
+  * forces enforce-secure-profile=false when online-mode is off.
 """
 from __future__ import annotations
 
@@ -21,38 +23,25 @@ SCRIPT = os.path.join(
 )
 
 
-def _run(server_dir: str, **overrides: str) -> subprocess.CompletedProcess:
-    env = {
-        **os.environ,
-        "MC_SERVER_DIR": server_dir,
-        "MOTD": "Test MOTD",
-        "DIFFICULTY": "hard",
-        "GAMEMODE": "creative",
-        "MAX_PLAYERS": "42",
-        "VIEW_DISTANCE": "16",
-        "SIM_DISTANCE": "12",
-        "ONLINE_MODE": "true",
-        "PVP": "false",
-        "HARDCORE": "false",
-        "ALLOW_FLIGHT": "true",
-        "WHITE_LIST": "true",
-        "SPAWN_PROTECTION": "0",
-        "LEVEL_NAME": "mycity",
-        "LEVEL_SEED": "12345",
-        "LEVEL_TYPE": "minecraft:flat",
-        "ENABLE_COMMAND_BLOCK": "true",
-        "OP_PERMISSION_LEVEL": "2",
-        "RCON_PASSWORD": "testpw",
-    }
-    env.update(overrides)
+def _run(server_dir: str, **env_extra: str) -> subprocess.CompletedProcess:
+    env = {**os.environ, "MC_SERVER_DIR": server_dir, "RCON_PASSWORD": "testpw"}
+    env.update(env_extra)
     return subprocess.run(
         ["bash", SCRIPT], env=env, capture_output=True, text=True, check=True,
     )
 
 
-def _parse(path: str) -> dict[str, str]:
+def _seed(server_dir: str, **props: str) -> None:
+    """Pre-write a server.properties (simulating an existing world)."""
+    path = os.path.join(server_dir, "server.properties")
+    with open(path, "w") as f:
+        for k, v in props.items():
+            f.write(f"{k}={v}\n")
+
+
+def _parse(server_dir: str) -> dict[str, str]:
     result: dict[str, str] = {}
-    with open(path) as f:
+    with open(os.path.join(server_dir, "server.properties")) as f:
         for line in f:
             line = line.rstrip("\n")
             if not line or line.startswith("#"):
@@ -62,214 +51,131 @@ def _parse(path: str) -> dict[str, str]:
     return result
 
 
-class TestSetupServerProperties(unittest.TestCase):
-    def test_renders_all_managed_keys(self):
+class TestInfraKeys(unittest.TestCase):
+    def test_infra_keys_always_enforced(self):
         with tempfile.TemporaryDirectory() as tmp:
             _run(tmp)
-            props = _parse(os.path.join(tmp, "server.properties"))
-            self.assertEqual(props["motd"], "Test MOTD")
-            self.assertEqual(props["difficulty"], "hard")
-            self.assertEqual(props["gamemode"], "creative")
-            self.assertEqual(props["max-players"], "42")
-            self.assertEqual(props["view-distance"], "16")
-            self.assertEqual(props["simulation-distance"], "12")
-            self.assertEqual(props["white-list"], "true")
-            self.assertEqual(props["level-name"], "mycity")
-            self.assertEqual(props["level-seed"], "12345")
+            props = _parse(tmp)
+            self.assertEqual(props["server-port"], "25565")
             self.assertEqual(props["enable-rcon"], "true")
             self.assertEqual(props["rcon.port"], "25575")
             self.assertEqual(props["rcon.password"], "testpw")
-            self.assertEqual(props["server-port"], "25565")
-            # The new managed keys must always be rendered — regression guard
-            # for the Xbox-login / "enforce-secure-profile" fix.
-            self.assertIn("enforce-secure-profile", props)
-            self.assertIn("allow-nether", props)
-            self.assertIn("spawn-monsters", props)
-            self.assertIn("generate-structures", props)
-            self.assertIn("prevent-proxy-connections", props)
+            self.assertEqual(props["enable-query"], "true")
 
-    def test_enforce_secure_profile_defaults_false_online(self):
+    def test_infra_keys_override_existing(self):
+        # Even if a world file tried to set an infra key, the add-on wins.
         with tempfile.TemporaryDirectory() as tmp:
-            _run(tmp, ONLINE_MODE="true")
-            props = _parse(os.path.join(tmp, "server.properties"))
-            self.assertEqual(props["online-mode"], "true")
-            self.assertEqual(props["enforce-secure-profile"], "false")
+            _seed(tmp, **{"enable-rcon": "false", "rcon.port": "9999"})
+            _run(tmp)
+            props = _parse(tmp)
+            self.assertEqual(props["enable-rcon"], "true")
+            self.assertEqual(props["rcon.port"], "25575")
 
-    def test_enforce_secure_profile_respects_opt_in_online(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            _run(tmp, ONLINE_MODE="true", ENFORCE_SECURE_PROFILE="true")
-            props = _parse(os.path.join(tmp, "server.properties"))
-            self.assertEqual(props["enforce-secure-profile"], "true")
 
-    def test_enforce_secure_profile_forced_false_in_offline_mode(self):
-        # Offline mode users have no signed profile — if we leave the
-        # toggle on they are kicked on join. The script must auto-force
-        # it false regardless of the raw env value.
-        with tempfile.TemporaryDirectory() as tmp:
-            _run(tmp, ONLINE_MODE="false", ENFORCE_SECURE_PROFILE="true")
-            props = _parse(os.path.join(tmp, "server.properties"))
-            self.assertEqual(props["online-mode"], "false")
-            self.assertEqual(
-                props["enforce-secure-profile"], "false",
-                "must auto-force enforce-secure-profile=false when online-mode=false",
-            )
-
-    def test_allow_cheats_forces_command_block_and_op_level(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            _run(
-                tmp, ALLOW_CHEATS="true",
-                ENABLE_COMMAND_BLOCK="false", OP_PERMISSION_LEVEL="1",
-            )
-            props = _parse(os.path.join(tmp, "server.properties"))
-            self.assertEqual(props["enable-command-block"], "true")
-            self.assertEqual(props["op-permission-level"], "2")
-
-    def test_allow_cheats_off_respects_raw_values(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            _run(
-                tmp, ALLOW_CHEATS="false",
-                ENABLE_COMMAND_BLOCK="false", OP_PERMISSION_LEVEL="4",
-            )
-            props = _parse(os.path.join(tmp, "server.properties"))
-            self.assertEqual(props["enable-command-block"], "false")
-            self.assertEqual(props["op-permission-level"], "4")
-
-    def test_initial_enabled_packs_defaults_to_vanilla(self):
-        # With no override the base game pack must still be enabled — an empty
-        # initial-enabled-packs disables vanilla and the server won't generate.
+class TestSeedDefaults(unittest.TestCase):
+    def test_seeds_gameplay_defaults_on_fresh_world(self):
         with tempfile.TemporaryDirectory() as tmp:
             _run(tmp)
-            props = _parse(os.path.join(tmp, "server.properties"))
-            self.assertEqual(props["initial-enabled-packs"], "vanilla")
-            self.assertEqual(props["initial-disabled-packs"], "")
-
-    def test_initial_enabled_packs_enables_experiments(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            _run(
-                tmp,
-                INITIAL_ENABLED_PACKS="vanilla,minecart_improvements,redstone_experiments",
-                INITIAL_DISABLED_PACKS="trade_rebalance",
-            )
-            props = _parse(os.path.join(tmp, "server.properties"))
-            self.assertEqual(
-                props["initial-enabled-packs"],
-                "vanilla,minecart_improvements,redstone_experiments",
-            )
-            self.assertEqual(props["initial-disabled-packs"], "trade_rebalance")
-
-    def test_force_gamemode_defaults_true(self):
-        # Regression for the "creative world keeps loading as survival" bug:
-        # without force-gamemode, returning players keep their saved mode.
-        with tempfile.TemporaryDirectory() as tmp:
-            _run(tmp)
-            props = _parse(os.path.join(tmp, "server.properties"))
+            props = _parse(tmp)
+            self.assertEqual(props["difficulty"], "normal")
+            self.assertEqual(props["gamemode"], "survival")
             self.assertEqual(props["force-gamemode"], "true")
+            self.assertEqual(props["max-players"], "20")
+            self.assertEqual(props["pvp"], "true")
+            self.assertEqual(props["level-name"], "world")
+            self.assertEqual(props["initial-enabled-packs"], "vanilla")
+            self.assertEqual(props["connection-throttle"], "4000")
+            self.assertEqual(props["player-idle-timeout"], "0")
 
-    def test_force_gamemode_can_be_disabled(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            _run(tmp, FORCE_GAMEMODE="false")
-            props = _parse(os.path.join(tmp, "server.properties"))
-            self.assertEqual(props["force-gamemode"], "false")
 
-    def test_blank_seed_preserves_staged_per_world_seed(self):
-        # world-manager stages a per-world level-seed; a blank global
-        # LEVEL_SEED option must NOT clobber it (else the panel's create-world
-        # seed is silently discarded on first boot).
+class TestPreserveExisting(unittest.TestCase):
+    def test_preserves_per_world_gameplay_values(self):
+        # The whole point: a creative world stays creative across boots.
         with tempfile.TemporaryDirectory() as tmp:
-            props_path = os.path.join(tmp, "server.properties")
-            with open(props_path, "w") as f:
-                f.write("level-seed=987654321\n")
-            _run(tmp, LEVEL_SEED="")
-            props = _parse(props_path)
-            self.assertEqual(props["level-seed"], "987654321")
+            _seed(tmp, gamemode="creative", difficulty="hard",
+                  **{"max-players": "8", "view-distance": "16"})
+            _run(tmp)
+            props = _parse(tmp)
+            self.assertEqual(props["gamemode"], "creative")
+            self.assertEqual(props["difficulty"], "hard")
+            self.assertEqual(props["max-players"], "8")
+            self.assertEqual(props["view-distance"], "16")
 
-    def test_global_seed_overrides_staged_seed(self):
+    def test_preserves_empty_string_value(self):
+        # An explicit empty value (e.g. resource-pack=) is preserved, not
+        # re-seeded with a default (there is no non-empty default anyway).
         with tempfile.TemporaryDirectory() as tmp:
-            props_path = os.path.join(tmp, "server.properties")
-            with open(props_path, "w") as f:
-                f.write("level-seed=987654321\n")
-            _run(tmp, LEVEL_SEED="111")
-            props = _parse(props_path)
-            self.assertEqual(props["level-seed"], "111")
-
-    def test_connection_throttle_passthrough(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            _run(tmp, CONNECTION_THROTTLE_MS="0")
-            props = _parse(os.path.join(tmp, "server.properties"))
-            self.assertEqual(props["connection-throttle"], "0")
-
-    def test_player_idle_timeout_passthrough(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            _run(tmp, PLAYER_IDLE_TIMEOUT_MINUTES="5")
-            props = _parse(os.path.join(tmp, "server.properties"))
-            self.assertEqual(props["player-idle-timeout"], "5")
-
-    def test_resource_pack_keys_pass_through(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            _run(
-                tmp,
-                RESOURCE_PACK="https://cdn.example/pack.zip",
-                RESOURCE_PACK_SHA1="deadbeef",
-                REQUIRE_RESOURCE_PACK="true",
-            )
-            props = _parse(os.path.join(tmp, "server.properties"))
-            self.assertEqual(props["resource-pack"], "https://cdn.example/pack.zip")
-            self.assertEqual(props["resource-pack-sha1"], "deadbeef")
-            self.assertEqual(props["require-resource-pack"], "true")
+            _seed(tmp, **{"level-seed": "13579"})
+            _run(tmp)
+            self.assertEqual(_parse(tmp)["level-seed"], "13579")
 
     def test_preserves_hand_edited_unknown_keys(self):
         with tempfile.TemporaryDirectory() as tmp:
-            props_path = os.path.join(tmp, "server.properties")
-            # Operator hand-edits keys the add-on doesn't know about.
-            # (`resource-pack` IS managed now, so pick keys we explicitly
-            # don't render — e.g. modded or Paper/Purpur-specific options.)
-            with open(props_path, "w") as f:
-                f.write("# my custom comment\n")
-                f.write("text-filtering-config=https://example.com/filter\n")
-                f.write("pause-when-empty-seconds=60\n")
-                f.write("motd=OLD\n")  # will be overridden by managed render
+            _seed(tmp, **{"text-filtering-config": "https://example.com/filter",
+                          "pause-when-empty-seconds": "60"})
             _run(tmp)
-            props = _parse(props_path)
-            self.assertEqual(
-                props["text-filtering-config"], "https://example.com/filter",
-                "non-managed key was dropped during re-render",
-            )
+            props = _parse(tmp)
+            self.assertEqual(props["text-filtering-config"], "https://example.com/filter")
             self.assertEqual(props["pause-when-empty-seconds"], "60")
-            self.assertEqual(props["motd"], "Test MOTD", "managed key should win")
 
+
+class TestDerivedAndSafety(unittest.TestCase):
+    def test_enforce_whitelist_mirrors_white_list(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _seed(tmp, **{"white-list": "true"})
+            _run(tmp)
+            props = _parse(tmp)
+            self.assertEqual(props["white-list"], "true")
+            self.assertEqual(props["enforce-whitelist"], "true")
+
+    def test_offline_mode_forces_secure_profile_false(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _seed(tmp, **{"online-mode": "false", "enforce-secure-profile": "true"})
+            _run(tmp)
+            props = _parse(tmp)
+            self.assertEqual(props["online-mode"], "false")
+            self.assertEqual(props["enforce-secure-profile"], "false")
+
+    def test_online_mode_respects_secure_profile_opt_in(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _seed(tmp, **{"online-mode": "true", "enforce-secure-profile": "true"})
+            _run(tmp)
+            self.assertEqual(_parse(tmp)["enforce-secure-profile"], "true")
+
+    def test_hardcore_non_survival_warns(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _seed(tmp, hardcore="true", gamemode="creative")
+            proc = _run(tmp)
+            self.assertIn("hardcore=true forces survival", proc.stderr)
+
+
+class TestFileHygiene(unittest.TestCase):
     def test_file_permissions_are_600(self):
         with tempfile.TemporaryDirectory() as tmp:
             _run(tmp)
-            path = os.path.join(tmp, "server.properties")
-            mode = stat.S_IMODE(os.stat(path).st_mode)
-            # 0o600 = user rw only; world/group can't read RCON password
+            mode = stat.S_IMODE(os.stat(os.path.join(tmp, "server.properties")).st_mode)
             self.assertEqual(mode, 0o600, f"expected 0o600, got {oct(mode)}")
 
     def test_deterministic_output(self):
-        # Running twice with the same env should produce the same key-set.
         with tempfile.TemporaryDirectory() as tmp:
             _run(tmp)
-            first = _parse(os.path.join(tmp, "server.properties"))
+            first = _parse(tmp)
             _run(tmp)
-            second = _parse(os.path.join(tmp, "server.properties"))
-            self.assertEqual(first, second)
+            self.assertEqual(first, _parse(tmp))
 
-    def test_second_run_does_not_duplicate_keys(self):
-        # Catches the most common bug: repeated renders appending instead of replacing.
+    def test_no_duplicate_keys_on_rerun(self):
         with tempfile.TemporaryDirectory() as tmp:
             _run(tmp)
-            _run(tmp, MOTD="Second run")
-            path = os.path.join(tmp, "server.properties")
-            # Count how many times each key appears — must be exactly once
+            _run(tmp)
             counts: dict[str, int] = {}
-            with open(path) as f:
+            with open(os.path.join(tmp, "server.properties")) as f:
                 for line in f:
                     if not line or line.startswith("#"):
                         continue
                     k = line.partition("=")[0]
                     counts[k] = counts.get(k, 0) + 1
             for k, n in counts.items():
-                self.assertEqual(n, 1, f"key '{k}' appears {n} times after rerender")
+                self.assertEqual(n, 1, f"key '{k}' appears {n} times")
 
 
 if __name__ == "__main__":

@@ -78,53 +78,14 @@ load_config() {
     fi
     export ACTIVE_WORLD
 
+    # Gameplay/world settings are NO LONGER add-on options — they live in each
+    # world's server.properties and are edited from the panel. Only
+    # install/container-level options are read here.
     EULA=$(bashio::config 'eula' 'false')
     SERVER_TYPE=$(bashio::config 'server_type' 'paper')
     MINECRAFT_VERSION=$(bashio::config 'minecraft_version' 'LATEST')
-    MOTD=$(bashio::config 'motd' 'A BRUH Minecraft Server')
-    DIFFICULTY=$(bashio::config 'difficulty' 'normal')
-    GAMEMODE=$(bashio::config 'gamemode' 'survival')
-    FORCE_GAMEMODE=$(bashio::config 'force_gamemode' 'true')
-    MAX_PLAYERS=$(bashio::config 'max_players' '20')
-    VIEW_DISTANCE=$(bashio::config 'view_distance' '10')
-    SIM_DISTANCE=$(bashio::config 'simulation_distance' '10')
-    ONLINE_MODE=$(bashio::config 'online_mode' 'true')
-    ENFORCE_SECURE_PROFILE=$(bashio::config 'enforce_secure_profile' 'false')
-    PVP=$(bashio::config 'pvp' 'true')
-    HARDCORE=$(bashio::config 'hardcore' 'false')
-    ALLOW_FLIGHT=$(bashio::config 'allow_flight' 'false')
-    WHITE_LIST=$(bashio::config 'white_list' 'false')
-    SPAWN_PROTECTION=$(bashio::config 'spawn_protection' '16')
-    LEVEL_NAME=$(bashio::config 'level_name' 'world')
-    LEVEL_SEED=$(bashio::config 'level_seed' '')
-    LEVEL_TYPE=$(bashio::config 'level_type' 'minecraft:normal')
-    INITIAL_ENABLED_PACKS=$(bashio::config 'initial_enabled_packs' 'vanilla')
-    INITIAL_DISABLED_PACKS=$(bashio::config 'initial_disabled_packs' '')
-    ALLOW_NETHER=$(bashio::config 'allow_nether' 'true')
-    GENERATE_STRUCTURES=$(bashio::config 'generate_structures' 'true')
-    SPAWN_MONSTERS=$(bashio::config 'spawn_monsters' 'true')
-    SPAWN_ANIMALS=$(bashio::config 'spawn_animals' 'true')
-    SPAWN_NPCS=$(bashio::config 'spawn_npcs' 'true')
-    PREVENT_PROXY_CONNECTIONS=$(bashio::config 'prevent_proxy_connections' 'false')
-    HIDE_ONLINE_PLAYERS=$(bashio::config 'hide_online_players' 'false')
-    RESOURCE_PACK=$(bashio::config 'resource_pack' '')
-    RESOURCE_PACK_SHA1=$(bashio::config 'resource_pack_sha1' '')
-    REQUIRE_RESOURCE_PACK=$(bashio::config 'require_resource_pack' 'false')
-    MAX_WORLD_SIZE=$(bashio::config 'max_world_size' '29999984')
-    NETWORK_COMPRESSION_THRESHOLD=$(bashio::config 'network_compression_threshold' '256')
-    ENTITY_BROADCAST_RANGE_PERCENTAGE=$(bashio::config 'entity_broadcast_range_percentage' '100')
     MEMORY_MB=$(bashio::config 'memory_mb' '2048')
     USE_AIKAR_FLAGS=$(bashio::config 'use_aikar_flags' 'true')
-    ENABLE_COMMAND_BLOCK=$(bashio::config 'enable_command_block' 'false')
-    OP_PERMISSION_LEVEL=$(bashio::config 'op_permission_level' '4')
-    ALLOW_CHEATS=$(bashio::config 'allow_cheats' 'false')
-    # initial_ops is a list in config.yaml; flatten to newline-separated
-    # names so the downstream shell scripts can iterate cleanly.
-    if bashio::config.is_empty 'initial_ops'; then
-        INITIAL_OPS=""
-    else
-        INITIAL_OPS=$(bashio::config 'initial_ops' | jq -r '.[]')
-    fi
     RCON_PASSWORD_CFG=$(bashio::config 'rcon_password' '')
     AUTO_UPDATE_SERVER=$(bashio::config 'auto_update_server' 'true')
     AUTO_BACKUP=$(bashio::config 'auto_backup' 'true')
@@ -139,8 +100,6 @@ load_config() {
     GEYSER_AUTH_TYPE=$(bashio::config 'geyser_auth_type' 'auto')
     GEYSER_MTU=$(bashio::config 'geyser_mtu' '1400')
     AUTO_KICK_GHOST_SESSIONS=$(bashio::config 'auto_kick_ghost_sessions' 'true')
-    CONNECTION_THROTTLE_MS=$(bashio::config 'connection_throttle_ms' '4000')
-    PLAYER_IDLE_TIMEOUT_MINUTES=$(bashio::config 'player_idle_timeout_minutes' '0')
     AUTO_QUARANTINE_DUPLICATES=$(bashio::config 'auto_quarantine_duplicates' 'true')
     EXTRA_JVM_ARGS=$(bashio::config 'extra_jvm_args' '')
     LOG_LEVEL=$(bashio::config 'log_level' 'info')
@@ -186,26 +145,14 @@ load_config() {
     # `set -e` kills the script silently, causing an s6 crash-restart loop.
     RCON_PASSWORD=""
 
-    export EULA SERVER_TYPE MINECRAFT_VERSION MOTD DIFFICULTY GAMEMODE \
-           FORCE_GAMEMODE \
-           MAX_PLAYERS VIEW_DISTANCE SIM_DISTANCE ONLINE_MODE \
-           ENFORCE_SECURE_PROFILE PVP HARDCORE \
-           ALLOW_FLIGHT WHITE_LIST SPAWN_PROTECTION LEVEL_NAME LEVEL_SEED \
-           LEVEL_TYPE INITIAL_ENABLED_PACKS INITIAL_DISABLED_PACKS \
-           ALLOW_NETHER GENERATE_STRUCTURES SPAWN_MONSTERS \
-           SPAWN_ANIMALS SPAWN_NPCS PREVENT_PROXY_CONNECTIONS \
-           HIDE_ONLINE_PLAYERS RESOURCE_PACK RESOURCE_PACK_SHA1 \
-           REQUIRE_RESOURCE_PACK MAX_WORLD_SIZE \
-           NETWORK_COMPRESSION_THRESHOLD ENTITY_BROADCAST_RANGE_PERCENTAGE \
-           MEMORY_MB USE_AIKAR_FLAGS ENABLE_COMMAND_BLOCK \
-           OP_PERMISSION_LEVEL ALLOW_CHEATS INITIAL_OPS \
+    export EULA SERVER_TYPE MINECRAFT_VERSION \
+           MEMORY_MB USE_AIKAR_FLAGS \
            RCON_PASSWORD RCON_PASSWORD_CFG \
            AUTO_UPDATE_SERVER AUTO_BACKUP \
            BACKUP_INTERVAL_MINUTES BACKUP_KEEP_COUNT BACKUP_USE_GIT \
            AUTO_RESTART_ON_CRASH AUTO_RESTART_SCHEDULE ENABLE_HA_INTEGRATION \
            ANNOUNCE_HA_EVENTS ENABLE_BEDROCK_SUPPORT GEYSER_AUTH_TYPE \
-           GEYSER_MTU AUTO_KICK_GHOST_SESSIONS CONNECTION_THROTTLE_MS \
-           PLAYER_IDLE_TIMEOUT_MINUTES \
+           GEYSER_MTU AUTO_KICK_GHOST_SESSIONS \
            AUTO_QUARANTINE_DUPLICATES \
            EXTRA_JVM_ARGS LOG_LEVEL
 
@@ -389,19 +336,48 @@ prepare_filesystem() {
 # ----------------------------------------------------------------------------
 write_state() {
     local status="$1"
+    # Gameplay display fields (motd/difficulty/gamemode/...) are now per-world,
+    # so we read them from the ACTIVE world's server.properties rather than
+    # from add-on options. server.properties has already been rendered by
+    # render_server_properties before this runs. The HA difficulty/gamemode/
+    # motd sensors read these from state.json, so they now reflect whatever
+    # world is live.
     python3 - <<PY
 import json, os, time
+
+def read_props(path):
+    props = {}
+    try:
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, _, v = line.partition("=")
+                props[k.strip()] = v
+    except OSError:
+        pass
+    return props
+
+props = read_props(os.path.join("${MC_SERVER_DIR}", "server.properties"))
+
+def as_int(v, default):
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return default
+
 state = {
     "status": "${status}",
     "server_type": os.environ["SERVER_TYPE"],
     "minecraft_version": os.environ["MINECRAFT_VERSION"],
-    "motd": os.environ["MOTD"],
-    "max_players": int(os.environ["MAX_PLAYERS"]),
     "memory_mb": int(os.environ["MEMORY_MB"]),
-    "difficulty": os.environ["DIFFICULTY"],
-    "gamemode": os.environ["GAMEMODE"],
-    "hardcore": os.environ["HARDCORE"] == "true",
-    "online_mode": os.environ["ONLINE_MODE"] == "true",
+    "motd": props.get("motd", ""),
+    "max_players": as_int(props.get("max-players"), 20),
+    "difficulty": props.get("difficulty", "normal"),
+    "gamemode": props.get("gamemode", "survival"),
+    "hardcore": props.get("hardcore", "false") == "true",
+    "online_mode": props.get("online-mode", "true") == "true",
     "rcon_port": 25575,
     "mc_port": 25565,
     "started_at": int(time.time()),
@@ -602,19 +578,6 @@ start_ghost_watcher() {
     echo $! > "${MC_PANEL_STATE}/ghost-watcher.pid"
 }
 
-start_initial_ops() {
-    # Auto-OP the configured names once the JVM is actually listening on
-    # RCON. The helper waits and exits on its own if there's nothing to do.
-    if [ -z "${INITIAL_OPS:-}" ] && [ "${ALLOW_CHEATS:-false}" != "true" ]; then
-        return 0
-    fi
-    bashio::log.info "Scheduling initial OP application (names='${INITIAL_OPS//$'\n'/ }')"
-    (
-        exec su-exec minecraft "${SCRIPTS_DIR}/apply-initial-ops.sh"
-    ) >> "${MC_PANEL_STATE}/initial-ops.log" 2>&1 &
-    echo $! > "${MC_PANEL_STATE}/initial-ops.pid"
-}
-
 start_ha_bridge() {
     if [ "${ENABLE_HA_INTEGRATION}" != "true" ]; then
         bashio::log.info "HA integration disabled; bridge not started"
@@ -731,7 +694,7 @@ graceful_shutdown() {
         fi
     fi
 
-    for helper in panel backup stats ha-bridge ghost-watcher initial-ops; do
+    for helper in panel backup stats ha-bridge ghost-watcher; do
         [ -f "${MC_PANEL_STATE}/${helper}.pid" ] \
             && kill "$(cat "${MC_PANEL_STATE}/${helper}.pid")" 2>/dev/null || true
     done
@@ -887,7 +850,6 @@ main() {
     start_stats_collector
     start_ha_bridge
     start_ghost_watcher
-    start_initial_ops
     announce_ha_discovery
 
     run_server_loop

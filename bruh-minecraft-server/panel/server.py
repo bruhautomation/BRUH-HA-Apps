@@ -168,77 +168,59 @@ def _read_properties() -> dict[str, str]:
     return props
 
 
-# Map a server.properties key the panel exposes -> (add-on option key, type).
-# Editing one of these in the panel now writes the value straight back to the
-# add-on's Configuration options via the Supervisor API, so the change is the
-# single source of truth and SURVIVES restarts. Before 1.7.0 the panel only
-# wrote server.properties, which run.sh re-rendered from the add-on options on
-# every restart — so every panel edit silently reverted. `type` drives the
-# coercion needed for the Supervisor schema (booleans/ints must not be sent as
-# strings or validation rejects the whole options object).
-PROP_OPTION_MAP: dict[str, tuple[str, str]] = {
-    "motd": ("motd", "str"),
-    "difficulty": ("difficulty", "str"),
-    "gamemode": ("gamemode", "str"),
-    "force-gamemode": ("force_gamemode", "bool"),
-    "max-players": ("max_players", "int"),
-    "view-distance": ("view_distance", "int"),
-    "simulation-distance": ("simulation_distance", "int"),
-    "pvp": ("pvp", "bool"),
-    "allow-flight": ("allow_flight", "bool"),
-    "white-list": ("white_list", "bool"),
-    # NOTE: enforce-whitelist is intentionally NOT editable here. It has no
-    # dedicated add-on option — setup-server-properties.sh always derives it
-    # from white_list — so exposing it would let the user think they could set
-    # it independently when they can't. It shows up read-only in the panel.
-    "spawn-protection": ("spawn_protection", "int"),
-    "enable-command-block": ("enable_command_block", "bool"),
-    "online-mode": ("online_mode", "bool"),
-    "enforce-secure-profile": ("enforce_secure_profile", "bool"),
-    "hardcore": ("hardcore", "bool"),
-    "allow-nether": ("allow_nether", "bool"),
-    "generate-structures": ("generate_structures", "bool"),
-    "spawn-monsters": ("spawn_monsters", "bool"),
-    "spawn-animals": ("spawn_animals", "bool"),
-    "spawn-npcs": ("spawn_npcs", "bool"),
-    "prevent-proxy-connections": ("prevent_proxy_connections", "bool"),
-    "hide-online-players": ("hide_online_players", "bool"),
-    "resource-pack": ("resource_pack", "str"),
-    "resource-pack-sha1": ("resource_pack_sha1", "str"),
-    "require-resource-pack": ("require_resource_pack", "bool"),
-    "max-world-size": ("max_world_size", "int"),
-    "network-compression-threshold": ("network_compression_threshold", "int"),
-    "entity-broadcast-range-percentage": ("entity_broadcast_range_percentage", "int"),
-    "op-permission-level": ("op_permission_level", "int"),
-    "level-seed": ("level_seed", "str"),
-    "level-type": ("level_type", "str"),
-    "level-name": ("level_name", "str"),
-    "initial-enabled-packs": ("initial_enabled_packs", "str"),
-    "initial-disabled-packs": ("initial_disabled_packs", "str"),
+# Per-world gameplay keys the panel may edit, with their value type. As of
+# 1.8.0 these live ONLY in the active world's server.properties (there are no
+# global add-on options for them anymore), so editing here writes straight to
+# that file — which IS the source of truth, so the change persists and is
+# per-world. `type` drives validation. enforce-whitelist is deliberately
+# absent: it has no independent meaning (the add-on derives it from
+# white-list), so it shows up read-only.
+EDITABLE_PROP_TYPES: dict[str, str] = {
+    "motd": "str",
+    "difficulty": "enum",
+    "gamemode": "enum",
+    "force-gamemode": "bool",
+    "max-players": "int",
+    "view-distance": "int",
+    "simulation-distance": "int",
+    "pvp": "bool",
+    "allow-flight": "bool",
+    "white-list": "bool",
+    "spawn-protection": "int",
+    "enable-command-block": "bool",
+    "op-permission-level": "int",
+    "online-mode": "bool",
+    "enforce-secure-profile": "bool",
+    "hardcore": "bool",
+    "allow-nether": "bool",
+    "generate-structures": "bool",
+    "spawn-monsters": "bool",
+    "spawn-animals": "bool",
+    "spawn-npcs": "bool",
+    "prevent-proxy-connections": "bool",
+    "hide-online-players": "bool",
+    "resource-pack": "str",
+    "resource-pack-sha1": "str",
+    "require-resource-pack": "bool",
+    "max-world-size": "int",
+    "network-compression-threshold": "int",
+    "entity-broadcast-range-percentage": "int",
+    "level-seed": "str",
+    "level-type": "enum",
+    "level-name": "str",
+    "initial-enabled-packs": "str",
+    "initial-disabled-packs": "str",
+    "connection-throttle": "int",
+    "player-idle-timeout": "int",
 }
 
-# Keys the panel is allowed to edit. Each maps to an add-on option (above) so
-# the edit persists. Other keys require editing the add-on options directly.
-EDITABLE_PROPS = set(PROP_OPTION_MAP)
+EDITABLE_PROPS = set(EDITABLE_PROP_TYPES)
 
 
-def _coerce_option(value: str, type_: str):
-    """Coerce a panel string value to the type the add-on schema expects.
-
-    Only ever called on values that already passed `_validate_prop_value`,
-    so the int parse and bool mapping below can't see junk."""
-    if type_ == "bool":
-        return str(value).strip().lower() == "true"
-    if type_ == "int":
-        return int(str(value).strip())
-    return str(value)
-
-
-# Allowed values for the list-type editable properties (mirrors config.yaml's
-# schema). Validating against these BEFORE we touch RCON or persist anything
-# (a) gives the user a clear error instead of a silently-reverted edit, and
-# (b) stops a value with spaces (e.g. "creative SomeProbe") from smuggling
-# extra arguments into the `gamemode <v> @a` RCON command.
+# Allowed values for the enum properties (mirrors config.yaml's old schema).
+# Validating BEFORE we touch RCON or write the file (a) gives the user a clear
+# error and (b) stops a value with spaces (e.g. "creative SomeProbe") from
+# smuggling extra arguments into the `gamemode <v> @a` RCON command.
 _PROP_ENUMS = {
     "difficulty": {"peaceful", "easy", "normal", "hard"},
     "gamemode": {"survival", "creative", "adventure", "spectator"},
@@ -249,7 +231,7 @@ _PROP_ENUMS = {
         "default", "flat", "largebiomes", "amplified",
     },
 }
-# Int ranges for editable int properties (mirrors config.yaml schema bounds).
+# Int ranges for editable int properties.
 _PROP_INT_RANGE = {
     "max-players": (1, 1000),
     "view-distance": (3, 32),
@@ -259,15 +241,17 @@ _PROP_INT_RANGE = {
     "network-compression-threshold": (-1, 65536),
     "entity-broadcast-range-percentage": (10, 1000),
     "op-permission-level": (1, 4),
+    "connection-throttle": (0, 60000),
+    "player-idle-timeout": (0, 1440),
 }
 
 
 def _validate_prop_value(key: str, value: str, type_: str) -> str | None:
     """Return None if `value` is acceptable for `key`, else an error string.
 
-    Rejects anything that would corrupt server.properties (newlines), violate
-    the option schema (out-of-range ints, bad enums, non-bool bools), and
-    thereby also closes RCON argument-smuggling on the live-applied keys."""
+    Rejects anything that would corrupt server.properties (newlines),
+    out-of-range ints, bad enums, or non-bool bools — which also closes
+    RCON argument-smuggling on the live-applied keys."""
     if "\n" in value or "\r" in value:
         return "value may not contain line breaks"
     if type_ == "bool":
@@ -283,9 +267,10 @@ def _validate_prop_value(key: str, value: str, type_: str) -> str | None:
         if lo is not None and (n < lo or n > hi):
             return f"{key} must be between {lo} and {hi}"
         return None
-    allowed = _PROP_ENUMS.get(key)
-    if allowed is not None and value not in allowed:
-        return f"{key} must be one of: {', '.join(sorted(allowed))}"
+    if type_ == "enum":
+        allowed = _PROP_ENUMS.get(key)
+        if allowed is not None and value not in allowed:
+            return f"{key} must be one of: {', '.join(sorted(allowed))}"
     return None
 
 VALID_PLAYER_NAME = re.compile(r"^[A-Za-z0-9_]{1,16}$")
@@ -370,24 +355,21 @@ async def api_properties_post(request: web.Request) -> web.Response:
     if key not in EDITABLE_PROPS:
         return web.json_response({"error": f"key '{key}' not editable"}, status=400)
 
-    # Validate BEFORE we write anything: rejects newline-injection into
-    # server.properties, out-of-range ints / bad enums (which the Supervisor
-    # would otherwise reject, silently reverting the edit), and value-with-
-    # spaces RCON argument smuggling on the live-applied keys.
-    option_key, option_type = PROP_OPTION_MAP[key]
-    err = _validate_prop_value(key, value, option_type)
+    # Validate before writing: rejects newline-injection into
+    # server.properties, out-of-range ints / bad enums, and value-with-spaces
+    # RCON argument smuggling on the live-applied keys.
+    err = _validate_prop_value(key, value, EDITABLE_PROP_TYPES[key])
     if err:
         return web.json_response({"error": err}, status=400)
 
-    # Write server.properties immediately so the running file + the panel's
-    # own GET reflect the change right away. On the next restart run.sh
-    # re-renders this file from the add-on options — which is exactly why we
-    # ALSO persist to the options below, so the two always agree.
+    # Write straight to the ACTIVE world's server.properties. That file is the
+    # per-world source of truth — the add-on no longer overwrites gameplay keys
+    # on boot — so this edit persists and stays scoped to this world.
     props = _read_properties()
     props[key] = value
     lines = [
-        "# server.properties — managed by BRUH Minecraft Server add-on",
-        "# Hand-edited keys not managed by the UI are preserved on restart.",
+        "# server.properties — active world is the source of truth.",
+        "# Gameplay keys are edited here / from the panel and preserved on boot.",
         f"# Last edited via panel: {time.strftime('%Y-%m-%dT%H:%M:%S%z')}",
     ]
     lines.extend(f"{k}={props[k]}" for k in sorted(props))
@@ -395,10 +377,8 @@ async def api_properties_post(request: web.Request) -> web.Response:
     tmp.write_text("\n".join(lines) + "\n")
     tmp.replace(MC_SERVER_DIR / "server.properties")
 
-    # Persist to the add-on options so the change survives restarts.
-    persist_warning = await _persist_option(option_key, _coerce_option(value, option_type))
-
-    # Live-apply a handful of keys via RCON where possible
+    # Live-apply a handful of keys via RCON where possible (others need a
+    # restart, which the frontend tells the user).
     live_reply = None
     try:
         if key == "difficulty":
@@ -414,12 +394,7 @@ async def api_properties_post(request: web.Request) -> web.Response:
     except Exception as exc:  # noqa: BLE001
         live_reply = f"live-apply failed: {exc}"
 
-    return web.json_response({
-        "ok": True,
-        "persisted": persist_warning is None,
-        "warning": persist_warning,
-        "live": live_reply,
-    })
+    return web.json_response({"ok": True, "live": live_reply})
 
 
 # ---------------------------------------------------------------------------
@@ -555,7 +530,8 @@ async def _restore_from_git(sha: str) -> web.Response:
     except Exception:  # noqa: BLE001
         pass
     repo = MC_BACKUP_DIR / "git"
-    level = os.environ.get("LEVEL_NAME", "world")
+    # level-name is a per-world server.properties setting now, not a global env.
+    level = _read_properties().get("level-name", "world") or "world"
     for world in (level, f"{level}_nether", f"{level}_the_end"):
         src = repo / world
         dst = MC_SERVER_DIR / world
@@ -790,45 +766,6 @@ async def api_worlds_switch(request: web.Request) -> web.Response:
             f"world loads."
         ),
     })
-
-
-async def _persist_option(option_key: str, value) -> str | None:
-    """Write a single add-on option back to the Supervisor so the change
-    persists across restarts. Returns None on success or a short error string.
-
-    The Supervisor's POST /addons/self/options REPLACES the entire options
-    object and validates it against the full schema, so we must fetch the
-    current options, merge our one key in, and POST the merged object —
-    otherwise every other required field reads as "missing" (the same trap
-    world-manager.sh's switch hit). Best-effort: callers treat a returned
-    error as a non-fatal warning (the live RCON apply still happened, the
-    value just won't survive the next restart)."""
-    token = os.environ.get("SUPERVISOR_TOKEN", "")
-    if not token:
-        return "SUPERVISOR_TOKEN not set"
-    base = os.environ.get("SUPERVISOR_API_URL", "http://supervisor")
-    import aiohttp
-    try:
-        timeout = aiohttp.ClientTimeout(total=8)
-        headers = {"Authorization": f"Bearer {token}"}
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(f"{base}/addons/self/info", headers=headers) as resp:
-                if resp.status != 200:
-                    return f"info HTTP {resp.status}"
-                info = await resp.json()
-            options = (info.get("data") or {}).get("options") or {}
-            options[option_key] = value
-            async with session.post(
-                f"{base}/addons/self/options",
-                headers=headers,
-                json={"options": options},
-            ) as resp:
-                if resp.status == 200:
-                    return None
-                body = (await resp.text())[:200]
-                return f"Supervisor HTTP {resp.status}: {body}"
-    except Exception as exc:  # noqa: BLE001
-        return f"{type(exc).__name__}: {exc}"
 
 
 async def _supervisor_restart_self() -> str | None:

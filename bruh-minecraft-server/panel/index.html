@@ -128,8 +128,8 @@
     <!-- Properties -->
     <section id="tab-properties" class="tab-panel">
       <p class="muted">
-        <strong>Edits here are permanent.</strong>
-        Changing an editable key writes the value back to the add-on's <strong>Configuration</strong> options (the single source of truth) and applies live via RCON where possible — so it takes effect right away <em>and</em> survives restarts. The greyed-out <code>config.yaml</code> rows are not panel-editable; change those from the Configuration tab.
+        <strong>These are this world's settings.</strong>
+        Each world has its own <code>server.properties</code> — so one world can be creative and another survival. Editing a value here saves it to the <em>active</em> world (shown in the Worlds tab) and persists across restarts. Some keys (difficulty, gamemode, whitelist) apply live; the rest take effect on the next restart. Greyed-out rows are infra keys managed by the add-on.
       </p>
       <table class="table" id="props-table">
         <thead><tr><th>Key</th><th>Value</th><th></th></tr></thead>
@@ -173,8 +173,8 @@
         Each world is a self-contained server root under <code>/config/minecraft-worlds/&lt;name&gt;/</code> with its own save files, <code>plugins/</code> folder, <code>server.properties</code>, ops/whitelist/bans, and backup history. Only one is active at a time.
       </p>
       <p class="muted">
-        <strong>What travels with the world:</strong> save files, plugins on disk, ops/whitelist/bans, per-world hand-edits to <code>server.properties</code>, backup history.<br />
-        <strong>What stays shared across every world:</strong> every setting in the add-on's <strong>Configuration</strong> tab — including <code>difficulty</code>, <code>gamemode</code>, <code>memory_mb</code>, <code>motd</code>, <code>level_name</code>, the <code>plugins:</code> URL list (copied into each profile's <code>plugins/</code> on boot), RCON password, and Geyser config. Changing them affects every profile.
+        <strong>What's per-world:</strong> all gameplay settings (gamemode, difficulty, PVP, world-gen, whitelist, MOTD, …) in this world's <code>server.properties</code> — edit them on the <strong>Server Properties</strong> tab. Plus save files, plugins on disk, ops/whitelist/bans, and backup history. So one world can be creative and another survival.<br />
+        <strong>What's shared (add-on <strong>Configuration</strong> tab):</strong> install-level only — <code>memory_mb</code> + JVM, server type/version, backups, the <code>plugins:</code> URL list (copied into each world's <code>plugins/</code> on boot), RCON password, and Bedrock/Geyser.
       </p>
       <p class="muted">
         <strong>Switching is a one-click operation</strong> (since 1.2.9): hit <strong>Switch</strong> below and the add-on restarts itself so the new world's plugins, world files, and <code>server.properties</code> are loaded. The panel is unreachable for ~30 s while the container comes back up — refresh after that. The header's <strong>Restart</strong> button only kicks the JVM, which is faster but does NOT re-point the world symlink, so it won't switch worlds on its own.
@@ -191,7 +191,7 @@
         <button class="btn btn-primary">Create</button>
       </form>
       <p class="muted">
-        Name must be 1–32 characters, letters/digits/underscore/dash only. The new world is staged empty — <em>Switch</em> to it and <em>Restart</em> to generate its initial chunks with the seed you gave here (or the <code>level_seed</code> from your add-on options if you leave the seed field blank). <code>delete</code> refuses to remove the currently-active world — switch away first.
+        Name must be 1–32 characters, letters/digits/underscore/dash only. The new world is staged empty — <em>Switch</em> to it (the add-on restarts) and it generates its initial chunks with the seed you typed here, or a random seed if blank. Tune its gamemode/difficulty/etc. on the Server Properties tab once it's active. <code>delete</code> refuses to remove the currently-active world — switch away first.
       </p>
       <pre id="world-reply" class="reply"></pre>
     </section>
