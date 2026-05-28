@@ -429,19 +429,57 @@ async def api_status(_: web.Request) -> web.Response:
     })
 
 
+# Marker file that records "the first-run wizard has been completed on this
+# install." Lives under /data/ so it survives add-on upgrades (which preserve
+# /data) and is cleared on uninstall (which clears /data) — exactly the
+# lifecycle we want for the wizard.
+SETUP_MARKER = MC_PANEL_STATE / ".setup-completed"
+
+
 def _setup_required() -> bool:
-    """True when the add-on can't run the JVM yet because the EULA hasn't been
-    accepted. The panel is up (we started it before the EULA gate in run.sh)
-    but the JVM loop is idling — the welcome wizard prompts the user to
-    accept and triggers a restart."""
+    """True when the welcome wizard should be shown — i.e. this looks like a
+    brand-new install.
+
+    Gated on TWO signals so a single dropped/edited value can't make the
+    wizard reappear after the user has already done it:
+
+      1. The completed-marker file is missing (`/data/panel/.setup-completed`).
+         Written on every successful wizard submit AND opportunistically by
+         the panel whenever it sees a server that's actually been set up
+         (EULA accepted *and* a world exists on disk) — that's the "upgrade
+         from a pre-wizard release" case where the user shouldn't suddenly
+         see the wizard.
+      2. The EULA hasn't been accepted (`/data/options.json`'s `eula`
+         field). This is also the gate run.sh checks before launching the
+         JVM, so it lines up with "the server actually can't run yet."
+
+    Both must be true for the wizard to show. After the user clicks Start
+    the marker is written and we never bother them again, even if eula gets
+    flipped back to false for some weird reason."""
+    # Belt-and-suspenders: marker present always wins.
+    if SETUP_MARKER.is_file():
+        return False
     try:
         with open(os.environ.get("MC_OPTIONS_FILE", "/data/options.json")) as f:
-            return not json.load(f).get("eula", False)
+            eula_accepted = bool(json.load(f).get("eula", False))
     except (OSError, ValueError):
-        # On a fresh install the file is always there; if missing we err on
-        # the side of NOT blocking the dashboard with a wizard that has
-        # nothing useful to do.
+        # Couldn't read options — err on the side of NOT showing the wizard.
+        # If the user really does need setup, they can re-install or hit the
+        # EULA gate in run.sh which logs a clear warning.
         return False
+    # If EULA is accepted but the marker is missing (upgrade from a
+    # pre-wizard release, or a panel-only restart), claim the setup-
+    # completed state now so we never show the wizard for an already-
+    # configured install.
+    if eula_accepted:
+        try:
+            SETUP_MARKER.parent.mkdir(parents=True, exist_ok=True)
+            SETUP_MARKER.write_text(time.strftime("%Y-%m-%dT%H:%M:%S%z"))
+        except OSError:
+            pass
+        return False
+    # EULA is false AND no marker — true first run.
+    return True
 
 
 def _detect_crash(state: dict) -> dict | None:
@@ -607,50 +645,153 @@ async def api_recommend_apply(_: web.Request) -> web.Response:
 # ---------------------------------------------------------------------------
 # Routes: API — first-run wizard
 # ---------------------------------------------------------------------------
+# Curated popular-plugin options the wizard can flip on. Kept in sync with
+# config.yaml's install_* options + popular-plugins.sh PLUGIN_SLUGS.
+_WIZARD_PLUGIN_KEYS = (
+    "install_essentialsx", "install_essentialsx_chat", "install_luckperms",
+    "install_worldedit", "install_coreprotect", "install_griefprevention",
+    "install_mcmmo", "install_chestsort", "install_veinminer", "install_spark",
+)
+
+
 async def api_setup(request: web.Request) -> web.Response:
-    """Accept the first-run wizard's submission. The wizard hands us at minimum
-    {eula: true}; optionally {server_type, online_mode} so a brand-new install
-    can be steered into the right shape (offline/family server vs public
-    online-mode) with a single click. Writes everything via the Supervisor
-    and triggers an add-on restart so run.sh re-enters and now boots the JVM."""
+    """Accept the multi-step first-run wizard's submission.
+
+    The wizard walks the user through seven steps (EULA, server software,
+    audience, first world, performance, plugins, review) and POSTs one body
+    here. We split the writes by scope:
+
+      * Global add-on options (eula, server_type, active_world, memory_mb,
+        install_*) -> Supervisor `/addons/self/options`.
+      * Per-world gameplay (gamemode, difficulty, level-type, level-seed,
+        pvp, hardcore, online-mode, view-distance, simulation-distance) ->
+        the target world's `server.properties`.
+
+    The target world is determined by `active_world` in the body (default
+    "default"). If the world directory doesn't exist yet we stage the
+    skeleton (plugins/, mods/, backup dir) so the next add-on boot can use
+    it without help from world-manager.sh.
+
+    Finally we trigger a Supervisor restart so run.sh re-enters and boots
+    the JVM with the new options."""
     body = await request.json()
     if not body.get("eula"):
         return web.json_response({"error": "eula must be accepted"}, status=400)
 
-    # Optional global add-on options.
-    server_type = body.get("server_type")
-    if server_type and server_type not in {
-        "paper", "purpur", "folia", "vanilla", "fabric", "forge",
-    }:
-        return web.json_response({"error": "invalid server_type"}, status=400)
-
-    # Optional per-world online-mode toggle: applied to the active world's
-    # server.properties (the per-world model). Default-true vanilla auth is
-    # the safest pick; offline is for LAN/family.
-    online_mode = body.get("online_mode")
     warnings: list[str] = []
 
-    err = await _persist_option("eula", True)
-    if err:
-        warnings.append(f"eula: {err}")
+    # ── Validate inputs up front so a malformed wizard payload can't half-
+    # apply (worlds dir created with junk gameplay keys, etc.).
+    server_type = body.get("server_type")
+    valid_server_types = {"paper", "purpur", "folia", "vanilla", "fabric", "forge"}
+    if server_type and server_type not in valid_server_types:
+        return web.json_response({"error": "invalid server_type"}, status=400)
+
+    world_name = (body.get("active_world") or "default").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,32}", world_name):
+        return web.json_response({"error": "invalid active_world name"}, status=400)
+
+    if "gamemode" in body and body["gamemode"] not in {
+        "survival", "creative", "adventure", "spectator",
+    }:
+        return web.json_response({"error": "invalid gamemode"}, status=400)
+    if "difficulty" in body and body["difficulty"] not in {
+        "peaceful", "easy", "normal", "hard",
+    }:
+        return web.json_response({"error": "invalid difficulty"}, status=400)
+    if "level_type" in body and body["level_type"] not in {
+        "minecraft:normal", "minecraft:flat", "minecraft:large_biomes",
+        "minecraft:amplified", "default", "flat", "largebiomes", "amplified",
+    }:
+        return web.json_response({"error": "invalid level_type"}, status=400)
+
+    memory_mb = body.get("memory_mb")
+    if memory_mb is not None:
+        try:
+            memory_mb = int(memory_mb)
+        except (TypeError, ValueError):
+            return web.json_response({"error": "memory_mb must be an integer"}, status=400)
+        if memory_mb < 512 or memory_mb > 65536:
+            return web.json_response({"error": "memory_mb out of range (512-65536)"}, status=400)
+
+    # ── Write the GLOBAL options to the add-on.
+    global_writes: list[tuple[str, object]] = [("eula", True)]
     if server_type:
-        err = await _persist_option("server_type", server_type)
+        global_writes.append(("server_type", server_type))
+    global_writes.append(("active_world", world_name))
+    if memory_mb is not None:
+        global_writes.append(("memory_mb", memory_mb))
+    for plugin_key in _WIZARD_PLUGIN_KEYS:
+        if plugin_key in body:
+            global_writes.append((plugin_key, bool(body[plugin_key])))
+
+    for key, value in global_writes:
+        err = await _persist_option(key, value)
         if err:
-            warnings.append(f"server_type: {err}")
+            warnings.append(f"{key}: {err}")
 
-    if isinstance(online_mode, bool):
-        # Stage into the active world's server.properties so the value is
-        # ready on first JVM start.
-        props = _read_properties()
-        props["online-mode"] = "true" if online_mode else "false"
-        if not online_mode:
-            # Offline-mode safety: enforce-secure-profile must be off.
+    # ── Stage the world skeleton + per-world `server.properties`.
+    world_dir = MC_WORLDS_DIR / world_name
+    world_dir.mkdir(parents=True, exist_ok=True)
+    (world_dir / "plugins").mkdir(exist_ok=True)
+    (world_dir / "mods").mkdir(exist_ok=True)
+    (MC_BACKUPS_ROOT / world_name).mkdir(parents=True, exist_ok=True)
+
+    props_path = world_dir / "server.properties"
+    props: dict[str, str] = {}
+    if props_path.is_file():
+        for line in props_path.read_text().splitlines():
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            props[k.strip()] = v
+
+    # Per-world keys come from the wizard's "first world" + "performance"
+    # steps. Coerce types here so the rendered file is valid out of the box.
+    def _bool(b: object) -> str:
+        return "true" if bool(b) else "false"
+    if "gamemode" in body:        props["gamemode"] = str(body["gamemode"])
+    if "difficulty" in body:      props["difficulty"] = str(body["difficulty"])
+    if "level_type" in body:      props["level-type"] = str(body["level_type"])
+    if "level_seed" in body:      props["level-seed"] = str(body["level_seed"]) or ""
+    if "pvp" in body:             props["pvp"] = _bool(body["pvp"])
+    if "hardcore" in body:        props["hardcore"] = _bool(body["hardcore"])
+    if "online_mode" in body:
+        props["online-mode"] = _bool(body["online_mode"])
+        # Offline-mode safety: enforce-secure-profile must be off or every
+        # client is kicked. (setup-server-properties.sh enforces this on
+        # boot too — belt-and-suspenders.)
+        if not body["online_mode"]:
             props["enforce-secure-profile"] = "false"
-        MC_SERVER_DIR.mkdir(parents=True, exist_ok=True)
-        lines = ["# server.properties — staged by the setup wizard."]
-        lines.extend(f"{k}={v}" for k, v in sorted(props.items()))
-        (MC_SERVER_DIR / "server.properties").write_text("\n".join(lines) + "\n")
+    if "view_distance" in body:
+        try:
+            props["view-distance"] = str(int(body["view_distance"]))
+        except (TypeError, ValueError):
+            pass
+    if "simulation_distance" in body:
+        try:
+            props["simulation-distance"] = str(int(body["simulation_distance"]))
+        except (TypeError, ValueError):
+            pass
 
+    lines = [
+        "# server.properties — staged by the BRUH first-run wizard.",
+        f"# Wizard run: {time.strftime('%Y-%m-%dT%H:%M:%S%z')}",
+    ]
+    lines.extend(f"{k}={v}" for k, v in sorted(props.items()))
+    props_path.write_text("\n".join(lines) + "\n")
+
+    # ── Drop the setup-completed marker before we restart, so even if
+    # something downstream wipes /data/options.json's eula key, the wizard
+    # never reappears on this install. The marker survives upgrades
+    # (persisted under /data) and is only cleared on add-on uninstall.
+    try:
+        SETUP_MARKER.parent.mkdir(parents=True, exist_ok=True)
+        SETUP_MARKER.write_text(time.strftime("%Y-%m-%dT%H:%M:%S%z"))
+    except OSError as e:
+        warnings.append(f"setup-marker: {e}")
+
+    # ── Restart the add-on so run.sh boots the JVM with the new options.
     restart_err = await _supervisor_restart_self()
     if restart_err:
         warnings.append(f"restart: {restart_err}")
@@ -658,9 +799,11 @@ async def api_setup(request: web.Request) -> web.Response:
     return web.json_response({
         "ok": not warnings,
         "warnings": warnings or None,
+        "world": world_name,
         "message": (
-            "Setup complete — the add-on is restarting now to boot the server. "
-            "This panel will be unreachable for ~30 seconds while it comes back."
+            f"Setup complete — staged '{world_name}' and restarting the "
+            f"add-on. The panel will be unreachable for ~30 seconds while "
+            f"the server boots."
         ),
     })
 

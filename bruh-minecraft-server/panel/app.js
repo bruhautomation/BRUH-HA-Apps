@@ -553,37 +553,192 @@
   }
 
   // ------------------------------------------------------------------
-  // First-run setup wizard
+  // First-run setup wizard (1.11.0 — multi-step)
   // ------------------------------------------------------------------
-  const setupSubmit = $('#setup-submit');
-  if (setupSubmit) {
-    setupSubmit.addEventListener('click', async () => {
-      const eula = $('#setup-eula').checked;
-      if (!eula) {
-        $('#setup-status').textContent = 'Please tick the EULA box to continue.';
-        return;
+  // The wizard is a stateful 7-step walkthrough. Each step is a
+  // `<section class="setup-step" data-step="N">` element; we toggle the
+  // `hidden` attribute to swap between them. Step 5 fetches a hardware
+  // recommendation, step 6 hides the plugin list for non-Bukkit server
+  // types, and step 7 renders a review summary built from the same body
+  // that gets POSTed to /api/setup.
+  const wizardRoot = $('#setup-wizard');
+  if (wizardRoot) {
+    const steps = Array.from(document.querySelectorAll('.setup-step'));
+    const totalSteps = steps.length;
+    $('#setup-step-total').textContent = String(totalSteps);
+    let current = 1;
+    let recommendation = null;
+
+    const $$btn = {
+      back: $('#setup-back'),
+      next: $('#setup-next'),
+      submit: $('#setup-submit'),
+      status: $('#setup-status'),
+    };
+
+    const isBukkit = () => ['paper', 'purpur', 'folia'].includes(serverType());
+    const serverType = () => document.querySelector('input[name="setup-server-type"]:checked')?.value || 'paper';
+    const audience = () => document.querySelector('input[name="setup-audience"]:checked')?.value || 'online';
+    const radio = (name, fallback) => document.querySelector(`input[name="${name}"]:checked`)?.value || fallback;
+
+    function showStep(n) {
+      current = Math.max(1, Math.min(totalSteps, n));
+      steps.forEach((el) => {
+        el.hidden = Number(el.dataset.step) !== current;
+      });
+      $('#setup-step-num').textContent = String(current);
+      $('#setup-progress-fill').style.width = `${(current / totalSteps) * 100}%`;
+      $$btn.back.disabled = current === 1;
+      $$btn.next.hidden = current === totalSteps;
+      $$btn.submit.hidden = current !== totalSteps;
+      $$btn.status.textContent = '';
+
+      // Step-entry hooks.
+      if (current === 5 && !recommendation) loadRecommendation();
+      if (current === 6) updatePluginsVisibility();
+      if (current === totalSteps) renderReview();
+    }
+
+    function validateStep() {
+      if (current === 1 && !$('#setup-eula').checked) {
+        return 'Please tick the EULA box to continue.';
       }
-      const audience = document.querySelector('input[name="setup-audience"]:checked')?.value;
-      const serverType = $('#setup-server-type').value;
-      setupSubmit.disabled = true;
-      $('#setup-status').textContent = 'Saving and restarting…';
+      if (current === 4) {
+        const name = $('#setup-world-name').value.trim();
+        if (!/^[A-Za-z0-9_-]{1,32}$/.test(name)) {
+          return 'World name must be 1-32 letters, digits, _ or -.';
+        }
+      }
+      if (current === 5 && radio('setup-perf') === 'manual') {
+        const mem = Number($('#setup-memory').value);
+        if (!Number.isInteger(mem) || mem < 512 || mem > 65536) {
+          return 'Memory must be a whole number between 512 and 65536.';
+        }
+      }
+      return null;
+    }
+
+    async function loadRecommendation() {
+      const summary = $('#setup-rec-summary');
+      summary.textContent = 'Detecting host hardware…';
+      try {
+        recommendation = await api('api/recommend');
+        if (!recommendation || !recommendation.memory_mb) throw new Error('no recommendation');
+        summary.innerHTML =
+          `<strong>Detected:</strong> ${recommendation.host_total_mb} MB RAM, ${recommendation.cpu_count} CPU(s). ` +
+          `<strong>Recommended:</strong> memory ${recommendation.memory_mb} MB, view-distance ${recommendation.view_distance}, ` +
+          `simulation-distance ${recommendation.simulation_distance}. ${esc(recommendation.rationale.memory)}`;
+        $('#setup-memory').value = recommendation.memory_mb;
+        $('#setup-view').value = recommendation.view_distance;
+        $('#setup-sim').value = recommendation.simulation_distance;
+      } catch {
+        summary.textContent = 'Could not detect host hardware; defaulting to 2048 MB heap. You can adjust manually.';
+      }
+    }
+
+    function updatePluginsVisibility() {
+      const note = $('#setup-plugins-note');
+      const grid = $('#setup-plugins-grid');
+      if (isBukkit()) {
+        note.textContent = `Plugins install into the active world's plugins/ folder on every boot.`;
+        grid.hidden = false;
+      } else {
+        note.textContent = `Your chosen server (${serverType()}) doesn't load Bukkit plugins — this step is a no-op for you.`;
+        grid.hidden = true;
+      }
+    }
+
+    document.querySelectorAll('input[name="setup-perf"]').forEach((el) => {
+      el.addEventListener('change', () => {
+        $('#setup-perf-manual').hidden = radio('setup-perf') !== 'manual';
+      });
+    });
+
+    function collect() {
+      const body = {
+        eula: true,
+        server_type: serverType(),
+        online_mode: audience() === 'online',
+        active_world: $('#setup-world-name').value.trim(),
+        gamemode: radio('setup-gamemode', 'survival'),
+        difficulty: radio('setup-difficulty', 'normal'),
+        level_type: radio('setup-level-type', 'minecraft:normal'),
+        level_seed: $('#setup-seed').value.trim(),
+        pvp: $('#setup-pvp').checked,
+        hardcore: $('#setup-hardcore').checked,
+      };
+      const perf = radio('setup-perf', 'auto');
+      if (perf === 'auto' && recommendation) {
+        body.memory_mb = recommendation.memory_mb;
+        body.view_distance = recommendation.view_distance;
+        body.simulation_distance = recommendation.simulation_distance;
+      } else if (perf === 'manual') {
+        body.memory_mb = Number($('#setup-memory').value);
+        body.view_distance = Number($('#setup-view').value);
+        body.simulation_distance = Number($('#setup-sim').value);
+      }
+      if (isBukkit()) {
+        document.querySelectorAll('#setup-plugins-grid input[data-plugin]').forEach((cb) => {
+          body[cb.dataset.plugin] = cb.checked;
+        });
+      }
+      return body;
+    }
+
+    function renderReview() {
+      const b = collect();
+      const dl = $('#setup-review');
+      const rows = [
+        ['Server software', b.server_type],
+        ['Mode', b.online_mode ? 'Online (Mojang auth)' : 'Offline / LAN'],
+        ['World name', b.active_world],
+        ['Gamemode', b.gamemode + (b.hardcore ? ' (hardcore)' : '')],
+        ['Difficulty', b.difficulty],
+        ['Terrain', b.level_type.replace(/^minecraft:/, '')],
+        ['Seed', b.level_seed || '(random)'],
+        ['PVP', b.pvp ? 'enabled' : 'disabled'],
+      ];
+      if (b.memory_mb) {
+        rows.push(['Memory', `${b.memory_mb} MB`]);
+        rows.push(['View / sim distance', `${b.view_distance} / ${b.simulation_distance}`]);
+      }
+      if (isBukkit()) {
+        const plugins = Object.entries(b)
+          .filter(([k, v]) => k.startsWith('install_') && v)
+          .map(([k]) => k.replace(/^install_/, ''));
+        rows.push(['Plugins', plugins.length ? plugins.join(', ') : '(none)']);
+      }
+      dl.innerHTML = rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(String(v))}</dd>`).join('');
+    }
+
+    $$btn.next.addEventListener('click', () => {
+      const err = validateStep();
+      if (err) { $$btn.status.textContent = err; return; }
+      showStep(current + 1);
+    });
+    $$btn.back.addEventListener('click', () => showStep(current - 1));
+
+    $$btn.submit.addEventListener('click', async () => {
+      const err = validateStep();
+      if (err) { $$btn.status.textContent = err; return; }
+      $$btn.submit.disabled = true;
+      $$btn.back.disabled = true;
+      $$btn.status.textContent = 'Saving and restarting the add-on…';
       const resp = await api('api/setup', {
         method: 'POST',
-        body: JSON.stringify({
-          eula: true,
-          server_type: serverType,
-          online_mode: audience === 'online',
-        }),
+        body: JSON.stringify(collect()),
       });
       if (resp.error) {
-        $('#setup-status').textContent = `Error: ${resp.error}`;
-        setupSubmit.disabled = false;
+        $$btn.status.textContent = `Error: ${resp.error}`;
+        $$btn.submit.disabled = false;
+        $$btn.back.disabled = current === 1;
         return;
       }
-      $('#setup-status').textContent = resp.message || 'Restarting…';
-      // The Supervisor will tear us down momentarily; just let the page
-      // hang on the spinner and the user can refresh once the server is up.
+      $$btn.status.textContent = resp.message || 'Restarting — the panel will be unreachable for ~30s.';
+      // The Supervisor tears us down on restart; nothing more to do here.
     });
+
+    showStep(1);
   }
 
   // ------------------------------------------------------------------

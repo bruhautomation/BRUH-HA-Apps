@@ -5,6 +5,94 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.11.0
+
+### Fixed: the wizard's CSS overrode `[hidden]`, so it appeared on every page load
+
+The setup overlay's `display: flex` rule beat the browser's default
+`[hidden] { display: none }` (without `!important`), so flipping the
+`hidden` attribute didn't actually hide it. The wizard showed up after
+every update even when the server was already running and there was no
+"Dismiss" path. Added explicit `.setup-overlay[hidden] { display: none
+!important; }` (and matching rules for the inner steps).
+
+### Fixed: dark-text-on-dark wizard in light mode
+
+The previous wizard CSS referenced a non-existent `--bg-elev` variable and
+several fallback literals that didn't match the panel's theme tokens —
+so in light mode the card was a dark literal background, and headings /
+selects / inputs inherited dark `--fg` (`#16202a`) for an invisible result.
+Every rule now uses the real theme tokens (`--bg-card`, `--bg`,
+`--bg-raise`, `--fg`, `--muted`, `--accent`, `--border`) and explicitly
+sets `color` on text-bearing elements (cards, picks, fields, code spans,
+the review block). Tested across the dark and light prefers-color-scheme
+breakpoints.
+
+### Changed: the wizard is now a real 7-step walkthrough
+
+Previously a single screen with three controls. Now:
+
+1. **EULA** — with a link and a one-line explanation.
+2. **Server software** — Paper / Purpur / Folia / Vanilla / Fabric / Forge,
+   each as a radio card with a real explanation of *what* and *why*: TPS
+   performance vs vanilla (Paper is ~30–40% faster on busy worlds), plugin
+   support, Bedrock-cross-play compatibility, and the niche cases
+   (Folia / Fabric / Forge).
+3. **Audience** — Internet/public (online mode) vs LAN/family (offline
+   mode), with the implications spelled out.
+4. **First world** — name, gamemode (each described), difficulty (each
+   described), terrain (normal/flat/large-biomes/amplified), optional
+   seed, PVP toggle, hardcore toggle.
+5. **Performance** — auto-detects host RAM and CPU count (via
+   `/api/recommend`), proposes memory + view-distance + simulation-
+   distance with rationale, or lets the user enter values manually.
+6. **Plugins** — checkboxes for every curated popular plugin
+   (EssentialsX, EssentialsX Chat, LuckPerms, WorldEdit, CoreProtect,
+   GriefPrevention, mcMMO, ChestSort, VeinMiner, Spark), each with a
+   one-line explanation. Auto-hides on non-Bukkit server types.
+7. **Review & start** — a summary of every choice; *Start the server*
+   writes everything and restarts.
+
+The wizard now drives the whole first-run shape from one place — gameplay
+settings, plugins, memory — instead of leaving most of it for the user to
+hunt down post-install.
+
+### Changed: `/api/setup` accepts the full wizard body
+
+Now writes: `eula`, `server_type`, `active_world`, `memory_mb`, and any
+`install_*` toggles via the Supervisor (global); `gamemode`, `difficulty`,
+`level-type`, `level-seed`, `pvp`, `hardcore`, `online-mode`, `view-
+distance`, `simulation-distance` into the *named* world's
+`server.properties` (per-world). Stages the world's skeleton (`plugins/`,
+`mods/`, backup dir) if the directory doesn't exist yet, so the wizard
+can name a world that didn't previously exist on disk.
+
+### Hardened: how "is this a first run?" is detected
+
+Previously the wizard appeared whenever `options.json`'s `eula` field was
+`false` — which is correct for upgrades (the file persists across them)
+but fragile against a manually-edited config, a half-failed Supervisor
+write, or an upgrade from a pre-wizard release where the user accepted
+EULA via YAML. The wizard now gates on **two** signals:
+
+1. A `/data/panel/.setup-completed` marker file. Lives under `/data/`, so
+   it persists across add-on updates and is cleared only on uninstall —
+   exactly the lifecycle we want.
+2. The EULA being unset in `options.json`.
+
+The wizard shows only when **both** "no marker" and "EULA false" are true.
+On wizard submit we drop the marker, so any subsequent state weirdness
+can't make the wizard reappear. We also drop the marker opportunistically
+the first time the panel sees `eula: true` without a marker (covers the
+upgrade-from-pre-wizard case so existing users don't suddenly get
+prompted).
+
+### Tests
+
++8 new (4 wizard-validation paths, 1 world-skeleton creation, 3 marker
+behaviour: marker dominates, eula-true writes the marker, submit writes
+the marker). 707 pass.
+
 ## 1.10.0
 
 A polish release focused on the new-user experience and the
