@@ -42,52 +42,237 @@
   </div>
 
   <!-- First-run wizard. Shown only when /api/status reports setup_required.
-       Hidden by default; app.js toggles it. -->
+       Hidden by default. CSS includes `.setup-overlay[hidden] { display: none }`
+       so the [hidden] attribute actually takes effect (a plain `hidden`
+       attribute can't beat `display: flex` from the overlay class alone). -->
   <div id="setup-wizard" class="setup-overlay" hidden>
     <div class="setup-card">
-      <h2>Welcome — let's get your server running</h2>
-      <p class="muted">A couple of quick choices and we're done. You can change all of these later from the panel or the add-on's Configuration tab.</p>
+      <header class="setup-header">
+        <div>
+          <h2>Welcome to BRUH Minecraft Server</h2>
+          <p class="muted">A short walk-through to spin up your first world. You can change anything later from the panel or the add-on's Configuration tab.</p>
+        </div>
+        <div class="setup-progress" aria-label="Wizard progress">
+          <span>Step <strong id="setup-step-num">1</strong> of <strong id="setup-step-total">7</strong></span>
+          <div class="setup-progress-bar"><div id="setup-progress-fill"></div></div>
+        </div>
+      </header>
 
-      <h3>1. Minecraft EULA</h3>
-      <p>Mojang requires every server to accept their End User Licence Agreement:
-        <a href="https://www.minecraft.net/eula" target="_blank" rel="noopener">minecraft.net/eula</a>.
-        The add-on will not start until you do.</p>
-      <label class="setup-checkbox">
-        <input type="checkbox" id="setup-eula" />
-        <span>I have read and accept the Minecraft EULA.</span>
-      </label>
-
-      <h3>2. Who's playing?</h3>
-      <p class="muted">Pick the option that matches the people who'll join. You can change this per-world later.</p>
-      <fieldset class="setup-radios">
-        <label><input type="radio" name="setup-audience" value="online" checked />
-          <strong>Internet / public server.</strong>
-          Players must sign in with a Mojang/Microsoft account. Safe default.
+      <!-- ─── STEP 1: EULA ──────────────────────────────────────────── -->
+      <section class="setup-step" data-step="1">
+        <h3>1. Accept the Minecraft EULA</h3>
+        <p>Mojang requires every server operator to accept their <a href="https://www.minecraft.net/eula" target="_blank" rel="noopener">End User Licence Agreement</a> before running a server. This is a one-time legal step, not a config choice — we won't store it anywhere except the add-on's options.</p>
+        <label class="setup-check">
+          <input type="checkbox" id="setup-eula" />
+          <span>I have read and accept the Minecraft EULA.</span>
         </label>
-        <label><input type="radio" name="setup-audience" value="offline" />
-          <strong>LAN / family / kids without Xbox accounts.</strong>
-          No sign-in required; any username works. Use this only on a private network.
-        </label>
-      </fieldset>
+      </section>
 
-      <h3>3. Server type</h3>
-      <p class="muted">Paper is the default for almost everyone — fast, supports plugins, works with Bedrock cross-play. Change only if you know why.</p>
-      <select id="setup-server-type">
-        <option value="paper" selected>Paper (recommended)</option>
-        <option value="purpur">Purpur — Paper + extra gameplay knobs</option>
-        <option value="folia">Folia — multi-threaded, niche</option>
-        <option value="vanilla">Vanilla — official Mojang, no plugins</option>
-        <option value="fabric">Fabric — lightweight mod loader</option>
-        <option value="forge">Forge — classic mod loader (modpacks)</option>
-      </select>
+      <!-- ─── STEP 2: SERVER TYPE ───────────────────────────────────── -->
+      <section class="setup-step" data-step="2" hidden>
+        <h3>2. Choose your server software</h3>
+        <p class="muted">This is the program that actually hosts the world. They all play Minecraft, but they differ on <strong>performance</strong>, <strong>plugin/mod support</strong>, and <strong>compatibility with Bedrock cross-play</strong>. Paper is the right answer for ~99% of home servers.</p>
+        <fieldset class="setup-cards">
+          <label class="setup-pick recommended">
+            <input type="radio" name="setup-server-type" value="paper" checked />
+            <div>
+              <strong>Paper <span class="setup-tag">recommended</span></strong>
+              <span class="muted">Spigot/Bukkit-compatible fork of vanilla. Roughly <strong>30–40% better TPS</strong> than vanilla on busy worlds thanks to chunk-loading rewrites and tick-thread optimisations. Loads the entire Bukkit plugin ecosystem (EssentialsX, LuckPerms, WorldEdit, Geyser, …). <strong>Required for Bedrock cross-play</strong> on this add-on.</span>
+            </div>
+          </label>
+          <label class="setup-pick">
+            <input type="radio" name="setup-server-type" value="purpur" />
+            <div>
+              <strong>Purpur</strong>
+              <span class="muted">A Paper fork that adds extra gameplay configurability — ridable mobs, configurable mob AI, anti-xray, expanded server.properties knobs. <strong>Same TPS as Paper</strong>; same plugin ecosystem. Pick this if you want to tune mob/world behaviour more finely than Paper allows.</span>
+            </div>
+          </label>
+          <label class="setup-pick">
+            <input type="radio" name="setup-server-type" value="folia" />
+            <div>
+              <strong>Folia <span class="setup-tag warn">niche</span></strong>
+              <span class="muted">Paper fork that ticks world regions on separate threads — designed for <strong>200+ concurrent players</strong>. <strong>Most plugins aren't Folia-compatible yet</strong> (they assume single-threaded tick). Skip unless you specifically need that scale.</span>
+            </div>
+          </label>
+          <label class="setup-pick">
+            <input type="radio" name="setup-server-type" value="vanilla" />
+            <div>
+              <strong>Vanilla</strong>
+              <span class="muted">Mojang's official server, unmodified. <strong>Noticeably slower</strong> than Paper on busy worlds. <strong>No plugin support</strong>. Pick this if you want pure Mojang behaviour and don't need plugins or Bedrock cross-play.</span>
+            </div>
+          </label>
+          <label class="setup-pick">
+            <input type="radio" name="setup-server-type" value="fabric" />
+            <div>
+              <strong>Fabric</strong>
+              <span class="muted">Lightweight mod loader. Server-side mods live in <code>mods/</code> — a <strong>separate ecosystem</strong> from Paper plugins. Faster boot than Forge; popular with newer performance mods. Pick this if your modpack is Fabric-based.</span>
+            </div>
+          </label>
+          <label class="setup-pick">
+            <input type="radio" name="setup-server-type" value="forge" />
+            <div>
+              <strong>Forge</strong>
+              <span class="muted">The classic mod loader. <strong>Heavier</strong> than Fabric (longer first boot, larger library tree) but it's what almost every big CurseForge modpack targets (FTB, ATM, etc.). Pick this for known modpacks.</span>
+            </div>
+          </label>
+        </fieldset>
+      </section>
 
-      <div class="setup-actions">
-        <button id="setup-submit" class="btn btn-primary" type="button">Start the server</button>
-        <span id="setup-status" class="muted"></span>
-      </div>
-      <p class="muted setup-fine">
-        Clicking <em>Start the server</em> writes your choices to the add-on's Configuration and restarts. The panel will be unreachable for about 30 seconds while the server boots.
-      </p>
+      <!-- ─── STEP 3: AUTHENTICATION ────────────────────────────────── -->
+      <section class="setup-step" data-step="3" hidden>
+        <h3>3. Who's playing?</h3>
+        <p class="muted">This controls how players sign in. You can change it per-world later from the Server Properties tab.</p>
+        <fieldset class="setup-cards">
+          <label class="setup-pick recommended">
+            <input type="radio" name="setup-audience" value="online" checked />
+            <div>
+              <strong>Internet / public server <span class="setup-tag">recommended</span></strong>
+              <span class="muted">Every login is verified against Microsoft/Mojang. Prevents name-spoofing. The right choice if anyone outside your LAN will connect, or if you may ever port-forward 25565.</span>
+            </div>
+          </label>
+          <label class="setup-pick">
+            <input type="radio" name="setup-audience" value="offline" />
+            <div>
+              <strong>LAN / family / kids without Xbox accounts</strong>
+              <span class="muted">No Microsoft account required — any username works. We auto-disable secure-profile checks and put Geyser in offline mode so Bedrock kids can join too. <strong>Insecure on the public internet</strong> — keep it LAN-only.</span>
+            </div>
+          </label>
+        </fieldset>
+      </section>
+
+      <!-- ─── STEP 4: FIRST WORLD ──────────────────────────────────── -->
+      <section class="setup-step" data-step="4" hidden>
+        <h3>4. Configure your first world</h3>
+        <p class="muted">These are per-world settings stored in the world's own <code>server.properties</code>. You can have multiple worlds with different settings — switch between them from the Worlds tab.</p>
+
+        <div class="setup-field">
+          <label for="setup-world-name">World name</label>
+          <input id="setup-world-name" type="text" value="default" maxlength="32" pattern="[A-Za-z0-9_-]+" />
+          <span class="muted">1–32 characters; letters, digits, <code>_</code> and <code>-</code>. The folder name on disk under <code>/config/minecraft-worlds/</code>.</span>
+        </div>
+
+        <div class="setup-field">
+          <label>Gamemode</label>
+          <fieldset class="setup-cards compact">
+            <label class="setup-pick"><input type="radio" name="setup-gamemode" value="survival" checked /><div><strong>Survival</strong> <span class="muted">Gather, craft, take damage. The default Minecraft experience.</span></div></label>
+            <label class="setup-pick"><input type="radio" name="setup-gamemode" value="creative" /><div><strong>Creative</strong> <span class="muted">Unlimited blocks, flight, invulnerable. Building sandbox.</span></div></label>
+            <label class="setup-pick"><input type="radio" name="setup-gamemode" value="adventure" /><div><strong>Adventure</strong> <span class="muted">Survival without breaking/placing most blocks (adventure maps).</span></div></label>
+            <label class="setup-pick"><input type="radio" name="setup-gamemode" value="spectator" /><div><strong>Spectator</strong> <span class="muted">Fly through blocks, no interaction (observe only).</span></div></label>
+          </fieldset>
+        </div>
+
+        <div class="setup-field">
+          <label>Difficulty</label>
+          <fieldset class="setup-cards compact">
+            <label class="setup-pick"><input type="radio" name="setup-difficulty" value="peaceful" /><div><strong>Peaceful</strong> <span class="muted">No hostile mobs, no hunger drain. Kid-friendly.</span></div></label>
+            <label class="setup-pick"><input type="radio" name="setup-difficulty" value="easy" /><div><strong>Easy</strong> <span class="muted">Hostiles spawn but deal less damage.</span></div></label>
+            <label class="setup-pick"><input type="radio" name="setup-difficulty" value="normal" checked /><div><strong>Normal</strong> <span class="muted">Vanilla default; balanced.</span></div></label>
+            <label class="setup-pick"><input type="radio" name="setup-difficulty" value="hard" /><div><strong>Hard</strong> <span class="muted">Hostiles deal full damage; hunger can kill.</span></div></label>
+          </fieldset>
+        </div>
+
+        <div class="setup-field">
+          <label>Terrain</label>
+          <fieldset class="setup-cards compact">
+            <label class="setup-pick"><input type="radio" name="setup-level-type" value="minecraft:normal" checked /><div><strong>Normal</strong> <span class="muted">Standard biome generation.</span></div></label>
+            <label class="setup-pick"><input type="radio" name="setup-level-type" value="minecraft:flat" /><div><strong>Superflat</strong> <span class="muted">One layer; great for creative builds and redstone testing.</span></div></label>
+            <label class="setup-pick"><input type="radio" name="setup-level-type" value="minecraft:large_biomes" /><div><strong>Large biomes</strong> <span class="muted">Same biomes, scaled up — longer to traverse, fewer transitions.</span></div></label>
+            <label class="setup-pick"><input type="radio" name="setup-level-type" value="minecraft:amplified" /><div><strong>Amplified</strong> <span class="muted">Extreme mountains. CPU-heavy, dramatic.</span></div></label>
+          </fieldset>
+        </div>
+
+        <div class="setup-field">
+          <label for="setup-seed">Seed (optional)</label>
+          <input id="setup-seed" type="text" placeholder="leave blank for a random seed" maxlength="64" />
+          <span class="muted">Determines terrain generation. Blank = random. Only matters when this world is first generated.</span>
+        </div>
+
+        <div class="setup-field">
+          <label class="setup-check"><input type="checkbox" id="setup-pvp" checked /><span><strong>Allow PVP</strong> <span class="muted">Players can damage each other. Turn off for cooperative-only play.</span></span></label>
+          <label class="setup-check"><input type="checkbox" id="setup-hardcore" /><span><strong>Hardcore mode</strong> <span class="muted">Difficulty locked to hard; on death, players are banned / made spectators. Intense.</span></span></label>
+        </div>
+      </section>
+
+      <!-- ─── STEP 5: PERFORMANCE ──────────────────────────────────── -->
+      <section class="setup-step" data-step="5" hidden>
+        <h3>5. Performance</h3>
+        <p class="muted">We can detect your host's RAM and propose a heap size + view/sim distance — or you can set them by hand. These can all be tuned later.</p>
+
+        <div id="setup-rec-summary" class="setup-rec-summary muted">Detecting host hardware…</div>
+
+        <div class="setup-field">
+          <label>How should we set memory + distances?</label>
+          <fieldset class="setup-cards compact">
+            <label class="setup-pick recommended">
+              <input type="radio" name="setup-perf" value="auto" checked />
+              <div><strong>Use the recommended values <span class="setup-tag">recommended</span></strong>
+                <span class="muted">Heap sized to your host (leaves 2 GB for HA/OS); view/sim distance scaled accordingly. Conservative — won't starve HA.</span>
+              </div>
+            </label>
+            <label class="setup-pick">
+              <input type="radio" name="setup-perf" value="manual" />
+              <div><strong>Let me set values manually</strong>
+                <span class="muted">You pick the numbers. The fields below appear when this is selected.</span>
+              </div>
+            </label>
+          </fieldset>
+        </div>
+
+        <div id="setup-perf-manual" class="setup-perf-manual" hidden>
+          <div class="setup-field-row">
+            <div class="setup-field">
+              <label for="setup-memory">Memory (MB)</label>
+              <input id="setup-memory" type="number" min="512" max="65536" step="256" value="2048" />
+              <span class="muted">JVM heap (both <code>-Xms</code> and <code>-Xmx</code>). 1–2 GB for a few friends; 4–6 GB for a busy plugin server; 8+ GB for big modpacks.</span>
+            </div>
+            <div class="setup-field">
+              <label for="setup-view">View distance</label>
+              <input id="setup-view" type="number" min="3" max="32" value="10" />
+              <span class="muted">Chunks (16-block squares) sent around each player. Higher = farther sightlines, more RAM/CPU.</span>
+            </div>
+            <div class="setup-field">
+              <label for="setup-sim">Simulation distance</label>
+              <input id="setup-sim" type="number" min="3" max="32" value="10" />
+              <span class="muted">Chunks actively ticked (mobs, redstone, crops). The bigger TPS lever — drop this first if the server feels slow.</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ─── STEP 6: PLUGINS ─────────────────────────────────────── -->
+      <section class="setup-step" data-step="6" hidden>
+        <h3>6. Add some plugins (optional)</h3>
+        <p class="muted">Curated, well-known Bukkit plugins the add-on can install automatically. Each toggle resolves the latest Paper-compatible build from Modrinth on every boot. <strong>Available only for Paper / Purpur / Folia</strong> — skipped on Vanilla/Fabric/Forge.</p>
+        <p class="muted" id="setup-plugins-note"></p>
+        <div id="setup-plugins-grid" class="setup-plugins">
+          <label class="setup-check setup-plugin"><input type="checkbox" data-plugin="install_essentialsx" /><div><strong>EssentialsX</strong><span class="muted">/home, /tpa, /spawn, /warp, /kit, /heal, /feed, /msg, economy, jail/mute. The "everyday QoL" bundle most servers run.</span></div></label>
+          <label class="setup-check setup-plugin"><input type="checkbox" data-plugin="install_essentialsx_chat" /><div><strong>EssentialsX Chat</strong><span class="muted">Chat formatting, per-group prefixes (e.g. coloured names, [Admin] tags). Pairs with LuckPerms. <em>Auto-enables EssentialsX.</em></span></div></label>
+          <label class="setup-check setup-plugin"><input type="checkbox" data-plugin="install_luckperms" /><div><strong>LuckPerms</strong><span class="muted">Standard permissions manager: groups, per-command grants, chat prefixes. The "let my mods kick but not op" plugin.</span></div></label>
+          <label class="setup-check setup-plugin"><input type="checkbox" data-plugin="install_worldedit" /><div><strong>WorldEdit</strong><span class="muted">In-game mass block editing: <code>//wand</code> selects, then <code>//set</code> / <code>//copy</code> / <code>//paste</code>. The builder's tool.</span></div></label>
+          <label class="setup-check setup-plugin"><input type="checkbox" data-plugin="install_coreprotect" /><div><strong>CoreProtect</strong><span class="muted">Block-history "forensics" — logs every place/break/container action so you can rewind griefing with <code>/co rollback</code>.</span></div></label>
+          <label class="setup-check setup-plugin"><input type="checkbox" data-plugin="install_griefprevention" /><div><strong>GriefPrevention</strong><span class="muted">Player-driven land claims (golden shovel). Each player protects their own plot — no admin intervention needed.</span></div></label>
+          <label class="setup-check setup-plugin"><input type="checkbox" data-plugin="install_mcmmo" /><div><strong>mcMMO</strong><span class="muted">RPG-style skills (mining, woodcutting, archery…). Players level by doing; perks unlock progression.</span></div></label>
+          <label class="setup-check setup-plugin"><input type="checkbox" data-plugin="install_chestsort" /><div><strong>ChestSort</strong><span class="muted">Auto-sorts chests/inventories on click. Pure QoL, zero downside.</span></div></label>
+          <label class="setup-check setup-plugin"><input type="checkbox" data-plugin="install_veinminer" /><div><strong>VeinMiner</strong><span class="muted">Sneak + break one ore mines the whole vein in a single action. Saves your wrists.</span></div></label>
+          <label class="setup-check setup-plugin"><input type="checkbox" data-plugin="install_spark" /><div><strong>Spark</strong><span class="muted">Performance profiler — <code>/spark profiler</code> tells you which plugin or chunk is eating tick time.</span></div></label>
+        </div>
+        <p class="muted setup-fine">ViaVersion + ViaBackwards are always on by default — they hide the gap between a Mojang release and the matching Paper build so a 26.x client doesn't get "Outdated server!" kicks.</p>
+      </section>
+
+      <!-- ─── STEP 7: REVIEW ───────────────────────────────────────── -->
+      <section class="setup-step" data-step="7" hidden>
+        <h3>7. Review &amp; start</h3>
+        <p class="muted">Here's what we'll set up. <em>Start the server</em> writes everything and restarts the add-on. The panel will be unreachable for ~30 seconds while the server boots.</p>
+        <dl id="setup-review" class="setup-review"></dl>
+        <p class="muted setup-fine">All of this is editable later — the panel's Server Properties, Plugins, and Worlds tabs cover everything you can change here.</p>
+      </section>
+
+      <footer class="setup-footer">
+        <button id="setup-back" class="btn btn-ghost" type="button" disabled>← Back</button>
+        <button id="setup-next" class="btn btn-primary" type="button">Next →</button>
+        <button id="setup-submit" class="btn btn-primary" type="button" hidden>Start the server</button>
+        <span id="setup-status" class="muted" role="status"></span>
+      </footer>
     </div>
   </div>
 

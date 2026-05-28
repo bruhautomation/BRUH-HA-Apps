@@ -465,7 +465,17 @@ class TestSetupWizard(PanelTestBase):
         resp = await self.client.request("POST", "/api/setup", json={"eula": False})
         self.assertEqual(resp.status, 400)
 
+    def _patch_worlds_dirs(self):
+        """Point the panel's MC_WORLDS_DIR / MC_BACKUPS_ROOT at tmpdirs so the
+        wizard doesn't try to write under /config inside CI."""
+        from pathlib import Path as _P
+        self.panel.MC_WORLDS_DIR = _P(self.tmp.name) / "minecraft-worlds"
+        self.panel.MC_BACKUPS_ROOT = _P(self.tmp.name) / "minecraft-backups"
+        self.panel.MC_WORLDS_DIR.mkdir(parents=True, exist_ok=True)
+        self.panel.MC_BACKUPS_ROOT.mkdir(parents=True, exist_ok=True)
+
     async def test_setup_writes_options_and_restarts(self):
+        self._patch_worlds_dirs()
         persisted = []
         async def fake_persist(key, value):
             persisted.append((key, value))
@@ -481,15 +491,71 @@ class TestSetupWizard(PanelTestBase):
             "eula": True,
             "server_type": "paper",
             "online_mode": False,
+            "active_world": "default",
+            "gamemode": "creative",
+            "difficulty": "peaceful",
+            "level_type": "minecraft:flat",
+            "level_seed": "12345",
+            "pvp": False,
+            "hardcore": False,
+            "memory_mb": 4096,
+            "view_distance": 12,
+            "simulation_distance": 8,
+            "install_essentialsx": True,
         })
-        self.assertEqual(resp.status, 200)
+        self.assertEqual(resp.status, 200, await resp.text())
+        # Global writes
         self.assertIn(("eula", True), persisted)
         self.assertIn(("server_type", "paper"), persisted)
+        self.assertIn(("active_world", "default"), persisted)
+        self.assertIn(("memory_mb", 4096), persisted)
+        self.assertIn(("install_essentialsx", True), persisted)
         self.assertTrue(restarted[0])
-        # online_mode=false also writes the world's server.properties.
-        content = (self.server_dir / "server.properties").read_text()
-        self.assertIn("online-mode=false", content)
-        self.assertIn("enforce-secure-profile=false", content)
+        # Per-world server.properties is written under the staged world dir.
+        props = (self.panel.MC_WORLDS_DIR / "default" / "server.properties").read_text()
+        self.assertIn("online-mode=false", props)
+        self.assertIn("enforce-secure-profile=false", props)
+        self.assertIn("gamemode=creative", props)
+        self.assertIn("difficulty=peaceful", props)
+        self.assertIn("level-type=minecraft:flat", props)
+        self.assertIn("level-seed=12345", props)
+        self.assertIn("pvp=false", props)
+        self.assertIn("view-distance=12", props)
+        self.assertIn("simulation-distance=8", props)
+
+    async def test_setup_rejects_invalid_world_name(self):
+        resp = await self.client.request("POST", "/api/setup", json={
+            "eula": True, "active_world": "bad name/with slash",
+        })
+        self.assertEqual(resp.status, 400)
+
+    async def test_setup_rejects_invalid_gamemode(self):
+        resp = await self.client.request("POST", "/api/setup", json={
+            "eula": True, "gamemode": "creative; op @a",
+        })
+        self.assertEqual(resp.status, 400)
+
+    async def test_setup_rejects_out_of_range_memory(self):
+        resp = await self.client.request("POST", "/api/setup", json={
+            "eula": True, "memory_mb": 100,
+        })
+        self.assertEqual(resp.status, 400)
+
+    async def test_setup_creates_world_skeleton_for_new_name(self):
+        self._patch_worlds_dirs()
+        async def noop(*a, **kw): return None
+        self.panel._persist_option = noop
+        self.panel._supervisor_restart_self = noop
+        resp = await self.client.request("POST", "/api/setup", json={
+            "eula": True, "active_world": "creative_one", "gamemode": "creative",
+        })
+        self.assertEqual(resp.status, 200)
+        wdir = self.panel.MC_WORLDS_DIR / "creative_one"
+        self.assertTrue(wdir.is_dir())
+        self.assertTrue((wdir / "plugins").is_dir())
+        self.assertTrue((wdir / "mods").is_dir())
+        self.assertTrue((wdir / "server.properties").is_file())
+        self.assertTrue((self.panel.MC_BACKUPS_ROOT / "creative_one").is_dir())
 
 
 class TestCrashBanner(PanelTestBase):

@@ -438,40 +438,203 @@ footer {
 .tps-badge.tps-bad  { color: var(--danger); }
 .tps-badge.tps-unknown { display: none; }
 
-/* First-run wizard overlay (1.10.0) */
+/* ─── First-run wizard (1.11.0 — multi-step) ──────────────────────────── */
+/* The `[hidden]` overrides are load-bearing: without them the `display: flex`
+   below would render the overlay even when the attribute is set, so the
+   wizard couldn't be hidden once setup is done. Pre-1.11.0 the wizard
+   appeared on every page load because of this. */
+.setup-overlay[hidden],
+.setup-step[hidden],
+.setup-perf-manual[hidden],
+#setup-submit[hidden] { display: none !important; }
+
 .setup-overlay {
   position: fixed; inset: 0;
-  background: rgba(15, 15, 18, 0.88);
+  background: rgba(0, 0, 0, 0.62);
+  backdrop-filter: blur(4px);
   display: flex; align-items: flex-start; justify-content: center;
   padding: 32px 16px;
-  z-index: 100;
+  z-index: 1000;
   overflow-y: auto;
 }
 .setup-card {
-  background: var(--bg-elev, #1f2024);
-  color: var(--fg, #e9eaee);
-  max-width: 640px; width: 100%;
-  border-radius: 12px;
+  background: var(--bg-card);
+  color: var(--fg);
+  max-width: 760px; width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 14px;
   padding: 24px 28px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+  line-height: 1.5;
 }
-.setup-card h2 { margin-top: 0; }
-.setup-card h3 { margin-top: 24px; margin-bottom: 8px; }
-.setup-card p { margin: 4px 0 8px; line-height: 1.5; }
-.setup-checkbox { display: flex; gap: 10px; align-items: center; margin-top: 12px; cursor: pointer; }
-.setup-checkbox input { width: 18px; height: 18px; }
-.setup-radios { border: none; padding: 0; margin: 4px 0 0; display: grid; gap: 10px; }
-.setup-radios label {
-  display: grid; grid-template-columns: 20px 1fr; gap: 10px; align-items: start;
-  padding: 10px; border: 1px solid var(--border, #2c2d34); border-radius: 8px; cursor: pointer;
+.setup-card h2 { margin: 0 0 4px; color: var(--fg); }
+.setup-card h3 { margin: 20px 0 8px; color: var(--fg); }
+.setup-card p { margin: 4px 0 10px; color: var(--fg); }
+.setup-card .muted { color: var(--muted); }
+.setup-card a { color: var(--accent); }
+.setup-card a:hover { color: var(--accent-hover); }
+.setup-card code {
+  font-family: var(--mono);
+  font-size: 0.92em;
+  background: var(--bg-raise);
+  color: var(--fg);
+  padding: 1px 5px;
+  border-radius: 4px;
 }
-.setup-radios input { margin-top: 3px; }
+
+.setup-header {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 14px; margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.setup-header > div:first-child { flex: 1 1 320px; min-width: 0; }
+.setup-progress {
+  text-align: right; min-width: 140px;
+  color: var(--muted); font-size: 0.9em;
+}
+.setup-progress strong { color: var(--fg); }
+.setup-progress-bar {
+  margin-top: 6px;
+  height: 6px; border-radius: 999px;
+  background: var(--bg-raise);
+  overflow: hidden;
+}
+#setup-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  width: 14.28%;
+  transition: width 0.2s ease;
+}
+
+.setup-step { padding-top: 6px; }
+
+/* Radio-card pickers (server type, gamemode, difficulty, terrain, audience) */
+.setup-cards {
+  border: none; padding: 0; margin: 4px 0 0;
+  display: grid; gap: 10px;
+}
+.setup-cards.compact { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+.setup-pick {
+  display: grid; grid-template-columns: 22px 1fr; gap: 12px; align-items: start;
+  padding: 12px 14px;
+  border: 1px solid var(--border); border-radius: 10px;
+  cursor: pointer; background: var(--bg);
+  color: var(--fg);
+  transition: border-color 0.15s, background 0.15s;
+}
+.setup-pick:hover { border-color: var(--accent); background: var(--bg-raise); }
+.setup-pick > div { display: flex; flex-direction: column; gap: 4px; min-width: 0; color: var(--fg); }
+.setup-pick strong { color: var(--fg); }
+.setup-pick .muted { font-size: 0.92em; color: var(--muted); }
+.setup-pick input[type="radio"] { margin-top: 3px; accent-color: var(--accent); }
+.setup-pick:has(input:checked) { border-color: var(--accent); background: var(--bg-raise); }
+.setup-pick.recommended { border-color: var(--accent); }
+
+.setup-tag {
+  display: inline-block;
+  font-size: 0.7em; font-weight: 600;
+  margin-left: 6px; padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent); color: #0f1419;
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+.setup-tag.warn { background: var(--warn); }
+
+/* Form fields */
+.setup-field { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; color: var(--fg); }
+.setup-field > label { font-weight: 600; color: var(--fg); }
+.setup-field > .muted { font-size: 0.85em; color: var(--muted); }
+.setup-field input[type="text"],
+.setup-field input[type="number"],
 .setup-card select {
-  width: 100%; padding: 8px; border-radius: 8px;
-  background: var(--bg, #15161a); color: var(--fg); border: 1px solid var(--border, #2c2d34);
+  width: 100%;
+  padding: 9px 10px;
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  font: inherit;
 }
-.setup-actions { margin-top: 20px; display: flex; align-items: center; gap: 12px; }
-.setup-fine { font-size: 0.85em; margin-top: 16px; }
+.setup-field input:focus,
+.setup-card select:focus { outline: 2px solid var(--accent); outline-offset: -2px; }
+.setup-field-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.setup-check {
+  display: grid; grid-template-columns: 22px 1fr; gap: 12px; align-items: start;
+  cursor: pointer; padding: 8px 0;
+  color: var(--fg);
+}
+.setup-check input[type="checkbox"] {
+  width: 18px; height: 18px; margin-top: 2px;
+  accent-color: var(--accent);
+}
+.setup-check strong { color: var(--fg); }
+.setup-check .muted { font-size: 0.92em; color: var(--muted); }
+
+/* Plugin grid */
+.setup-plugins {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+.setup-plugin {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--fg);
+}
+.setup-plugin:has(input:checked) {
+  border-color: var(--accent);
+  background: var(--bg-raise);
+}
+
+.setup-rec-summary {
+  padding: 10px 12px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  margin-bottom: 12px;
+  font-size: 0.92em;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.setup-review {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 16px;
+  margin: 4px 0 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+.setup-review dt { color: var(--muted); font-size: 0.9em; }
+.setup-review dd { margin: 0; color: var(--fg); }
+
+.setup-footer {
+  display: flex; align-items: center; gap: 12px;
+  margin-top: 24px; padding-top: 16px;
+  border-top: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.setup-footer #setup-next,
+.setup-footer #setup-submit { margin-left: auto; }
+.setup-footer #setup-status { flex-basis: 100%; color: var(--muted); }
+.setup-fine { font-size: 0.85em; color: var(--muted); margin-top: 12px; }
+
+@media (max-width: 560px) {
+  .setup-card { padding: 18px 16px; }
+  .setup-header { flex-direction: column; }
+  .setup-progress { text-align: left; min-width: 0; width: 100%; }
+}
 
 /* Crash banner */
 .crash-banner {
