@@ -5,6 +5,51 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.9.0
+
+### Added: "Tune for my hardware" + TPS health badge
+
+The Dashboard's **Performance** card now does two new things:
+
+- **Health badge.** Each TPS value (1m/5m/15m) is colored — green at 19.5+,
+  yellow at 17–19.5, red below 17 — and the card header shows an at-a-glance
+  *healthy / degraded / struggling* badge driven by the 5-minute average. No
+  more squinting at the numbers to tell if something's off.
+- **Tune for my hardware button.** Inspects the host's RAM (via
+  `/proc/meminfo`) and CPU count, then proposes sensible values for
+  `memory_mb` (global add-on option), `view-distance`, and
+  `simulation-distance` (per-world `server.properties`). One click applies
+  them — `memory_mb` writes back to the add-on Configuration via the
+  Supervisor API (since it's global, one JVM at a time); the distances
+  write to the **active world's** `server.properties`. A confirm dialog
+  shows the proposed values and the rationale before anything is changed.
+
+New endpoints: `GET /api/recommend` (preview) and
+`POST /api/recommend/apply` (apply).
+
+### Changed: popular-plugin tidy-up
+
+- **Removed `install_worldguard` and `install_multiverse_core`.** WorldGuard
+  overlapped confusingly with GriefPrevention (both protect land, different
+  models); Multiverse-Core overlapped with the add-on's built-in Worlds
+  feature in ways that confused most users. Both still installable by hand
+  via the `plugins:` URL list if you specifically want them. Their sections
+  in `PLUGINS.md` are gone too.
+- **Auto-enable plugin dependencies.** Enabling EssentialsX Chat now also
+  enables EssentialsX (it's dead without it); enabling ViaBackwards now also
+  enables ViaVersion. Logged so it's not silent.
+- **Proactive de-dupe.** If a popular toggle's plugin is *also* in your
+  `plugins:` URL list, the popular installer detects the matching jar on
+  disk and skips the download — no more two-copy waste cleaned up after the
+  fact by the quarantine.
+- **Visible quarantine.** The duplicate-jar quarantine now names which
+  plugins it cleaned up in the boot log (`Quarantined N duplicate jar(s)
+  for: <names>`), so you can see what's happening instead of just a count.
+- **Better in-config docs.** Each popular-plugin toggle's inline comment
+  now explains what the plugin actually does, and a section header notes
+  that the toggles are global (applied to whichever world is active on
+  boot) with a pointer to `PLUGINS.md` for the full command reference.
+
 ## 1.8.0
 
 ### Changed: per-world settings — every world is now independent

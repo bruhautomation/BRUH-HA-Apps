@@ -81,6 +81,12 @@ class TestPreReleaseLosesToStable(unittest.TestCase):
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertIn("multiverse-core-5.6.2.jar", proc.stderr)  # kept
             self.assertIn("multiverse-core-5.6.2-pre.jar", proc.stderr)  # quarantined
+            # 1.9.0: the final summary names which plugins had dups so the
+            # boot log makes it obvious what got cleaned up.
+            self.assertRegex(
+                proc.stderr,
+                r"Quarantined \d+ duplicate jar\(s\) for: .*[Mm]ultiverse-[Cc]ore",
+            )
 
             # The stable jar stays
             self.assertTrue((plugins / "multiverse-core-5.6.2.jar").is_file())

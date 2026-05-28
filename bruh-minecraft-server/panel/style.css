@@ -417,3 +417,23 @@ footer {
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
 }
+
+/* TPS health colors — green/yellow/red mapped to perfect/degraded/struggling. */
+.tps.tps-good    { color: var(--accent); font-weight: 600; }
+.tps.tps-warn    { color: var(--warn);   font-weight: 600; }
+.tps.tps-bad     { color: var(--danger); font-weight: 600; }
+.tps.tps-unknown { color: inherit; }
+
+.tps-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 2px 6px;
+  font-size: 0.75em;
+  font-weight: 600;
+  border-radius: 4px;
+  vertical-align: middle;
+}
+.tps-badge.tps-good { color: var(--accent); }
+.tps-badge.tps-warn { color: var(--warn);   }
+.tps-badge.tps-bad  { color: var(--danger); }
+.tps-badge.tps-unknown { display: none; }

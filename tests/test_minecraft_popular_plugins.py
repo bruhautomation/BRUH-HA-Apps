@@ -33,9 +33,7 @@ EXPECTED_PLUGINS = {
     "essentialsx_chat",
     "luckperms",
     "worldedit",
-    "worldguard",
     "coreprotect",
-    "multiverse_core",
     "griefprevention",
     "mcmmo",
     "chestsort",
@@ -130,15 +128,27 @@ class TestPopularPluginsScript(unittest.TestCase):
     a stub `install-plugin.sh` so we can assert which URLs got installed
     without touching the network."""
 
-    def _run_with_stubs(self, env_overrides: dict[str, str], modrinth_responses: dict[str, str]):
+    def _run_with_stubs(self, env_overrides: dict[str, str], modrinth_responses: dict[str, str],
+                        existing_jars: list[str] | None = None):
         """Run popular-plugins.sh with:
         - INSTALL_<NAME> env vars from `env_overrides` (rest default to false).
         - A fake `curl` on PATH that returns canned JSON for each project URL,
           based on `modrinth_responses` keyed by Modrinth slug.
         - A fake `install-plugin.sh` that just records the URL it received.
-        Returns (proc, install_log_path)."""
+        - Optional `existing_jars`: filenames to pre-seed in plugins/ so the
+          proactive de-dupe ("already supplied via plugins: URL list") path
+          can be exercised.
+        Returns (proc, installed_urls)."""
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
+
+            # Pre-seed plugins/ dir so the user-supplied check has something
+            # to find. Even when empty we still create the dir so the path
+            # exists for `ls`.
+            plugins_dir = tmp_path / "plugins"
+            plugins_dir.mkdir()
+            for jar in existing_jars or []:
+                (plugins_dir / jar).write_bytes(b"PK\x03\x04fake")
 
             # Fake install-plugin.sh — just append the URL to a log file.
             install_log = tmp_path / "install-log.txt"
@@ -172,6 +182,7 @@ class TestPopularPluginsScript(unittest.TestCase):
                 **os.environ,
                 "PATH": f"{curl_dir}:{os.environ.get('PATH', '')}",
                 "SCRIPTS_DIR": str(scripts_dir),
+                "PLUGINS_DIR": str(plugins_dir),
                 **env_overrides,
             }
             proc = subprocess.run(
@@ -241,6 +252,66 @@ class TestPopularPluginsScript(unittest.TestCase):
         # Confirm no resolution lines in the log
         self.assertNotIn("Resolving", proc.stderr)
         self.assertEqual(urls, [])
+
+    def test_essentialsx_chat_auto_enables_essentialsx(self):
+        # Operator only flips on the chat add-on; the dependency must come
+        # along for the ride (chat plugin is dead without EssentialsX).
+        ess = ('[{"loaders":["paper"],'
+               '"files":[{"url":"https://cdn.modrinth.com/data/EssentialsX.jar"}]}]')
+        chat = ('[{"loaders":["paper"],'
+                '"files":[{"url":"https://cdn.modrinth.com/data/EssentialsXChat.jar"}]}]')
+        proc, urls = self._run_with_stubs(
+            env_overrides={"INSTALL_ESSENTIALSX_CHAT": "true"},
+            modrinth_responses={"essentialsx": ess, "essentialsxchat": chat},
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("Auto-enabling essentialsx", proc.stderr)
+        self.assertIn("https://cdn.modrinth.com/data/EssentialsX.jar", urls)
+        self.assertIn("https://cdn.modrinth.com/data/EssentialsXChat.jar", urls)
+
+    def test_viabackwards_auto_enables_viaversion(self):
+        via = ('[{"loaders":["paper"],'
+               '"files":[{"url":"https://cdn.modrinth.com/data/ViaVersion.jar"}]}]')
+        back = ('[{"loaders":["paper"],'
+                '"files":[{"url":"https://cdn.modrinth.com/data/ViaBackwards.jar"}]}]')
+        proc, urls = self._run_with_stubs(
+            # ViaVersion would default-on in production but the stubs default
+            # everything to false, so this also exercises the auto-enable.
+            env_overrides={"INSTALL_VIABACKWARDS": "true"},
+            modrinth_responses={"viaversion": via, "viabackwards": back},
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("Auto-enabling viaversion", proc.stderr)
+        self.assertIn("https://cdn.modrinth.com/data/ViaVersion.jar", urls)
+        self.assertIn("https://cdn.modrinth.com/data/ViaBackwards.jar", urls)
+
+    def test_user_supplied_jar_skips_popular_install(self):
+        # User added an EssentialsX URL to the `plugins:` list and ALSO
+        # enabled the popular toggle — we shouldn't download a second copy.
+        ess = ('[{"loaders":["paper"],'
+               '"files":[{"url":"https://cdn.modrinth.com/data/EssentialsX-2.21.jar"}]}]')
+        proc, urls = self._run_with_stubs(
+            env_overrides={"INSTALL_ESSENTIALSX": "true"},
+            modrinth_responses={"essentialsx": ess},
+            existing_jars=["EssentialsX-2.21.0.jar"],
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(urls, [], "should not re-download a user-supplied plugin")
+        self.assertIn("already supplied via plugins: URL list", proc.stderr)
+
+    def test_match_is_case_insensitive_and_prefix(self):
+        # The on-disk file uses a different case + extra suffix; matcher
+        # must still recognise it as the same plugin.
+        proc, urls = self._run_with_stubs(
+            env_overrides={"INSTALL_LUCKPERMS": "true"},
+            modrinth_responses={"luckperms": (
+                '[{"loaders":["paper"],'
+                '"files":[{"url":"https://cdn.modrinth.com/data/LuckPerms.jar"}]}]'
+            )},
+            existing_jars=["LuckPerms-Bukkit-5.4.142.jar"],
+        )
+        self.assertEqual(urls, [])
+        self.assertIn("Skipping luckperms", proc.stderr)
 
 
 if __name__ == "__main__":

@@ -343,7 +343,8 @@ The panel is reachable from the **Minecraft** entry in HA's sidebar (or directly
 ### Dashboard
 
 - Real-time status dot, version, uptime, memory.
-- Performance metrics: TPS, latency.
+- **Performance** card with TPS (1m/5m/15m) and latency, plus a colored *healthy / degraded / struggling* badge driven by the 5-minute TPS (green ≥ 19.5, yellow ≥ 17, red below).
+- **Tune for my hardware** button (1.9.0+): inspects host RAM/CPU and proposes `memory_mb` (global), plus per-world `view-distance` / `simulation-distance`. Click → confirm with rationale → applies. Memory writes back to the add-on Configuration via the Supervisor; distances write to the active world's `server.properties`. Both take effect on the next restart.
 - Current player list with pill badges.
 - Quick-chat (`/say`) and one-shot RCON command bar.
 
