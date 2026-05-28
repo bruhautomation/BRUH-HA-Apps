@@ -576,6 +576,17 @@ async def api_players(_: web.Request) -> web.Response:
     }))
 
 
+# Keys whose value is BAKED INTO the world at generation time — changing
+# them post-creation has no effect on the existing save. The panel surfaces
+# this clearly so users don't think "I changed level-seed but the world
+# didn't change." (The world would need to be re-generated for these to
+# matter; create a new world from the Worlds tab instead.)
+WORLD_GEN_ONLY_KEYS = frozenset({
+    "level-seed", "level-type", "level-name",
+    "initial-enabled-packs", "initial-disabled-packs",
+})
+
+
 async def api_properties_get(_: web.Request) -> web.Response:
     props = _read_properties()
     safe = {k: v for k, v in props.items() if k != "rcon.password"}
@@ -590,6 +601,10 @@ async def api_properties_get(_: web.Request) -> web.Response:
         "types": EDITABLE_PROP_TYPES,
         "enums": {k: sorted(v) for k, v in _PROP_ENUMS.items()},
         "int_ranges": {k: list(v) for k, v in _PROP_INT_RANGE.items()},
+        # Per-key flags so the panel can render warnings without hardcoding
+        # the same list in JS. Right now: world-gen-only keys that won't
+        # affect an existing world if edited.
+        "world_gen_only": sorted(WORLD_GEN_ONLY_KEYS),
     })
 
 
@@ -612,6 +627,20 @@ async def api_properties_post(request: web.Request) -> web.Response:
     # on boot — so this edit persists and stays scoped to this world.
     props = _read_properties()
     props[key] = value
+    # The "creative doesn't stick" trap: Minecraft only applies `gamemode` to
+    # NEW players; returning players keep their saved mode unless
+    # `force-gamemode=true` is set. Older worlds (created before 1.7.0) often
+    # have force-gamemode missing / false, so editing gamemode in the panel
+    # would change the file but rejoining players would still land in their
+    # previous mode. We auto-set force-gamemode=true alongside gamemode so
+    # the user's intent ("set creative → everyone is creative") just works.
+    # Power users who specifically want returning players to keep their mode
+    # can flip force-gamemode back to false from the same Server Properties
+    # tab — it's an editable key.
+    auto_set_force_gamemode = False
+    if key == "gamemode" and props.get("force-gamemode") != "true":
+        props["force-gamemode"] = "true"
+        auto_set_force_gamemode = True
     lines = [
         "# server.properties — active world is the source of truth.",
         "# Gameplay keys are edited here / from the panel and preserved on boot.",
@@ -639,6 +668,14 @@ async def api_properties_post(request: web.Request) -> web.Response:
     except Exception as exc:  # noqa: BLE001
         live_reply = f"live-apply failed: {exc}"
 
+    if auto_set_force_gamemode:
+        note = (
+            "Also set force-gamemode=true so this mode sticks for returning "
+            "players. Flip it back on the Properties tab if you want players "
+            "to keep their own mode."
+        )
+        live_reply = note if not live_reply else f"{live_reply}\n{note}"
+
     return web.json_response({"ok": True, "live": live_reply})
 
 
@@ -650,13 +687,21 @@ async def api_recommend_get(_: web.Request) -> web.Response:
     per-key delta, so the Tune dialog can show only what would actually
     change (or say "no changes needed" when settings already match)."""
     rec = _recommend_settings()
-    # Current global memory_mb lives in /data/options.json (Supervisor-managed).
-    cur_mem = None
+    # Current global memory_mb. /data/options.json only contains keys the
+    # user has explicitly overridden — HA Supervisor stores defaults in the
+    # schema, not the file. So a user who left memory_mb at the default 2048
+    # gets nothing here, and we'd previously report "unset" in the Tune
+    # dialog even though the server is happily running on 2048. Fall back
+    # to the schema default when the key is absent.
+    DEFAULT_MEMORY_MB = 2048
+    cur_mem = DEFAULT_MEMORY_MB
     try:
         with open(os.environ.get("MC_OPTIONS_FILE", "/data/options.json")) as f:
-            cur_mem = int(json.load(f).get("memory_mb"))
+            raw = json.load(f).get("memory_mb")
+        if raw is not None:
+            cur_mem = int(raw)
     except (OSError, ValueError, TypeError):
-        cur_mem = None
+        pass  # keep the schema default
     # View / sim distance are per-world server.properties keys (the active
     # world is what's loaded via the symlink).
     props = _read_properties()
@@ -890,6 +935,9 @@ async def api_setup(request: web.Request) -> web.Response:
     # steps. Coerce types here so the rendered file is valid out of the box.
     def _bool(b: object) -> str:
         return "true" if bool(b) else "false"
+    # Sync level-name with the profile name so users see ONE name in every
+    # surface (Worlds tab / Server Properties / Minecraft F3 debug).
+    props["level-name"] = world_name
     if "gamemode" in body:        props["gamemode"] = str(body["gamemode"])
     if "force_gamemode" in body:  props["force-gamemode"] = _bool(body["force_gamemode"])
     if "difficulty" in body:      props["difficulty"] = str(body["difficulty"])
@@ -1306,15 +1354,91 @@ async def api_worlds_list(_: web.Request) -> web.Response:
 
 
 async def api_worlds_create(request: web.Request) -> web.Response:
+    """Stage a new world. The minimal body is `{name, seed?}` (the old shape
+    still works), but the 1.13.0 new-world wizard POSTs a richer body with
+    `gamemode`, `force_gamemode`, `difficulty`, `level_type`, `pvp`,
+    `hardcore`, `max_players`, `white_list`, `spawn_protection`. Those keys
+    are written into the new world's `server.properties` so the world boots
+    with the user's gameplay choices already in place — no second trip to
+    the Server Properties tab needed."""
     body = await request.json()
     name = str(body.get("name", "")).strip()
     seed = str(body.get("seed", "")).strip()
     if not VALID_WORLD_NAME.match(name):
         return web.json_response({"error": "invalid name (1-32 chars, A-Z a-z 0-9 _ -)"}, status=400)
+
+    # Same enum / bool / int-range validation as the first-run wizard so the
+    # new-world flow can't push a malformed value into server.properties.
+    if "gamemode" in body and body["gamemode"] not in _PROP_ENUMS["gamemode"]:
+        return web.json_response({"error": "invalid gamemode"}, status=400)
+    if "difficulty" in body and body["difficulty"] not in _PROP_ENUMS["difficulty"]:
+        return web.json_response({"error": "invalid difficulty"}, status=400)
+    if "level_type" in body and body["level_type"] not in _PROP_ENUMS["level-type"]:
+        return web.json_response({"error": "invalid level_type"}, status=400)
+    for bool_key in ("force_gamemode", "pvp", "hardcore", "white_list"):
+        if bool_key in body and not isinstance(body[bool_key], bool):
+            return web.json_response(
+                {"error": f"{bool_key} must be true or false"}, status=400,
+            )
+    int_values: dict[str, int] = {}
+    for key, lo, hi in (("max_players", 1, 1000), ("spawn_protection", 0, 10000)):
+        if key in body:
+            try:
+                n = int(body[key])
+            except (TypeError, ValueError):
+                return web.json_response({"error": f"{key} must be an integer"}, status=400)
+            if n < lo or n > hi:
+                return web.json_response({"error": f"{key} out of range ({lo}-{hi})"}, status=400)
+            int_values[key] = n
+
     rc, out = await _run_world_manager("create", name, seed) if seed else await _run_world_manager("create", name)
     if rc != 0:
         return web.json_response({"error": out.strip()}, status=400)
-    return web.json_response({"ok": True, "output": out})
+
+    # Stage gameplay settings into the new world's server.properties so the
+    # first boot uses them. We READ what world-manager just wrote (it stages
+    # a minimal file with level-name + optional level-seed), MERGE in the
+    # wizard's choices, then re-write. setup-server-properties.sh on boot
+    # preserves these (its seed-if-absent rule only adds keys that are
+    # missing — ours are present so they stay).
+    props_path = MC_WORLDS_DIR / name / "server.properties"
+    existing: dict[str, str] = {}
+    if props_path.is_file():
+        for line in props_path.read_text().splitlines():
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            existing[k.strip()] = v
+
+    def _bool(b: object) -> str:
+        return "true" if bool(b) else "false"
+    # Match level-name to the profile name so users see ONE name everywhere
+    # (Worlds tab, Server Properties, in-game F3 debug). Pre-1.13 left
+    # level-name=world by default, so a profile "WORLD_3" had its save at
+    # WORLD_3/world/ — confusing because the panel's "world name" didn't
+    # match what Minecraft displayed.
+    existing["level-name"] = name
+    if "gamemode" in body:        existing["gamemode"] = str(body["gamemode"])
+    if "force_gamemode" in body:  existing["force-gamemode"] = _bool(body["force_gamemode"])
+    if "difficulty" in body:      existing["difficulty"] = str(body["difficulty"])
+    if "level_type" in body:      existing["level-type"] = str(body["level_type"])
+    if "pvp" in body:             existing["pvp"] = _bool(body["pvp"])
+    if "hardcore" in body:        existing["hardcore"] = _bool(body["hardcore"])
+    if "white_list" in body:      existing["white-list"] = _bool(body["white_list"])
+    if "max_players" in int_values:
+        existing["max-players"] = str(int_values["max_players"])
+    if "spawn_protection" in int_values:
+        existing["spawn-protection"] = str(int_values["spawn_protection"])
+
+    if existing:
+        lines = [
+            f"# server.properties — staged by the new-world wizard "
+            f"({time.strftime('%Y-%m-%dT%H:%M:%S%z')})",
+        ]
+        lines.extend(f"{k}={v}" for k, v in sorted(existing.items()))
+        props_path.write_text("\n".join(lines) + "\n")
+
+    return web.json_response({"ok": True, "name": name, "output": out})
 
 
 async def api_worlds_switch(request: web.Request) -> web.Response:

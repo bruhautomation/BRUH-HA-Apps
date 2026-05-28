@@ -400,22 +400,55 @@
 
   async function loadProperties() {
     const data = await api('api/properties');
+    // Surface which world the user is currently configuring. Per-world is
+    // the whole point — without this label the table looks the same
+    // regardless of which world is active, which has confused users.
+    try {
+      const w = await api('api/worlds');
+      const active = (w && w.active) || 'default';
+      const ctx = $('#props-active-world');
+      if (ctx) ctx.textContent = active;
+    } catch { /* non-fatal cosmetic */ }
     const tbody = $('#props-table tbody');
     tbody.innerHTML = '';
     const editable = new Set(data.editable);
     const types = data.types || {};
     const enums = data.enums || {};
     const ranges = data.int_ranges || {};
-    Object.entries(data.properties).sort().forEach(([k, v]) => {
+    // Pull the headline gameplay settings to the top so the user sees them
+    // without scrolling — `level-name` (the world's save-folder name) first,
+    // then the everyday gameplay knobs. Everything else stays in alphabetical
+    // order below this priority list.
+    const PROP_PRIORITY = [
+      'level-name', 'motd', 'gamemode', 'force-gamemode', 'difficulty',
+      'max-players', 'pvp', 'hardcore', 'online-mode', 'white-list',
+      'view-distance', 'simulation-distance', 'level-type', 'level-seed',
+    ];
+    const priorityIndex = new Map(PROP_PRIORITY.map((k, i) => [k, i]));
+    const sortedEntries = Object.entries(data.properties).sort(([a], [b]) => {
+      const ai = priorityIndex.has(a) ? priorityIndex.get(a) : Infinity;
+      const bi = priorityIndex.has(b) ? priorityIndex.get(b) : Infinity;
+      if (ai !== bi) return ai - bi;
+      return a.localeCompare(b);
+    });
+    const worldGenOnly = new Set(data.world_gen_only || []);
+    sortedEntries.forEach(([k, v]) => {
       const isEditable = editable.has(k);
       const tr = document.createElement('tr');
+      // Flag keys that are baked into the world at GENERATION time —
+      // editing them on an existing world has NO effect (Minecraft only
+      // reads them once when it generates the world). Without this badge
+      // users edit level-seed expecting their world to change.
+      const wgoBadge = worldGenOnly.has(k)
+        ? `<span class="wgo-badge" title="World-generation only — has no effect on this already-generated world. To use this, create a new world from the Worlds tab.">world-gen only</span>`
+        : '';
       const valCell = isEditable
         ? renderPropEditor(k, v, types, enums, ranges)
         : `<code>${esc(v)}</code>`;
       const actionCell = isEditable
         ? `<button class="btn btn-primary" data-save-key="${esc(k)}">Save</button>`
         : '<span class="muted">config.yaml</span>';
-      tr.innerHTML = `<td><code>${esc(k)}</code></td><td>${valCell}</td><td>${actionCell}</td>`;
+      tr.innerHTML = `<td><code>${esc(k)}</code>${wgoBadge}</td><td>${valCell}</td><td>${actionCell}</td>`;
       tbody.appendChild(tr);
     });
     tbody.querySelectorAll('button[data-save-key]').forEach((b) => {
@@ -555,22 +588,150 @@
     });
   }
 
-  document.querySelector('#f-world-create').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const name = document.querySelector('#world-name').value.trim();
-    const seed = document.querySelector('#world-seed').value.trim();
-    const resp = await api('api/worlds', {
-      method: 'POST',
-      body: JSON.stringify({ name, seed }),
-    });
-    document.querySelector('#world-reply').textContent =
-      resp.ok ? `Created "${name}". Switch to it and restart to boot into it.` : (resp.error || 'failed');
-    if (resp.ok) {
-      document.querySelector('#world-name').value = '';
-      document.querySelector('#world-seed').value = '';
-      loadWorlds();
+  // ------------------------------------------------------------------
+  // New-world wizard (1.13.0) — opened from the Worlds-tab Create button.
+  // Same shape as the first-run wizard but only covers per-world settings
+  // (no EULA / server type / plugins / memory). 5 steps: name+seed,
+  // gameplay, rules, players & access, review.
+  // ------------------------------------------------------------------
+  const newworldRoot = $('#newworld-wizard');
+  if (newworldRoot) {
+    const steps = Array.from(document.querySelectorAll('.setup-step[data-newworld-step]'));
+    const total = steps.length;
+    $('#newworld-step-total').textContent = String(total);
+    let current = 1;
+
+    const nwBtn = {
+      back: $('#newworld-back'),
+      next: $('#newworld-next'),
+      submit: $('#newworld-submit'),
+      cancel: $('#newworld-cancel'),
+      status: $('#newworld-status'),
+    };
+    const nwRadio = (name, fallback) =>
+      document.querySelector(`input[name="${name}"]:checked`)?.value || fallback;
+
+    function nwShow(n) {
+      current = Math.max(1, Math.min(total, n));
+      steps.forEach((el) => { el.hidden = Number(el.dataset.newworldStep) !== current; });
+      $('#newworld-step-num').textContent = String(current);
+      $('#newworld-progress-fill').style.width = `${(current / total) * 100}%`;
+      nwBtn.back.disabled = current === 1;
+      nwBtn.next.hidden = current === total;
+      nwBtn.submit.hidden = current !== total;
+      nwBtn.status.textContent = '';
+      if (current === total) nwRenderReview();
     }
-  });
+
+    function nwValidate() {
+      if (current === 1) {
+        const name = $('#newworld-name').value.trim();
+        if (!/^[A-Za-z0-9_-]{1,32}$/.test(name)) {
+          return 'World name must be 1-32 letters, digits, _ or -.';
+        }
+      }
+      if (current === 4) {
+        const mp = Number($('#newworld-max-players').value);
+        if (!Number.isInteger(mp) || mp < 1 || mp > 1000) return 'Max players must be between 1 and 1000.';
+        const sp = Number($('#newworld-spawn-protection').value);
+        if (!Number.isInteger(sp) || sp < 0 || sp > 10000) return 'Spawn protection must be between 0 and 10000.';
+      }
+      return null;
+    }
+
+    function nwCollect() {
+      return {
+        name: $('#newworld-name').value.trim(),
+        seed: $('#newworld-seed').value.trim(),
+        gamemode: nwRadio('newworld-gamemode', 'survival'),
+        force_gamemode: $('#newworld-force-gamemode').checked,
+        difficulty: nwRadio('newworld-difficulty', 'normal'),
+        level_type: nwRadio('newworld-level-type', 'minecraft:normal'),
+        pvp: $('#newworld-pvp').checked,
+        hardcore: $('#newworld-hardcore').checked,
+        max_players: Number($('#newworld-max-players').value) || 20,
+        white_list: $('#newworld-whitelist').checked,
+        spawn_protection: Number($('#newworld-spawn-protection').value) || 16,
+      };
+    }
+
+    function nwRenderReview() {
+      const b = nwCollect();
+      const rows = [
+        ['Name', b.name],
+        ['Seed', b.seed || '(random)'],
+        ['Gamemode', `${b.gamemode}${b.force_gamemode ? ' (forced on every join)' : ''}${b.hardcore ? ' — HARDCORE' : ''}`],
+        ['Difficulty', b.difficulty],
+        ['Terrain', b.level_type.replace(/^minecraft:/, '')],
+        ['PvP', b.pvp ? 'enabled' : 'disabled'],
+        ['Max players', String(b.max_players)],
+        ['Whitelist', b.white_list ? 'on — only listed players may join' : 'off (open)'],
+        ['Spawn protection', `${b.spawn_protection} blocks`],
+      ];
+      $('#newworld-review').innerHTML = rows
+        .map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(String(v))}</dd>`).join('');
+    }
+
+    function nwClose() {
+      newworldRoot.hidden = true;
+      // Reset fields for next open.
+      $('#newworld-name').value = '';
+      $('#newworld-seed').value = '';
+      $('#newworld-force-gamemode').checked = true;
+      $('#newworld-pvp').checked = true;
+      $('#newworld-hardcore').checked = false;
+      $('#newworld-whitelist').checked = false;
+      $('#newworld-max-players').value = '20';
+      $('#newworld-spawn-protection').value = '16';
+      document.querySelector('input[name="newworld-gamemode"][value="survival"]').checked = true;
+      document.querySelector('input[name="newworld-difficulty"][value="normal"]').checked = true;
+      document.querySelector('input[name="newworld-level-type"][value="minecraft:normal"]').checked = true;
+      nwShow(1);
+    }
+
+    nwBtn.next.addEventListener('click', () => {
+      const err = nwValidate();
+      if (err) { nwBtn.status.textContent = err; return; }
+      nwShow(current + 1);
+    });
+    nwBtn.back.addEventListener('click', () => nwShow(current - 1));
+    nwBtn.cancel.addEventListener('click', nwClose);
+
+    nwBtn.submit.addEventListener('click', async () => {
+      const err = nwValidate();
+      if (err) { nwBtn.status.textContent = err; return; }
+      nwBtn.submit.disabled = true;
+      nwBtn.back.disabled = true;
+      nwBtn.status.textContent = 'Staging the world…';
+      const body = nwCollect();
+      const resp = await api('api/worlds', { method: 'POST', body: JSON.stringify(body) });
+      nwBtn.submit.disabled = false;
+      nwBtn.back.disabled = false;
+      if (resp.error) {
+        nwBtn.status.textContent = `Error: ${resp.error}`;
+        return;
+      }
+      $('#world-reply').textContent =
+        `Staged "${body.name}". Switch to it from the table above and the add-on will restart to boot it.`;
+      nwClose();
+      loadWorlds();
+      // Offer to switch right away so the user doesn't end up editing the
+      // OLD active world's settings under the impression they're tuning
+      // the world they just created.
+      if (confirm(`Switch to "${body.name}" now? The add-on will restart and the new world will boot.`)) {
+        const sw = await api(`api/worlds/${encodeURIComponent(body.name)}/switch`, { method: 'POST' });
+        alert(sw.message || sw.warning || sw.error || 'unknown error');
+        loadWorlds();
+      }
+    });
+
+    $('#btn-newworld').addEventListener('click', () => {
+      newworldRoot.hidden = false;
+      nwShow(1);
+      // Focus the name field for keyboard-first users.
+      setTimeout(() => $('#newworld-name').focus(), 50);
+    });
+  }
 
   async function loadBackups() {
     const data = await api('api/backups');
