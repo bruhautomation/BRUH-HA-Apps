@@ -751,9 +751,10 @@ _WIZARD_PLUGIN_KEYS = (
 async def api_setup(request: web.Request) -> web.Response:
     """Accept the multi-step first-run wizard's submission.
 
-    The wizard walks the user through seven steps (EULA, server software,
-    audience, first world, performance, plugins, review) and POSTs one body
-    here. We split the writes by scope:
+    The wizard walks the user through nine steps (EULA, server software,
+    connectivity, first world basics, players + access, performance,
+    plugins, maintenance, review) and POSTs one body here. We split the
+    writes by scope:
 
       * Global add-on options (eula, server_type, active_world, memory_mb,
         install_*) -> Supervisor `/addons/self/options`.
@@ -793,11 +794,20 @@ async def api_setup(request: web.Request) -> web.Response:
         "peaceful", "easy", "normal", "hard",
     }:
         return web.json_response({"error": "invalid difficulty"}, status=400)
-    if "level_type" in body and body["level_type"] not in {
-        "minecraft:normal", "minecraft:flat", "minecraft:large_biomes",
-        "minecraft:amplified", "default", "flat", "largebiomes", "amplified",
-    }:
+    if "level_type" in body and body["level_type"] not in _PROP_ENUMS["level-type"]:
         return web.json_response({"error": "invalid level_type"}, status=400)
+
+    # Strict bool validation. Python's `bool("false") is True` (any non-empty
+    # string is truthy), so a non-JS caller posting {"hardcore": "false"} used
+    # to silently turn hardcore ON. Reject anything that isn't a JSON bool.
+    for bool_key in (
+        "online_mode", "enable_bedrock_support", "force_gamemode", "pvp",
+        "hardcore", "white_list",
+    ):
+        if bool_key in body and not isinstance(body[bool_key], bool):
+            return web.json_response(
+                {"error": f"{bool_key} must be true or false"}, status=400,
+            )
 
     memory_mb = body.get("memory_mb")
     if memory_mb is not None:
@@ -884,7 +894,11 @@ async def api_setup(request: web.Request) -> web.Response:
     if "force_gamemode" in body:  props["force-gamemode"] = _bool(body["force_gamemode"])
     if "difficulty" in body:      props["difficulty"] = str(body["difficulty"])
     if "level_type" in body:      props["level-type"] = str(body["level_type"])
-    if "level_seed" in body:      props["level-seed"] = str(body["level_seed"]) or ""
+    if "level_seed" in body:
+        # `str(None) or ""` is the literal string "None" (truthy) — guard
+        # the JSON-null case so a missing seed doesn't get written as "None".
+        seed = body["level_seed"]
+        props["level-seed"] = "" if seed is None else str(seed)
     if "pvp" in body:             props["pvp"] = _bool(body["pvp"])
     if "hardcore" in body:        props["hardcore"] = _bool(body["hardcore"])
     if "white_list" in body:      props["white-list"] = _bool(body["white_list"])

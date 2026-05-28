@@ -286,9 +286,9 @@ dd { margin: 0; font-variant-numeric: tabular-nums; }
   word-break: break-word;
   margin: 0;
 }
-.console .warn  { color: #e0a020; }
-.console .error { color: #ff6060; }
-.console .info  { color: #4ea2ff; }
+.console .warn  { color: var(--warn); }
+.console .error { color: var(--danger); }
+.console .info  { color: var(--primary); }
 
 /* Tables. On narrow viewports we want horizontal scrolling so long
    rows (backup SHAs, plugin filenames) don't clip off-screen. The

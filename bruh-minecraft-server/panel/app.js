@@ -627,11 +627,12 @@
   // ------------------------------------------------------------------
   // First-run setup wizard (1.11.0 — multi-step)
   // ------------------------------------------------------------------
-  // The wizard is a stateful 7-step walkthrough. Each step is a
+  // The wizard is a stateful 9-step walkthrough. Each step is a
   // `<section class="setup-step" data-step="N">` element; we toggle the
-  // `hidden` attribute to swap between them. Step 5 fetches a hardware
-  // recommendation, step 6 hides the plugin list for non-Bukkit server
-  // types, and step 7 renders a review summary built from the same body
+  // `hidden` attribute to swap between them. Step 6 fetches a hardware
+  // recommendation + draws the perf preview, step 7 hides the plugin
+  // list for non-Bukkit server types, and step 9 renders a review
+  // summary built from the same body
   // that gets POSTed to /api/setup.
   const wizardRoot = $('#setup-wizard');
   if (wizardRoot) {
