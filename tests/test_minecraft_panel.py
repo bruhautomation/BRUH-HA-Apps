@@ -17,6 +17,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import aiohttp
 from aiohttp.test_utils import AioHTTPTestCase
 
 BASE_DIR = os.path.join(os.path.dirname(__file__), "..")
@@ -437,6 +438,181 @@ class TestRecommender(PanelTestBase):
         self.assertIn("403", data["warnings"][0])
         # memory_mb did NOT get added to applied{}.
         self.assertNotIn("memory_mb", data["applied"])
+
+
+class TestSetupWizard(PanelTestBase):
+    """1.10.0: the first-run wizard accepts the EULA + initial choices and
+    triggers a Supervisor restart so the JVM boots."""
+
+    def _set_options(self, **opts) -> None:
+        # The panel reads MC_OPTIONS_FILE to decide if setup is required.
+        path = self.state_dir / "options.json"
+        path.write_text(json.dumps(opts))
+        os.environ["MC_OPTIONS_FILE"] = str(path)
+        self.addCleanup(lambda: os.environ.pop("MC_OPTIONS_FILE", None))
+
+    async def test_status_reports_setup_required_when_eula_unset(self):
+        self._set_options(eula=False)
+        resp = await self.client.request("GET", "/api/status")
+        self.assertTrue((await resp.json())["setup_required"])
+
+    async def test_status_no_setup_when_eula_accepted(self):
+        self._set_options(eula=True)
+        resp = await self.client.request("GET", "/api/status")
+        self.assertFalse((await resp.json())["setup_required"])
+
+    async def test_setup_rejects_without_eula(self):
+        resp = await self.client.request("POST", "/api/setup", json={"eula": False})
+        self.assertEqual(resp.status, 400)
+
+    async def test_setup_writes_options_and_restarts(self):
+        persisted = []
+        async def fake_persist(key, value):
+            persisted.append((key, value))
+            return None
+        restarted = [False]
+        async def fake_restart():
+            restarted[0] = True
+            return None
+        self.panel._persist_option = fake_persist
+        self.panel._supervisor_restart_self = fake_restart
+
+        resp = await self.client.request("POST", "/api/setup", json={
+            "eula": True,
+            "server_type": "paper",
+            "online_mode": False,
+        })
+        self.assertEqual(resp.status, 200)
+        self.assertIn(("eula", True), persisted)
+        self.assertIn(("server_type", "paper"), persisted)
+        self.assertTrue(restarted[0])
+        # online_mode=false also writes the world's server.properties.
+        content = (self.server_dir / "server.properties").read_text()
+        self.assertIn("online-mode=false", content)
+        self.assertIn("enforce-secure-profile=false", content)
+
+
+class TestCrashBanner(PanelTestBase):
+    async def test_status_omits_crash_when_running(self):
+        # Default fixture writes status=running, so no crash should surface.
+        resp = await self.client.request("GET", "/api/status")
+        data = await resp.json()
+        self.assertIsNone(data.get("crash"))
+
+    async def test_status_reports_crash_with_excerpt(self):
+        # Mark stopped + drop a console.log with an exception trace.
+        state_path = self.state_dir / "state.json"
+        s = json.loads(state_path.read_text())
+        s["status"] = "stopped"
+        state_path.write_text(json.dumps(s))
+        (self.state_dir / "console.log").write_text(
+            "[12:34:56 INFO]: Done (3.2s)!\n"
+            "[12:34:57 ERROR]: java.lang.NullPointerException: cannot do thing\n"
+            "\tat com.example.Plugin.onEnable(Plugin.java:42)\n"
+            "[12:34:58 INFO]: Stopping server\n"
+        )
+        resp = await self.client.request("GET", "/api/status")
+        crash = (await resp.json())["crash"]
+        self.assertIsNotNone(crash)
+        self.assertTrue(any("NullPointerException" in ln for ln in crash["excerpt"]))
+
+    async def test_no_crash_when_user_stopped(self):
+        # User-initiated stop writes no_restart; we suppress the banner so
+        # the user doesn't see "crash" after clicking Stop.
+        s = json.loads((self.state_dir / "state.json").read_text())
+        s["status"] = "stopped"
+        (self.state_dir / "state.json").write_text(json.dumps(s))
+        (self.state_dir / "no_restart").write_text("1")
+        (self.state_dir / "console.log").write_text("[INFO]: ERROR fake but stopped on purpose\n")
+        resp = await self.client.request("GET", "/api/status")
+        self.assertIsNone((await resp.json())["crash"])
+
+
+class TestResourcePacks(PanelTestBase):
+    def _packs_dir(self):
+        d = self.state_dir / "resource-packs"
+        d.mkdir(exist_ok=True)
+        os.environ["MC_RESOURCE_PACKS"] = str(d)
+        self.addCleanup(lambda: os.environ.pop("MC_RESOURCE_PACKS", None))
+        # Force the module-level constant to re-read the override.
+        from pathlib import Path as _P
+        self.panel.MC_RESOURCE_PACKS = _P(os.environ["MC_RESOURCE_PACKS"])
+        return d
+
+    async def test_list_empty(self):
+        self._packs_dir()
+        resp = await self.client.request("GET", "/api/resource-packs")
+        self.assertEqual((await resp.json())["packs"], [])
+
+    async def test_list_returns_sha1(self):
+        d = self._packs_dir()
+        (d / "Test.zip").write_bytes(b"PK\x03\x04hello")
+        resp = await self.client.request("GET", "/api/resource-packs")
+        packs = (await resp.json())["packs"]
+        self.assertEqual(len(packs), 1)
+        self.assertEqual(packs[0]["name"], "Test.zip")
+        self.assertEqual(len(packs[0]["sha1"]), 40)
+
+    async def test_delete_rejects_invalid_name(self):
+        self._packs_dir()
+        resp = await self.client.request("DELETE", "/api/resource-packs/..%2Fevil")
+        self.assertIn(resp.status, {400, 404})
+
+    async def test_apply_writes_to_active_world_properties(self):
+        d = self._packs_dir()
+        (d / "Pack.zip").write_bytes(b"PK\x03\x04hello")
+        resp = await self.client.request("POST", "/api/resource-packs/Pack.zip/apply", json={})
+        self.assertEqual(resp.status, 200)
+        body = await resp.json()
+        content = (self.server_dir / "server.properties").read_text()
+        self.assertIn(f"resource-pack={body['url']}", content)
+        self.assertIn(f"resource-pack-sha1={body['sha1']}", content)
+
+
+class TestWorldImport(PanelTestBase):
+    async def test_import_rejects_non_zip(self):
+        import io
+        form = aiohttp.FormData()
+        form.add_field("name", "imported")
+        form.add_field("file", io.BytesIO(b"not a zip"), filename="x.zip")
+        resp = await self.client.request("POST", "/api/worlds/import", data=form)
+        self.assertEqual(resp.status, 400)
+
+    async def test_import_rejects_zip_without_level_dat(self):
+        import io, zipfile
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as z:
+            z.writestr("notes.txt", "hi")
+        buf.seek(0)
+        form = aiohttp.FormData()
+        form.add_field("name", "bad")
+        form.add_field("file", buf, filename="bad.zip", content_type="application/zip")
+        resp = await self.client.request("POST", "/api/worlds/import", data=form)
+        self.assertEqual(resp.status, 400)
+        self.assertIn("level.dat", (await resp.json())["error"])
+
+    async def test_import_stages_valid_world(self):
+        import io, zipfile, tempfile, shutil
+        # Point the panel module's world directory at a tempdir so imports
+        # don't try to write into /config.
+        with tempfile.TemporaryDirectory() as tmp:
+            from pathlib import Path as _P
+            self.panel.MC_WORLDS_DIR = _P(tmp) / "minecraft-worlds"
+            self.panel.MC_BACKUPS_ROOT = _P(tmp) / "minecraft-backups"
+            (self.panel.MC_WORLDS_DIR).mkdir(parents=True)
+            (self.panel.MC_BACKUPS_ROOT).mkdir(parents=True)
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w") as z:
+                z.writestr("my_world/level.dat", b"\x0a\x00\x00")  # fake nbt
+                z.writestr("my_world/region/r.0.0.mca", b"region-data")
+            buf.seek(0)
+            form = aiohttp.FormData()
+            form.add_field("name", "imported")
+            form.add_field("file", buf, filename="my_world.zip", content_type="application/zip")
+            resp = await self.client.request("POST", "/api/worlds/import", data=form)
+            self.assertEqual(resp.status, 200, await resp.text())
+            self.assertTrue((self.panel.MC_WORLDS_DIR / "imported" / "world" / "level.dat").is_file())
+            self.assertTrue((self.panel.MC_BACKUPS_ROOT / "imported").is_dir())
 
 
 if __name__ == "__main__":

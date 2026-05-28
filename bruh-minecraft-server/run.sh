@@ -195,21 +195,6 @@ ensure_rcon_password() {
 }
 
 # ----------------------------------------------------------------------------
-# Hard-stop if the user has not accepted the Minecraft EULA
-# ----------------------------------------------------------------------------
-check_eula() {
-    if [ "${EULA}" != "true" ]; then
-        bashio::log.fatal "================================================================"
-        bashio::log.fatal "The Minecraft EULA has NOT been accepted."
-        bashio::log.fatal "Set 'eula: true' in the add-on configuration to continue."
-        bashio::log.fatal "See https://www.minecraft.net/eula"
-        bashio::log.fatal "================================================================"
-        exit 1
-    fi
-    bashio::log.info "Minecraft EULA accepted"
-}
-
-# ----------------------------------------------------------------------------
 # Ensure switchable-world layout under /config/minecraft-worlds/<name>/ and
 # point /config/minecraft at the active profile.
 #
@@ -824,15 +809,30 @@ main() {
     bashio::log.info "================================================================"
 
     load_config
-    check_eula
     ensure_worlds_layout
     prepare_filesystem
     ensure_rcon_password
 
-    # Stats / panel rely on a running (or cached) jar; start them first so the
-    # user can see progress even while the jar is downloading
+    # Start the panel FIRST — before the EULA gate — so a brand-new install
+    # can use the first-run wizard to accept the EULA from the UI instead of
+    # editing the Configuration tab by hand. If EULA is unset we idle here
+    # forever; the wizard writes EULA=true via the Supervisor and the
+    # Supervisor restart relaunches us through the normal path.
     start_ingress_panel
     deploy_custom_integration
+
+    if [ "${EULA}" != "true" ]; then
+        write_state "waiting_for_setup"
+        bashio::log.warning "================================================================"
+        bashio::log.warning " EULA not accepted yet — open the add-on's web UI and use the"
+        bashio::log.warning " 'Welcome' wizard to accept the Minecraft EULA. The server will"
+        bashio::log.warning " start automatically after that. (https://www.minecraft.net/eula)"
+        bashio::log.warning "================================================================"
+        # Idle. The Supervisor will SIGTERM us on restart once EULA is set;
+        # graceful_shutdown picks that up.
+        while true; do sleep 3600; done
+    fi
+    bashio::log.info "Minecraft EULA accepted"
 
     if [ "${AUTO_UPDATE_SERVER}" = "true" ] || [ ! -s "${MC_SERVER_DIR}/server.jar" ]; then
         download_server_jar

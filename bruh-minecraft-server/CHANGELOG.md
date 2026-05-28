@@ -5,6 +5,67 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.10.0
+
+A polish release focused on the new-user experience and the
+"something went wrong, what do I do" moments.
+
+### Added: first-run wizard
+
+Install, start, open the panel — a welcome overlay walks you through:
+
+1. Accept the Minecraft EULA.
+2. Choose **Internet / public** (online-mode on, Mojang auth) or
+   **LAN / family / kids without Xbox accounts** (online-mode off; Geyser
+   auto-switches to offline auth so Bedrock kids can join too).
+3. Pick a server type (Paper is the default for ~99% of users).
+
+Click *Start the server* and that's it — no more "edit the YAML, accept the
+EULA, restart the add-on, hunt for the right server type" first-time fuss.
+The add-on now idles cleanly when EULA is unset (instead of hard-exiting),
+so the panel can run the wizard.
+
+### Added: crash banner on the dashboard
+
+When the JVM exits unexpectedly the dashboard surfaces the last few error /
+exception lines from the console log in a red banner — so you can see
+*what* broke without leaving the panel for the Console tab. Suppresses
+itself when you click *Stop* (that's not a crash) and reappears for any
+new crash signature.
+
+### Added: import an existing world
+
+The **Worlds** tab now takes a `.zip` of a Minecraft world (up to 2 GB) and
+stages it as a new switchable world. Finds the directory containing
+`level.dat` automatically — works whether it's at the zip root, one level
+deep, or a re-zipped backup. Switch to the imported world and it boots
+exactly as if you'd had it the whole time.
+
+### Added: resource-pack hosting
+
+New **Resource Packs** tab. Upload a `.zip` (≤ 250 MB), the add-on stores
+it under `/config/resource-packs/` and serves it at
+`http://<HA-host>:8099/pack/<filename>` on your LAN. *Apply to active
+world* writes the URL + SHA-1 directly into the active world's
+`server.properties` — no copy-pasting hashes.
+
+### Added: smart performance hints
+
+When the 5-minute TPS slips, the Performance card now suggests the most
+useful knob to turn first (drop `simulation-distance`, or use *Tune for
+my hardware* to size memory). Reach-for-the-fix in one line instead of
+"figure it out yourself."
+
+### Internal
+
+- Documentation refreshed across `README.md`, `DOCS.md`, and `config.yaml`
+  comments for the per-world model and the new features. Java version
+  reference updated to Temurin 25 (was stale at 21).
+- `run.sh`: the panel now starts BEFORE the EULA gate, so the wizard can
+  accept the EULA from the UI. `check_eula()` removed (dead code).
+- Resource packs and world imports are covered by 14 new tests; 700 pass
+  overall.
+
 ## 1.9.0
 
 ### Added: "Tune for my hardware" + TPS health badge
