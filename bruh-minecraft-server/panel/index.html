@@ -37,7 +37,69 @@
       <button class="tab" data-tab="plugins" role="tab">Plugins</button>
       <button class="tab" data-tab="backups" role="tab">Backups</button>
       <button class="tab" data-tab="worlds" role="tab">Worlds</button>
+      <button class="tab" data-tab="resource-packs" role="tab">Resource Packs</button>
     </nav>
+  </div>
+
+  <!-- First-run wizard. Shown only when /api/status reports setup_required.
+       Hidden by default; app.js toggles it. -->
+  <div id="setup-wizard" class="setup-overlay" hidden>
+    <div class="setup-card">
+      <h2>Welcome — let's get your server running</h2>
+      <p class="muted">A couple of quick choices and we're done. You can change all of these later from the panel or the add-on's Configuration tab.</p>
+
+      <h3>1. Minecraft EULA</h3>
+      <p>Mojang requires every server to accept their End User Licence Agreement:
+        <a href="https://www.minecraft.net/eula" target="_blank" rel="noopener">minecraft.net/eula</a>.
+        The add-on will not start until you do.</p>
+      <label class="setup-checkbox">
+        <input type="checkbox" id="setup-eula" />
+        <span>I have read and accept the Minecraft EULA.</span>
+      </label>
+
+      <h3>2. Who's playing?</h3>
+      <p class="muted">Pick the option that matches the people who'll join. You can change this per-world later.</p>
+      <fieldset class="setup-radios">
+        <label><input type="radio" name="setup-audience" value="online" checked />
+          <strong>Internet / public server.</strong>
+          Players must sign in with a Mojang/Microsoft account. Safe default.
+        </label>
+        <label><input type="radio" name="setup-audience" value="offline" />
+          <strong>LAN / family / kids without Xbox accounts.</strong>
+          No sign-in required; any username works. Use this only on a private network.
+        </label>
+      </fieldset>
+
+      <h3>3. Server type</h3>
+      <p class="muted">Paper is the default for almost everyone — fast, supports plugins, works with Bedrock cross-play. Change only if you know why.</p>
+      <select id="setup-server-type">
+        <option value="paper" selected>Paper (recommended)</option>
+        <option value="purpur">Purpur — Paper + extra gameplay knobs</option>
+        <option value="folia">Folia — multi-threaded, niche</option>
+        <option value="vanilla">Vanilla — official Mojang, no plugins</option>
+        <option value="fabric">Fabric — lightweight mod loader</option>
+        <option value="forge">Forge — classic mod loader (modpacks)</option>
+      </select>
+
+      <div class="setup-actions">
+        <button id="setup-submit" class="btn btn-primary" type="button">Start the server</button>
+        <span id="setup-status" class="muted"></span>
+      </div>
+      <p class="muted setup-fine">
+        Clicking <em>Start the server</em> writes your choices to the add-on's Configuration and restarts. The panel will be unreachable for about 30 seconds while the server boots.
+      </p>
+    </div>
+  </div>
+
+  <!-- Crash banner. Shown by app.js when /api/status reports a recent crash. -->
+  <div id="crash-banner" class="crash-banner" hidden>
+    <div class="crash-head">
+      <strong>Server crashed.</strong>
+      <span id="crash-summary" class="muted"></span>
+      <button id="crash-dismiss" class="btn btn-ghost" type="button" title="Hide this banner until the next crash">Dismiss</button>
+    </div>
+    <pre id="crash-excerpt" class="crash-excerpt"></pre>
+    <p class="muted">Full log: <strong>Console</strong> tab. Auto-restart is enabled by default and the add-on will try again in a few seconds.</p>
   </div>
 
   <main>
@@ -63,6 +125,7 @@
             <dt>Latency</dt><dd id="m-latency">—</dd>
           </dl>
           <button id="btn-tune" class="btn btn-ghost" type="button" title="Inspect host RAM/CPU and propose memory/distance settings">Tune for my hardware</button>
+          <p id="perf-hint" class="perf-hint" hidden></p>
         </div>
         <div class="card">
           <h2>Players</h2>
@@ -195,6 +258,40 @@
         Name must be 1–32 characters, letters/digits/underscore/dash only. The new world is staged empty — <em>Switch</em> to it (the add-on restarts) and it generates its initial chunks with the seed you typed here, or a random seed if blank. Tune its gamemode/difficulty/etc. on the Server Properties tab once it's active. <code>delete</code> refuses to remove the currently-active world — switch away first.
       </p>
       <pre id="world-reply" class="reply"></pre>
+
+      <h3>Import an existing world (.zip)</h3>
+      <p class="muted">
+        Drop in a Minecraft world export — the contents of a <code>world/</code> folder, zipped — and we'll stage it as a new switchable world. Anything ending in <code>.zip</code> up to 2 GB works. Common shapes (level.dat at root, <code>SomeName/level.dat</code> one level deep, or a re-zipped backup) all get found automatically.
+      </p>
+      <form id="f-world-import" class="inline-form">
+        <input id="world-import-name" type="text" placeholder="imported_world" maxlength="32" required />
+        <input id="world-import-file" type="file" accept=".zip" required />
+        <button class="btn btn-primary">Import</button>
+      </form>
+      <pre id="world-import-reply" class="reply"></pre>
+    </section>
+
+    <!-- Resource Packs -->
+    <section id="tab-resource-packs" class="tab-panel">
+      <h2>Resource Packs</h2>
+      <p class="muted">
+        Drop a Minecraft resource pack <code>.zip</code> here and the add-on hosts it for you. Use <strong>Apply to active world</strong> to plug the URL + SHA-1 directly into the active world's <code>server.properties</code> — no copy-pasting hashes. Packs are global; one pack can serve every world.
+      </p>
+      <p class="muted">
+        <strong>How clients fetch the pack:</strong> the add-on serves it at
+        <code>http://&lt;your-HA-host&gt;:8099/pack/&lt;filename&gt;</code> on your LAN. The
+        <em>Apply</em> button fills that URL in for you using the host you're loading this panel from.
+      </p>
+      <form id="f-pack-upload" class="inline-form">
+        <input id="pack-file" type="file" accept=".zip" required />
+        <input id="pack-name" type="text" placeholder="optional rename (e.g. MyPack.zip)" />
+        <button class="btn btn-primary">Upload</button>
+      </form>
+      <pre id="pack-upload-reply" class="reply"></pre>
+      <table class="table" id="packs-table">
+        <thead><tr><th>File</th><th>Size</th><th>SHA-1</th><th>Modified</th><th>Actions</th></tr></thead>
+        <tbody></tbody>
+      </table>
     </section>
   </main>
 

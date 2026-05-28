@@ -27,13 +27,17 @@ relative links in the HTML and let aiohttp serve at /.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
+import zipfile
 from pathlib import Path
 
 import aiofiles
@@ -60,6 +64,10 @@ STATIC = HERE
 MC_SERVER_DIR = Path(os.environ.get("MC_SERVER_DIR", "/config/minecraft"))
 _MC_BACKUP_DIR_ENV = Path(os.environ.get("MC_BACKUP_DIR", "/config/minecraft-backups"))
 MC_PANEL_STATE = Path(os.environ.get("MC_PANEL_STATE", "/data/panel"))
+MC_BACKUPS_ROOT = Path(os.environ.get("MC_BACKUPS_ROOT", "/config/minecraft-backups"))
+# Resource packs are GLOBAL (one pack serves multiple worlds), so they live
+# alongside the worlds directory rather than inside any one of them.
+MC_RESOURCE_PACKS = Path(os.environ.get("MC_RESOURCE_PACKS", "/config/resource-packs"))
 MC_CONSOLE_LOG = Path(os.environ.get("MC_CONSOLE_LOG", str(MC_PANEL_STATE / "console.log")))
 MC_INPUT_FIFO = Path(os.environ.get("MC_INPUT_FIFO", "/tmp/mc-stdin.fifo"))
 SCRIPTS_DIR = Path("/opt/bruh-mc/scripts")
@@ -416,7 +424,60 @@ async def api_status(_: web.Request) -> web.Response:
         "state": state,
         "stats": stats,
         "server_meta": meta,
+        "setup_required": _setup_required(),
+        "crash": _detect_crash(state),
     })
+
+
+def _setup_required() -> bool:
+    """True when the add-on can't run the JVM yet because the EULA hasn't been
+    accepted. The panel is up (we started it before the EULA gate in run.sh)
+    but the JVM loop is idling — the welcome wizard prompts the user to
+    accept and triggers a restart."""
+    try:
+        with open(os.environ.get("MC_OPTIONS_FILE", "/data/options.json")) as f:
+            return not json.load(f).get("eula", False)
+    except (OSError, ValueError):
+        # On a fresh install the file is always there; if missing we err on
+        # the side of NOT blocking the dashboard with a wizard that has
+        # nothing useful to do.
+        return False
+
+
+def _detect_crash(state: dict) -> dict | None:
+    """Surface the last few lines of the console log when the server is in a
+    'crashed' state — i.e. it was running, then exited non-zero, and the
+    auto-restart loop has either kicked off a new attempt or given up. The
+    panel uses this to render a banner with the actionable error.
+
+    We treat `state.status == "stopped"` plus a recent non-zero exit as a
+    crash. Run.sh writes `state.json` with `status: stopped` after every JVM
+    exit, but only an UNEXPECTED stop deserves the crash banner — clicking
+    the panel's Stop button writes `no_restart` first, which we honour by
+    suppressing the banner.
+    """
+    if state.get("status") != "stopped":
+        return None
+    if (MC_PANEL_STATE / "no_restart").is_file():
+        return None
+    log_path = MC_CONSOLE_LOG
+    if not log_path.is_file():
+        return None
+    # Show the last ~30 lines that look like error context.
+    try:
+        with open(log_path, errors="replace") as f:
+            tail = f.readlines()[-200:]
+    except OSError:
+        return None
+    if not tail:
+        return None
+    # Keep lines that look interesting (ERROR/WARN/Exception/stack frames).
+    interesting = [
+        ln.rstrip("\n") for ln in tail
+        if re.search(r"\b(ERROR|SEVERE|Exception|Caused by|\tat )\b", ln)
+    ]
+    excerpt = (interesting or [ln.rstrip("\n") for ln in tail])[-30:]
+    return {"excerpt": excerpt, "log_size": log_path.stat().st_size}
 
 
 async def api_players(_: web.Request) -> web.Response:
@@ -539,6 +600,67 @@ async def api_recommend_apply(_: web.Request) -> web.Response:
         "note": (
             "Memory change takes effect on the next add-on restart; "
             "view/sim distance on the next JVM restart."
+        ),
+    })
+
+
+# ---------------------------------------------------------------------------
+# Routes: API — first-run wizard
+# ---------------------------------------------------------------------------
+async def api_setup(request: web.Request) -> web.Response:
+    """Accept the first-run wizard's submission. The wizard hands us at minimum
+    {eula: true}; optionally {server_type, online_mode} so a brand-new install
+    can be steered into the right shape (offline/family server vs public
+    online-mode) with a single click. Writes everything via the Supervisor
+    and triggers an add-on restart so run.sh re-enters and now boots the JVM."""
+    body = await request.json()
+    if not body.get("eula"):
+        return web.json_response({"error": "eula must be accepted"}, status=400)
+
+    # Optional global add-on options.
+    server_type = body.get("server_type")
+    if server_type and server_type not in {
+        "paper", "purpur", "folia", "vanilla", "fabric", "forge",
+    }:
+        return web.json_response({"error": "invalid server_type"}, status=400)
+
+    # Optional per-world online-mode toggle: applied to the active world's
+    # server.properties (the per-world model). Default-true vanilla auth is
+    # the safest pick; offline is for LAN/family.
+    online_mode = body.get("online_mode")
+    warnings: list[str] = []
+
+    err = await _persist_option("eula", True)
+    if err:
+        warnings.append(f"eula: {err}")
+    if server_type:
+        err = await _persist_option("server_type", server_type)
+        if err:
+            warnings.append(f"server_type: {err}")
+
+    if isinstance(online_mode, bool):
+        # Stage into the active world's server.properties so the value is
+        # ready on first JVM start.
+        props = _read_properties()
+        props["online-mode"] = "true" if online_mode else "false"
+        if not online_mode:
+            # Offline-mode safety: enforce-secure-profile must be off.
+            props["enforce-secure-profile"] = "false"
+        MC_SERVER_DIR.mkdir(parents=True, exist_ok=True)
+        lines = ["# server.properties — staged by the setup wizard."]
+        lines.extend(f"{k}={v}" for k, v in sorted(props.items()))
+        (MC_SERVER_DIR / "server.properties").write_text("\n".join(lines) + "\n")
+
+    restart_err = await _supervisor_restart_self()
+    if restart_err:
+        warnings.append(f"restart: {restart_err}")
+
+    return web.json_response({
+        "ok": not warnings,
+        "warnings": warnings or None,
+        "message": (
+            "Setup complete — the add-on is restarting now to boot the server. "
+            "This panel will be unreachable for ~30 seconds while it comes back."
         ),
     })
 
@@ -988,6 +1110,274 @@ async def api_worlds_delete(request: web.Request) -> web.Response:
 
 
 # ---------------------------------------------------------------------------
+# Routes: API — resource-pack hosting
+# ---------------------------------------------------------------------------
+# Packs are stored at /config/resource-packs/ (global; shared across worlds)
+# and exposed publicly at GET /pack/<filename> on the same port the panel
+# binds — host_network: true means that port is directly reachable on the
+# LAN, which is what Minecraft clients need to fetch the pack on join.
+VALID_PACK_NAME = re.compile(r"^[A-Za-z0-9._-]{1,128}\.zip$")
+MAX_PACK_SIZE = 250 * 1024 * 1024  # 250 MB — Mojang's own client cap
+
+
+def _pack_sha1(path: Path) -> str:
+    h = hashlib.sha1()  # noqa: S324 — Minecraft requires SHA-1 for resource-pack-sha1
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 16), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+async def api_resource_packs_list(_: web.Request) -> web.Response:
+    MC_RESOURCE_PACKS.mkdir(parents=True, exist_ok=True)
+    packs = []
+    for p in sorted(MC_RESOURCE_PACKS.glob("*.zip")):
+        stat = p.stat()
+        packs.append({
+            "name": p.name,
+            "size": stat.st_size,
+            "mtime": int(stat.st_mtime),
+            "sha1": _pack_sha1(p),
+            # The "url" is computed from the request host on the client side
+            # so the panel can show "use this URL" without us guessing what
+            # IP the user reaches us at.
+        })
+    return web.json_response({"packs": packs})
+
+
+async def api_resource_pack_upload(request: web.Request) -> web.Response:
+    """Stream a multipart upload to /config/resource-packs/<name>.zip and
+    return its SHA-1 so the user can copy it (or use the apply endpoint to
+    write it to the active world automatically)."""
+    MC_RESOURCE_PACKS.mkdir(parents=True, exist_ok=True)
+    reader = await request.multipart()
+    name = None
+    saved: Path | None = None
+    total = 0
+    async for part in reader:
+        if part.name == "name":
+            name = (await part.text()).strip()
+        elif part.name == "file":
+            # Use the form's "name" if provided, otherwise fall back to the
+            # uploaded filename. Validate either way.
+            target_name = name or (part.filename or "").strip()
+            if not VALID_PACK_NAME.match(target_name or ""):
+                return web.json_response(
+                    {"error": "name must end in .zip and contain only A-Z a-z 0-9 . _ -"},
+                    status=400,
+                )
+            saved = MC_RESOURCE_PACKS / target_name
+            tmp = saved.with_suffix(saved.suffix + ".uploading")
+            with open(tmp, "wb") as f:
+                while True:
+                    chunk = await part.read_chunk(64 * 1024)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > MAX_PACK_SIZE:
+                        f.close()
+                        tmp.unlink(missing_ok=True)
+                        return web.json_response(
+                            {"error": f"upload exceeds {MAX_PACK_SIZE // (1024*1024)} MB limit"},
+                            status=413,
+                        )
+                    f.write(chunk)
+            tmp.replace(saved)
+    if saved is None:
+        return web.json_response({"error": "no file uploaded"}, status=400)
+    return web.json_response({
+        "ok": True,
+        "name": saved.name,
+        "size": saved.stat().st_size,
+        "sha1": _pack_sha1(saved),
+    })
+
+
+async def api_resource_pack_delete(request: web.Request) -> web.Response:
+    name = request.match_info["name"]
+    if not VALID_PACK_NAME.match(name):
+        return web.json_response({"error": "invalid name"}, status=400)
+    target = MC_RESOURCE_PACKS / name
+    if not target.is_file():
+        return web.json_response({"error": "not found"}, status=404)
+    target.unlink()
+    return web.json_response({"ok": True})
+
+
+async def api_resource_pack_apply(request: web.Request) -> web.Response:
+    """Write the pack's URL + SHA-1 into the active world's server.properties.
+    The URL is built from the request's host header so the user doesn't have
+    to figure out what IP/hostname Minecraft clients will reach this add-on at.
+    """
+    name = request.match_info["name"]
+    if not VALID_PACK_NAME.match(name):
+        return web.json_response({"error": "invalid name"}, status=400)
+    pack = MC_RESOURCE_PACKS / name
+    if not pack.is_file():
+        return web.json_response({"error": "not found"}, status=404)
+    sha1 = _pack_sha1(pack)
+    # The host header tells us how Minecraft clients reach this box. If we
+    # ever sit behind ingress (no direct port), the user has to override the
+    # host — but host_network: true on this add-on means the panel's port is
+    # directly reachable on the LAN.
+    body = await request.json() if request.body_exists else {}
+    host = (body.get("host") or request.host).split(":", 1)[0]
+    port = body.get("port") or 8099
+    url = f"http://{host}:{port}/pack/{name}"
+
+    props = _read_properties()
+    props["resource-pack"] = url
+    props["resource-pack-sha1"] = sha1
+    lines = [
+        "# server.properties — active world is the source of truth.",
+        f"# Resource pack staged via panel: {time.strftime('%Y-%m-%dT%H:%M:%S%z')}",
+    ]
+    lines.extend(f"{k}={v}" for k, v in sorted(props.items()))
+    tmp = MC_SERVER_DIR / "server.properties.tmp"
+    tmp.write_text("\n".join(lines) + "\n")
+    tmp.replace(MC_SERVER_DIR / "server.properties")
+
+    return web.json_response({"ok": True, "url": url, "sha1": sha1})
+
+
+async def serve_pack(request: web.Request) -> web.Response:
+    """Public endpoint Minecraft clients fetch the pack from. No auth — packs
+    are by definition public assets the server hands to anyone who joins."""
+    name = request.match_info["name"]
+    if not VALID_PACK_NAME.match(name):
+        return web.Response(status=400, text="invalid name")
+    target = MC_RESOURCE_PACKS / name
+    if not target.is_file():
+        return web.Response(status=404, text="not found")
+    return web.FileResponse(target, headers={
+        "Content-Type": "application/zip",
+        "Cache-Control": "public, max-age=86400",
+    })
+
+
+# ---------------------------------------------------------------------------
+# Routes: API — world import (upload a .zip → switchable world)
+# ---------------------------------------------------------------------------
+MAX_WORLD_ZIP_SIZE = 2 * 1024 * 1024 * 1024  # 2 GB
+
+
+def _find_world_root(extracted: Path) -> Path | None:
+    """Inside an extracted zip, locate the directory containing level.dat —
+    that's the actual world root. Returns None if not found.
+
+    Handles three common zip shapes:
+      * level.dat at the top of the zip (zip created from inside the world).
+      * SomeName/level.dat one level deep (most common — players zip the
+        world folder).
+      * SomeName/SomeNested/level.dat (rare but seen with re-zipped backups).
+    """
+    for level_dat in extracted.rglob("level.dat"):
+        return level_dat.parent
+    return None
+
+
+async def api_worlds_import(request: web.Request) -> web.Response:
+    """Accept a multipart upload of a Minecraft world `.zip` and stage it as
+    a new switchable world profile. The new profile is empty otherwise — the
+    operator should switch to it (panel → Worlds → Switch) to boot in."""
+    reader = await request.multipart()
+    name: str | None = None
+    upload_path: Path | None = None
+    total = 0
+    async for part in reader:
+        if part.name == "name":
+            name = (await part.text()).strip()
+        elif part.name == "file":
+            handle = tempfile.NamedTemporaryFile(
+                delete=False, suffix=".zip", dir="/tmp",
+            )
+            upload_path = Path(handle.name)
+            try:
+                while True:
+                    chunk = await part.read_chunk(256 * 1024)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > MAX_WORLD_ZIP_SIZE:
+                        handle.close()
+                        upload_path.unlink(missing_ok=True)
+                        return web.json_response(
+                            {"error": f"upload exceeds {MAX_WORLD_ZIP_SIZE // (1024**3)} GB limit"},
+                            status=413,
+                        )
+                    handle.write(chunk)
+            finally:
+                handle.close()
+
+    if not name or not VALID_WORLD_NAME.match(name):
+        if upload_path:
+            upload_path.unlink(missing_ok=True)
+        return web.json_response(
+            {"error": "name must match 1-32 chars of A-Z a-z 0-9 _ -"},
+            status=400,
+        )
+    if upload_path is None:
+        return web.json_response({"error": "no file uploaded"}, status=400)
+
+    target_dir = MC_WORLDS_DIR / name
+    if target_dir.exists():
+        upload_path.unlink(missing_ok=True)
+        return web.json_response(
+            {"error": f"world '{name}' already exists — pick a different name"},
+            status=409,
+        )
+
+    extract_root = Path(tempfile.mkdtemp(prefix="world-import-", dir="/tmp"))
+    try:
+        try:
+            with zipfile.ZipFile(upload_path) as zf:
+                # Guard against zip-slip: refuse any member that resolves
+                # outside extract_root.
+                for member in zf.namelist():
+                    resolved = (extract_root / member).resolve()
+                    if extract_root.resolve() not in resolved.parents \
+                       and resolved != extract_root.resolve():
+                        return web.json_response(
+                            {"error": f"zip contains unsafe path: {member}"},
+                            status=400,
+                        )
+                zf.extractall(extract_root)
+        except zipfile.BadZipFile:
+            return web.json_response(
+                {"error": "file is not a valid .zip"},
+                status=400,
+            )
+        world_src = _find_world_root(extract_root)
+        if world_src is None:
+            return web.json_response(
+                {"error": "no level.dat found in the zip — not a Minecraft world"},
+                status=400,
+            )
+        target_dir.mkdir(parents=True)
+        # Move the world into the new profile under the default level-name
+        # ("world") so server.properties' level-name=world works out of the
+        # box. setup-server-properties.sh seeds the rest on first boot.
+        shutil.move(str(world_src), str(target_dir / "world"))
+        # Standard skeleton.
+        (target_dir / "plugins").mkdir(exist_ok=True)
+        (target_dir / "mods").mkdir(exist_ok=True)
+        (MC_BACKUPS_ROOT / name).mkdir(parents=True, exist_ok=True)
+    finally:
+        shutil.rmtree(extract_root, ignore_errors=True)
+        upload_path.unlink(missing_ok=True)
+
+    return web.json_response({
+        "ok": True,
+        "name": name,
+        "size_bytes": sum(p.stat().st_size for p in target_dir.rglob("*") if p.is_file()),
+        "message": (
+            f"World '{name}' imported. Switch to it from the Worlds tab "
+            f"to boot in (the add-on restarts; ~30s)."
+        ),
+    })
+
+
+# ---------------------------------------------------------------------------
 # App factory
 # ---------------------------------------------------------------------------
 def build_app() -> web.Application:
@@ -1028,8 +1418,18 @@ def build_app() -> web.Application:
     # Switchable server profiles
     app.router.add_get("/api/worlds", api_worlds_list)
     app.router.add_post("/api/worlds", api_worlds_create)
+    app.router.add_post("/api/worlds/import", api_worlds_import)
     app.router.add_post("/api/worlds/{name}/switch", api_worlds_switch)
     app.router.add_delete("/api/worlds/{name}", api_worlds_delete)
+    # First-run wizard
+    app.router.add_post("/api/setup", api_setup)
+    # Resource-pack hosting (manage via authenticated panel endpoints,
+    # serve to clients via a public path on the same port).
+    app.router.add_get("/api/resource-packs", api_resource_packs_list)
+    app.router.add_post("/api/resource-packs", api_resource_pack_upload)
+    app.router.add_delete("/api/resource-packs/{name}", api_resource_pack_delete)
+    app.router.add_post("/api/resource-packs/{name}/apply", api_resource_pack_apply)
+    app.router.add_get("/pack/{name}", serve_pack)
     return app
 
 

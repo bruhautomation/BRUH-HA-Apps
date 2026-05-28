@@ -8,37 +8,42 @@ Complete configuration reference, operational notes, and integration details.
 
 A bird's-eye view so you can skim to the sections that matter to you:
 
-- **Rock-solid Paper / Purpur / Folia / Vanilla / Fabric / Forge** server jar management. `LATEST`, `SNAPSHOT`, or any pinned version; auto-resolves, caches to `/data/server-cache`, re-downloads only when upstream changes.
-- **Aikar-flagged Java 21 JVM** with configurable memory, extra JVM args, and crash auto-restart (rate-limited so a fatal misconfig can't runaway-restart).
-- **Ingress-only panel** at the add-on's sidebar entry with:
-  - Live dashboard (status dot, version, uptime, TPS, latency, players).
-  - Streaming console over SSE with INFO/WARN/ERROR colouring, clear button, autoscroll toggle, and a command input (no leading slash needed).
-  - Players tab with one-click op/deop/kick/ban/pardon/whitelist.
-  - Server properties editor for the UI-safe subset of keys; changes apply over RCON where Paper supports it.
-  - Plugins tab with install-by-URL, size/mtime listing, one-click delete.
-  - Backups tab browsing both git snapshots and tar.gz archives with per-entry restore.
-  - Backup / Update / Restart / Stop buttons on every page.
-- **Bedrock cross-play** via Geyser (+ Floodgate when applicable). Auto-installed, auto-configured for your auth-type choice, and MTU/auth-type/validate-bedrock-login patched on every boot so iOS, Android, Switch, Xbox, PS and Windows 10/11 can connect.
-- **Offline mode done right.** Set a world's `online-mode: false` (panel → Server Properties) and the add-on silently forces `enforce-secure-profile: false`, switches Geyser to `auth-type: offline`, uninstalls Floodgate, and sets `validate-bedrock-login: false` — the full chain of changes Microsoft/Mojang's and GeyserMC's defaults gate behind one flag.
-- **Per-world settings.** Each world has its own gamemode, difficulty, world-gen, etc. — set them in the panel's Server Properties tab; one world can be creative and another survival.
-- **World safety.** Incremental git-backed world snapshots or tar.gz archive backups, on a configurable schedule, with one-click restore from either format.
-- **Home Assistant integration** with 12 sensors, 2 binary sensors, 4 buttons, 13 services, a `notify.bruh_minecraft_broadcast` platform, and a Supervisor-registered discovery tile for one-click setup.
-- **Self-healing.** Ghost-session auto-kicker clears stuck Bedrock handshakes; RCON client is thread-safe (fixes the `signal only works in main thread` panel crash); bad plugin URLs log a warning instead of tanking startup.
+- **Rock-solid Paper / Purpur / Folia / Vanilla / Fabric / Forge** server-jar management. `LATEST`, `SNAPSHOT`, or any pinned version; auto-resolves through PaperMC's `fill.papermc.io/v3` API (with v2 fallback), caches to `/data/server-cache`, re-downloads only when upstream changes.
+- **Aikar-flagged Eclipse Temurin 25 JVM** with configurable memory, extra JVM args, and crash auto-restart (rate-limited so a fatal misconfig can't runaway-restart).
+- **First-run wizard** for the EULA + online/offline mode + server type — install, start, three clicks, done.
+- **Ingress panel** at the add-on's sidebar entry with:
+  - Live dashboard — status dot, TPS health badge, *Tune for my hardware* recommender, players, latency.
+  - Streaming console over SSE with INFO / WARN / ERROR colouring and a command input.
+  - Players tab with one-click op / deop / kick / ban / pardon / whitelist.
+  - Per-world **Server Properties** editor (everything that's a `server.properties` key, validated server-side).
+  - Plugins tab with curated one-click installers, install-by-URL, and duplicate-jar quarantine.
+  - Backups tab browsing git snapshots and tar.gz archives with per-entry restore.
+  - Worlds tab — switch / create / **import-from-zip** / delete.
+  - Resource Packs tab — upload a pack, get a URL + SHA-1, *Apply* writes them into the active world.
+- **Bedrock cross-play** via Geyser (+ Floodgate when applicable). Auto-installed, auto-configured for your auth-type choice, and MTU / auth-type / validate-bedrock-login patched on every boot so iOS, Android, Switch, Xbox, PS and Windows 10/11 can connect.
+- **Offline mode done right.** Set a world's `online-mode: false` (panel → Server Properties) and the add-on silently forces `enforce-secure-profile: false`, switches Geyser to `auth-type: offline`, uninstalls Floodgate, and sets `validate-bedrock-login: false` — the full chain of changes Microsoft / Mojang's and GeyserMC's defaults gate behind one flag.
+- **Per-world settings.** Each world has its own `server.properties` — one world can be creative, another survival; switching loads each world's own gamemode, difficulty, world-gen, whitelist, etc.
+- **World safety.** Incremental git-backed snapshots or tar.gz archive backups on a configurable schedule, with one-click restore from either format.
+- **Home Assistant integration** — sensors (players, TPS, MOTD, difficulty, gamemode, …), binary sensors (online, RCON), buttons (Backup / Restart / Stop / Save), and 13 services (`rcon_command`, `say`, `give`, `set_weather`, `set_time`, `backup_now`, lifecycle, player management).
+- **Self-healing.** Ghost-session auto-kicker clears stuck Bedrock handshakes; RCON client is thread-safe; bad plugin URLs log a warning instead of tanking startup; crash banner surfaces the last error lines on the dashboard.
 - **Zero-dependency architecture.** Everything runs inside the one add-on container — no separate proxy jars, no VPS, no external broker.
 
-See CHANGELOG.md for the full version history.
+> See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
 ---
 
 ## 0.1 Quick start
 
-1. Install the add-on from the BRUH repository in Home Assistant.
-2. **Set `eula: true`** in the **Configuration** tab. The add-on will refuse to start otherwise — that's the Minecraft EULA acknowledgement, required by Mojang.
-3. Start the add-on. Give it ~30 s for the jar to download and Paper to boot, then open the **Minecraft** entry in HA's sidebar — the panel's dashboard tells you when the server is online.
-4. (Optional) Tune the world in the panel's **Server Properties** tab (gamemode, difficulty, etc.). For kids / LAN / no-Microsoft-account play, set `online-mode: false` there. OP yourself from the **Players** tab once you've joined.
-5. Connect to `<your-HA-host>:25565` from Java Edition, or `<your-HA-host>:19132` from Bedrock (UDP, same subnet gets automatic LAN discovery in the Bedrock **Friends** tab).
+1. **Add the repository** in HA → **Settings → Add-ons → ⋮ → Repositories**:
+   ```
+   https://github.com/bruhautomation/BRUH-HA-Apps
+   ```
+2. Install **BRUH Minecraft Server** and click **Start**.
+3. Open the sidebar **Minecraft** entry. The **welcome wizard** asks for the EULA, the online/offline mode for the first world, and the server type (Paper is the default). Click *Start the server* — the add-on restarts and the panel takes over.
+4. **Connect.** Java Edition → `<your-HA-host>:25565`. Bedrock → `<your-HA-host>:19132` (UDP; on the same LAN the server auto-appears in Minecraft's **Friends** tab).
+5. **OP yourself.** Join once, then on the panel's **Players** tab click *op* next to your name. Ops persist in `ops.json` per world.
 
-The rest of this document is optional reading — the defaults are sensible.
+> The defaults are sensible for a home / family server. The rest of this document is reference reading.
 
 ---
 
@@ -382,9 +387,17 @@ The panel is reachable from the **Minecraft** entry in HA's sidebar (or directly
 ### Worlds
 
 - Lists every world profile under `/config/minecraft-worlds/` with on-disk size and an "Active?" marker.
-- **Switch** button sets `active_world` and restarts the add-on so the chosen world boots — one click, no second step.
-- **Create** form stages an empty profile (optional fixed seed); name must be 1–32 characters, `[A-Za-z0-9_-]`.
+- **Switch** sets `active_world` and restarts the add-on so the chosen world boots — one click, no second step.
+- **Create** stages an empty profile (optional fixed seed); name must be 1–32 characters, `[A-Za-z0-9_-]`.
+- **Import** (1.10.0+) accepts a Minecraft world `.zip` (up to 2 GB). The add-on finds the directory containing `level.dat` automatically (works whether it's at the root of the zip, one level deep, or in a re-zipped backup) and stages it as a new switchable world. Then *Switch* into it.
 - **Delete** removes both the world directory and its backup history; refuses to delete the active profile (switch away first).
+
+### Resource Packs
+
+- Upload a Minecraft resource pack `.zip` (≤ 250 MB). The add-on stores it under `/config/resource-packs/` and serves it at `http://<your-HA-host>:8099/pack/<filename>` on the LAN.
+- The table lists each pack's size, SHA-1, mtime, and serve URL.
+- **Apply to active world** writes the URL + SHA-1 into the active world's `server.properties` `resource-pack` and `resource-pack-sha1` keys. Restart the server for clients to pick up the new pack.
+- **Delete** removes the pack from disk; worlds referencing it fall back to no pack.
 
 ---
 
@@ -597,9 +610,9 @@ script:
 
 ## 5. Troubleshooting
 
-### `fatal: The Minecraft EULA has NOT been accepted`
+### `EULA not accepted yet` in the startup log
 
-Set `eula: true` in the add-on configuration. That is the one and only way to start the server.
+The add-on is idling on purpose — open the sidebar **Minecraft** panel and the first-run wizard prompts you to accept the EULA + pick your server type. Alternatively, set `eula: true` in the add-on **Configuration** tab.
 
 ### `address already in use: bind: 0.0.0.0:25565`
 

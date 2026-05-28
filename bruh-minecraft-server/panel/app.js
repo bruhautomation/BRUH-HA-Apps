@@ -37,6 +37,7 @@
       if (tab.dataset.tab === 'plugins')    loadPlugins();
       if (tab.dataset.tab === 'backups')    loadBackups();
       if (tab.dataset.tab === 'worlds')     loadWorlds();
+      if (tab.dataset.tab === 'resource-packs') loadPacks();
       // Reset main's scroll position when switching tabs so the user
       // lands at the top of the new content. main is the page's single
       // scroll container (see style.css for why); a plain
@@ -116,6 +117,29 @@
         'tps-unknown': '',
       })[cls];
       $('#m-latency').textContent = stats.latency_ms != null ? `${stats.latency_ms} ms` : '—';
+
+      // Smart perf hint: when the 5-minute TPS is degraded or worse, the
+      // user benefits from a one-liner action. Pick the most impactful one
+      // based on what's actually configured.
+      const hint = $('#perf-hint');
+      if (cls === 'tps-warn' || cls === 'tps-bad') {
+        const tip = (cls === 'tps-bad' ? 'TPS is struggling — ' : 'TPS is degraded — ')
+          + 'try lowering simulation-distance (the biggest TPS lever) on the Server Properties tab. '
+          + 'If you have spare RAM, click Tune for my hardware above for a sized recommendation.';
+        hint.textContent = tip;
+        hint.hidden = false;
+      } else {
+        hint.hidden = true;
+      }
+
+      // First-run wizard: show the welcome overlay when the add-on is idling
+      // for setup (EULA not yet accepted). Hide it as soon as setup is done.
+      const wizard = $('#setup-wizard');
+      if (wizard) wizard.hidden = !data.setup_required;
+
+      // Crash banner: surface the last few error lines when the JVM exited
+      // unexpectedly. Respect a dismissal until the crash signature changes.
+      renderCrashBanner(data.crash);
       $('#m-online').textContent = stats.online ?? 0;
       $('#m-max').textContent = stats.max_players ?? state.max_players ?? 0;
 
@@ -527,4 +551,157 @@
       });
     });
   }
+
+  // ------------------------------------------------------------------
+  // First-run setup wizard
+  // ------------------------------------------------------------------
+  const setupSubmit = $('#setup-submit');
+  if (setupSubmit) {
+    setupSubmit.addEventListener('click', async () => {
+      const eula = $('#setup-eula').checked;
+      if (!eula) {
+        $('#setup-status').textContent = 'Please tick the EULA box to continue.';
+        return;
+      }
+      const audience = document.querySelector('input[name="setup-audience"]:checked')?.value;
+      const serverType = $('#setup-server-type').value;
+      setupSubmit.disabled = true;
+      $('#setup-status').textContent = 'Saving and restarting…';
+      const resp = await api('api/setup', {
+        method: 'POST',
+        body: JSON.stringify({
+          eula: true,
+          server_type: serverType,
+          online_mode: audience === 'online',
+        }),
+      });
+      if (resp.error) {
+        $('#setup-status').textContent = `Error: ${resp.error}`;
+        setupSubmit.disabled = false;
+        return;
+      }
+      $('#setup-status').textContent = resp.message || 'Restarting…';
+      // The Supervisor will tear us down momentarily; just let the page
+      // hang on the spinner and the user can refresh once the server is up.
+    });
+  }
+
+  // ------------------------------------------------------------------
+  // Crash banner — surfaces the last few error lines when the JVM
+  // exited unexpectedly. Dismissal is "until the signature changes" so
+  // a fresh crash brings the banner back.
+  // ------------------------------------------------------------------
+  let lastCrashSig = null;
+  let crashDismissed = false;
+  $('#crash-dismiss')?.addEventListener('click', () => {
+    crashDismissed = true;
+    $('#crash-banner').hidden = true;
+  });
+  function renderCrashBanner(crash) {
+    const banner = $('#crash-banner');
+    if (!banner) return;
+    if (!crash || !crash.excerpt || !crash.excerpt.length) {
+      banner.hidden = true;
+      lastCrashSig = null;
+      crashDismissed = false;
+      return;
+    }
+    const sig = `${crash.log_size}:${crash.excerpt[crash.excerpt.length - 1]}`;
+    if (sig !== lastCrashSig) {
+      crashDismissed = false;
+      lastCrashSig = sig;
+    }
+    if (crashDismissed) return;
+    $('#crash-excerpt').textContent = crash.excerpt.join('\n');
+    $('#crash-summary').textContent =
+      `Showing the last ${crash.excerpt.length} interesting log lines.`;
+    banner.hidden = false;
+  }
+
+  // ------------------------------------------------------------------
+  // World import
+  // ------------------------------------------------------------------
+  $('#f-world-import')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const name = $('#world-import-name').value.trim();
+    const file = $('#world-import-file').files[0];
+    if (!name || !file) return;
+    const reply = $('#world-import-reply');
+    reply.textContent = `Uploading ${file.name} (${fmtSize(file.size)})…`;
+    const fd = new FormData();
+    fd.append('name', name);
+    fd.append('file', file);
+    const resp = await fetch('api/worlds/import', { method: 'POST', body: fd, credentials: 'same-origin' });
+    let out; try { out = await resp.json(); } catch { out = { error: await resp.text() }; }
+    if (out.ok) {
+      reply.textContent = out.message || `Imported '${name}'.`;
+      $('#world-import-name').value = '';
+      $('#world-import-file').value = '';
+      loadWorlds();
+    } else {
+      reply.textContent = `Import failed: ${out.error || resp.status}`;
+    }
+  });
+
+  // ------------------------------------------------------------------
+  // Resource Packs tab
+  // ------------------------------------------------------------------
+  async function loadPacks() {
+    const data = await api('api/resource-packs');
+    const tbody = $('#packs-table tbody');
+    tbody.innerHTML = '';
+    (data.packs || []).forEach((p) => {
+      const url = `${location.protocol}//${location.hostname}:8099/pack/${encodeURIComponent(p.name)}`;
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td><code>${esc(p.name)}</code><br /><span class="muted" style="font-size: 0.8em;">${esc(url)}</span></td>
+        <td>${fmtSize(p.size)}</td>
+        <td><code style="font-size: 0.75em;">${esc(p.sha1)}</code></td>
+        <td>${new Date(p.mtime * 1000).toLocaleString()}</td>
+        <td>
+          <button class="btn btn-primary" data-pack-apply="${esc(p.name)}">Apply to active world</button>
+          <button class="btn btn-danger" data-pack-del="${esc(p.name)}">Delete</button>
+        </td>
+      `;
+      tbody.appendChild(tr);
+    });
+    tbody.querySelectorAll('button[data-pack-apply]').forEach((b) => {
+      b.addEventListener('click', async () => {
+        const name = b.dataset.packApply;
+        if (!confirm(`Apply ${name} to the active world's server.properties? The server needs a restart for clients to pick up the new pack.`)) return;
+        const resp = await api(`api/resource-packs/${encodeURIComponent(name)}/apply`, { method: 'POST' });
+        alert(resp.ok ? `Done.\nURL: ${resp.url}\nSHA-1: ${resp.sha1}` : `Failed: ${resp.error}`);
+      });
+    });
+    tbody.querySelectorAll('button[data-pack-del]').forEach((b) => {
+      b.addEventListener('click', async () => {
+        const name = b.dataset.packDel;
+        if (!confirm(`Delete resource pack ${name}? Worlds using it will fall back to no pack.`)) return;
+        await api(`api/resource-packs/${encodeURIComponent(name)}`, { method: 'DELETE' });
+        loadPacks();
+      });
+    });
+  }
+
+  $('#f-pack-upload')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const file = $('#pack-file').files[0];
+    const name = $('#pack-name').value.trim();
+    if (!file) return;
+    const reply = $('#pack-upload-reply');
+    reply.textContent = `Uploading ${file.name} (${fmtSize(file.size)})…`;
+    const fd = new FormData();
+    if (name) fd.append('name', name);
+    fd.append('file', file);
+    const resp = await fetch('api/resource-packs', { method: 'POST', body: fd, credentials: 'same-origin' });
+    let out; try { out = await resp.json(); } catch { out = { error: await resp.text() }; }
+    if (out.ok) {
+      reply.textContent = `Uploaded ${out.name} — SHA-1: ${out.sha1}`;
+      $('#pack-file').value = '';
+      $('#pack-name').value = '';
+      loadPacks();
+    } else {
+      reply.textContent = `Upload failed: ${out.error || resp.status}`;
+    }
+  });
 })();
