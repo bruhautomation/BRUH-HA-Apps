@@ -67,9 +67,31 @@ distance`, `simulation-distance` into the *named* world's
 `mods/`, backup dir) if the directory doesn't exist yet, so the wizard
 can name a world that didn't previously exist on disk.
 
+### Hardened: how "is this a first run?" is detected
+
+Previously the wizard appeared whenever `options.json`'s `eula` field was
+`false` — which is correct for upgrades (the file persists across them)
+but fragile against a manually-edited config, a half-failed Supervisor
+write, or an upgrade from a pre-wizard release where the user accepted
+EULA via YAML. The wizard now gates on **two** signals:
+
+1. A `/data/panel/.setup-completed` marker file. Lives under `/data/`, so
+   it persists across add-on updates and is cleared only on uninstall —
+   exactly the lifecycle we want.
+2. The EULA being unset in `options.json`.
+
+The wizard shows only when **both** "no marker" and "EULA false" are true.
+On wizard submit we drop the marker, so any subsequent state weirdness
+can't make the wizard reappear. We also drop the marker opportunistically
+the first time the panel sees `eula: true` without a marker (covers the
+upgrade-from-pre-wizard case so existing users don't suddenly get
+prompted).
+
 ### Tests
 
-+5 new (4 wizard-validation paths, 1 world-skeleton creation). 704 pass.
++8 new (4 wizard-validation paths, 1 world-skeleton creation, 3 marker
+behaviour: marker dominates, eula-true writes the marker, submit writes
+the marker). 707 pass.
 
 ## 1.10.0
 

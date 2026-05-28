@@ -429,19 +429,57 @@ async def api_status(_: web.Request) -> web.Response:
     })
 
 
+# Marker file that records "the first-run wizard has been completed on this
+# install." Lives under /data/ so it survives add-on upgrades (which preserve
+# /data) and is cleared on uninstall (which clears /data) — exactly the
+# lifecycle we want for the wizard.
+SETUP_MARKER = MC_PANEL_STATE / ".setup-completed"
+
+
 def _setup_required() -> bool:
-    """True when the add-on can't run the JVM yet because the EULA hasn't been
-    accepted. The panel is up (we started it before the EULA gate in run.sh)
-    but the JVM loop is idling — the welcome wizard prompts the user to
-    accept and triggers a restart."""
+    """True when the welcome wizard should be shown — i.e. this looks like a
+    brand-new install.
+
+    Gated on TWO signals so a single dropped/edited value can't make the
+    wizard reappear after the user has already done it:
+
+      1. The completed-marker file is missing (`/data/panel/.setup-completed`).
+         Written on every successful wizard submit AND opportunistically by
+         the panel whenever it sees a server that's actually been set up
+         (EULA accepted *and* a world exists on disk) — that's the "upgrade
+         from a pre-wizard release" case where the user shouldn't suddenly
+         see the wizard.
+      2. The EULA hasn't been accepted (`/data/options.json`'s `eula`
+         field). This is also the gate run.sh checks before launching the
+         JVM, so it lines up with "the server actually can't run yet."
+
+    Both must be true for the wizard to show. After the user clicks Start
+    the marker is written and we never bother them again, even if eula gets
+    flipped back to false for some weird reason."""
+    # Belt-and-suspenders: marker present always wins.
+    if SETUP_MARKER.is_file():
+        return False
     try:
         with open(os.environ.get("MC_OPTIONS_FILE", "/data/options.json")) as f:
-            return not json.load(f).get("eula", False)
+            eula_accepted = bool(json.load(f).get("eula", False))
     except (OSError, ValueError):
-        # On a fresh install the file is always there; if missing we err on
-        # the side of NOT blocking the dashboard with a wizard that has
-        # nothing useful to do.
+        # Couldn't read options — err on the side of NOT showing the wizard.
+        # If the user really does need setup, they can re-install or hit the
+        # EULA gate in run.sh which logs a clear warning.
         return False
+    # If EULA is accepted but the marker is missing (upgrade from a
+    # pre-wizard release, or a panel-only restart), claim the setup-
+    # completed state now so we never show the wizard for an already-
+    # configured install.
+    if eula_accepted:
+        try:
+            SETUP_MARKER.parent.mkdir(parents=True, exist_ok=True)
+            SETUP_MARKER.write_text(time.strftime("%Y-%m-%dT%H:%M:%S%z"))
+        except OSError:
+            pass
+        return False
+    # EULA is false AND no marker — true first run.
+    return True
 
 
 def _detect_crash(state: dict) -> dict | None:
@@ -742,6 +780,16 @@ async def api_setup(request: web.Request) -> web.Response:
     ]
     lines.extend(f"{k}={v}" for k, v in sorted(props.items()))
     props_path.write_text("\n".join(lines) + "\n")
+
+    # ── Drop the setup-completed marker before we restart, so even if
+    # something downstream wipes /data/options.json's eula key, the wizard
+    # never reappears on this install. The marker survives upgrades
+    # (persisted under /data) and is only cleared on add-on uninstall.
+    try:
+        SETUP_MARKER.parent.mkdir(parents=True, exist_ok=True)
+        SETUP_MARKER.write_text(time.strftime("%Y-%m-%dT%H:%M:%S%z"))
+    except OSError as e:
+        warnings.append(f"setup-marker: {e}")
 
     # ── Restart the add-on so run.sh boots the JVM with the new options.
     restart_err = await _supervisor_restart_self()

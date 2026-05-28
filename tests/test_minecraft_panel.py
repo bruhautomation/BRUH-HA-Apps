@@ -461,6 +461,44 @@ class TestSetupWizard(PanelTestBase):
         resp = await self.client.request("GET", "/api/status")
         self.assertFalse((await resp.json())["setup_required"])
 
+    async def test_marker_suppresses_wizard_even_if_eula_false(self):
+        # The marker is the dominant signal — if a previous wizard run
+        # completed, even a manually-flipped `eula: false` (or any other
+        # weird state) must NOT bring the wizard back. This is the
+        # belt-and-suspenders gate that prevents the wizard from appearing
+        # after every update.
+        self._set_options(eula=False)
+        (self.panel.SETUP_MARKER).parent.mkdir(parents=True, exist_ok=True)
+        self.panel.SETUP_MARKER.write_text("2026-01-01T00:00:00+0000")
+        resp = await self.client.request("GET", "/api/status")
+        self.assertFalse((await resp.json())["setup_required"])
+
+    async def test_eula_accepted_writes_marker_on_first_read(self):
+        # The upgrade-from-pre-wizard case: existing install has EULA true
+        # but no marker (because the user accepted EULA in YAML before this
+        # release existed). The first /api/status call must claim the
+        # setup-completed state by writing the marker, so subsequent calls
+        # don't re-evaluate.
+        self._set_options(eula=True)
+        self.assertFalse(self.panel.SETUP_MARKER.is_file())
+        await self.client.request("GET", "/api/status")
+        self.assertTrue(self.panel.SETUP_MARKER.is_file())
+
+    async def test_wizard_submit_writes_marker(self):
+        # Belt-and-suspenders: the wizard's submit path explicitly drops the
+        # marker so even if the Supervisor write of `eula: true` somehow
+        # fails, the wizard never reappears.
+        self._set_options(eula=False)
+        async def noop(*a, **kw): return None
+        self.panel._persist_option = noop
+        self.panel._supervisor_restart_self = noop
+        self._patch_worlds_dirs()
+        resp = await self.client.request("POST", "/api/setup", json={
+            "eula": True, "active_world": "default",
+        })
+        self.assertEqual(resp.status, 200)
+        self.assertTrue(self.panel.SETUP_MARKER.is_file())
+
     async def test_setup_rejects_without_eula(self):
         resp = await self.client.request("POST", "/api/setup", json={"eula": False})
         self.assertEqual(resp.status, 400)
