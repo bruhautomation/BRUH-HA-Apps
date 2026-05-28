@@ -5,6 +5,51 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.8.0
+
+### Changed: per-world settings — every world is now independent
+
+The biggest simplification yet. **Gameplay settings are no longer global
+add-on options** — each world owns its own `server.properties`, so you can
+have a creative world and a survival world side by side and switching
+between them loads each world's real settings. No more "I set creative but
+it loads survival because the global option overrides the world."
+
+- The HA **Configuration tab now holds only install/container-level
+  options**: EULA, active world, server type/version, RAM + JVM flags,
+  RCON password, auto-update, backups, crash-restart, HA integration,
+  Bedrock/Geyser, the ghost-session kicker, duplicate-plugin quarantine,
+  the plugin list, and log level. That's it.
+- **Everything gameplay/world** — gamemode, force-gamemode, difficulty,
+  PVP, hardcore, allow-flight, whitelist, spawn protection, view/sim
+  distance, world-gen (level name/seed/type, packs, structures, mobs),
+  online-mode, secure-profile, resource pack, command blocks, op level,
+  connection throttle, idle timeout — is edited from the ingress panel's
+  **Server Properties** tab and saved into that world's
+  `server.properties`. It persists and is per-world.
+- On boot the add-on only enforces the infra keys (RCON/query/ports) and
+  **seeds gameplay defaults once**; it never overwrites a world's existing
+  values again.
+- **Migration is seamless:** your current world keeps its exact settings —
+  they're already in its `server.properties`, which the add-on now
+  preserves instead of overwriting.
+
+### Removed
+
+- The `allow_cheats` and `initial_ops` options (and the per-boot OP helper).
+  Toggle command blocks / op level per-world in the panel, and op players
+  from the panel's Players tab — ops persist per-world in `ops.json`.
+- The panel's short-lived "write settings back to add-on options" path
+  (1.7.0) — no longer needed now that `server.properties` is the per-world
+  source of truth.
+
+### Internal
+
+- Geyser "auto" auth-type and the bedrock MOTD now read the active world's
+  `server.properties` (not a global env var); backup/restore read its
+  `level-name` the same way.
+- Tests reworked for the per-world model.
+
 ## 1.7.0
 
 A reliability + simplification release focused on the three things that

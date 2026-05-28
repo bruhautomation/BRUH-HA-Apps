@@ -34,6 +34,19 @@ SCRIPT_DIR="${SCRIPT_DIR:-/opt/bruh-mc/scripts}"
 log()  { printf '[bedrock-support] %s\n' "$*" >&2; }
 warn() { printf '[bedrock-support] WARN: %s\n' "$*" >&2; }
 
+# Read a key from the ACTIVE world's server.properties (gameplay settings are
+# per-world now — online-mode and motd are no longer add-on env vars). Prints
+# the value, or the supplied default when the key/file is absent.
+read_prop() {
+    local key="$1" default="${2:-}" line
+    line=$(grep -E "^${key}=" "${MC_SERVER_DIR}/server.properties" 2>/dev/null | head -n 1 || true)
+    if [ -n "${line}" ]; then
+        printf '%s' "${line#*=}"
+    else
+        printf '%s' "${default}"
+    fi
+}
+
 # Map our server_type to Geyser's platform slug. Also pick the right
 # destination dir (plugins/ for Bukkit-API servers, mods/ for Fabric).
 #
@@ -78,8 +91,9 @@ resolve_auth_type() {
             printf '%s' "${requested}"
             ;;
         *)
-            # "auto" and any bogus value fall through to the inference path.
-            if [ "${ONLINE_MODE:-true}" = "true" ]; then
+            # "auto" and any bogus value fall through to the inference path,
+            # keyed off the active world's online-mode (per-world setting).
+            if [ "$(read_prop online-mode true)" = "true" ]; then
                 printf 'floodgate'
             else
                 printf 'offline'
@@ -155,10 +169,11 @@ configure_geyser() {
 
     mkdir -p "${plugin_dir}"
 
-    local motd="${MOTD:-A BRUH Minecraft Server}"
+    local motd
+    motd="$(read_prop motd 'A BRUH Minecraft Server')"
     local motd_sub="Powered by BRUH HA Apps"
 
-    log "Resolved Geyser auth-type: ${auth_type} (requested='${GEYSER_AUTH_TYPE:-auto}', online-mode='${ONLINE_MODE:-true}')"
+    log "Resolved Geyser auth-type: ${auth_type} (requested='${GEYSER_AUTH_TYPE:-auto}', online-mode='$(read_prop online-mode true)')"
 
     if [ -f "${cfg}" ]; then
         log "Geyser config exists at ${cfg} ($(stat -c '%s bytes, %y' "${cfg}" 2>/dev/null || echo '?'))"

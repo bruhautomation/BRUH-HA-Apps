@@ -50,11 +50,14 @@ def _run_patcher(
     """Execute just the `configure_geyser_for_floodgate` function against
     `${server_dir}/plugins/Geyser-Spigot/config.yml`."""
     source = SCRIPT.read_text()
+    # online-mode and motd are now per-world server.properties keys (not env),
+    # so stage a server.properties the script's read_prop() can read.
+    (server_dir / "server.properties").write_text(
+        f"online-mode={online_mode}\nmotd={motd}\n"
+    )
     env_bits = [
         f"export MC_SERVER_DIR={server_dir.as_posix()!r}",
         f"export PLUGINS_DIR={(server_dir / 'plugins').as_posix()!r}",
-        f"export MOTD={motd!r}",
-        f"export ONLINE_MODE={online_mode!r}",
         # configure_geyser shells out to patch-geyser-config.py via $SCRIPT_DIR.
         # Point it at the real scripts/ checkout so the helper is reachable.
         f"export SCRIPT_DIR={(BASE_DIR / 'bruh-minecraft-server' / 'scripts').as_posix()!r}",
@@ -72,7 +75,7 @@ def _run_patcher(
     # reads $AUTH_TYPE which is normally set by the top-level of the real
     # script, so we export it here too for the test harness.
     bodies: list[str] = []
-    for func in ("resolve_auth_type", "configure_geyser"):
+    for func in ("read_prop", "resolve_auth_type", "configure_geyser"):
         start = source.index(f"{func}() {{")
         remaining = source[start:]
         brace = 0
@@ -104,12 +107,14 @@ def _run_full_script(
     (server_dir / "plugins").mkdir(exist_ok=True)
     if seed_floodgate_jar:
         (server_dir / "plugins" / "floodgate-spigot.jar").write_bytes(b"MZfake")
+    # online-mode/motd are per-world server.properties keys now.
+    (server_dir / "server.properties").write_text(
+        f"online-mode={online_mode}\nmotd=test\n"
+    )
     env = {
         **os.environ,
         "MC_SERVER_DIR": str(server_dir),
         "SERVER_TYPE": "paper",
-        "MOTD": "test",
-        "ONLINE_MODE": online_mode,
     }
     if geyser_auth_type is not None:
         env["GEYSER_AUTH_TYPE"] = geyser_auth_type

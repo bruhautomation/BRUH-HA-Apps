@@ -128,8 +128,8 @@
     <!-- Properties -->
     <section id="tab-properties" class="tab-panel">
       <p class="muted">
-        <strong>Edits here are permanent.</strong>
-        Changing an editable key writes the value back to the add-on's <strong>Configuration</strong> options (the single source of truth) and applies live via RCON where possible — so it takes effect right away <em>and</em> survives restarts. The greyed-out <code>config.yaml</code> rows are not panel-editable; change those from the Configuration tab.
+        <strong>These are this world's settings.</strong>
+        Each world has its own <code>server.properties</code> — so one world can be creative and another survival. Editing a value here saves it to the <em>active</em> world (shown in the Worlds tab) and persists across restarts. Some keys (difficulty, gamemode, whitelist) apply live; the rest take effect on the next restart. Greyed-out rows are infra keys managed by the add-on.
       </p>
       <table class="table" id="props-table">
         <thead><tr><th>Key</th><th>Value</th><th></th></tr></thead>

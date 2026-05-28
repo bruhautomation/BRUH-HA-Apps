@@ -305,14 +305,11 @@
         if (resp.error) {
           alert(resp.error);
           b.textContent = original;
-        } else if (resp.persisted) {
-          b.textContent = 'Saved ✓';
-          setTimeout(() => { b.textContent = original; }, 2000);
         } else {
-          // Live-applied but couldn't write back to the add-on options —
-          // it'll revert on the next restart. Tell the user why.
-          alert(`Applied live, but could not save permanently:\n${resp.warning || 'unknown error'}\n\nThis change will revert on the next restart.`);
-          b.textContent = original;
+          // Saved to this world's server.properties (the source of truth).
+          // Some keys apply live via RCON; the rest take effect on restart.
+          b.textContent = resp.live ? 'Saved ✓' : 'Saved — restart to apply';
+          setTimeout(() => { b.textContent = original; }, 2500);
         }
       });
     });
