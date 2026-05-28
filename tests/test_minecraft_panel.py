@@ -719,5 +719,267 @@ class TestWorldImport(PanelTestBase):
             self.assertTrue((self.panel.MC_BACKUPS_ROOT / "imported").is_dir())
 
 
+class TestFloodgatePlayerNames(PanelTestBase):
+    """1.12.0: Bedrock players join via Floodgate with a `.` username prefix
+    by default (`.Ben13765`). The pre-1.12.0 player-name regex rejected any
+    name starting with a non-alphanumeric — so every OP/kick/ban/whitelist
+    action from the Players tab returned 400 for Bedrock players and the
+    user had to fall back to the console."""
+
+    async def test_op_accepts_dot_prefix(self):
+        resp = await self.client.request("POST", "/api/player/.Ben13765/op")
+        self.assertEqual(resp.status, 200)
+
+    async def test_kick_accepts_asterisk_prefix(self):
+        # Floodgate can also be configured with `*` as the prefix.
+        resp = await self.client.request("POST", "/api/player/*Alice99/kick")
+        self.assertEqual(resp.status, 200)
+
+    async def test_still_rejects_garbage(self):
+        # Tight bound still in effect — quoting/injection chars still rejected.
+        for bad in ("Alice; op @a", "../wat", "Alice'\"", "name with spaces"):
+            resp = await self.client.request(
+                "POST", f"/api/player/{bad}/op")
+            self.assertIn(resp.status, {400, 404})
+
+
+class TestJavaPropertyUnescape(PanelTestBase):
+    """1.12.0: Minecraft rewrites server.properties with Java's `Properties`
+    format on shutdown, which escapes `:` as `\\:`. The panel was displaying
+    the raw escaped form. The unescape runs inside _read_properties so every
+    consumer sees clean values."""
+
+    async def test_colon_unescaped_in_get(self):
+        (self.server_dir / "server.properties").write_text(
+            "level-type=minecraft\\:normal\n"
+            "motd=hi\\nthere\n"  # escaped newline
+        )
+        resp = await self.client.request("GET", "/api/properties")
+        data = await resp.json()
+        self.assertEqual(data["properties"]["level-type"], "minecraft:normal")
+        self.assertEqual(data["properties"]["motd"], "hi\nthere")
+
+    async def test_plain_values_unchanged(self):
+        (self.server_dir / "server.properties").write_text(
+            "gamemode=creative\nmax-players=20\n"
+        )
+        resp = await self.client.request("GET", "/api/properties")
+        data = await resp.json()
+        self.assertEqual(data["properties"]["gamemode"], "creative")
+
+
+class TestPropertiesTypeMetadata(PanelTestBase):
+    """1.12.0: /api/properties surfaces type info so the panel can render
+    typed widgets (select / number / checkbox) instead of guessable text
+    inputs. Without this the user saw `minecraft:normal` and didn't know
+    what shape went there."""
+
+    async def test_returns_types_enums_ranges(self):
+        resp = await self.client.request("GET", "/api/properties")
+        data = await resp.json()
+        # Type map covers every editable key.
+        self.assertEqual(set(data["types"]), set(data["editable"]))
+        # gamemode is enum and has the four standard values.
+        self.assertEqual(data["types"]["gamemode"], "enum")
+        self.assertEqual(
+            set(data["enums"]["gamemode"]),
+            {"survival", "creative", "adventure", "spectator"},
+        )
+        # view-distance has a numeric range.
+        self.assertEqual(data["types"]["view-distance"], "int")
+        self.assertEqual(data["int_ranges"]["view-distance"], [3, 32])
+
+
+class TestRecommendDelta(PanelTestBase):
+    """1.12.0: /api/recommend returns the user's CURRENT settings + a per-key
+    delta + a top-level any_change flag, so the Tune dialog can highlight
+    only what would actually change (or short-circuit when settings already
+    match)."""
+
+    def _set_meminfo(self, mb: int) -> None:
+        path = self.state_dir / "fake_meminfo"
+        path.write_text(f"MemTotal:    {mb * 1024} kB\n")
+        os.environ["MEMINFO_PATH"] = str(path)
+        self.addCleanup(lambda: os.environ.pop("MEMINFO_PATH", None))
+
+    def _set_options(self, **opts) -> None:
+        path = self.state_dir / "options.json"
+        path.write_text(json.dumps(opts))
+        os.environ["MC_OPTIONS_FILE"] = str(path)
+        self.addCleanup(lambda: os.environ.pop("MC_OPTIONS_FILE", None))
+
+    async def test_includes_current_and_delta(self):
+        self._set_meminfo(8192)
+        self._set_options(memory_mb=1024)  # intentionally below the rec
+        (self.server_dir / "server.properties").write_text(
+            "view-distance=8\nsimulation-distance=6\n"
+        )
+        resp = await self.client.request("GET", "/api/recommend")
+        data = await resp.json()
+        self.assertIn("current", data)
+        self.assertEqual(data["current"]["memory_mb"], 1024)
+        self.assertEqual(data["current"]["view_distance"], 8)
+        self.assertIn("delta", data)
+        self.assertTrue(data["any_change"])  # at least memory differs
+
+    async def test_any_change_false_when_matching(self):
+        self._set_meminfo(8192)
+        # Pick the recommendation first, then claim it's already current.
+        from importlib import reload
+        rec_resp = await self.client.request("GET", "/api/recommend")
+        rec = await rec_resp.json()
+        self._set_options(memory_mb=rec["memory_mb"])
+        (self.server_dir / "server.properties").write_text(
+            f"view-distance={rec['view_distance']}\n"
+            f"simulation-distance={rec['simulation_distance']}\n"
+        )
+        resp = await self.client.request("GET", "/api/recommend")
+        data = await resp.json()
+        self.assertFalse(data["any_change"])
+
+
+class TestWorldsListSettings(PanelTestBase):
+    """1.12.0: /api/worlds returns each world's gameplay highlights so the
+    Worlds tab can show what each world's gamemode/difficulty actually is.
+    Helps users whose mental model expected global settings."""
+
+    async def test_settings_surfaced_per_world(self):
+        # Stand up two world dirs with different settings.
+        worlds_dir = self.state_dir / "minecraft-worlds"
+        worlds_dir.mkdir()
+        for name, gm, diff in [("alpha", "creative", "peaceful"),
+                                ("beta", "survival", "hard")]:
+            (worlds_dir / name).mkdir()
+            (worlds_dir / name / "server.properties").write_text(
+                f"gamemode={gm}\ndifficulty={diff}\nlevel-type=minecraft\\:normal\n"
+            )
+        self.panel.MC_WORLDS_DIR = worlds_dir
+        # Patch the world-manager subprocess so list returns our two worlds.
+        async def fake_run_world_manager(*args):
+            if args == ("list",):
+                return 0, "alpha\t1024\tfalse\nbeta\t2048\ttrue\n"
+            if args == ("active",):
+                return 0, "beta"
+            return 0, ""
+        self.panel._run_world_manager = fake_run_world_manager
+        resp = await self.client.request("GET", "/api/worlds")
+        data = await resp.json()
+        worlds = {w["name"]: w for w in data["worlds"]}
+        self.assertEqual(worlds["alpha"]["settings"]["gamemode"], "creative")
+        self.assertEqual(worlds["beta"]["settings"]["difficulty"], "hard")
+        # Java-escape colon unescaped on the way out.
+        self.assertEqual(worlds["alpha"]["settings"]["level-type"], "minecraft:normal")
+
+
+class TestWorldExport(PanelTestBase):
+    """1.12.0: GET /api/worlds/{name}/export streams a zip of the world for
+    sharing / off-host backup."""
+
+    async def test_export_streams_world_zip(self):
+        # Stand up a world dir with a level.dat under world/.
+        worlds_dir = self.state_dir / "minecraft-worlds"
+        wdir = worlds_dir / "myworld"
+        (wdir / "world" / "region").mkdir(parents=True)
+        (wdir / "world" / "level.dat").write_bytes(b"\x0a\x00\x00fake-nbt")
+        (wdir / "world" / "region" / "r.0.0.mca").write_bytes(b"region")
+        (wdir / "server.properties").write_text("gamemode=creative\n")
+        self.panel.MC_WORLDS_DIR = worlds_dir
+        resp = await self.client.request("GET", "/api/worlds/myworld/export")
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(resp.headers["Content-Type"], "application/zip")
+        self.assertIn("myworld", resp.headers["Content-Disposition"])
+        # The body is a real zip with our files in it.
+        import io, zipfile
+        buf = io.BytesIO(await resp.read())
+        with zipfile.ZipFile(buf) as zf:
+            names = set(zf.namelist())
+        self.assertIn("world/level.dat", names)
+        self.assertIn("world/region/r.0.0.mca", names)
+        self.assertIn("server.properties", names)
+
+    async def test_export_404_for_missing_world(self):
+        worlds_dir = self.state_dir / "minecraft-worlds"
+        worlds_dir.mkdir()
+        self.panel.MC_WORLDS_DIR = worlds_dir
+        resp = await self.client.request("GET", "/api/worlds/nope/export")
+        self.assertEqual(resp.status, 404)
+
+    async def test_export_rejects_bad_name(self):
+        resp = await self.client.request("GET", "/api/worlds/..%2Fevil/export")
+        # Path-traversal attempt — regex won't match.
+        self.assertIn(resp.status, {400, 404})
+
+
+class TestExpandedSetup(PanelTestBase):
+    """1.12.0: the expanded wizard POSTs many new fields; verify each one
+    writes to the right destination and validates its range."""
+
+    def _patch(self):
+        from pathlib import Path as _P
+        self.panel.MC_WORLDS_DIR = _P(self.tmp.name) / "wmw"
+        self.panel.MC_BACKUPS_ROOT = _P(self.tmp.name) / "wbr"
+        self.panel.MC_WORLDS_DIR.mkdir(parents=True, exist_ok=True)
+        self.panel.MC_BACKUPS_ROOT.mkdir(parents=True, exist_ok=True)
+
+    async def test_full_wizard_body(self):
+        self._patch()
+        persisted = []
+        async def fake_persist(k, v): persisted.append((k, v)); return None
+        async def fake_restart(): return None
+        self.panel._persist_option = fake_persist
+        self.panel._supervisor_restart_self = fake_restart
+
+        resp = await self.client.request("POST", "/api/setup", json={
+            "eula": True,
+            "server_type": "paper",
+            "online_mode": True,
+            "enable_bedrock_support": True,
+            "active_world": "default",
+            "gamemode": "creative",
+            "force_gamemode": True,
+            "difficulty": "peaceful",
+            "level_type": "minecraft:flat",
+            "level_seed": "",
+            "pvp": False,
+            "hardcore": False,
+            "max_players": 30,
+            "white_list": True,
+            "spawn_protection": 0,
+            "memory_mb": 4096,
+            "view_distance": 12,
+            "simulation_distance": 10,
+            "backup_interval_minutes": 30,
+            "backup_keep_count": 96,
+            "auto_restart_schedule": "0 4 * * *",
+            "install_essentialsx": True,
+        })
+        self.assertEqual(resp.status, 200, await resp.text())
+        # Global writes.
+        persisted_keys = {k for k, _ in persisted}
+        for k in ("eula", "server_type", "active_world", "memory_mb",
+                  "enable_bedrock_support", "backup_interval_minutes",
+                  "backup_keep_count", "auto_restart_schedule",
+                  "install_essentialsx"):
+            self.assertIn(k, persisted_keys, f"missing global write: {k}")
+        # Per-world writes are in the world's server.properties.
+        props = (self.panel.MC_WORLDS_DIR / "default" / "server.properties").read_text()
+        self.assertIn("force-gamemode=true", props)
+        self.assertIn("max-players=30", props)
+        self.assertIn("white-list=true", props)
+        self.assertIn("spawn-protection=0", props)
+
+    async def test_rejects_out_of_range_max_players(self):
+        resp = await self.client.request("POST", "/api/setup", json={
+            "eula": True, "max_players": 99999,
+        })
+        self.assertEqual(resp.status, 400)
+
+    async def test_rejects_out_of_range_backup_interval(self):
+        resp = await self.client.request("POST", "/api/setup", json={
+            "eula": True, "backup_interval_minutes": 3,  # below 5 min min
+        })
+        self.assertEqual(resp.status, 400)
+
+
 if __name__ == "__main__":
     unittest.main()

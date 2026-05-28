@@ -5,6 +5,78 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.12.0
+
+A wizard expansion + a sweep of UX bugs the previous wizard exposed.
+
+### Added: 9-step setup wizard, properly comprehensive
+
+Previously 7 steps focused on EULA / server software / world basics.
+Expanded to 9 with two new steps and a proper performance preview:
+
+1. EULA
+2. Server software (with TPS-vs-vanilla details — ~30-40% perf gap)
+3. **Connectivity** (audience + Bedrock cross-play question — was implicit)
+4. First world — basics (now includes `force-gamemode`, the "creative
+   actually stays creative" toggle)
+5. **Players & access** (max-players, whitelist, spawn protection)
+6. **Performance** with live capacity preview + sanity warnings (heap-vs-host,
+   sim>view, etc.)
+7. Plugins
+8. **Maintenance** (backup interval, keep count, optional nightly restart)
+9. Review
+
+### Added: world export (download as zip)
+
+`GET /api/worlds/{name}/export` streams a zip of any world's save data
+plus its `server.properties`. *Download* button on every row of the
+Worlds tab. Works on the active world too (point-in-time read of region
+files; for a fully consistent snapshot use the Backups tab).
+
+### Added: Worlds tab shows each world's gameplay settings inline
+
+Helps with the "my settings don't appear to move when I switch worlds"
+confusion — each row now lists that world's gamemode / difficulty /
+terrain / online-mode / whitelist so you can see at a glance which
+world is which.
+
+### Added: Tune for my hardware now shows the delta
+
+Reads your current `memory_mb` / view-distance / simulation-distance and
+compares to the recommendation. Shows only what would change, marked
+clearly with arrows; short-circuits with "already optimal" when nothing
+needs to change.
+
+### Fixed: OP / kick / ban rejected Bedrock players (`.Ben13765`)
+
+Floodgate prefixes Bedrock usernames with `.` by default. The Players-
+tab regex was `^[A-Za-z0-9_]{1,16}$` and rejected the leading dot — so
+every action on a Bedrock player returned 400 and the operator had to
+fall back to the console. Now accepts `.`, `*`, and `_` anywhere; still
+tightly bounded against quoting/injection.
+
+### Fixed: Server Properties showed `minecraft\:normal` literally
+
+Minecraft re-saves `server.properties` with Java's `Properties.store()`
+which escapes `:` as `\:`. The panel was rendering the raw escaped form
+and users didn't know what to put in the field. `_read_properties` now
+unescapes Java values (handles `\:`, `\=`, `\#`, `\!`, `\\`, `\n`, `\t`,
+`\r`, and `\uXXXX`).
+
+### Fixed: Server Properties text fields were guess-the-shape
+
+Editable keys all rendered as plain text inputs — including enums like
+`gamemode` where the user had to type the value. `/api/properties` now
+surfaces type metadata; the panel renders `<select>` for enums and
+bools, `<input type="number">` with schema bounds for ints, plain text
+for strings. No more guessing.
+
+### Internal
+
+- 15 new tests covering Floodgate-prefix names, Java unescape, properties
+  metadata, recommend delta, worlds-list settings, world export, and the
+  expanded wizard body. 721 deterministic tests pass.
+
 ## 1.11.0
 
 ### Fixed: the wizard's CSS overrode `[hidden]`, so it appeared on every page load

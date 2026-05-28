@@ -216,21 +216,39 @@
   // Tune-for-my-hardware. Fetches the recommendation, shows what would be
   // applied + the rationale, then writes memory_mb to the add-on options and
   // view/sim distance to the active world's server.properties on confirm.
+  // The dialog now shows BOTH the current effective values and the
+  // recommended ones, highlights the delta, and short-circuits with "no
+  // changes needed" when everything already matches.
   $('#btn-tune').addEventListener('click', async () => {
     const r = await api('api/recommend');
     if (r._raw || !r.memory_mb) { alert('Could not read recommendation:\n' + (r._raw || 'unknown')); return; }
+    const cur = r.current || {};
+    if (!r.any_change) {
+      alert(
+        'Your current settings already match the recommendation for this host:\n' +
+        `  memory_mb: ${cur.memory_mb} MB\n` +
+        `  view-distance: ${cur.view_distance}\n` +
+        `  simulation-distance: ${cur.simulation_distance}\n\n` +
+        'Nothing to apply.'
+      );
+      return;
+    }
+    const row = (label, c, rec, changed) => {
+      const cdisp = (c == null ? 'unset' : String(c));
+      return changed
+        ? `  ${label}: ${cdisp} → ${rec}    ← CHANGE`
+        : `  ${label}: ${rec} (already correct)`;
+    };
     const msg =
-      'Detected:\n' +
-      `  host RAM: ${r.host_total_mb} MB\n` +
-      `  CPUs: ${r.cpu_count}\n\n` +
-      'Recommended:\n' +
-      `  memory_mb (global): ${r.memory_mb}\n` +
-      `  view-distance (active world): ${r.view_distance}\n` +
-      `  simulation-distance (active world): ${r.simulation_distance}\n\n` +
+      `Host: ${r.host_total_mb} MB RAM, ${r.cpu_count} CPU(s).\n\n` +
+      'Proposed changes:\n' +
+      row('memory_mb (global)',         cur.memory_mb,         r.memory_mb,         r.delta.memory_mb) + '\n' +
+      row('view-distance (active world)', cur.view_distance,   r.view_distance,     r.delta.view_distance) + '\n' +
+      row('simulation-distance (active)', cur.simulation_distance, r.simulation_distance, r.delta.simulation_distance) + '\n\n' +
       'Why:\n' +
       `  • ${r.rationale.memory}\n` +
       `  • ${r.rationale.distances}\n\n` +
-      'Apply now? (Takes effect on the next restart.)';
+      'Apply the changes? (Takes effect on the next restart.)';
     if (!confirmAction(msg)) return;
     const out = await api('api/recommend/apply', { method: 'POST' });
     if (out.error) { alert('Apply failed: ' + out.error); return; }
@@ -349,16 +367,50 @@
   // ------------------------------------------------------------------
   // Properties tab
   // ------------------------------------------------------------------
+  // Render an editor for a server.properties key based on the type metadata
+  // the API surfaces in /api/properties. Picking the right widget per key
+  // means the user doesn't have to guess "what shape goes here" — enums
+  // become dropdowns, bools become true/false selects, ints become number
+  // inputs with the schema bounds, and the rest stay as plain text.
+  function renderPropEditor(k, v, types, enums, ranges) {
+    const t = types[k];
+    const safeKey = esc(k);
+    const safeVal = esc(v == null ? '' : String(v));
+    if (t === 'bool') {
+      const isTrue = String(v).toLowerCase() === 'true';
+      return `<select data-key="${safeKey}">` +
+        `<option value="true"${isTrue ? ' selected' : ''}>true</option>` +
+        `<option value="false"${!isTrue ? ' selected' : ''}>false</option>` +
+        `</select>`;
+    }
+    if (t === 'enum' && enums[k]) {
+      return `<select data-key="${safeKey}">` +
+        enums[k].map((opt) =>
+          `<option value="${esc(opt)}"${opt === v ? ' selected' : ''}>${esc(opt)}</option>`
+        ).join('') +
+        `</select>`;
+    }
+    if (t === 'int') {
+      const r = ranges[k];
+      const attrs = r ? `min="${r[0]}" max="${r[1]}"` : '';
+      return `<input type="number" ${attrs} value="${safeVal}" data-key="${safeKey}" />`;
+    }
+    return `<input type="text" value="${safeVal}" data-key="${safeKey}" />`;
+  }
+
   async function loadProperties() {
     const data = await api('api/properties');
     const tbody = $('#props-table tbody');
     tbody.innerHTML = '';
     const editable = new Set(data.editable);
+    const types = data.types || {};
+    const enums = data.enums || {};
+    const ranges = data.int_ranges || {};
     Object.entries(data.properties).sort().forEach(([k, v]) => {
       const isEditable = editable.has(k);
       const tr = document.createElement('tr');
       const valCell = isEditable
-        ? `<input type="text" value="${esc(v)}" data-key="${esc(k)}" />`
+        ? renderPropEditor(k, v, types, enums, ranges)
         : `<code>${esc(v)}</code>`;
       const actionCell = isEditable
         ? `<button class="btn btn-primary" data-save-key="${esc(k)}">Save</button>`
@@ -369,7 +421,8 @@
     tbody.querySelectorAll('button[data-save-key]').forEach((b) => {
       b.addEventListener('click', async () => {
         const key = b.dataset.saveKey;
-        const input = tbody.querySelector(`input[data-key="${key}"]`);
+        // input OR select — both expose .value
+        const input = tbody.querySelector(`[data-key="${key}"]`);
         if (!input) return;
         b.disabled = true;
         const original = b.textContent;
@@ -445,15 +498,34 @@
       const activeBadge = w.active
         ? '<span style="color: var(--accent); font-weight: 600;">● active</span>'
         : '—';
+      // Surface each world's per-world gameplay settings so the user can see
+      // at a glance that switching loads THAT world's mode — not whatever
+      // they last edited on a different world. This is the "settings don't
+      // appear to move with me" UX hint.
+      const s = w.settings || {};
+      const settingsCell = s.gamemode || s.difficulty || s['level-type']
+        ? `<span class="world-settings">` +
+          (s.gamemode ? `<code>${esc(s.gamemode)}</code>` : '') +
+          (s.difficulty ? ` · ${esc(s.difficulty)}` : '') +
+          (s['level-type'] ? ` · ${esc(String(s['level-type']).replace(/^minecraft:/, ''))}` : '') +
+          (s['white-list'] === 'true' ? ' · <span class="muted">whitelist</span>' : '') +
+          (s['online-mode'] === 'false' ? ' · <span class="muted">offline</span>' : '') +
+          `</span>`
+        : '<span class="muted">(no settings yet)</span>';
+      // Export (download .zip) is available for every world — including the
+      // active one. Switching/deleting is only meaningful for non-active.
+      const exportBtn = `<a class="btn btn-ghost" href="api/worlds/${encodeURIComponent(w.name)}/export" download title="Download this world's save as a .zip for sharing or off-host backup">Download</a>`;
       const actions = w.active
-        ? '<span class="muted">—</span>'
+        ? exportBtn
         : `
           <button class="btn btn-primary" data-switch="${esc(w.name)}">Switch</button>
+          ${exportBtn}
           <button class="btn btn-danger" data-delete="${esc(w.name)}">Delete</button>
         `;
       tr.innerHTML = `
         <td><code>${esc(w.name)}</code></td>
         <td>${fmtSize(w.size_bytes)}</td>
+        <td>${settingsCell}</td>
         <td>${activeBadge}</td>
         <td class="actions">${actions}</td>
       `;
@@ -593,9 +665,13 @@
       $$btn.submit.hidden = current !== totalSteps;
       $$btn.status.textContent = '';
 
-      // Step-entry hooks.
-      if (current === 5 && !recommendation) loadRecommendation();
-      if (current === 6) updatePluginsVisibility();
+      // Step-entry hooks. Step numbers track the data-step values in
+      // index.html: 1 EULA, 2 server software, 3 connectivity, 4 world
+      // basics, 5 players & access, 6 performance, 7 plugins,
+      // 8 maintenance, 9 review.
+      if (current === 6 && !recommendation) loadRecommendation();
+      if (current === 6) renderPerfPreview();
+      if (current === 7) updatePluginsVisibility();
       if (current === totalSteps) renderReview();
     }
 
@@ -609,14 +685,88 @@
           return 'World name must be 1-32 letters, digits, _ or -.';
         }
       }
-      if (current === 5 && radio('setup-perf') === 'manual') {
+      if (current === 5) {
+        const maxP = Number($('#setup-max-players').value);
+        if (!Number.isInteger(maxP) || maxP < 1 || maxP > 1000) {
+          return 'Max players must be between 1 and 1000.';
+        }
+        const sp = Number($('#setup-spawn-protection').value);
+        if (!Number.isInteger(sp) || sp < 0 || sp > 10000) {
+          return 'Spawn protection must be between 0 and 10000.';
+        }
+      }
+      if (current === 6 && radio('setup-perf') === 'manual') {
         const mem = Number($('#setup-memory').value);
         if (!Number.isInteger(mem) || mem < 512 || mem > 65536) {
           return 'Memory must be a whole number between 512 and 65536.';
         }
       }
+      if (current === 8) {
+        const iv = Number($('#setup-backup-interval').value);
+        if (!Number.isInteger(iv) || iv < 5 || iv > 1440) {
+          return 'Backup interval must be 5-1440 minutes.';
+        }
+        const keep = Number($('#setup-backup-keep').value);
+        if (!Number.isInteger(keep) || keep < 1 || keep > 500) {
+          return 'Backup keep count must be 1-500.';
+        }
+      }
       return null;
     }
+
+    // Performance preview: capacity estimate + sanity warnings, recomputed
+    // every time step 6 is shown or the perf inputs change. Heuristic but
+    // grounded — the numbers come from running real Paper servers and
+    // observing where TPS starts dropping.
+    function renderPerfPreview() {
+      const host = document.querySelector('input[name="setup-perf"]:checked')?.value || 'auto';
+      let mem, view, sim;
+      if (host === 'auto' && recommendation) {
+        mem = recommendation.memory_mb;
+        view = recommendation.view_distance;
+        sim = recommendation.simulation_distance;
+      } else {
+        mem = Number($('#setup-memory').value) || 2048;
+        view = Number($('#setup-view').value) || 10;
+        sim = Number($('#setup-sim').value) || 10;
+      }
+      // Heuristic capacity range. Players-per-MB scales linearly; sim
+      // distance squared-ish penalty because tick cost grows with the
+      // number of ticked chunks per player.
+      const base = mem / 480;
+      const simPenalty = Math.max(1, Math.pow(sim / 10, 1.6));
+      const center = Math.max(1, Math.round(base / simPenalty));
+      const low = Math.max(1, Math.round(center * 0.6));
+      const high = Math.round(center * 1.4);
+
+      const warnings = [];
+      if (sim > view) warnings.push(
+        `Your simulation-distance (${sim}) exceeds view-distance (${view}). ` +
+        `Minecraft caps the effective sim-distance at the view-distance, so the higher value is wasted CPU. Lower sim-distance or raise view-distance.`
+      );
+      if (recommendation && mem > Math.max(1024, recommendation.host_total_mb - 1024)) warnings.push(
+        `Heap ${mem} MB leaves little room for Home Assistant + the OS on a ${recommendation.host_total_mb} MB host. ` +
+        `HA may be starved during peak Minecraft load. Drop memory below ${Math.max(1024, recommendation.host_total_mb - 2048)} MB.`
+      );
+      if (sim >= 16) warnings.push(
+        `simulation-distance ≥ 16 is heavy — expect TPS dips on anything but a top-tier host with few players.`
+      );
+      if (mem < 1024) warnings.push(
+        `Heap under 1 GB is uncomfortable for modern Paper; expect frequent GC pauses. Bump to at least 1024 MB.`
+      );
+
+      const html =
+        `<div class="setup-preview-row"><strong>Expected capacity</strong>: <span class="setup-preview-emph">${low}–${high} players</span> ` +
+        `<span class="muted">(comfortable; assumes mostly-survival gameplay with a few plugins)</span></div>` +
+        (warnings.length
+          ? '<ul class="setup-preview-warn">' + warnings.map((w) => `<li>${esc(w)}</li>`).join('') + '</ul>'
+          : '<p class="setup-preview-ok">No warnings — this looks like a healthy combination.</p>');
+      $('#setup-perf-preview').innerHTML = html;
+    }
+    // Keep the preview live as the user edits manual values.
+    ['#setup-memory', '#setup-view', '#setup-sim'].forEach((sel) => {
+      const el = $(sel); if (el) el.addEventListener('input', renderPerfPreview);
+    });
 
     async function loadRecommendation() {
       const summary = $('#setup-rec-summary');
@@ -659,14 +809,25 @@
         eula: true,
         server_type: serverType(),
         online_mode: audience() === 'online',
+        enable_bedrock_support: radio('setup-bedrock', 'on') === 'on',
         active_world: $('#setup-world-name').value.trim(),
         gamemode: radio('setup-gamemode', 'survival'),
+        force_gamemode: $('#setup-force-gamemode').checked,
         difficulty: radio('setup-difficulty', 'normal'),
         level_type: radio('setup-level-type', 'minecraft:normal'),
         level_seed: $('#setup-seed').value.trim(),
         pvp: $('#setup-pvp').checked,
         hardcore: $('#setup-hardcore').checked,
+        max_players: Number($('#setup-max-players').value) || 20,
+        white_list: $('#setup-whitelist').checked,
+        spawn_protection: Number($('#setup-spawn-protection').value) || 16,
+        backup_interval_minutes: Number($('#setup-backup-interval').value) || 60,
+        backup_keep_count: Number($('#setup-backup-keep').value) || 48,
       };
+      if ($('#setup-nightly-restart').checked) {
+        // Cron expression — 4 AM daily. Documented in config.yaml.
+        body.auto_restart_schedule = '0 4 * * *';
+      }
       const perf = radio('setup-perf', 'auto');
       if (perf === 'auto' && recommendation) {
         body.memory_mb = recommendation.memory_mb;
@@ -691,17 +852,23 @@
       const rows = [
         ['Server software', b.server_type],
         ['Mode', b.online_mode ? 'Online (Mojang auth)' : 'Offline / LAN'],
+        ['Bedrock cross-play', b.enable_bedrock_support ? 'enabled (Geyser + Floodgate)' : 'disabled'],
         ['World name', b.active_world],
-        ['Gamemode', b.gamemode + (b.hardcore ? ' (hardcore)' : '')],
+        ['Gamemode', `${b.gamemode}${b.force_gamemode ? ' (forced on every join)' : ''}${b.hardcore ? ' — HARDCORE' : ''}`],
         ['Difficulty', b.difficulty],
         ['Terrain', b.level_type.replace(/^minecraft:/, '')],
         ['Seed', b.level_seed || '(random)'],
         ['PVP', b.pvp ? 'enabled' : 'disabled'],
+        ['Max players', String(b.max_players)],
+        ['Whitelist', b.white_list ? 'on — only listed players may join' : 'off (open)'],
+        ['Spawn protection', `${b.spawn_protection} blocks`],
       ];
       if (b.memory_mb) {
         rows.push(['Memory', `${b.memory_mb} MB`]);
         rows.push(['View / sim distance', `${b.view_distance} / ${b.simulation_distance}`]);
       }
+      rows.push(['Backups', `every ${b.backup_interval_minutes} min, keep ${b.backup_keep_count}`]);
+      if (b.auto_restart_schedule) rows.push(['Nightly restart', `${b.auto_restart_schedule} (4 AM)`]);
       if (isBukkit()) {
         const plugins = Object.entries(b)
           .filter(([k, v]) => k.startsWith('install_') && v)
