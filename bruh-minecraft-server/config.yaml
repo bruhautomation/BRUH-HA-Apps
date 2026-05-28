@@ -1,7 +1,7 @@
 ---
 name: "BRUH Minecraft Server"
 description: "Rock-solid Minecraft Java Edition server with ingress panel, RCON, git world backups, auto-updates, plugin management, and deep Home Assistant integration"
-version: "1.8.0"
+version: "1.9.0"
 slug: "bruh_minecraft_server"
 init: false
 
@@ -253,30 +253,46 @@ options:
   # and the server still starts. To remove a plugin permanently, remove the
   # entry here AND delete the jar from the panel. Empty by default.
   plugins: []
-  # Popular-plugin one-click installers. Each toggle maps to a curated,
-  # well-known plugin; when true the add-on resolves the latest
+  # Popular-plugin one-click installers. Each toggle is a curated, well-known
+  # Bukkit/Spigot plugin; when true the add-on resolves the latest
   # Paper/Spigot/Folia-compatible build via the Modrinth API on every boot and
-  # installs it into the active world's plugins/ folder. All default false —
-  # opt in to what you want. Toggling back to false does NOT remove the jar;
-  # delete it from the panel's Plugins tab to remove.
-  install_essentialsx: false         # core commands: /home, /tpa, /kit, economy
-  install_essentialsx_chat: false    # chat formatting/prefixes (needs EssentialsX)
-  install_luckperms: false           # the standard permissions manager
-  install_worldedit: false           # in-game mass block editing (//set, //copy)
-  install_worldguard: false          # region protection (needs WorldEdit)
-  install_coreprotect: false         # block-logging + griefing rollback
-  install_multiverse_core: false     # multiple worlds within one server
-  install_griefprevention: false     # claim-based land protection
-  install_mcmmo: false               # RPG skills/leveling
-  install_chestsort: false           # auto-sort chests/inventories
-  install_veinminer: false           # mine a whole ore vein at once
-  install_spark: false               # performance profiler/diagnostics
+  # installs it into the ACTIVE world's plugins/ folder. Full per-command
+  # reference: ./PLUGINS.md.
+  #
+  # SCOPE: these toggles are GLOBAL — they apply to whichever world is
+  # currently active. When you switch worlds, the same set is installed into
+  # the new world's plugins/ folder on boot, so every world gets the same
+  # plugin lineup. (For per-world plugin differences, delete jars from a
+  # specific world via the panel's Plugins tab while that world is active.)
+  #
+  # DEPENDENCIES are auto-enforced: enabling EssentialsX Chat auto-enables
+  # EssentialsX, and enabling ViaBackwards auto-enables ViaVersion (it
+  # depends on ViaVersion to load). You don't need to remember which needs
+  # which.
+  #
+  # DUPLICATES: if you also add a matching plugin URL to the `plugins:` list
+  # above, the popular installer skips it on the next boot (so you don't end
+  # up with two copies of the same jar). The duplicate-jar quarantine
+  # (`auto_quarantine_duplicates`) is a second safety net.
+  #
+  # Toggling back to false does NOT remove the jar — delete it from the
+  # panel's Plugins tab to remove.
+  install_essentialsx: false         # /home, /sethome, /tpa, /spawn, /warp, /heal, /feed, /kit, mute/jail, economy. The "everyday QoL" pack.
+  install_essentialsx_chat: false    # Chat formatting + per-group prefixes (e.g. coloured names, [Admin] tags). Pairs with LuckPerms. NEEDS EssentialsX (auto-enabled).
+  install_luckperms: false           # The standard permissions manager — groups, per-command permissions, chat prefixes. The "give my mods access to /kick but not /op" plugin.
+  install_worldedit: false           # In-game mass block editing for builders: //wand selects a region, then //set / //copy / //paste / //replace / //cyl / terrain smoothing. The plugin for creative servers.
+  install_coreprotect: false         # Block-history "forensics": logs every place/break/container/chat. `/co lookup` shows who did what; `/co rollback time:1h player:Bob` undoes a griefing spree. Essential on any open server.
+  install_griefprevention: false     # Player-driven land protection: each player gets a golden shovel and claims land by clicking corners; their claim is auto-protected from other players. Great for survival multiplayer with strangers.
+  install_mcmmo: false               # RPG-style skills (mining, woodcutting, swords, archery, …). Players level them by doing the activity; higher levels unlock perks. Adds long-term progression to plain survival.
+  install_chestsort: false           # Auto-sort chests/inventories on click or open. Pure quality-of-life, zero downside.
+  install_veinminer: false           # Sneak + break one ore mines the whole vein in a single action. Saves your wrists.
+  install_spark: false               # Performance profiler. `/spark profiler` tells you which plugin or chunk is causing TPS lag. Reach for it when "the server feels slow".
   # Cross-version protocol bridges (default ON). ViaVersion lets clients on a
   # NEWER Minecraft version connect to an older server; ViaBackwards lets OLDER
   # clients connect to a newer server. Together they hide the gap between a
   # Mojang release and the matching Paper build ("Outdated server!" /
   # "This server does not support Java Edition X.Y"). Lightweight; safe to
-  # leave on.
+  # leave on. ViaBackwards needs ViaVersion to load (auto-enforced).
   install_viaversion: true
   install_viabackwards: true
 
@@ -318,9 +334,7 @@ schema:
   install_essentialsx_chat: bool
   install_luckperms: bool
   install_worldedit: bool
-  install_worldguard: bool
   install_coreprotect: bool
-  install_multiverse_core: bool
   install_griefprevention: bool
   install_mcmmo: bool
   install_chestsort: bool

@@ -38,9 +38,7 @@ declare -A PLUGIN_SLUGS=(
     [essentialsx_chat]="essentialsxchat"
     [luckperms]="luckperms"
     [worldedit]="worldedit"
-    [worldguard]="worldguard"
     [coreprotect]="coreprotect"
-    [multiverse_core]="multiverse-core"
     [griefprevention]="griefprevention"
     [mcmmo]="mcmmo"
     [chestsort]="chestsort"
@@ -54,6 +52,61 @@ declare -A PLUGIN_SLUGS=(
     [viaversion]="viaversion"
     [viabackwards]="viabackwards"
 )
+
+# Dependency map: enabling the key auto-enables the value. The user shouldn't
+# need to remember that EssentialsX Chat is dead without EssentialsX, or that
+# ViaBackwards refuses to load without ViaVersion.
+declare -A PLUGIN_DEPS=(
+    [essentialsx_chat]="essentialsx"
+    [viabackwards]="viaversion"
+)
+
+# Auto-enable any plugin whose dependent is on. Logs a one-line notice the
+# first time it kicks in so the operator knows why they got an "extra" plugin.
+for dependent in "${!PLUGIN_DEPS[@]}"; do
+    dep="${PLUGIN_DEPS[${dependent}]}"
+    dependent_var="INSTALL_$(echo "${dependent}" | tr '[:lower:]' '[:upper:]')"
+    dep_var="INSTALL_$(echo "${dep}" | tr '[:lower:]' '[:upper:]')"
+    if [ "${!dependent_var:-false}" = "true" ] && [ "${!dep_var:-false}" != "true" ]; then
+        log "Auto-enabling ${dep} (required by ${dependent})"
+        printf -v "${dep_var}" '%s' "true"
+        export "${dep_var?}"
+    fi
+done
+
+# Slug-pattern map for the "skip if user already added this via plugins: URL
+# list" check. Match jars whose filename starts with any of these patterns
+# (case-insensitive). install_plugin.sh has already run before us, so any
+# user-listed jars are on disk in plugins/.
+declare -A PLUGIN_PATTERNS=(
+    [essentialsx]="essentialsx essentials"
+    [essentialsx_chat]="essentialsxchat"
+    [luckperms]="luckperms"
+    [worldedit]="worldedit"
+    [coreprotect]="coreprotect"
+    [griefprevention]="griefprevention"
+    [mcmmo]="mcmmo"
+    [chestsort]="chestsort"
+    [veinminer]="veinminer"
+    [spark]="spark"
+    [viaversion]="viaversion"
+    [viabackwards]="viabackwards"
+)
+
+PLUGINS_DIR="${PLUGINS_DIR:-${MC_SERVER_DIR:-/config/minecraft}/plugins}"
+
+# Returns 0 if a jar matching any of `$2`-listed patterns already exists in
+# PLUGINS_DIR (so the user supplied this plugin via the `plugins:` URL list).
+user_supplied_already() {
+    local patterns="$1" pat
+    [ -d "${PLUGINS_DIR}" ] || return 1
+    for pat in ${patterns}; do
+        # shellcheck disable=SC2010
+        ls "${PLUGINS_DIR}" 2>/dev/null \
+            | grep -i -E "^${pat}.*\.jar$" -q && return 0
+    done
+    return 1
+}
 
 # Loader filter: prefer Paper-family loaders. Modrinth tags vary, so we
 # accept any of paper/spigot/purpur/folia. The API supports facets but
@@ -93,6 +146,17 @@ for name in "${!PLUGIN_SLUGS[@]}"; do
     var="INSTALL_$(echo "${name}" | tr '[:lower:]' '[:upper:]')"
     enabled="${!var:-false}"
     if [ "${enabled}" != "true" ]; then
+        skipped=$((skipped + 1))
+        continue
+    fi
+
+    # Proactive de-dupe: if the user already supplied this plugin via the
+    # `plugins:` URL list (its jar is on disk by now — install_plugins ran
+    # before us), skip the popular install so we don't download a second
+    # copy that auto_quarantine would just shove into .quarantine/.
+    patterns="${PLUGIN_PATTERNS[${name}]:-${name}}"
+    if user_supplied_already "${patterns}"; then
+        log "Skipping ${name}: already supplied via plugins: URL list"
         skipped=$((skipped + 1))
         continue
     fi

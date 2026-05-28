@@ -216,7 +216,13 @@ def main() -> int:
     append_manifest(quarantined)
 
     if quarantined:
-        log(f"Done. Quarantined {len(quarantined)} duplicate jar(s).")
+        # Surface which plugins had duplicates so the boot log makes it
+        # obvious what the add-on cleaned up (instead of just a silent count).
+        affected = sorted({q["plugin"] for q in quarantined})
+        log(
+            f"Done. Quarantined {len(quarantined)} duplicate jar(s) "
+            f"for: {', '.join(affected)}."
+        )
     else:
         log("No duplicate plugin jars found.")
     return 0

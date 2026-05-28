@@ -113,8 +113,8 @@ load_config() {
     # the protocol bridges that hide the gap between a fresh Mojang
     # release and the matching Paper build (otherwise: "Outdated server!"
     # / "This server does not support Java Edition X.Y").
-    for popular in essentialsx essentialsx_chat luckperms worldedit worldguard \
-                   coreprotect multiverse_core griefprevention mcmmo \
+    for popular in essentialsx essentialsx_chat luckperms worldedit \
+                   coreprotect griefprevention mcmmo \
                    chestsort veinminer spark; do
         var="INSTALL_$(echo "${popular}" | tr '[:lower:]' '[:upper:]')"
         # shellcheck disable=SC2034
