@@ -302,8 +302,16 @@
 
       <!-- ─── STEP 7: PLUGINS ─────────────────────────────────────── -->
       <section class="setup-step" data-step="7" hidden>
-        <h3>7. Add some plugins (optional)</h3>
+        <h3>7. Plugins</h3>
         <p class="muted">Curated, well-known Bukkit plugins the add-on can install automatically. Each toggle resolves the latest Paper-compatible build from Modrinth on every boot. <strong>Available only for Paper / Purpur / Folia</strong> — skipped on Vanilla/Fabric/Forge.</p>
+
+        <h4 style="margin-top: 14px;">Essential — leave on</h4>
+        <div class="setup-essential-callout">
+          <div><strong>ViaVersion + ViaBackwards <span class="setup-tag">always on</span></strong>
+          <span class="muted">Protocol bridges so clients on a different Minecraft version than your server can still connect — hides the gap between a Mojang release and the matching Paper build (the "Outdated server!" / "This server does not support Java Edition X.Y" kicks). No gameplay impact. Toggleable in the Configuration tab if you really need to disable, but almost no one wants to.</span></div>
+        </div>
+
+        <h4 style="margin-top: 18px;">Optional — pick what you want</h4>
         <p class="muted" id="setup-plugins-note"></p>
         <div id="setup-plugins-grid" class="setup-plugins">
           <label class="setup-check setup-plugin"><input type="checkbox" data-plugin="install_essentialsx" /><div><strong>EssentialsX</strong><span class="muted">/home, /tpa, /spawn, /warp, /kit, /heal, /feed, /msg, economy, jail/mute. The "everyday QoL" bundle most servers run.</span></div></label>
@@ -317,7 +325,6 @@
           <label class="setup-check setup-plugin"><input type="checkbox" data-plugin="install_veinminer" /><div><strong>VeinMiner</strong><span class="muted">Sneak + break one ore mines the whole vein in a single action. Saves your wrists.</span></div></label>
           <label class="setup-check setup-plugin"><input type="checkbox" data-plugin="install_spark" /><div><strong>Spark</strong><span class="muted">Performance profiler — <code>/spark profiler</code> tells you which plugin or chunk is eating tick time.</span></div></label>
         </div>
-        <p class="muted setup-fine">ViaVersion + ViaBackwards are always on by default — they hide the gap between a Mojang release and the matching Paper build so a 26.x client doesn't get "Outdated server!" kicks.</p>
       </section>
 
       <!-- ─── STEP 8: MAINTENANCE ─────────────────────────────────── -->
@@ -361,6 +368,125 @@
         <button id="setup-next" class="btn btn-primary" type="button">Next →</button>
         <button id="setup-submit" class="btn btn-primary" type="button" hidden>Start the server</button>
         <span id="setup-status" class="muted" role="status"></span>
+      </footer>
+    </div>
+  </div>
+
+  <!-- New-world wizard (1.13.0). Same shape as the first-run wizard but
+       scoped to per-world settings — no EULA, no server type, no plugins.
+       Opened on demand from the Worlds tab "Create new world…" button. -->
+  <div id="newworld-wizard" class="setup-overlay" hidden>
+    <div class="setup-card">
+      <header class="setup-header">
+        <div>
+          <h2>Create a new world</h2>
+          <p class="muted">A short walk-through to set up a fresh world with its own gameplay rules. Switch to it from the Worlds tab once it's staged.</p>
+        </div>
+        <div class="setup-progress">
+          <span>Step <strong id="newworld-step-num">1</strong> of <strong id="newworld-step-total">5</strong></span>
+          <div class="setup-progress-bar"><div id="newworld-progress-fill"></div></div>
+        </div>
+      </header>
+
+      <!-- ─── STEP 1: Identity ───────────────────────────────────────── -->
+      <section class="setup-step" data-newworld-step="1">
+        <h3>1. Name &amp; seed</h3>
+        <div class="setup-field">
+          <label for="newworld-name">World name</label>
+          <input id="newworld-name" type="text" placeholder="creative_flat" maxlength="32" pattern="[A-Za-z0-9_-]+" />
+          <span class="muted">1–32 characters; letters, digits, <code>_</code> and <code>-</code>. The folder name on disk under <code>/config/minecraft-worlds/</code>.</span>
+        </div>
+        <div class="setup-field">
+          <label for="newworld-seed">Seed (optional)</label>
+          <input id="newworld-seed" type="text" placeholder="leave blank for a random seed" maxlength="64" />
+          <span class="muted">Determines terrain generation. Blank = random. Only matters when the world is first generated.</span>
+        </div>
+      </section>
+
+      <!-- ─── STEP 2: Gameplay ──────────────────────────────────────── -->
+      <section class="setup-step" data-newworld-step="2" hidden>
+        <h3>2. Gameplay</h3>
+        <div class="setup-field">
+          <label>Gamemode</label>
+          <fieldset class="setup-cards compact">
+            <label class="setup-pick"><input type="radio" name="newworld-gamemode" value="survival" checked /><div><strong>Survival</strong> <span class="muted">Gather, craft, take damage. The default Minecraft experience.</span></div></label>
+            <label class="setup-pick"><input type="radio" name="newworld-gamemode" value="creative" /><div><strong>Creative</strong> <span class="muted">Unlimited blocks, flight, invulnerable. Building sandbox.</span></div></label>
+            <label class="setup-pick"><input type="radio" name="newworld-gamemode" value="adventure" /><div><strong>Adventure</strong> <span class="muted">Survival without breaking/placing most blocks.</span></div></label>
+            <label class="setup-pick"><input type="radio" name="newworld-gamemode" value="spectator" /><div><strong>Spectator</strong> <span class="muted">Fly through blocks, no interaction.</span></div></label>
+          </fieldset>
+        </div>
+        <div class="setup-field">
+          <label class="setup-check">
+            <input type="checkbox" id="newworld-force-gamemode" checked />
+            <span><strong>Lock players into this gamemode on every join</strong>
+            <span class="muted">Writes <code>force-gamemode=true</code> — fixes "I set creative but it keeps loading survival" for returning players. Leave on unless you want players to toggle their own mode.</span></span>
+          </label>
+        </div>
+        <div class="setup-field">
+          <label>Difficulty</label>
+          <fieldset class="setup-cards compact">
+            <label class="setup-pick"><input type="radio" name="newworld-difficulty" value="peaceful" /><div><strong>Peaceful</strong> <span class="muted">No hostile mobs, no hunger drain.</span></div></label>
+            <label class="setup-pick"><input type="radio" name="newworld-difficulty" value="easy" /><div><strong>Easy</strong> <span class="muted">Hostiles spawn but deal less damage.</span></div></label>
+            <label class="setup-pick"><input type="radio" name="newworld-difficulty" value="normal" checked /><div><strong>Normal</strong> <span class="muted">Vanilla default; balanced.</span></div></label>
+            <label class="setup-pick"><input type="radio" name="newworld-difficulty" value="hard" /><div><strong>Hard</strong> <span class="muted">Hostiles deal full damage; hunger can kill.</span></div></label>
+          </fieldset>
+        </div>
+        <div class="setup-field">
+          <label>Terrain</label>
+          <fieldset class="setup-cards compact">
+            <label class="setup-pick"><input type="radio" name="newworld-level-type" value="minecraft:normal" checked /><div><strong>Normal</strong> <span class="muted">Standard biome generation.</span></div></label>
+            <label class="setup-pick"><input type="radio" name="newworld-level-type" value="minecraft:flat" /><div><strong>Superflat</strong> <span class="muted">One layer; great for creative builds.</span></div></label>
+            <label class="setup-pick"><input type="radio" name="newworld-level-type" value="minecraft:large_biomes" /><div><strong>Large biomes</strong> <span class="muted">Same biomes, scaled up.</span></div></label>
+            <label class="setup-pick"><input type="radio" name="newworld-level-type" value="minecraft:amplified" /><div><strong>Amplified</strong> <span class="muted">Extreme mountains. CPU-heavy.</span></div></label>
+          </fieldset>
+        </div>
+      </section>
+
+      <!-- ─── STEP 3: Rules ─────────────────────────────────────────── -->
+      <section class="setup-step" data-newworld-step="3" hidden>
+        <h3>3. Rules</h3>
+        <p class="muted">PvP / hardcore behaviour for this world.</p>
+        <div class="setup-field">
+          <label class="setup-check"><input type="checkbox" id="newworld-pvp" checked /><span><strong>Allow PvP</strong> <span class="muted">Players can damage each other. Turn off for cooperative-only play.</span></span></label>
+          <label class="setup-check"><input type="checkbox" id="newworld-hardcore" /><span><strong>Hardcore mode</strong> <span class="muted">Difficulty locked to hard; on death players are banned / made spectators. Overrides gamemode to survival.</span></span></label>
+        </div>
+      </section>
+
+      <!-- ─── STEP 4: Players & access ─────────────────────────────── -->
+      <section class="setup-step" data-newworld-step="4" hidden>
+        <h3>4. Players &amp; access</h3>
+        <div class="setup-field">
+          <label for="newworld-max-players">Maximum simultaneous players</label>
+          <input id="newworld-max-players" type="number" min="1" max="1000" value="20" />
+          <span class="muted">Hard cap on concurrent connections. Vanilla default is 20.</span>
+        </div>
+        <div class="setup-field">
+          <label class="setup-check">
+            <input type="checkbox" id="newworld-whitelist" />
+            <span><strong>Whitelist only (private world)</strong>
+            <span class="muted">Only listed players may join. You'll add names from the Players tab after your first own join.</span></span>
+          </label>
+        </div>
+        <div class="setup-field">
+          <label for="newworld-spawn-protection">Spawn protection radius (blocks)</label>
+          <input id="newworld-spawn-protection" type="number" min="0" max="10000" value="16" />
+          <span class="muted">Around world spawn, only OPs can break or place blocks. <strong>0</strong> = anyone can build at spawn (common on family servers).</span>
+        </div>
+      </section>
+
+      <!-- ─── STEP 5: Review ───────────────────────────────────────── -->
+      <section class="setup-step" data-newworld-step="5" hidden>
+        <h3>5. Review &amp; create</h3>
+        <p class="muted">Confirm and we'll stage the world. Switch to it from the Worlds tab when you're ready to play.</p>
+        <dl id="newworld-review" class="setup-review"></dl>
+      </section>
+
+      <footer class="setup-footer">
+        <button id="newworld-cancel" class="btn btn-ghost" type="button">Cancel</button>
+        <button id="newworld-back" class="btn btn-ghost" type="button" disabled>← Back</button>
+        <button id="newworld-next" class="btn btn-primary" type="button">Next →</button>
+        <button id="newworld-submit" class="btn btn-primary" type="button" hidden>Create</button>
+        <span id="newworld-status" class="muted" role="status"></span>
       </footer>
     </div>
   </div>
@@ -465,9 +591,13 @@
 
     <!-- Properties -->
     <section id="tab-properties" class="tab-panel">
+      <p class="props-context">
+        Editing world <strong><code id="props-active-world">…</code></strong>
+        — these settings are <strong>per-world</strong>. Switch worlds from the
+        Worlds tab to edit a different one.
+      </p>
       <p class="muted">
-        <strong>These are this world's settings.</strong>
-        Each world has its own <code>server.properties</code> — so one world can be creative and another survival. Editing a value here saves it to the <em>active</em> world (shown in the Worlds tab) and persists across restarts. Some keys (difficulty, gamemode, whitelist) apply live; the rest take effect on the next restart. Greyed-out rows are infra keys managed by the add-on.
+        Each world has its own <code>server.properties</code> — so one world can be creative and another survival. Difficulty, gamemode, and whitelist apply live; the rest take effect on the next restart. Greyed-out rows are infra keys managed by the add-on.
       </p>
       <table class="table" id="props-table">
         <thead><tr><th>Key</th><th>Value</th><th></th></tr></thead>
@@ -523,14 +653,10 @@
       </table>
 
       <h3>Create a new world</h3>
-      <form id="f-world-create" class="inline-form">
-        <input id="world-name" type="text" placeholder="creative_flat" maxlength="32" required />
-        <input id="world-seed" type="text" placeholder="optional seed" />
-        <button class="btn btn-primary">Create</button>
-      </form>
       <p class="muted">
-        Name must be 1–32 characters, letters/digits/underscore/dash only. The new world is staged empty — <em>Switch</em> to it (the add-on restarts) and it generates its initial chunks with the seed you typed here, or a random seed if blank. Tune its gamemode/difficulty/etc. on the Server Properties tab once it's active. <code>delete</code> refuses to remove the currently-active world — switch away first.
+        Spin up a fresh world with its own gamemode, difficulty, and player rules — walked-through one step at a time.
       </p>
+      <button id="btn-newworld" class="btn btn-primary" type="button">Create new world…</button>
       <pre id="world-reply" class="reply"></pre>
 
       <h3>Import an existing world (.zip)</h3>

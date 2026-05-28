@@ -981,5 +981,219 @@ class TestExpandedSetup(PanelTestBase):
         self.assertEqual(resp.status, 400)
 
 
+class TestGamemodeAutoForce(PanelTestBase):
+    """1.13.0: editing `gamemode` from the panel also writes
+    `force-gamemode=true` so the chosen mode sticks for returning players.
+
+    Without this, the panel says "creative" but anyone who joined before
+    keeps their saved survival mode (the user's "settings don't stick"
+    report). Power users can flip force-gamemode back off.
+    """
+
+    async def test_gamemode_edit_sets_force_gamemode(self):
+        # Pre-seed a world where force-gamemode is absent.
+        (self.server_dir / "server.properties").write_text(
+            "gamemode=survival\nmotd=hi\n"
+        )
+        resp = await self.client.request("POST", "/api/properties", json={
+            "key": "gamemode", "value": "creative",
+        })
+        self.assertEqual(resp.status, 200)
+        content = (self.server_dir / "server.properties").read_text()
+        self.assertIn("gamemode=creative", content)
+        self.assertIn("force-gamemode=true", content)
+        # The response surfaces the auto-action so the user sees it.
+        data = await resp.json()
+        self.assertIn("force-gamemode", data.get("live", "") or "")
+
+    async def test_gamemode_does_not_change_already_true_force(self):
+        # When force-gamemode is already true, we don't pretend it changed.
+        (self.server_dir / "server.properties").write_text(
+            "gamemode=survival\nforce-gamemode=true\n"
+        )
+        resp = await self.client.request("POST", "/api/properties", json={
+            "key": "gamemode", "value": "creative",
+        })
+        data = await resp.json()
+        # No "force-gamemode" note because nothing changed.
+        self.assertNotIn("force-gamemode", (data.get("live") or ""))
+
+    async def test_force_gamemode_explicit_edit_respected(self):
+        # User editing force-gamemode directly (e.g. setting to false) is
+        # respected — we don't fight them.
+        (self.server_dir / "server.properties").write_text(
+            "gamemode=creative\nforce-gamemode=true\n"
+        )
+        resp = await self.client.request("POST", "/api/properties", json={
+            "key": "force-gamemode", "value": "false",
+        })
+        self.assertEqual(resp.status, 200)
+        content = (self.server_dir / "server.properties").read_text()
+        self.assertIn("force-gamemode=false", content)
+
+
+class TestWorldsCreateExtended(PanelTestBase):
+    """1.13.0: POST /api/worlds accepts the new-world wizard's full body
+    (gameplay + access settings) and stages them in the world's
+    server.properties so the world boots configured."""
+
+    def _patch_worlds_dirs(self):
+        from pathlib import Path as _P
+        self.panel.MC_WORLDS_DIR = _P(self.tmp.name) / "wmw"
+        self.panel.MC_BACKUPS_ROOT = _P(self.tmp.name) / "wbr"
+        self.panel.MC_WORLDS_DIR.mkdir(parents=True, exist_ok=True)
+        self.panel.MC_BACKUPS_ROOT.mkdir(parents=True, exist_ok=True)
+        # Make the panel's _run_world_manager call our test script which
+        # actually creates a world dir under MC_WORLDS_DIR.
+        wm_dir = self.panel.MC_WORLDS_DIR
+        bk_dir = self.panel.MC_BACKUPS_ROOT
+        async def fake_run_world_manager(*args):
+            if args[:1] == ("create",):
+                name = args[1]
+                seed = args[2] if len(args) > 2 else ""
+                (wm_dir / name).mkdir(parents=True, exist_ok=True)
+                (wm_dir / name / "plugins").mkdir(exist_ok=True)
+                (wm_dir / name / "mods").mkdir(exist_ok=True)
+                (bk_dir / name).mkdir(parents=True, exist_ok=True)
+                # world-manager stages a minimal server.properties.
+                seed_line = f"level-seed={seed}\n" if seed else ""
+                (wm_dir / name / "server.properties").write_text(
+                    f"level-name=world\n{seed_line}"
+                )
+                return 0, f"Created profile: {name}"
+            return 0, ""
+        self.panel._run_world_manager = fake_run_world_manager
+
+    async def test_minimal_create_still_works(self):
+        self._patch_worlds_dirs()
+        resp = await self.client.request("POST", "/api/worlds", json={"name": "simple"})
+        self.assertEqual(resp.status, 200, await resp.text())
+        self.assertTrue((self.panel.MC_WORLDS_DIR / "simple").is_dir())
+
+    async def test_full_wizard_body_stages_settings(self):
+        self._patch_worlds_dirs()
+        resp = await self.client.request("POST", "/api/worlds", json={
+            "name": "creative_one",
+            "seed": "12345",
+            "gamemode": "creative",
+            "force_gamemode": True,
+            "difficulty": "peaceful",
+            "level_type": "minecraft:flat",
+            "pvp": False,
+            "hardcore": False,
+            "max_players": 8,
+            "white_list": True,
+            "spawn_protection": 0,
+        })
+        self.assertEqual(resp.status, 200, await resp.text())
+        props = (self.panel.MC_WORLDS_DIR / "creative_one" / "server.properties").read_text()
+        self.assertIn("gamemode=creative", props)
+        self.assertIn("force-gamemode=true", props)
+        self.assertIn("difficulty=peaceful", props)
+        self.assertIn("level-type=minecraft:flat", props)
+        self.assertIn("level-seed=12345", props)
+        self.assertIn("pvp=false", props)
+        self.assertIn("max-players=8", props)
+        self.assertIn("white-list=true", props)
+        self.assertIn("spawn-protection=0", props)
+
+    async def test_rejects_invalid_gamemode(self):
+        self._patch_worlds_dirs()
+        resp = await self.client.request("POST", "/api/worlds", json={
+            "name": "bad", "gamemode": "creative; op @a",
+        })
+        self.assertEqual(resp.status, 400)
+
+
+class TestRecommendMemoryDefaults(PanelTestBase):
+    """1.13.0: when memory_mb is absent from options.json (HA Supervisor
+    only stores user-overridden values, not defaults), the Tune dialog
+    used to say "unset" even though the server was happily running on the
+    schema default. Now we fall back to 2048."""
+
+    def _meminfo(self, mb):
+        path = self.state_dir / "fake_meminfo"
+        path.write_text(f"MemTotal:    {mb * 1024} kB\n")
+        os.environ["MEMINFO_PATH"] = str(path)
+        self.addCleanup(lambda: os.environ.pop("MEMINFO_PATH", None))
+
+    async def test_missing_memory_falls_back_to_default(self):
+        self._meminfo(8192)
+        opts = self.state_dir / "options.json"
+        opts.write_text("{}")  # no memory_mb key at all
+        os.environ["MC_OPTIONS_FILE"] = str(opts)
+        self.addCleanup(lambda: os.environ.pop("MC_OPTIONS_FILE", None))
+        resp = await self.client.request("GET", "/api/recommend")
+        data = await resp.json()
+        # No longer null — surfaces the effective runtime default.
+        self.assertEqual(data["current"]["memory_mb"], 2048)
+
+
+class TestWorldGenOnlyExposed(PanelTestBase):
+    """1.13.0: /api/properties exposes which keys are baked into the world
+    at generation time so the panel can render a warning badge."""
+
+    async def test_world_gen_keys_listed(self):
+        resp = await self.client.request("GET", "/api/properties")
+        data = await resp.json()
+        wgo = set(data.get("world_gen_only") or [])
+        self.assertIn("level-seed", wgo)
+        self.assertIn("level-type", wgo)
+        self.assertIn("level-name", wgo)
+        # Non-gen-time keys must NOT be on the list — editing them on an
+        # existing world DOES work.
+        self.assertNotIn("gamemode", wgo)
+        self.assertNotIn("difficulty", wgo)
+        self.assertNotIn("pvp", wgo)
+
+
+class TestLevelNameSync(PanelTestBase):
+    """1.13.0: new-world creation sets level-name = profile name so the
+    user sees the same name in the Worlds tab, Server Properties, and
+    Minecraft's F3 debug. Pre-1.13 left level-name=world, creating the
+    confusing "WORLD_3 profile has its save at WORLD_3/world/" trap."""
+
+    def _patch(self):
+        from pathlib import Path as _P
+        self.panel.MC_WORLDS_DIR = _P(self.tmp.name) / "wmw"
+        self.panel.MC_BACKUPS_ROOT = _P(self.tmp.name) / "wbr"
+        self.panel.MC_WORLDS_DIR.mkdir(parents=True, exist_ok=True)
+        self.panel.MC_BACKUPS_ROOT.mkdir(parents=True, exist_ok=True)
+        wm = self.panel.MC_WORLDS_DIR
+        async def fake(*args):
+            if args[:1] == ("create",):
+                name = args[1]
+                (wm / name).mkdir(parents=True, exist_ok=True)
+                (wm / name / "server.properties").write_text("level-name=world\n")
+                return 0, f"Created {name}"
+            return 0, ""
+        self.panel._run_world_manager = fake
+
+    async def test_new_world_levelname_matches_profile(self):
+        self._patch()
+        resp = await self.client.request("POST", "/api/worlds", json={
+            "name": "WORLD_3", "gamemode": "creative",
+        })
+        self.assertEqual(resp.status, 200)
+        props = (self.panel.MC_WORLDS_DIR / "WORLD_3" / "server.properties").read_text()
+        self.assertIn("level-name=WORLD_3", props)
+        self.assertNotIn("level-name=world\n", props)
+
+
+class TestPropertiesPriorityOrder(PanelTestBase):
+    """1.13.0: /api/properties returns keys in priority order so the panel
+    can render `level-name` and other headline gameplay keys at the top.
+    The server returns the same dict as before — the sort is enforced
+    client-side — but we verify the metadata that drives the sort."""
+
+    async def test_editable_includes_headline_keys(self):
+        resp = await self.client.request("GET", "/api/properties")
+        data = await resp.json()
+        # All headline keys the panel pulls to the top are editable.
+        for k in ("level-name", "motd", "gamemode", "difficulty",
+                  "max-players", "pvp", "hardcore"):
+            self.assertIn(k, data["editable"])
+
+
 if __name__ == "__main__":
     unittest.main()

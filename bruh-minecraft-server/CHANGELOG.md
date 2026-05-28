@@ -5,6 +5,78 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.13.0
+
+A round of "the panel says X but the server is doing Y" fixes plus a
+new-world wizard.
+
+### Added: new-world setup wizard
+
+The Worlds tab's "Create a new world" form is now a multi-step wizard
+(name + seed → gameplay → rules → players & access → review) that
+stages every per-world setting in one go — gamemode, force-gamemode,
+difficulty, terrain, PVP, hardcore, max-players, whitelist, spawn
+protection. On submit, asks "Switch to it now?" so you don't end up
+editing the OLD active world's settings under the impression you're
+tuning the new one.
+
+### Fixed: "creative doesn't stick" trap for returning players
+
+Editing `gamemode` in the panel now also auto-sets `force-gamemode=true`
+so the change applies to returning players, not just brand-new ones.
+Pre-1.13.0 the panel would update the file and live-apply via RCON, but
+the next time a player reconnected they'd be back in their saved mode
+(usually survival) because `force-gamemode` was false on older worlds.
+The auto-set is surfaced in the save response and you can flip
+force-gamemode back off explicitly if you want.
+
+### Fixed: world name ≠ level-name confusion
+
+When you created a world named "WORLD_3", its save folder was actually
+called `world` (the vanilla default level-name), so the on-disk path
+was `WORLD_3/world/`. The Worlds tab showed "WORLD_3" but Server
+Properties showed level-name=world. The wizards now set
+`level-name=<profile name>` on creation so you see ONE name everywhere
+(Worlds tab, Server Properties, Minecraft's F3 debug). Existing worlds
+aren't changed — only new ones created via either wizard.
+
+### Fixed: Tune dialog said "memory: unset" when memory was set
+
+HA Supervisor only stores user-overridden values in `options.json` —
+default values come from the schema, not the file. So `memory_mb: 2048`
+(the default) wasn't in the file and we reported "unset" in the Tune
+dialog even though the server was running fine on the default. Now
+falls back to the schema default when the key is absent.
+
+### Added: "world-generation only" badge for keys that don't migrate
+
+`level-seed`, `level-type`, `level-name`, `initial-enabled-packs`, and
+`initial-disabled-packs` are baked into a world at generation time —
+editing them on an existing world has no effect. The Server Properties
+tab now shows an inline `world-gen only` badge on those rows with a
+hover explanation pointing users at the Worlds tab to create a fresh
+world.
+
+### Added: "Editing world X" context above Server Properties
+
+The Server Properties tab now shows which world you're configuring, so
+edits never feel like they applied to "the wrong world." Per-world
+settings are clearly per-world.
+
+### Added: headline gameplay keys pulled to the top
+
+`level-name`, `motd`, `gamemode`, `force-gamemode`, `difficulty`,
+`max-players`, `pvp`, `hardcore`, `online-mode`, `white-list`, view /
+sim distance, `level-type`, `level-seed` now appear in a priority block
+at the top of the Server Properties table — no more scrolling past
+infra keys to find the headline gameplay settings.
+
+### Tests
+
++8 new (auto force-gamemode, no-op on already-true, explicit edit
+respected; extended worlds-create body; memory default fallback; world-
+gen-only metadata; level-name sync; priority-order metadata). 687 pass.
+
 ## 1.12.0
 
 A wizard expansion + a sweep of UX bugs the previous wizard exposed.

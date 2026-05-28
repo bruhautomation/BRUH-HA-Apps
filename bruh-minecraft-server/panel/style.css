@@ -711,3 +711,45 @@ footer {
   border-radius: 3px;
   font-family: var(--mono);
 }
+
+/* "Editing world X" context badge above the Server Properties table. */
+.props-context {
+  padding: 10px 12px;
+  background: var(--bg-raise);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  color: var(--fg);
+  margin: 0 0 12px;
+}
+.props-context code { color: var(--accent); font-family: var(--mono); }
+
+/* World-generation-only badge in the Server Properties table — these keys
+   only take effect at world creation time, editing them on an existing
+   world is a no-op. */
+.wgo-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 7px;
+  font-size: 0.7em;
+  font-weight: 600;
+  border-radius: 999px;
+  background: var(--warn);
+  color: var(--bg);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  vertical-align: middle;
+  cursor: help;
+}
+
+/* Essential-plugins callout in the first-run wizard plugin step. */
+.setup-essential-callout {
+  padding: 12px 14px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: rgba(111, 191, 67, 0.10);
+  color: var(--fg);
+  margin: 8px 0 0;
+}
+.setup-essential-callout strong { color: var(--fg); }
+.setup-essential-callout .muted { font-size: 0.92em; color: var(--muted); display: block; margin-top: 4px; }
+.setup-card h4 { margin: 14px 0 6px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }

@@ -1,7 +1,7 @@
 ---
 name: "BRUH Minecraft Server"
 description: "Rock-solid Minecraft Java Edition server with ingress panel, RCON, git world backups, auto-updates, plugin management, and deep Home Assistant integration"
-version: "1.12.0"
+version: "1.13.0"
 slug: "bruh_minecraft_server"
 init: false
 
@@ -277,6 +277,20 @@ options:
   #
   # Toggling back to false does NOT remove the jar — delete it from the
   # panel's Plugins tab to remove.
+  # ── ESSENTIAL — leave these on (cross-version protocol bridges) ──────
+  # ViaVersion lets clients on a NEWER Minecraft version connect to an older
+  # server; ViaBackwards lets OLDER clients connect to a newer server.
+  # Together they hide the gap between a Mojang release and the matching
+  # Paper build ("Outdated server!" / "This server does not support Java
+  # Edition X.Y" — same kick Geyser surfaces for Bedrock clients during the
+  # gap). Lightweight, no gameplay impact. Default ON because almost
+  # everyone wants this; turning them off bricks compatibility for anyone on
+  # a newer client than your server (or vice versa) and is rarely intentional.
+  # ViaBackwards depends on ViaVersion — toggling either on auto-enables both.
+  install_viaversion: true
+  install_viabackwards: true
+
+  # ── OPTIONAL plugins — opt in to what you actually want ──────────────
   install_essentialsx: false         # /home, /sethome, /tpa, /spawn, /warp, /heal, /feed, /kit, mute/jail, economy. The "everyday QoL" pack.
   install_essentialsx_chat: false    # Chat formatting + per-group prefixes (e.g. coloured names, [Admin] tags). Pairs with LuckPerms. NEEDS EssentialsX (auto-enabled).
   install_luckperms: false           # The standard permissions manager — groups, per-command permissions, chat prefixes. The "give my mods access to /kick but not /op" plugin.
@@ -287,14 +301,6 @@ options:
   install_chestsort: false           # Auto-sort chests/inventories on click or open. Pure quality-of-life, zero downside.
   install_veinminer: false           # Sneak + break one ore mines the whole vein in a single action. Saves your wrists.
   install_spark: false               # Performance profiler. `/spark profiler` tells you which plugin or chunk is causing TPS lag. Reach for it when "the server feels slow".
-  # Cross-version protocol bridges (default ON). ViaVersion lets clients on a
-  # NEWER Minecraft version connect to an older server; ViaBackwards lets OLDER
-  # clients connect to a newer server. Together they hide the gap between a
-  # Mojang release and the matching Paper build ("Outdated server!" /
-  # "This server does not support Java Edition X.Y"). Lightweight; safe to
-  # leave on. ViaBackwards needs ViaVersion to load (auto-enforced).
-  install_viaversion: true
-  install_viabackwards: true
 
   # ──────────────────────────────────────────────────────────────────────
   # Add-on logging
