@@ -53,7 +53,7 @@
           <p class="muted">A short walk-through to spin up your first world. You can change anything later from the panel or the add-on's Configuration tab.</p>
         </div>
         <div class="setup-progress" aria-label="Wizard progress">
-          <span>Step <strong id="setup-step-num">1</strong> of <strong id="setup-step-total">7</strong></span>
+          <span>Step <strong id="setup-step-num">1</strong> of <strong id="setup-step-total">9</strong></span>
           <div class="setup-progress-bar"><div id="setup-progress-fill"></div></div>
         </div>
       </header>
@@ -118,10 +118,12 @@
         </fieldset>
       </section>
 
-      <!-- ─── STEP 3: AUTHENTICATION ────────────────────────────────── -->
+      <!-- ─── STEP 3: CONNECTIVITY (authentication + Bedrock cross-play) ── -->
       <section class="setup-step" data-step="3" hidden>
-        <h3>3. Who's playing?</h3>
-        <p class="muted">This controls how players sign in. You can change it per-world later from the Server Properties tab.</p>
+        <h3>3. Who's joining your server?</h3>
+        <p class="muted">Two related choices — they decide how players sign in and which devices can connect at all. Both editable per-world later from the Server Properties tab.</p>
+
+        <h4>Authentication mode</h4>
         <fieldset class="setup-cards">
           <label class="setup-pick recommended">
             <input type="radio" name="setup-audience" value="online" checked />
@@ -138,12 +140,31 @@
             </div>
           </label>
         </fieldset>
+
+        <h4 style="margin-top: 18px;">Bedrock cross-play (iOS, Android, Xbox, Switch, PS, Win10/11)</h4>
+        <p class="muted">Bedrock players run a different version of Minecraft than the Java server. <strong>Geyser</strong> + <strong>Floodgate</strong> are plugins that translate between the two so Java and Bedrock players share one world. Only works with Paper / Purpur / Folia (your earlier pick), and the add-on installs both for you.</p>
+        <fieldset class="setup-cards">
+          <label class="setup-pick recommended">
+            <input type="radio" name="setup-bedrock" value="on" checked />
+            <div>
+              <strong>Yes — let Bedrock devices join <span class="setup-tag">recommended</span></strong>
+              <span class="muted">Auto-installs Geyser + Floodgate (≈ 8 MB). The server shows up automatically in Minecraft's <em>Friends</em> tab on any device on your LAN — no IP entry needed. Bedrock kids connect on UDP&nbsp;19132.</span>
+            </div>
+          </label>
+          <label class="setup-pick">
+            <input type="radio" name="setup-bedrock" value="off" />
+            <div>
+              <strong>No — Java only</strong>
+              <span class="muted">Skip Geyser/Floodgate. Slightly faster startup, no extra port exposure. Pick this if you're sure no Bedrock devices will ever join, or if your <em>server_type</em> doesn't support Bukkit plugins (Vanilla/Fabric/Forge).</span>
+            </div>
+          </label>
+        </fieldset>
       </section>
 
-      <!-- ─── STEP 4: FIRST WORLD ──────────────────────────────────── -->
+      <!-- ─── STEP 4: FIRST WORLD — BASICS ─────────────────────────── -->
       <section class="setup-step" data-step="4" hidden>
-        <h3>4. Configure your first world</h3>
-        <p class="muted">These are per-world settings stored in the world's own <code>server.properties</code>. You can have multiple worlds with different settings — switch between them from the Worlds tab.</p>
+        <h3>4. Your first world — basics</h3>
+        <p class="muted">Per-world settings stored in this world's <code>server.properties</code>. You can have multiple worlds with different settings — switch between them from the Worlds tab.</p>
 
         <div class="setup-field">
           <label for="setup-world-name">World name</label>
@@ -159,6 +180,14 @@
             <label class="setup-pick"><input type="radio" name="setup-gamemode" value="adventure" /><div><strong>Adventure</strong> <span class="muted">Survival without breaking/placing most blocks (adventure maps).</span></div></label>
             <label class="setup-pick"><input type="radio" name="setup-gamemode" value="spectator" /><div><strong>Spectator</strong> <span class="muted">Fly through blocks, no interaction (observe only).</span></div></label>
           </fieldset>
+        </div>
+
+        <div class="setup-field">
+          <label class="setup-check">
+            <input type="checkbox" id="setup-force-gamemode" checked />
+            <span><strong>Lock players into this gamemode on every join</strong>
+            <span class="muted">Sets <code>force-gamemode=true</code>. Without it, Minecraft only applies the gamemode to brand-new players — anyone who's joined before keeps their saved mode. This is the fix for "I set creative but it keeps loading survival." Leave on unless you want players to toggle their own mode and have it stick.</span></span>
+          </label>
         </div>
 
         <div class="setup-field">
@@ -186,17 +215,43 @@
           <input id="setup-seed" type="text" placeholder="leave blank for a random seed" maxlength="64" />
           <span class="muted">Determines terrain generation. Blank = random. Only matters when this world is first generated.</span>
         </div>
+      </section>
+
+      <!-- ─── STEP 5: PLAYERS & ACCESS ────────────────────────────── -->
+      <section class="setup-step" data-step="5" hidden>
+        <h3>5. Players &amp; access</h3>
+        <p class="muted">How many players, who's allowed in, and how PvP behaves. All per-world server.properties keys — editable later from the Server Properties tab.</p>
+
+        <div class="setup-field">
+          <label for="setup-max-players">Maximum simultaneous players</label>
+          <input id="setup-max-players" type="number" min="1" max="1000" value="20" />
+          <span class="muted">Hard cap on concurrent connections. Vanilla default is 20. Bump it for a community server; each player adds RAM/CPU load.</span>
+        </div>
+
+        <div class="setup-field">
+          <label class="setup-check">
+            <input type="checkbox" id="setup-whitelist" />
+            <span><strong>Whitelist only (private server)</strong>
+            <span class="muted">Only players you've explicitly added can join. You'll add names from the <strong>Players</strong> tab after your first own join. Recommended for any internet-exposed server with a small group of known players.</span></span>
+          </label>
+        </div>
+
+        <div class="setup-field">
+          <label for="setup-spawn-protection">Spawn protection radius (blocks)</label>
+          <input id="setup-spawn-protection" type="number" min="0" max="10000" value="16" />
+          <span class="muted">Around world spawn, only OPs can break or place blocks. <strong>16</strong> is vanilla default. Set to <strong>0</strong> if you want anyone to build at spawn — common on small family servers.</span>
+        </div>
 
         <div class="setup-field">
           <label class="setup-check"><input type="checkbox" id="setup-pvp" checked /><span><strong>Allow PVP</strong> <span class="muted">Players can damage each other. Turn off for cooperative-only play.</span></span></label>
-          <label class="setup-check"><input type="checkbox" id="setup-hardcore" /><span><strong>Hardcore mode</strong> <span class="muted">Difficulty locked to hard; on death, players are banned / made spectators. Intense.</span></span></label>
+          <label class="setup-check"><input type="checkbox" id="setup-hardcore" /><span><strong>Hardcore mode</strong> <span class="muted">Difficulty locked to hard; on death, players are banned / made spectators. <strong>Intense</strong> — overrides your gamemode pick to survival.</span></span></label>
         </div>
       </section>
 
-      <!-- ─── STEP 5: PERFORMANCE ──────────────────────────────────── -->
-      <section class="setup-step" data-step="5" hidden>
-        <h3>5. Performance</h3>
-        <p class="muted">We can detect your host's RAM and propose a heap size + view/sim distance — or you can set them by hand. These can all be tuned later.</p>
+      <!-- ─── STEP 6: PERFORMANCE ──────────────────────────────────── -->
+      <section class="setup-step" data-step="6" hidden>
+        <h3>6. Performance</h3>
+        <p class="muted">We detect your host's RAM and propose a heap size + view/sim distance, then preview the expected player capacity. All tunable later from the Dashboard's <em>Tune for my hardware</em> button and the per-world Server Properties tab.</p>
 
         <div id="setup-rec-summary" class="setup-rec-summary muted">Detecting host hardware…</div>
 
@@ -237,11 +292,17 @@
             </div>
           </div>
         </div>
+
+        <!-- Performance preview / sanity check. Driven by JS — computes a
+             player-capacity estimate from memory + sim-distance and surfaces
+             warnings for combinations that won't work (heap > host RAM,
+             sim > view, etc.). -->
+        <div id="setup-perf-preview" class="setup-perf-preview"></div>
       </section>
 
-      <!-- ─── STEP 6: PLUGINS ─────────────────────────────────────── -->
-      <section class="setup-step" data-step="6" hidden>
-        <h3>6. Add some plugins (optional)</h3>
+      <!-- ─── STEP 7: PLUGINS ─────────────────────────────────────── -->
+      <section class="setup-step" data-step="7" hidden>
+        <h3>7. Add some plugins (optional)</h3>
         <p class="muted">Curated, well-known Bukkit plugins the add-on can install automatically. Each toggle resolves the latest Paper-compatible build from Modrinth on every boot. <strong>Available only for Paper / Purpur / Folia</strong> — skipped on Vanilla/Fabric/Forge.</p>
         <p class="muted" id="setup-plugins-note"></p>
         <div id="setup-plugins-grid" class="setup-plugins">
@@ -259,12 +320,40 @@
         <p class="muted setup-fine">ViaVersion + ViaBackwards are always on by default — they hide the gap between a Mojang release and the matching Paper build so a 26.x client doesn't get "Outdated server!" kicks.</p>
       </section>
 
-      <!-- ─── STEP 7: REVIEW ───────────────────────────────────────── -->
-      <section class="setup-step" data-step="7" hidden>
-        <h3>7. Review &amp; start</h3>
+      <!-- ─── STEP 8: MAINTENANCE ─────────────────────────────────── -->
+      <section class="setup-step" data-step="8" hidden>
+        <h3>8. Backups &amp; maintenance</h3>
+        <p class="muted">Sensible defaults are picked for you — most home servers don't need to change these. Worth a one-screen confirmation that the safety nets are running.</p>
+
+        <div class="setup-field">
+          <label for="setup-backup-interval">Auto-backup interval (minutes)</label>
+          <input id="setup-backup-interval" type="number" min="5" max="1440" value="60" />
+          <span class="muted">How often the background watcher snapshots the active world. <strong>60</strong> (hourly) is the default. Lower = more frequent safety net + more disk churn.</span>
+        </div>
+
+        <div class="setup-field">
+          <label for="setup-backup-keep">How many snapshots to keep</label>
+          <input id="setup-backup-keep" type="number" min="1" max="500" value="48" />
+          <span class="muted">Older snapshots are pruned. <strong>48</strong> at hourly cadence ≈ 2 days of history. Git mode (default) only stores deltas, so disk use is small.</span>
+        </div>
+
+        <div class="setup-field">
+          <label class="setup-check">
+            <input type="checkbox" id="setup-nightly-restart" />
+            <span><strong>Nightly restart at 4 AM</strong>
+            <span class="muted">For long-running servers — clears memory fragmentation and gives plugins a clean boot. Default off; flip on if you plan to leave the server up for days at a time. (You can set a custom cron expression later in the Configuration tab.)</span></span>
+          </label>
+        </div>
+
+        <p class="muted setup-fine">Auto-update of the server jar, crash auto-restart (rate-limited), and the Home Assistant integration (sensors + services) are <strong>on by default</strong> and don't need configuration. You can disable any of them from the Configuration tab later.</p>
+      </section>
+
+      <!-- ─── STEP 9: REVIEW ───────────────────────────────────────── -->
+      <section class="setup-step" data-step="9" hidden>
+        <h3>9. Review &amp; start</h3>
         <p class="muted">Here's what we'll set up. <em>Start the server</em> writes everything and restarts the add-on. The panel will be unreachable for ~30 seconds while the server boots.</p>
         <dl id="setup-review" class="setup-review"></dl>
-        <p class="muted setup-fine">All of this is editable later — the panel's Server Properties, Plugins, and Worlds tabs cover everything you can change here.</p>
+        <p class="muted setup-fine">All of this is editable later — the panel's Server Properties, Plugins, Worlds, and Backups tabs cover everything you can change here.</p>
       </section>
 
       <footer class="setup-footer">
@@ -429,7 +518,7 @@
         <strong>Switching is a one-click operation</strong> (since 1.2.9): hit <strong>Switch</strong> below and the add-on restarts itself so the new world's plugins, world files, and <code>server.properties</code> are loaded. The panel is unreachable for ~30 s while the container comes back up — refresh after that. The header's <strong>Restart</strong> button only kicks the JVM, which is faster but does NOT re-point the world symlink, so it won't switch worlds on its own.
       </p>
       <table class="table" id="worlds-table">
-        <thead><tr><th>Name</th><th>Size</th><th>Active?</th><th>Actions</th></tr></thead>
+        <thead><tr><th>Name</th><th>Size</th><th>Settings</th><th>Active?</th><th>Actions</th></tr></thead>
         <tbody></tbody>
       </table>
 

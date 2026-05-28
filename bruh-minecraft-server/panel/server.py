@@ -163,6 +163,45 @@ async def _rcon_command(command: str) -> str:
     return await asyncio.to_thread(_exec)
 
 
+def _unescape_java_property(value: str) -> str:
+    """Reverse the escaping Java's `Properties.store()` applies to values.
+
+    Minecraft re-saves `server.properties` on shutdown using Java's
+    Properties format, which escapes `:`, `=`, `#`, `!`, leading whitespace,
+    and `\\` itself. The on-disk file ends up with values like
+    `level-type=minecraft\\:normal` and the panel was displaying the raw
+    escaped form (the literal backslash), which was confusing.
+
+    We unescape conservatively: only the handful of escapes Java's properties
+    writer emits. Unicode `\\uXXXX` is handled because Minecraft's MOTD can
+    contain it. Anything else `\\?` falls through unchanged so we never
+    corrupt a value we didn't recognise."""
+    if "\\" not in value:
+        return value
+    out: list[str] = []
+    i = 0
+    while i < len(value):
+        ch = value[i]
+        if ch != "\\" or i + 1 >= len(value):
+            out.append(ch)
+            i += 1
+            continue
+        nxt = value[i + 1]
+        if nxt in ":=# !\\":
+            out.append(nxt); i += 2
+        elif nxt == "n":  out.append("\n"); i += 2
+        elif nxt == "t":  out.append("\t"); i += 2
+        elif nxt == "r":  out.append("\r"); i += 2
+        elif nxt == "u" and i + 5 < len(value):
+            try:
+                out.append(chr(int(value[i + 2:i + 6], 16))); i += 6
+            except ValueError:
+                out.append(ch); i += 1
+        else:
+            out.append(ch); i += 1
+    return "".join(out)
+
+
 def _read_properties() -> dict[str, str]:
     props: dict[str, str] = {}
     path = MC_SERVER_DIR / "server.properties"
@@ -172,7 +211,10 @@ def _read_properties() -> dict[str, str]:
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, _, value = line.partition("=")
-        props[key.strip()] = value
+        # Java's Properties.store() escapes colons/equals/etc. in values; we
+        # unescape so the panel shows readable values (e.g. `minecraft:normal`
+        # instead of `minecraft\:normal`).
+        props[key.strip()] = _unescape_java_property(value)
     return props
 
 
@@ -364,7 +406,17 @@ def _recommend_settings() -> dict:
     }
 
 
-VALID_PLAYER_NAME = re.compile(r"^[A-Za-z0-9_]{1,16}$")
+# Player-name validator for the Players tab actions (op/kick/ban/whitelist).
+# Vanilla Mojang names are `[A-Za-z0-9_]{1,16}`, but with Geyser + Floodgate
+# enabled (the default on this add-on) Bedrock players join with a
+# Floodgate username-prefix — `.` by default, configurable to `*` or any
+# single ASCII char. The prefix counts toward the 16-char Minecraft limit.
+# Without this, OP/kick/ban from the Players tab returns "invalid name" for
+# every Bedrock player (the leading dot is rejected) and the user has to
+# fall back to the console. We accept `.`, `*`, and `_` anywhere; the
+# character set is still tightly bounded so no quoting/injection risk
+# downstream over RCON.
+VALID_PLAYER_NAME = re.compile(r"^[A-Za-z0-9_.*]{1,16}$")
 
 
 # ---------------------------------------------------------------------------
@@ -527,7 +579,18 @@ async def api_players(_: web.Request) -> web.Response:
 async def api_properties_get(_: web.Request) -> web.Response:
     props = _read_properties()
     safe = {k: v for k, v in props.items() if k != "rcon.password"}
-    return web.json_response({"properties": safe, "editable": sorted(EDITABLE_PROPS)})
+    # Expose the type metadata so the panel can render typed widgets — a
+    # `<select>` for `gamemode` / `difficulty` / `level-type`, a number
+    # input for view-distance, a checkbox-like select for bools — instead
+    # of plain text fields where the user has to guess what shape a value
+    # takes (the "what goes in minecraft\:normal" confusion).
+    return web.json_response({
+        "properties": safe,
+        "editable": sorted(EDITABLE_PROPS),
+        "types": EDITABLE_PROP_TYPES,
+        "enums": {k: sorted(v) for k, v in _PROP_ENUMS.items()},
+        "int_ranges": {k: list(v) for k, v in _PROP_INT_RANGE.items()},
+    })
 
 
 async def api_properties_post(request: web.Request) -> web.Response:
@@ -583,7 +646,38 @@ async def api_properties_post(request: web.Request) -> web.Response:
 # Routes: API — settings recommender ("Tune for my hardware")
 # ---------------------------------------------------------------------------
 async def api_recommend_get(_: web.Request) -> web.Response:
-    return web.json_response(_recommend_settings())
+    """Return the recommendation alongside the current effective values and a
+    per-key delta, so the Tune dialog can show only what would actually
+    change (or say "no changes needed" when settings already match)."""
+    rec = _recommend_settings()
+    # Current global memory_mb lives in /data/options.json (Supervisor-managed).
+    cur_mem = None
+    try:
+        with open(os.environ.get("MC_OPTIONS_FILE", "/data/options.json")) as f:
+            cur_mem = int(json.load(f).get("memory_mb"))
+    except (OSError, ValueError, TypeError):
+        cur_mem = None
+    # View / sim distance are per-world server.properties keys (the active
+    # world is what's loaded via the symlink).
+    props = _read_properties()
+    def _as_int(s):
+        try: return int(s)
+        except (TypeError, ValueError): return None
+    cur_view = _as_int(props.get("view-distance"))
+    cur_sim = _as_int(props.get("simulation-distance"))
+
+    rec["current"] = {
+        "memory_mb": cur_mem,
+        "view_distance": cur_view,
+        "simulation_distance": cur_sim,
+    }
+    rec["delta"] = {
+        "memory_mb": cur_mem != rec["memory_mb"],
+        "view_distance": cur_view != rec["view_distance"],
+        "simulation_distance": cur_sim != rec["simulation_distance"],
+    }
+    rec["any_change"] = any(rec["delta"].values())
+    return web.json_response(rec)
 
 
 async def api_recommend_apply(_: web.Request) -> web.Response:
@@ -657,9 +751,10 @@ _WIZARD_PLUGIN_KEYS = (
 async def api_setup(request: web.Request) -> web.Response:
     """Accept the multi-step first-run wizard's submission.
 
-    The wizard walks the user through seven steps (EULA, server software,
-    audience, first world, performance, plugins, review) and POSTs one body
-    here. We split the writes by scope:
+    The wizard walks the user through nine steps (EULA, server software,
+    connectivity, first world basics, players + access, performance,
+    plugins, maintenance, review) and POSTs one body here. We split the
+    writes by scope:
 
       * Global add-on options (eula, server_type, active_world, memory_mb,
         install_*) -> Supervisor `/addons/self/options`.
@@ -699,11 +794,20 @@ async def api_setup(request: web.Request) -> web.Response:
         "peaceful", "easy", "normal", "hard",
     }:
         return web.json_response({"error": "invalid difficulty"}, status=400)
-    if "level_type" in body and body["level_type"] not in {
-        "minecraft:normal", "minecraft:flat", "minecraft:large_biomes",
-        "minecraft:amplified", "default", "flat", "largebiomes", "amplified",
-    }:
+    if "level_type" in body and body["level_type"] not in _PROP_ENUMS["level-type"]:
         return web.json_response({"error": "invalid level_type"}, status=400)
+
+    # Strict bool validation. Python's `bool("false") is True` (any non-empty
+    # string is truthy), so a non-JS caller posting {"hardcore": "false"} used
+    # to silently turn hardcore ON. Reject anything that isn't a JSON bool.
+    for bool_key in (
+        "online_mode", "enable_bedrock_support", "force_gamemode", "pvp",
+        "hardcore", "white_list",
+    ):
+        if bool_key in body and not isinstance(body[bool_key], bool):
+            return web.json_response(
+                {"error": f"{bool_key} must be true or false"}, status=400,
+            )
 
     memory_mb = body.get("memory_mb")
     if memory_mb is not None:
@@ -714,6 +818,34 @@ async def api_setup(request: web.Request) -> web.Response:
         if memory_mb < 512 or memory_mb > 65536:
             return web.json_response({"error": "memory_mb out of range (512-65536)"}, status=400)
 
+    # Per-world integer validation up front so a bad backup interval or
+    # spawn-protection value doesn't leave the world half-staged.
+    def _bounded_int(key: str, lo: int, hi: int):
+        if key not in body:
+            return None
+        try:
+            n = int(body[key])
+        except (TypeError, ValueError):
+            return f"{key} must be an integer"
+        if n < lo or n > hi:
+            return f"{key} out of range ({lo}-{hi})"
+        return n
+    range_err_keys = [
+        ("max_players", 1, 1000),
+        ("spawn_protection", 0, 10000),
+        ("view_distance", 3, 32),
+        ("simulation_distance", 3, 32),
+        ("backup_interval_minutes", 5, 1440),
+        ("backup_keep_count", 1, 500),
+    ]
+    int_values: dict[str, int] = {}
+    for key, lo, hi in range_err_keys:
+        v = _bounded_int(key, lo, hi)
+        if isinstance(v, str):  # error message
+            return web.json_response({"error": v}, status=400)
+        if v is not None:
+            int_values[key] = v
+
     # ── Write the GLOBAL options to the add-on.
     global_writes: list[tuple[str, object]] = [("eula", True)]
     if server_type:
@@ -721,6 +853,14 @@ async def api_setup(request: web.Request) -> web.Response:
     global_writes.append(("active_world", world_name))
     if memory_mb is not None:
         global_writes.append(("memory_mb", memory_mb))
+    if "enable_bedrock_support" in body:
+        global_writes.append(("enable_bedrock_support", bool(body["enable_bedrock_support"])))
+    if "backup_interval_minutes" in int_values:
+        global_writes.append(("backup_interval_minutes", int_values["backup_interval_minutes"]))
+    if "backup_keep_count" in int_values:
+        global_writes.append(("backup_keep_count", int_values["backup_keep_count"]))
+    if body.get("auto_restart_schedule"):
+        global_writes.append(("auto_restart_schedule", str(body["auto_restart_schedule"])))
     for plugin_key in _WIZARD_PLUGIN_KEYS:
         if plugin_key in body:
             global_writes.append((plugin_key, bool(body[plugin_key])))
@@ -751,11 +891,25 @@ async def api_setup(request: web.Request) -> web.Response:
     def _bool(b: object) -> str:
         return "true" if bool(b) else "false"
     if "gamemode" in body:        props["gamemode"] = str(body["gamemode"])
+    if "force_gamemode" in body:  props["force-gamemode"] = _bool(body["force_gamemode"])
     if "difficulty" in body:      props["difficulty"] = str(body["difficulty"])
     if "level_type" in body:      props["level-type"] = str(body["level_type"])
-    if "level_seed" in body:      props["level-seed"] = str(body["level_seed"]) or ""
+    if "level_seed" in body:
+        # `str(None) or ""` is the literal string "None" (truthy) — guard
+        # the JSON-null case so a missing seed doesn't get written as "None".
+        seed = body["level_seed"]
+        props["level-seed"] = "" if seed is None else str(seed)
     if "pvp" in body:             props["pvp"] = _bool(body["pvp"])
     if "hardcore" in body:        props["hardcore"] = _bool(body["hardcore"])
+    if "white_list" in body:      props["white-list"] = _bool(body["white_list"])
+    if "max_players" in int_values:
+        props["max-players"] = str(int_values["max_players"])
+    if "spawn_protection" in int_values:
+        props["spawn-protection"] = str(int_values["spawn_protection"])
+    if "view_distance" in int_values:
+        props["view-distance"] = str(int_values["view_distance"])
+    if "simulation_distance" in int_values:
+        props["simulation-distance"] = str(int_values["simulation_distance"])
     if "online_mode" in body:
         props["online-mode"] = _bool(body["online_mode"])
         # Offline-mode safety: enforce-secure-profile must be off or every
@@ -763,16 +917,6 @@ async def api_setup(request: web.Request) -> web.Response:
         # boot too — belt-and-suspenders.)
         if not body["online_mode"]:
             props["enforce-secure-profile"] = "false"
-    if "view_distance" in body:
-        try:
-            props["view-distance"] = str(int(body["view_distance"]))
-        except (TypeError, ValueError):
-            pass
-    if "simulation_distance" in body:
-        try:
-            props["simulation-distance"] = str(int(body["simulation_distance"]))
-        except (TypeError, ValueError):
-            pass
 
     lines = [
         "# server.properties — staged by the BRUH first-run wizard.",
@@ -1104,6 +1248,38 @@ async def _run_world_manager(*args: str) -> tuple[int, str]:
     return proc.returncode or 0, out_b.decode("utf-8", "replace")
 
 
+# Per-world settings the Worlds tab summarises in each row. Surfacing these
+# at-a-glance makes it obvious that gameplay settings are PER-WORLD — when
+# you switch to "creative_one" you're getting *that world's* gamemode +
+# difficulty, not whatever you last set on a different world. Helps users
+# whose mental model expected global settings.
+_WORLD_LIST_PROP_KEYS = (
+    "gamemode", "difficulty", "level-type", "level-name",
+    "online-mode", "white-list",
+)
+
+
+def _read_world_props(name: str) -> dict[str, str]:
+    """Read just the highlight keys from `<MC_WORLDS_DIR>/<name>/server.properties`
+    for display in the Worlds tab. Returns an empty dict if the world has
+    no properties file yet (a freshly-created world before its first boot)."""
+    path = MC_WORLDS_DIR / name / "server.properties"
+    if not path.is_file():
+        return {}
+    out: dict[str, str] = {}
+    try:
+        for line in path.read_text().splitlines():
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            k = k.strip()
+            if k in _WORLD_LIST_PROP_KEYS:
+                out[k] = _unescape_java_property(v)
+    except OSError:
+        pass
+    return out
+
+
 async def api_worlds_list(_: web.Request) -> web.Response:
     rc, out = await _run_world_manager("list")
     worlds: list[dict] = []
@@ -1112,10 +1288,12 @@ async def api_worlds_list(_: web.Request) -> web.Response:
         if len(parts) != 3:
             continue
         try:
+            name = parts[0]
             worlds.append({
-                "name": parts[0],
+                "name": name,
                 "size_bytes": int(parts[1]),
                 "active": parts[2] == "true",
+                "settings": _read_world_props(name),
             })
         except ValueError:
             continue
@@ -1250,6 +1428,91 @@ async def api_worlds_delete(request: web.Request) -> web.Response:
         status = 409 if "active profile" in out else 400
         return web.json_response({"error": out.strip()}, status=status)
     return web.json_response({"ok": True})
+
+
+# What we put inside an exported world zip. plugins/, mods/, and the backup
+# tree are deliberately excluded — they're either install-specific (the
+# receiver's add-on installs its own plugins from the URL list) or
+# enormous (backups). Save data + server.properties is what the receiver
+# needs to actually play this world.
+_EXPORT_INCLUDE_PREFIXES = ("world", "world_nether", "world_the_end")
+
+
+def _build_world_zip(world_dir: Path, out_path: Path) -> None:
+    """Build a streaming-friendly zip of the world's save dirs into out_path.
+
+    Runs in a thread (asyncio.to_thread). Uses ZIP_DEFLATED with a low
+    compression level — Minecraft worlds are mostly already-compressed
+    .mca region files, so heavy compression wastes CPU for ~1% gain."""
+    with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED, compresslevel=1) as zf:
+        for prefix in _EXPORT_INCLUDE_PREFIXES:
+            sub = world_dir / prefix
+            if not sub.is_dir():
+                continue
+            for entry in sub.rglob("*"):
+                if entry.is_file():
+                    zf.write(entry, entry.relative_to(world_dir))
+        # server.properties lets the receiver pick up gamemode / difficulty /
+        # seed without having to ask.
+        sp = world_dir / "server.properties"
+        if sp.is_file():
+            zf.write(sp, "server.properties")
+
+
+async def api_worlds_export(request: web.Request) -> web.StreamResponse:
+    """Stream the named world's save data back as a `.zip` for sharing or
+    off-host backup. The active world is safe to download too — the JVM
+    keeps writing during the export, but the zip is built from a
+    point-in-time read of region files which Minecraft tolerates well
+    enough for sharing purposes. For consistent backups use the Backups
+    tab instead (RCON save-all flush + git/tar snapshot)."""
+    name = request.match_info["name"]
+    if not VALID_WORLD_NAME.match(name):
+        return web.json_response({"error": "invalid name"}, status=400)
+    world_dir = MC_WORLDS_DIR / name
+    if not world_dir.is_dir():
+        return web.json_response({"error": "world not found"}, status=404)
+
+    # Build the zip in a temp file we own so we can stream + cleanup. We
+    # put it under MC_PANEL_STATE/exports rather than /tmp because /tmp on
+    # many HA hosts is tmpfs and a multi-GB world would OOM the box.
+    out_dir = MC_PANEL_STATE / "exports"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    # Best-effort: purge any leftover exports older than an hour. If a
+    # previous request was killed mid-stream the temp file lingers; this
+    # keeps the directory from accumulating gigabytes over time.
+    cutoff = time.time() - 3600
+    for stale in out_dir.glob("*.zip"):
+        try:
+            if stale.stat().st_mtime < cutoff:
+                stale.unlink()
+        except OSError:
+            pass
+
+    handle = tempfile.NamedTemporaryFile(delete=False, dir=out_dir, suffix=".zip")
+    out_path = Path(handle.name)
+    handle.close()
+    try:
+        await asyncio.to_thread(_build_world_zip, world_dir, out_path)
+        size = out_path.stat().st_size
+        ts = time.strftime("%Y-%m-%d")
+        resp = web.StreamResponse(status=200, headers={
+            "Content-Type": "application/zip",
+            "Content-Length": str(size),
+            "Content-Disposition": f'attachment; filename="{name}-{ts}.zip"',
+            "Cache-Control": "no-store",
+        })
+        await resp.prepare(request)
+        with open(out_path, "rb") as f:
+            while True:
+                chunk = f.read(64 * 1024)
+                if not chunk:
+                    break
+                await resp.write(chunk)
+        await resp.write_eof()
+        return resp
+    finally:
+        out_path.unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1562,6 +1825,7 @@ def build_app() -> web.Application:
     app.router.add_get("/api/worlds", api_worlds_list)
     app.router.add_post("/api/worlds", api_worlds_create)
     app.router.add_post("/api/worlds/import", api_worlds_import)
+    app.router.add_get("/api/worlds/{name}/export", api_worlds_export)
     app.router.add_post("/api/worlds/{name}/switch", api_worlds_switch)
     app.router.add_delete("/api/worlds/{name}", api_worlds_delete)
     # First-run wizard

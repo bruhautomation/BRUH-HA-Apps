@@ -286,9 +286,9 @@ dd { margin: 0; font-variant-numeric: tabular-nums; }
   word-break: break-word;
   margin: 0;
 }
-.console .warn  { color: #e0a020; }
-.console .error { color: #ff6060; }
-.console .info  { color: #4ea2ff; }
+.console .warn  { color: var(--warn); }
+.console .error { color: var(--danger); }
+.console .info  { color: var(--primary); }
 
 /* Tables. On narrow viewports we want horizontal scrolling so long
    rows (backup SHAs, plugin filenames) don't clip off-screen. The
@@ -670,4 +670,44 @@ footer {
   border-radius: 4px;
   font-size: 0.9em;
   line-height: 1.4;
+}
+
+/* Performance preview block (1.12.0) shown under the step-6 perf inputs. */
+.setup-perf-preview { margin-top: 12px; }
+.setup-preview-row {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-raise);
+  color: var(--fg);
+}
+.setup-preview-emph { color: var(--accent); font-weight: 600; }
+.setup-preview-warn {
+  list-style: none; padding: 0; margin: 8px 0 0;
+}
+.setup-preview-warn li {
+  padding: 8px 10px;
+  margin-top: 6px;
+  background: rgba(224, 160, 32, 0.10);
+  border-left: 3px solid var(--warn);
+  border-radius: 4px;
+  font-size: 0.9em;
+  color: var(--fg);
+}
+.setup-preview-ok {
+  margin: 8px 0 0; padding: 8px 10px;
+  background: rgba(111, 191, 67, 0.10);
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+  font-size: 0.9em;
+  color: var(--fg);
+}
+
+/* Worlds tab — per-world settings inline summary. */
+.world-settings { font-size: 0.9em; color: var(--fg); }
+.world-settings code {
+  background: var(--bg-raise);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: var(--mono);
 }

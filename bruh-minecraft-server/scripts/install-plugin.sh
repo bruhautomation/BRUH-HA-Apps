@@ -38,6 +38,21 @@ case "${NAME}" in
     *)     NAME="${NAME}.jar" ;;
 esac
 
+# Reject anything that could escape PLUGINS_DIR. The panel's install-by-URL
+# endpoint already strips `/` and `..` but `run.sh` calls us with names from
+# the user's `plugins:` config too, and a malformed entry shouldn't be able
+# to write outside plugins/.
+case "${NAME}" in
+    */*|*..*|.*|"")
+        echo "[install-plugin] refusing unsafe jar name: ${NAME}" >&2
+        exit 2
+        ;;
+esac
+if ! printf '%s' "${NAME}" | grep -Eq '^[A-Za-z0-9._-]+\.jar$'; then
+    echo "[install-plugin] refusing jar name with disallowed chars: ${NAME}" >&2
+    exit 2
+fi
+
 DEST="${PLUGINS_DIR}/${NAME}"
 TMP="${DEST}.tmp"
 

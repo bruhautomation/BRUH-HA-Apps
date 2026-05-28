@@ -34,17 +34,48 @@ SCRIPT_DIR="${SCRIPT_DIR:-/opt/bruh-mc/scripts}"
 log()  { printf '[bedrock-support] %s\n' "$*" >&2; }
 warn() { printf '[bedrock-support] WARN: %s\n' "$*" >&2; }
 
-# Read a key from the ACTIVE world's server.properties (gameplay settings are
-# per-world now — online-mode and motd are no longer add-on env vars). Prints
-# the value, or the supplied default when the key/file is absent.
+# Read a key from the ACTIVE world's server.properties and undo Java's
+# Properties.store() escaping (Minecraft re-saves the file on shutdown using
+# that format, which writes `:` as `\:`, `§a` for color codes, etc.).
+# Without the unescape, Geyser's MOTD would show a literal `§a` to
+# Bedrock players instead of the color code, and any motd with a `:` would
+# include a stray backslash.
 read_prop() {
-    local key="$1" default="${2:-}" line
+    local key="$1" default="${2:-}" line raw
     line=$(grep -E "^${key}=" "${MC_SERVER_DIR}/server.properties" 2>/dev/null | head -n 1 || true)
-    if [ -n "${line}" ]; then
-        printf '%s' "${line#*=}"
-    else
+    if [ -z "${line}" ]; then
         printf '%s' "${default}"
+        return
     fi
+    raw="${line#*=}"
+    # Fast path: no escapes, return as-is.
+    case "${raw}" in
+        *\\*) ;;
+        *) printf '%s' "${raw}"; return ;;
+    esac
+    # Delegate to Python for proper Java-properties unescape (handles \:,
+    # \=, \#, \!, \\, \n, \t, \r, and \uXXXX). Bash's parameter expansion
+    # can't do the unicode case cleanly.
+    python3 -c '
+import sys
+def unesc(v):
+    out = []; i = 0
+    while i < len(v):
+        c = v[i]
+        if c != "\\" or i + 1 >= len(v):
+            out.append(c); i += 1; continue
+        n = v[i + 1]
+        if n in ":=# !\\": out.append(n); i += 2
+        elif n == "n": out.append("\n"); i += 2
+        elif n == "t": out.append("\t"); i += 2
+        elif n == "r": out.append("\r"); i += 2
+        elif n == "u" and i + 5 < len(v):
+            try: out.append(chr(int(v[i+2:i+6], 16))); i += 6
+            except ValueError: out.append(c); i += 1
+        else: out.append(c); i += 1
+    return "".join(out)
+sys.stdout.write(unesc(sys.argv[1]))
+' "${raw}"
 }
 
 # Map our server_type to Geyser's platform slug. Also pick the right
