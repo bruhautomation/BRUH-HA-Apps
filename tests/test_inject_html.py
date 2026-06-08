@@ -433,37 +433,81 @@ def test_toolbar_no_history_scroll_button(script_block: str):
     )
 
 
-def test_no_setup_scroll_forwarder(script_block: str):
+def test_no_synthetic_wheel_scroll_forwarder(script_block: str):
     """Regression test for 1.18.3 – 1.18.8's `setupScrollForwarder`.
 
-    The function dispatched synthetic WheelEvents from touchmove. In
-    Claude Code's alt-screen the wheel translated to ↑/↓ key escape
+    That code dispatched *synthetic WheelEvents* from touchmove. In
+    Claude Code's alt-screen, xterm translated those to ↑/↓ key escape
     sequences, which the user saw as "every swipe moves the cursor".
-    Removed in 1.18.9. Catch any future attempt to bring it back so
-    we don't re-ship the symptom.
+
+    2.1.0 re-adds touch scrolling, but with a fundamentally different
+    mechanism: the swipe handler reads the finger delta and calls
+    `sendInput(PgUp/PgDn)` straight to the PTY — it never lets xterm
+    interpret the gesture. So what we guard here is the BROKEN
+    mechanism (the old name + synthetic WheelEvent dispatch), not
+    touch handling in general. See `test_touch_scroll_sends_pgup_pgdn`
+    for the positive side.
     """
-    # Match a real function declaration / call only, not a passing
-    # reference inside a comment.
-    fn_decl = re.compile(r"function\s+setupScrollForwarder\s*\(")
-    fn_call = re.compile(r"\bsetupScrollForwarder\s*\(\s*\)")
-    assert not fn_decl.search(script_block), (
-        "setupScrollForwarder is back — but it caused the 'every "
-        "swipe moves the cursor' symptom in Claude Code TUI. See "
-        "1.18.9 CHANGELOG."
+    # The old function name must not come back.
+    assert not re.search(r"function\s+setupScrollForwarder\s*\(", script_block), (
+        "setupScrollForwarder is back — it caused the 'every swipe "
+        "moves the cursor' symptom. The 2.1.0 approach is "
+        "setupTouchScroll() + sendInput(PgUp/PgDn). See CHANGELOG."
     )
-    assert not fn_call.search(script_block), (
-        "setupScrollForwarder() is being called somewhere. The "
-        "function was removed in 1.18.9; calling it now would be a "
-        "ReferenceError."
+    assert not re.search(r"\bsetupScrollForwarder\s*\(\s*\)", script_block)
+    # And nothing may synthesise WheelEvents — that's the root cause of
+    # the arrow-key regression, regardless of what the handler is named.
+    assert "new WheelEvent" not in script_block, (
+        "touch/scroll code must not dispatch synthetic WheelEvents — "
+        "xterm translates them to ↑/↓ arrow keys in alt-screen "
+        "(1.18.9 regression). Send PgUp/PgDn via sendInput instead."
     )
-    # Also assert no document-level touchmove handler at all — that's
-    # the underlying mechanism setupScrollForwarder used, and a
-    # functionally-equivalent rename would still regress us.
-    assert "addEventListener('touchmove'" not in script_block, (
-        "document-level touchmove listener is back. body { touch-"
-        "action: none } is the supported way to block iOS panning "
-        "delegation; we shouldn't also be intercepting touchmove "
-        "from JS (1.18.9)."
+
+
+def test_touch_scroll_sends_pgup_pgdn(script_block: str):
+    r"""Positive test for 2.1.0 mobile swipe-to-scroll.
+
+    Mobile users can't produce a wheel event with a finger, so without
+    this the only chat-scroll affordance on touch is tapping the PgUp/
+    PgDn toolbar buttons one page at a time. The swipe handler restores
+    natural scrolling by translating a vertical drag into the same
+    PgUp/PgDn sequences the wheel handler uses.
+    """
+    assert re.search(r"function\s+setupTouchScroll\s*\(", script_block), (
+        "setupTouchScroll() missing — mobile swipe-to-scroll gone (2.1.0)"
+    )
+    assert re.search(r"\bsetupTouchScroll\s*\(\s*\)", script_block), (
+        "setupTouchScroll() is never called — register it on touch devices"
+    )
+    # It has to listen to touchmove and page via the shared helper.
+    assert "addEventListener('touchmove'" in script_block, (
+        "no touchmove listener — swipe can't be detected"
+    )
+    assert "pageScroll(" in script_block, (
+        "swipe handler must drive the shared pageScroll() accumulator"
+    )
+    # The canonical PgUp/PgDn sequences must be what gets sent.
+    assert "\\x1b[5~" in script_block and "\\x1b[6~" in script_block
+
+
+def test_scroll_paging_is_throttled(script_block: str):
+    """Regression test for the "very difficult to scroll on PC" report.
+
+    The 1.18.10 wheel handler sent one full PgUp/PgDn per raw wheel
+    event. On a trackpad / smooth-scroll mouse that's dozens of events
+    per gesture, so the view rocketed to the top uncontrollably. 2.1.0
+    routes both wheel and touch through a shared pixel accumulator that
+    only emits a page once enough distance has built up. Pin the helper
+    + threshold so the throttle can't be silently dropped.
+    """
+    assert "function pageScroll" in script_block, "shared pageScroll() helper missing"
+    assert re.search(r"SCROLL_PAGE_PX\s*=\s*\d+", script_block), (
+        "SCROLL_PAGE_PX threshold constant missing — paging is un-throttled again"
+    )
+    # The wheel handler must feed normalised pixels into the accumulator
+    # rather than emitting a page per event.
+    assert "wheelDeltaPx(" in script_block, (
+        "wheel handler should normalise deltaMode → px via wheelDeltaPx()"
     )
 
 

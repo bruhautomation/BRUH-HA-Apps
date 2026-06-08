@@ -195,16 +195,43 @@ The web terminal auto-detects touch devices and shows an on-screen toolbar above
 
 ### Mobile toolbar
 
+Every button sends a complete action on its own — no sticky modifiers.
+The row scrolls horizontally if it overflows.
+
 | Key | Sends | Notes |
 |-----|-------|-------|
 | `ESC` | `␛` | Claude Code's interrupt / close-menu key. Highlighted in orange. |
-| `Tab` | `\t` | Tab-complete in the shell; navigate Claude Code menus. |
-| `Ctrl` | (sticky) | Tap once to arm, then tap any letter to send the control code. Tap `Ctrl` again to cancel. |
-| `↑ ↓ ← →` | arrow keys | Shell history / cursor movement. |
-| <code>&#124;</code> `/` `~` `-` | literal | Characters iOS hides two taps deep. |
-| `^C` | `Ctrl-C` | One-tap interrupt. |
+| `▾ Kbd` | (blur) | Closes the on-screen keyboard. Tap the terminal to reopen it. |
+| `Tab` / `⇧Tab` | `\t` / `Shift+Tab` | Tab-complete / menu nav; `⇧Tab` toggles Claude Code's mode. |
+| `↑ ↓ ← →` | arrow keys | Shell history / cursor movement within the input. |
+| `PgUp` / `PgDn` | `PageUp` / `PageDown` | **Scroll Claude Code's chat history** one page at a time. |
+| `^C` `^D` `^L` `^U` | control codes | Interrupt / EOF / clear screen / clear line. |
+| `/` `@` `#` `!` <code>&#124;</code> | literal | Claude Code prefixes (slash-command, file ref, memory, bash, pipe). |
 | `Paste` | clipboard | Pastes via the Web Clipboard API (iOS will ask for permission the first time). |
 | `×` | hide toolbar | Reconnect to the session to bring it back. |
+
+### Scrolling chat history
+
+Claude Code draws its conversation in the terminal's *alternate screen*,
+which has no native scrollback — so to look back at earlier messages you
+drive Claude Code's own pager:
+
+- **On mobile:** **swipe up/down with one finger** inside the terminal.
+  Swipe down to go back through history, up to return to the latest. (The
+  `PgUp`/`PgDn` toolbar buttons do the same thing, one page per tap.)
+- **On desktop:** use the **mouse wheel / trackpad** over the terminal,
+  or `PgUp`/`PgDn` on a real keyboard. Wheel scrolling is throttled so a
+  trackpad doesn't fly straight to the top.
+
+Both swipe and wheel are translated to `PgUp`/`PgDn` and sent straight to
+Claude Code — they never enable terminal mouse tracking, so **long-press
+text selection still works** (handy for copying an OAuth URL). A quick
+tap still just focuses the terminal and opens the keyboard.
+
+> **Tip:** running `/tui fullscreen` inside Claude Code switches on its
+> flicker-free renderer, which is smoother under tmux and adds native
+> mouse scroll/selection on desktop. It's optional because it turns on
+> terminal mouse tracking. Run `/tui default` to switch back.
 
 ### Voice dictation
 

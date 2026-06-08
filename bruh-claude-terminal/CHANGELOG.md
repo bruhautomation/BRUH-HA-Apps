@@ -1,5 +1,104 @@
 # Changelog
 
+## 2.1.0
+
+**Mobile swipe-to-scroll + throttled desktop wheel. The scroll saga,
+finally answered at the right layer.**
+
+For 15 releases (1.17.1 → 2.0.2) "scroll up to see past chat" was the
+white whale. This release fixes it on both PC and mobile by re-using the
+one mechanism that was actually proven to work — and never overshooting.
+
+### How scrolling actually works (the model that survived)
+
+Claude Code's TUI draws its conversation in the terminal's **alternate
+screen**, which by spec has **no scrollback** — xterm.js never captures
+it, and tmux's copy mode only shows the *normal-screen* (pre-Claude)
+history. This is now confirmed by Claude Code's own docs ("Claude Code
+uses the alternate screen buffer, which bypasses terminal scrollback
+entirely"). So the **only** way to see past chat is Claude Code's own
+internal pager, bound to **PgUp / PgDn** (it prints "use PgUp/PgDn to
+scroll"). Nothing in the `claude-code → tmux → ttyd → xterm.js` stack
+can scroll it *except* sending those keys.
+
+1.18.10 used exactly that for the **desktop wheel** (intercept the wheel,
+`sendInput('\x1b[5~' / '\x1b[6~')`). That part worked. Two gaps remained:
+
+1. **Mobile had no swipe scroll at all.** Every touch attempt in
+   1.18.3–1.18.8 let *xterm* interpret the gesture — a synthetic
+   `WheelEvent` (which xterm turned into ↑/↓ arrows → "every swipe moves
+   the cursor"), or `tmux set -g mouse on` (which broke drag-to-select /
+   OAuth-URL copy), or the `📜 Hist` button (which showed the wrong,
+   normal-screen history). 1.18.9 gave up and made swipes a no-op, so
+   the only way to scroll on a phone was tapping the PgUp/PgDn toolbar
+   buttons one page at a time. That's the "very difficult to scroll up."
+
+2. **The desktop wheel overshot.** It sent one *full page* per raw wheel
+   event. A notched mouse is fine (≈1 event/notch), but a trackpad or
+   smooth-scroll mouse fires dozens of events per gesture → dozens of
+   PgUp → instantly at the top, uncontrollable. That's the "difficult to
+   scroll on PC."
+
+### The fix
+
+`ttyd-assets/inject.html`:
+
+- **New touch swipe handler** (`setupTouchScroll`). A one-finger
+  vertical swipe inside the terminal is translated **directly** into
+  `sendInput(PgUp/PgDn)` — the touch analog of the desktop wheel
+  handler. It never dispatches a synthetic `WheelEvent` and never
+  enables tmux mouse tracking, which is precisely why it dodges every
+  prior failure mode:
+  - no arrow-key cursor movement (xterm never sees the gesture),
+  - native long-press text selection still works (mouse mode stays off
+    — **OAuth-URL copy intact**),
+  - the HA ingress panel doesn't scroll away (`body { touch-action:
+    none }` still blocks delegation to the parent frame).
+  It stays out of the way of taps (focus/keyboard) and selection: a
+  gesture only latches after >10 px of *mostly-vertical* travel and
+  never while a selection is active, and it defers to native scrolling
+  in normal-screen (bash) mode.
+
+- **Shared throttled accumulator** (`pageScroll`). Both wheel and touch
+  now feed a pixel accumulator that emits one PgUp/PgDn per
+  `SCROLL_PAGE_PX` (120 px) of travel, with deltaMode normalisation for
+  Firefox line/page wheels and a per-call cap. A mouse notch still ≈ one
+  page (the 1.18.10 feel is preserved), but a trackpad fling or a fast
+  swipe pages proportionally instead of teleporting to the top.
+
+This is mode-independent: PgUp/PgDn scroll Claude Code's chat in both the
+default and the new `/tui fullscreen` renderer, so the fix holds whatever
+mode you run.
+
+### "Update everything" notes
+
+- **Claude Code CLI** is already pinned to *latest* — the image installs
+  it via npm and `run.sh`'s `update_claude_code()` re-pulls the newest
+  `@anthropic-ai/claude-code` on every startup (with retries). No change
+  needed; restart the add-on to pick up the current release.
+- **Base image / ttyd / xterm.js** stay on the HA Alpine 3.19 base this
+  release. Bumping the base (newer ttyd + xterm.js) is worthwhile but
+  CI only *lints* the Dockerfile (hadolint) — it doesn't build the
+  image — so a base bump can't be validated here without shipping it
+  blind to every user. It's deferred to a separate, build-tested PR.
+  Note it would not change the scroll model: alt-screen has no
+  scrollback in any xterm.js version, so PgUp/PgDn forwarding is still
+  the lever.
+- Tip: `/tui fullscreen` (or `CLAUDE_CODE_NO_FLICKER=1`) enables Claude
+  Code's flicker-free renderer, which is nicer under tmux and adds
+  native mouse scroll/selection on desktop. It's left opt-in because it
+  turns on terminal mouse tracking, the same thing that historically
+  interfered with touch text-selection.
+
+### Tests
+
+`tests/test_inject_html.py`: reworked the old `setupScrollForwarder`
+ban into `test_no_synthetic_wheel_scroll_forwarder` (still forbids the
+broken mechanism — the old name and any `new WheelEvent` dispatch — but
+allows a touchmove handler), and added `test_touch_scroll_sends_pgup_pgdn`
+and `test_scroll_paging_is_throttled`. Full suite green; the inline
+script still passes `node --check`.
+
 ## 2.0.2
 
 **Revert the 2.0.x custom chat UI. Back to native Claude Code in ttyd.**
