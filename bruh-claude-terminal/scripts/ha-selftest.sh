@@ -11,7 +11,11 @@
 
 # Pull in HOME / SUPERVISOR_TOKEN / HA_BASE_URL the way the listeners do, in
 # case this is run from a context that didn't source the shell profile.
-if [ -f /data/.bruh_claude_env ]; then
+# Use `-r` (readable), not `-f`: the env file is root-owned 0600, so when this
+# runs as the non-root `claude` user it exists but isn't readable — `-f` would
+# then try to source it and print "Permission denied". `claude` already
+# inherits these vars from its parent, so skipping the source here is correct.
+if [ -r /data/.bruh_claude_env ]; then
     # shellcheck disable=SC1091
     . /data/.bruh_claude_env
 fi

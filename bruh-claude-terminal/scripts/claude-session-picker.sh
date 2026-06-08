@@ -11,7 +11,7 @@ mkdir -p "$TASK_DIR"
 # Defaults to --dangerously-skip-permissions if the env file is missing
 # (backwards compatibility with older run.sh versions).
 PERMS_FLAG="--dangerously-skip-permissions"
-if [ -f /data/.bruh_claude_env ]; then
+if [ -r /data/.bruh_claude_env ]; then
     # shellcheck disable=SC1091
     source /data/.bruh_claude_env
     PERMS_FLAG="${BRUH_CLAUDE_PERMS_FLAG:-$PERMS_FLAG}"
