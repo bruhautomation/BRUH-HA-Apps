@@ -530,12 +530,68 @@
   //    spec, so the inequality is false; in normal-screen with
   //    output it's true.
   //
-  //    This is intentionally desktop-mouse-only (1.18.10 doesn't
-  //    re-introduce a touch wheel forwarder — the 1.18.9 reasoning
-  //    for removing that still applies). The PgUp / PgDn toolbar
-  //    buttons added in 1.18.10 are how mobile users scroll chat;
-  //    the wheel handler is how desktop users do it.
+  //    2.1.0: this same "send PgUp/PgDn straight to the PTY" trick is
+  //    now ALSO driven from touch (see section 4's swipe handler), so
+  //    mobile finally gets natural swipe-to-scroll. Both the wheel
+  //    handler here and the touch handler there feed a shared
+  //    `pageScroll()` accumulator so a trackpad fling or a fast finger
+  //    swipe pages proportionally instead of firing one PgUp per raw
+  //    event (the un-throttled 1.18.10 wheel handler sent a full page
+  //    per wheel tick — on a trackpad that's dozens of events per
+  //    gesture, which rocketed straight to the top and was the "very
+  //    difficult to scroll on PC" report).
   // ===================================================================
+  //
+  // ---- shared paging primitives (used by wheel + touch) ----
+  var PG_UP = '\x1b[5~';   // CSI 5~  — Claude Code chat scroll up
+  var PG_DN = '\x1b[6~';   // CSI 6~  — Claude Code chat scroll down
+
+  // Accumulated scroll distance (px) that equals one PgUp/PgDn. Tuned so
+  // a single mouse-wheel notch (deltaY ~100-120 px in Chrome) ≈ one page
+  // — preserving the 1.18.10 desktop feel — while a trackpad or a finger
+  // swipe has to travel this far per page, which is what makes both
+  // controllable instead of overshooting.
+  var SCROLL_PAGE_PX = 120;
+  var MAX_PAGES_PER_CALL = 8;   // safety cap against a giant delta/fling
+  var scrollAccum = 0;
+
+  // True only when xterm's own viewport has real scrollback — i.e. a
+  // bash/normal-screen session with output. In that case we step aside
+  // and let xterm.js (wheel) / native pan-y (touch) scroll its viewport.
+  // While Claude Code (or any tmux pane) owns the alternate screen,
+  // scrollHeight === clientHeight, so this is false and we forward
+  // PgUp/PgDn instead.
+  function hasNativeScrollback() {
+    var vp = document.querySelector('.xterm-viewport');
+    return !!(vp && vp.scrollHeight > vp.clientHeight + 1);
+  }
+
+  // Convert an accumulated pixel delta into PgUp/PgDn key presses.
+  // Sign convention: positive = scroll toward newer/bottom (PgDn),
+  // negative = toward older/top (PgUp) — matching WheelEvent.deltaY.
+  function pageScroll(deltaPx) {
+    if (!deltaPx) return;
+    // Reset on direction change so a reversal responds on the next pixel
+    // instead of first having to unwind the opposite-direction backlog.
+    if ((deltaPx < 0) !== (scrollAccum < 0)) scrollAccum = 0;
+    scrollAccum += deltaPx;
+    var pages = (scrollAccum / SCROLL_PAGE_PX) | 0;   // trunc toward zero
+    if (!pages) return;
+    if (pages >  MAX_PAGES_PER_CALL) pages =  MAX_PAGES_PER_CALL;
+    if (pages < -MAX_PAGES_PER_CALL) pages = -MAX_PAGES_PER_CALL;
+    scrollAccum -= pages * SCROLL_PAGE_PX;
+    var seq = pages > 0 ? PG_DN : PG_UP;
+    for (var i = 0, n = Math.abs(pages); i < n; i++) sendInput(seq);
+  }
+
+  // Normalise a WheelEvent's delta to pixels (Firefox reports lines via
+  // deltaMode 1; some setups report pages via deltaMode 2).
+  function wheelDeltaPx(e) {
+    var d = e.deltaY;
+    if (e.deltaMode === 1) d *= 16;                          // lines → px
+    else if (e.deltaMode === 2) d *= (window.innerHeight || 800); // pages → px
+    return d;
+  }
   function onWheel(e) {
     if (!e || !e.deltaY) return;
     // Only intercept when the gesture started inside the terminal —
@@ -544,15 +600,16 @@
     var t = e.target;
     if (t && t.closest && t.closest('#bruh-bar')) return;
     if (t && t.closest && !t.closest('.terminal') && !t.closest('.xterm')) return;
-    var vp = document.querySelector('.xterm-viewport');
-    if (vp && vp.scrollHeight > vp.clientHeight + 1) {
+    if (hasNativeScrollback()) {
       // Normal-screen mode with real scrollback — let xterm.js's own
       // wheel handler do its thing.
       return;
     }
-    // Alt-screen (or no scrollback yet). Send PgUp / PgDn to the PTY
-    // instead of letting xterm translate to ↑ / ↓.
-    sendInput(e.deltaY < 0 ? '\x1b[5~' : '\x1b[6~');
+    // Alt-screen (or no scrollback yet). Accumulate the (deltaMode-
+    // normalised) delta and emit PgUp / PgDn instead of letting xterm
+    // translate the wheel to ↑ / ↓. Accumulation is what stops a
+    // trackpad / smooth-scroll mouse from firing a full page per event.
+    pageScroll(wheelDeltaPx(e));
     e.preventDefault();
     e.stopPropagation();
   }
@@ -954,56 +1011,95 @@
   }
 
   // ===================================================================
-  // 4. Touch scroll: intentionally not implemented.
+  // 4. Touch swipe → PgUp/PgDn (the mobile half of section 3).
   //
-  // Claude Code's TUI runs in xterm's alternate-screen mode. By spec,
-  // alt-screen content is NOT added to xterm's scrollback. tmux does
-  // capture cell-by-cell output into its per-pane history buffer, but
-  // tmux only exposes the *normal-screen* portion of that history in
-  // copy mode — Claude Code's chat output, drawn in alt-screen, is
-  // never visible there. So there is NO surface anywhere on the
-  // (claude-code → tmux → ttyd → xterm.js) stack that has Claude
-  // Code's past chat preserved in a way the user can scroll to. We
-  // can't fix that from the JS layer.
+  // Claude Code's TUI runs in xterm's alternate-screen, which by spec
+  // has no scrollback — so the ONLY way to see past chat is Claude
+  // Code's own internal pager, bound to PgUp/PgDn (it literally prints
+  // "use PgUp/PgDn to scroll"). Section 3 forwards the desktop wheel to
+  // those keys; this forwards a touch swipe to them.
   //
-  // Previous releases (1.18.3 – 1.18.8) tried, in order, to:
+  // Why this works where 1.18.3–1.18.8 failed: every previous touch
+  // attempt let xterm.js *interpret* the gesture —
   //
-  //   * drive `xterm-viewport.scrollTop` directly — nothing to scroll
-  //     in alt-screen, no visible effect.
-  //   * dispatch a synthesised WheelEvent on `.terminal` — xterm's
-  //     wheel handler translates to ↑/↓ escape sequences in alt-
-  //     screen, which Claude Code interprets as "move cursor in the
-  //     input field", not "scroll chat". This is the "every swipe
-  //     arrow-keys around in Claude Code" complaint.
-  //   * `set -g mouse on` in tmux.conf so wheel events route to copy
-  //     mode — works for scrolling, but disables native drag-to-
-  //     select text on touch (xterm.js routes drags to the PTY when
-  //     mouse mode is on, with no Shift-bypass on mobile). Broke
-  //     OAuth-URL copy.
-  //   * the `📜 Hist` toolbar button that sent `Ctrl+B [` to enter
-  //     tmux copy mode — does enter copy mode, but copy mode shows
-  //     the *normal-screen* history (i.e. bash output from before
-  //     Claude Code started), not Claude Code's chat. So entering
-  //     copy mode and tapping ↑ scrolls through pre-Claude-Code
-  //     stuff that the user doesn't care about, while their input
-  //     cursor in Claude Code is unaffected. The user reported this
-  //     as confusing and broken — correctly so.
+  //   * `setupScrollForwarder` dispatched a synthetic WheelEvent on
+  //     `.terminal`; xterm translated it to ↑/↓ in alt-screen, so
+  //     "every swipe moved the cursor" (1.18.9 ripped it out).
+  //   * `set -g mouse on` routed the wheel to tmux copy mode, but
+  //     disabled xterm's native drag-to-select → broke OAuth-URL copy
+  //     on touch (reverted in 1.18.8).
+  //   * the `📜 Hist` button entered tmux copy mode, which shows the
+  //     *normal-screen* (pre-Claude) history, not the chat.
   //
-  // 1.18.9 removes that whole code path. Swipes inside the terminal
-  // do nothing: `body { touch-action: none }` blocks native panning
-  // (so the HA panel doesn't scroll either — the original problem
-  // from 1.18.1), and there is no JS gesture handler. Native iOS
-  // long-press / drag selection works (mouse mode is off, so
-  // xterm.js leaves selection to the browser). Toolbar arrows
-  // remain for input-cursor navigation. Real keyboards still get
-  // xterm's built-in Shift+PageUp / Shift+PageDown for normal-screen
-  // scrollback when there is any.
+  // This handler never touches xterm and never enables mouse tracking:
+  // it reads the finger delta itself and calls `sendInput(PgUp/PgDn)`
+  // straight to the PTY, exactly like the wheel handler. So:
+  //   - no arrow-key cursor movement (we bypass xterm's wheel/key path),
+  //   - native long-press text selection still works (mouse mode stays
+  //     off — OAuth copy intact),
+  //   - the HA panel doesn't scroll away (`body { touch-action: none }`
+  //     still blocks gesture delegation to the parent frame).
   //
-  // If Claude Code chat history scrolling is ever needed, it can't
-  // come from this layer — it has to come from claude-code itself
-  // (e.g. a `/scrollback` slash command or a Claude Code-side
-  // keybinding to switch to a paged view).
+  // It stays out of the way of taps (focus / keyboard) and selection:
+  // a gesture only latches once the finger has travelled >SWIPE_START_PX
+  // vertically and more vertically than horizontally, and never while a
+  // text selection is active. In normal-screen mode (real xterm
+  // scrollback) it defers to native pan-y, same as the wheel handler
+  // defers to xterm.
   // ===================================================================
+  function setupTouchScroll() {
+    var startX = 0, startY = 0, lastY = 0;
+    var tracking = false;    // a 1-finger gesture inside the terminal
+    var scrolling = false;   // we've latched onto a vertical swipe
+    var SWIPE_START_PX = 10; // travel before swipe beats tap/selection
+
+    function insideTerminal(t) {
+      if (!t || !t.closest) return false;
+      if (t.closest('#bruh-bar')) return false;   // toolbar owns its pan-x
+      return !!(t.closest('.terminal') || t.closest('.xterm'));
+    }
+    function selectionActive() {
+      var s = window.getSelection && window.getSelection();
+      return !!(s && !s.isCollapsed && String(s).length > 0);
+    }
+
+    document.addEventListener('touchstart', function (e) {
+      tracking = false; scrolling = false;
+      if (!e.touches || e.touches.length !== 1) return;   // ignore multi-touch
+      if (!insideTerminal(e.target)) return;
+      if (selectionActive()) return;   // let the user adjust an existing selection
+      startX = e.touches[0].clientX;
+      startY = lastY = e.touches[0].clientY;
+      tracking = true;
+    }, { passive: true });
+
+    document.addEventListener('touchmove', function (e) {
+      if (!tracking || !e.touches || e.touches.length !== 1) return;
+      var x = e.touches[0].clientX;
+      var y = e.touches[0].clientY;
+      if (!scrolling) {
+        var dx = x - startX, dy = y - startY;
+        if (Math.abs(dy) < SWIPE_START_PX) return;          // still maybe a tap
+        if (Math.abs(dx) > Math.abs(dy)) { tracking = false; return; } // horizontal → leave for selection
+        scrolling = true;
+        scrollAccum = 0;   // start this swipe's paging from a clean slate
+        lastY = y;         // and don't apply the pre-latch travel in one jump
+      }
+      // Real scrollback present (bash/normal-screen): let native pan-y
+      // scroll xterm's viewport instead of paging Claude Code.
+      if (hasNativeScrollback()) return;
+      // Finger up (y decreasing) → see newer → scroll down → PgDn;
+      // finger down → older → PgUp. `lastY - y` gives that sign.
+      var increment = lastY - y;
+      lastY = y;
+      pageScroll(increment);
+      e.preventDefault();   // we own this gesture (listener is non-passive)
+    }, { passive: false });
+
+    function endTouch() { tracking = false; scrolling = false; }
+    document.addEventListener('touchend', endTouch, { passive: true });
+    document.addEventListener('touchcancel', endTouch, { passive: true });
+  }
 
   // ===================================================================
   // 5. Bootstrap — wait for xterm to mount, then wire everything up.
@@ -1018,14 +1114,13 @@
       // scroll it to bring the focused textarea into view, which
       // would otherwise drag our `position: fixed` bar with it), the
       // body rule clamps the body's box to the viewport so xterm's
-      // layout stays consistent under the keyboard. Swipes inside
-      // the terminal are now intentionally a no-op — `body { touch-
-      // action: none }` blocks native panning so the HA panel
-      // doesn't scroll, and no JS gesture handler is registered. See
-      // the comment block above the (deleted) `setupScrollForwarder`
-      // section for the full reasoning.
+      // layout stays consistent under the keyboard. `body { touch-
+      // action: none }` blocks native panning so the HA panel doesn't
+      // scroll; setupTouchScroll() (section 4) then turns a vertical
+      // swipe into Claude Code PgUp/PgDn instead of a dead no-op.
       document.documentElement.classList.add('bruh-is-touch');
       document.body.classList.add('bruh-is-touch');
+      setupTouchScroll();
     }
     buildToolbar();
   }
