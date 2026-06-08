@@ -24,13 +24,19 @@ BRUH-HA-Apps/
 │   │   ├── ha-context-gen.sh    # CLAUDE.md context generator
 │   │   ├── ha-backup.sh         # Manual backup tool
 │   │   ├── ha-backup-watcher.sh # Background auto-backup daemon
-│   │   ├── token-stats-tracker.py  # Background token usage stats daemon
+│   │   ├── ha-addon.sh / ha-entity.sh / ha-service.sh / ha-notify.sh / ha-share.sh  # HA helper CLIs
+│   │   ├── ha-yaml-check.sh     # YAML validation CLI
+│   │   ├── ha-selftest.sh       # In-situ end-to-end diagnostic (MCP, auth, listeners)
+│   │   ├── usage-limits-tracker.py   # Background Anthropic usage-limits daemon
+│   │   ├── build-mobile-index.py     # Splices mobile UI into ttyd's HTML at startup
 │   │   ├── claude-session-picker.sh  # Enhanced session picker
 │   │   ├── claude-auth-helper.sh     # Auth workaround helper
 │   │   ├── health-check.sh      # Startup diagnostics
 │   │   ├── persist-install.sh   # Persistent package manager
 │   │   ├── ha-api-examples.sh   # API usage examples
 │   │   └── tmux.conf            # tmux configuration
+│   ├── ttyd-assets/             # Mobile toolbar + iOS fixes injected into ttyd
+│   │   └── inject.html          # Toolbar, swipe-scroll, OSC-52 copy, dictation fix
 │   ├── integrations/            # HA integrations (add-on side)
 │   │   ├── assist-listener.sh   # Conversation request file watcher
 │   │   └── automation-listener.sh # Task request file watcher
@@ -40,11 +46,13 @@ BRUH-HA-Apps/
 │           ├── manifest.json    # HA integration metadata
 │           ├── config_flow.py   # UI config flow
 │           ├── conversation.py  # ConversationEntity for Assist
-│           ├── sensor.py        # Token usage sensors
+│           ├── sensor.py        # Anthropic usage-limit sensors
 │           ├── bridge.py        # File-based IPC with the add-on
+│           ├── repairs.py       # "Restart required" repair flow
 │           ├── const.py         # Constants
 │           ├── services.yaml    # Service definitions
 │           ├── strings.json     # UI strings
+│           ├── icons.json       # Entity/service icons
 │           └── translations/en.json
 ├── .gitignore
 ├── LICENSE
@@ -56,7 +64,7 @@ BRUH-HA-Apps/
 ### MCP Server (`ha-mcp-server/ha_mcp_server.py`)
 - Stdio-based MCP server that Claude Code launches automatically
 - Uses `SUPERVISOR_TOKEN` for HA API authentication
-- Provides tools for entity states, service calls, logs, template rendering, config reload
+- Provides tools for entity states, device control, area listings (`get_areas`), service calls, logs, template rendering, config reload
 
 ### Startup Flow (`run.sh`)
 1. Health check
@@ -70,15 +78,15 @@ BRUH-HA-Apps/
 9. Broken plugin cleanup (removes stale `claude-homeassistant-plugins` entries)
 10. MCP server configuration (writes `.mcp.json` with proper ownership)
 11. Custom integration deployment to `/config/custom_components/bruh_claude/`
-12. Token stats tracker (background daemon scanning session JSONL files)
+12. Usage-limits tracker (background daemon querying the Anthropic usage endpoint)
 13. Optional: Assist + Automation integrations
-14. ttyd web terminal launch
+14. ttyd web terminal launch (with the mobile UI spliced in via `build-mobile-index.py`)
 
 ### Custom Integration (`custom_components/bruh_claude/`)
 - Deployed automatically to `/config/custom_components/` by the add-on at startup
 - Registers a `ConversationEntity` so "BRUH Claude" appears in Settings > Voice Assistants
-- Provides `bruh_claude.send_prompt` and `bruh_claude.run_task` services
-- Token usage sensors reading from `/config/.bruh_claude/token_stats.json` (real Anthropic API values)
+- Provides `bruh_claude.send_prompt`, `bruh_claude.run_task`, and `bruh_claude.clear_conversation` services
+- Usage-limit sensors reading from `/config/.bruh_claude/usage_limits.json` (real Anthropic account utilization; requires OAuth/subscription login)
 - Communicates with the add-on via shared files in `/config/.bruh_claude/`
 - Request/response flow: integration writes JSON → add-on processes → add-on writes JSON response
 

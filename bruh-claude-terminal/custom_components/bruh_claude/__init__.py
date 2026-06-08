@@ -137,11 +137,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Reload the entry when the user changes options (system prompt, timeout, etc.)
     entry.async_on_unload(entry.add_update_listener(_async_options_updated))
 
-    # Listen for the add-on signalling that new files were deployed while HA is running
+    # Listen for the add-on signalling that new files were deployed while HA is
+    # running. Wrap in async_on_unload so the listener is removed when the entry
+    # unloads/reloads — otherwise listeners accumulate on every options change.
     async def _on_restart_required(event: Event) -> None:
         await _check_restart_required(hass)
 
-    hass.bus.async_listen("bruh_claude_restart_required", _on_restart_required)
+    entry.async_on_unload(
+        hass.bus.async_listen("bruh_claude_restart_required", _on_restart_required)
+    )
 
     return True
 
@@ -165,6 +169,13 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data[DOMAIN].pop(entry.entry_id, None)
         hass.data[DOMAIN].pop(f"{entry.entry_id}_platforms", None)
 
+        # Remaining configured entries (bridge instances), excluding the
+        # metadata keys (_sensors_added, _sensors_entry, <id>_platforms).
+        remaining = [
+            eid for eid in hass.data[DOMAIN]
+            if not eid.startswith("_") and not eid.endswith("_platforms")
+        ]
+
         # If this entry owned the account-wide sensors, clear the flag so
         # another entry can recreate them on its next reload.
         if hass.data[DOMAIN].get("_sensors_entry") == entry.entry_id:
@@ -172,14 +183,17 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             hass.data[DOMAIN].pop("_sensors_added", None)
 
             # Auto-migrate: reload another entry so it picks up sensor duties.
-            remaining = [
-                eid for eid in hass.data[DOMAIN]
-                if not eid.startswith("_") and not eid.endswith("_platforms")
-            ]
             if remaining:
                 hass.async_create_task(
                     hass.config_entries.async_reload(remaining[0])
                 )
+
+        # Last entry removed — tear down the domain services so they don't
+        # linger and raise "not configured" if called with no bridge.
+        if not remaining:
+            for service in ("send_prompt", "run_task", "clear_conversation"):
+                if hass.services.has_service(DOMAIN, service):
+                    hass.services.async_remove(DOMAIN, service)
     return unload_ok
 
 

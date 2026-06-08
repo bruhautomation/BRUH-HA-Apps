@@ -4,8 +4,8 @@ Home Assistant MCP Server for BRUH Claude Terminal
 
 Provides Claude Code with real-time access to Home Assistant via the
 Model Context Protocol (MCP). This server exposes HA entity states,
-service calls, automation traces, device registry, area registry,
-and log access as MCP tools.
+service calls, device control, automation traces, area listings
+(via the template engine), and log access as MCP tools.
 
 Runs as a stdio-based MCP server that Claude Code launches automatically.
 """
@@ -618,6 +618,46 @@ def render_template(template_str):
         data={"template": template_str}
     )
     return result
+
+
+def get_areas():
+    """List every area and the entities assigned to it.
+
+    The HA REST API does not expose the area/entity registry directly (it
+    lives behind the WebSocket API), so we obtain it through the template
+    engine, which DOES expose `areas()` / `area_name()` / `area_entities()`.
+    This gives Claude the area awareness it needs for voice-style requests
+    like "turn off the bedroom lights" without it having to guess entity
+    ids from friendly names.
+    """
+    template = (
+        "{% set ns = namespace(items=[]) %}"
+        "{% for a in areas() %}"
+        "{% set ns.items = ns.items + [{"
+        "'area_id': a, 'name': area_name(a), 'entities': area_entities(a)"
+        "}] %}"
+        "{% endfor %}"
+        "{{ ns.items | tojson }}"
+    )
+    result = render_template(template)
+
+    # `ha_api_request` auto-parses JSON, so a `| tojson` array usually comes
+    # back already decoded as a list. Handle list, raw-string, and the
+    # error-dict passthrough cases explicitly.
+    if isinstance(result, list):
+        return {"area_count": len(result), "areas": result}
+    if isinstance(result, str):
+        try:
+            parsed = json.loads(result)
+            return {"area_count": len(parsed), "areas": parsed}
+        except json.JSONDecodeError:
+            return {
+                "error": "Could not parse areas from template output",
+                "raw": result[:500],
+            }
+    # dict (typically an {"error": ...} from the API) — pass through
+    return result
+
 
 
 def fire_event(event_type, event_data=None):
@@ -1244,7 +1284,15 @@ TOOLS = [
     },
     {
         "name": "get_device_registry",
-        "description": "Get a summary of all devices and entity domains registered in Home Assistant.",
+        "description": "Get a count summary of entities grouped by domain (total entities and a per-domain tally). NOTE: this is derived from entity states, not the HA device registry. For area/room groupings use get_areas.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {}
+        }
+    },
+    {
+        "name": "get_areas",
+        "description": "List all Home Assistant areas (rooms) and the entity_ids assigned to each. Use this to resolve room-based requests like 'turn off the kitchen lights' to concrete entity_ids before calling a control tool.",
         "inputSchema": {
             "type": "object",
             "properties": {}
@@ -1460,6 +1508,8 @@ def handle_tool_call(name, arguments):
             return get_services()
         elif name == "get_device_registry":
             return get_device_registry()
+        elif name == "get_areas":
+            return get_areas()
         elif name == "get_logbook":
             return get_logbook(arguments.get("hours", 1), arguments.get("entity_id"))
         elif name == "get_error_log":

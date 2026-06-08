@@ -1,5 +1,70 @@
 # Changelog
 
+## 2.2.0
+
+**Area-aware MCP, an in-situ self-test, and a round of cleanup.**
+
+### MCP: area/room awareness (`get_areas`)
+
+The MCP server controlled devices well but had no way to answer "what's in
+the bedroom?" — the HA REST API doesn't expose the area/entity registry
+(it lives behind the WebSocket API), and the old `get_device_registry`
+tool just counted entities per domain (its name oversold it).
+
+2.2.0 adds **`get_areas`**, which lists every area and the entity_ids
+assigned to it. It's implemented through the template engine (`areas()` /
+`area_name()` / `area_entities()`), reusing the proven `/api/template`
+path — no new transport, no WebSocket client. This gives the Assist agent
+what it needs to turn "turn off the kitchen lights" into concrete
+entity_ids; the Assist system prompt now points at it for room requests.
+
+`get_device_registry`'s description was corrected to say what it actually
+returns (a per-domain entity tally, not the HA device registry).
+
+### New: `ha-selftest` in-situ diagnostic
+
+A new `ha-selftest` CLI (run it inside the add-on terminal) verifies the
+whole chain end-to-end and prints PASS/FAIL with hints:
+
+- `SUPERVISOR_TOKEN` present and the HA REST API reachable,
+- `.mcp.json` present and free of stale `/api/mcp` entries, tool allowlist
+  present,
+- the **MCP server driven over stdio JSON-RPC the same way Claude Code
+  drives it** — initialize handshake, `tools/list` (count + `get_areas`
+  registered), and live `tools/call` for `get_ha_config`,
+  `get_all_states`, and `get_areas`,
+- the custom integration deployed (with its version) and whether a restart
+  is pending,
+- the Assist/automation listeners running,
+- Claude login status and whether the usage sensors have data.
+
+This is the fastest way to find what needs fixing on a real install.
+
+### Cleanup
+
+- Removed the orphaned `scripts/token-stats-tracker.py` — it hasn't been
+  launched since the token sensors were dropped in 1.9.0 (the usage-limit
+  sensors are fed by `usage-limits-tracker.py`).
+- `bruh_claude.clear_conversation` now just clears the bridge's in-memory
+  history (which is the only place conversation context lives — the
+  listeners are stateless). Removed the `clear_sessions/` marker file it
+  used to write, which nothing ever consumed, plus the now-unused helper
+  and the startup `mkdir`.
+- `__init__.py`: the `bruh_claude_restart_required` event listener is now
+  wrapped in `entry.async_on_unload`, so it no longer accumulates a new
+  listener on every options change/reload; and the domain services are
+  torn down when the last config entry is removed (they used to linger and
+  raise "not configured" if called).
+- Refreshed `CLAUDE.md` and `DOCS.md`, which still described the removed
+  token-usage sensors and the orphaned tracker.
+
+### Tests
+
+`tests/test_mcp_server.py` adds a `TestGetAreas` suite (list/string/error/
+dispatch paths) and pins `get_areas` into the canonical tool set. Full
+non-Minecraft suite green; `ha-selftest.sh` passes `shellcheck` at
+error level and `bash -n`.
+
 ## 2.1.0
 
 **Mobile swipe-to-scroll + throttled desktop wheel. The scroll saga,
