@@ -40,7 +40,7 @@ mkdir -p "$TASKS_DIR" "$RESULTS_DIR" "$LOG_DIR"
 # Source the Claude environment written by run.sh
 # This ensures HOME, ANTHROPIC_CONFIG_DIR, etc. are set correctly
 # even when with-contenv shebang reloads the s6 container environment.
-if [ -f /data/.bruh_claude_env ]; then
+if [ -r /data/.bruh_claude_env ]; then
     # shellcheck disable=SC1091
     source /data/.bruh_claude_env
 fi

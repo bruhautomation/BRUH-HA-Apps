@@ -1,5 +1,25 @@
 # Changelog
 
+## 2.2.1
+
+**Fix: `ha-selftest` (and other scripts) printed `Permission denied` when
+sourcing the env file as the non-root user.**
+
+`/data/.bruh_claude_env` is root-owned `0600` (it holds `SUPERVISOR_TOKEN`).
+Scripts guarded the source with `[ -f ]` (exists), so when they ran as the
+`claude` user — `ha-selftest`, an interactive shell's `.bashrc` — the file
+existed but wasn't readable and `. /data/.bruh_claude_env` printed
+`Permission denied`. Harmless (the `claude` user already inherits those vars
+from its parent), but noisy.
+
+Changed the guard to `[ -r ]` (readable) everywhere the file is sourced:
+`scripts/ha-selftest.sh`, `scripts/claude-session-picker.sh`, the generated
+`.bashrc` and `claude-run` wrapper in `run.sh`, and both integration
+listeners. For root contexts `-r` behaves exactly like `-f` (root can read
+the file, so it still sources); for the `claude` user it cleanly skips the
+unreadable file instead of erroring. The file's `0600` perms are left
+unchanged — `SUPERVISOR_TOKEN` stays off-limits to other users.
+
 ## 2.2.0
 
 **Area-aware MCP, an in-situ self-test, and a round of cleanup.**

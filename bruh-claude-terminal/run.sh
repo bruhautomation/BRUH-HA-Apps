@@ -306,7 +306,7 @@ setup_claude_user() {
 # Source HA environment (SUPERVISOR_TOKEN, DISABLE_AUTOUPDATER, etc.)
 # This ensures env vars reach Claude Code even if tmux/su-exec don't
 # fully propagate the parent environment.
-if [ -f /data/.bruh_claude_env ]; then
+if [ -r /data/.bruh_claude_env ]; then
     . /data/.bruh_claude_env
 fi
 if [ "$(id -u)" = "0" ]; then
@@ -327,7 +327,7 @@ WRAPPER
 export PATH="$HOME/.local/bin:$PATH"
 
 # Source HA environment if available
-if [ -f /data/.bruh_claude_env ]; then
+if [ -r /data/.bruh_claude_env ]; then
     . /data/.bruh_claude_env
 fi
 
@@ -1442,7 +1442,7 @@ trap cleanup SIGTERM SIGINT EXIT
 
 main() {
     bashio::log.info "============================================"
-    bashio::log.info "  BRUH Claude Terminal v2.2.0"
+    bashio::log.info "  BRUH Claude Terminal v2.2.1"
     bashio::log.info "  Enhanced Claude Code for Home Assistant"
     bashio::log.info "============================================"
 
