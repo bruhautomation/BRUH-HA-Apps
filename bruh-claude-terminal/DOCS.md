@@ -189,6 +189,22 @@ persist-install list                # List persistent packages
 persist-install remove apk vim      # Remove from persistence
 ```
 
+### ha-selftest
+
+Run a full in-situ diagnostic of the add-on. It checks HA API auth, drives
+the MCP server end-to-end (initialize, tool list, and live `get_ha_config`
+/ `get_all_states` / `get_areas` calls), and verifies the deployed
+integration, the background listeners, your Claude login, and the usage
+sensors — printing PASS/FAIL with a fix hint for anything wrong.
+
+```bash
+ha-selftest
+```
+
+Use it after first install, after an update, or any time Assist /
+automations / sensors aren't behaving — it's the quickest way to localize
+the problem.
+
 ## Using the Terminal on iOS / Android
 
 The web terminal auto-detects touch devices and shows an on-screen toolbar above the software keyboard with the keys iOS doesn't give you.
@@ -305,18 +321,34 @@ The built-in MCP server gives Claude Code these capabilities:
 |------|-------------|
 | `get_entity_state` | Get current state of any entity |
 | `get_all_states` | List all entities (filterable by domain) |
+| `get_areas` | List all areas (rooms) and the entity_ids in each — resolve "the kitchen lights" to entity_ids |
 | `call_service` | Call any HA service (turn on lights, etc.) |
+| `get_service_details` | Get the service schema for a domain |
+| `control_light` | Lights: on/off/toggle, brightness, color, color-temp |
+| `control_climate` | Thermostats: temperature, HVAC/preset/fan modes |
+| `control_media_player` | Media players: play/pause/volume/source |
+| `control_cover` | Covers/blinds/garage: open/close/position |
+| `control_fan` | Fans: on/off, speed, oscillation |
+| `control_switch` | Switches: on/off/toggle |
+| `control_lock` | Locks: lock/unlock |
+| `control_alarm` | Alarm panels: arm/disarm |
+| `control_vacuum` | Vacuums: start/stop/return/clean |
+| `activate_scene` | Activate a scene |
+| `run_script` | Run a script (with variables) |
+| `send_notification` | Send a notification |
 | `get_automations` | List all automations with status |
 | `get_automation_trace` | Get automation state and stored execution traces |
 | `get_ha_config` | Get HA configuration details |
 | `get_services` | List all available services |
-| `get_device_registry` | Get device/entity summary |
+| `get_device_registry` | Per-domain entity count summary (not the HA device registry — use `get_areas` for rooms) |
 | `get_logbook` | Get recent logbook entries |
 | `get_error_log` | Get HA logs from Supervisor journal |
 | `render_template` | Render Jinja2 templates |
 | `fire_event` | Fire custom events |
 | `get_supervisor_info` | Get system information |
 | `reload_config` | Reload configurations |
+
+> Verify the MCP server and all tools on your install by running **`ha-selftest`** in the terminal — it drives the server end-to-end and reports any tool that errors.
 
 ## Automation Integration
 
@@ -369,18 +401,24 @@ data:
   timeout: 300
 ```
 
-### Token Usage Sensors
+### Usage Limit Sensors
 
-The integration exposes sensors that track Claude Code token usage. Token counts are the real values from the Anthropic API `usage` field in each response — they are not estimated.
+The integration exposes account-wide **usage limit** sensors — the same
+session/weekly utilization shown on **claude.ai → Settings → Usage**.
 
 | Sensor | Description | Key attributes |
 |--------|-------------|----------------|
-| Session Input Tokens | Input tokens for the current session | `session_id`, `started_at`, `last_activity` |
-| Session Output Tokens | Output tokens for the current session | `session_id`, `started_at`, `last_activity` |
-| Session Total Tokens | Total tokens for the current session | `session_id`, `started_at`, `last_activity` |
-| Today Total Tokens | Total tokens used today | `period_start`, `resets_at` |
-| Weekly Total Tokens | Total tokens used this week (Mon–Sun) | `period_start`, `resets_at`, `session_count` |
-| Weekly Sessions | Number of distinct sessions this week | `period_start`, `resets_at` |
-| All Time Total Tokens | Lifetime total tokens | `message_count` |
+| Session Usage | Percent of the current 5-hour session window used | `resets_at`, `data_source`, `last_updated` |
+| Session Usage Resets At | Timestamp the 5-hour window resets | `utilization` |
+| Weekly Usage | Percent of the 7-day window used | `resets_at`, `data_source`, `last_updated` |
+| Weekly Usage Resets At | Timestamp the 7-day window resets | `utilization` |
 
-A background tracker (`token-stats-tracker.py`) scans Claude Code session JSONL files every 60 seconds and writes stats to `/config/.bruh_claude/token_stats.json`. The sensors poll this file every 30 seconds.
+A background tracker (`usage-limits-tracker.py`) reads your Claude Code
+OAuth token and queries the Anthropic usage endpoint every ~2 minutes,
+writing `/config/.bruh_claude/usage_limits.json`; the sensors poll it every
+30 seconds.
+
+> **These sensors need an OAuth / subscription login** (the one you do in
+> the terminal), **not** an `ANTHROPIC_API_KEY`. If you authenticate with an
+> API key, or before you've logged in, the sensors stay **unavailable** and
+> expose the reason in their `error` attribute. `ha-selftest` reports this.

@@ -516,15 +516,15 @@ install_cli_tools() {
         chmod +x /usr/local/bin/persist-install
     fi
 
-    # New CLI tools: ha-addon, ha-entity, ha-service, ha-notify, ha-share
-    for script in ha-addon ha-entity ha-service ha-notify ha-share; do
+    # New CLI tools: ha-addon, ha-entity, ha-service, ha-notify, ha-share, ha-selftest
+    for script in ha-addon ha-entity ha-service ha-notify ha-share ha-selftest; do
         if [ -f "/opt/scripts/${script}.sh" ]; then
             cp "/opt/scripts/${script}.sh" "/usr/local/bin/${script}"
             chmod +x "/usr/local/bin/${script}"
         fi
     done
 
-    bashio::log.info "CLI tools installed: ha-reload, ha-log, ha-context-gen, ha-backup, ha-yaml-check, ha-addon, ha-entity, ha-service, ha-notify, ha-share"
+    bashio::log.info "CLI tools installed: ha-reload, ha-log, ha-context-gen, ha-backup, ha-yaml-check, ha-addon, ha-entity, ha-service, ha-notify, ha-share, ha-selftest"
 }
 
 # ============================================================================
@@ -1099,7 +1099,6 @@ deploy_custom_integration() {
              /config/.bruh_claude/tasks \
              /config/.bruh_claude/task_results \
              /config/.bruh_claude/sessions \
-             /config/.bruh_claude/clear_sessions \
              /config/.bruh_claude/logs
 
     # Rotate old debug logs (keep last 7 days)
@@ -1443,7 +1442,7 @@ trap cleanup SIGTERM SIGINT EXIT
 
 main() {
     bashio::log.info "============================================"
-    bashio::log.info "  BRUH Claude Terminal v2.1.0"
+    bashio::log.info "  BRUH Claude Terminal v2.2.0"
     bashio::log.info "  Enhanced Claude Code for Home Assistant"
     bashio::log.info "============================================"
 

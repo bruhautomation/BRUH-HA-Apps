@@ -462,7 +462,7 @@ class TestMCPProtocol(unittest.TestCase):
             "send_notification", "activate_scene", "run_script",
             # System tools
             "get_automations", "get_automation_trace", "get_ha_config",
-            "get_services", "get_device_registry", "get_logbook",
+            "get_services", "get_device_registry", "get_areas", "get_logbook",
             "get_error_log", "render_template", "fire_event",
             "get_supervisor_info", "reload_config",
         }
@@ -654,6 +654,57 @@ class TestSendResponse(unittest.TestCase):
 
         output = json.loads(captured.getvalue().strip())
         self.assertIsNone(output["id"])
+
+
+class TestGetAreas(unittest.TestCase):
+    """Tests for the get_areas tool (area registry via the template engine)."""
+
+    @patch("ha_mcp_server.ha_api_request")
+    def test_areas_parsed_list(self, mock_api):
+        """ha_api_request auto-parses the `| tojson` array → list."""
+        mock_api.return_value = [
+            {"area_id": "kitchen", "name": "Kitchen",
+             "entities": ["light.kitchen", "switch.kettle"]},
+            {"area_id": "bedroom", "name": "Bedroom",
+             "entities": ["light.bedroom"]},
+        ]
+        result = ha_mcp_server.get_areas()
+        self.assertEqual(result["area_count"], 2)
+        self.assertEqual(result["areas"][0]["name"], "Kitchen")
+        # It must hit the template endpoint, not invent a REST path.
+        endpoint = mock_api.call_args[0][0]
+        self.assertIn("/api/template", endpoint)
+
+    @patch("ha_mcp_server.ha_api_request")
+    def test_areas_string_payload(self, mock_api):
+        """If the template comes back as a raw JSON string, it's parsed."""
+        mock_api.return_value = '[{"area_id": "office", "name": "Office", "entities": []}]'
+        result = ha_mcp_server.get_areas()
+        self.assertEqual(result["area_count"], 1)
+        self.assertEqual(result["areas"][0]["area_id"], "office")
+
+    @patch("ha_mcp_server.ha_api_request")
+    def test_areas_api_error_passthrough(self, mock_api):
+        """An API error dict is passed straight through (sets isError)."""
+        mock_api.return_value = {"error": "HTTP 401: Unauthorized"}
+        result = ha_mcp_server.get_areas()
+        self.assertIn("error", result)
+
+    @patch("ha_mcp_server.ha_api_request")
+    def test_areas_unparseable_string(self, mock_api):
+        """Garbage template output reports an error instead of crashing."""
+        mock_api.return_value = "Template error: areas() is undefined"
+        result = ha_mcp_server.get_areas()
+        self.assertIn("error", result)
+        self.assertIn("raw", result)
+
+    @patch("ha_mcp_server.get_areas")
+    def test_dispatch_routes_get_areas(self, mock_get_areas):
+        """tools/call must route get_areas to the implementation."""
+        mock_get_areas.return_value = {"area_count": 0, "areas": []}
+        result = ha_mcp_server.handle_tool_call("get_areas", {})
+        mock_get_areas.assert_called_once()
+        self.assertEqual(result["area_count"], 0)
 
 
 if __name__ == "__main__":

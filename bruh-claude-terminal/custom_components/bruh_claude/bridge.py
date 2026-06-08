@@ -54,10 +54,6 @@ class ClaudeBridge:
         return os.path.join(self._base, RESPONSES_DIR)
 
     @property
-    def clear_sessions_dir(self) -> str:
-        return os.path.join(self._base, "clear_sessions")
-
-    @property
     def tasks_dir(self) -> str:
         return os.path.join(self._base, TASKS_DIR)
 
@@ -124,24 +120,20 @@ class ClaudeBridge:
     async def async_clear_conversation(
         self, conversation_id: str | None = None
     ) -> None:
-        """Clear a persistent Claude session for a conversation.
+        """Clear the in-memory conversation history for a session.
 
-        If conversation_id is None, clears ALL sessions.
-        The assist listener watches the clear_sessions/ directory for these signals.
+        If conversation_id is None, clears ALL sessions. The add-on
+        listeners are stateless — each Claude invocation is independent
+        (no --resume), so a conversation's context lives only in this
+        bridge's in-memory map. Clearing it here is all that's required.
         """
-        clear_dir = self.clear_sessions_dir
         if conversation_id:
-            # Clear in-memory history
             self._conversation_history.pop(conversation_id, None)
-            # Signal the add-on listener to clear the persistent session
-            marker = os.path.join(clear_dir, f"{conversation_id}.clear")
         else:
-            # Clear all in-memory history
             self._conversation_history.clear()
-            marker = os.path.join(clear_dir, "_all.clear")
-
-        await self._hass.async_add_executor_job(self._touch_file, marker)
-        _LOGGER.info("Clear session signal written: %s", marker)
+        _LOGGER.info(
+            "Cleared conversation history: %s", conversation_id or "ALL"
+        )
 
     async def async_send_task(
         self,
@@ -194,12 +186,6 @@ class ClaudeBridge:
     # ------------------------------------------------------------------
     # Synchronous filesystem helpers (run via executor)
     # ------------------------------------------------------------------
-
-    @staticmethod
-    def _touch_file(path: str) -> None:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w") as fh:
-            fh.write("")
 
     @staticmethod
     def _write_json(path: str, data: dict) -> None:
