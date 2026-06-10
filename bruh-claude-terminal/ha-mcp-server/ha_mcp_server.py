@@ -10,11 +10,21 @@ service calls, device control, automation traces, area listings
 Runs as a stdio-based MCP server that Claude Code launches automatically.
 """
 
+import base64
+import io
 import json
 import os
 import sys
 import urllib.request
 import urllib.error
+
+# Pillow is optional: camera snapshots are downscaled when it's available
+# and passed through untouched when it isn't.
+try:
+    from PIL import Image
+    _PIL_AVAILABLE = True
+except ImportError:
+    _PIL_AVAILABLE = False
 
 # ============================================================================
 # Configuration
@@ -57,6 +67,46 @@ def ha_api_request(endpoint, method="GET", data=None, accept=None):
         return {"error": f"HTTP {e.code}: {e.reason}", "details": error_body}
     except Exception as e:
         return {"error": str(e)}
+
+
+def ha_api_request_raw(endpoint):
+    """GET a Home Assistant API endpoint, returning raw bytes (e.g. images)."""
+    if endpoint.startswith("/api/"):
+        url = f"{HA_BASE_URL}{endpoint[4:]}"
+    else:
+        url = f"{HA_BASE_URL}/{endpoint.lstrip('/')}"
+    req = urllib.request.Request(
+        url, headers={"Authorization": f"Bearer {SUPERVISOR_TOKEN}"}
+    )
+    with urllib.request.urlopen(req, timeout=30) as response:
+        return response.read()
+
+
+def _ws_command(payload, timeout=15):
+    """Run one authenticated command against HA's WebSocket API.
+
+    Some data (long-term statistics) is WebSocket-only. The `websockets`
+    package ships in the add-on image; import lazily so environments
+    without it (tests) degrade to a clear error instead of failing import.
+    """
+    from websockets.sync.client import connect  # lazy: optional dependency
+
+    url = HA_BASE_URL.replace("http://", "ws://").replace("https://", "wss://")
+    url = url.rsplit("/api", 1)[0] + "/websocket"
+    with connect(url, open_timeout=timeout, close_timeout=5) as ws:
+        json.loads(ws.recv(timeout=timeout))  # auth_required
+        ws.send(json.dumps({"type": "auth", "access_token": SUPERVISOR_TOKEN}))
+        auth = json.loads(ws.recv(timeout=timeout))
+        if auth.get("type") != "auth_ok":
+            return {"error": f"WebSocket auth failed: {auth.get('message', auth)}"}
+        payload = {"id": 1, **payload}
+        ws.send(json.dumps(payload))
+        while True:
+            msg = json.loads(ws.recv(timeout=timeout))
+            if msg.get("id") == 1 and msg.get("type") == "result":
+                if not msg.get("success"):
+                    return {"error": str(msg.get("error", "WebSocket command failed"))}
+                return msg.get("result")
 
 
 # ============================================================================
@@ -452,6 +502,69 @@ def run_script(entity_id, variables=None):
 
 
 # ============================================================================
+# MCP Tool Implementations — Vision
+# ============================================================================
+
+# Snapshots above this size are rejected even after downscaling — a huge
+# image would blow the model's context for no benefit.
+MAX_SNAPSHOT_B64 = 1_500_000
+
+
+def _downscale_jpeg(data, max_dim):
+    """Downscale image bytes to max_dim and re-encode as JPEG.
+
+    Returns the original bytes when Pillow is unavailable or the image is
+    already small enough.
+    """
+    if not _PIL_AVAILABLE:
+        return data, "original (Pillow unavailable)"
+    try:
+        img = Image.open(io.BytesIO(data))
+        if max(img.size) > max_dim:
+            img.thumbnail((max_dim, max_dim))
+        if img.mode not in ("RGB", "L"):
+            img = img.convert("RGB")
+        out = io.BytesIO()
+        img.save(out, format="JPEG", quality=70)
+        return out.getvalue(), f"{img.size[0]}x{img.size[1]} jpeg"
+    except Exception:  # noqa: BLE001 — fall back to the original bytes
+        return data, "original (downscale failed)"
+
+
+def get_camera_snapshot(entity_id, max_dim=1024):
+    """Fetch a camera snapshot and return it as an MCP image."""
+    if not entity_id.startswith("camera."):
+        return {"error": f"Not a camera entity: {entity_id}"}
+    try:
+        max_dim = max(256, min(int(max_dim), 1920))
+    except (TypeError, ValueError):
+        max_dim = 1024
+    try:
+        raw = ha_api_request_raw(f"/api/camera_proxy/{entity_id}")
+    except urllib.error.HTTPError as e:
+        return {"error": f"HTTP {e.code}: {e.reason} (is the camera available?)"}
+    except Exception as e:  # noqa: BLE001
+        return {"error": str(e)}
+    if not raw:
+        return {"error": f"Camera {entity_id} returned no image data"}
+
+    scaled, detail = _downscale_jpeg(raw, max_dim)
+    encoded = base64.b64encode(scaled).decode()
+    if len(encoded) > MAX_SNAPSHOT_B64:
+        return {
+            "error": (
+                f"Snapshot too large ({len(encoded)} b64 bytes) even after "
+                f"downscaling — retry with a smaller max_dim."
+            )
+        }
+    return {
+        "_mcp_image": {"data": encoded, "mimeType": "image/jpeg"},
+        "entity_id": entity_id,
+        "image": detail,
+    }
+
+
+# ============================================================================
 # MCP Tool Implementations — System
 # ============================================================================
 
@@ -599,6 +712,98 @@ def get_logbook(hours=1, entity_id=None):
     return result
 
 
+def get_history(entity_id, hours=24):
+    """Get recent state history for one entity (recorder, detailed)."""
+    from datetime import datetime, timedelta, timezone
+    try:
+        hours = max(1, min(int(hours), 168))
+    except (TypeError, ValueError):
+        hours = 24
+    start = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    result = ha_api_request(
+        f"/api/history/period/{start}"
+        f"?filter_entity_id={entity_id}&minimal_response&no_attributes"
+    )
+    if isinstance(result, dict) and "error" in result:
+        return result
+    if not isinstance(result, list) or not result or not result[0]:
+        return {"entity_id": entity_id, "hours": hours, "changes": [],
+                "note": "No recorded history in this window."}
+
+    points = [
+        {"state": p.get("state"), "at": p.get("last_changed") or p.get("last_updated")}
+        for p in result[0]
+    ]
+    summary = {"entity_id": entity_id, "hours": hours, "change_count": len(points)}
+
+    numeric = []
+    for p in points:
+        try:
+            numeric.append(float(p["state"]))
+        except (TypeError, ValueError):
+            pass
+    if numeric:
+        summary["min"] = min(numeric)
+        summary["max"] = max(numeric)
+        summary["first"] = points[0]["state"]
+        summary["last"] = points[-1]["state"]
+
+    # Downsample long histories so the tool result stays small
+    if len(points) > 100:
+        step = len(points) // 100 + 1
+        sampled = points[::step]
+        if sampled[-1] is not points[-1]:
+            sampled.append(points[-1])
+        points = sampled
+        summary["note"] = "Changes downsampled; min/max cover the full window."
+    summary["changes"] = points
+    return summary
+
+
+def get_statistics(entity_id, period="hour", days=7):
+    """Get long-term statistics (mean/min/max) via the WebSocket API.
+
+    Long-term statistics survive recorder purging, so this answers
+    questions like 'how cold did it get last week' that get_history can't.
+    """
+    from datetime import datetime, timedelta, timezone
+    if period not in ("5minute", "hour", "day", "week", "month"):
+        period = "hour"
+    try:
+        days = max(1, min(int(days), 365))
+    except (TypeError, ValueError):
+        days = 7
+    start = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    try:
+        result = _ws_command({
+            "type": "recorder/statistics_during_period",
+            "start_time": start,
+            "statistic_ids": [entity_id],
+            "period": period,
+        })
+    except ImportError:
+        return {"error": "websockets package not available in this environment"}
+    except Exception as e:  # noqa: BLE001
+        return {"error": str(e)}
+
+    if isinstance(result, dict) and "error" in result:
+        return result
+    rows = (result or {}).get(entity_id, [])
+    if not rows:
+        return {
+            "entity_id": entity_id, "period": period, "days": days, "stats": [],
+            "note": ("No long-term statistics for this entity. Statistics exist "
+                     "only for numeric sensors with state_class set."),
+        }
+    stats = [
+        {k: r.get(k) for k in ("start", "mean", "min", "max", "sum") if r.get(k) is not None}
+        for r in rows
+    ]
+    if len(stats) > 200:
+        stats = stats[-200:]
+    return {"entity_id": entity_id, "period": period, "days": days, "stats": stats}
+
+
 def get_error_log():
     """Get the Home Assistant error log.
 
@@ -630,12 +835,12 @@ def get_error_log():
     return result or {"error": "No log data available."}
 
 
-def render_template(template_str):
+def render_template(template):
     """Render a Jinja2 template in Home Assistant."""
     result = ha_api_request(
         "/api/template",
         method="POST",
-        data={"template": template_str}
+        data={"template": template}
     )
     return result
 
@@ -1263,6 +1468,31 @@ TOOLS = [
         }
     },
     # ------------------------------------------------------------------
+    # Camera Vision
+    # ------------------------------------------------------------------
+    {
+        "name": "get_camera_snapshot",
+        "description": (
+            "Take a snapshot from a camera and SEE it. Returns the current "
+            "image so you can describe what's visible, check on things, or "
+            "verify a state visually (e.g. 'is the garage door actually closed?')."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "entity_id": {
+                    "type": "string",
+                    "description": "The camera entity ID (e.g., 'camera.driveway')"
+                },
+                "max_dim": {
+                    "type": "integer",
+                    "description": "Max image dimension in pixels, 256-1920 (default 1024). Use smaller for quick checks."
+                }
+            },
+            "required": ["entity_id"]
+        }
+    },
+    # ------------------------------------------------------------------
     # Automation Tools
     # ------------------------------------------------------------------
     {
@@ -1340,6 +1570,55 @@ TOOLS = [
         }
     },
     {
+        "name": "get_history",
+        "description": (
+            "Get recent state-change history for ONE entity (up to 7 days, from "
+            "the recorder). Includes min/max for numeric sensors. Use this for "
+            "'when did the garage last open' or 'how warm was it this morning'."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "entity_id": {
+                    "type": "string",
+                    "description": "The entity ID to fetch history for"
+                },
+                "hours": {
+                    "type": "number",
+                    "description": "How many hours back (1-168, default 24)"
+                }
+            },
+            "required": ["entity_id"]
+        }
+    },
+    {
+        "name": "get_statistics",
+        "description": (
+            "Get long-term statistics (hourly/daily mean, min, max) for a numeric "
+            "sensor — survives recorder purging, so it answers 'how cold did it "
+            "get last week/month'. Only works for sensors with a state_class."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "entity_id": {
+                    "type": "string",
+                    "description": "The sensor entity ID (e.g., 'sensor.outdoor_temperature')"
+                },
+                "period": {
+                    "type": "string",
+                    "enum": ["5minute", "hour", "day", "week", "month"],
+                    "description": "Aggregation bucket (default 'hour')"
+                },
+                "days": {
+                    "type": "number",
+                    "description": "How many days back (1-365, default 7)"
+                }
+            },
+            "required": ["entity_id"]
+        }
+    },
+    {
         "name": "get_error_log",
         "description": "Get the last 100 lines of Home Assistant logs from the Supervisor journal. Useful for diagnosing integration issues, failed automations, and system errors.",
         "inputSchema": {
@@ -1408,148 +1687,114 @@ TOOLS = [
 # Tool Call Router
 # ============================================================================
 
+# Single source of truth mapping tool name -> implementation function name.
+# Arguments from the MCP request are matched to the function's parameters by
+# name (every implementation's signature mirrors its inputSchema), so adding
+# a tool is: write the function, add its schema to TOOLS, add one line here.
+# Names (not references) keep the lookup late-bound, so tests can patch
+# implementations on the module.
+TOOL_IMPLEMENTATIONS = {
+    # Core tools
+    "get_entity_state": "get_entity_state",
+    "get_all_states": "get_all_states",
+    "call_service": "call_service",
+    "get_service_details": "get_service_details",
+    # Domain-specific device control
+    "control_light": "control_light",
+    "control_climate": "control_climate",
+    "control_media_player": "control_media_player",
+    "control_cover": "control_cover",
+    "control_fan": "control_fan",
+    "control_switch": "control_switch",
+    "control_lock": "control_lock",
+    "control_alarm": "control_alarm",
+    "control_vacuum": "control_vacuum",
+    "send_notification": "send_notification",
+    "activate_scene": "activate_scene",
+    "run_script": "run_script",
+    # Vision
+    "get_camera_snapshot": "get_camera_snapshot",
+    # System tools
+    "get_automations": "get_automations",
+    "get_automation_trace": "get_automation_trace",
+    "get_ha_config": "get_config",
+    "get_services": "get_services",
+    "get_device_registry": "get_device_registry",
+    "get_areas": "get_areas",
+    "get_logbook": "get_logbook",
+    "get_history": "get_history",
+    "get_statistics": "get_statistics",
+    "get_error_log": "get_error_log",
+    "render_template": "render_template",
+    "fire_event": "fire_event",
+    "get_supervisor_info": "get_supervisor_info",
+    "reload_config": "reload_config",
+}
+
+
+# Argument contracts derived from the schemas themselves: the inputSchema is
+# the single source of truth for which arguments a tool accepts/requires.
+_TOOL_SPECS = {
+    schema["name"]: (
+        set(schema.get("inputSchema", {}).get("properties", {})),
+        list(schema.get("inputSchema", {}).get("required", [])),
+    )
+    for schema in TOOLS
+}
+
+
 def handle_tool_call(name, arguments):
-    """Route a tool call to the appropriate function."""
+    """Dispatch a tool call.
+
+    Arguments are filtered/validated against the tool's inputSchema, then
+    passed as keyword args to the implementation (looked up late via
+    globals() so tests can patch implementations on the module).
+    """
+    fn_name = TOOL_IMPLEMENTATIONS.get(name)
+    spec = _TOOL_SPECS.get(name)
+    if fn_name is None or spec is None:
+        return {"error": f"Unknown tool: {name}"}
+    allowed, required = spec
+    kwargs = {k: v for k, v in (arguments or {}).items() if k in allowed}
+    missing = [p for p in required if p not in kwargs]
+    if missing:
+        return {"error": f"Missing required argument(s) for {name}: {', '.join(missing)}"}
     try:
-        # Core tools
-        if name == "get_entity_state":
-            return get_entity_state(arguments["entity_id"])
-        elif name == "get_all_states":
-            return get_all_states(arguments.get("domain"), arguments.get("name_filter"))
-        elif name == "call_service":
-            return call_service(arguments["domain"], arguments["service"], arguments.get("data"))
-        elif name == "get_service_details":
-            return get_service_details(arguments["domain"])
-
-        # Domain-specific device control
-        elif name == "control_light":
-            return control_light(
-                entity_id=arguments["entity_id"],
-                action=arguments["action"],
-                brightness=arguments.get("brightness"),
-                brightness_pct=arguments.get("brightness_pct"),
-                rgb_color=arguments.get("rgb_color"),
-                hs_color=arguments.get("hs_color"),
-                xy_color=arguments.get("xy_color"),
-                color_temp_kelvin=arguments.get("color_temp_kelvin"),
-                color_name=arguments.get("color_name"),
-                effect=arguments.get("effect"),
-                transition=arguments.get("transition"),
-                flash=arguments.get("flash"),
-                white=arguments.get("white"),
-            )
-        elif name == "control_climate":
-            return control_climate(
-                entity_id=arguments["entity_id"],
-                action=arguments["action"],
-                temperature=arguments.get("temperature"),
-                target_temp_high=arguments.get("target_temp_high"),
-                target_temp_low=arguments.get("target_temp_low"),
-                hvac_mode=arguments.get("hvac_mode"),
-                fan_mode=arguments.get("fan_mode"),
-                preset_mode=arguments.get("preset_mode"),
-                humidity=arguments.get("humidity"),
-                swing_mode=arguments.get("swing_mode"),
-            )
-        elif name == "control_media_player":
-            return control_media_player(
-                entity_id=arguments["entity_id"],
-                action=arguments["action"],
-                volume_level=arguments.get("volume_level"),
-                source=arguments.get("source"),
-                media_content_id=arguments.get("media_content_id"),
-                media_content_type=arguments.get("media_content_type"),
-                seek_position=arguments.get("seek_position"),
-                shuffle=arguments.get("shuffle"),
-                repeat=arguments.get("repeat"),
-            )
-        elif name == "control_cover":
-            return control_cover(
-                entity_id=arguments["entity_id"],
-                action=arguments["action"],
-                position=arguments.get("position"),
-                tilt_position=arguments.get("tilt_position"),
-            )
-        elif name == "control_fan":
-            return control_fan(
-                entity_id=arguments["entity_id"],
-                action=arguments["action"],
-                percentage=arguments.get("percentage"),
-                preset_mode=arguments.get("preset_mode"),
-                direction=arguments.get("direction"),
-                oscillating=arguments.get("oscillating"),
-            )
-        elif name == "control_switch":
-            return control_switch(
-                entity_id=arguments["entity_id"],
-                action=arguments["action"],
-            )
-        elif name == "control_lock":
-            return control_lock(
-                entity_id=arguments["entity_id"],
-                action=arguments["action"],
-                code=arguments.get("code"),
-            )
-        elif name == "control_alarm":
-            return control_alarm(
-                entity_id=arguments["entity_id"],
-                action=arguments["action"],
-                code=arguments.get("code"),
-            )
-        elif name == "control_vacuum":
-            return control_vacuum(
-                entity_id=arguments["entity_id"],
-                action=arguments["action"],
-                command=arguments.get("command"),
-                params=arguments.get("params"),
-            )
-        elif name == "send_notification":
-            return send_notification(
-                message=arguments["message"],
-                title=arguments.get("title"),
-                target=arguments.get("target"),
-                data=arguments.get("data"),
-            )
-        elif name == "activate_scene":
-            return activate_scene(
-                entity_id=arguments["entity_id"],
-                transition=arguments.get("transition"),
-            )
-        elif name == "run_script":
-            return run_script(
-                entity_id=arguments["entity_id"],
-                variables=arguments.get("variables"),
-            )
-
-        # System tools
-        elif name == "get_automations":
-            return get_automations()
-        elif name == "get_automation_trace":
-            return get_automation_trace(arguments["automation_id"])
-        elif name == "get_ha_config":
-            return get_config()
-        elif name == "get_services":
-            return get_services()
-        elif name == "get_device_registry":
-            return get_device_registry()
-        elif name == "get_areas":
-            return get_areas()
-        elif name == "get_logbook":
-            return get_logbook(arguments.get("hours", 1), arguments.get("entity_id"))
-        elif name == "get_error_log":
-            return get_error_log()
-        elif name == "render_template":
-            return render_template(arguments["template"])
-        elif name == "fire_event":
-            return fire_event(arguments["event_type"], arguments.get("event_data"))
-        elif name == "get_supervisor_info":
-            return get_supervisor_info()
-        elif name == "reload_config":
-            return reload_config(arguments["target"])
-        else:
-            return {"error": f"Unknown tool: {name}"}
+        return globals()[fn_name](**kwargs)
     except Exception as e:
         return {"error": str(e)}
+
+
+def build_tool_response(result):
+    """Build the MCP content payload for a tool result.
+
+    Results are JSON text blocks, except when a tool returns an image
+    envelope ({"_mcp_image": {"data": <b64>, "mimeType": ...}, ...}) —
+    those become an MCP image content block plus a text block with any
+    remaining metadata.
+    """
+    if isinstance(result, dict) and "_mcp_image" in result:
+        image = result["_mcp_image"]
+        meta = {k: v for k, v in result.items() if k != "_mcp_image"}
+        content = [{
+            "type": "image",
+            "data": image.get("data", ""),
+            "mimeType": image.get("mimeType", "image/jpeg"),
+        }]
+        if meta:
+            content.append({
+                "type": "text",
+                "text": json.dumps(meta, indent=2, default=str),
+            })
+        return {"content": content}
+
+    result_text = json.dumps(result, indent=2, default=str)
+    response_obj = {
+        "content": [{"type": "text", "text": result_text}],
+    }
+    if isinstance(result, dict) and "error" in result:
+        response_obj["isError"] = True
+    return response_obj
 
 
 # ============================================================================
@@ -1626,14 +1871,7 @@ def main():
             tool_name = params.get("name", "")
             arguments = params.get("arguments", {})
             result = handle_tool_call(tool_name, arguments)
-            result_text = json.dumps(result, indent=2, default=str)
-            is_error = isinstance(result, dict) and "error" in result
-            response_obj = {
-                "content": [{"type": "text", "text": result_text}],
-            }
-            if is_error:
-                response_obj["isError"] = True
-            send_response(req_id, response_obj)
+            send_response(req_id, build_tool_response(result))
 
         elif method == "ping":
             send_response(req_id, {})

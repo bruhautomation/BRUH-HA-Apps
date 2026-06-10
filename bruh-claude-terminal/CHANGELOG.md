@@ -1,5 +1,36 @@
 # Changelog
 
+## 2.5.0
+
+**Claude can now see cameras and answer questions about the past — and
+the MCP server got the registry it needed to keep growing safely.**
+
+### New tools
+
+- **`get_camera_snapshot`** — fetches a camera image (downscaled via
+  Pillow to keep token cost sane) and returns it as a real MCP image
+  block, so Claude can *look*: "what's in the driveway?", "is the garage
+  door actually closed?" work by voice, and automations can ask for
+  visual checks.
+- **`get_history`** — recent state history for an entity (up to 7 days)
+  with min/max for numeric sensors, downsampled to stay small. "When did
+  the garage last open?", "how warm was it this morning?"
+- **`get_statistics`** — long-term statistics (hourly/daily
+  mean/min/max) over the WebSocket API, which survives recorder purging:
+  "how cold did it get last week?" The assist prompt teaches the voice
+  agent when to reach for each.
+
+### MCP server internals: schema-driven dispatch
+
+The hand-written 140-line if/elif router (every tool's arguments
+re-listed by hand — a standing drift hazard) is replaced by a registry:
+tool name → implementation, with allowed/required arguments derived
+from each tool's own inputSchema. Adding a tool is now: function +
+schema + one mapping line, and a test enforces that schemas and
+implementations never diverge. Implementations are looked up late, so
+tests can patch them. `tools/call` responses are built by a single
+helper that knows how to emit image content blocks.
+
 ## 2.4.1
 
 **Field fixes from the first 2.4.0 logs: oversized area maps lost their

@@ -369,18 +369,20 @@ class TestMCPServerPython(unittest.TestCase):
         self.assertIn('if __name__ == "__main__":', self.content)
 
     def test_handles_all_tool_names(self):
-        """handle_tool_call should have a branch for every defined tool."""
+        """Every defined tool must be registered in TOOL_IMPLEMENTATIONS."""
         import re
-        # Get tool names from TOOLS list only (between TOOLS = [ and ])
-        tools_section = self.content[self.content.index("TOOLS = ["):self.content.index("def handle_tool_call")]
+        # Get tool names from TOOLS list only (between TOOLS = [ and the registry)
+        tools_section = self.content[self.content.index("TOOLS = ["):self.content.index("TOOL_IMPLEMENTATIONS = {")]
         tool_names = re.findall(r'"name":\s*"([^"]+)"', tools_section)
-        # Get handler branches
-        handler_section = self.content[self.content.index("def handle_tool_call"):]
+        self.assertGreater(len(tool_names), 0)
+        # Get the registry mapping
+        registry_start = self.content.index("TOOL_IMPLEMENTATIONS = {")
+        registry_section = self.content[registry_start:self.content.index("}", registry_start)]
         for name in tool_names:
             self.assertIn(
-                f'name == "{name}"',
-                handler_section,
-                f"Tool '{name}' not handled in handle_tool_call"
+                f'"{name}":',
+                registry_section,
+                f"Tool '{name}' not registered in TOOL_IMPLEMENTATIONS"
             )
 
 

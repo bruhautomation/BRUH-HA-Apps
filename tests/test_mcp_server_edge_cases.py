@@ -312,7 +312,7 @@ class TestEdgeCaseHandleToolCall(unittest.TestCase):
             "get_entity_state",
             {"entity_id": "test.entity", "extra_field": "ignored"}
         )
-        mock_fn.assert_called_with("test.entity")
+        mock_fn.assert_called_with(entity_id="test.entity")
 
     def test_tool_call_exception_returns_error(self):
         """Internal exception should be caught and returned as error."""

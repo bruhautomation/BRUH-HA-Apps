@@ -65,7 +65,8 @@ BRUH-HA-Apps/
 ### MCP Server (`ha-mcp-server/ha_mcp_server.py`)
 - Stdio-based MCP server that Claude Code launches automatically
 - Uses `SUPERVISOR_TOKEN` for HA API authentication
-- Provides tools for entity states, device control, area listings (`get_areas`), service calls, logs, template rendering, config reload
+- Provides tools for entity states, device control, area listings (`get_areas`), camera snapshots (`get_camera_snapshot`, returned as MCP image blocks), history/long-term statistics (`get_history`, `get_statistics` via the WebSocket API), service calls, logs, template rendering, config reload
+- Tools are registered via `TOOL_IMPLEMENTATIONS` (name → function name, late-bound) with argument contracts derived from each tool's inputSchema; add a tool = function + schema in `TOOLS` + one mapping line
 
 ### Startup Flow (`run.sh`)
 1. Health check

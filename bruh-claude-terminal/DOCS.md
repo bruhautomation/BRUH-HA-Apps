@@ -332,8 +332,11 @@ The built-in MCP server gives Claude Code these capabilities:
 | Tool | Description |
 |------|-------------|
 | `get_entity_state` | Get current state of any entity |
-| `get_all_states` | List all entities (filterable by domain) |
+| `get_all_states` | List all entities (filterable by domain and name) |
 | `get_areas` | List all areas (rooms) and the entity_ids in each — resolve "the kitchen lights" to entity_ids |
+| `get_camera_snapshot` | **See** a camera: returns the current image so Claude can describe what's visible |
+| `get_history` | Recent state history for an entity (up to 7 days), with min/max for numeric sensors |
+| `get_statistics` | Long-term statistics (hourly/daily mean/min/max) — answers "how cold did it get last week" |
 | `call_service` | Call any HA service (turn on lights, etc.) |
 | `get_service_details` | Get the service schema for a domain |
 | `control_light` | Lights: on/off/toggle, brightness, color, color-temp |

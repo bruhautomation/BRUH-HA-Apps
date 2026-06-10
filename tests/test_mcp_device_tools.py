@@ -713,7 +713,7 @@ class TestHandleToolCallRouting(unittest.TestCase):
     def test_routes_get_service_details(self, mock_fn):
         mock_fn.return_value = {"domain": "light"}
         ha_mcp_server.handle_tool_call("get_service_details", {"domain": "light"})
-        mock_fn.assert_called_once_with("light")
+        mock_fn.assert_called_once_with(domain="light")
 
 
 if __name__ == "__main__":
