@@ -125,6 +125,15 @@ jobs:
             exit 1
           fi
 
+      # HA's store offers whatever config.yaml says — a changelog entry
+      # announcing a version config.yaml doesn't carry means users read
+      # about a release the store never offers them.
+      - name: Check Claude Terminal changelog matches shipped version
+        run: .github/scripts/check-changelog-version.sh bruh-claude-terminal
+
+      - name: Check Minecraft changelog matches shipped version
+        run: .github/scripts/check-changelog-version.sh bruh-minecraft-server
+
   version-bump:
     # On every PR that touches addon files, verify the version in
     # config.yaml has bumped vs. the base branch. HA only picks up new
