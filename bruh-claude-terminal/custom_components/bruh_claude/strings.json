@@ -40,7 +40,7 @@
       },
       "add_insight": {
         "title": "Add Insight Job",
-        "description": "Claude runs this job on a schedule and writes a markdown report to a sensor.\n\nGetting started: pick a template and a schedule — that's enough. After creating it, the job runs once within ~2 minutes; open the new sensor and copy its card_yaml attribute into a dashboard markdown card to display the report. Run it any time with the job's Run now button.\n\nTo read or customize the template's full prompt, open Configure on the created entry — it shows the exact text that runs.",
+        "description": "Claude runs this job on a schedule and writes a markdown report to a sensor.\n\nGetting started: pick a template and a schedule — that's enough. After creating it, the job runs once within ~2 minutes; you'll get a notification with a dashboard card ready to paste (also available any time as the sensor's card_yaml attribute). Run it any time with the job's Run now button.\n\nTo read or customize the template's full prompt, open Configure on the created entry — it shows the exact text that runs.",
         "data": {
           "name": "Job name",
           "insight_template": "Template",

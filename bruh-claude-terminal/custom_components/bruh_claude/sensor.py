@@ -33,7 +33,7 @@ from .const import (
     SHARED_DIR,
     SIGNAL_INSIGHT_UPDATE,
 )
-from .insight_format import build_card_yaml
+from .insight_format import build_card_yaml, make_preview
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -302,12 +302,14 @@ class BruhClaudeInsightSensor(SensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         opts = {**self._entry.data, **self._entry.options}
+        # Short/readable first; the long blobs (full report, card YAML) last
         return {
+            "preview": make_preview(self._payload.get("markdown")),
+            "error": self._payload.get("error"),
+            "duration_s": self._payload.get("duration_s"),
+            "template": opts.get(CONF_INSIGHT_TEMPLATE),
             "markdown": self._payload.get("markdown"),
             "card_yaml": build_card_yaml(
                 self.entity_id or "sensor.insight", self._entry.title
             ),
-            "duration_s": self._payload.get("duration_s"),
-            "error": self._payload.get("error"),
-            "template": opts.get(CONF_INSIGHT_TEMPLATE),
         }

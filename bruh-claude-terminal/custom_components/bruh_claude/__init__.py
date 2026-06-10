@@ -62,7 +62,12 @@ from .const import (
     SHARED_DIR,
     SIGNAL_INSIGHT_UPDATE,
 )
-from .insight_format import INSIGHT_TEMPLATES, truncate_markdown
+from .insight_format import (
+    INSIGHT_TEMPLATES,
+    build_card_yaml,
+    make_preview,
+    truncate_markdown,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -418,6 +423,18 @@ async def _async_run_insight(hass: HomeAssistant, entry: ConfigEntry) -> None:
                 "error": str(exc),
             }
 
+        # Onboarding: after a job's FIRST successful run, send one
+        # notification containing the ready-to-paste dashboard card —
+        # the bridge from "it ran" to "I can see it".
+        prior = await hass.async_add_executor_job(
+            load_insight_payload, hass, entry.entry_id
+        )
+        payload["ever_succeeded"] = bool(
+            (prior or {}).get("ever_succeeded") or payload.get("error") is None
+        )
+        if payload.get("error") is None and not (prior or {}).get("ever_succeeded"):
+            await _notify_first_success(hass, entry, payload)
+
         await hass.async_add_executor_job(
             _persist_insight, hass.config.path(SHARED_DIR, INSIGHTS_DIR),
             entry.entry_id, payload,
@@ -435,6 +452,36 @@ async def _async_run_insight(hass: HomeAssistant, entry: ConfigEntry) -> None:
         )
     finally:
         running.discard(entry.entry_id)
+
+
+async def _notify_first_success(
+    hass: HomeAssistant, entry: ConfigEntry, payload: dict
+) -> None:
+    """One-time persistent notification with the dashboard card YAML."""
+    try:
+        from homeassistant.helpers import entity_registry as er
+
+        entity_id = er.async_get(hass).async_get_entity_id(
+            "sensor", DOMAIN, f"{entry.entry_id}_insight"
+        ) or "sensor.<your insight sensor>"
+        preview = make_preview(payload.get("markdown"), limit=240) or ""
+        await hass.services.async_call(
+            "persistent_notification",
+            "create",
+            {
+                "title": f"Insight '{entry.title}' ran — put it on a dashboard",
+                "message": (
+                    f"{preview}\n\n"
+                    "To display it, add a card to any dashboard "
+                    "(Add card > Manual) and paste:\n\n"
+                    f"```yaml\n{build_card_yaml(entity_id, entry.title)}\n```\n\n"
+                    "This notification only appears after the first successful run."
+                ),
+                "notification_id": f"bruh_claude_insight_{entry.entry_id}",
+            },
+        )
+    except Exception:  # noqa: BLE001 — onboarding must never fail the run
+        _LOGGER.debug("Could not send first-run insight notification")
 
 
 def _persist_insight(directory: str, entry_id: str, payload: dict) -> None:

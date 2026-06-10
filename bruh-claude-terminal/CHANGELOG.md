@@ -19,6 +19,10 @@
 - Prompt fields (insight and agent personality) are proper multiline
   editors; step descriptions rewritten to explain the create -> card_yaml
   -> dashboard flow in place.
+- **Finding the report**: a job's first successful run now sends a
+  one-time notification containing the dashboard card ready to paste;
+  the sensor gained a readable `preview` attribute (long blobs sorted
+  last), and DOCS explains exactly where the report lives.
 
 ## 3.0.0
 

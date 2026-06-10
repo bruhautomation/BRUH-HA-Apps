@@ -335,9 +335,13 @@ data:
   name: "Morning Briefing"   # omit to run all jobs
 ```
 
-Each job creates `sensor.<job>_insight`: the state is the last successful
-run, the report lives in the `markdown` attribute, and the sensor's
-`card_yaml` attribute contains a ready-to-paste dashboard card:
+**Viewing the report:** the sensor's *state* is just the last-run
+timestamp — the report itself lives in its attributes. After a job's first
+successful run you'll get a notification containing the dashboard card
+ready to paste. To see it any time: Developer Tools > States > select
+`sensor.<job>_insight` — `preview` shows the first lines, `markdown` the
+full report, `card_yaml` the card. For a permanent view, add a Manual card
+to any dashboard with:
 
 ```yaml
 type: markdown
