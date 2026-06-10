@@ -1,5 +1,25 @@
 # Changelog
 
+## 2.4.1
+
+**Field fixes from the first 2.4.0 logs: oversized area maps lost their
+Weather/People sections, and the first request after a restart was cold.**
+
+- 2.4.0 logs showed `AreaMap: 12000 chars` — exactly the truncation cap.
+  Large homes overflow it, and Weather/People were appended last, so the
+  truncation silently removed exactly the sections voice asks about most.
+  **Weather/People now come first** (truncation can only drop areas), the
+  cap is raised to 16000, truncation lands on a line boundary instead of
+  mid-entity_id, and it's logged to the assist debug log when it happens.
+- **The spare worker is now pre-warmed at startup** from the last-used
+  agent profile (persisted in `cache/last_profile.json`), so the first
+  voice command after an add-on restart no longer pays the cold start
+  (~20s observed in the field, since the spare previously only spawned
+  after the first request). The area map is refreshed synchronously at
+  startup so the pre-warmed spare bakes in the same map the first request
+  builds — otherwise the profiles wouldn't match and the spare would
+  never be adopted.
+
 ## 2.4.0
 
 **Assist fast mode: pre-warmed Claude workers, and a fix for the area map

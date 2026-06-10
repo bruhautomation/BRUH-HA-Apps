@@ -63,7 +63,11 @@ WORKER_MAX_AGE = int(os.environ.get("BRUH_ASSIST_MAX_AGE", "1800"))
 SPARE_RECYCLE = int(os.environ.get("BRUH_ASSIST_SPARE_RECYCLE", "600"))
 
 AREA_MAP_TTL = 300
-AREA_MAP_MAX_BYTES = 12000
+AREA_MAP_MAX_BYTES = 16000
+
+# Last-used agent profile (custom prompt + model), persisted so the spare
+# can be pre-warmed right at startup instead of after the first request.
+LAST_PROFILE_FILE = os.path.join(CACHE_DIR, "last_profile.json")
 
 SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 TEMPLATE_API = os.environ.get(
@@ -71,9 +75,17 @@ TEMPLATE_API = os.environ.get(
 )
 
 # Mirrors the area-map template in assist-listener.sh — pure core Jinja so
-# it renders on any HA version. Keep the two in sync.
+# it renders on any HA version. Weather/People come FIRST so an oversized,
+# truncated map can only ever drop areas, never these sections. Keep the
+# two copies in sync.
 AREA_MAP_TEMPLATE = """\
 {%- set domains = ['light','switch','climate','media_player','cover','fan','lock','vacuum','scene','script','alarm_control_panel','input_boolean'] -%}
+{%- set weather = states.weather | map(attribute='entity_id') | list -%}
+{%- if weather %}Weather: {{ weather | join(', ') }}
+{% endif -%}
+{%- set people = states.person | map(attribute='entity_id') | list -%}
+{%- if people %}People: {{ people | join(', ') }}
+{% endif -%}
 {%- for a in areas() -%}
 {%- set ns = namespace(ents=[]) -%}
 {%- for e in area_entities(a) -%}
@@ -82,12 +94,6 @@ AREA_MAP_TEMPLATE = """\
 {%- if ns.ents %}{{ area_name(a) }}: {{ ns.ents | join(', ') }}
 {% endif -%}
 {%- endfor -%}
-{%- set weather = states.weather | map(attribute='entity_id') | list -%}
-{%- if weather %}Weather: {{ weather | join(', ') }}
-{% endif -%}
-{%- set people = states.person | map(attribute='entity_id') | list -%}
-{%- if people %}People: {{ people | join(', ') }}
-{% endif -%}
 """
 
 # Mirrors the base system prompt in assist-listener.sh. Keep in sync.
@@ -166,12 +172,26 @@ def refresh_area_map() -> bool:
     if not rendered or rendered.startswith("{") or ":" not in rendered:
         debug_log([f"[{{ts}}] AREA-MAP refresh FAILED: {rendered[:300]}"])
         return False
+    if len(rendered) > AREA_MAP_MAX_BYTES:
+        debug_log([
+            f"[{{ts}}] AREA-MAP truncated: {len(rendered)} chars > "
+            f"{AREA_MAP_MAX_BYTES} (some areas omitted)"
+        ])
+        rendered = _truncate_at_line(rendered, AREA_MAP_MAX_BYTES)
     os.makedirs(CACHE_DIR, exist_ok=True)
     tmp = AREA_MAP_FILE + ".tmp"
     with open(tmp, "w") as fh:
-        fh.write(rendered[:AREA_MAP_MAX_BYTES])
+        fh.write(rendered)
     os.replace(tmp, AREA_MAP_FILE)
     return True
+
+
+def _truncate_at_line(text: str, cap: int) -> str:
+    """Cap text without leaving a cut-off entity_id on the last line."""
+    if len(text) <= cap:
+        return text
+    cut = text[:cap]
+    return cut[: cut.rfind("\n") + 1]
 
 
 def get_area_map() -> str:
@@ -202,6 +222,32 @@ def build_system_prompt(custom: str) -> str:
     if custom:
         prompt = f"{custom}\n\n{prompt}"
     return prompt
+
+
+def save_last_profile(custom: str, model: str) -> None:
+    """Remember the agent profile so the next pool start pre-warms with it."""
+    try:
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        tmp = LAST_PROFILE_FILE + ".tmp"
+        with open(tmp, "w") as fh:
+            json.dump({"system_prompt": custom, "model": model}, fh)
+        os.replace(tmp, LAST_PROFILE_FILE)
+    except OSError:
+        pass
+
+
+def prewarm_spare(pool: "Pool") -> None:
+    """Spawn the spare at startup from the last-used agent profile, so even
+    the first voice command after an add-on restart skips the cold start."""
+    custom, model = "", "default"
+    try:
+        with open(LAST_PROFILE_FILE) as fh:
+            data = json.load(fh)
+        custom = data.get("system_prompt") or ""
+        model = data.get("model") or "default"
+    except (OSError, json.JSONDecodeError, AttributeError):
+        pass
+    pool._spawn_spare((build_system_prompt(custom), model))
 
 
 # ---------------------------------------------------------------------------
@@ -427,9 +473,11 @@ class Pool:
         limit = max(window - TIMEOUT_MARGIN, LIMIT_FLOOR)
         deadline = time.time() + limit
 
-        system_prompt = build_system_prompt(req.get("system_prompt") or "")
+        custom_prompt = req.get("system_prompt") or ""
         model = req.get("model") or "default"
+        system_prompt = build_system_prompt(custom_prompt)
         profile = (system_prompt, model)
+        save_last_profile(custom_prompt, model)
 
         debug_log([
             "================================================================",
@@ -604,10 +652,14 @@ def main() -> None:
         f"starting (poll={POLL_INTERVAL}s, max_workers={MAX_WORKERS}, "
         f"max_turns={MAX_TURNS}, default_timeout={DEFAULT_TIMEOUT}s)"
     )
-    threading.Thread(target=refresh_area_map, daemon=True).start()
+    # Refresh the map synchronously first so the pre-warmed spare bakes in
+    # the same map the first request will build — otherwise their system
+    # prompts differ and the spare is never adopted.
+    refresh_area_map()
     cleanup_stale_files()
 
     pool = Pool()
+    prewarm_spare(pool)
     last_housekeeping = time.time()
 
     while True:

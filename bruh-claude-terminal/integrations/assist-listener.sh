@@ -53,7 +53,7 @@ SESSION_FLAGS_MARKER="$CACHE_DIR/session_flags_unsupported"
 # round-trip (saves a whole model turn on most voice commands).
 AREA_MAP_FILE="$CACHE_DIR/area_map.txt"
 AREA_MAP_TTL=300        # seconds before a background refresh is triggered
-AREA_MAP_MAX_BYTES=12000
+AREA_MAP_MAX_BYTES=16000
 
 # Maximum number of agentic turns per request.
 # Configurable via the add-on's assist_max_turns option.
@@ -194,11 +194,18 @@ refresh_area_map() {
 
     # Pure core-Jinja (namespace + split) — no HA-version-specific tests like
     # `match`/`regex_match`, so it renders on any HA release. Weather and
-    # person entities usually have no area, so they get their own sections;
-    # without them every "what's the weather" pays a discovery turn.
+    # person entities usually have no area, so they get their own sections —
+    # FIRST, so a truncated oversized map can only ever drop areas, never
+    # the sections voice asks about constantly.
     local template payload rendered
     template=$(cat << 'JINJA'
 {%- set domains = ['light','switch','climate','media_player','cover','fan','lock','vacuum','scene','script','alarm_control_panel','input_boolean'] -%}
+{%- set weather = states.weather | map(attribute='entity_id') | list -%}
+{%- if weather %}Weather: {{ weather | join(', ') }}
+{% endif -%}
+{%- set people = states.person | map(attribute='entity_id') | list -%}
+{%- if people %}People: {{ people | join(', ') }}
+{% endif -%}
 {%- for a in areas() -%}
 {%- set ns = namespace(ents=[]) -%}
 {%- for e in area_entities(a) -%}
@@ -207,12 +214,6 @@ refresh_area_map() {
 {%- if ns.ents %}{{ area_name(a) }}: {{ ns.ents | join(', ') }}
 {% endif -%}
 {%- endfor -%}
-{%- set weather = states.weather | map(attribute='entity_id') | list -%}
-{%- if weather %}Weather: {{ weather | join(', ') }}
-{% endif -%}
-{%- set people = states.person | map(attribute='entity_id') | list -%}
-{%- if people %}People: {{ people | join(', ') }}
-{% endif -%}
 JINJA
 )
     payload=$(jq -n --arg t "$template" '{"template": $t}')
@@ -237,7 +238,15 @@ JINJA
         return 1
     }
 
-    printf '%s\n' "$rendered" | head -c "$AREA_MAP_MAX_BYTES" > "${AREA_MAP_FILE}.tmp"
+    # Truncate oversized maps on a line boundary (a cut-off entity_id would
+    # be worse than a missing area) and make the truncation visible.
+    if [ "${#rendered}" -gt "$AREA_MAP_MAX_BYTES" ]; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] AREA-MAP truncated: ${#rendered} chars > ${AREA_MAP_MAX_BYTES} (some areas omitted — raise AREA_MAP_MAX_BYTES if entities are missed)" \
+            >> "$LOG_DIR/assist-$(date +%Y%m%d).log"
+        printf '%s\n' "$rendered" | head -c "$AREA_MAP_MAX_BYTES" | sed '$d' > "${AREA_MAP_FILE}.tmp"
+    else
+        printf '%s\n' "$rendered" > "${AREA_MAP_FILE}.tmp"
+    fi
     mv "${AREA_MAP_FILE}.tmp" "$AREA_MAP_FILE"
     return 0
 }
