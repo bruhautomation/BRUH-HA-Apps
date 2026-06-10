@@ -183,13 +183,39 @@ running() {
         ps 2>/dev/null | grep -v grep | grep -q "$1"
     fi
 }
-for l in assist-listener automation-listener; do
-    if running "$l"; then
-        pass "${l} running"
-    else
-        warn "${l} not running (disabled in config, or check the add-on log)"
-    fi
-done
+if running assist-worker-pool; then
+    pass "assist worker pool running (fast mode)"
+elif running assist-listener; then
+    pass "assist-listener running (classic mode)"
+else
+    warn "assist listener not running (disabled in config, or check the add-on log)"
+fi
+if running automation-listener; then
+    pass "automation-listener running"
+else
+    warn "automation-listener not running (disabled in config, or check the add-on log)"
+fi
+
+# --- 5b. assist area map (voice fast-path) ----------------------------------
+hdr "Assist area map (voice fast-path)"
+AREA_MAP=/config/.bruh_claude/cache/area_map.txt
+if [ -s "$AREA_MAP" ]; then
+    map_age=$(( $(date +%s) - $(stat -c %Y "$AREA_MAP" 2>/dev/null || date +%s) ))
+    pass "Area map cached ($(wc -c < "$AREA_MAP") bytes, ${map_age}s old)"
+    info "$(head -2 "$AREA_MAP")"
+else
+    warn "Area map cache missing — every fresh voice command pays an extra discovery turn"
+    # Probe the template engine the same way the listener renders the map.
+    probe=$(curl -s -m 10 -X POST \
+        -H "Authorization: Bearer ${SUPERVISOR_TOKEN:-}" \
+        -H "Content-Type: application/json" \
+        -d '{"template": "{{ areas() | count }}"}' \
+        "${HA_BASE_URL}/template" 2>/dev/null)
+    case "$probe" in
+        ''|'{'*) fail "Template API probe failed: ${probe:-no response} — area map cannot render" ;;
+        *)       info "Template API OK (${probe} areas) — map will be cached on the next voice request" ;;
+    esac
+fi
 
 # --- 6. Claude auth & usage sensors ----------------------------------------
 hdr "Claude login & usage sensors"

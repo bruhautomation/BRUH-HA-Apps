@@ -38,7 +38,8 @@ BRUH-HA-Apps/
 │   ├── ttyd-assets/             # Mobile toolbar + iOS fixes injected into ttyd
 │   │   └── inject.html          # Toolbar, swipe-scroll, OSC-52 copy, dictation fix
 │   ├── integrations/            # HA integrations (add-on side)
-│   │   ├── assist-listener.sh   # Conversation request file watcher
+│   │   ├── assist-worker-pool.py  # Fast mode: pre-warmed persistent Claude workers (default)
+│   │   ├── assist-listener.sh   # Classic conversation listener (assist_fast_mode: false)
 │   │   └── automation-listener.sh # Task request file watcher
 │   └── custom_components/       # HA custom integration (deployed at runtime)
 │       └── bruh_claude/
@@ -96,7 +97,7 @@ BRUH-HA-Apps/
 - **Background listeners (Assist, Automation)**: Do NOT use `--dangerously-skip-permissions`. Instead, tool permissions are granted via `/config/.claude/settings.local.json`, which pre-approves MCP, Bash, Read, Write, Edit, WebFetch, and WebSearch tools. This avoids root-user restrictions of the flag.
 - **Project settings**: Written to `/config/.claude/settings.local.json` at startup by `setup_claude_settings()` in `run.sh`
 - **Non-root execution**: Claude Code runs as UID 1000 (`claude` user) via a wrapper script at `/usr/local/bin/claude-run` that uses `su-exec`
-- **Listener speed**: Both listeners use `--max-turns` to limit agentic loops (defaults: 5 for Assist, 10 for Automation; configurable). The assist listener also splices a cached area→entity map into the system prompt so most voice commands skip the `get_areas` lookup turn
+- **Listener speed**: Both listeners use `--max-turns` to limit agentic loops (defaults: 5 for Assist, 10 for Automation; configurable). The assist path splices a cached area→entity map (controllable domains + Weather/People) into the system prompt so most voice commands skip lookup turns. With `assist_fast_mode` (default) the assist channel runs as a worker pool (`assist-worker-pool.py`): persistent `claude --input-format stream-json` processes per conversation plus a pre-warmed spare, falling back to one-shot spawns on any worker error
 
 ### Container Environment
 - Base: Home Assistant Alpine Linux 3.19

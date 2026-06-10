@@ -192,13 +192,27 @@ verify_mcp_config_full() {
 refresh_area_map() {
     [ -n "$SUPERVISOR_TOKEN" ] || return 1
 
+    # Pure core-Jinja (namespace + split) — no HA-version-specific tests like
+    # `match`/`regex_match`, so it renders on any HA release. Weather and
+    # person entities usually have no area, so they get their own sections;
+    # without them every "what's the weather" pays a discovery turn.
     local template payload rendered
     template=$(cat << 'JINJA'
-{% for a in areas() -%}
-{%- set ents = area_entities(a) | select('match', '^(light|switch|climate|media_player|cover|fan|lock|vacuum|scene|script|alarm_control_panel|input_boolean)\.') | list -%}
-{%- if ents %}{{ area_name(a) }}: {{ ents | join(', ') }}
+{%- set domains = ['light','switch','climate','media_player','cover','fan','lock','vacuum','scene','script','alarm_control_panel','input_boolean'] -%}
+{%- for a in areas() -%}
+{%- set ns = namespace(ents=[]) -%}
+{%- for e in area_entities(a) -%}
+{%- if '.' in e and e.split('.')[0] in domains -%}{%- set ns.ents = ns.ents + [e] -%}{%- endif -%}
+{%- endfor -%}
+{%- if ns.ents %}{{ area_name(a) }}: {{ ns.ents | join(', ') }}
 {% endif -%}
-{%- endfor %}
+{%- endfor -%}
+{%- set weather = states.weather | map(attribute='entity_id') | list -%}
+{%- if weather %}Weather: {{ weather | join(', ') }}
+{% endif -%}
+{%- set people = states.person | map(attribute='entity_id') | list -%}
+{%- if people %}People: {{ people | join(', ') }}
+{% endif -%}
 JINJA
 )
     payload=$(jq -n --arg t "$template" '{"template": $t}')
@@ -211,9 +225,17 @@ JINJA
     # Error responses come back as JSON ({"message": ...}); a good render is
     # plain "Area: entity, entity" lines.
     case "$rendered" in
-        "{"*|"") return 1 ;;
+        "{"*|"")
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] AREA-MAP refresh FAILED: ${rendered:0:300}" \
+                >> "$LOG_DIR/assist-$(date +%Y%m%d).log"
+            return 1
+            ;;
     esac
-    echo "$rendered" | grep -q ":" || return 1
+    echo "$rendered" | grep -q ":" || {
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] AREA-MAP refresh produced no entries" \
+            >> "$LOG_DIR/assist-$(date +%Y%m%d).log"
+        return 1
+    }
 
     printf '%s\n' "$rendered" | head -c "$AREA_MAP_MAX_BYTES" > "${AREA_MAP_FILE}.tmp"
     mv "${AREA_MAP_FILE}.tmp" "$AREA_MAP_FILE"
@@ -275,6 +297,7 @@ log_request_debug() {
     local model="$3"
     local prompt_chars="$4"
     local session_mode="$5"
+    local area_map_chars="$6"
     local log_file="$LOG_DIR/assist-$(date +%Y%m%d).log"
 
     {
@@ -285,6 +308,7 @@ log_request_debug() {
         echo "  Model:    ${model:-default}"
         echo "  Session:  ${session_mode}"
         echo "  Prompt:   $prompt_chars chars"
+        echo "  AreaMap:  ${area_map_chars:-0} chars"
         echo "  MaxTurns: $MAX_TURNS"
     } >> "$log_file"
 }
@@ -420,7 +444,8 @@ process_request() {
     # System prompt for Claude: kept concise for speed.
     # MCP tool details are discovered automatically from the server;
     # we only need to tell Claude its role and style.
-    local base_system_prompt="You are a Home Assistant voice assistant. You have FULL authorization to control all devices — never ask for permission or confirmation. Act immediately, then briefly confirm what you did in one short sentence.
+    local base_system_prompt="You are a Home Assistant voice assistant. You have FULL authorization to control all devices — never ask for permission or confirmation. Act immediately, then confirm what you did.
+This is a VOICE interface: replies are spoken aloud, so answer in 1-2 short sentences unless the user explicitly asks for detail or a document.
 Use your MCP tools (control_light, control_climate, control_media_player, control_cover, control_fan, control_switch, control_lock, control_alarm, control_vacuum, call_service, get_all_states, get_areas, activate_scene, run_script, send_notification, get_service_details)."
 
     # Splice in the cached area map so room commands need zero lookup turns
@@ -429,18 +454,17 @@ Use your MCP tools (control_light, control_climate, control_media_player, contro
     if [ -n "$area_map" ]; then
         base_system_prompt="${base_system_prompt}
 
-Known areas and their controllable entity_ids:
+Known areas and their controllable entity_ids (current and complete):
 ${area_map}
 
-Use these entity_ids directly — only call get_areas if something you need is missing above.
-For entities not listed, use get_all_states with the domain and name_filter arguments."
+Act on these entity_ids DIRECTLY with your control_* tools in your FIRST response — never call get_areas or get_all_states to verify an entity that is already listed.
+For weather questions, call get_entity_state on a Weather entity above.
+Only for entities not listed anywhere above, search with get_all_states (domain and name_filter arguments)."
     else
         base_system_prompt="${base_system_prompt}
 For room/area requests (e.g. 'turn off the bedroom lights') call get_areas to resolve the room to entity_ids first.
 If unsure of an entity_id, call get_all_states with a domain filter first."
     fi
-    base_system_prompt="${base_system_prompt}
-Keep responses concise."
 
     # Merge custom system prompt (from the conversation agent config) if provided
     local final_system_prompt="$base_system_prompt"
@@ -490,7 +514,7 @@ USER: ${text}"
     fi
 
     # Log the request for debugging
-    log_request_debug "$req_id" "$text" "$model" "${#message_fresh}" "$session_mode"
+    log_request_debug "$req_id" "$text" "$model" "${#message_fresh}" "$session_mode" "${#area_map}"
 
     local output_file stderr_file
     output_file=$(mktemp)

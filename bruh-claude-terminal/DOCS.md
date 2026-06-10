@@ -62,6 +62,7 @@ Every option from the add-on **Configuration** tab, grouped by what it controls.
 |--------|------|---------|-------------|
 | `enable_ha_mcp_server` | bool | `true` | Start the built-in MCP server that gives Claude entity states, service calls, automation traces, template rendering, logs, and config reloads. See the **MCP Server** section for the full tool list. |
 | `enable_assist_integration` | bool | `true` | Run the Assist listener. When the Voice Assistants pipeline routes a message to **BRUH Claude** (or a service call hits `bruh_claude.send_prompt`), the add-on picks it up from `/config/.bruh_claude/` and runs Claude Code to generate the response. |
+| `assist_fast_mode` | bool | `true` | Keep pre-warmed Claude worker processes alive for the Assist channel (one per active conversation plus a hot spare), so voice turns skip the CLI boot and MCP handshake. Costs ~150–300 MB RAM per warm worker (max 3). Set to `false` to use the classic spawn-per-request listener. |
 | `enable_automation_integration` | bool | `true` | Run the Automation listener. Drop a JSON task into `/data/automation-tasks/` (or call `bruh_claude.run_task`) and the add-on executes it with Claude Code in the background, optionally notifying you when it's done. |
 
 ### Non-interactive turn budgets
