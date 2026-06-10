@@ -384,6 +384,25 @@ The BRUH Claude integration is automatically discovered when the add-on starts. 
 
 When the integration is set up, "BRUH Claude" appears as a conversation agent in Settings > Voice Assistants. Select it as your default assistant to route voice/text queries through Claude.
 
+New conversation agents default to **Claude Haiku** for snappy voice
+responses; pick a different model per agent in the integration's options
+(`Default` inherits whatever model the terminal uses).
+
+#### Conversation memory
+
+Follow-up prompts work within a conversation: while the same Assist chat
+dialog or voice session stays open, Home Assistant keeps the same
+`conversation_id`, and the add-on resumes the same Claude Code session for
+each turn — Claude remembers the full conversation server-side. Starting a
+new conversation (closing and reopening the Assist dialog, a new voice
+session, restarting HA) gets a fresh `conversation_id` and therefore a
+clean slate. Call `bruh_claude.clear_conversation` to reset a conversation
+manually (omit `conversation_id` to reset all of them).
+
+If session resume isn't possible (e.g. an older Claude CLI), the
+integration falls back to replaying the last few turns of the transcript
+into each request, so follow-ups still work — just with shorter memory.
+
 ### Services
 
 ```yaml

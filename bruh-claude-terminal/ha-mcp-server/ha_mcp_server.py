@@ -77,13 +77,18 @@ def get_entity_state(entity_id):
     return result
 
 
-def get_all_states(domain=None):
-    """Get states of all entities, optionally filtered by domain."""
+# Cap on get_all_states results: an unfiltered dump of a large install is a
+# huge tool result that slows every model turn and can blow the context.
+MAX_STATE_RESULTS = 300
+
+
+def get_all_states(domain=None, name_filter=None):
+    """Get states of all entities, filtered by domain and/or name substring."""
     result = ha_api_request("/api/states")
     if isinstance(result, list):
         if domain:
             result = [e for e in result if e.get("entity_id", "").startswith(f"{domain}.")]
-        return [
+        entities = [
             {
                 "entity_id": e.get("entity_id"),
                 "state": e.get("state"),
@@ -91,6 +96,21 @@ def get_all_states(domain=None):
             }
             for e in result
         ]
+        if name_filter:
+            needle = name_filter.lower()
+            entities = [
+                e for e in entities
+                if needle in (e["entity_id"] or "").lower()
+                or needle in (e["friendly_name"] or "").lower()
+            ]
+        if len(entities) > MAX_STATE_RESULTS:
+            return {
+                "total_matches": len(entities),
+                "returned": MAX_STATE_RESULTS,
+                "note": "Result truncated — narrow the search with the domain and/or name_filter arguments.",
+                "entities": entities[:MAX_STATE_RESULTS],
+            }
+        return entities
     return result
 
 
@@ -734,13 +754,17 @@ TOOLS = [
     },
     {
         "name": "get_all_states",
-        "description": "Get a summary of all entity states in Home Assistant, optionally filtered by domain (e.g., 'light', 'sensor', 'automation', 'switch', 'climate').",
+        "description": "Get a summary of entity states in Home Assistant, filtered by domain and/or a name substring. Results are capped at 300 — always filter on large installations.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "domain": {
                     "type": "string",
                     "description": "Optional domain filter (e.g., 'light', 'sensor', 'switch', 'automation')"
+                },
+                "name_filter": {
+                    "type": "string",
+                    "description": "Optional case-insensitive substring matched against entity_id and friendly name (e.g., 'kitchen')"
                 }
             }
         }
@@ -1391,7 +1415,7 @@ def handle_tool_call(name, arguments):
         if name == "get_entity_state":
             return get_entity_state(arguments["entity_id"])
         elif name == "get_all_states":
-            return get_all_states(arguments.get("domain"))
+            return get_all_states(arguments.get("domain"), arguments.get("name_filter"))
         elif name == "call_service":
             return call_service(arguments["domain"], arguments["service"], arguments.get("data"))
         elif name == "get_service_details":

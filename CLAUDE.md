@@ -88,14 +88,15 @@ BRUH-HA-Apps/
 - Provides `bruh_claude.send_prompt`, `bruh_claude.run_task`, and `bruh_claude.clear_conversation` services
 - Usage-limit sensors reading from `/config/.bruh_claude/usage_limits.json` (real Anthropic account utilization; requires OAuth/subscription login)
 - Communicates with the add-on via shared files in `/config/.bruh_claude/`
-- Request/response flow: integration writes JSON → add-on processes → add-on writes JSON response
+- Request/response flow: integration writes JSON (unique per-request file id) → add-on processes → add-on writes JSON response named after the request id
+- Conversation continuity: the assist listener maps `conversation_id` → Claude session uuid in `/config/.bruh_claude/sessions/` and resumes the session on follow-up turns (`--session-id` / `--resume`); falls back to replaying recent history when resume isn't possible
 
 ### Permissions Architecture
 - **Interactive terminal**: `dangerously_skip_permissions` config option (default: **off**)
 - **Background listeners (Assist, Automation)**: Do NOT use `--dangerously-skip-permissions`. Instead, tool permissions are granted via `/config/.claude/settings.local.json`, which pre-approves MCP, Bash, Read, Write, Edit, WebFetch, and WebSearch tools. This avoids root-user restrictions of the flag.
 - **Project settings**: Written to `/config/.claude/settings.local.json` at startup by `setup_claude_settings()` in `run.sh`
 - **Non-root execution**: Claude Code runs as UID 1000 (`claude` user) via a wrapper script at `/usr/local/bin/claude-run` that uses `su-exec`
-- **Listener speed**: Both listeners use `--max-turns` to limit agentic loops (3 for Assist, 10 for Automation) and `--system-prompt` for efficient prompt handling
+- **Listener speed**: Both listeners use `--max-turns` to limit agentic loops (defaults: 5 for Assist, 10 for Automation; configurable). The assist listener also splices a cached area→entity map into the system prompt so most voice commands skip the `get_areas` lookup turn
 
 ### Container Environment
 - Base: Home Assistant Alpine Linux 3.19

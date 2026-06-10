@@ -7,8 +7,14 @@
 #   /config/.bruh_claude/tasks/        - incoming task requests (JSON)
 #   /config/.bruh_claude/task_results/ - outgoing task results (JSON)
 #
-# Request format:  {"id": "<uuid>", "prompt": "...", "notify": true, "notify_entity": "notify.mobile_app"}
+# Request format:  {"id": "<uuid>", "prompt": "...", "notify": true,
+#                   "notify_entity": "notify.mobile_app", "ts": <epoch>,
+#                   "timeout": <secs>}
 # Response format: {"id": "<uuid>", "result": "claude output", "status": "completed"}
+#
+# The integration sends the window it will wait ("timeout") with each task;
+# the listener keeps the claude process comfortably inside that window so a
+# result is always written before the bridge stops polling.
 #
 # Permissions:
 #   This listener does NOT use --dangerously-skip-permissions. Instead, tool
@@ -29,11 +35,14 @@ LOG_DIR="$SHARED_DIR/logs"
 # Configurable via the add-on's automation_max_turns option.
 MAX_TURNS="${BRUH_AUTOMATION_MAX_TURNS:-10}"
 
-# Process-level timeout for claude -p commands (seconds).
-# Automation tasks can be longer than conversation requests, so default is
-# higher.  Without this, a hung MCP connection causes claude -p to block
-# forever and no result file is ever written.
+# Default process-level timeout for claude -p commands (seconds), used when a
+# task doesn't carry its own timeout. The integration's task default (300s)
+# matches this; per-task timeouts in the payload always take precedence.
 CLAUDE_TIMEOUT="${BRUH_AUTOMATION_TIMEOUT:-300}"
+
+# Subtracted from a task's bridge timeout to get the claude process limit,
+# leaving room to write the result file before the bridge gives up.
+TIMEOUT_MARGIN=15
 
 mkdir -p "$TASKS_DIR" "$RESULTS_DIR" "$LOG_DIR"
 
@@ -53,7 +62,7 @@ if [ ! -x /usr/local/bin/claude-run ]; then
     fi
 fi
 
-bashio::log.info "Automation listener starting (UID=$(id -u), claude=$CLAUDE_BIN, max_turns=$MAX_TURNS, timeout=${CLAUDE_TIMEOUT}s)..."
+bashio::log.info "Automation listener starting (UID=$(id -u), claude=$CLAUDE_BIN, max_turns=$MAX_TURNS, default_timeout=${CLAUDE_TIMEOUT}s)..."
 bashio::log.info "Watching $TASKS_DIR for automation tasks"
 bashio::log.info "Debug logs: $LOG_DIR/automation-*.log"
 
@@ -61,10 +70,9 @@ bashio::log.info "Debug logs: $LOG_DIR/automation-*.log"
 # MCP config verification
 # ---------------------------------------------------------------------------
 
-# Verify /config/.mcp.json is clean before each Claude invocation.
-# A broken marketplace plugin can re-register an SSE MCP server entry
-# pointing to /api/mcp with invalid auth, causing task failures.
-verify_mcp_config() {
+# Fast check used on the hot path before each Claude invocation: only the
+# canonical project config, a single grep on a tiny file.
+verify_mcp_config_fast() {
     local mcp_file="/config/.mcp.json"
 
     if [ ! -f "$mcp_file" ]; then
@@ -88,6 +96,13 @@ MCP_CLEAN
         chmod 644 "$mcp_file"
         bashio::log.info "MCP config restored to clean state"
     fi
+}
+
+# Deep cleanup of every config a broken marketplace plugin can poison.
+# Runs at startup and after an /api/mcp error is detected — NOT per task
+# (the find over ~/.claude/projects grows with session count).
+verify_mcp_config_full() {
+    verify_mcp_config_fast
 
     # Check ~/.claude.json — the most common hiding spot for stale /api/mcp
     # entries added by marketplace plugins.
@@ -141,32 +156,80 @@ MCP_CLEAN
     fi
 }
 
+# Orphaned results accumulate when nothing consumes them — sweep periodically.
+cleanup_stale_files() {
+    find "$RESULTS_DIR" -name '*.json' -mmin +120 -delete 2>/dev/null || true
+    find "$RESULTS_DIR" -name '*.tmp' -mmin +120 -delete 2>/dev/null || true
+    find "$TASKS_DIR" -name '*.work.*' -mmin +120 -delete 2>/dev/null || true
+}
+
 # Process an automation task file
 process_task() {
     local task_file="$1"
-    local task_id
-    local prompt
-    local notify
-    local notify_entity
 
-    task_id=$(jq -r '.id // empty' "$task_file" 2>/dev/null)
-    prompt=$(jq -r '.prompt // empty' "$task_file" 2>/dev/null)
-    notify=$(jq -r '.notify // false' "$task_file" 2>/dev/null)
-    notify_entity=$(jq -r '.notify_entity // empty' "$task_file" 2>/dev/null)
+    # Claim the task atomically so the startup-backlog scan, inotify events,
+    # and the polling fallback can never double-process one file.
+    local work_file="${task_file%.json}.work.${BASHPID:-$$}"
+    mv "$task_file" "$work_file" 2>/dev/null || return 0
+
+    local task_id prompt notify notify_entity task_ts task_timeout
+
+    task_id=$(jq -r '.id // empty' "$work_file" 2>/dev/null)
+    prompt=$(jq -r '.prompt // empty' "$work_file" 2>/dev/null)
+    notify=$(jq -r '.notify // false' "$work_file" 2>/dev/null)
+    notify_entity=$(jq -r '.notify_entity // empty' "$work_file" 2>/dev/null)
+    task_ts=$(jq -r '.ts // empty' "$work_file" 2>/dev/null)
+    task_timeout=$(jq -r '.timeout // empty' "$work_file" 2>/dev/null)
 
     if [ -z "$task_id" ] || [ -z "$prompt" ]; then
         bashio::log.warning "Invalid task file: $task_file"
-        rm -f "$task_file"
+        rm -f "$work_file"
+        return
+    fi
+
+    # Bridge wait window for this task (drives staleness + process limit)
+    local has_task_timeout=1
+    case "$task_timeout" in
+        ''|*[!0-9]*) task_timeout="$CLAUDE_TIMEOUT"; has_task_timeout=0 ;;
+    esac
+    case "$task_ts" in
+        *[!0-9.]*) task_ts="" ;;
+    esac
+
+    # Discard tasks nobody is waiting for anymore (add-on was stopped,
+    # bridge already timed out).
+    local now age
+    now=$(date +%s)
+    if [ -n "$task_ts" ]; then
+        age=$((now - ${task_ts%.*}))
+    else
+        age=$((now - $(stat -c %Y "$work_file" 2>/dev/null || echo "$now")))
+    fi
+    if [ "$age" -gt $((task_timeout + 30)) ] 2>/dev/null; then
+        bashio::log.warning "Discarding stale task [$task_id] (${age}s old > ${task_timeout}s window)"
+        rm -f "$work_file"
         return
     fi
 
     bashio::log.info "Processing task [$task_id]: ${prompt:0:80}..."
+    rm -f "$work_file"
 
-    # Remove task file immediately
-    rm -f "$task_file"
+    cleanup_stale_files
 
-    # Ensure MCP config is clean before invoking Claude
-    verify_mcp_config
+    # Cheap canonical-config check only — the deep cleanup runs at startup
+    # and after detected /api/mcp errors.
+    verify_mcp_config_fast
+
+    # Claude process limit: stay inside the bridge's polling window so the
+    # result file always lands before the integration gives up. Tasks without
+    # a timeout (older integration) keep the configured default.
+    local claude_limit
+    if [ "$has_task_timeout" = "1" ]; then
+        claude_limit=$((task_timeout - TIMEOUT_MARGIN))
+        [ "$claude_limit" -lt 30 ] && claude_limit=30
+    else
+        claude_limit="$CLAUDE_TIMEOUT"
+    fi
 
     # Log request for debugging
     local log_file="$LOG_DIR/automation-$(date +%Y%m%d).log"
@@ -177,6 +240,7 @@ process_task() {
         echo "  Prompt:   ${prompt:0:500}"
         echo "  Chars:    ${#prompt}"
         echo "  Notify:   $notify"
+        echo "  Timeout:  ${claude_limit}s (bridge window ${task_timeout}s)"
         echo "  MaxTurns: $MAX_TURNS"
     } >> "$log_file"
 
@@ -192,7 +256,7 @@ process_task() {
     start_time=$(date +%s)
 
     # shellcheck disable=SC2086
-    (cd /config && printf '%s' "$prompt" | timeout "$CLAUDE_TIMEOUT" ${CLAUDE_BIN} -p --verbose --max-turns "$MAX_TURNS" > "$output_file" 2>"$stderr_file") || true
+    (cd /config && printf '%s' "$prompt" | timeout "$claude_limit" ${CLAUDE_BIN} -p --verbose --max-turns "$MAX_TURNS" > "$output_file" 2>"$stderr_file") || true
 
     local end_time duration
     end_time=$(date +%s)
@@ -203,57 +267,39 @@ process_task() {
     stderr_output=$(cat "$stderr_file" 2>/dev/null || echo "")
     rm -f "$output_file" "$stderr_file"
 
-    # Check for /api/mcp auth errors in stderr — clean configs and retry
+    # Check for /api/mcp auth errors in stderr — deep-clean configs and retry
+    # within the remaining time budget.
     if echo "$stderr_output" | grep -qi "/api/mcp\|invalid authentication.*mcp"; then
         bashio::log.error "Detected /api/mcp auth error in task [$task_id] — cleaning and retrying"
-        verify_mcp_config
+        verify_mcp_config_full
 
-        # Clean project-level configs
-        local claude_projects="/data/home/.claude/projects"
-        if [ -d "$claude_projects" ]; then
-            find "$claude_projects" -name "*.json" -type f -exec \
-                grep -l "/api/mcp" {} \; 2>/dev/null | while read -r f; do
-                local tmp
-                tmp=$(mktemp)
-                if jq '
-                    if .mcpServers then
-                        .mcpServers |= with_entries(
-                            select((.value | tostring) | contains("/api/mcp") | not)
-                        )
-                    else . end
-                ' "$f" > "$tmp" 2>/dev/null; then
-                    mv "$tmp" "$f"
-                    chown claude:claude "$f" 2>/dev/null || true
-                else
-                    rm -f "$tmp"
-                fi
-            done
+        local remaining=$((claude_limit - duration))
+        if [ "$remaining" -ge 30 ]; then
+            output_file=$(mktemp)
+            stderr_file=$(mktemp)
+
+            # shellcheck disable=SC2086
+            (cd /config && printf '%s' "$prompt" | timeout "$remaining" ${CLAUDE_BIN} -p --verbose --max-turns "$MAX_TURNS" > "$output_file" 2>"$stderr_file") || true
+
+            end_time=$(date +%s)
+            duration=$((end_time - start_time))
+
+            result=$(cat "$output_file" 2>/dev/null || echo "")
+            stderr_output=$(cat "$stderr_file" 2>/dev/null || echo "")
+            rm -f "$output_file" "$stderr_file"
+            bashio::log.info "Retried task [$task_id] after /api/mcp cleanup"
+        else
+            bashio::log.warning "No time budget left to retry task [$task_id] (${remaining}s remaining)"
         fi
-
-        # Retry with clean config
-        output_file=$(mktemp)
-        stderr_file=$(mktemp)
-        start_time=$(date +%s)
-
-        # shellcheck disable=SC2086
-        (cd /config && printf '%s' "$prompt" | timeout "$CLAUDE_TIMEOUT" ${CLAUDE_BIN} -p --verbose --max-turns "$MAX_TURNS" > "$output_file" 2>"$stderr_file") || true
-
-        end_time=$(date +%s)
-        duration=$((end_time - start_time))
-
-        result=$(cat "$output_file" 2>/dev/null || echo "")
-        stderr_output=$(cat "$stderr_file" 2>/dev/null || echo "")
-        rm -f "$output_file" "$stderr_file"
-        bashio::log.info "Retried task [$task_id] after /api/mcp cleanup"
     fi
 
     # If result is empty, something went wrong — check stderr for clues
     if [ -z "$result" ]; then
         bashio::log.error "Empty result for task [$task_id] after ${duration}s"
         bashio::log.error "Stderr: ${stderr_output:0:500}"
-        if [ "$duration" -ge "$((CLAUDE_TIMEOUT - 5))" ] 2>/dev/null; then
+        if [ "$duration" -ge "$((claude_limit - 5))" ] 2>/dev/null; then
             result="Claude task timed out after ${duration}s. This may be caused by a broken MCP server connection. Try restarting the BRUH Claude Terminal add-on."
-            bashio::log.error "Claude process timed out (limit=${CLAUDE_TIMEOUT}s)"
+            bashio::log.error "Claude process timed out (limit=${claude_limit}s)"
         elif echo "$stderr_output" | grep -qi "not logged in\|please log in\|authentication"; then
             result="Claude is not logged in. Please open the BRUH Claude Terminal sidebar and complete the OAuth login first."
         elif echo "$stderr_output" | grep -qi "permission\|not allowed\|denied"; then
@@ -332,6 +378,7 @@ listen_for_tasks() {
         bashio::log.info "Using inotifywait for efficient file watching"
 
         # Process any files that arrived before we started watching
+        # (process_task claims by rename, so the watcher can't double-pick)
         for task_file in "$TASKS_DIR"/*.json; do
             [ -f "$task_file" ] || continue
             process_task "$task_file" &
@@ -359,4 +406,6 @@ listen_for_tasks() {
 }
 
 # Main
+verify_mcp_config_full
+cleanup_stale_files
 listen_for_tasks
