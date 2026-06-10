@@ -26,6 +26,17 @@ The BRUH Claude app deploys a custom Home Assistant integration (`custom_compone
 
 **To restart:** Go to **Settings > System > Restart**, then check **Settings > Devices & Services** for BRUH Claude.
 
+## Update Not Showing Up?
+
+The Supervisor only re-pulls add-on repositories periodically, so a freshly
+released version (what you see in this repo's CHANGELOG on GitHub) can take a
+while to appear as an update in your instance — the store page keeps showing
+the version from its last refresh until then.
+
+To pick it up immediately: **Settings > Add-ons > Add-on Store > ⋮ (top
+right) > Check for updates**, then go back to the add-on page. (`ha store
+reload` from the SSH add-on does the same.)
+
 ## Configuration Reference
 
 Every option from the add-on **Configuration** tab, grouped by what it controls. All defaults match `config.yaml` as shipped; the Supervisor validates each value against the schema before the add-on starts.
