@@ -53,7 +53,7 @@ SESSION_FLAGS_MARKER="$CACHE_DIR/session_flags_unsupported"
 # round-trip (saves a whole model turn on most voice commands).
 AREA_MAP_FILE="$CACHE_DIR/area_map.txt"
 AREA_MAP_TTL=300        # seconds before a background refresh is triggered
-AREA_MAP_MAX_BYTES=12000
+AREA_MAP_MAX_BYTES=16000
 
 # Maximum number of agentic turns per request.
 # Configurable via the add-on's assist_max_turns option.
@@ -194,11 +194,18 @@ refresh_area_map() {
 
     # Pure core-Jinja (namespace + split) — no HA-version-specific tests like
     # `match`/`regex_match`, so it renders on any HA release. Weather and
-    # person entities usually have no area, so they get their own sections;
-    # without them every "what's the weather" pays a discovery turn.
+    # person entities usually have no area, so they get their own sections —
+    # FIRST, so a truncated oversized map can only ever drop areas, never
+    # the sections voice asks about constantly.
     local template payload rendered
     template=$(cat << 'JINJA'
 {%- set domains = ['light','switch','climate','media_player','cover','fan','lock','vacuum','scene','script','alarm_control_panel','input_boolean'] -%}
+{%- set weather = states.weather | map(attribute='entity_id') | list -%}
+{%- if weather %}Weather: {{ weather | join(', ') }}
+{% endif -%}
+{%- set people = states.person | map(attribute='entity_id') | list -%}
+{%- if people %}People: {{ people | join(', ') }}
+{% endif -%}
 {%- for a in areas() -%}
 {%- set ns = namespace(ents=[]) -%}
 {%- for e in area_entities(a) -%}
@@ -207,12 +214,6 @@ refresh_area_map() {
 {%- if ns.ents %}{{ area_name(a) }}: {{ ns.ents | join(', ') }}
 {% endif -%}
 {%- endfor -%}
-{%- set weather = states.weather | map(attribute='entity_id') | list -%}
-{%- if weather %}Weather: {{ weather | join(', ') }}
-{% endif -%}
-{%- set people = states.person | map(attribute='entity_id') | list -%}
-{%- if people %}People: {{ people | join(', ') }}
-{% endif -%}
 JINJA
 )
     payload=$(jq -n --arg t "$template" '{"template": $t}')
@@ -237,7 +238,15 @@ JINJA
         return 1
     }
 
-    printf '%s\n' "$rendered" | head -c "$AREA_MAP_MAX_BYTES" > "${AREA_MAP_FILE}.tmp"
+    # Truncate oversized maps on a line boundary (a cut-off entity_id would
+    # be worse than a missing area) and make the truncation visible.
+    if [ "${#rendered}" -gt "$AREA_MAP_MAX_BYTES" ]; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] AREA-MAP truncated: ${#rendered} chars > ${AREA_MAP_MAX_BYTES} (some areas omitted — raise AREA_MAP_MAX_BYTES if entities are missed)" \
+            >> "$LOG_DIR/assist-$(date +%Y%m%d).log"
+        printf '%s\n' "$rendered" | head -c "$AREA_MAP_MAX_BYTES" | sed '$d' > "${AREA_MAP_FILE}.tmp"
+    else
+        printf '%s\n' "$rendered" > "${AREA_MAP_FILE}.tmp"
+    fi
     mv "${AREA_MAP_FILE}.tmp" "$AREA_MAP_FILE"
     return 0
 }
@@ -358,6 +367,12 @@ invoke_claude() {
         new:*)    session_args=(--session-id "${session_spec#new:}") ;;
     esac
 
+    # Voice tool scoping (assist_tool_access: mcp_only) — deny-list settings
+    local scope_args=()
+    if [ "${BRUH_ASSIST_TOOL_ACCESS:-mcp_only}" = "mcp_only" ] && [ -f "$SHARED_DIR/assist_settings.json" ]; then
+        scope_args=(--settings "$SHARED_DIR/assist_settings.json")
+    fi
+
     # Run Claude in print mode from /config so it finds .mcp.json for HA tools
     # and .claude/settings.local.json for pre-approved tool permissions.
     # Plain text output (no --output-format json) — proven reliable here.
@@ -365,7 +380,7 @@ invoke_claude() {
     (cd /config && printf '%s' "$message" | timeout "$limit" \
         ${CLAUDE_BIN} -p --verbose --max-turns "$MAX_TURNS" \
         --system-prompt "$final_system_prompt" \
-        "${session_args[@]}" \
+        "${session_args[@]}" "${scope_args[@]}" \
         ${model_flag} > "$output_file" 2>"$stderr_file")
 }
 
@@ -446,7 +461,9 @@ process_request() {
     # we only need to tell Claude its role and style.
     local base_system_prompt="You are a Home Assistant voice assistant. You have FULL authorization to control all devices — never ask for permission or confirmation. Act immediately, then confirm what you did.
 This is a VOICE interface: replies are spoken aloud, so answer in 1-2 short sentences unless the user explicitly asks for detail or a document.
-Use your MCP tools (control_light, control_climate, control_media_player, control_cover, control_fan, control_switch, control_lock, control_alarm, control_vacuum, call_service, get_all_states, get_areas, activate_scene, run_script, send_notification, get_service_details)."
+Use your MCP tools (control_light, control_climate, control_media_player, control_cover, control_fan, control_switch, control_lock, control_alarm, control_vacuum, call_service, get_all_states, get_areas, activate_scene, run_script, send_notification, get_service_details).
+For questions about the PAST ('how cold did it get last night', 'when did the garage open'), use get_history (recent detail) or get_statistics (daily min/max/mean over weeks).
+To CHECK A CAMERA or visually verify something, use get_camera_snapshot and describe what you see."
 
     # Splice in the cached area map so room commands need zero lookup turns
     local area_map

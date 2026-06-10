@@ -28,13 +28,16 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import shlex
+import socket
 import subprocess
 import sys
 import threading
 import time
 import urllib.request
 import uuid
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from queue import Empty, Queue
 
 # ---------------------------------------------------------------------------
@@ -63,7 +66,27 @@ WORKER_MAX_AGE = int(os.environ.get("BRUH_ASSIST_MAX_AGE", "1800"))
 SPARE_RECYCLE = int(os.environ.get("BRUH_ASSIST_SPARE_RECYCLE", "600"))
 
 AREA_MAP_TTL = 300
-AREA_MAP_MAX_BYTES = 12000
+AREA_MAP_MAX_BYTES = 16000
+
+# Internal HTTP API (health + streaming conversations). Reachable by HA Core
+# over the hassio network; conversation requests require the shared token.
+API_PORT = int(os.environ.get("BRUH_API_PORT", "8099"))
+API_TOKEN_FILE = os.path.join(SHARED_DIR, "api_token")
+API_ENDPOINT_FILE = os.path.join(SHARED_DIR, "api_endpoint.json")
+POOL_STATUS_FILE = os.path.join(CACHE_DIR, "pool_status.json")
+
+# Voice tool scoping: with mcp_only (default), workers get a deny-list
+# settings file so voice can control the house but not run Bash/edit files.
+TOOL_ACCESS = os.environ.get("BRUH_ASSIST_TOOL_ACCESS", "mcp_only")
+ASSIST_SETTINGS_FILE = os.path.join(SHARED_DIR, "assist_settings.json")
+
+# --include-partial-messages gives token-level deltas for streaming TTS.
+# Disabled automatically if the installed CLI predates the flag.
+PARTIAL_MESSAGES_OK = True
+
+# Last-used agent profile (custom prompt + model), persisted so the spare
+# can be pre-warmed right at startup instead of after the first request.
+LAST_PROFILE_FILE = os.path.join(CACHE_DIR, "last_profile.json")
 
 SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 TEMPLATE_API = os.environ.get(
@@ -71,9 +94,17 @@ TEMPLATE_API = os.environ.get(
 )
 
 # Mirrors the area-map template in assist-listener.sh — pure core Jinja so
-# it renders on any HA version. Keep the two in sync.
+# it renders on any HA version. Weather/People come FIRST so an oversized,
+# truncated map can only ever drop areas, never these sections. Keep the
+# two copies in sync.
 AREA_MAP_TEMPLATE = """\
 {%- set domains = ['light','switch','climate','media_player','cover','fan','lock','vacuum','scene','script','alarm_control_panel','input_boolean'] -%}
+{%- set weather = states.weather | map(attribute='entity_id') | list -%}
+{%- if weather %}Weather: {{ weather | join(', ') }}
+{% endif -%}
+{%- set people = states.person | map(attribute='entity_id') | list -%}
+{%- if people %}People: {{ people | join(', ') }}
+{% endif -%}
 {%- for a in areas() -%}
 {%- set ns = namespace(ents=[]) -%}
 {%- for e in area_entities(a) -%}
@@ -82,18 +113,14 @@ AREA_MAP_TEMPLATE = """\
 {%- if ns.ents %}{{ area_name(a) }}: {{ ns.ents | join(', ') }}
 {% endif -%}
 {%- endfor -%}
-{%- set weather = states.weather | map(attribute='entity_id') | list -%}
-{%- if weather %}Weather: {{ weather | join(', ') }}
-{% endif -%}
-{%- set people = states.person | map(attribute='entity_id') | list -%}
-{%- if people %}People: {{ people | join(', ') }}
-{% endif -%}
 """
 
 # Mirrors the base system prompt in assist-listener.sh. Keep in sync.
 BASE_SYSTEM_PROMPT = """You are a Home Assistant voice assistant. You have FULL authorization to control all devices — never ask for permission or confirmation. Act immediately, then confirm what you did.
 This is a VOICE interface: replies are spoken aloud, so answer in 1-2 short sentences unless the user explicitly asks for detail or a document.
-Use your MCP tools (control_light, control_climate, control_media_player, control_cover, control_fan, control_switch, control_lock, control_alarm, control_vacuum, call_service, get_all_states, get_areas, activate_scene, run_script, send_notification, get_service_details)."""
+Use your MCP tools (control_light, control_climate, control_media_player, control_cover, control_fan, control_switch, control_lock, control_alarm, control_vacuum, call_service, get_all_states, get_areas, activate_scene, run_script, send_notification, get_service_details).
+For questions about the PAST ('how cold did it get last night', 'when did the garage open'), use get_history (recent detail) or get_statistics (daily min/max/mean over weeks).
+To CHECK A CAMERA or visually verify something, use get_camera_snapshot and describe what you see."""
 
 MAP_PROMPT = """
 
@@ -137,6 +164,15 @@ def resolve_claude_cmd() -> list[str]:
     return ["claude"]
 
 
+def scoping_args() -> list:
+    """Per-channel tool scoping: in mcp_only mode workers load a deny-list
+    settings file (written by run.sh) that blocks Bash/file/web tools while
+    the project allowlist keeps every MCP tool available."""
+    if TOOL_ACCESS == "mcp_only" and os.path.isfile(ASSIST_SETTINGS_FILE):
+        return ["--settings", ASSIST_SETTINGS_FILE]
+    return []
+
+
 # ---------------------------------------------------------------------------
 # Area map (same cache file as the classic listener)
 # ---------------------------------------------------------------------------
@@ -166,12 +202,26 @@ def refresh_area_map() -> bool:
     if not rendered or rendered.startswith("{") or ":" not in rendered:
         debug_log([f"[{{ts}}] AREA-MAP refresh FAILED: {rendered[:300]}"])
         return False
+    if len(rendered) > AREA_MAP_MAX_BYTES:
+        debug_log([
+            f"[{{ts}}] AREA-MAP truncated: {len(rendered)} chars > "
+            f"{AREA_MAP_MAX_BYTES} (some areas omitted)"
+        ])
+        rendered = _truncate_at_line(rendered, AREA_MAP_MAX_BYTES)
     os.makedirs(CACHE_DIR, exist_ok=True)
     tmp = AREA_MAP_FILE + ".tmp"
     with open(tmp, "w") as fh:
-        fh.write(rendered[:AREA_MAP_MAX_BYTES])
+        fh.write(rendered)
     os.replace(tmp, AREA_MAP_FILE)
     return True
+
+
+def _truncate_at_line(text: str, cap: int) -> str:
+    """Cap text without leaving a cut-off entity_id on the last line."""
+    if len(text) <= cap:
+        return text
+    cut = text[:cap]
+    return cut[: cut.rfind("\n") + 1]
 
 
 def get_area_map() -> str:
@@ -204,6 +254,32 @@ def build_system_prompt(custom: str) -> str:
     return prompt
 
 
+def save_last_profile(custom: str, model: str) -> None:
+    """Remember the agent profile so the next pool start pre-warms with it."""
+    try:
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        tmp = LAST_PROFILE_FILE + ".tmp"
+        with open(tmp, "w") as fh:
+            json.dump({"system_prompt": custom, "model": model}, fh)
+        os.replace(tmp, LAST_PROFILE_FILE)
+    except OSError:
+        pass
+
+
+def prewarm_spare(pool: "Pool") -> None:
+    """Spawn the spare at startup from the last-used agent profile, so even
+    the first voice command after an add-on restart skips the cold start."""
+    custom, model = "", "default"
+    try:
+        with open(LAST_PROFILE_FILE) as fh:
+            data = json.load(fh)
+        custom = data.get("system_prompt") or ""
+        model = data.get("model") or "default"
+    except (OSError, json.JSONDecodeError, AttributeError):
+        pass
+    pool._spawn_spare((build_system_prompt(custom), model))
+
+
 # ---------------------------------------------------------------------------
 # Worker: one live `claude` stream-json process
 # ---------------------------------------------------------------------------
@@ -229,6 +305,9 @@ class Worker:
             "--max-turns", str(max(int(MAX_TURNS) * 10, 50)),
             "--system-prompt", system_prompt,
         ]
+        if PARTIAL_MESSAGES_OK:
+            cmd += ["--include-partial-messages"]
+        cmd += scoping_args()
         if model and model != "default":
             cmd += ["--model", model]
         if resume:
@@ -265,8 +344,14 @@ class Worker:
     def alive(self) -> bool:
         return self.proc.poll() is None
 
-    def ask(self, text: str, deadline: float) -> str | None:
-        """Send one user message, wait for its result event."""
+    def ask(self, text: str, deadline: float, delta_cb=None) -> str | None:
+        """Send one user message, wait for its result event.
+
+        When delta_cb is given, assistant text is forwarded incrementally:
+        token-level via stream_event deltas when the CLI supports
+        --include-partial-messages, otherwise per-turn via assistant
+        message events.
+        """
         msg = {
             "type": "user",
             "message": {
@@ -280,6 +365,7 @@ class Worker:
         except (OSError, ValueError):
             return None
 
+        saw_partial = False
         while True:
             remaining = deadline - time.time()
             if remaining <= 0:
@@ -291,7 +377,17 @@ class Worker:
             etype = event.get("type")
             if etype == "_eof":
                 return None
-            if etype == "result":
+            if etype == "stream_event" and delta_cb is not None:
+                delta = (event.get("event") or {}).get("delta") or {}
+                if delta.get("type") == "text_delta" and delta.get("text"):
+                    saw_partial = True
+                    delta_cb(delta["text"])
+            elif etype == "assistant" and delta_cb is not None and not saw_partial:
+                # Coarse fallback: stream each turn's text as one chunk
+                for block in (event.get("message") or {}).get("content") or []:
+                    if isinstance(block, dict) and block.get("type") == "text" and block.get("text"):
+                        delta_cb(block["text"])
+            elif etype == "result":
                 if event.get("is_error"):
                     return None
                 result = event.get("result")
@@ -315,6 +411,8 @@ class Pool:
         self.spare: Worker | None = None
         self.lock = threading.Lock()
         self.conv_locks: dict[str, threading.Lock] = {}
+        self.started = time.time()
+        self.last_request: dict | None = None
 
     # -- worker lifecycle ---------------------------------------------------
 
@@ -338,8 +436,17 @@ class Pool:
         with self.lock:
             worker = self.workers.get(conv_id)
             if worker and worker.alive() and worker.profile == profile:
-                return worker, "warm"
-            if worker:
+                # clear_conversation deletes the session mapping; a live
+                # worker that already answered must honor that and start
+                # fresh instead of reusing its in-process context.
+                if worker.last_used > worker.created and not os.path.isfile(
+                    os.path.join(SESSIONS_DIR, conv_id)
+                ):
+                    worker.kill()
+                    self.workers.pop(conv_id, None)
+                else:
+                    return worker, "warm"
+            elif worker:
                 worker.kill()
                 self.workers.pop(conv_id, None)
 
@@ -416,6 +523,11 @@ class Pool:
     # -- request handling -----------------------------------------------------
 
     def handle(self, req: dict) -> None:
+        """File-protocol frontend: process the request, write the response."""
+        response = self.process(req)
+        write_response(req["id"], response)
+
+    def process(self, req: dict, delta_cb=None) -> str:
         req_id = req["id"]
         text = req["text"]
         conv_id = "".join(
@@ -427,9 +539,11 @@ class Pool:
         limit = max(window - TIMEOUT_MARGIN, LIMIT_FLOOR)
         deadline = time.time() + limit
 
-        system_prompt = build_system_prompt(req.get("system_prompt") or "")
+        custom_prompt = req.get("system_prompt") or ""
         model = req.get("model") or "default"
+        system_prompt = build_system_prompt(custom_prompt)
         profile = (system_prompt, model)
+        save_last_profile(custom_prompt, model)
 
         debug_log([
             "================================================================",
@@ -459,7 +573,13 @@ class Pool:
                     )
 
                 with worker.lock:
-                    response = worker.ask(message, deadline)
+                    response = worker.ask(message, deadline, delta_cb=delta_cb)
+                if response is None and not worker.alive() and \
+                        time.time() - worker.created < 5 and PARTIAL_MESSAGES_OK:
+                    # CLI likely predates --include-partial-messages: disable
+                    # it for future workers and let the fallback answer now.
+                    globals()["PARTIAL_MESSAGES_OK"] = False
+                    log("worker died at spawn — disabling --include-partial-messages")
                 if response is not None:
                     worker.last_used = time.time()
                     self._store_session(conv_id, worker.session_id)
@@ -497,7 +617,11 @@ class Pool:
             "----------------------------------------------------------------",
         ])
         log(f"request {req_id}: {duration:.1f}s ({mode})")
-        write_response(req_id, response)
+        self.last_request = {
+            "ts": time.time(), "duration_s": round(duration, 1), "mode": mode,
+        }
+        write_pool_status(self)
+        return response
 
     @staticmethod
     def _oneshot(
@@ -518,7 +642,7 @@ class Pool:
             "-p", "--verbose",
             "--max-turns", str(MAX_TURNS),
             "--system-prompt", system_prompt,
-        ]
+        ] + scoping_args()
         if model and model != "default":
             cmd += ["--model", model]
         try:
@@ -533,6 +657,162 @@ class Pool:
             return proc.stdout.strip() or None
         except (subprocess.TimeoutExpired, OSError):
             return None
+
+
+# ---------------------------------------------------------------------------
+# HTTP frontend: /health (open) + /conversation (token-auth, SSE streaming)
+# ---------------------------------------------------------------------------
+
+
+def load_or_create_token() -> str:
+    """Shared secret for the conversation endpoint, exchanged over the
+    /config volume both containers already share (0600)."""
+    try:
+        with open(API_TOKEN_FILE) as fh:
+            token = fh.read().strip()
+        if len(token) >= 16:
+            return token
+    except OSError:
+        pass
+    token = secrets.token_hex(16)
+    os.makedirs(SHARED_DIR, exist_ok=True)
+    fd = os.open(API_TOKEN_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        fh.write(token)
+    return token
+
+
+def publish_endpoint(port: int) -> None:
+    """Tell the integration where to find us (read off the shared volume).
+    The container hostname is reachable from HA Core on the hassio network."""
+    data = {
+        "host": os.environ.get("HOSTNAME") or socket.gethostname(),
+        "port": port,
+        "protocol_version": 1,
+        "ts": time.time(),
+    }
+    tmp = API_ENDPOINT_FILE + ".tmp"
+    with open(tmp, "w") as fh:
+        json.dump(data, fh)
+    os.replace(tmp, API_ENDPOINT_FILE)
+
+
+def write_pool_status(pool) -> None:
+    """Heartbeat consumed by the integration's health sensor (file fallback
+    when the HTTP endpoint isn't reachable)."""
+    try:
+        status = {
+            "ts": time.time(),
+            "status": "ok",
+            "workers": len(pool.workers),
+            "spare_ready": bool(pool.spare is not None and pool.spare.alive()),
+            "uptime_s": int(time.time() - pool.started),
+            "last_request": pool.last_request,
+            "tool_access": TOOL_ACCESS,
+        }
+        tmp = POOL_STATUS_FILE + ".tmp"
+        with open(tmp, "w") as fh:
+            json.dump(status, fh)
+        os.replace(tmp, POOL_STATUS_FILE)
+    except OSError:
+        pass
+
+
+class ApiHandler(BaseHTTPRequestHandler):
+    """Stdlib HTTP handler — one thread per connection via ThreadingHTTPServer."""
+
+    pool: "Pool" = None  # set by start_http_server
+    token: str = ""
+
+    # Quiet the default per-request stderr logging
+    def log_message(self, fmt, *args):  # noqa: N802
+        pass
+
+    def _json(self, code: int, payload: dict) -> None:
+        body = json.dumps(payload).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):  # noqa: N802
+        if self.path != "/health":
+            self._json(404, {"error": "not found"})
+            return
+        pool = self.pool
+        self._json(200, {
+            "status": "ok",
+            "workers": len(pool.workers),
+            "spare_ready": bool(pool.spare is not None and pool.spare.alive()),
+            "uptime_s": int(time.time() - pool.started),
+            "last_request": pool.last_request,
+            "tool_access": TOOL_ACCESS,
+        })
+
+    def do_POST(self):  # noqa: N802
+        if self.path != "/conversation":
+            self._json(404, {"error": "not found"})
+            return
+        if self.headers.get("X-BRUH-Token", "") != self.token:
+            self._json(401, {"error": "bad token"})
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            req = json.loads(self.rfile.read(length))
+            assert isinstance(req, dict) and req.get("id") and req.get("text")
+        except Exception:  # noqa: BLE001
+            self._json(400, {"error": "invalid request body"})
+            return
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+
+        write_lock = threading.Lock()
+
+        def emit(payload: dict) -> None:
+            data = f"data: {json.dumps(payload)}\n\n".encode()
+            with write_lock:
+                self.wfile.write(data)
+                self.wfile.flush()
+
+        def delta_cb(text: str) -> None:
+            try:
+                emit({"type": "delta", "text": text})
+            except OSError:
+                pass  # client went away; result still completes server-side
+
+        try:
+            response = self.pool.process(req, delta_cb=delta_cb)
+            emit({"type": "result", "text": response})
+        except OSError:
+            pass  # client disconnected mid-stream
+        except Exception as exc:  # noqa: BLE001
+            try:
+                emit({"type": "error", "message": str(exc)})
+            except OSError:
+                pass
+
+
+def start_http_server(pool) -> None:
+    """Serve the internal API; failure is non-fatal (file IPC keeps working)."""
+    try:
+        token = load_or_create_token()
+        ApiHandler.pool = pool
+        ApiHandler.token = token
+        server = ThreadingHTTPServer(("0.0.0.0", API_PORT), ApiHandler)
+        server.daemon_threads = True
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        publish_endpoint(API_PORT)
+        log(f"HTTP API listening on :{API_PORT} (health + streaming conversations)")
+    except Exception as exc:  # noqa: BLE001
+        log(f"HTTP API failed to start ({exc}) — file IPC only")
+        try:
+            os.remove(API_ENDPOINT_FILE)
+        except OSError:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -604,10 +884,16 @@ def main() -> None:
         f"starting (poll={POLL_INTERVAL}s, max_workers={MAX_WORKERS}, "
         f"max_turns={MAX_TURNS}, default_timeout={DEFAULT_TIMEOUT}s)"
     )
-    threading.Thread(target=refresh_area_map, daemon=True).start()
+    # Refresh the map synchronously first so the pre-warmed spare bakes in
+    # the same map the first request will build — otherwise their system
+    # prompts differ and the spare is never adopted.
+    refresh_area_map()
     cleanup_stale_files()
 
     pool = Pool()
+    start_http_server(pool)
+    prewarm_spare(pool)
+    write_pool_status(pool)
     last_housekeeping = time.time()
 
     while True:
@@ -629,6 +915,7 @@ def main() -> None:
             last_housekeeping = now
             pool.reap()
             cleanup_stale_files()
+            write_pool_status(pool)
 
         time.sleep(POLL_INTERVAL)
 

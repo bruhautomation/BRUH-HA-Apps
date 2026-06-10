@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 
 import voluptuous as vol
 
@@ -22,6 +23,15 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import Event, HomeAssistant, ServiceCall
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.dispatcher import async_dispatcher_send
+from homeassistant.helpers.event import (
+    async_call_later,
+    async_track_time_change,
+    async_track_time_interval,
+)
+from homeassistant.helpers.template import Template
+from homeassistant.util import dt as dt_util
+from datetime import timedelta
 
 try:
     from homeassistant.core import SupportsResponse
@@ -32,14 +42,27 @@ from .bridge import ClaudeBridge
 from .const import (
     CONF_ENABLE_CONVERSATION,
     CONF_ENABLE_SENSORS,
+    CONF_ENTRY_TYPE,
+    CONF_INSIGHT_DAILY_AT,
+    CONF_INSIGHT_INTERVAL,
+    CONF_INSIGHT_PROMPT,
+    CONF_INSIGHT_TEMPLATE,
     CONF_MODEL,
     CONF_SYSTEM_PROMPT,
     CONF_TIMEOUT,
+    DEFAULT_INSIGHT_TIMEOUT,
     DEFAULT_MODEL,
     DEFAULT_SYSTEM_PROMPT,
     DEFAULT_TIMEOUT,
     DOMAIN,
+    ENTRY_TYPE_AGENT,
+    ENTRY_TYPE_INSIGHT,
+    EVENT_INSIGHT_COMPLETE,
+    INSIGHTS_DIR,
+    SHARED_DIR,
+    SIGNAL_INSIGHT_UPDATE,
 )
+from .insight_format import INSIGHT_TEMPLATES, truncate_markdown
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -76,15 +99,30 @@ CLEAR_CONVERSATION_SCHEMA = vol.Schema(
     }
 )
 
+RUN_INSIGHT_SCHEMA = vol.Schema(
+    {
+        vol.Optional("name"): str,
+    }
+)
+
+
+def entry_type(entry: ConfigEntry) -> str:
+    """Entries created before 3.0 have no type and are conversation agents."""
+    return entry.data.get(CONF_ENTRY_TYPE, ENTRY_TYPE_AGENT)
+
 
 def _get_platforms(entry: ConfigEntry) -> list[Platform]:
     """Return the list of platforms to set up for this config entry."""
+    if entry_type(entry) == ENTRY_TYPE_INSIGHT:
+        return [Platform.SENSOR]
     opts = {**entry.data, **entry.options}
     platforms: list[Platform] = []
     if opts.get(CONF_ENABLE_CONVERSATION, True):
         platforms.append(Platform.CONVERSATION)
     if opts.get(CONF_ENABLE_SENSORS, True):
         platforms.append(Platform.SENSOR)
+        # The system health binary sensor rides with the sensors-owner entry
+        platforms.append(Platform.BINARY_SENSOR)
     return platforms
 
 
@@ -131,6 +169,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if not hass.services.has_service(DOMAIN, "send_prompt"):
         _register_services(hass)
 
+    if entry_type(entry) == ENTRY_TYPE_INSIGHT:
+        _setup_insight_schedule(hass, entry)
+
     # Check if the add-on deployed newer integration files that need a restart
     await _check_restart_required(hass)
 
@@ -176,8 +217,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if not eid.startswith("_") and not eid.endswith("_platforms")
         ]
 
-        # If this entry owned the account-wide sensors, clear the flag so
-        # another entry can recreate them on its next reload.
+        # If this entry owned the account-wide sensors, clear the flags so
+        # another entry (or this one, on reload) can recreate them.
+        if hass.data[DOMAIN].get("_health_entry") == entry.entry_id:
+            hass.data[DOMAIN].pop("_health_entry", None)
+            hass.data[DOMAIN].pop("_health_added", None)
         if hass.data[DOMAIN].get("_sensors_entry") == entry.entry_id:
             hass.data[DOMAIN].pop("_sensors_entry", None)
             hass.data[DOMAIN].pop("_sensors_added", None)
@@ -191,7 +235,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Last entry removed — tear down the domain services so they don't
         # linger and raise "not configured" if called with no bridge.
         if not remaining:
-            for service in ("send_prompt", "run_task", "clear_conversation"):
+            for service in ("send_prompt", "run_task", "clear_conversation", "run_insight"):
                 if hass.services.has_service(DOMAIN, service):
                     hass.services.async_remove(DOMAIN, service)
     return unload_ok
@@ -284,6 +328,134 @@ def _remove_file(path: str) -> None:
         pass
 
 
+# ---------------------------------------------------------------------------
+# Insight jobs
+# ---------------------------------------------------------------------------
+
+
+def _setup_insight_schedule(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Wire up interval/daily triggers and an initial run for an insight job."""
+    opts = {**entry.data, **entry.options}
+
+    async def _scheduled_run(_now=None) -> None:
+        await _async_run_insight(hass, entry)
+
+    interval = opts.get(CONF_INSIGHT_INTERVAL) or 0
+    if isinstance(interval, (int, float)) and interval >= 5:
+        entry.async_on_unload(
+            async_track_time_interval(
+                hass, _scheduled_run, timedelta(minutes=int(interval))
+            )
+        )
+
+    daily_at = (opts.get(CONF_INSIGHT_DAILY_AT) or "").strip()
+    if daily_at:
+        try:
+            hour, minute = (int(part) for part in daily_at.split(":", 1))
+            entry.async_on_unload(
+                async_track_time_change(
+                    hass, _scheduled_run, hour=hour, minute=minute, second=0
+                )
+            )
+        except (ValueError, TypeError):
+            _LOGGER.warning(
+                "Insight job '%s' has invalid daily_at '%s' (expected HH:MM)",
+                entry.title, daily_at,
+            )
+
+    # One run shortly after setup so the sensor isn't empty until the first
+    # scheduled slot. Delay gives the add-on time to come up after a restart.
+    entry.async_on_unload(
+        async_call_later(hass, 90, _scheduled_run)
+    )
+
+
+async def _async_run_insight(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Run one insight job: render prompt -> task channel -> sensor + event."""
+    running = hass.data[DOMAIN].setdefault("_insights_running", set())
+    if entry.entry_id in running:
+        _LOGGER.debug("Insight '%s' already running — skipped", entry.title)
+        return
+    running.add(entry.entry_id)
+    try:
+        opts = {**entry.data, **entry.options}
+        prompt_text = (opts.get(CONF_INSIGHT_PROMPT) or "").strip()
+        if not prompt_text:
+            template_key = opts.get(CONF_INSIGHT_TEMPLATE, "daily_briefing")
+            prompt_text = INSIGHT_TEMPLATES.get(
+                template_key, INSIGHT_TEMPLATES["daily_briefing"]
+            )
+
+        # Custom prompts may embed HA Jinja ({{ states(...) }}) for
+        # deterministic data injection — render before sending.
+        try:
+            prompt = Template(prompt_text, hass).async_render(parse_result=False)
+        except Exception:  # noqa: BLE001 — template errors fall back to raw text
+            _LOGGER.warning(
+                "Insight '%s': prompt template failed to render; sending raw",
+                entry.title,
+            )
+            prompt = prompt_text
+
+        bridge = _get_bridge(hass)
+        timeout = opts.get(CONF_TIMEOUT) or DEFAULT_INSIGHT_TIMEOUT
+        model = opts.get(CONF_MODEL) or "default"
+        started = time.monotonic()
+        payload: dict
+        try:
+            result = await bridge.async_send_task(
+                prompt=prompt, timeout=timeout, model=model
+            )
+            payload = {
+                "markdown": truncate_markdown(result),
+                "last_success": dt_util.utcnow().isoformat(),
+                "duration_s": round(time.monotonic() - started, 1),
+                "error": None,
+            }
+        except Exception as exc:  # noqa: BLE001 — surface failure on the sensor
+            payload = {
+                "duration_s": round(time.monotonic() - started, 1),
+                "error": str(exc),
+            }
+
+        await hass.async_add_executor_job(
+            _persist_insight, hass.config.path(SHARED_DIR, INSIGHTS_DIR),
+            entry.entry_id, payload,
+        )
+        async_dispatcher_send(
+            hass, SIGNAL_INSIGHT_UPDATE.format(entry.entry_id), payload
+        )
+        hass.bus.async_fire(
+            EVENT_INSIGHT_COMPLETE,
+            {
+                "name": entry.title,
+                "entry_id": entry.entry_id,
+                "success": payload.get("error") is None,
+            },
+        )
+    finally:
+        running.discard(entry.entry_id)
+
+
+def _persist_insight(directory: str, entry_id: str, payload: dict) -> None:
+    """Persist the latest result so insights survive HA restarts."""
+    try:
+        os.makedirs(directory, exist_ok=True)
+        path = os.path.join(directory, f"{entry_id}.json")
+        tmp = path + ".tmp"
+        with open(tmp, "w") as fh:
+            json.dump(payload, fh)
+        os.replace(tmp, path)
+    except OSError:
+        _LOGGER.debug("Could not persist insight result for %s", entry_id)
+
+
+def load_insight_payload(hass: HomeAssistant, entry_id: str) -> dict | None:
+    """Read the persisted result for an insight job (executor-safe)."""
+    path = hass.config.path(SHARED_DIR, INSIGHTS_DIR, f"{entry_id}.json")
+    return _read_json(path)
+
+
 def _get_bridge(hass: HomeAssistant) -> ClaudeBridge:
     """Return the first available bridge instance."""
     domain_data = hass.data.get(DOMAIN, {})
@@ -329,6 +501,21 @@ def _register_services(hass: HomeAssistant) -> None:
 
         return {"response": result}
 
+    async def handle_run_insight(call: ServiceCall):
+        name = (call.data.get("name") or "").strip().lower()
+        entries = [
+            e for e in hass.config_entries.async_entries(DOMAIN)
+            if entry_type(e) == ENTRY_TYPE_INSIGHT
+            and (not name or e.title.lower() == name)
+        ]
+        if not entries:
+            raise ValueError(
+                f"No insight job matches '{name}'" if name
+                else "No insight jobs configured"
+            )
+        for e in entries:
+            hass.async_create_task(_async_run_insight(hass, e))
+
     async def handle_clear_conversation(call: ServiceCall):
         bridge = _get_bridge(hass)
         conversation_id = call.data.get("conversation_id")
@@ -363,4 +550,11 @@ def _register_services(hass: HomeAssistant) -> None:
         "clear_conversation",
         handle_clear_conversation,
         schema=CLEAR_CONVERSATION_SCHEMA,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "run_insight",
+        handle_run_insight,
+        schema=RUN_INSIGHT_SCHEMA,
     )

@@ -74,6 +74,12 @@ These cap how many agentic loops Claude runs before returning. Lower values are 
 | `assist_max_turns` | 1–20 | `5` | Per-request turn cap for the Assist conversation agent. Passed as `--max-turns` to Claude Code. 5 is enough for the common "check/toggle/summarise" flows; bump it if you see replies getting cut off mid-thought. |
 | `automation_max_turns` | 1–50 | `10` | Per-request turn cap for the Automation listener. Automation tasks typically need more turns than Assist because they're doing multi-step work unattended (read log → analyse → write report → notify). |
 
+### Assist tool scoping
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `assist_tool_access` | `mcp_only` / `full` | `mcp_only` | What the voice channel may do. `mcp_only` allows every Home Assistant MCP tool (full device control, cameras, history) but denies shell commands, file edits, and web access — automations and the terminal keep full access. Set `full` to lift the restriction for voice too. |
+
 ### Terminal permissions
 
 | Option | Type | Default | Description |
@@ -102,28 +108,19 @@ These let you keep packages installed across container restarts (the add-on cont
 | `persistent_apk_packages` | list of strings | `[]` | Alpine `apk` packages to install on startup. Example: `["vim", "htop", "ripgrep"]`. Managed identically to running `persist-install apk <name>` from the terminal. |
 | `persistent_pip_packages` | list of strings | `[]` | Python `pip` packages to install on startup. Example: `["pandas", "numpy"]`. Managed identically to `persist-install pip <name>`. |
 
-## Permissions (dangerously_skip_permissions)
+## Permissions
 
-Claude Code has a `--dangerously-skip-permissions` flag that tells it to execute tool calls (file edits, shell commands, MCP tool calls) without asking for interactive confirmation on each action.
+Claude Code normally asks before each tool call. The add-on handles this differently per channel:
 
-### Why the app uses this flag
+| Channel | Mechanism | Default access |
+|---------|-----------|----------------|
+| **Interactive terminal** | Prompts, unless `dangerously_skip_permissions: true` | Everything (you approve actions) |
+| **Voice / conversation agents** | Pre-approved allowlist + `assist_tool_access` deny-list | All HA MCP tools; **no** shell/file-edit/web (`mcp_only`) |
+| **Automation tasks & insight jobs** | Pre-approved allowlist | All tools (MCP, shell, file edits, web) |
 
-Inside the Home Assistant app container, Claude Code runs in a sandboxed environment:
-- It can only access `/config` (your HA configuration) and `/data` (persistent app storage)
-- It runs as a non-root user (UID 1000), not as root — this is required because the flag refuses to work as root
-- It cannot access the host OS, other apps, or the HA Core container
+Background channels never use `--dangerously-skip-permissions` — they can't prompt, so the add-on writes `/config/.claude/settings.local.json` pre-approving the tools they need. The voice channel additionally loads a deny-list (see `assist_tool_access` above) so a voice request can control the whole house but can't run shell commands or edit files.
 
-### How it applies to different channels
-
-| Channel | Permission flag | Configurable? | Why |
-|---------|----------------|---------------|-----|
-| **Interactive terminal** | Controlled by config | Yes | You can choose to approve each action manually |
-| **Conversation agents** (Assist) | Always on | No | Runs non-interactively — cannot prompt for approval |
-| **Automation tasks** | Always on | No | Runs non-interactively — cannot prompt for approval |
-
-**Conversation agents and automation tasks always use `--dangerously-skip-permissions`** regardless of the config setting. Without this flag, non-interactive Claude Code invocations would either silently fail or return permission prompts as text responses instead of executing the requested action.
-
-Additionally, the app writes a `settings.local.json` file that pre-allows all MCP tools (like `control_light`, `call_service`, etc.) as a belt-and-suspenders safeguard.
+Everything runs sandboxed: non-root (UID 1000), access limited to `/config`, `/data`, and the volume toggles above — never the host OS or other containers.
 
 ### Configuration
 
@@ -289,17 +286,12 @@ The app writes detailed debug logs for every conversation agent and automation t
 
 ### What's logged for each request
 
-- **Channel** — whether the request came from the conversation agent or automation
-- **User text** — what the user said
-- **Model** — which Claude model was used
-- **History turns** — how many prior conversation turns were included
-- **Prompt size** — total characters sent to Claude
-- **Flags** — what CLI flags were passed (e.g., `--dangerously-skip-permissions`)
+- **Channel** — conversation agent (classic or fast mode) or automation
+- **Text / Model / Prompt size** — what was asked, with which model, how big
+- **AreaMap** — size of the area map spliced into the system prompt (0 = map missing, expect discovery turns)
+- **Session / Worker** — `new`/`resume` (classic) or `warm`/`spare`/`cold`/`…+fallback` (fast mode) — tells you which speed path the request took
 - **Duration** — wall-clock time for the Claude invocation
-- **Response size** — characters and lines in the response
-- **Token/cost info** — extracted from Claude Code's stderr output (when available)
-- **Response preview** — first 200 characters of the response
-- **Stderr output** — any errors or diagnostics from Claude Code
+- **Response size + preview** — and stderr/token info when available
 
 ### Viewing logs
 
@@ -325,6 +317,53 @@ For startup issues and overall add-on health, check the add-on logs in Settings 
 ha-log addon bruh_claude_terminal
 ```
 
+## Insight Jobs (scheduled Claude reports)
+
+Create them from the integration: **Settings > Devices & Services > BRUH
+Claude > Add Service > Insight job**. Pick a shipped template — daily
+briefing, anomaly watch, battery & maintenance, camera check — or write a
+custom prompt. Custom prompts may embed HA templating
+(`{{ states('sensor.outdoor_temp') }}`), rendered just before each run.
+
+Scheduling: an interval (every N minutes), a daily time (HH:MM), both, or
+neither (manual only). Trigger on demand from automations:
+
+```yaml
+service: bruh_claude.run_insight
+data:
+  name: "Morning Briefing"   # omit to run all jobs
+```
+
+Each job creates `sensor.<job>_insight`: the state is the last successful
+run, the report lives in the `markdown` attribute, and the sensor's
+`card_yaml` attribute contains a ready-to-paste dashboard card:
+
+```yaml
+type: markdown
+title: Morning Briefing
+content: >-
+  {{ state_attr('sensor.morning_briefing_insight', 'markdown')
+     or 'No insight yet — run the bruh_claude.run_insight service.' }}
+```
+
+Results persist across HA restarts; failed runs keep the previous report
+visible and expose the failure in the `error` attribute. A
+`bruh_claude_insight_complete` event fires after every run for chaining
+notifications or TTS announcements.
+
+## Transport & Health
+
+In fast mode the worker pool serves an internal HTTP API (port 8099 on
+the hassio network, token-authenticated via the shared `/config` volume).
+The integration prefers it — no file polling, and voice replies stream
+into the chat log so TTS starts speaking at the first sentence on
+pipelines that support streaming. If the API is unreachable for any
+reason, both sides fall back to the original file protocol automatically.
+
+`binary_sensor.bruh_claude_system_assist_healthy` reports pool health
+(worker count, pre-warmed spare, last request latency as attributes), and
+`ha-selftest` probes the API end-to-end.
+
 ## MCP Server
 
 The built-in MCP server gives Claude Code these capabilities:
@@ -332,8 +371,11 @@ The built-in MCP server gives Claude Code these capabilities:
 | Tool | Description |
 |------|-------------|
 | `get_entity_state` | Get current state of any entity |
-| `get_all_states` | List all entities (filterable by domain) |
+| `get_all_states` | List all entities (filterable by domain and name) |
 | `get_areas` | List all areas (rooms) and the entity_ids in each — resolve "the kitchen lights" to entity_ids |
+| `get_camera_snapshot` | **See** a camera: returns the current image so Claude can describe what's visible |
+| `get_history` | Recent state history for an entity (up to 7 days), with min/max for numeric sensors |
+| `get_statistics` | Long-term statistics (hourly/daily mean/min/max) — answers "how cold did it get last week" |
 | `call_service` | Call any HA service (turn on lights, etc.) |
 | `get_service_details` | Get the service schema for a domain |
 | `control_light` | Lights: on/off/toggle, brightness, color, color-temp |

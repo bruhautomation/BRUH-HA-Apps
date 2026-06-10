@@ -65,7 +65,8 @@ BRUH-HA-Apps/
 ### MCP Server (`ha-mcp-server/ha_mcp_server.py`)
 - Stdio-based MCP server that Claude Code launches automatically
 - Uses `SUPERVISOR_TOKEN` for HA API authentication
-- Provides tools for entity states, device control, area listings (`get_areas`), service calls, logs, template rendering, config reload
+- Provides tools for entity states, device control, area listings (`get_areas`), camera snapshots (`get_camera_snapshot`, returned as MCP image blocks), history/long-term statistics (`get_history`, `get_statistics` via the WebSocket API), service calls, logs, template rendering, config reload
+- Tools are registered via `TOOL_IMPLEMENTATIONS` (name → function name, late-bound) with argument contracts derived from each tool's inputSchema; add a tool = function + schema in `TOOLS` + one mapping line
 
 ### Startup Flow (`run.sh`)
 1. Health check
@@ -86,7 +87,9 @@ BRUH-HA-Apps/
 ### Custom Integration (`custom_components/bruh_claude/`)
 - Deployed automatically to `/config/custom_components/` by the add-on at startup
 - Registers a `ConversationEntity` so "BRUH Claude" appears in Settings > Voice Assistants
-- Provides `bruh_claude.send_prompt`, `bruh_claude.run_task`, and `bruh_claude.clear_conversation` services
+- Provides `bruh_claude.send_prompt`, `bruh_claude.run_task`, `bruh_claude.run_insight`, and `bruh_claude.clear_conversation` services
+- Insight jobs (config entries of type `insight`): scheduled Claude reports rendered to `sensor.<job>_insight` (markdown attribute + ready-to-paste `card_yaml`); prompts support HA templating
+- 3.0 transport: worker pool serves an internal HTTP API (:8099, token on the shared volume); integration streams deltas into the chat log (SSE) and falls back to file IPC; `binary_sensor` reports pool health
 - Usage-limit sensors reading from `/config/.bruh_claude/usage_limits.json` (real Anthropic account utilization; requires OAuth/subscription login)
 - Communicates with the add-on via shared files in `/config/.bruh_claude/`
 - Request/response flow: integration writes JSON (unique per-request file id) → add-on processes → add-on writes JSON response named after the request id

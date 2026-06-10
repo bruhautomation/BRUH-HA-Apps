@@ -27,16 +27,35 @@ from .const import (
     AVAILABLE_MODELS,
     CONF_ENABLE_CONVERSATION,
     CONF_ENABLE_SENSORS,
+    CONF_ENTRY_TYPE,
+    CONF_INSIGHT_DAILY_AT,
+    CONF_INSIGHT_INTERVAL,
+    CONF_INSIGHT_PROMPT,
+    CONF_INSIGHT_TEMPLATE,
     CONF_MODEL,
     CONF_NAME,
     CONF_SYSTEM_PROMPT,
     CONF_TIMEOUT,
+    DEFAULT_INSIGHT_TIMEOUT,
     DEFAULT_MODEL,
     DEFAULT_NAME,
     DEFAULT_SYSTEM_PROMPT,
     DEFAULT_TIMEOUT,
     DOMAIN,
+    ENTRY_TYPE_INSIGHT,
 )
+from .insight_format import INSIGHT_TEMPLATES
+
+INSIGHT_TEMPLATE_CHOICES = {key: key.replace("_", " ").title() for key in INSIGHT_TEMPLATES}
+INSIGHT_TEMPLATE_CHOICES["custom"] = "Custom (write your own prompt)"
+
+
+def _valid_daily_at(value: str) -> bool:
+    try:
+        hour, minute = (int(part) for part in value.split(":", 1))
+    except (ValueError, TypeError):
+        return False
+    return 0 <= hour <= 23 and 0 <= minute <= 59
 
 
 class BruhClaudeConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -62,8 +81,77 @@ class BruhClaudeConfigFlow(ConfigFlow, domain=DOMAIN):
     ):
         """Route to the appropriate setup step."""
         if self._async_current_entries():
-            return await self.async_step_add_agent(user_input)
+            return self.async_show_menu(
+                step_id="user",
+                menu_options=["add_agent", "add_insight"],
+            )
         return await self.async_step_first_setup(user_input)
+
+    # ------------------------------------------------------------------
+    # Add insight job: a scheduled Claude run whose markdown lands on a
+    # sensor (dashboard card YAML is provided on the sensor itself).
+    # ------------------------------------------------------------------
+
+    async def async_step_add_insight(
+        self, user_input: dict[str, Any] | None = None
+    ):
+        """Create a scheduled insight job."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            shared_path = self.hass.config.path(".bruh_claude")
+            dir_exists = await self.hass.async_add_executor_job(
+                os.path.isdir, shared_path
+            )
+            daily_at = (user_input.get(CONF_INSIGHT_DAILY_AT) or "").strip()
+            if not dir_exists:
+                errors["base"] = "addon_not_running"
+            elif daily_at and not _valid_daily_at(daily_at):
+                errors["base"] = "invalid_daily_at"
+            else:
+                name = user_input[CONF_NAME]
+                unique_id = f"{DOMAIN}_insight_{name.lower().replace(' ', '_')}"
+                await self.async_set_unique_id(unique_id)
+                self._abort_if_unique_id_configured()
+                return self.async_create_entry(
+                    title=name,
+                    data={
+                        CONF_ENTRY_TYPE: ENTRY_TYPE_INSIGHT,
+                        CONF_NAME: name,
+                        CONF_ENABLE_CONVERSATION: False,
+                        CONF_ENABLE_SENSORS: False,
+                        CONF_INSIGHT_TEMPLATE: user_input.get(
+                            CONF_INSIGHT_TEMPLATE, "daily_briefing"
+                        ),
+                        CONF_INSIGHT_PROMPT: user_input.get(CONF_INSIGHT_PROMPT, ""),
+                        CONF_INSIGHT_INTERVAL: user_input.get(CONF_INSIGHT_INTERVAL, 0),
+                        CONF_INSIGHT_DAILY_AT: daily_at,
+                        CONF_MODEL: user_input.get(CONF_MODEL, "default"),
+                        CONF_TIMEOUT: user_input.get(CONF_TIMEOUT, DEFAULT_INSIGHT_TIMEOUT),
+                    },
+                )
+
+        return self.async_show_form(
+            step_id="add_insight",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_NAME): str,
+                    vol.Optional(
+                        CONF_INSIGHT_TEMPLATE, default="daily_briefing"
+                    ): vol.In(INSIGHT_TEMPLATE_CHOICES),
+                    vol.Optional(CONF_INSIGHT_PROMPT, default=""): str,
+                    vol.Optional(CONF_INSIGHT_INTERVAL, default=0): vol.All(
+                        int, vol.Range(min=0, max=1440)
+                    ),
+                    vol.Optional(CONF_INSIGHT_DAILY_AT, default=""): str,
+                    vol.Optional(CONF_MODEL, default="default"): vol.In(AVAILABLE_MODELS),
+                    vol.Optional(
+                        CONF_TIMEOUT, default=DEFAULT_INSIGHT_TIMEOUT
+                    ): vol.All(int, vol.Range(min=30, max=600)),
+                }
+            ),
+            errors=errors,
+        )
 
     # ------------------------------------------------------------------
     # First setup: minimal — just name, auto-enable everything
@@ -223,6 +311,9 @@ class BruhClaudeOptionsFlowHandler(OptionsFlow):
         errors: dict[str, str] = {}
         current = {**self._config_entry.data, **self._config_entry.options}
 
+        if self._config_entry.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_INSIGHT:
+            return await self.async_step_insight(user_input)
+
         # Only show the sensor toggle if this is the sole entry
         all_entries = self.hass.config_entries.async_entries(DOMAIN)
         is_only_entry = len(all_entries) <= 1
@@ -280,5 +371,55 @@ class BruhClaudeOptionsFlowHandler(OptionsFlow):
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(schema_fields),
+            errors=errors,
+        )
+
+
+    async def async_step_insight(
+        self, user_input: dict[str, Any] | None = None
+    ):
+        """Options for an insight job entry.
+
+        Must be a real step named after the form's step_id — HA routes the
+        form submission to async_step_<step_id>.
+        """
+        current = {**self._config_entry.data, **self._config_entry.options}
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            daily_at = (user_input.get(CONF_INSIGHT_DAILY_AT) or "").strip()
+            if daily_at and not _valid_daily_at(daily_at):
+                errors["base"] = "invalid_daily_at"
+            else:
+                return self.async_create_entry(title="", data=user_input)
+
+        return self.async_show_form(
+            step_id="insight",
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(
+                        CONF_INSIGHT_TEMPLATE,
+                        default=current.get(CONF_INSIGHT_TEMPLATE, "daily_briefing"),
+                    ): vol.In(INSIGHT_TEMPLATE_CHOICES),
+                    vol.Optional(
+                        CONF_INSIGHT_PROMPT,
+                        default=current.get(CONF_INSIGHT_PROMPT, ""),
+                    ): str,
+                    vol.Optional(
+                        CONF_INSIGHT_INTERVAL,
+                        default=current.get(CONF_INSIGHT_INTERVAL, 0),
+                    ): vol.All(int, vol.Range(min=0, max=1440)),
+                    vol.Optional(
+                        CONF_INSIGHT_DAILY_AT,
+                        default=current.get(CONF_INSIGHT_DAILY_AT, ""),
+                    ): str,
+                    vol.Optional(
+                        CONF_MODEL, default=current.get(CONF_MODEL, "default")
+                    ): vol.In(AVAILABLE_MODELS),
+                    vol.Optional(
+                        CONF_TIMEOUT,
+                        default=current.get(CONF_TIMEOUT, DEFAULT_INSIGHT_TIMEOUT),
+                    ): vol.All(int, vol.Range(min=30, max=600)),
+                }
+            ),
             errors=errors,
         )

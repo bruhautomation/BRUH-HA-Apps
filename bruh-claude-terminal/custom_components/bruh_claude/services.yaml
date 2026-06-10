@@ -58,3 +58,13 @@ clear_conversation:
       description: The conversation ID to clear. Leave empty to clear all sessions.
       selector:
         text:
+
+run_insight:
+  name: Run insight job
+  description: Run a configured insight job now (refreshes its sensor and markdown). Leave name empty to run all insight jobs.
+  fields:
+    name:
+      name: Job name
+      description: The insight job's name (the config entry title). Empty runs every job.
+      selector:
+        text:

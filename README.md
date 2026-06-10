@@ -6,17 +6,16 @@ Home Assistant add-on repository by BRUH Automation.
 
 ### [BRUH Claude Terminal](bruh-claude-terminal/)
 
-Enhanced Claude Code terminal for Home Assistant. Everything the original Claude Terminal does, plus:
+Claude Code for Home Assistant — terminal, voice assistant, and proactive AI in one add-on:
 
-- **Native HA API access** via built-in MCP server - entity states, service calls, automation traces, logs
+- **Fast voice assistant** - pre-warmed Claude workers (~3-5s commands), streaming TTS, conversation memory, multiple personalities, area-aware control
+- **Insight jobs** - scheduled Claude reports (daily briefing, anomaly watch, camera check) written to dashboard-ready sensors
+- **Native HA API access** via built-in MCP server - entity control, camera vision, history & statistics, automation traces, logs
 - **Auto-generated context** - CLAUDE.md describes your installation on startup
 - **Git-based config backup** - automatic versioning of your /config directory
-- **Config reload** - `ha-reload automations` right from the terminal
-- **Log access** - `ha-log core -f` for real-time log tailing
-- **Persistent environment** - packages survive restarts
-- **Multi-session support** - background tasks, multiple tmux windows
-- **Token usage sensors** - real Anthropic API token counts as HA sensors
-- **Assist integration** - use Claude as a conversation agent
+- **CLI tools** - `ha-reload`, `ha-log -f`, `ha-entity`, `ha-selftest`, and more
+- **Persistent environment** - packages survive restarts; tmux multi-session; mobile UI
+- **Usage limit sensors** - your Anthropic session/weekly utilization as HA sensors
 - **Automation integration** - trigger Claude tasks from HA automations
 
 ### [BRUH Minecraft Server](bruh-minecraft-server/)

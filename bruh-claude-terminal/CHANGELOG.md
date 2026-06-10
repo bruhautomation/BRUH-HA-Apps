@@ -1,5 +1,109 @@
 # Changelog
 
+## 3.0.0
+
+**The big one: insight jobs, streaming voice, an internal HTTP API with
+health monitoring, and voice tool scoping — with the file protocol kept
+as a permanent fallback so nothing existing breaks.**
+
+### Insight jobs (proactive Claude)
+
+Add scheduled Claude reports from the integration: **Add Service → Insight
+job**. Pick a shipped template (daily briefing, anomaly watch, battery &
+maintenance, camera check) or write a custom prompt — custom prompts can
+embed HA templating (`{{ states('sensor.x') }}`), rendered before sending.
+Schedule by interval and/or daily time, or trigger from automations with
+the new `bruh_claude.run_insight` service. Results land on
+`sensor.<job>_insight`: state = last successful run, `markdown` attribute =
+the report (kept out of the recorder), and a ready-to-paste `card_yaml`
+attribute for a dashboard markdown card. Results persist across HA
+restarts, errors keep the previous report visible, and a
+`bruh_claude_insight_complete` event fires for chaining.
+
+### Streaming voice (HTTP/SSE transport)
+
+The worker pool now serves an internal HTTP API on the hassio network
+(token-authenticated via the shared volume). The integration prefers it —
+requests arrive instantly (no file polling) and Claude's text **streams
+into HA's chat log as it's generated**, so TTS starts speaking at the
+first sentence on Assist pipelines that support streaming. Every layer
+falls back automatically: no chat-log API → whole-reply; HTTP unreachable
+→ file IPC, which both sides keep forever.
+
+### Health monitoring
+
+`binary_sensor.bruh_claude_system_assist_healthy` reports the pool's
+health (HTTP `/health` first, heartbeat file fallback) with worker counts
+and last-request latency as attributes. `ha-selftest` checks the API, and
+run.sh babysits the pool process (auto-restart on exit). The Supervisor
+`watchdog` key is deliberately not used — it can't be conditional on the
+assist channel being enabled and would restart-loop disabled installs.
+
+### Voice tool scoping (assist_tool_access, default mcp_only)
+
+The assist channel now runs with a deny-list settings file: voice keeps
+every MCP device tool but can no longer run shell commands, edit files,
+or reach the web. Automations and the terminal keep full access. Set
+`assist_tool_access: full` to restore the old behavior.
+
+### Also
+
+- `bruh_claude.run_task` (and insight jobs) accept a `model` override,
+  honored by the automation listener.
+- Conversation workers stream token-level deltas via
+  `--include-partial-messages`, with automatic downgrade on older CLIs.
+
+## 2.5.0
+
+**Claude can now see cameras and answer questions about the past — and
+the MCP server got the registry it needed to keep growing safely.**
+
+### New tools
+
+- **`get_camera_snapshot`** — fetches a camera image (downscaled via
+  Pillow to keep token cost sane) and returns it as a real MCP image
+  block, so Claude can *look*: "what's in the driveway?", "is the garage
+  door actually closed?" work by voice, and automations can ask for
+  visual checks.
+- **`get_history`** — recent state history for an entity (up to 7 days)
+  with min/max for numeric sensors, downsampled to stay small. "When did
+  the garage last open?", "how warm was it this morning?"
+- **`get_statistics`** — long-term statistics (hourly/daily
+  mean/min/max) over the WebSocket API, which survives recorder purging:
+  "how cold did it get last week?" The assist prompt teaches the voice
+  agent when to reach for each.
+
+### MCP server internals: schema-driven dispatch
+
+The hand-written 140-line if/elif router (every tool's arguments
+re-listed by hand — a standing drift hazard) is replaced by a registry:
+tool name → implementation, with allowed/required arguments derived
+from each tool's own inputSchema. Adding a tool is now: function +
+schema + one mapping line, and a test enforces that schemas and
+implementations never diverge. Implementations are looked up late, so
+tests can patch them. `tools/call` responses are built by a single
+helper that knows how to emit image content blocks.
+
+## 2.4.1
+
+**Field fixes from the first 2.4.0 logs: oversized area maps lost their
+Weather/People sections, and the first request after a restart was cold.**
+
+- 2.4.0 logs showed `AreaMap: 12000 chars` — exactly the truncation cap.
+  Large homes overflow it, and Weather/People were appended last, so the
+  truncation silently removed exactly the sections voice asks about most.
+  **Weather/People now come first** (truncation can only drop areas), the
+  cap is raised to 16000, truncation lands on a line boundary instead of
+  mid-entity_id, and it's logged to the assist debug log when it happens.
+- **The spare worker is now pre-warmed at startup** from the last-used
+  agent profile (persisted in `cache/last_profile.json`), so the first
+  voice command after an add-on restart no longer pays the cold start
+  (~20s observed in the field, since the spare previously only spawned
+  after the first request). The area map is refreshed synchronously at
+  startup so the pre-warmed spare bakes in the same map the first request
+  builds — otherwise the profiles wouldn't match and the spare would
+  never be adopted.
+
 ## 2.4.0
 
 **Assist fast mode: pre-warmed Claude workers, and a fix for the area map

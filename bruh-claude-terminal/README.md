@@ -1,108 +1,66 @@
 # BRUH Claude Terminal
 
-Enhanced Claude Code terminal for Home Assistant with native HA API access, auto-backup, context generation, and deep Home Assistant integration.
+Claude Code for Home Assistant: a full terminal with native HA API access, a fast voice assistant, scheduled AI insight reports, and deep HA integration.
 
-📖 **Full documentation:** [bruhautomation.com/bruh-claude](https://bruhautomation.com/bruh-claude/)
+📖 **Full documentation:** [DOCS.md](DOCS.md) · [bruhautomation.com/bruh-claude](https://bruhautomation.com/bruh-claude/)
 
 ## Features
 
+### Voice Assistant (Assist)
+Claude as a conversation agent in Settings > Voice Assistants:
+- **Fast**: pre-warmed worker pool answers typical commands in ~3–5s, and replies stream so TTS starts speaking at the first sentence (on streaming-capable pipelines)
+- **Area-aware**: "turn off the kitchen lights" acts directly — no entity lookups
+- **Conversation memory**: follow-ups resume the same Claude session
+- **Multiple personalities**: each agent gets its own name, model, and system prompt
+- **Safe by default**: voice can control everything but can't run shell commands or edit files (`assist_tool_access: mcp_only`)
+
+### Insight Jobs (scheduled Claude reports)
+Claude watches your house and writes markdown reports to sensors — daily briefing, anomaly watch, battery & maintenance, camera check, or your own prompt (HA templating supported). Schedule by interval/daily time or trigger via `bruh_claude.run_insight`; each sensor includes ready-to-paste dashboard card YAML.
+
 ### Native HA API Access (MCP Server)
-A built-in MCP server gives Claude Code real-time access to your Home Assistant installation:
-- Get entity states, call services, trigger automations
-- View automation state and stored execution traces for debugging
-- Check HA logs via Supervisor journal
-- Render Jinja2 templates
-- Reload configurations after YAML edits
+31 tools give Claude real-time access to your installation:
+- Entity states, service calls, device control for every major domain
+- **Camera vision** — Claude can look at a camera and describe what it sees
+- **History & statistics** — "how cold did it get last night?" answered from the recorder and long-term statistics
+- Areas/rooms, automation traces, logs, Jinja2 templates, config reloads
 
-### Auto-Generated Project Context
-On startup, automatically generates a `CLAUDE.md` file that describes your HA installation:
-- Entity registry summary (counts by domain)
-- Automation list with states and last-triggered times
-- Installed add-ons and integrations
-- File structure guide
+### Terminal & Workflow
+- **Auto-generated context**: `CLAUDE.md` describing your install, regenerated each startup
+- **Git-based config backup**: periodic auto-commits of `/config`, manual `ha-backup`, easy restore
+- **CLI tools**: `ha-reload`, `ha-log`, `ha-entity`, `ha-service`, `ha-yaml-check`, `ha-selftest`, and more
+- **Persistent environment**: APK/pip packages survive restarts (`persist-install`)
+- **Multi-session**: tmux windows, background tasks, mobile-friendly UI with toolbar
 
-### Git-Based Config Backup
-Automatic git versioning of your `/config` directory:
-- Initializes a git repo on first run
-- Periodic auto-commits (configurable interval)
-- Manual backup via `ha-backup` command
-- File restore from any previous backup
-- Sensible `.gitignore` (excludes secrets, databases, logs)
-
-### Config Reload Integration
-After editing YAML files, reload without leaving the terminal:
-- `ha-reload automations` - Reload automations
-- `ha-reload scripts` - Reload scripts
-- `ha-reload all` - Reload everything
-- `ha-reload check` - Validate configuration
-
-### Log Access
-Real-time access to HA logs:
-- `ha-log core` - Core logs
-- `ha-log supervisor` - Supervisor logs
-- `ha-log errors` - Error-only filter
-- `ha-log core -f` - Follow mode
-
-### Persistent Environment
-Packages survive container restarts:
-- Configure via add-on settings or `persist-install` command
-- Both APK and pip packages supported
-
-### Multi-Session & Background Tasks
-- tmux-based session management
-- Open multiple Claude windows
-- Queue background tasks that Claude works through autonomously
-
-### Home Assistant Assist Integration
-Connect Claude to HA's conversation agent for voice/text assistant responses.
-
-### Token Usage Sensors
-Track Claude Code token usage directly in Home Assistant:
-- Session, daily, weekly, and all-time token counts (real Anthropic API values)
-- Session start time, last activity, and period reset timestamps
-- Weekly session count
-
-### Home Assistant Automation Integration
-Trigger Claude tasks from HA automations via file-based task queue.
+### Home Assistant Integration
+- **Automation tasks**: `bruh_claude.run_task` runs Claude jobs from automations (optional model override + completion notification/event)
+- **Usage limit sensors**: your real Anthropic session/weekly utilization and reset times (the same numbers as claude.ai > Settings > Usage; requires OAuth/subscription login)
+- **Health sensor**: `binary_sensor … Assist healthy` with worker and latency attributes
 
 ## Installation
 
-1. Add this repository to your Home Assistant app store
-2. Install "BRUH Claude Terminal"
-3. Start the app
-4. **Restart Home Assistant** (Settings > System > Restart) — required on first install so HA loads the BRUH Claude integration
-5. Home Assistant will automatically discover the BRUH Claude integration and prompt you to set it up
-6. Authenticate with your Anthropic account in the terminal
+1. Add this repository to your Home Assistant add-on store
+2. Install "BRUH Claude Terminal" and start it
+3. **Restart Home Assistant** (Settings > System > Restart) — required on first install so HA loads the BRUH Claude integration
+4. Accept the discovered BRUH Claude integration (Settings > Devices & Services)
+5. Authenticate with your Anthropic account in the terminal
 
-> **After upgrades:** If the app version changes, restart HA again so the updated integration code is loaded. The app will send a persistent notification when this is needed.
-
-The integration can also be added manually via Settings > Devices & Services > Add Integration > BRUH Claude.
+> **After upgrades:** restart HA again when prompted (persistent notification + repair) so the updated integration code loads.
 
 ## Configuration
 
-See [DOCS.md — Configuration Reference](DOCS.md#configuration-reference) for a description of every option. Quick overview of the defaults:
+See [DOCS.md — Configuration Reference](DOCS.md#configuration-reference) for every option. The defaults work out of the box; the ones most worth knowing:
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `auto_launch_claude` | `true` | Auto-start Claude or show session picker |
-| `auto_backup` | `true` | Enable git-based config backup |
-| `auto_generate_context` | `true` | Generate CLAUDE.md on startup |
-| `backup_interval_minutes` | `30` | Minutes between auto-backups |
-| `enable_ha_mcp_server` | `true` | Enable HA MCP server for Claude |
-| `enable_assist_integration` | `true` | Enable Assist conversation agent |
-| `enable_automation_integration` | `true` | Enable automation task queue |
-| `assist_max_turns` | `5` | Max agentic turns per Assist request |
-| `automation_max_turns` | `10` | Max agentic turns per automation task |
-| `dangerously_skip_permissions` | `false` | Skip per-action confirmation prompts in the terminal (see [Permissions docs](DOCS.md#permissions-dangerously_skip_permissions)) |
-| `access_share` | `true` | Expose `/share` to Claude |
-| `access_media` | `true` | Expose `/media` to Claude |
-| `access_backup` | `true` | Expose `/backup` to Claude (read-only) |
-| `access_addon_configs` | `true` | Expose `/addon_configs` to Claude |
-| `access_addons` | `true` | Expose `/addons` to Claude |
-| `additional_directories` | `[]` | Extra directories to expose to Claude |
-| `persistent_apk_packages` | `[]` | APK packages to install on startup |
-| `persistent_pip_packages` | `[]` | pip packages to install on startup |
-| `log_level` | `info` | Logging verbosity |
+| `assist_fast_mode` | `true` | Pre-warmed Claude workers for fast voice (~150–300 MB RAM per warm worker, max 3) |
+| `assist_tool_access` | `mcp_only` | Voice gets all HA tools but no shell/file/web access (`full` to lift) |
+| `assist_max_turns` / `automation_max_turns` | `5` / `10` | Agentic turn caps per request |
+| `auto_backup` / `backup_interval_minutes` | `true` / `30` | Git config backup |
+| `auto_generate_context` | `true` | Regenerate `CLAUDE.md` on startup |
+| `dangerously_skip_permissions` | `false` | Terminal-only: skip per-action confirmation ([details](DOCS.md#permissions)) |
+| `access_share` / `access_media` / `access_backup` / `access_addon_configs` / `access_addons` | `true` | Volume exposure toggles |
+| `additional_directories`, `persistent_apk_packages`, `persistent_pip_packages` | `[]` | Extra dirs / persistent packages |
+| `log_level` | `info` | Add-on log verbosity |
 
 ## Credits
 

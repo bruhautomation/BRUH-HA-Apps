@@ -305,8 +305,83 @@ def test_no_map_prompt_without_area_cache(tmp_path, monkeypatch):
         shutdown(pool)
 
 
+def test_truncate_at_line(tmp_path, monkeypatch):
+    mod = load_pool_module(tmp_path, monkeypatch)
+    text = "Weather: weather.home\nLab: light.lab_one, light.lab_two\nKitchen: light.kitchen\n"
+    # No-op under the cap
+    assert mod._truncate_at_line(text, 1000) == text
+    # Over the cap: cut lands on a line boundary, never mid-entity
+    cut = mod._truncate_at_line(text, len("Weather: weather.home\nLab: light."))
+    assert cut == "Weather: weather.home\n"
+    assert mod._truncate_at_line("oneline-no-newline", 5) == ""
+
+
+def test_prewarm_spare_uses_last_profile(tmp_path, monkeypatch):
+    mod = load_pool_module(tmp_path, monkeypatch)
+    with open(mod.LAST_PROFILE_FILE, "w") as fh:
+        json.dump({"system_prompt": "You are Dave.", "model": "haiku"}, fh)
+
+    pool = mod.Pool()
+    try:
+        mod.prewarm_spare(pool)
+        deadline = time.time() + 5
+        while pool.spare is None and time.time() < deadline:
+            time.sleep(0.05)
+        assert pool.spare is not None, "prewarm never produced a spare"
+        assert pool.spare.profile[0].startswith("You are Dave.")
+        assert pool.spare.profile[1] == "haiku"
+        spare_pid = str(pool.spare.proc.pid)
+
+        # The first request with the same agent profile adopts it directly.
+        req = make_request("hello", system_prompt="You are Dave.", model="haiku")
+        pool.handle(req)
+        resp = read_response(mod, req["id"])
+        assert fake_pid(resp) == spare_pid, "first request should adopt prewarmed spare"
+    finally:
+        shutdown(pool)
+
+
+def test_handle_persists_last_profile(tmp_path, monkeypatch):
+    mod = load_pool_module(tmp_path, monkeypatch)
+    pool = mod.Pool()
+    try:
+        pool.handle(make_request("hi", system_prompt="Butler mode.", model="sonnet"))
+        with open(mod.LAST_PROFILE_FILE) as fh:
+            data = json.load(fh)
+        assert data == {"system_prompt": "Butler mode.", "model": "sonnet"}
+    finally:
+        shutdown(pool)
+
+
 def test_pool_script_compiles_and_has_main():
     assert POOL_PATH.exists()
     source = POOL_PATH.read_text()
     compile(source, str(POOL_PATH), "exec")
     assert 'if __name__ == "__main__":' in source
+
+
+def test_clear_conversation_resets_warm_worker(tmp_path, monkeypatch):
+    """Deleting the session mapping (bruh_claude.clear_conversation) must
+    reset a live warm worker too — otherwise the old context survives."""
+    mod = load_pool_module(tmp_path, monkeypatch)
+    pool = mod.Pool()
+    try:
+        r1 = make_request("remember me", conv="convClear")
+        pool.handle(r1)
+        pid1 = fake_pid(read_response(mod, r1["id"]))
+        session_file = os.path.join(mod.SESSIONS_DIR, "convClear")
+        assert os.path.isfile(session_file)
+
+        # Same conversation, mapping intact -> warm reuse
+        r2 = make_request("still me", conv="convClear")
+        pool.handle(r2)
+        assert fake_pid(read_response(mod, r2["id"])) == pid1
+
+        # Integration clears the conversation -> mapping file removed
+        os.remove(session_file)
+        r3 = make_request("who am i", conv="convClear")
+        pool.handle(r3)
+        assert fake_pid(read_response(mod, r3["id"])) != pid1, \
+            "cleared conversation must not reuse the old worker"
+    finally:
+        shutdown(pool)

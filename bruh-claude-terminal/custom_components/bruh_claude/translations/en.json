@@ -30,11 +30,37 @@
       "hassio_confirm": {
         "title": "BRUH Claude Discovered",
         "description": "The BRUH Claude Terminal add-on has been detected. Click Submit to create a conversation agent and usage limit sensors.\n\nYou can add more agents with different personalities later from the integration page."
+      },
+      "user": {
+        "title": "Add BRUH Claude",
+        "menu_options": {
+          "add_agent": "Conversation agent (voice personality)",
+          "add_insight": "Insight job (scheduled Claude report)"
+        }
+      },
+      "add_insight": {
+        "title": "Add Insight Job",
+        "description": "A scheduled Claude run whose markdown report lands on a sensor. After creation, open the sensor and copy its `card_yaml` attribute into a dashboard markdown card to display it.",
+        "data": {
+          "name": "Job name",
+          "insight_template": "Template",
+          "insight_prompt": "Custom prompt (overrides template; supports HA templating)",
+          "interval_minutes": "Run every N minutes (0 = scheduled/manual only)",
+          "daily_at": "Run daily at (HH:MM, optional)",
+          "model": "Claude model",
+          "timeout": "Timeout (seconds)"
+        },
+        "data_description": {
+          "insight_template": "Shipped prompt to start from: daily briefing, anomaly watch, battery & maintenance, or camera check.",
+          "insight_prompt": "Write your own prompt instead. You can embed Home Assistant templates like {{ states('sensor.x') }} — they render before sending.",
+          "daily_at": "24h time, e.g. 07:30. Combine with the interval or use alone."
+        }
       }
     },
     "error": {
       "addon_not_running": "The BRUH Claude Terminal add-on does not appear to be running. Start the add-on and try again.",
-      "no_features": "Please enable at least one feature."
+      "no_features": "Please enable at least one feature.",
+      "invalid_daily_at": "Daily time must be HH:MM (24h), e.g. 07:30."
     },
     "abort": {
       "already_configured": "BRUH Claude is already configured. You can add more conversation agents from the integration page using 'Add Service'."
@@ -59,10 +85,27 @@
           "system_prompt": "A system prompt that defines this agent's personality. Leave blank for the default assistant behavior.",
           "timeout": "Maximum time in seconds to wait for Claude to respond."
         }
+      },
+      "insight": {
+        "title": "Configure Insight Job",
+        "data": {
+          "insight_template": "Template",
+          "insight_prompt": "Custom prompt (overrides template; supports HA templating)",
+          "interval_minutes": "Run every N minutes (0 = scheduled/manual only)",
+          "daily_at": "Run daily at (HH:MM, optional)",
+          "model": "Claude model",
+          "timeout": "Timeout (seconds)"
+        },
+        "data_description": {
+          "insight_template": "Shipped prompt to start from: daily briefing, anomaly watch, battery & maintenance, or camera check.",
+          "insight_prompt": "Write your own prompt instead. You can embed Home Assistant templates like {{ states('sensor.x') }} — they render before sending.",
+          "daily_at": "24h time, e.g. 07:30. Combine with the interval or use alone."
+        }
       }
     },
     "error": {
-      "no_features": "Please enable at least one feature."
+      "no_features": "Please enable at least one feature.",
+      "invalid_daily_at": "Daily time must be HH:MM (24h), e.g. 07:30."
     }
   },
   "issues": {

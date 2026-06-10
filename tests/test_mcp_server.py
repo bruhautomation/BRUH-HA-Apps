@@ -372,21 +372,21 @@ class TestHandleToolCall(unittest.TestCase):
         """Test routing to get_entity_state."""
         mock_fn.return_value = {"entity_id": "test"}
         result = ha_mcp_server.handle_tool_call("get_entity_state", {"entity_id": "light.test"})
-        mock_fn.assert_called_with("light.test")
+        mock_fn.assert_called_with(entity_id="light.test")
 
     @patch("ha_mcp_server.get_all_states")
     def test_routes_get_all_states(self, mock_fn):
         """Test routing to get_all_states with optional domain."""
         mock_fn.return_value = []
         ha_mcp_server.handle_tool_call("get_all_states", {"domain": "light"})
-        mock_fn.assert_called_with("light", None)
+        mock_fn.assert_called_with(domain="light")
 
     @patch("ha_mcp_server.get_all_states")
     def test_routes_get_all_states_no_domain(self, mock_fn):
         """Test routing to get_all_states without domain."""
         mock_fn.return_value = []
         ha_mcp_server.handle_tool_call("get_all_states", {})
-        mock_fn.assert_called_with(None, None)
+        mock_fn.assert_called_with()
 
     @patch("ha_mcp_server.get_all_states")
     def test_routes_get_all_states_name_filter(self, mock_fn):
@@ -395,7 +395,7 @@ class TestHandleToolCall(unittest.TestCase):
         ha_mcp_server.handle_tool_call(
             "get_all_states", {"domain": "light", "name_filter": "kitchen"}
         )
-        mock_fn.assert_called_with("light", "kitchen")
+        mock_fn.assert_called_with(domain="light", name_filter="kitchen")
 
     def test_unknown_tool_returns_error(self):
         """Test that unknown tool name returns error."""
@@ -414,7 +414,9 @@ class TestHandleToolCall(unittest.TestCase):
         ha_mcp_server.handle_tool_call("call_service", {
             "domain": "light", "service": "turn_on", "data": {"entity_id": "light.test"}
         })
-        mock_fn.assert_called_with("light", "turn_on", {"entity_id": "light.test"})
+        mock_fn.assert_called_with(
+            domain="light", service="turn_on", data={"entity_id": "light.test"}
+        )
 
 
 class TestMCPProtocol(unittest.TestCase):
@@ -487,9 +489,12 @@ class TestMCPProtocol(unittest.TestCase):
             "control_cover", "control_fan", "control_switch",
             "control_lock", "control_alarm", "control_vacuum",
             "send_notification", "activate_scene", "run_script",
+            # Vision
+            "get_camera_snapshot",
             # System tools
             "get_automations", "get_automation_trace", "get_ha_config",
             "get_services", "get_device_registry", "get_areas", "get_logbook",
+            "get_history", "get_statistics",
             "get_error_log", "render_template", "fire_event",
             "get_supervisor_info", "reload_config",
         }

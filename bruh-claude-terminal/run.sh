@@ -178,6 +178,8 @@ init_environment() {
     assist_max_turns=$(bashio::config 'assist_max_turns' '5')
     local automation_max_turns
     automation_max_turns=$(bashio::config 'automation_max_turns' '10')
+    local assist_tool_access
+    assist_tool_access=$(bashio::config 'assist_tool_access' 'mcp_only')
 
     local env_file="/data/.bruh_claude_env"
     cat > "$env_file" << ENVEOF
@@ -196,6 +198,7 @@ export HA_BASE_URL="http://supervisor/core/api"
 export SUPERVISOR_API_URL="http://supervisor"
 export BRUH_ASSIST_MAX_TURNS="${assist_max_turns}"
 export BRUH_AUTOMATION_MAX_TURNS="${automation_max_turns}"
+export BRUH_ASSIST_TOOL_ACCESS="${assist_tool_access}"
 export CLAUDE_CODE_DISABLE_MCP_DISCOVERY=1
 export CLAUDE_MCP_SERVERS_OVERRIDE="/config/.mcp.json"
 export DISABLE_AUTOUPDATER=1
@@ -980,6 +983,34 @@ setup_mcp_server() {
     setup_claude_settings
 }
 
+# Voice tool scoping: the assist channel loads this deny-list via --settings
+# when assist_tool_access is mcp_only (default). Deny wins over the project
+# allowlist, so voice keeps every MCP device tool but can't run shell
+# commands, edit files, or reach the web. Automations keep full access.
+setup_assist_scoping() {
+    mkdir -p /config/.bruh_claude
+    cat > /config/.bruh_claude/assist_settings.json << 'SCOPE'
+{
+  "permissions": {
+    "deny": [
+      "Bash",
+      "Bash(*)",
+      "Write",
+      "Edit",
+      "NotebookEdit",
+      "WebFetch",
+      "WebSearch",
+      "Agent",
+      "Skill"
+    ]
+  }
+}
+SCOPE
+    chown claude:claude /config/.bruh_claude/assist_settings.json 2>/dev/null || true
+    chmod 644 /config/.bruh_claude/assist_settings.json
+    bashio::log.info "Assist tool scoping file written (mode: $(bashio::config 'assist_tool_access' 'mcp_only'))"
+}
+
 setup_claude_settings() {
     local claude_settings_dir="/config/.claude"
     mkdir -p "$claude_settings_dir"
@@ -1274,10 +1305,22 @@ setup_assist_integration() {
 
     if [ "$fast_mode" = "true" ] && [ -f /opt/integrations/assist-worker-pool.py ]; then
         bashio::log.info "Starting Assist worker pool (fast mode)..."
-        python3 /opt/integrations/assist-worker-pool.py &
-        bashio::log.info "Assist integration active (worker pool)"
+        # Babysitter: restart the pool if it ever exits (self-healing; the
+        # Supervisor watchdog key is deliberately NOT used because it can't
+        # be conditional on assist/fast-mode being enabled).
+        (
+            while true; do
+                python3 /opt/integrations/assist-worker-pool.py
+                bashio::log.warning "Assist worker pool exited — restarting in 5s"
+                sleep 5
+            done
+        ) &
+        bashio::log.info "Assist integration active (worker pool + HTTP API)"
     else
         bashio::log.info "Starting Assist integration listener (classic)..."
+        # Remove a stale fast-mode endpoint so the integration doesn't try
+        # (and have to fail over from) an API that isn't running.
+        rm -f /config/.bruh_claude/api_endpoint.json
         /opt/integrations/assist-listener.sh &
         bashio::log.info "Assist integration active"
     fi
@@ -1471,6 +1514,7 @@ main() {
     cleanup_all_mcp_references
     setup_mcp_server
     start_mcp_watchdog
+    setup_assist_scoping
     deploy_custom_integration
     start_usage_limits_tracker
     setup_assist_integration
