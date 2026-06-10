@@ -326,7 +326,8 @@ custom prompt. Custom prompts may embed HA templating
 (`{{ states('sensor.outdoor_temp') }}`), rendered just before each run.
 
 Scheduling: an interval (every N minutes), a daily time (HH:MM), both, or
-neither (manual only). Trigger on demand from automations:
+neither (manual only). Each job also gets a **Run now button** on its device
+page; from automations, trigger on demand with:
 
 ```yaml
 service: bruh_claude.run_insight

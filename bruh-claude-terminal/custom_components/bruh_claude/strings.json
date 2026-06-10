@@ -34,33 +34,34 @@
       "user": {
         "title": "Add BRUH Claude",
         "menu_options": {
-          "add_agent": "Conversation agent (voice personality)",
-          "add_insight": "Insight job (scheduled Claude report)"
+          "add_agent": "Conversation agent — a voice personality for Assist",
+          "add_insight": "Insight job — a scheduled Claude report on a sensor"
         }
       },
       "add_insight": {
         "title": "Add Insight Job",
-        "description": "A scheduled Claude run whose markdown report lands on a sensor. After creation, open the sensor and copy its `card_yaml` attribute into a dashboard markdown card to display it.",
+        "description": "Claude runs this job on a schedule and writes a markdown report to a sensor.\n\nGetting started: pick a template and a schedule — that's enough. After creating it, the job runs once within ~2 minutes; open the new sensor and copy its card_yaml attribute into a dashboard markdown card to display the report. Run it any time with the job's Run now button.\n\nTo read or customize the template's full prompt, open Configure on the created entry — it shows the exact text that runs.",
         "data": {
           "name": "Job name",
           "insight_template": "Template",
-          "insight_prompt": "Custom prompt (overrides template; supports HA templating)",
-          "interval_minutes": "Run every N minutes (0 = scheduled/manual only)",
-          "daily_at": "Run daily at (HH:MM, optional)",
+          "insight_prompt": "Custom prompt (optional)",
+          "interval_minutes": "Run every N minutes",
+          "daily_at": "Run daily at",
           "model": "Claude model",
           "timeout": "Timeout (seconds)"
         },
         "data_description": {
-          "insight_template": "Shipped prompt to start from: daily briefing, anomaly watch, battery & maintenance, or camera check.",
-          "insight_prompt": "Write your own prompt instead. You can embed Home Assistant templates like {{ states('sensor.x') }} — they render before sending.",
-          "daily_at": "24h time, e.g. 07:30. Combine with the interval or use alone."
+          "insight_prompt": "Leave empty to use the template. Anything here overrides it. Supports Home Assistant templating — states(...), state_attr(...) — rendered before each run.",
+          "interval_minutes": "0 disables interval runs (daily time or Run now button only).",
+          "daily_at": "24-hour HH:MM, e.g. 07:30. Works alone or together with the interval.",
+          "model": "Haiku is fastest, Opus is most thorough. Default uses the terminal's model."
         }
       }
     },
     "error": {
       "addon_not_running": "The BRUH Claude Terminal add-on does not appear to be running. Start the add-on and try again.",
       "no_features": "Please enable at least one feature.",
-      "invalid_daily_at": "Daily time must be HH:MM (24h), e.g. 07:30."
+      "invalid_daily_at": "Daily time must be HH:MM (24-hour), e.g. 07:30."
     },
     "abort": {
       "already_configured": "BRUH Claude is already configured. You can add more conversation agents from the integration page using 'Add Service'."
@@ -88,24 +89,25 @@
       },
       "insight": {
         "title": "Configure Insight Job",
+        "description": "The prompt below is exactly what runs — pre-filled from the selected template so you can review it. Edit freely; saving stores your text as this job's prompt (the template dropdown then only matters if you empty the prompt again).",
         "data": {
           "insight_template": "Template",
-          "insight_prompt": "Custom prompt (overrides template; supports HA templating)",
-          "interval_minutes": "Run every N minutes (0 = scheduled/manual only)",
-          "daily_at": "Run daily at (HH:MM, optional)",
+          "insight_prompt": "Prompt",
+          "interval_minutes": "Run every N minutes",
+          "daily_at": "Run daily at",
           "model": "Claude model",
           "timeout": "Timeout (seconds)"
         },
         "data_description": {
-          "insight_template": "Shipped prompt to start from: daily briefing, anomaly watch, battery & maintenance, or camera check.",
-          "insight_prompt": "Write your own prompt instead. You can embed Home Assistant templates like {{ states('sensor.x') }} — they render before sending.",
-          "daily_at": "24h time, e.g. 07:30. Combine with the interval or use alone."
+          "insight_prompt": "Supports Home Assistant templating — states(...), state_attr(...) — rendered before each run.",
+          "interval_minutes": "0 disables interval runs.",
+          "daily_at": "24-hour HH:MM, e.g. 07:30."
         }
       }
     },
     "error": {
       "no_features": "Please enable at least one feature.",
-      "invalid_daily_at": "Daily time must be HH:MM (24h), e.g. 07:30."
+      "invalid_daily_at": "Daily time must be HH:MM (24-hour), e.g. 07:30."
     }
   },
   "issues": {

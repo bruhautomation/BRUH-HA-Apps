@@ -114,7 +114,7 @@ def entry_type(entry: ConfigEntry) -> str:
 def _get_platforms(entry: ConfigEntry) -> list[Platform]:
     """Return the list of platforms to set up for this config entry."""
     if entry_type(entry) == ENTRY_TYPE_INSIGHT:
-        return [Platform.SENSOR]
+        return [Platform.SENSOR, Platform.BUTTON]
     opts = {**entry.data, **entry.options}
     platforms: list[Platform] = []
     if opts.get(CONF_ENABLE_CONVERSATION, True):

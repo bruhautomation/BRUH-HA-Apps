@@ -1,5 +1,25 @@
 # Changelog
 
+## 3.0.1
+
+**Fix: blank "Add Service" dialog — plus a much friendlier insight setup.**
+
+- The 3.0.0 config dialog could render completely blank: two translation
+  strings contained literal Jinja braces, which break the frontend's
+  message-format parser. All translation strings are now brace-free and a
+  CI test guards against reintroducing any.
+- Menu and dropdown labels are now provided inline (immune to translation
+  loading), and template choices describe themselves: "Anomaly watch —
+  only problems; says 'All quiet.' otherwise".
+- **Template preview**: opening Configure on an insight job pre-fills the
+  prompt box with the selected template's full text — read it, tweak it,
+  or leave it; what you see is exactly what runs.
+- **Run now button** on every insight job's device page for manual firing
+  (the `bruh_claude.run_insight` service remains for automations).
+- Prompt fields (insight and agent personality) are proper multiline
+  editors; step descriptions rewritten to explain the create -> card_yaml
+  -> dashboard flow in place.
+
 ## 3.0.0
 
 **The big one: insight jobs, streaming voice, an internal HTTP API with
