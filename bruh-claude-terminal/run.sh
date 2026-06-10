@@ -1265,9 +1265,22 @@ setup_assist_integration() {
         return
     fi
 
-    bashio::log.info "Starting Assist integration listener..."
-    /opt/integrations/assist-listener.sh &
-    bashio::log.info "Assist integration active"
+    # Fast mode keeps pre-warmed Claude processes alive (worker pool) so
+    # voice turns skip the CLI boot + MCP handshake. The classic listener
+    # remains as the opt-out (assist_fast_mode: false) and the pool itself
+    # falls back to one-shot invocations when a worker misbehaves.
+    local fast_mode
+    fast_mode=$(bashio::config 'assist_fast_mode' 'true')
+
+    if [ "$fast_mode" = "true" ] && [ -f /opt/integrations/assist-worker-pool.py ]; then
+        bashio::log.info "Starting Assist worker pool (fast mode)..."
+        python3 /opt/integrations/assist-worker-pool.py &
+        bashio::log.info "Assist integration active (worker pool)"
+    else
+        bashio::log.info "Starting Assist integration listener (classic)..."
+        /opt/integrations/assist-listener.sh &
+        bashio::log.info "Assist integration active"
+    fi
 }
 
 # ============================================================================

@@ -1,0 +1,57 @@
+#!/usr/bin/env python3
+"""Stand-in for the Claude Code CLI used by test_assist_worker_pool.py.
+
+Speaks just enough of the two invocation shapes the worker pool uses:
+
+  stream mode  (--input-format stream-json): emits an init event, then one
+               result event per user message, embedding its own PID so tests
+               can prove process reuse.
+  one-shot     (no --input-format): reads stdin, prints "ONESHOT: <text>".
+
+Behavior switches via env:
+  FAKE_CLAUDE_LOG  append each invocation's argv as a JSON line
+  FAKE_MODE        ok (default) | hang (never answer) | crash (die after read)
+"""
+
+import json
+import os
+import sys
+import time
+
+argv = sys.argv[1:]
+log_path = os.environ.get("FAKE_CLAUDE_LOG")
+if log_path:
+    with open(log_path, "a") as fh:
+        fh.write(json.dumps(argv) + "\n")
+
+mode = os.environ.get("FAKE_MODE", "ok")
+
+if "--input-format" in argv:
+    sid = "11111111-1111-1111-1111-111111111111"
+    if "--resume" in argv:
+        sid = argv[argv.index("--resume") + 1]
+    print(json.dumps({"type": "system", "subtype": "init", "session_id": sid}),
+          flush=True)
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        msg = json.loads(line)
+        text = msg["message"]["content"][0]["text"]
+        if mode == "hang":
+            time.sleep(60)
+            continue
+        if mode == "crash":
+            sys.exit(1)
+        print(json.dumps({
+            "type": "result",
+            "subtype": "success",
+            "is_error": False,
+            "result": f"OK[{os.getpid()}]: {text}",
+            "session_id": sid,
+        }), flush=True)
+else:
+    data = sys.stdin.read()
+    if mode == "hang":
+        time.sleep(60)
+    print(f"ONESHOT: {data}")

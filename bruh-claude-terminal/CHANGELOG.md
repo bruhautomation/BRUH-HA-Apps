@@ -1,5 +1,51 @@
 # Changelog
 
+## 2.4.0
+
+**Assist fast mode: pre-warmed Claude workers, and a fix for the area map
+silently failing.**
+
+Field data from 2.3.0 showed fresh-conversation voice commands taking
+14–16s while the identical command on a resumed conversation took 6s —
+meaning the model was still spending turns on entity discovery
+(`get_areas` / `get_all_states`) instead of acting from the area map, and
+weather questions (entities with no area) always paid that tax.
+
+### Area map: version-proof template, weather/people context, visibility
+
+- The map template now uses **pure core Jinja** (namespace + split) instead
+  of the `match` select-test, so it renders on any HA version. If the
+  render fails, the failure is now **logged** to the assist debug log
+  instead of silently falling back to discovery mode.
+- The map gains **Weather:** and **People:** sections — weather and person
+  entities usually have no area, so "what's the weather" previously always
+  needed a discovery turn.
+- The system prompt now instructs Claude to act on listed entity_ids in its
+  FIRST response and never re-verify them, and to keep spoken replies to
+  1–2 short sentences (they're read aloud).
+- Every request logs `AreaMap: <n> chars`, and `ha-selftest` gained an
+  "Assist area map" section that checks the cache and probes the template
+  API so a broken map is impossible to miss.
+
+### Fast mode (assist_fast_mode, default on)
+
+A new worker-pool daemon (`assist-worker-pool.py`) replaces
+spawn-per-request for the Assist channel:
+
+- **One live Claude process per active conversation** — follow-up turns
+  skip the CLI boot, MCP handshake, and session reload entirely.
+- **A pre-warmed spare process** — even brand-new conversations (the
+  common voice case) skip the cold start; the spare is respawned in the
+  background after being adopted and recycled every 10 minutes so its
+  baked-in area map stays fresh.
+- Same file IPC, same atomic claim, same response format — the HA
+  integration is untouched, and any worker error falls back to a one-shot
+  invocation (exactly the classic behavior). Set `assist_fast_mode: false`
+  to keep the classic listener.
+- Workers are capped (3), idle-reaped (5 min), and age-recycled (30 min);
+  Claude session ids are still persisted so context survives pool
+  restarts via `--resume`.
+
 ## 2.3.0
 
 **Faster conversations, real session memory, and a fix for the
