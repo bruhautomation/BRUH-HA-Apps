@@ -108,28 +108,19 @@ These let you keep packages installed across container restarts (the add-on cont
 | `persistent_apk_packages` | list of strings | `[]` | Alpine `apk` packages to install on startup. Example: `["vim", "htop", "ripgrep"]`. Managed identically to running `persist-install apk <name>` from the terminal. |
 | `persistent_pip_packages` | list of strings | `[]` | Python `pip` packages to install on startup. Example: `["pandas", "numpy"]`. Managed identically to `persist-install pip <name>`. |
 
-## Permissions (dangerously_skip_permissions)
+## Permissions
 
-Claude Code has a `--dangerously-skip-permissions` flag that tells it to execute tool calls (file edits, shell commands, MCP tool calls) without asking for interactive confirmation on each action.
+Claude Code normally asks before each tool call. The add-on handles this differently per channel:
 
-### Why the app uses this flag
+| Channel | Mechanism | Default access |
+|---------|-----------|----------------|
+| **Interactive terminal** | Prompts, unless `dangerously_skip_permissions: true` | Everything (you approve actions) |
+| **Voice / conversation agents** | Pre-approved allowlist + `assist_tool_access` deny-list | All HA MCP tools; **no** shell/file-edit/web (`mcp_only`) |
+| **Automation tasks & insight jobs** | Pre-approved allowlist | All tools (MCP, shell, file edits, web) |
 
-Inside the Home Assistant app container, Claude Code runs in a sandboxed environment:
-- It can only access `/config` (your HA configuration) and `/data` (persistent app storage)
-- It runs as a non-root user (UID 1000), not as root — this is required because the flag refuses to work as root
-- It cannot access the host OS, other apps, or the HA Core container
+Background channels never use `--dangerously-skip-permissions` — they can't prompt, so the add-on writes `/config/.claude/settings.local.json` pre-approving the tools they need. The voice channel additionally loads a deny-list (see `assist_tool_access` above) so a voice request can control the whole house but can't run shell commands or edit files.
 
-### How it applies to different channels
-
-| Channel | Permission flag | Configurable? | Why |
-|---------|----------------|---------------|-----|
-| **Interactive terminal** | Controlled by config | Yes | You can choose to approve each action manually |
-| **Conversation agents** (Assist) | Always on | No | Runs non-interactively — cannot prompt for approval |
-| **Automation tasks** | Always on | No | Runs non-interactively — cannot prompt for approval |
-
-**Conversation agents and automation tasks always use `--dangerously-skip-permissions`** regardless of the config setting. Without this flag, non-interactive Claude Code invocations would either silently fail or return permission prompts as text responses instead of executing the requested action.
-
-Additionally, the app writes a `settings.local.json` file that pre-allows all MCP tools (like `control_light`, `call_service`, etc.) as a belt-and-suspenders safeguard.
+Everything runs sandboxed: non-root (UID 1000), access limited to `/config`, `/data`, and the volume toggles above — never the host OS or other containers.
 
 ### Configuration
 
@@ -295,17 +286,12 @@ The app writes detailed debug logs for every conversation agent and automation t
 
 ### What's logged for each request
 
-- **Channel** — whether the request came from the conversation agent or automation
-- **User text** — what the user said
-- **Model** — which Claude model was used
-- **History turns** — how many prior conversation turns were included
-- **Prompt size** — total characters sent to Claude
-- **Flags** — what CLI flags were passed (e.g., `--dangerously-skip-permissions`)
+- **Channel** — conversation agent (classic or fast mode) or automation
+- **Text / Model / Prompt size** — what was asked, with which model, how big
+- **AreaMap** — size of the area map spliced into the system prompt (0 = map missing, expect discovery turns)
+- **Session / Worker** — `new`/`resume` (classic) or `warm`/`spare`/`cold`/`…+fallback` (fast mode) — tells you which speed path the request took
 - **Duration** — wall-clock time for the Claude invocation
-- **Response size** — characters and lines in the response
-- **Token/cost info** — extracted from Claude Code's stderr output (when available)
-- **Response preview** — first 200 characters of the response
-- **Stderr output** — any errors or diagnostics from Claude Code
+- **Response size + preview** — and stderr/token info when available
 
 ### Viewing logs
 
