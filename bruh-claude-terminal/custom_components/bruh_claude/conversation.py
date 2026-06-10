@@ -106,9 +106,12 @@ class BruhClaudeConversationEntity(ConversationEntity):
                 return await self._process_streaming(user_input)
             except asyncio.CancelledError:
                 raise
-            except Exception:  # noqa: BLE001 — never lose a turn to streaming
+            except Exception:  # noqa: BLE001
+                # Only chat-session/chat-log SETUP can raise here —
+                # _process_streaming handles everything after the bridge
+                # task starts, so this fallback can never re-send a command.
                 _LOGGER.exception(
-                    "Streaming path failed — falling back to classic flow"
+                    "Chat-log setup failed — falling back to classic flow"
                 )
         return await self._process_classic(user_input)
 
@@ -157,12 +160,34 @@ class BruhClaudeConversationEntity(ConversationEntity):
                     saw_delta = True
                     yield {"content": item}
 
-            async for _content in chat_log.async_add_delta_content_stream(
-                agent_id, _stream()
-            ):
-                pass
+            # From here on the bridge task is in flight: chat-log plumbing
+            # failures must NOT escape to the classic-resend fallback (the
+            # command may already be executing). Degrade to plain result.
+            try:
+                async for _content in chat_log.async_add_delta_content_stream(
+                    agent_id, _stream()
+                ):
+                    pass
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("chat-log delta streaming failed mid-turn")
 
-            response_text = await task
+            try:
+                response_text = await task
+            except TimeoutError:
+                response_text = (
+                    "Sorry, Claude didn't respond in time. "
+                    "Make sure the BRUH Claude Terminal app is running."
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("Conversation request failed")
+                response_text = (
+                    "Sorry, something went wrong communicating with the "
+                    "Claude Terminal app."
+                )
 
             response = intent.IntentResponse(language=user_input.language)
             response.async_set_speech(response_text)

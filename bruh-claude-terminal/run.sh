@@ -1318,6 +1318,9 @@ setup_assist_integration() {
         bashio::log.info "Assist integration active (worker pool + HTTP API)"
     else
         bashio::log.info "Starting Assist integration listener (classic)..."
+        # Remove a stale fast-mode endpoint so the integration doesn't try
+        # (and have to fail over from) an API that isn't running.
+        rm -f /config/.bruh_claude/api_endpoint.json
         /opt/integrations/assist-listener.sh &
         bashio::log.info "Assist integration active"
     fi

@@ -45,6 +45,7 @@ async def async_setup_entry(
     if domain_data.get("_health_added"):
         return
     domain_data["_health_added"] = True
+    domain_data["_health_entry"] = config_entry.entry_id
 
     bridge = domain_data.get(config_entry.entry_id)
     async_add_entities(

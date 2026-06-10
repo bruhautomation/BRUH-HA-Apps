@@ -312,7 +312,7 @@ class BruhClaudeOptionsFlowHandler(OptionsFlow):
         current = {**self._config_entry.data, **self._config_entry.options}
 
         if self._config_entry.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_INSIGHT:
-            return await self._async_step_insight_options(user_input, current)
+            return await self.async_step_insight(user_input)
 
         # Only show the sensor toggle if this is the sole entry
         all_entries = self.hass.config_entries.async_entries(DOMAIN)
@@ -375,10 +375,15 @@ class BruhClaudeOptionsFlowHandler(OptionsFlow):
         )
 
 
-    async def _async_step_insight_options(
-        self, user_input: dict[str, Any] | None, current: dict[str, Any]
+    async def async_step_insight(
+        self, user_input: dict[str, Any] | None = None
     ):
-        """Options for an insight job entry."""
+        """Options for an insight job entry.
+
+        Must be a real step named after the form's step_id — HA routes the
+        form submission to async_step_<step_id>.
+        """
+        current = {**self._config_entry.data, **self._config_entry.options}
         errors: dict[str, str] = {}
         if user_input is not None:
             daily_at = (user_input.get(CONF_INSIGHT_DAILY_AT) or "").strip()

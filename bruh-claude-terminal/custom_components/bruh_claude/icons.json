@@ -4,6 +4,11 @@
       "_": {
         "default": "mdi:creation"
       }
+    },
+    "binary_sensor": {
+      "_": {
+        "default": "mdi:heart-pulse"
+      }
     }
   },
   "services": {
@@ -12,6 +17,12 @@
     },
     "run_task": {
       "service": "mdi:creation"
+    },
+    "clear_conversation": {
+      "service": "mdi:broom"
+    },
+    "run_insight": {
+      "service": "mdi:lightbulb-on-outline"
     }
   }
 }

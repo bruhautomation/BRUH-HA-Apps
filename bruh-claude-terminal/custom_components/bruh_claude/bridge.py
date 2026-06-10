@@ -58,6 +58,11 @@ HISTORY_MSG_MAX_CHARS = 1500
 MAX_TRACKED_CONVERSATIONS = 50
 
 
+class _StreamBrokenError(RuntimeError):
+    """The pool accepted the request but the stream failed afterwards —
+    re-sending is NOT safe (the command may already be executing)."""
+
+
 class ClaudeBridge:
     """Handles file-based communication with the Claude Terminal add-on."""
 
@@ -208,9 +213,18 @@ class ClaudeBridge:
                     api, text, conversation_id, timeout, system_prompt, model,
                     delta_listener,
                 )
-            except Exception as exc:  # noqa: BLE001 — fall back, never fail the turn
+            except _StreamBrokenError as exc:
+                # The pool ACCEPTED the request before the stream broke — it
+                # may already be executing the command, so re-sending could
+                # run it twice. Report instead of retrying.
+                _LOGGER.warning("Conversation stream broke mid-flight: %s", exc)
+                return (
+                    "Sorry, the connection to Claude dropped mid-response. "
+                    "The command may still have completed — check before retrying."
+                )
+            except Exception as exc:  # noqa: BLE001 — pre-acceptance: safe to retry
                 _LOGGER.warning(
-                    "HTTP transport failed (%s) — falling back to file IPC", exc
+                    "HTTP transport unavailable (%s) — falling back to file IPC", exc
                 )
         return await self.async_send_conversation(
             text,
@@ -246,35 +260,45 @@ class ClaudeBridge:
 
         session = async_get_clientsession(self._hass)
         result_text: str | None = None
-        async with session.post(
-            f"{base_url}/conversation",
-            json=request,
-            headers={"X-BRUH-Token": token},
-            timeout=aiohttp.ClientTimeout(total=timeout + 10, sock_read=timeout + 10),
-        ) as resp:
-            if resp.status != 200:
-                raise RuntimeError(f"API returned HTTP {resp.status}")
-            async for raw_line in resp.content:
-                line = raw_line.decode(errors="replace").strip()
-                if not line.startswith("data: "):
-                    continue
-                try:
-                    event = json.loads(line[6:])
-                except json.JSONDecodeError:
-                    continue
-                etype = event.get("type")
-                if etype == "delta" and delta_listener is not None:
+        accepted = False
+        try:
+            async with session.post(
+                f"{base_url}/conversation",
+                json=request,
+                headers={"X-BRUH-Token": token},
+                timeout=aiohttp.ClientTimeout(total=timeout + 10, sock_read=timeout + 10),
+            ) as resp:
+                if resp.status != 200:
+                    raise RuntimeError(f"API returned HTTP {resp.status}")
+                # 200 means the pool claimed the request and is processing it
+                accepted = True
+                async for raw_line in resp.content:
+                    line = raw_line.decode(errors="replace").strip()
+                    if not line.startswith("data: "):
+                        continue
                     try:
-                        delta_listener(event.get("text") or "")
-                    except Exception:  # noqa: BLE001 — listener bugs can't kill the turn
-                        _LOGGER.exception("delta listener failed")
-                elif etype == "result":
-                    result_text = event.get("text") or ""
-                    break
-                elif etype == "error":
-                    raise RuntimeError(event.get("message") or "stream error")
+                        event = json.loads(line[6:])
+                    except json.JSONDecodeError:
+                        continue
+                    etype = event.get("type")
+                    if etype == "delta" and delta_listener is not None:
+                        try:
+                            delta_listener(event.get("text") or "")
+                        except Exception:  # noqa: BLE001 — listener bugs can't kill the turn
+                            _LOGGER.exception("delta listener failed")
+                    elif etype == "result":
+                        result_text = event.get("text") or ""
+                        break
+                    elif etype == "error":
+                        raise RuntimeError(event.get("message") or "stream error")
+        except Exception as exc:
+            if accepted:
+                raise _StreamBrokenError(str(exc)) from exc
+            raise
 
         if result_text is None:
+            if accepted:
+                raise _StreamBrokenError("stream ended without a result event")
             raise RuntimeError("stream ended without a result event")
         self._append_history(conv_id, text, result_text)
         return result_text

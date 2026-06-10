@@ -370,3 +370,73 @@ def test_bridge_falls_back_to_files_when_api_down(tmp_path, monkeypatch):
             await hass.aiohttp_session.close()
 
     asyncio.new_event_loop().run_until_complete(main())
+
+
+def test_bridge_does_not_resend_after_accepted_stream_break(tmp_path, monkeypatch):
+    """Once the pool accepts a request (200), a broken stream must NOT fall
+    back to a file re-send — the command may already be executing."""
+    import socket
+    import threading
+
+    mod = load_pool_module(tmp_path, monkeypatch)
+    os.makedirs(os.path.dirname(mod.API_ENDPOINT_FILE), exist_ok=True)
+
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind(("127.0.0.1", 0))
+    server.listen(1)
+    port = server.getsockname()[1]
+
+    def broken_server():
+        conn, _addr = server.accept()
+        conn.recv(65536)  # read the request
+        conn.sendall(
+            b"HTTP/1.0 200 OK\r\nContent-Type: text/event-stream\r\n\r\n"
+            b'data: {"type": "delta", "text": "half a rep"}\n\n'
+        )
+        conn.close()  # die mid-stream, before the result event
+
+    threading.Thread(target=broken_server, daemon=True).start()
+
+    json.dump({"host": "127.0.0.1", "port": port, "ts": time.time()},
+              open(mod.API_ENDPOINT_FILE, "w"))
+    with open(mod.API_TOKEN_FILE, "w") as fh:
+        fh.write("t" * 32)
+
+    bridge_mod = load_bridge(tmp_path)
+    import aiohttp
+
+    class FakeConfig:
+        def path(self, *parts):
+            return os.path.join(str(tmp_path / "shared"), *parts[1:]) \
+                if parts and parts[0] == ".bruh_claude" \
+                else os.path.join(str(tmp_path), *parts)
+
+    class FakeHass:
+        config = FakeConfig()
+
+        async def async_add_executor_job(self, fn, *args):
+            return fn(*args)
+
+    async def main():
+        hass = FakeHass()
+        hass.aiohttp_session = aiohttp.ClientSession()
+        try:
+            bridge = bridge_mod.ClaudeBridge(hass, timeout=10)
+            deltas = []
+            text = await bridge.async_send_conversation_streaming(
+                "toggle the lights", conversation_id="convBRK",
+                delta_listener=deltas.append,
+            )
+            # Apology, not a retry
+            assert "dropped mid-response" in text
+            # And crucially: nothing was re-sent over the file protocol
+            req_files = [f for f in os.listdir(bridge.requests_dir)
+                         if f.endswith(".json")] \
+                if os.path.isdir(bridge.requests_dir) else []
+            assert req_files == [], "stream break must not re-send via files"
+        finally:
+            await hass.aiohttp_session.close()
+            server.close()
+
+    asyncio.new_event_loop().run_until_complete(main())

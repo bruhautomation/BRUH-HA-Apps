@@ -358,3 +358,30 @@ def test_pool_script_compiles_and_has_main():
     source = POOL_PATH.read_text()
     compile(source, str(POOL_PATH), "exec")
     assert 'if __name__ == "__main__":' in source
+
+
+def test_clear_conversation_resets_warm_worker(tmp_path, monkeypatch):
+    """Deleting the session mapping (bruh_claude.clear_conversation) must
+    reset a live warm worker too — otherwise the old context survives."""
+    mod = load_pool_module(tmp_path, monkeypatch)
+    pool = mod.Pool()
+    try:
+        r1 = make_request("remember me", conv="convClear")
+        pool.handle(r1)
+        pid1 = fake_pid(read_response(mod, r1["id"]))
+        session_file = os.path.join(mod.SESSIONS_DIR, "convClear")
+        assert os.path.isfile(session_file)
+
+        # Same conversation, mapping intact -> warm reuse
+        r2 = make_request("still me", conv="convClear")
+        pool.handle(r2)
+        assert fake_pid(read_response(mod, r2["id"])) == pid1
+
+        # Integration clears the conversation -> mapping file removed
+        os.remove(session_file)
+        r3 = make_request("who am i", conv="convClear")
+        pool.handle(r3)
+        assert fake_pid(read_response(mod, r3["id"])) != pid1, \
+            "cleared conversation must not reuse the old worker"
+    finally:
+        shutdown(pool)

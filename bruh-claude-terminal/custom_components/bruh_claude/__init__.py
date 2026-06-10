@@ -217,8 +217,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if not eid.startswith("_") and not eid.endswith("_platforms")
         ]
 
-        # If this entry owned the account-wide sensors, clear the flag so
-        # another entry can recreate them on its next reload.
+        # If this entry owned the account-wide sensors, clear the flags so
+        # another entry (or this one, on reload) can recreate them.
+        if hass.data[DOMAIN].get("_health_entry") == entry.entry_id:
+            hass.data[DOMAIN].pop("_health_entry", None)
+            hass.data[DOMAIN].pop("_health_added", None)
         if hass.data[DOMAIN].get("_sensors_entry") == entry.entry_id:
             hass.data[DOMAIN].pop("_sensors_entry", None)
             hass.data[DOMAIN].pop("_sensors_added", None)

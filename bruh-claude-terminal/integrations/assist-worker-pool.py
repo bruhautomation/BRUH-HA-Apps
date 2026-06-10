@@ -436,8 +436,17 @@ class Pool:
         with self.lock:
             worker = self.workers.get(conv_id)
             if worker and worker.alive() and worker.profile == profile:
-                return worker, "warm"
-            if worker:
+                # clear_conversation deletes the session mapping; a live
+                # worker that already answered must honor that and start
+                # fresh instead of reusing its in-process context.
+                if worker.last_used > worker.created and not os.path.isfile(
+                    os.path.join(SESSIONS_DIR, conv_id)
+                ):
+                    worker.kill()
+                    self.workers.pop(conv_id, None)
+                else:
+                    return worker, "warm"
+            elif worker:
                 worker.kill()
                 self.workers.pop(conv_id, None)
 
