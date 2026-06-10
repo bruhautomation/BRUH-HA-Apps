@@ -367,6 +367,12 @@ invoke_claude() {
         new:*)    session_args=(--session-id "${session_spec#new:}") ;;
     esac
 
+    # Voice tool scoping (assist_tool_access: mcp_only) — deny-list settings
+    local scope_args=()
+    if [ "${BRUH_ASSIST_TOOL_ACCESS:-mcp_only}" = "mcp_only" ] && [ -f "$SHARED_DIR/assist_settings.json" ]; then
+        scope_args=(--settings "$SHARED_DIR/assist_settings.json")
+    fi
+
     # Run Claude in print mode from /config so it finds .mcp.json for HA tools
     # and .claude/settings.local.json for pre-approved tool permissions.
     # Plain text output (no --output-format json) — proven reliable here.
@@ -374,7 +380,7 @@ invoke_claude() {
     (cd /config && printf '%s' "$message" | timeout "$limit" \
         ${CLAUDE_BIN} -p --verbose --max-turns "$MAX_TURNS" \
         --system-prompt "$final_system_prompt" \
-        "${session_args[@]}" \
+        "${session_args[@]}" "${scope_args[@]}" \
         ${model_flag} > "$output_file" 2>"$stderr_file")
 }
 

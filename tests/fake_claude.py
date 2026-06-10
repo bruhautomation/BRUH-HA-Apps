@@ -43,11 +43,28 @@ if "--input-format" in argv:
             continue
         if mode == "crash":
             sys.exit(1)
+        result = f"OK[{os.getpid()}]: {text}"
+        if "--include-partial-messages" in argv:
+            # Mirror the real CLI: token-level stream_event deltas, then an
+            # assistant message event with the full text, then the result.
+            half = len(result) // 2
+            for chunk in (result[:half], result[half:]):
+                print(json.dumps({
+                    "type": "stream_event",
+                    "event": {"type": "content_block_delta",
+                              "delta": {"type": "text_delta", "text": chunk}},
+                    "session_id": sid,
+                }), flush=True)
+            print(json.dumps({
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": result}]},
+                "session_id": sid,
+            }), flush=True)
         print(json.dumps({
             "type": "result",
             "subtype": "success",
             "is_error": False,
-            "result": f"OK[{os.getpid()}]: {text}",
+            "result": result,
             "session_id": sid,
         }), flush=True)
 else:

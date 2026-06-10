@@ -74,6 +74,12 @@ These cap how many agentic loops Claude runs before returning. Lower values are 
 | `assist_max_turns` | 1–20 | `5` | Per-request turn cap for the Assist conversation agent. Passed as `--max-turns` to Claude Code. 5 is enough for the common "check/toggle/summarise" flows; bump it if you see replies getting cut off mid-thought. |
 | `automation_max_turns` | 1–50 | `10` | Per-request turn cap for the Automation listener. Automation tasks typically need more turns than Assist because they're doing multi-step work unattended (read log → analyse → write report → notify). |
 
+### Assist tool scoping
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `assist_tool_access` | `mcp_only` / `full` | `mcp_only` | What the voice channel may do. `mcp_only` allows every Home Assistant MCP tool (full device control, cameras, history) but denies shell commands, file edits, and web access — automations and the terminal keep full access. Set `full` to lift the restriction for voice too. |
+
 ### Terminal permissions
 
 | Option | Type | Default | Description |
@@ -324,6 +330,53 @@ For startup issues and overall add-on health, check the add-on logs in Settings 
 ```bash
 ha-log addon bruh_claude_terminal
 ```
+
+## Insight Jobs (scheduled Claude reports)
+
+Create them from the integration: **Settings > Devices & Services > BRUH
+Claude > Add Service > Insight job**. Pick a shipped template — daily
+briefing, anomaly watch, battery & maintenance, camera check — or write a
+custom prompt. Custom prompts may embed HA templating
+(`{{ states('sensor.outdoor_temp') }}`), rendered just before each run.
+
+Scheduling: an interval (every N minutes), a daily time (HH:MM), both, or
+neither (manual only). Trigger on demand from automations:
+
+```yaml
+service: bruh_claude.run_insight
+data:
+  name: "Morning Briefing"   # omit to run all jobs
+```
+
+Each job creates `sensor.<job>_insight`: the state is the last successful
+run, the report lives in the `markdown` attribute, and the sensor's
+`card_yaml` attribute contains a ready-to-paste dashboard card:
+
+```yaml
+type: markdown
+title: Morning Briefing
+content: >-
+  {{ state_attr('sensor.morning_briefing_insight', 'markdown')
+     or 'No insight yet — run the bruh_claude.run_insight service.' }}
+```
+
+Results persist across HA restarts; failed runs keep the previous report
+visible and expose the failure in the `error` attribute. A
+`bruh_claude_insight_complete` event fires after every run for chaining
+notifications or TTS announcements.
+
+## Transport & Health
+
+In fast mode the worker pool serves an internal HTTP API (port 8099 on
+the hassio network, token-authenticated via the shared `/config` volume).
+The integration prefers it — no file polling, and voice replies stream
+into the chat log so TTS starts speaking at the first sentence on
+pipelines that support streaming. If the API is unreachable for any
+reason, both sides fall back to the original file protocol automatically.
+
+`binary_sensor.bruh_claude_system_assist_healthy` reports pool health
+(worker count, pre-warmed spare, last request latency as attributes), and
+`ha-selftest` probes the API end-to-end.
 
 ## MCP Server
 

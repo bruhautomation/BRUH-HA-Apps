@@ -87,7 +87,9 @@ BRUH-HA-Apps/
 ### Custom Integration (`custom_components/bruh_claude/`)
 - Deployed automatically to `/config/custom_components/` by the add-on at startup
 - Registers a `ConversationEntity` so "BRUH Claude" appears in Settings > Voice Assistants
-- Provides `bruh_claude.send_prompt`, `bruh_claude.run_task`, and `bruh_claude.clear_conversation` services
+- Provides `bruh_claude.send_prompt`, `bruh_claude.run_task`, `bruh_claude.run_insight`, and `bruh_claude.clear_conversation` services
+- Insight jobs (config entries of type `insight`): scheduled Claude reports rendered to `sensor.<job>_insight` (markdown attribute + ready-to-paste `card_yaml`); prompts support HA templating
+- 3.0 transport: worker pool serves an internal HTTP API (:8099, token on the shared volume); integration streams deltas into the chat log (SSE) and falls back to file IPC; `binary_sensor` reports pool health
 - Usage-limit sensors reading from `/config/.bruh_claude/usage_limits.json` (real Anthropic account utilization; requires OAuth/subscription login)
 - Communicates with the add-on via shared files in `/config/.bruh_claude/`
 - Request/response flow: integration writes JSON (unique per-request file id) → add-on processes → add-on writes JSON response named after the request id

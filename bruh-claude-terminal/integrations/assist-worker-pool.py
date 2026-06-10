@@ -28,13 +28,16 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import shlex
+import socket
 import subprocess
 import sys
 import threading
 import time
 import urllib.request
 import uuid
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from queue import Empty, Queue
 
 # ---------------------------------------------------------------------------
@@ -64,6 +67,22 @@ SPARE_RECYCLE = int(os.environ.get("BRUH_ASSIST_SPARE_RECYCLE", "600"))
 
 AREA_MAP_TTL = 300
 AREA_MAP_MAX_BYTES = 16000
+
+# Internal HTTP API (health + streaming conversations). Reachable by HA Core
+# over the hassio network; conversation requests require the shared token.
+API_PORT = int(os.environ.get("BRUH_API_PORT", "8099"))
+API_TOKEN_FILE = os.path.join(SHARED_DIR, "api_token")
+API_ENDPOINT_FILE = os.path.join(SHARED_DIR, "api_endpoint.json")
+POOL_STATUS_FILE = os.path.join(CACHE_DIR, "pool_status.json")
+
+# Voice tool scoping: with mcp_only (default), workers get a deny-list
+# settings file so voice can control the house but not run Bash/edit files.
+TOOL_ACCESS = os.environ.get("BRUH_ASSIST_TOOL_ACCESS", "mcp_only")
+ASSIST_SETTINGS_FILE = os.path.join(SHARED_DIR, "assist_settings.json")
+
+# --include-partial-messages gives token-level deltas for streaming TTS.
+# Disabled automatically if the installed CLI predates the flag.
+PARTIAL_MESSAGES_OK = True
 
 # Last-used agent profile (custom prompt + model), persisted so the spare
 # can be pre-warmed right at startup instead of after the first request.
@@ -143,6 +162,15 @@ def resolve_claude_cmd() -> list[str]:
     if os.geteuid() == 0:
         return ["su-exec", "claude", "/root/.local/bin/claude"]
     return ["claude"]
+
+
+def scoping_args() -> list:
+    """Per-channel tool scoping: in mcp_only mode workers load a deny-list
+    settings file (written by run.sh) that blocks Bash/file/web tools while
+    the project allowlist keeps every MCP tool available."""
+    if TOOL_ACCESS == "mcp_only" and os.path.isfile(ASSIST_SETTINGS_FILE):
+        return ["--settings", ASSIST_SETTINGS_FILE]
+    return []
 
 
 # ---------------------------------------------------------------------------
@@ -277,6 +305,9 @@ class Worker:
             "--max-turns", str(max(int(MAX_TURNS) * 10, 50)),
             "--system-prompt", system_prompt,
         ]
+        if PARTIAL_MESSAGES_OK:
+            cmd += ["--include-partial-messages"]
+        cmd += scoping_args()
         if model and model != "default":
             cmd += ["--model", model]
         if resume:
@@ -313,8 +344,14 @@ class Worker:
     def alive(self) -> bool:
         return self.proc.poll() is None
 
-    def ask(self, text: str, deadline: float) -> str | None:
-        """Send one user message, wait for its result event."""
+    def ask(self, text: str, deadline: float, delta_cb=None) -> str | None:
+        """Send one user message, wait for its result event.
+
+        When delta_cb is given, assistant text is forwarded incrementally:
+        token-level via stream_event deltas when the CLI supports
+        --include-partial-messages, otherwise per-turn via assistant
+        message events.
+        """
         msg = {
             "type": "user",
             "message": {
@@ -328,6 +365,7 @@ class Worker:
         except (OSError, ValueError):
             return None
 
+        saw_partial = False
         while True:
             remaining = deadline - time.time()
             if remaining <= 0:
@@ -339,7 +377,17 @@ class Worker:
             etype = event.get("type")
             if etype == "_eof":
                 return None
-            if etype == "result":
+            if etype == "stream_event" and delta_cb is not None:
+                delta = (event.get("event") or {}).get("delta") or {}
+                if delta.get("type") == "text_delta" and delta.get("text"):
+                    saw_partial = True
+                    delta_cb(delta["text"])
+            elif etype == "assistant" and delta_cb is not None and not saw_partial:
+                # Coarse fallback: stream each turn's text as one chunk
+                for block in (event.get("message") or {}).get("content") or []:
+                    if isinstance(block, dict) and block.get("type") == "text" and block.get("text"):
+                        delta_cb(block["text"])
+            elif etype == "result":
                 if event.get("is_error"):
                     return None
                 result = event.get("result")
@@ -363,6 +411,8 @@ class Pool:
         self.spare: Worker | None = None
         self.lock = threading.Lock()
         self.conv_locks: dict[str, threading.Lock] = {}
+        self.started = time.time()
+        self.last_request: dict | None = None
 
     # -- worker lifecycle ---------------------------------------------------
 
@@ -464,6 +514,11 @@ class Pool:
     # -- request handling -----------------------------------------------------
 
     def handle(self, req: dict) -> None:
+        """File-protocol frontend: process the request, write the response."""
+        response = self.process(req)
+        write_response(req["id"], response)
+
+    def process(self, req: dict, delta_cb=None) -> str:
         req_id = req["id"]
         text = req["text"]
         conv_id = "".join(
@@ -509,7 +564,13 @@ class Pool:
                     )
 
                 with worker.lock:
-                    response = worker.ask(message, deadline)
+                    response = worker.ask(message, deadline, delta_cb=delta_cb)
+                if response is None and not worker.alive() and \
+                        time.time() - worker.created < 5 and PARTIAL_MESSAGES_OK:
+                    # CLI likely predates --include-partial-messages: disable
+                    # it for future workers and let the fallback answer now.
+                    globals()["PARTIAL_MESSAGES_OK"] = False
+                    log("worker died at spawn — disabling --include-partial-messages")
                 if response is not None:
                     worker.last_used = time.time()
                     self._store_session(conv_id, worker.session_id)
@@ -547,7 +608,11 @@ class Pool:
             "----------------------------------------------------------------",
         ])
         log(f"request {req_id}: {duration:.1f}s ({mode})")
-        write_response(req_id, response)
+        self.last_request = {
+            "ts": time.time(), "duration_s": round(duration, 1), "mode": mode,
+        }
+        write_pool_status(self)
+        return response
 
     @staticmethod
     def _oneshot(
@@ -568,7 +633,7 @@ class Pool:
             "-p", "--verbose",
             "--max-turns", str(MAX_TURNS),
             "--system-prompt", system_prompt,
-        ]
+        ] + scoping_args()
         if model and model != "default":
             cmd += ["--model", model]
         try:
@@ -583,6 +648,162 @@ class Pool:
             return proc.stdout.strip() or None
         except (subprocess.TimeoutExpired, OSError):
             return None
+
+
+# ---------------------------------------------------------------------------
+# HTTP frontend: /health (open) + /conversation (token-auth, SSE streaming)
+# ---------------------------------------------------------------------------
+
+
+def load_or_create_token() -> str:
+    """Shared secret for the conversation endpoint, exchanged over the
+    /config volume both containers already share (0600)."""
+    try:
+        with open(API_TOKEN_FILE) as fh:
+            token = fh.read().strip()
+        if len(token) >= 16:
+            return token
+    except OSError:
+        pass
+    token = secrets.token_hex(16)
+    os.makedirs(SHARED_DIR, exist_ok=True)
+    fd = os.open(API_TOKEN_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        fh.write(token)
+    return token
+
+
+def publish_endpoint(port: int) -> None:
+    """Tell the integration where to find us (read off the shared volume).
+    The container hostname is reachable from HA Core on the hassio network."""
+    data = {
+        "host": os.environ.get("HOSTNAME") or socket.gethostname(),
+        "port": port,
+        "protocol_version": 1,
+        "ts": time.time(),
+    }
+    tmp = API_ENDPOINT_FILE + ".tmp"
+    with open(tmp, "w") as fh:
+        json.dump(data, fh)
+    os.replace(tmp, API_ENDPOINT_FILE)
+
+
+def write_pool_status(pool) -> None:
+    """Heartbeat consumed by the integration's health sensor (file fallback
+    when the HTTP endpoint isn't reachable)."""
+    try:
+        status = {
+            "ts": time.time(),
+            "status": "ok",
+            "workers": len(pool.workers),
+            "spare_ready": bool(pool.spare is not None and pool.spare.alive()),
+            "uptime_s": int(time.time() - pool.started),
+            "last_request": pool.last_request,
+            "tool_access": TOOL_ACCESS,
+        }
+        tmp = POOL_STATUS_FILE + ".tmp"
+        with open(tmp, "w") as fh:
+            json.dump(status, fh)
+        os.replace(tmp, POOL_STATUS_FILE)
+    except OSError:
+        pass
+
+
+class ApiHandler(BaseHTTPRequestHandler):
+    """Stdlib HTTP handler — one thread per connection via ThreadingHTTPServer."""
+
+    pool: "Pool" = None  # set by start_http_server
+    token: str = ""
+
+    # Quiet the default per-request stderr logging
+    def log_message(self, fmt, *args):  # noqa: N802
+        pass
+
+    def _json(self, code: int, payload: dict) -> None:
+        body = json.dumps(payload).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):  # noqa: N802
+        if self.path != "/health":
+            self._json(404, {"error": "not found"})
+            return
+        pool = self.pool
+        self._json(200, {
+            "status": "ok",
+            "workers": len(pool.workers),
+            "spare_ready": bool(pool.spare is not None and pool.spare.alive()),
+            "uptime_s": int(time.time() - pool.started),
+            "last_request": pool.last_request,
+            "tool_access": TOOL_ACCESS,
+        })
+
+    def do_POST(self):  # noqa: N802
+        if self.path != "/conversation":
+            self._json(404, {"error": "not found"})
+            return
+        if self.headers.get("X-BRUH-Token", "") != self.token:
+            self._json(401, {"error": "bad token"})
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            req = json.loads(self.rfile.read(length))
+            assert isinstance(req, dict) and req.get("id") and req.get("text")
+        except Exception:  # noqa: BLE001
+            self._json(400, {"error": "invalid request body"})
+            return
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+
+        write_lock = threading.Lock()
+
+        def emit(payload: dict) -> None:
+            data = f"data: {json.dumps(payload)}\n\n".encode()
+            with write_lock:
+                self.wfile.write(data)
+                self.wfile.flush()
+
+        def delta_cb(text: str) -> None:
+            try:
+                emit({"type": "delta", "text": text})
+            except OSError:
+                pass  # client went away; result still completes server-side
+
+        try:
+            response = self.pool.process(req, delta_cb=delta_cb)
+            emit({"type": "result", "text": response})
+        except OSError:
+            pass  # client disconnected mid-stream
+        except Exception as exc:  # noqa: BLE001
+            try:
+                emit({"type": "error", "message": str(exc)})
+            except OSError:
+                pass
+
+
+def start_http_server(pool) -> None:
+    """Serve the internal API; failure is non-fatal (file IPC keeps working)."""
+    try:
+        token = load_or_create_token()
+        ApiHandler.pool = pool
+        ApiHandler.token = token
+        server = ThreadingHTTPServer(("0.0.0.0", API_PORT), ApiHandler)
+        server.daemon_threads = True
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        publish_endpoint(API_PORT)
+        log(f"HTTP API listening on :{API_PORT} (health + streaming conversations)")
+    except Exception as exc:  # noqa: BLE001
+        log(f"HTTP API failed to start ({exc}) — file IPC only")
+        try:
+            os.remove(API_ENDPOINT_FILE)
+        except OSError:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -661,7 +882,9 @@ def main() -> None:
     cleanup_stale_files()
 
     pool = Pool()
+    start_http_server(pool)
     prewarm_spare(pool)
+    write_pool_status(pool)
     last_housekeeping = time.time()
 
     while True:
@@ -683,6 +906,7 @@ def main() -> None:
             last_housekeeping = now
             pool.reap()
             cleanup_stale_files()
+            write_pool_status(pool)
 
         time.sleep(POLL_INTERVAL)
 

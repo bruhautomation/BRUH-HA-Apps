@@ -172,7 +172,7 @@ process_task() {
     local work_file="${task_file%.json}.work.${BASHPID:-$$}"
     mv "$task_file" "$work_file" 2>/dev/null || return 0
 
-    local task_id prompt notify notify_entity task_ts task_timeout
+    local task_id prompt notify notify_entity task_ts task_timeout task_model
 
     task_id=$(jq -r '.id // empty' "$work_file" 2>/dev/null)
     prompt=$(jq -r '.prompt // empty' "$work_file" 2>/dev/null)
@@ -180,6 +180,12 @@ process_task() {
     notify_entity=$(jq -r '.notify_entity // empty' "$work_file" 2>/dev/null)
     task_ts=$(jq -r '.ts // empty' "$work_file" 2>/dev/null)
     task_timeout=$(jq -r '.timeout // empty' "$work_file" 2>/dev/null)
+    task_model=$(jq -r '.model // empty' "$work_file" 2>/dev/null)
+
+    local model_flag=""
+    if [ -n "$task_model" ] && [ "$task_model" != "default" ]; then
+        model_flag="--model $task_model"
+    fi
 
     if [ -z "$task_id" ] || [ -z "$prompt" ]; then
         bashio::log.warning "Invalid task file: $task_file"
@@ -256,7 +262,7 @@ process_task() {
     start_time=$(date +%s)
 
     # shellcheck disable=SC2086
-    (cd /config && printf '%s' "$prompt" | timeout "$claude_limit" ${CLAUDE_BIN} -p --verbose --max-turns "$MAX_TURNS" > "$output_file" 2>"$stderr_file") || true
+    (cd /config && printf '%s' "$prompt" | timeout "$claude_limit" ${CLAUDE_BIN} -p --verbose --max-turns "$MAX_TURNS" ${model_flag} > "$output_file" 2>"$stderr_file") || true
 
     local end_time duration
     end_time=$(date +%s)
@@ -279,7 +285,7 @@ process_task() {
             stderr_file=$(mktemp)
 
             # shellcheck disable=SC2086
-            (cd /config && printf '%s' "$prompt" | timeout "$remaining" ${CLAUDE_BIN} -p --verbose --max-turns "$MAX_TURNS" > "$output_file" 2>"$stderr_file") || true
+            (cd /config && printf '%s' "$prompt" | timeout "$remaining" ${CLAUDE_BIN} -p --verbose --max-turns "$MAX_TURNS" ${model_flag} > "$output_file" 2>"$stderr_file") || true
 
             end_time=$(date +%s)
             duration=$((end_time - start_time))

@@ -1,5 +1,58 @@
 # Changelog
 
+## 3.0.0
+
+**The big one: insight jobs, streaming voice, an internal HTTP API with
+health monitoring, and voice tool scoping — with the file protocol kept
+as a permanent fallback so nothing existing breaks.**
+
+### Insight jobs (proactive Claude)
+
+Add scheduled Claude reports from the integration: **Add Service → Insight
+job**. Pick a shipped template (daily briefing, anomaly watch, battery &
+maintenance, camera check) or write a custom prompt — custom prompts can
+embed HA templating (`{{ states('sensor.x') }}`), rendered before sending.
+Schedule by interval and/or daily time, or trigger from automations with
+the new `bruh_claude.run_insight` service. Results land on
+`sensor.<job>_insight`: state = last successful run, `markdown` attribute =
+the report (kept out of the recorder), and a ready-to-paste `card_yaml`
+attribute for a dashboard markdown card. Results persist across HA
+restarts, errors keep the previous report visible, and a
+`bruh_claude_insight_complete` event fires for chaining.
+
+### Streaming voice (HTTP/SSE transport)
+
+The worker pool now serves an internal HTTP API on the hassio network
+(token-authenticated via the shared volume). The integration prefers it —
+requests arrive instantly (no file polling) and Claude's text **streams
+into HA's chat log as it's generated**, so TTS starts speaking at the
+first sentence on Assist pipelines that support streaming. Every layer
+falls back automatically: no chat-log API → whole-reply; HTTP unreachable
+→ file IPC, which both sides keep forever.
+
+### Health monitoring
+
+`binary_sensor.bruh_claude_system_assist_healthy` reports the pool's
+health (HTTP `/health` first, heartbeat file fallback) with worker counts
+and last-request latency as attributes. `ha-selftest` checks the API, and
+run.sh babysits the pool process (auto-restart on exit). The Supervisor
+`watchdog` key is deliberately not used — it can't be conditional on the
+assist channel being enabled and would restart-loop disabled installs.
+
+### Voice tool scoping (assist_tool_access, default mcp_only)
+
+The assist channel now runs with a deny-list settings file: voice keeps
+every MCP device tool but can no longer run shell commands, edit files,
+or reach the web. Automations and the terminal keep full access. Set
+`assist_tool_access: full` to restore the old behavior.
+
+### Also
+
+- `bruh_claude.run_task` (and insight jobs) accept a `model` override,
+  honored by the automation listener.
+- Conversation workers stream token-level deltas via
+  `--include-partial-messages`, with automatic downgrade on older CLIs.
+
 ## 2.5.0
 
 **Claude can now see cameras and answer questions about the past — and

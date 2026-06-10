@@ -1,7 +1,7 @@
 ---
 name: "BRUH Claude Terminal"
 description: "Enhanced Claude Code terminal for Home Assistant with native HA API access, auto-backup, context generation, and Assist integration"
-version: "2.5.0"
+version: "3.0.0"
 slug: "bruh_claude_terminal"
 init: false
 
@@ -38,6 +38,7 @@ options:
   enable_mobile_ui: true
   dangerously_skip_permissions: false
   assist_fast_mode: true
+  assist_tool_access: mcp_only
   assist_max_turns: 5
   automation_max_turns: 10
   access_share: true
@@ -60,6 +61,7 @@ schema:
   enable_mobile_ui: bool?
   dangerously_skip_permissions: bool?
   assist_fast_mode: bool?
+  assist_tool_access: "list(mcp_only|full)?"
   assist_max_turns: "int(1,20)?"
   automation_max_turns: "int(1,50)?"
   access_share: bool?

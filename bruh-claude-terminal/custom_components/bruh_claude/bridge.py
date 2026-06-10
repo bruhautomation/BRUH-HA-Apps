@@ -26,6 +26,8 @@ import uuid
 from homeassistant.core import HomeAssistant
 
 from .const import (
+    API_ENDPOINT_FILENAME,
+    API_TOKEN_FILENAME,
     DEFAULT_TASK_TIMEOUT,
     DEFAULT_TIMEOUT,
     REQUESTS_DIR,
@@ -145,6 +147,138 @@ class ClaudeBridge:
 
         return response_text
 
+    # ------------------------------------------------------------------
+    # HTTP transport (3.0): streaming via the add-on's internal API, with
+    # transparent fallback to the file protocol above.
+    # ------------------------------------------------------------------
+
+    async def async_api_config(self) -> tuple[str, str] | None:
+        """Return (base_url, token) when the add-on publishes its API."""
+        return await self._hass.async_add_executor_job(self._read_api_config)
+
+    def _read_api_config(self) -> tuple[str, str] | None:
+        try:
+            with open(os.path.join(self._base, API_ENDPOINT_FILENAME)) as fh:
+                endpoint = json.load(fh)
+            with open(os.path.join(self._base, API_TOKEN_FILENAME)) as fh:
+                token = fh.read().strip()
+            host = endpoint.get("host")
+            port = endpoint.get("port")
+            if host and port and token:
+                return f"http://{host}:{port}", token
+        except (OSError, json.JSONDecodeError, ValueError):
+            pass
+        return None
+
+    async def async_api_health(self) -> dict | None:
+        """GET /health from the add-on API; None when unreachable."""
+        api = await self.async_api_config()
+        if not api:
+            return None
+        base_url, _token = api
+        try:
+            import aiohttp
+            from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+            session = async_get_clientsession(self._hass)
+            async with session.get(
+                f"{base_url}/health", timeout=aiohttp.ClientTimeout(total=5)
+            ) as resp:
+                if resp.status != 200:
+                    return None
+                return await resp.json()
+        except Exception:  # noqa: BLE001 — any failure means "not healthy via HTTP"
+            return None
+
+    async def async_send_conversation_streaming(
+        self,
+        text: str,
+        conversation_id: str | None = None,
+        timeout: int | None = None,
+        system_prompt: str | None = None,
+        model: str | None = None,
+        delta_listener=None,
+    ) -> str:
+        """Send a conversation over HTTP/SSE when available (deltas pushed to
+        delta_listener as they arrive), else fall back to the file protocol."""
+        api = await self.async_api_config()
+        if api:
+            try:
+                return await self._http_conversation(
+                    api, text, conversation_id, timeout, system_prompt, model,
+                    delta_listener,
+                )
+            except Exception as exc:  # noqa: BLE001 — fall back, never fail the turn
+                _LOGGER.warning(
+                    "HTTP transport failed (%s) — falling back to file IPC", exc
+                )
+        return await self.async_send_conversation(
+            text,
+            conversation_id=conversation_id,
+            timeout=timeout,
+            system_prompt=system_prompt,
+            model=model,
+        )
+
+    async def _http_conversation(
+        self, api, text, conversation_id, timeout, system_prompt, model,
+        delta_listener,
+    ) -> str:
+        import aiohttp
+        from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+        base_url, token = api
+        conv_id = conversation_id or uuid.uuid4().hex
+        timeout = timeout or self._timeout
+        request: dict = {
+            "id": uuid.uuid4().hex,
+            "conversation_id": conv_id,
+            "text": text,
+            "type": "conversation",
+            "ts": time.time(),
+            "timeout": timeout,
+            "conversation_history": list(self._conversation_history.get(conv_id, [])),
+        }
+        if system_prompt:
+            request["system_prompt"] = system_prompt
+        if model:
+            request["model"] = model
+
+        session = async_get_clientsession(self._hass)
+        result_text: str | None = None
+        async with session.post(
+            f"{base_url}/conversation",
+            json=request,
+            headers={"X-BRUH-Token": token},
+            timeout=aiohttp.ClientTimeout(total=timeout + 10, sock_read=timeout + 10),
+        ) as resp:
+            if resp.status != 200:
+                raise RuntimeError(f"API returned HTTP {resp.status}")
+            async for raw_line in resp.content:
+                line = raw_line.decode(errors="replace").strip()
+                if not line.startswith("data: "):
+                    continue
+                try:
+                    event = json.loads(line[6:])
+                except json.JSONDecodeError:
+                    continue
+                etype = event.get("type")
+                if etype == "delta" and delta_listener is not None:
+                    try:
+                        delta_listener(event.get("text") or "")
+                    except Exception:  # noqa: BLE001 — listener bugs can't kill the turn
+                        _LOGGER.exception("delta listener failed")
+                elif etype == "result":
+                    result_text = event.get("text") or ""
+                    break
+                elif etype == "error":
+                    raise RuntimeError(event.get("message") or "stream error")
+
+        if result_text is None:
+            raise RuntimeError("stream ended without a result event")
+        self._append_history(conv_id, text, result_text)
+        return result_text
+
     def _append_history(self, conv_id: str, user_text: str, response: str) -> None:
         """Record an exchange, trimming length and evicting old sessions.
 
@@ -197,6 +331,7 @@ class ClaudeBridge:
         notify: bool = False,
         notify_entity: str | None = None,
         timeout: int | None = None,
+        model: str | None = None,
     ) -> str:
         """Send an automation task and wait for the result."""
         task_id = uuid.uuid4().hex
@@ -214,6 +349,8 @@ class ClaudeBridge:
         }
         if notify_entity:
             task["notify_entity"] = notify_entity
+        if model and model != "default":
+            task["model"] = model
 
         task_file = os.path.join(self.tasks_dir, f"{task_id}.json")
         result_file = os.path.join(self.task_results_dir, f"{task_id}.json")

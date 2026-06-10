@@ -196,6 +196,22 @@ else
     warn "automation-listener not running (disabled in config, or check the add-on log)"
 fi
 
+# --- 5a. assist API (fast mode) ----------------------------------------------
+hdr "Assist API (worker pool)"
+api_health=$(curl -s -m 5 "http://127.0.0.1:8099/health" 2>/dev/null)
+case "$api_health" in
+    *'"status": "ok"'*|*'"status":"ok"'*)
+        pass "Worker pool API healthy (:8099/health)"
+        info "$(echo "$api_health" | head -c 160)"
+        ;;
+    "")
+        warn "Worker pool API not responding (classic mode, or pool starting up)"
+        ;;
+    *)
+        fail "Worker pool API responded abnormally: $(echo "$api_health" | head -c 160)"
+        ;;
+esac
+
 # --- 5b. assist area map (voice fast-path) ----------------------------------
 hdr "Assist area map (voice fast-path)"
 AREA_MAP=/config/.bruh_claude/cache/area_map.txt

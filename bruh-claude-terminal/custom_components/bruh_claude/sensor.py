@@ -24,7 +24,16 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN, SHARED_DIR
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
+
+from .const import (
+    CONF_INSIGHT_TEMPLATE,
+    DOMAIN,
+    ENTRY_TYPE_INSIGHT,
+    SHARED_DIR,
+    SIGNAL_INSIGHT_UPDATE,
+)
+from .insight_format import build_card_yaml
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -66,6 +75,14 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up BRUH Claude sensors (once, not per conversation)."""
+    from . import entry_type, load_insight_payload  # local import: avoid cycle
+
+    if entry_type(config_entry) == ENTRY_TYPE_INSIGHT:
+        async_add_entities([
+            BruhClaudeInsightSensor(hass, config_entry, load_insight_payload)
+        ])
+        return
+
     domain_data = hass.data.get(DOMAIN, {})
 
     # Guard: sensors are account-wide — only create them from the first entry.
@@ -220,3 +237,77 @@ class BruhClaudeUsageLimitSensor(SensorEntity):
         except (OSError, json.JSONDecodeError) as exc:
             _LOGGER.debug("Could not read usage limits: %s", exc)
             return None
+
+
+# ---------------------------------------------------------------------------
+# Insight job sensor
+# ---------------------------------------------------------------------------
+
+class BruhClaudeInsightSensor(SensorEntity):
+    """Holds the latest result of one insight job.
+
+    State is the last successful run time; the generated markdown lives in
+    attributes (kept out of the recorder — it can be sizeable and the live
+    state machine is all a dashboard card needs).
+    """
+
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+    _attr_icon = "mdi:lightbulb-on-outline"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _unrecorded_attributes = frozenset({"markdown", "card_yaml"})
+
+    def __init__(self, hass, config_entry: ConfigEntry, loader) -> None:
+        self.hass = hass
+        self._entry = config_entry
+        self._loader = loader
+        self._payload: dict[str, Any] = {}
+        self._attr_name = "Insight"
+        self._attr_unique_id = f"{config_entry.entry_id}_insight"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"insight_{config_entry.entry_id}")},
+            name=config_entry.title,
+            manufacturer="BRUH Automation",
+            model="Claude Insight Job",
+        )
+
+    async def async_added_to_hass(self) -> None:
+        # Restore the last persisted result so restarts don't blank the card
+        payload = await self.hass.async_add_executor_job(
+            self._loader, self.hass, self._entry.entry_id
+        )
+        if payload:
+            self._apply(payload)
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass,
+                SIGNAL_INSIGHT_UPDATE.format(self._entry.entry_id),
+                self._handle_update,
+            )
+        )
+
+    def _handle_update(self, payload: dict) -> None:
+        self._apply(payload)
+        self.async_write_ha_state()
+
+    def _apply(self, payload: dict) -> None:
+        # Errors keep the previous markdown so the card never goes blank
+        previous_markdown = self._payload.get("markdown")
+        merged = {**self._payload, **payload}
+        if payload.get("error") and previous_markdown and not payload.get("markdown"):
+            merged["markdown"] = previous_markdown
+        self._payload = merged
+        self._attr_native_value = _parse_timestamp(merged.get("last_success"))
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        opts = {**self._entry.data, **self._entry.options}
+        return {
+            "markdown": self._payload.get("markdown"),
+            "card_yaml": build_card_yaml(
+                self.entity_id or "sensor.insight", self._entry.title
+            ),
+            "duration_s": self._payload.get("duration_s"),
+            "error": self._payload.get("error"),
+            "template": opts.get(CONF_INSIGHT_TEMPLATE),
+        }
