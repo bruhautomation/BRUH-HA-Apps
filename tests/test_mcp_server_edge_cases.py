@@ -74,7 +74,7 @@ class TestEdgeCaseEntityStates(unittest.TestCase):
 
     @patch("ha_mcp_server.ha_api_request")
     def test_get_all_states_very_large_list(self, mock_api):
-        """Should handle a very large entity list."""
+        """A very large entity list is capped with a truncation envelope."""
         states = [
             {
                 "entity_id": f"sensor.test_{i}",
@@ -85,7 +85,27 @@ class TestEdgeCaseEntityStates(unittest.TestCase):
         ]
         mock_api.return_value = states
         result = ha_mcp_server.get_all_states()
-        self.assertEqual(len(result), 1000)
+        self.assertIsInstance(result, dict)
+        self.assertEqual(result["total_matches"], 1000)
+        self.assertEqual(result["returned"], ha_mcp_server.MAX_STATE_RESULTS)
+        self.assertEqual(len(result["entities"]), ha_mcp_server.MAX_STATE_RESULTS)
+        self.assertIn("note", result)
+
+    @patch("ha_mcp_server.ha_api_request")
+    def test_get_all_states_at_cap_stays_list(self, mock_api):
+        """Exactly MAX_STATE_RESULTS entities keeps the plain-list shape."""
+        states = [
+            {
+                "entity_id": f"sensor.test_{i}",
+                "state": str(i),
+                "attributes": {"friendly_name": f"Test {i}"}
+            }
+            for i in range(ha_mcp_server.MAX_STATE_RESULTS)
+        ]
+        mock_api.return_value = states
+        result = ha_mcp_server.get_all_states()
+        self.assertIsInstance(result, list)
+        self.assertEqual(len(result), ha_mcp_server.MAX_STATE_RESULTS)
 
     @patch("ha_mcp_server.ha_api_request")
     def test_get_all_states_with_nonstandard_entity_ids(self, mock_api):

@@ -107,10 +107,10 @@ class BruhClaudeConversationEntity(ConversationEntity):
                 "Make sure the BRUH Claude Terminal app is running."
             )
         except asyncio.CancelledError:
-            _LOGGER.warning("Conversation cancelled for [%s]", conversation_id)
-            response_text = (
-                "The request was cancelled before Claude could respond."
-            )
+            # HA cancelled the pipeline (dialog closed, voice timeout).
+            # Swallowing this breaks asyncio cancellation semantics — re-raise.
+            _LOGGER.debug("Conversation cancelled for [%s]", conversation_id)
+            raise
         except Exception:
             _LOGGER.exception("Error communicating with Claude app")
             response_text = (

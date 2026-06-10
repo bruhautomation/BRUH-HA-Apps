@@ -183,6 +183,24 @@ class TestToolImplementations(unittest.TestCase):
             self.assertTrue(entity["entity_id"].startswith("light."))
 
     @patch("ha_mcp_server.ha_api_request")
+    def test_get_all_states_name_filter(self, mock_api):
+        """Test filtering states by name substring (entity_id or friendly name)."""
+        mock_api.return_value = [
+            {"entity_id": "light.kitchen_main", "state": "on", "attributes": {"friendly_name": "Kitchen Main"}},
+            {"entity_id": "light.bedroom", "state": "off", "attributes": {"friendly_name": "Bedroom"}},
+            {"entity_id": "switch.fountain", "state": "on", "attributes": {"friendly_name": "Kitchen Fountain"}},
+        ]
+
+        result = ha_mcp_server.get_all_states(name_filter="KITCHEN")
+        self.assertEqual(len(result), 2)
+        ids = {e["entity_id"] for e in result}
+        self.assertEqual(ids, {"light.kitchen_main", "switch.fountain"})
+
+        result = ha_mcp_server.get_all_states(domain="light", name_filter="kitchen")
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["entity_id"], "light.kitchen_main")
+
+    @patch("ha_mcp_server.ha_api_request")
     def test_get_all_states_empty(self, mock_api):
         """Test empty state list."""
         mock_api.return_value = []
@@ -361,14 +379,23 @@ class TestHandleToolCall(unittest.TestCase):
         """Test routing to get_all_states with optional domain."""
         mock_fn.return_value = []
         ha_mcp_server.handle_tool_call("get_all_states", {"domain": "light"})
-        mock_fn.assert_called_with("light")
+        mock_fn.assert_called_with("light", None)
 
     @patch("ha_mcp_server.get_all_states")
     def test_routes_get_all_states_no_domain(self, mock_fn):
         """Test routing to get_all_states without domain."""
         mock_fn.return_value = []
         ha_mcp_server.handle_tool_call("get_all_states", {})
-        mock_fn.assert_called_with(None)
+        mock_fn.assert_called_with(None, None)
+
+    @patch("ha_mcp_server.get_all_states")
+    def test_routes_get_all_states_name_filter(self, mock_fn):
+        """Test routing passes name_filter through."""
+        mock_fn.return_value = []
+        ha_mcp_server.handle_tool_call(
+            "get_all_states", {"domain": "light", "name_filter": "kitchen"}
+        )
+        mock_fn.assert_called_with("light", "kitchen")
 
     def test_unknown_tool_returns_error(self):
         """Test that unknown tool name returns error."""

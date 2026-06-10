@@ -1,5 +1,69 @@
 # Changelog
 
+## 2.3.0
+
+**Faster conversations, real session memory, and a fix for the
+"one answer behind" bug.**
+
+### Fix: stale responses could leave a conversation permanently lagging
+
+Request and response files were both named `{conversation_id}.json` and
+reused for every turn. If a response ever landed after the integration
+stopped waiting (bridge timeout, or HA cancelling the pipeline when the
+Assist dialog closed), the orphaned file was consumed as the answer to the
+**next** turn — and from then on every turn received the previous turn's
+answer. Concurrent requests for the same conversation collided on the same
+files too.
+
+Files are now named by a unique per-request id (the conversation id rides
+along inside the payload), listeners discard backlog requests that nobody
+is waiting for anymore, claim requests atomically by rename (no
+double-processing races), and sweep orphaned files periodically. The
+conversation entity also re-raises `asyncio.CancelledError` instead of
+swallowing it, and the in-memory history map is bounded (oldest
+conversations evicted) instead of growing forever.
+
+### Conversations now resume real Claude Code sessions
+
+The first turn of a conversation starts a Claude session with a generated
+`--session-id`; follow-up turns `--resume` it. Claude keeps the full
+conversation context server-side — no more replaying the transcript into
+every request — which cuts tokens and time-to-first-token and gives the
+agent complete (not truncated) memory within a conversation.
+`bruh_claude.clear_conversation` clears the session mapping so the next
+turn starts fresh. If resume fails or the CLI predates the session flags,
+the listener falls back to the old stateless replay automatically.
+
+### Speed: area map in the system prompt, Haiku default, snappier polling
+
+- The assist listener renders an **area → controllable-entities map** via
+  the template API, caches it (5-minute stale-while-revalidate), and
+  splices it into the system prompt. "Turn off the kitchen lights" no
+  longer needs a `get_areas` round-trip — that's a whole model turn
+  (several seconds) saved on most voice commands.
+- New conversation agents default to **Claude Haiku** (fastest). Existing
+  agents keep their configured model; `Default` still inherits the
+  terminal's model.
+- The bridge polls for responses every **0.1s** instead of 0.5s.
+- The deep MCP-config cleanup (greps over `~/.claude.json` and a `find`
+  across `~/.claude/projects`) now runs at startup and after detected
+  `/api/mcp` errors instead of before **every** request; the hot path keeps
+  a single cheap check of `/config/.mcp.json`.
+- Fallback history replay is trimmed (6 turns, long messages truncated) so
+  long chats don't slow down turn after turn.
+- `get_all_states` gained a `name_filter` argument and caps results at 300
+  entities — an unfiltered dump of a large install was a huge tool result
+  that slowed every turn.
+
+### Fix: automation tasks longer than 120s were lost
+
+The automation listener allows tasks up to 300s, but the integration only
+waited 120s — anything longer "timed out" for the user while Claude kept
+working, and the result was orphaned. Tasks now default to a 300s wait, and
+both listeners derive their claude process limit from the timeout the
+integration sends with each request, so results always land inside the
+window the bridge is actually polling.
+
 ## 2.2.1
 
 **Fix: `ha-selftest` (and other scripts) printed `Permission denied` when
