@@ -15,6 +15,7 @@ RUN apk add --no-cache \
     py3-yaml \
     py3-beautifulsoup4 \
     py3-pillow \
+    tzdata \
     git \
     vim \
     wget \

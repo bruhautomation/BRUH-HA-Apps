@@ -68,6 +68,10 @@ SPARE_RECYCLE = int(os.environ.get("BRUH_ASSIST_SPARE_RECYCLE", "600"))
 AREA_MAP_TTL = 300
 AREA_MAP_MAX_BYTES = 16000
 
+# HA's configured timezone (written by run.sh at startup; refreshed here as
+# a fallback). Voice answers must use local time, never the container UTC.
+TIMEZONE_FILE = os.path.join(CACHE_DIR, "ha_timezone")
+
 # Internal HTTP API (health + streaming conversations). Reachable by HA Core
 # over the hassio network; conversation requests require the shared token.
 API_PORT = int(os.environ.get("BRUH_API_PORT", "8099"))
@@ -91,6 +95,9 @@ LAST_PROFILE_FILE = os.path.join(CACHE_DIR, "last_profile.json")
 SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 TEMPLATE_API = os.environ.get(
     "BRUH_TEMPLATE_API", "http://supervisor/core/api/template"
+)
+HA_CONFIG_API = os.environ.get(
+    "BRUH_HA_CONFIG_API", "http://supervisor/core/api/config"
 )
 
 # Mirrors the area-map template in assist-listener.sh — pure core Jinja so
@@ -242,8 +249,58 @@ def get_area_map() -> str:
             return ""
 
 
+def get_ha_timezone() -> str:
+    """HA's time_zone, from the startup cache or fetched directly."""
+    try:
+        with open(TIMEZONE_FILE) as fh:
+            tz = fh.read().strip()
+        if tz:
+            return tz
+    except OSError:
+        pass
+    if not SUPERVISOR_TOKEN:
+        return ""
+    try:
+        req = urllib.request.Request(
+            HA_CONFIG_API,
+            headers={"Authorization": f"Bearer {SUPERVISOR_TOKEN}"},
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            tz = json.loads(resp.read().decode()).get("time_zone") or ""
+        if tz:
+            os.makedirs(CACHE_DIR, exist_ok=True)
+            with open(TIMEZONE_FILE, "w") as fh:
+                fh.write(tz)
+        return tz
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def local_time_line() -> str:
+    """One-line local-time stamp prepended to each user message, so 'what
+    time is it' costs zero tool calls and answers in the right zone."""
+    tz = get_ha_timezone()
+    if not tz:
+        return ""
+    try:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        now = datetime.now(ZoneInfo(tz))
+        return f"(Local time: {now.strftime('%A %Y-%m-%d %H:%M')} {tz})\n"
+    except Exception:  # noqa: BLE001 — missing tzdata etc.: skip the stamp
+        return ""
+
+
 def build_system_prompt(custom: str) -> str:
     prompt = BASE_SYSTEM_PROMPT
+    tz = get_ha_timezone()
+    if tz:
+        prompt += (
+            f"\nThe user's timezone is {tz}. Every user message starts with "
+            "the current local time — ALWAYS answer times in that local "
+            "timezone, never UTC."
+        )
     area_map = get_area_map()
     if area_map.strip():
         prompt += MAP_PROMPT.format(area_map=area_map.rstrip())
@@ -559,7 +616,7 @@ class Pool:
         with conv_lock:
             try:
                 worker, mode = self._take_worker(conv_id, profile)
-                message = text
+                message = local_time_line() + text
                 # A truly fresh session can't see earlier turns — replay the
                 # transcript the integration sends (like the classic listener).
                 if mode == "cold" and req.get("conversation_history"):
@@ -569,7 +626,7 @@ class Pool:
                     ]
                     message = (
                         "Previous conversation:\n" + "\n".join(lines)
-                        + f"\n\nUSER: {text}"
+                        + f"\n\n{local_time_line()}USER: {text}"
                     )
 
                 with worker.lock:
@@ -631,7 +688,7 @@ class Pool:
         remaining = int(deadline - time.time())
         if remaining < 10:
             return None
-        text = req["text"]
+        text = local_time_line() + req["text"]
         if req.get("conversation_history"):
             lines = [
                 f"{m.get('role', '?').upper()}: {m.get('content', '')}"

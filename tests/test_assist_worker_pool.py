@@ -385,3 +385,35 @@ def test_clear_conversation_resets_warm_worker(tmp_path, monkeypatch):
             "cleared conversation must not reuse the old worker"
     finally:
         shutdown(pool)
+
+
+def test_local_time_stamp_and_timezone_prompt(tmp_path, monkeypatch):
+    """With HA's timezone cached, the system prompt names it and every
+    message carries a local-time stamp; without it, nothing is added."""
+    mod = load_pool_module(tmp_path, monkeypatch)
+    with open(mod.TIMEZONE_FILE, "w") as fh:
+        fh.write("America/Chicago")
+    pool = mod.Pool()
+    try:
+        req = make_request("what time is it")
+        pool.handle(req)
+        resp = read_response(mod, req["id"])
+        assert "(Local time: " in resp
+        assert "America/Chicago" in resp
+
+        spawns = argv_log(tmp_path)
+        prompt = spawns[-1][spawns[-1].index("--system-prompt") + 1]
+        assert "timezone is America/Chicago" in prompt
+        assert "never UTC" in prompt
+    finally:
+        shutdown(pool)
+
+    # No timezone known -> clean messages (also keeps other tests stable)
+    mod2 = load_pool_module(tmp_path / "no_tz", monkeypatch)
+    pool2 = mod2.Pool()
+    try:
+        req = make_request("plain")
+        pool2.handle(req)
+        assert "(Local time:" not in read_response(mod2, req["id"])
+    finally:
+        shutdown(pool2)

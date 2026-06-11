@@ -23,6 +23,11 @@
   one-time notification containing the dashboard card ready to paste;
   the sensor gained a readable `preview` attribute (long blobs sorted
   last), and DOCS explains exactly where the report lives.
+- **Local time, not UTC**: the container now adopts HA's configured
+  timezone (TZ + tzdata), the voice system prompt names it, and every
+  message carries a local-time stamp — agents answer time questions in
+  your timezone with zero tool calls. Applies to terminal, voice, and
+  automation channels.
 
 ## 3.0.0
 
