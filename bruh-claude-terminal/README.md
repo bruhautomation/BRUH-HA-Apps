@@ -18,10 +18,10 @@ Claude as a conversation agent in Settings > Voice Assistants:
 Claude watches your house and writes markdown reports to sensors — daily briefing, anomaly watch, battery & maintenance, camera check, or your own prompt (HA templating supported). Schedule by interval/daily time or trigger via `bruh_claude.run_insight`; each sensor includes ready-to-paste dashboard card YAML.
 
 ### Native HA API Access (MCP Server)
-31 tools give Claude real-time access to your installation:
+32 tools give Claude real-time access to your installation:
 - Entity states, service calls, device control for every major domain
 - **Camera vision** — Claude can look at a camera and describe what it sees
-- **History & statistics** — "how cold did it get last night?" answered from the recorder and long-term statistics
+- **History, statistics & forecasts** — "how cold did it get last night?", "what's the weather tomorrow?"
 - Areas/rooms, automation traces, logs, Jinja2 templates, config reloads
 
 ### Terminal & Workflow

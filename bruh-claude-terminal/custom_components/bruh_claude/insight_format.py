@@ -19,6 +19,15 @@ def truncate_markdown(text: str, limit: int = MARKDOWN_MAX_CHARS) -> str:
     return cut + "\n\n*…truncated*"
 
 
+def make_preview(markdown: str | None, limit: int = 180) -> str | None:
+    """First line(s) of the report, flattened — readable in the attributes
+    pane without expanding the full markdown blob."""
+    if not markdown:
+        return None
+    flat = " ".join(markdown.split())
+    return flat[:limit] + ("…" if len(flat) > limit else "")
+
+
 def build_card_yaml(entity_id: str, title: str) -> str:
     """Ready-to-paste Lovelace markdown card for an insight sensor."""
     return (

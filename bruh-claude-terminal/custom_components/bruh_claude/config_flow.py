@@ -30,6 +30,7 @@ from .const import (
     CONF_ENTRY_TYPE,
     CONF_INSIGHT_DAILY_AT,
     CONF_INSIGHT_INTERVAL,
+    CONF_INSIGHT_NOTIFY,
     CONF_INSIGHT_PROMPT,
     CONF_INSIGHT_TEMPLATE,
     CONF_MODEL,
@@ -46,8 +47,39 @@ from .const import (
 )
 from .insight_format import INSIGHT_TEMPLATES
 
-INSIGHT_TEMPLATE_CHOICES = {key: key.replace("_", " ").title() for key in INSIGHT_TEMPLATES}
-INSIGHT_TEMPLATE_CHOICES["custom"] = "Custom (write your own prompt)"
+try:
+    from homeassistant.helpers.selector import (
+        SelectOptionDict,
+        SelectSelector,
+        SelectSelectorConfig,
+        SelectSelectorMode,
+        TextSelector,
+        TextSelectorConfig,
+    )
+
+    # Inline labels render regardless of translation loading and double as
+    # the template "preview" at a glance.
+    TEMPLATE_LABELS = {
+        "daily_briefing": "Daily briefing — what's notable right now (anomalies, batteries, weather that matters)",
+        "anomaly_watch": "Anomaly watch — only problems; says 'All quiet.' otherwise",
+        "battery_maintenance": "Battery & maintenance — what to replace now / soon",
+        "camera_check": "Camera check — looks at every camera, reports anything notable",
+        "custom": "Custom — use my prompt below",
+    }
+
+    def _select(options: dict[str, str]):
+        return SelectSelector(SelectSelectorConfig(
+            options=[SelectOptionDict(value=v, label=label) for v, label in options.items()],
+            mode=SelectSelectorMode.DROPDOWN,
+        ))
+
+    TEMPLATE_FIELD = _select(TEMPLATE_LABELS)
+    MODEL_FIELD = _select(AVAILABLE_MODELS)
+    MULTILINE_FIELD = TextSelector(TextSelectorConfig(multiline=True))
+except ImportError:  # very old HA — plain widgets still work
+    TEMPLATE_FIELD = vol.In(list(INSIGHT_TEMPLATES) + ["custom"])
+    MODEL_FIELD = vol.In(AVAILABLE_MODELS)
+    MULTILINE_FIELD = str
 
 
 def _valid_daily_at(value: str) -> bool:
@@ -83,7 +115,10 @@ class BruhClaudeConfigFlow(ConfigFlow, domain=DOMAIN):
         if self._async_current_entries():
             return self.async_show_menu(
                 step_id="user",
-                menu_options=["add_agent", "add_insight"],
+                menu_options={
+                    "add_agent": "Conversation agent — a voice personality for Assist",
+                    "add_insight": "Insight job — a scheduled Claude report on a sensor",
+                },
             )
         return await self.async_step_first_setup(user_input)
 
@@ -126,6 +161,7 @@ class BruhClaudeConfigFlow(ConfigFlow, domain=DOMAIN):
                         CONF_INSIGHT_PROMPT: user_input.get(CONF_INSIGHT_PROMPT, ""),
                         CONF_INSIGHT_INTERVAL: user_input.get(CONF_INSIGHT_INTERVAL, 0),
                         CONF_INSIGHT_DAILY_AT: daily_at,
+                        CONF_INSIGHT_NOTIFY: user_input.get(CONF_INSIGHT_NOTIFY, ""),
                         CONF_MODEL: user_input.get(CONF_MODEL, "default"),
                         CONF_TIMEOUT: user_input.get(CONF_TIMEOUT, DEFAULT_INSIGHT_TIMEOUT),
                     },
@@ -138,13 +174,14 @@ class BruhClaudeConfigFlow(ConfigFlow, domain=DOMAIN):
                     vol.Required(CONF_NAME): str,
                     vol.Optional(
                         CONF_INSIGHT_TEMPLATE, default="daily_briefing"
-                    ): vol.In(INSIGHT_TEMPLATE_CHOICES),
-                    vol.Optional(CONF_INSIGHT_PROMPT, default=""): str,
+                    ): TEMPLATE_FIELD,
+                    vol.Optional(CONF_INSIGHT_PROMPT, default=""): MULTILINE_FIELD,
                     vol.Optional(CONF_INSIGHT_INTERVAL, default=0): vol.All(
                         int, vol.Range(min=0, max=1440)
                     ),
                     vol.Optional(CONF_INSIGHT_DAILY_AT, default=""): str,
-                    vol.Optional(CONF_MODEL, default="default"): vol.In(AVAILABLE_MODELS),
+                    vol.Optional(CONF_INSIGHT_NOTIFY, default=""): str,
+                    vol.Optional(CONF_MODEL, default="default"): MODEL_FIELD,
                     vol.Optional(
                         CONF_TIMEOUT, default=DEFAULT_INSIGHT_TIMEOUT
                     ): vol.All(int, vol.Range(min=30, max=600)),
@@ -240,10 +277,10 @@ class BruhClaudeConfigFlow(ConfigFlow, domain=DOMAIN):
                     vol.Required(CONF_NAME): str,
                     vol.Optional(
                         CONF_MODEL, default=DEFAULT_MODEL
-                    ): vol.In(AVAILABLE_MODELS),
+                    ): MODEL_FIELD,
                     vol.Optional(
                         CONF_SYSTEM_PROMPT, default=DEFAULT_SYSTEM_PROMPT
-                    ): str,
+                    ): MULTILINE_FIELD,
                     vol.Optional(
                         CONF_TIMEOUT, default=DEFAULT_TIMEOUT
                     ): vol.All(int, vol.Range(min=10, max=600)),
@@ -356,12 +393,12 @@ class BruhClaudeOptionsFlowHandler(OptionsFlow):
         schema_fields[vol.Optional(
             CONF_MODEL,
             default=current.get(CONF_MODEL, DEFAULT_MODEL),
-        )] = vol.In(AVAILABLE_MODELS)
+        )] = MODEL_FIELD
 
         schema_fields[vol.Optional(
             CONF_SYSTEM_PROMPT,
             default=current.get(CONF_SYSTEM_PROMPT, DEFAULT_SYSTEM_PROMPT),
-        )] = str
+        )] = MULTILINE_FIELD
 
         schema_fields[vol.Optional(
             CONF_TIMEOUT,
@@ -392,6 +429,15 @@ class BruhClaudeOptionsFlowHandler(OptionsFlow):
             else:
                 return self.async_create_entry(title="", data=user_input)
 
+        # Preview: pre-fill the prompt with the selected template's full text
+        # so the user can read exactly what runs (and tweak it — saving
+        # stores the text as this job's prompt).
+        default_prompt = current.get(CONF_INSIGHT_PROMPT, "")
+        if not default_prompt:
+            default_prompt = INSIGHT_TEMPLATES.get(
+                current.get(CONF_INSIGHT_TEMPLATE, "daily_briefing"), ""
+            )
+
         return self.async_show_form(
             step_id="insight",
             data_schema=vol.Schema(
@@ -399,11 +445,11 @@ class BruhClaudeOptionsFlowHandler(OptionsFlow):
                     vol.Optional(
                         CONF_INSIGHT_TEMPLATE,
                         default=current.get(CONF_INSIGHT_TEMPLATE, "daily_briefing"),
-                    ): vol.In(INSIGHT_TEMPLATE_CHOICES),
+                    ): TEMPLATE_FIELD,
                     vol.Optional(
                         CONF_INSIGHT_PROMPT,
-                        default=current.get(CONF_INSIGHT_PROMPT, ""),
-                    ): str,
+                        default=default_prompt,
+                    ): MULTILINE_FIELD,
                     vol.Optional(
                         CONF_INSIGHT_INTERVAL,
                         default=current.get(CONF_INSIGHT_INTERVAL, 0),
@@ -413,8 +459,12 @@ class BruhClaudeOptionsFlowHandler(OptionsFlow):
                         default=current.get(CONF_INSIGHT_DAILY_AT, ""),
                     ): str,
                     vol.Optional(
+                        CONF_INSIGHT_NOTIFY,
+                        default=current.get(CONF_INSIGHT_NOTIFY, ""),
+                    ): str,
+                    vol.Optional(
                         CONF_MODEL, default=current.get(CONF_MODEL, "default")
-                    ): vol.In(AVAILABLE_MODELS),
+                    ): MODEL_FIELD,
                     vol.Optional(
                         CONF_TIMEOUT,
                         default=current.get(CONF_TIMEOUT, DEFAULT_INSIGHT_TIMEOUT),

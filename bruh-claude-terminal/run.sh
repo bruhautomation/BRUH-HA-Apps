@@ -84,6 +84,24 @@ init_environment() {
     export HA_BASE_URL="http://supervisor/core/api"
     export SUPERVISOR_API_URL="http://supervisor"
 
+    # Adopt Home Assistant's timezone so Claude (terminal, voice, tasks)
+    # reasons in local time instead of the container default (UTC). Cached
+    # to a shared file the listeners/pool read; falls back to the previous
+    # cache if HA Core isn't answering yet at boot.
+    local ha_tz=""
+    ha_tz=$(curl -s -m 5 -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
+        "http://supervisor/core/api/config" 2>/dev/null | jq -r '.time_zone // empty') || true
+    mkdir -p /config/.bruh_claude/cache
+    if [ -n "$ha_tz" ]; then
+        printf '%s' "$ha_tz" > /config/.bruh_claude/cache/ha_timezone
+    elif [ -r /config/.bruh_claude/cache/ha_timezone ]; then
+        ha_tz=$(cat /config/.bruh_claude/cache/ha_timezone)
+    fi
+    if [ -n "$ha_tz" ]; then
+        export TZ="$ha_tz"
+        bashio::log.info "  - Timezone: $ha_tz (from HA config)"
+    fi
+
     # Volume mount directories — only export if enabled in config
     local access_share access_media access_backup access_addon_configs access_addons
     access_share=$(bashio::config 'access_share' 'true')
@@ -199,6 +217,7 @@ export SUPERVISOR_API_URL="http://supervisor"
 export BRUH_ASSIST_MAX_TURNS="${assist_max_turns}"
 export BRUH_AUTOMATION_MAX_TURNS="${automation_max_turns}"
 export BRUH_ASSIST_TOOL_ACCESS="${assist_tool_access}"
+export TZ="${TZ:-}"
 export CLAUDE_CODE_DISABLE_MCP_DISCOVERY=1
 export CLAUDE_MCP_SERVERS_OVERRIDE="/config/.mcp.json"
 export DISABLE_AUTOUPDATER=1

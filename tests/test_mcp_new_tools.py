@@ -220,3 +220,61 @@ class TestGetStatistics(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestGetWeatherForecast(unittest.TestCase):
+    def test_rejects_non_weather_entity(self):
+        result = ha_mcp_server.get_weather_forecast("sensor.outdoor")
+        self.assertIn("error", result)
+
+    @patch("ha_mcp_server._ws_command")
+    def test_forecast_trimmed_and_shaped(self, mock_ws):
+        mock_ws.return_value = {
+            "context": {"id": "x"},
+            "response": {
+                "weather.home": {
+                    "forecast": [
+                        {"datetime": "2026-06-12T00:00:00Z", "condition": "sunny",
+                         "temperature": 90, "templow": 73,
+                         "precipitation": 0.0, "precipitation_probability": 0,
+                         "wind_bearing": 220, "uv_index": 7},
+                        {"datetime": "2026-06-13T00:00:00Z", "condition": "rainy",
+                         "temperature": 81, "templow": 70,
+                         "precipitation": 0.4, "precipitation_probability": 80},
+                    ]
+                }
+            },
+        }
+        result = ha_mcp_server.get_weather_forecast("weather.home")
+        payload = mock_ws.call_args[0][0]
+        self.assertEqual(payload["service"], "get_forecasts")
+        self.assertTrue(payload["return_response"])
+        self.assertEqual(payload["service_data"], {"type": "daily"})
+        self.assertEqual(len(result["forecast"]), 2)
+        day_one = result["forecast"][0]
+        self.assertEqual(day_one["condition"], "sunny")
+        # noisy fields are dropped, zero-values kept
+        self.assertNotIn("wind_bearing", day_one)
+        self.assertNotIn("uv_index", day_one)
+        self.assertEqual(day_one["precipitation"], 0.0)
+
+    @patch("ha_mcp_server._ws_command")
+    def test_invalid_type_defaults_to_daily(self, mock_ws):
+        mock_ws.return_value = {"response": {"weather.home": {"forecast": []}}}
+        result = ha_mcp_server.get_weather_forecast("weather.home", "fortnightly")
+        self.assertEqual(result["type"], "daily")
+        self.assertIn("note", result)
+
+    @patch("ha_mcp_server._ws_command")
+    def test_hourly_capped_at_24(self, mock_ws):
+        mock_ws.return_value = {"response": {"weather.home": {"forecast": [
+            {"datetime": f"t{i}", "temperature": i} for i in range(72)
+        ]}}}
+        result = ha_mcp_server.get_weather_forecast("weather.home", "hourly")
+        self.assertEqual(len(result["forecast"]), 24)
+
+    @patch("ha_mcp_server._ws_command")
+    def test_ws_error_passthrough(self, mock_ws):
+        mock_ws.return_value = {"error": "WebSocket auth failed"}
+        result = ha_mcp_server.get_weather_forecast("weather.home")
+        self.assertIn("error", result)

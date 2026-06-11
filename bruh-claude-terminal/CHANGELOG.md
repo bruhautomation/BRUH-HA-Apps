@@ -1,5 +1,42 @@
 # Changelog
 
+## 3.0.1
+
+**Fix: blank "Add Service" dialog — plus a much friendlier insight setup.**
+
+- The 3.0.0 config dialog could render completely blank: two translation
+  strings contained literal Jinja braces, which break the frontend's
+  message-format parser. All translation strings are now brace-free and a
+  CI test guards against reintroducing any.
+- Menu and dropdown labels are now provided inline (immune to translation
+  loading), and template choices describe themselves: "Anomaly watch —
+  only problems; says 'All quiet.' otherwise".
+- **Template preview**: opening Configure on an insight job pre-fills the
+  prompt box with the selected template's full text — read it, tweak it,
+  or leave it; what you see is exactly what runs.
+- **Run now button** on every insight job's device page for manual firing
+  (the `bruh_claude.run_insight` service remains for automations).
+- Prompt fields (insight and agent personality) are proper multiline
+  editors; step descriptions rewritten to explain the create -> card_yaml
+  -> dashboard flow in place.
+- **Finding the report**: a job's first successful run now sends a
+  one-time notification containing the dashboard card ready to paste;
+  the sensor gained a readable `preview` attribute (long blobs sorted
+  last), and DOCS explains exactly where the report lives.
+- **`get_weather_forecast` MCP tool**: modern HA only exposes forecasts
+  via `weather.get_forecasts` with response data (the old `forecast`
+  attribute is gone) — fetched over the WebSocket API so "what's the
+  weather tomorrow" works reliably by voice.
+- **Insight reports to your phone**: each job gets an optional notify
+  service; the `bruh_claude_insight_complete` event now carries
+  `entity_id` and a `preview` for TTS announcements; `send_prompt` and
+  `run_task` accept a `model` override.
+- **Local time, not UTC**: the container now adopts HA's configured
+  timezone (TZ + tzdata), the voice system prompt names it, and every
+  message carries a local-time stamp — agents answer time questions in
+  your timezone with zero tool calls. Applies to terminal, voice, and
+  automation channels.
+
 ## 3.0.0
 
 **The big one: insight jobs, streaming voice, an internal HTTP API with

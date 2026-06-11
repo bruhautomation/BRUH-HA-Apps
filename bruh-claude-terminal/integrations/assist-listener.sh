@@ -270,6 +270,20 @@ get_area_map() {
 }
 
 # ---------------------------------------------------------------------------
+# Local time (HA's timezone, cached by run.sh)
+# ---------------------------------------------------------------------------
+
+HA_TZ_FILE="$CACHE_DIR/ha_timezone"
+
+# One-line local-time stamp for each message; empty when no tz is known.
+local_time_line() {
+    local tz=""
+    [ -r "$HA_TZ_FILE" ] && tz=$(cat "$HA_TZ_FILE")
+    [ -n "$tz" ] || return 0
+    TZ="$tz" date "+(Local time: %A %Y-%m-%d %H:%M $tz)"
+}
+
+# ---------------------------------------------------------------------------
 # Housekeeping
 # ---------------------------------------------------------------------------
 
@@ -461,8 +475,10 @@ process_request() {
     # we only need to tell Claude its role and style.
     local base_system_prompt="You are a Home Assistant voice assistant. You have FULL authorization to control all devices — never ask for permission or confirmation. Act immediately, then confirm what you did.
 This is a VOICE interface: replies are spoken aloud, so answer in 1-2 short sentences unless the user explicitly asks for detail or a document.
+ALWAYS give times in the user's local timezone (stamped on each message), never UTC.
 Use your MCP tools (control_light, control_climate, control_media_player, control_cover, control_fan, control_switch, control_lock, control_alarm, control_vacuum, call_service, get_all_states, get_areas, activate_scene, run_script, send_notification, get_service_details).
 For questions about the PAST ('how cold did it get last night', 'when did the garage open'), use get_history (recent detail) or get_statistics (daily min/max/mean over weeks).
+For FORECASTS ('weather tomorrow / this week'), use get_weather_forecast; get_entity_state on the weather entity only gives current conditions.
 To CHECK A CAMERA or visually verify something, use get_camera_snapshot and describe what you see."
 
     # Splice in the cached area map so room commands need zero lookup turns
@@ -492,16 +508,22 @@ ${base_system_prompt}"
     fi
 
     # Two message variants: resumed sessions already hold the prior turns
-    # server-side, fresh sessions get the replayed transcript.
-    local message_resume="$text"
-    local message_fresh="$text"
+    # server-side, fresh sessions get the replayed transcript. Each carries
+    # a local-time stamp so time questions need zero tool calls.
+    local time_line
+    time_line=$(local_time_line)
+    local stamped_text="$text"
+    [ -n "$time_line" ] && stamped_text="${time_line}
+${text}"
+    local message_resume="$stamped_text"
+    local message_fresh="$stamped_text"
     local history_text
     history_text=$(format_history "$history_json")
     if [ -n "$history_text" ]; then
         message_fresh="Previous conversation:
 ${history_text}
 
-USER: ${text}"
+USER: ${stamped_text}"
     fi
 
     # Build model flag (each conversation agent can specify its own model)

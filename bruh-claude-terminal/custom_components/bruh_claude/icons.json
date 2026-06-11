@@ -9,6 +9,11 @@
       "_": {
         "default": "mdi:heart-pulse"
       }
+    },
+    "button": {
+      "_": {
+        "default": "mdi:play-circle-outline"
+      }
     }
   },
   "services": {

@@ -37,6 +37,14 @@ To pick it up immediately: **Settings > Add-ons > Add-on Store > ⋮ (top
 right) > Check for updates**, then go back to the add-on page. (`ha store
 reload` from the SSH add-on does the same.)
 
+## "Icon Not Available" on Device Pages?
+
+Cosmetic only: Home Assistant loads integration branding from its central
+[brands repository](https://github.com/home-assistant/brands), never from
+the integration's own files. Ready-to-submit assets and the 3-step,
+one-time submission guide live in [`brands/`](../brands/README.md) at the
+repo root; icons appear for everyone once that PR merges.
+
 ## Configuration Reference
 
 Every option from the add-on **Configuration** tab, grouped by what it controls. All defaults match `config.yaml` as shipped; the Supervisor validates each value against the schema before the add-on starts.
@@ -326,7 +334,8 @@ custom prompt. Custom prompts may embed HA templating
 (`{{ states('sensor.outdoor_temp') }}`), rendered just before each run.
 
 Scheduling: an interval (every N minutes), a daily time (HH:MM), both, or
-neither (manual only). Trigger on demand from automations:
+neither (manual only). Each job also gets a **Run now button** on its device
+page; from automations, trigger on demand with:
 
 ```yaml
 service: bruh_claude.run_insight
@@ -334,9 +343,13 @@ data:
   name: "Morning Briefing"   # omit to run all jobs
 ```
 
-Each job creates `sensor.<job>_insight`: the state is the last successful
-run, the report lives in the `markdown` attribute, and the sensor's
-`card_yaml` attribute contains a ready-to-paste dashboard card:
+**Viewing the report:** the sensor's *state* is just the last-run
+timestamp — the report itself lives in its attributes. After a job's first
+successful run you'll get a notification containing the dashboard card
+ready to paste. To see it any time: Developer Tools > States > select
+`sensor.<job>_insight` — `preview` shows the first lines, `markdown` the
+full report, `card_yaml` the card. For a permanent view, add a Manual card
+to any dashboard with:
 
 ```yaml
 type: markdown
@@ -347,9 +360,11 @@ content: >-
 ```
 
 Results persist across HA restarts; failed runs keep the previous report
-visible and expose the failure in the `error` attribute. A
-`bruh_claude_insight_complete` event fires after every run for chaining
-notifications or TTS announcements.
+visible and expose the failure in the `error` attribute. Set the job's
+**notify service** to push each report to a phone. A
+`bruh_claude_insight_complete` event fires after every run with `name`,
+`entity_id`, `success`, and a `preview` of the report — ideal for TTS
+announcements.
 
 ## Transport & Health
 
@@ -376,6 +391,7 @@ The built-in MCP server gives Claude Code these capabilities:
 | `get_camera_snapshot` | **See** a camera: returns the current image so Claude can describe what's visible |
 | `get_history` | Recent state history for an entity (up to 7 days), with min/max for numeric sensors |
 | `get_statistics` | Long-term statistics (hourly/daily mean/min/max) — answers "how cold did it get last week" |
+| `get_weather_forecast` | Daily/hourly forecast via weather.get_forecasts — "what's the weather tomorrow?" |
 | `call_service` | Call any HA service (turn on lights, etc.) |
 | `get_service_details` | Get the service schema for a domain |
 | `control_light` | Lights: on/off/toggle, brightness, color, color-temp |
