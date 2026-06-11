@@ -30,6 +30,7 @@ from .const import (
     CONF_ENTRY_TYPE,
     CONF_INSIGHT_DAILY_AT,
     CONF_INSIGHT_INTERVAL,
+    CONF_INSIGHT_NOTIFY,
     CONF_INSIGHT_PROMPT,
     CONF_INSIGHT_TEMPLATE,
     CONF_MODEL,
@@ -160,6 +161,7 @@ class BruhClaudeConfigFlow(ConfigFlow, domain=DOMAIN):
                         CONF_INSIGHT_PROMPT: user_input.get(CONF_INSIGHT_PROMPT, ""),
                         CONF_INSIGHT_INTERVAL: user_input.get(CONF_INSIGHT_INTERVAL, 0),
                         CONF_INSIGHT_DAILY_AT: daily_at,
+                        CONF_INSIGHT_NOTIFY: user_input.get(CONF_INSIGHT_NOTIFY, ""),
                         CONF_MODEL: user_input.get(CONF_MODEL, "default"),
                         CONF_TIMEOUT: user_input.get(CONF_TIMEOUT, DEFAULT_INSIGHT_TIMEOUT),
                     },
@@ -178,6 +180,7 @@ class BruhClaudeConfigFlow(ConfigFlow, domain=DOMAIN):
                         int, vol.Range(min=0, max=1440)
                     ),
                     vol.Optional(CONF_INSIGHT_DAILY_AT, default=""): str,
+                    vol.Optional(CONF_INSIGHT_NOTIFY, default=""): str,
                     vol.Optional(CONF_MODEL, default="default"): MODEL_FIELD,
                     vol.Optional(
                         CONF_TIMEOUT, default=DEFAULT_INSIGHT_TIMEOUT
@@ -454,6 +457,10 @@ class BruhClaudeOptionsFlowHandler(OptionsFlow):
                     vol.Optional(
                         CONF_INSIGHT_DAILY_AT,
                         default=current.get(CONF_INSIGHT_DAILY_AT, ""),
+                    ): str,
+                    vol.Optional(
+                        CONF_INSIGHT_NOTIFY,
+                        default=current.get(CONF_INSIGHT_NOTIFY, ""),
                     ): str,
                     vol.Optional(
                         CONF_MODEL, default=current.get(CONF_MODEL, "default")

@@ -48,13 +48,15 @@
           "interval_minutes": "Run every N minutes",
           "daily_at": "Run daily at",
           "model": "Claude model",
-          "timeout": "Timeout (seconds)"
+          "timeout": "Timeout (seconds)",
+          "notify_service": "Send report to (notify service, optional)"
         },
         "data_description": {
           "insight_prompt": "Leave empty to use the template. Anything here overrides it. Supports Home Assistant templating — states(...), state_attr(...) — rendered before each run.",
           "interval_minutes": "0 disables interval runs (daily time or Run now button only).",
           "daily_at": "24-hour HH:MM, e.g. 07:30. Works alone or together with the interval.",
-          "model": "Haiku is fastest, Opus is most thorough. Default uses the terminal's model."
+          "model": "Haiku is fastest, Opus is most thorough. Default uses the terminal's model.",
+          "notify_service": "Push every successful report to this notify service, e.g. mobile_app_bens_iphone. Empty disables."
         }
       }
     },
@@ -96,12 +98,14 @@
           "interval_minutes": "Run every N minutes",
           "daily_at": "Run daily at",
           "model": "Claude model",
-          "timeout": "Timeout (seconds)"
+          "timeout": "Timeout (seconds)",
+          "notify_service": "Send report to (notify service, optional)"
         },
         "data_description": {
           "insight_prompt": "Supports Home Assistant templating — states(...), state_attr(...) — rendered before each run.",
           "interval_minutes": "0 disables interval runs.",
-          "daily_at": "24-hour HH:MM, e.g. 07:30."
+          "daily_at": "24-hour HH:MM, e.g. 07:30.",
+          "notify_service": "Push every successful report to this notify service, e.g. mobile_app_bens_iphone. Empty disables."
         }
       }
     },

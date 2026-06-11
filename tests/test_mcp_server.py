@@ -494,7 +494,7 @@ class TestMCPProtocol(unittest.TestCase):
             # System tools
             "get_automations", "get_automation_trace", "get_ha_config",
             "get_services", "get_device_registry", "get_areas", "get_logbook",
-            "get_history", "get_statistics",
+            "get_history", "get_statistics", "get_weather_forecast",
             "get_error_log", "render_template", "fire_event",
             "get_supervisor_info", "reload_config",
         }

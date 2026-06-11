@@ -23,6 +23,14 @@
   one-time notification containing the dashboard card ready to paste;
   the sensor gained a readable `preview` attribute (long blobs sorted
   last), and DOCS explains exactly where the report lives.
+- **`get_weather_forecast` MCP tool**: modern HA only exposes forecasts
+  via `weather.get_forecasts` with response data (the old `forecast`
+  attribute is gone) — fetched over the WebSocket API so "what's the
+  weather tomorrow" works reliably by voice.
+- **Insight reports to your phone**: each job gets an optional notify
+  service; the `bruh_claude_insight_complete` event now carries
+  `entity_id` and a `preview` for TTS announcements; `send_prompt` and
+  `run_task` accept a `model` override.
 - **Local time, not UTC**: the container now adopts HA's configured
   timezone (TZ + tzdata), the voice system prompt names it, and every
   message carries a local-time stamp — agents answer time questions in

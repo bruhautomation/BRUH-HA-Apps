@@ -44,6 +44,7 @@ from .const import (
     CONF_ENABLE_SENSORS,
     CONF_ENTRY_TYPE,
     CONF_INSIGHT_DAILY_AT,
+    CONF_INSIGHT_NOTIFY,
     CONF_INSIGHT_INTERVAL,
     CONF_INSIGHT_PROMPT,
     CONF_INSIGHT_TEMPLATE,
@@ -86,6 +87,7 @@ SEND_PROMPT_SCHEMA = vol.Schema(
     {
         vol.Required("prompt"): str,
         vol.Optional("timeout"): vol.All(int, vol.Range(min=10, max=600)),
+        vol.Optional("model"): str,
     }
 )
 
@@ -442,16 +444,49 @@ async def _async_run_insight(hass: HomeAssistant, entry: ConfigEntry) -> None:
         async_dispatcher_send(
             hass, SIGNAL_INSIGHT_UPDATE.format(entry.entry_id), payload
         )
+
+        # Optional push: deliver the report to a notify service on every
+        # successful run (e.g. the morning briefing straight to a phone).
+        notify_service = (opts.get(CONF_INSIGHT_NOTIFY) or "").strip()
+        notify_service = notify_service.removeprefix("notify.")
+        if notify_service and payload.get("error") is None:
+            try:
+                await hass.services.async_call(
+                    "notify", notify_service,
+                    {
+                        "title": entry.title,
+                        "message": (payload.get("markdown") or "")[:2000],
+                    },
+                )
+            except Exception:  # noqa: BLE001 — a bad target can't fail the run
+                _LOGGER.warning(
+                    "Insight '%s': notify.%s failed", entry.title, notify_service
+                )
+
         hass.bus.async_fire(
             EVENT_INSIGHT_COMPLETE,
             {
                 "name": entry.title,
                 "entry_id": entry.entry_id,
+                "entity_id": _insight_entity_id(hass, entry),
                 "success": payload.get("error") is None,
+                "preview": make_preview(payload.get("markdown"), limit=240),
             },
         )
     finally:
         running.discard(entry.entry_id)
+
+
+def _insight_entity_id(hass: HomeAssistant, entry: ConfigEntry) -> str | None:
+    """Resolve an insight job's sensor entity_id from the registry."""
+    try:
+        from homeassistant.helpers import entity_registry as er
+
+        return er.async_get(hass).async_get_entity_id(
+            "sensor", DOMAIN, f"{entry.entry_id}_insight"
+        )
+    except Exception:  # noqa: BLE001
+        return None
 
 
 async def _notify_first_success(
@@ -459,11 +494,7 @@ async def _notify_first_success(
 ) -> None:
     """One-time persistent notification with the dashboard card YAML."""
     try:
-        from homeassistant.helpers import entity_registry as er
-
-        entity_id = er.async_get(hass).async_get_entity_id(
-            "sensor", DOMAIN, f"{entry.entry_id}_insight"
-        ) or "sensor.<your insight sensor>"
+        entity_id = _insight_entity_id(hass, entry) or "sensor.<your insight sensor>"
         preview = make_preview(payload.get("markdown"), limit=240) or ""
         await hass.services.async_call(
             "persistent_notification",
@@ -522,7 +553,7 @@ def _register_services(hass: HomeAssistant) -> None:
 
         try:
             result = await bridge.async_send_conversation(
-                text=prompt, timeout=timeout
+                text=prompt, timeout=timeout, model=call.data.get("model")
             )
         except TimeoutError:
             result = "Claude did not respond in time."

@@ -40,6 +40,7 @@ CONF_INSIGHT_TEMPLATE = "insight_template"
 CONF_INSIGHT_PROMPT = "insight_prompt"
 CONF_INSIGHT_INTERVAL = "interval_minutes"
 CONF_INSIGHT_DAILY_AT = "daily_at"
+CONF_INSIGHT_NOTIFY = "notify_service"
 DEFAULT_INSIGHT_TIMEOUT = 300
 
 # Event fired on the HA bus when an insight job finishes

@@ -360,9 +360,11 @@ content: >-
 ```
 
 Results persist across HA restarts; failed runs keep the previous report
-visible and expose the failure in the `error` attribute. A
-`bruh_claude_insight_complete` event fires after every run for chaining
-notifications or TTS announcements.
+visible and expose the failure in the `error` attribute. Set the job's
+**notify service** to push each report to a phone. A
+`bruh_claude_insight_complete` event fires after every run with `name`,
+`entity_id`, `success`, and a `preview` of the report — ideal for TTS
+announcements.
 
 ## Transport & Health
 
@@ -389,6 +391,7 @@ The built-in MCP server gives Claude Code these capabilities:
 | `get_camera_snapshot` | **See** a camera: returns the current image so Claude can describe what's visible |
 | `get_history` | Recent state history for an entity (up to 7 days), with min/max for numeric sensors |
 | `get_statistics` | Long-term statistics (hourly/daily mean/min/max) — answers "how cold did it get last week" |
+| `get_weather_forecast` | Daily/hourly forecast via weather.get_forecasts — "what's the weather tomorrow?" |
 | `call_service` | Call any HA service (turn on lights, etc.) |
 | `get_service_details` | Get the service schema for a domain |
 | `control_light` | Lights: on/off/toggle, brightness, color, color-temp |

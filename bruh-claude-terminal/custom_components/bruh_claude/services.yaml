@@ -9,6 +9,16 @@ send_prompt:
       selector:
         text:
           multiline: true
+    model:
+      name: Model
+      description: Claude model override (default, sonnet, opus, haiku).
+      selector:
+        select:
+          options:
+            - default
+            - sonnet
+            - opus
+            - haiku
     timeout:
       name: Timeout
       description: Maximum seconds to wait for a response (default 120).
@@ -29,6 +39,16 @@ run_task:
       selector:
         text:
           multiline: true
+    model:
+      name: Model
+      description: Claude model override (default, sonnet, opus, haiku).
+      selector:
+        select:
+          options:
+            - default
+            - sonnet
+            - opus
+            - haiku
     notify:
       name: Notify on completion
       description: Send a persistent notification when the task completes.

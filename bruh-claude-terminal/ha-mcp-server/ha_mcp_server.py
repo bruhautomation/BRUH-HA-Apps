@@ -804,6 +804,52 @@ def get_statistics(entity_id, period="hour", days=7):
     return {"entity_id": entity_id, "period": period, "days": days, "stats": stats}
 
 
+def get_weather_forecast(entity_id, forecast_type="daily"):
+    """Get a weather forecast via weather.get_forecasts (WebSocket).
+
+    Modern HA removed the `forecast` attribute from weather entities; the
+    only reliable source is the get_forecasts service WITH response data,
+    which the REST API can't return — hence the WebSocket call.
+    """
+    if not entity_id.startswith("weather."):
+        return {"error": f"Not a weather entity: {entity_id}"}
+    if forecast_type not in ("daily", "hourly", "twice_daily"):
+        forecast_type = "daily"
+    try:
+        result = _ws_command({
+            "type": "call_service",
+            "domain": "weather",
+            "service": "get_forecasts",
+            "target": {"entity_id": entity_id},
+            "service_data": {"type": forecast_type},
+            "return_response": True,
+        })
+    except ImportError:
+        return {"error": "websockets package not available in this environment"}
+    except Exception as e:  # noqa: BLE001
+        return {"error": str(e)}
+    if isinstance(result, dict) and "error" in result:
+        return result
+
+    response = (result or {}).get("response") or {}
+    forecast = (response.get(entity_id) or {}).get("forecast") or []
+    if not forecast:
+        return {
+            "entity_id": entity_id, "type": forecast_type, "forecast": [],
+            "note": (f"No {forecast_type} forecast returned — the entity may "
+                     "not support this forecast type."),
+        }
+
+    keep = ("datetime", "condition", "temperature", "templow",
+            "precipitation", "precipitation_probability", "humidity",
+            "wind_speed")
+    trimmed = [
+        {k: item.get(k) for k in keep if item.get(k) is not None}
+        for item in forecast[:24]
+    ]
+    return {"entity_id": entity_id, "type": forecast_type, "forecast": trimmed}
+
+
 def get_error_log():
     """Get the Home Assistant error log.
 
@@ -1619,6 +1665,29 @@ TOOLS = [
         }
     },
     {
+        "name": "get_weather_forecast",
+        "description": (
+            "Get the weather forecast (daily, hourly, or twice_daily) for a "
+            "weather entity. Use this for 'what's the weather tomorrow / this "
+            "week' — current conditions come from get_entity_state instead."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "entity_id": {
+                    "type": "string",
+                    "description": "The weather entity ID (e.g., 'weather.home')"
+                },
+                "forecast_type": {
+                    "type": "string",
+                    "enum": ["daily", "hourly", "twice_daily"],
+                    "description": "Forecast granularity (default 'daily')"
+                }
+            },
+            "required": ["entity_id"]
+        }
+    },
+    {
         "name": "get_error_log",
         "description": "Get the last 100 lines of Home Assistant logs from the Supervisor journal. Useful for diagnosing integration issues, failed automations, and system errors.",
         "inputSchema": {
@@ -1724,6 +1793,7 @@ TOOL_IMPLEMENTATIONS = {
     "get_logbook": "get_logbook",
     "get_history": "get_history",
     "get_statistics": "get_statistics",
+    "get_weather_forecast": "get_weather_forecast",
     "get_error_log": "get_error_log",
     "render_template": "render_template",
     "fire_event": "fire_event",
