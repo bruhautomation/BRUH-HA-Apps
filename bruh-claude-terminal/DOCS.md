@@ -37,6 +37,14 @@ To pick it up immediately: **Settings > Add-ons > Add-on Store > ⋮ (top
 right) > Check for updates**, then go back to the add-on page. (`ha store
 reload` from the SSH add-on does the same.)
 
+## "Icon Not Available" on Device Pages?
+
+Cosmetic only: Home Assistant loads integration branding from its central
+[brands repository](https://github.com/home-assistant/brands), never from
+the integration's own files. Ready-to-submit assets and the 3-step,
+one-time submission guide live in [`brands/`](../brands/README.md) at the
+repo root; icons appear for everyone once that PR merges.
+
 ## Configuration Reference
 
 Every option from the add-on **Configuration** tab, grouped by what it controls. All defaults match `config.yaml` as shipped; the Supervisor validates each value against the schema before the add-on starts.
