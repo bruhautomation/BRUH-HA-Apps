@@ -1,5 +1,45 @@
 # Changelog
 
+## 3.1.0
+
+**Per-agent service deny-lists — voice agents you can lock down individually.**
+
+Each conversation agent now has a **Blocked services** picker (Add Service
+and the agent's Configure dialog). Pick from common high-risk patterns
+(lock.unlock, alarm_control_panel.alarm_disarm, homeassistant.restart,
+update.install, …) — every service domain on your system is offered as
+`domain.*`, and you can type any custom `domain.service` or `domain.*`
+pattern. Each agent carries its own list, so a kitchen speaker can be
+barred from unlocking doors while your office agent isn't.
+
+Enforcement is real, not just a prompt request: the deny-list is passed to
+that agent's MCP server (per-worker env) and checked in `call_service`,
+which every device tool (control_light, control_lock, activate_scene,
+run_script, reload_config, send_notification, …) routes through — so a
+blocked service can't be reached by any tool or phrasing. Empty list =
+everything allowed (unchanged default).
+
+
+**Personalities stop fighting the built-in prompt.**
+
+The voice system prompt used to merge your personality with a base that
+asserted its own identity ("You are a Home Assistant voice assistant")
+and its own style ("answer in 1-2 short sentences") — two "You are X"
+statements average out, which is exactly the watered-down persona effect.
+
+Now identity, tone, and verbosity come from exactly one source: a custom
+personality leads with an explicit precedence note, and the operational
+block (authorization, tools, area map, timezone, routing rules) is
+identity- and style-free. Agents without a personality keep the old
+default behavior. The agent config field and DOCS explain the layering,
+including the tip to put a length rule inside expansive personas.
+
+Also: the voice deny-list (`assist_tool_access: mcp_only`) now blocks
+file READS (Read/Glob/Grep) as well as writes — voice gets HA data
+exclusively through MCP tools, so the only thing file access enabled
+was reading things like secrets.yaml aloud. Docs updated to state the
+boundary precisely.
+
 ## 3.0.1
 
 **Fix: blank "Add Service" dialog — plus a much friendlier insight setup.**

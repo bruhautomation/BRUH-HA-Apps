@@ -185,7 +185,8 @@ def test_mcp_only_scoping_adds_settings_flag(tmp_path, monkeypatch):
     try:
         pool.handle(make_request("scoped"))
         spawns = [json.loads(line) for line in
-                  (tmp_path / "argv.log").read_text().splitlines()]
+                  (tmp_path / "argv.log").read_text().splitlines()
+                  if not line.startswith("ENV ")]
         argv = spawns[-1]
         assert "--settings" in argv
         assert argv[argv.index("--settings") + 1] == mod.ASSIST_SETTINGS_FILE
@@ -203,7 +204,8 @@ def test_full_access_skips_settings_flag(tmp_path, monkeypatch):
     try:
         pool.handle(make_request("unscoped"))
         spawns = [json.loads(line) for line in
-                  (tmp_path / "argv.log").read_text().splitlines()]
+                  (tmp_path / "argv.log").read_text().splitlines()
+                  if not line.startswith("ENV ")]
         assert "--settings" not in spawns[-1]
     finally:
         shutdown(pool)
@@ -440,3 +442,15 @@ def test_bridge_does_not_resend_after_accepted_stream_break(tmp_path, monkeypatc
             server.close()
 
     asyncio.new_event_loop().run_until_complete(main())
+
+
+def test_runsh_voice_deny_list_blocks_all_file_access():
+    """The mcp_only deny-list must block shell, web, AND file reads —
+    voice gets HA data exclusively via MCP; Read/Glob/Grep would only
+    enable reading /config secrets aloud."""
+    run_sh = (REPO_ROOT / "bruh-claude-terminal" / "run.sh").read_text()
+    start = run_sh.index("assist_settings.json << 'SCOPE'")
+    deny_block = run_sh[start:run_sh.index("SCOPE", start + 40)]
+    for tool in ("Bash", "Read", "Glob", "Grep", "Write", "Edit",
+                 "WebFetch", "WebSearch", "Agent"):
+        assert f'"{tool}"' in deny_block, f"voice deny-list missing {tool}"

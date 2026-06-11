@@ -87,7 +87,7 @@ def argv_log(tmp_path: Path) -> list[list[str]]:
         lines = (tmp_path / "argv.log").read_text().splitlines()
     except FileNotFoundError:
         return []
-    return [json.loads(line) for line in lines]
+    return [json.loads(line) for line in lines if not line.startswith("ENV ")]
 
 
 def test_cold_then_warm_reuses_process(tmp_path, monkeypatch):
@@ -247,7 +247,8 @@ def test_custom_prompt_and_model_flag(tmp_path, monkeypatch):
         last = spawns[-1]
         assert "--model" in last and last[last.index("--model") + 1] == "haiku"
         prompt = last[last.index("--system-prompt") + 1]
-        assert prompt.startswith("You are Dave.")
+        assert prompt.startswith("PERSONALITY")
+        assert "You are Dave." in prompt
     finally:
         shutdown(pool)
 
@@ -328,7 +329,8 @@ def test_prewarm_spare_uses_last_profile(tmp_path, monkeypatch):
         while pool.spare is None and time.time() < deadline:
             time.sleep(0.05)
         assert pool.spare is not None, "prewarm never produced a spare"
-        assert pool.spare.profile[0].startswith("You are Dave.")
+        assert pool.spare.profile[0].startswith("PERSONALITY")
+        assert "You are Dave." in pool.spare.profile[0]
         assert pool.spare.profile[1] == "haiku"
         spare_pid = str(pool.spare.proc.pid)
 
@@ -348,7 +350,7 @@ def test_handle_persists_last_profile(tmp_path, monkeypatch):
         pool.handle(make_request("hi", system_prompt="Butler mode.", model="sonnet"))
         with open(mod.LAST_PROFILE_FILE) as fh:
             data = json.load(fh)
-        assert data == {"system_prompt": "Butler mode.", "model": "sonnet"}
+        assert data == {"system_prompt": "Butler mode.", "model": "sonnet", "denied": ""}
     finally:
         shutdown(pool)
 
@@ -417,3 +419,70 @@ def test_local_time_stamp_and_timezone_prompt(tmp_path, monkeypatch):
         assert "(Local time:" not in read_response(mod2, req["id"])
     finally:
         shutdown(pool2)
+
+
+def test_prompt_layering_personality_owns_identity(tmp_path, monkeypatch):
+    """With a personality: it leads with explicit precedence, and the
+    operational block carries no competing identity or brevity rule.
+    Without one: the default identity + brevity apply."""
+    mod = load_pool_module(tmp_path, monkeypatch)
+
+    with_persona = mod.build_system_prompt("You are Dave, a sardonic butler.")
+    assert with_persona.startswith("PERSONALITY")
+    assert "takes precedence" in with_persona
+    assert "You are Dave, a sardonic butler." in with_persona
+    # the old identity/brevity must NOT fight the personality
+    assert "You are a helpful, efficient Home Assistant voice assistant" not in with_persona
+    assert "1-2 short sentences" not in with_persona
+    # personality comes before the operational block
+    assert with_persona.index("You are Dave") < with_persona.index("Use your MCP tools")
+    # capabilities always present
+    assert "get_weather_forecast" in with_persona
+
+    no_persona = mod.build_system_prompt("")
+    assert no_persona.startswith("You are a helpful, efficient Home Assistant voice assistant")
+    assert "1-2 short sentences" in no_persona
+    assert "PERSONALITY" not in no_persona
+    assert "Use your MCP tools" in no_persona
+
+
+def _env_lines(tmp_path):
+    return [l for l in (tmp_path / "argv.log").read_text().splitlines()
+            if l.startswith("ENV BRUH_DENIED_SERVICES=")]
+
+
+def test_normalize_denied_stable_sorted_dedup(tmp_path, monkeypatch):
+    mod = load_pool_module(tmp_path, monkeypatch)
+    assert mod.normalize_denied(["lock.unlock", "Lock.Unlock", " alarm.* "]) == "alarm.*,lock.unlock"
+    assert mod.normalize_denied("b.x,a.y") == "a.y,b.x"
+    assert mod.normalize_denied(None) == ""
+
+
+def test_denied_services_reach_worker_env(tmp_path, monkeypatch):
+    """The agent's deny-list must be passed to the claude subprocess env
+    (where the MCP server inherits and enforces it)."""
+    mod = load_pool_module(tmp_path, monkeypatch)
+    pool = mod.Pool()
+    try:
+        req = make_request("lock it", denied_services=["lock.unlock", "alarm_control_panel.*"])
+        pool.handle(req)
+        envs = _env_lines(tmp_path)
+        assert envs, "no env line captured"
+        # normalized: sorted + comma-joined
+        assert envs[-1] == "ENV BRUH_DENIED_SERVICES=alarm_control_panel.*,lock.unlock"
+        # and the deny-list is part of the worker profile (so agents separate)
+        conv = "convA"
+        assert pool.workers[conv].profile[2] == "alarm_control_panel.*,lock.unlock"
+    finally:
+        shutdown(pool)
+
+
+def test_no_denied_services_empty_env(tmp_path, monkeypatch):
+    mod = load_pool_module(tmp_path, monkeypatch)
+    pool = mod.Pool()
+    try:
+        pool.handle(make_request("hi"))
+        envs = _env_lines(tmp_path)
+        assert envs and envs[-1] == "ENV BRUH_DENIED_SERVICES="
+    finally:
+        shutdown(pool)

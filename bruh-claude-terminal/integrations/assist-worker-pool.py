@@ -122,9 +122,18 @@ AREA_MAP_TEMPLATE = """\
 {%- endfor -%}
 """
 
-# Mirrors the base system prompt in assist-listener.sh. Keep in sync.
-BASE_SYSTEM_PROMPT = """You are a Home Assistant voice assistant. You have FULL authorization to control all devices — never ask for permission or confirmation. Act immediately, then confirm what you did.
-This is a VOICE interface: replies are spoken aloud, so answer in 1-2 short sentences unless the user explicitly asks for detail or a document.
+# Prompt layering (mirrored in assist-listener.sh — keep in sync):
+# identity/tone/verbosity come from exactly ONE source. A custom personality
+# leads with explicit precedence and the operational block stays
+# identity-free; without one, the default style applies. Mixing two
+# "You are X" statements is what waters personalities down.
+PERSONALITY_FRAME = """PERSONALITY — this defines who you are, how you speak, and how verbose you are. It takes precedence over any tone or style implied by the instructions below:
+{custom}"""
+
+DEFAULT_STYLE_PROMPT = """You are a helpful, efficient Home Assistant voice assistant. Answer in 1-2 short sentences unless the user explicitly asks for detail."""
+
+OPERATIONAL_PROMPT = """You are connected to the user's Home Assistant with FULL authorization to control all devices — never ask for permission or confirmation. Act on requests immediately, then confirm.
+Replies are spoken aloud by TTS.
 Use your MCP tools (control_light, control_climate, control_media_player, control_cover, control_fan, control_switch, control_lock, control_alarm, control_vacuum, call_service, get_all_states, get_areas, activate_scene, run_script, send_notification, get_service_details).
 For questions about the PAST ('how cold did it get last night', 'when did the garage open'), use get_history (recent detail) or get_statistics (daily min/max/mean over weeks).
 For FORECASTS ('weather tomorrow / this week'), use get_weather_forecast; get_entity_state on the weather entity only gives current conditions.
@@ -294,7 +303,10 @@ def local_time_line() -> str:
 
 
 def build_system_prompt(custom: str) -> str:
-    prompt = BASE_SYSTEM_PROMPT
+    if custom:
+        prompt = PERSONALITY_FRAME.format(custom=custom) + "\n\n" + OPERATIONAL_PROMPT
+    else:
+        prompt = DEFAULT_STYLE_PROMPT + "\n" + OPERATIONAL_PROMPT
     tz = get_ha_timezone()
     if tz:
         prompt += (
@@ -307,35 +319,49 @@ def build_system_prompt(custom: str) -> str:
         prompt += MAP_PROMPT.format(area_map=area_map.rstrip())
     else:
         prompt += NO_MAP_PROMPT
-    if custom:
-        prompt = f"{custom}\n\n{prompt}"
     return prompt
 
 
-def save_last_profile(custom: str, model: str) -> None:
+def save_last_profile(custom: str, model: str, denied_csv: str = "") -> None:
     """Remember the agent profile so the next pool start pre-warms with it."""
     try:
         os.makedirs(CACHE_DIR, exist_ok=True)
         tmp = LAST_PROFILE_FILE + ".tmp"
         with open(tmp, "w") as fh:
-            json.dump({"system_prompt": custom, "model": model}, fh)
+            json.dump(
+                {"system_prompt": custom, "model": model, "denied": denied_csv}, fh
+            )
         os.replace(tmp, LAST_PROFILE_FILE)
     except OSError:
         pass
 
 
+def normalize_denied(value) -> str:
+    """Normalize a deny-list (list or csv) to a stable, sorted csv string so
+    it can key the worker profile and ride in the MCP env."""
+    if isinstance(value, str):
+        parts = value.split(",")
+    elif isinstance(value, (list, tuple)):
+        parts = value
+    else:
+        parts = []
+    cleaned = sorted({str(p).strip().lower() for p in parts if str(p).strip()})
+    return ",".join(cleaned)
+
+
 def prewarm_spare(pool: "Pool") -> None:
     """Spawn the spare at startup from the last-used agent profile, so even
     the first voice command after an add-on restart skips the cold start."""
-    custom, model = "", "default"
+    custom, model, denied = "", "default", ""
     try:
         with open(LAST_PROFILE_FILE) as fh:
             data = json.load(fh)
         custom = data.get("system_prompt") or ""
         model = data.get("model") or "default"
+        denied = data.get("denied") or ""
     except (OSError, json.JSONDecodeError, AttributeError):
         pass
-    pool._spawn_spare((build_system_prompt(custom), model))
+    pool._spawn_spare((build_system_prompt(custom), model, denied))
 
 
 # ---------------------------------------------------------------------------
@@ -344,15 +370,15 @@ def prewarm_spare(pool: "Pool") -> None:
 
 
 class Worker:
-    def __init__(self, profile: tuple[str, str], resume: str | None = None):
-        self.profile = profile  # (system_prompt, model)
+    def __init__(self, profile: tuple, resume: str | None = None):
+        self.profile = profile  # (system_prompt, model, denied_services_csv)
         self.created = time.time()
         self.last_used = self.created
         self.session_id: str | None = None
         self.lock = threading.Lock()  # serializes turns on this worker
         self._events: Queue = Queue()
 
-        system_prompt, model = profile
+        system_prompt, model, denied_csv = profile
         cmd = resolve_claude_cmd() + [
             "-p",
             "--verbose",
@@ -372,6 +398,10 @@ class Worker:
             cmd += ["--resume", resume]
             self.session_id = resume
 
+        # Pass this agent's service deny-list to the MCP server (inherited
+        # via claude's environment). Per-worker, so it is per-agent.
+        env = dict(os.environ)
+        env["BRUH_DENIED_SERVICES"] = denied_csv
         self.proc = subprocess.Popen(
             cmd,
             cwd=WORK_DIR,
@@ -379,6 +409,7 @@ class Worker:
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
+            env=env,
         )
         threading.Thread(target=self._reader, daemon=True).start()
 
@@ -599,9 +630,10 @@ class Pool:
 
         custom_prompt = req.get("system_prompt") or ""
         model = req.get("model") or "default"
+        denied_csv = normalize_denied(req.get("denied_services"))
         system_prompt = build_system_prompt(custom_prompt)
-        profile = (system_prompt, model)
-        save_last_profile(custom_prompt, model)
+        profile = (system_prompt, model, denied_csv)
+        save_last_profile(custom_prompt, model, denied_csv)
 
         debug_log([
             "================================================================",
@@ -646,11 +678,11 @@ class Pool:
                     # to a one-shot invocation within the remaining budget.
                     self._drop_worker(conv_id, worker)
                     mode += "+fallback"
-                    response = self._oneshot(req, system_prompt, model, deadline)
+                    response = self._oneshot(req, system_prompt, model, deadline, denied_csv)
             except Exception as exc:  # noqa: BLE001 — never drop a request
                 log(f"worker path failed for {req_id}: {exc}")
                 mode = "error+fallback"
-                response = self._oneshot(req, system_prompt, model, deadline)
+                response = self._oneshot(req, system_prompt, model, deadline, denied_csv)
 
         duration = time.time() - start
         if response is None:
@@ -683,7 +715,8 @@ class Pool:
 
     @staticmethod
     def _oneshot(
-        req: dict, system_prompt: str, model: str, deadline: float
+        req: dict, system_prompt: str, model: str, deadline: float,
+        denied_csv: str = "",
     ) -> str | None:
         """Classic spawn-per-request fallback — identical to the bash path."""
         remaining = int(deadline - time.time())
@@ -703,6 +736,8 @@ class Pool:
         ] + scoping_args()
         if model and model != "default":
             cmd += ["--model", model]
+        env = dict(os.environ)
+        env["BRUH_DENIED_SERVICES"] = denied_csv
         try:
             proc = subprocess.run(
                 cmd,
@@ -711,6 +746,7 @@ class Pool:
                 text=True,
                 timeout=remaining,
                 cwd=WORK_DIR,
+                env=env,
             )
             return proc.stdout.strip() or None
         except (subprocess.TimeoutExpired, OSError):

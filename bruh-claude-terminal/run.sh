@@ -1014,6 +1014,9 @@ setup_assist_scoping() {
     "deny": [
       "Bash",
       "Bash(*)",
+      "Read",
+      "Glob",
+      "Grep",
       "Write",
       "Edit",
       "NotebookEdit",

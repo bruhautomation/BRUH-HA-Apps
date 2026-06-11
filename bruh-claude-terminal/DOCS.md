@@ -84,9 +84,21 @@ These cap how many agentic loops Claude runs before returning. Lower values are 
 
 ### Assist tool scoping
 
+Two layers, from coarse to fine:
+
+1. **`assist_tool_access`** (add-on option, below) — the coarse switch:
+   `mcp_only` (default) lets voice use every HA MCP tool but blocks shell,
+   file read/write, and web for ALL voice agents.
+2. **Per-agent Blocked services** (in each agent's config) — a picker of
+   service patterns that specific agent may never call, e.g. `lock.unlock`
+   or `alarm_control_panel.*`. Enforced in the MCP server's `call_service`
+   chokepoint, so it covers every device tool and phrasing — not just the
+   generic call. Pick common risky ones, choose a whole `domain.*`, or type
+   your own. Each agent has its own list; empty allows everything.
+
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `assist_tool_access` | `mcp_only` / `full` | `mcp_only` | What the voice channel may do. `mcp_only` allows every Home Assistant MCP tool (full device control, cameras, history) but denies shell commands, file edits, and web access — automations and the terminal keep full access. Set `full` to lift the restriction for voice too. |
+| `assist_tool_access` | `mcp_only` / `full` | `mcp_only` | What the voice channel may do. `mcp_only` allows every Home Assistant MCP tool (full device control, cameras, history, any service call) but denies shell commands and ALL file access (read and write) plus web access — so voice cannot author automations or read secrets.yaml. Automations and the terminal keep full access. Set `full` to lift the restriction for voice too. |
 
 ### Terminal permissions
 
@@ -123,7 +135,7 @@ Claude Code normally asks before each tool call. The add-on handles this differe
 | Channel | Mechanism | Default access |
 |---------|-----------|----------------|
 | **Interactive terminal** | Prompts, unless `dangerously_skip_permissions: true` | Everything (you approve actions) |
-| **Voice / conversation agents** | Pre-approved allowlist + `assist_tool_access` deny-list | All HA MCP tools; **no** shell/file-edit/web (`mcp_only`) |
+| **Voice / conversation agents** | Pre-approved allowlist + `assist_tool_access` deny-list | All HA MCP tools; **no** shell, file read/write, or web (`mcp_only`) |
 | **Automation tasks & insight jobs** | Pre-approved allowlist | All tools (MCP, shell, file edits, web) |
 
 Background channels never use `--dangerously-skip-permissions` — they can't prompt, so the add-on writes `/config/.claude/settings.local.json` pre-approving the tools they need. The voice channel additionally loads a deny-list (see `assist_tool_access` above) so a voice request can control the whole house but can't run shell commands or edit files.
@@ -457,6 +469,22 @@ When the integration is set up, "BRUH Claude" appears as a conversation agent in
 New conversation agents default to **Claude Haiku** for snappy voice
 responses; pick a different model per agent in the integration's options
 (`Default` inherits whatever model the terminal uses).
+
+#### Personalities & prompt layering
+
+Each voice request sends Claude one system prompt built from layers:
+
+1. **Your personality** (the agent's system prompt) — leads, with an explicit
+   note that it owns identity, tone, and verbosity.
+2. **Operational block** — HA capabilities: tools, the area map, timezone,
+   and tool-routing rules. Deliberately identity-free so it can't fight
+   your persona.
+
+Without a personality, a built-in default applies ("helpful, efficient,
+1-2 short sentences"). With one, that default is dropped entirely — so if
+your persona should still be brief for TTS, say so in the persona itself,
+e.g. *"…no matter how excited you get, keep spoken replies under two
+sentences."*
 
 #### Conversation memory
 

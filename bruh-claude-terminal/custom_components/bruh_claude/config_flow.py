@@ -33,6 +33,7 @@ from .const import (
     CONF_INSIGHT_NOTIFY,
     CONF_INSIGHT_PROMPT,
     CONF_INSIGHT_TEMPLATE,
+    CONF_DENIED_SERVICES,
     CONF_MODEL,
     CONF_NAME,
     CONF_SYSTEM_PROMPT,
@@ -76,10 +77,67 @@ try:
     TEMPLATE_FIELD = _select(TEMPLATE_LABELS)
     MODEL_FIELD = _select(AVAILABLE_MODELS)
     MULTILINE_FIELD = TextSelector(TextSelectorConfig(multiline=True))
+    _HAS_SELECTORS = True
 except ImportError:  # very old HA — plain widgets still work
     TEMPLATE_FIELD = vol.In(list(INSIGHT_TEMPLATES) + ["custom"])
     MODEL_FIELD = vol.In(AVAILABLE_MODELS)
     MULTILINE_FIELD = str
+    _HAS_SELECTORS = False
+
+# Common high-risk service patterns offered as one-click deny options. Users
+# can also type any "domain.service" or whole-domain "domain.*" pattern, and
+# every service domain on the system is offered as "domain.*" too.
+CURATED_DENY_PATTERNS = [
+    "homeassistant.restart",
+    "homeassistant.stop",
+    "hassio.host_reboot",
+    "hassio.host_shutdown",
+    "update.install",
+    "recorder.purge",
+    "lock.unlock",
+    "lock.open",
+    "alarm_control_panel.alarm_disarm",
+    "cover.open_cover",
+    "automation.turn_off",
+    "script.*",
+    "shell_command.*",
+    "backup.create",
+]
+
+
+def denied_services_field(hass, default):
+    """Multi-select of service patterns to forbid for this agent.
+
+    Seeded with curated high-risk patterns plus every live service domain
+    as "domain.*"; accepts custom typed patterns. Per agent — enforced in
+    the MCP server's call_service chokepoint, so it covers every tool.
+    """
+    default = default or []
+    if not _HAS_SELECTORS:
+        # Old HA: free-text comma list, normalized by the caller.
+        return vol.Optional(CONF_DENIED_SERVICES, default=default), str
+
+    options = list(CURATED_DENY_PATTERNS)
+    try:
+        for domain in sorted(hass.services.async_services()):
+            pat = f"{domain}.*"
+            if pat not in options:
+                options.append(pat)
+    except Exception:  # noqa: BLE001 — registry unavailable: curated list only
+        pass
+    # Keep any already-selected custom values present as options
+    for v in default:
+        if v not in options:
+            options.append(v)
+
+    selector = SelectSelector(SelectSelectorConfig(
+        options=[SelectOptionDict(value=o, label=o) for o in options],
+        multiple=True,
+        custom_value=True,
+        mode=SelectSelectorMode.DROPDOWN,
+        sort=True,
+    ))
+    return vol.Optional(CONF_DENIED_SERVICES, default=default), selector
 
 
 def _valid_daily_at(value: str) -> bool:
@@ -266,10 +324,12 @@ class BruhClaudeConfigFlow(ConfigFlow, domain=DOMAIN):
                         CONF_SYSTEM_PROMPT: user_input.get(
                             CONF_SYSTEM_PROMPT, DEFAULT_SYSTEM_PROMPT
                         ),
+                        CONF_DENIED_SERVICES: user_input.get(CONF_DENIED_SERVICES, []),
                         CONF_TIMEOUT: user_input.get(CONF_TIMEOUT, DEFAULT_TIMEOUT),
                     },
                 )
 
+        deny_key, deny_field = denied_services_field(self.hass, [])
         return self.async_show_form(
             step_id="add_agent",
             data_schema=vol.Schema(
@@ -281,6 +341,7 @@ class BruhClaudeConfigFlow(ConfigFlow, domain=DOMAIN):
                     vol.Optional(
                         CONF_SYSTEM_PROMPT, default=DEFAULT_SYSTEM_PROMPT
                     ): MULTILINE_FIELD,
+                    deny_key: deny_field,
                     vol.Optional(
                         CONF_TIMEOUT, default=DEFAULT_TIMEOUT
                     ): vol.All(int, vol.Range(min=10, max=600)),
@@ -399,6 +460,11 @@ class BruhClaudeOptionsFlowHandler(OptionsFlow):
             CONF_SYSTEM_PROMPT,
             default=current.get(CONF_SYSTEM_PROMPT, DEFAULT_SYSTEM_PROMPT),
         )] = MULTILINE_FIELD
+
+        deny_key, deny_field = denied_services_field(
+            self.hass, current.get(CONF_DENIED_SERVICES, [])
+        )
+        schema_fields[deny_key] = deny_field
 
         schema_fields[vol.Optional(
             CONF_TIMEOUT,
