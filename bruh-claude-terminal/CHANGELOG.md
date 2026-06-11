@@ -1,6 +1,24 @@
 # Changelog
 
-## 3.0.2
+## 3.1.0
+
+**Per-agent service deny-lists — voice agents you can lock down individually.**
+
+Each conversation agent now has a **Blocked services** picker (Add Service
+and the agent's Configure dialog). Pick from common high-risk patterns
+(lock.unlock, alarm_control_panel.alarm_disarm, homeassistant.restart,
+update.install, …) — every service domain on your system is offered as
+`domain.*`, and you can type any custom `domain.service` or `domain.*`
+pattern. Each agent carries its own list, so a kitchen speaker can be
+barred from unlocking doors while your office agent isn't.
+
+Enforcement is real, not just a prompt request: the deny-list is passed to
+that agent's MCP server (per-worker env) and checked in `call_service`,
+which every device tool (control_light, control_lock, activate_scene,
+run_script, reload_config, send_notification, …) routes through — so a
+blocked service can't be reached by any tool or phrasing. Empty list =
+everything allowed (unchanged default).
+
 
 **Personalities stop fighting the built-in prompt.**
 

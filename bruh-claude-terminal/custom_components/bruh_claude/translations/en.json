@@ -18,13 +18,15 @@
           "name": "Agent name",
           "model": "Claude model",
           "system_prompt": "System prompt (personality)",
-          "timeout": "Response timeout (seconds)"
+          "timeout": "Response timeout (seconds)",
+          "denied_services": "Blocked services"
         },
         "data_description": {
           "name": "A unique name for this agent (e.g. 'Sarcastic Claude', 'Kitchen Assistant').",
           "model": "Which Claude model this agent uses. Sonnet is fast and balanced, Opus is the most capable, Haiku is the fastest and cheapest.",
           "system_prompt": "Defines who this agent is: identity, tone, and verbosity. It takes precedence over the built-in style — device control, tools, and the area map are appended automatically and stay out of its way. Include a length rule (e.g. keep spoken replies short) if your persona tends to ramble.",
-          "timeout": "Maximum time in seconds to wait for Claude to respond."
+          "timeout": "Maximum time in seconds to wait for Claude to respond.",
+          "denied_services": "Services this agent may NOT call, even by voice — enforced in the MCP server, so it covers every device tool. Pick common risky ones or type your own: exact like lock.unlock, or a whole domain like lock.* . Leave empty to allow everything."
         }
       },
       "hassio_confirm": {
@@ -79,14 +81,16 @@
           "enable_sensors": "Usage limit sensors active",
           "model": "Claude model",
           "system_prompt": "System prompt (personality)",
-          "timeout": "Response timeout (seconds)"
+          "timeout": "Response timeout (seconds)",
+          "denied_services": "Blocked services"
         },
         "data_description": {
           "enable_conversation": "When disabled, this agent will not appear in Voice Assistants.",
           "enable_sensors": "Create sensors that track your Anthropic account usage limits. This is account-wide (not per agent).",
           "model": "Which Claude model this agent uses. Sonnet is fast and balanced, Opus is the most capable, Haiku is the fastest and cheapest.",
           "system_prompt": "Defines who this agent is: identity, tone, and verbosity. It takes precedence over the built-in style — device control, tools, and the area map are appended automatically and stay out of its way. Include a length rule (e.g. keep spoken replies short) if your persona tends to ramble.",
-          "timeout": "Maximum time in seconds to wait for Claude to respond."
+          "timeout": "Maximum time in seconds to wait for Claude to respond.",
+          "denied_services": "Services this agent may NOT call, even by voice — enforced in the MCP server, so it covers every device tool. Pick common risky ones or type your own: exact like lock.unlock, or a whole domain like lock.* . Leave empty to allow everything."
         }
       },
       "insight": {

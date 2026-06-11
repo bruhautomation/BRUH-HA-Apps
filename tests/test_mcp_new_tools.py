@@ -278,3 +278,49 @@ class TestGetWeatherForecast(unittest.TestCase):
         mock_ws.return_value = {"error": "WebSocket auth failed"}
         result = ha_mcp_server.get_weather_forecast("weather.home")
         self.assertIn("error", result)
+
+
+class TestServiceDenyList(unittest.TestCase):
+    """Per-agent service deny-list enforced at the call_service chokepoint."""
+
+    def setUp(self):
+        self._saved = ha_mcp_server.DENIED_SERVICES
+
+    def tearDown(self):
+        ha_mcp_server.DENIED_SERVICES = self._saved
+
+    def test_pattern_matching(self):
+        ha_mcp_server.DENIED_SERVICES = ["lock.unlock", "alarm_control_panel.*"]
+        self.assertTrue(ha_mcp_server._service_denied("lock", "unlock"))
+        self.assertFalse(ha_mcp_server._service_denied("lock", "lock"))
+        self.assertTrue(ha_mcp_server._service_denied("alarm_control_panel", "alarm_disarm"))
+        self.assertTrue(ha_mcp_server._service_denied("ALARM_CONTROL_PANEL", "alarm_arm_away"))
+        self.assertFalse(ha_mcp_server._service_denied("light", "turn_on"))
+
+    def test_wildcard_all(self):
+        ha_mcp_server.DENIED_SERVICES = ["*"]
+        self.assertTrue(ha_mcp_server._service_denied("light", "turn_on"))
+
+    @patch("ha_mcp_server.ha_api_request")
+    def test_call_service_blocks_denied(self, mock_api):
+        ha_mcp_server.DENIED_SERVICES = ["lock.unlock"]
+        result = ha_mcp_server.call_service("lock", "unlock", {"entity_id": "lock.front"})
+        self.assertIn("error", result)
+        self.assertIn("not permitted", result["error"])
+        mock_api.assert_not_called()  # never hit the HA API
+
+    @patch("ha_mcp_server.ha_api_request")
+    def test_call_service_allows_others(self, mock_api):
+        ha_mcp_server.DENIED_SERVICES = ["lock.unlock"]
+        mock_api.return_value = {"ok": True}
+        ha_mcp_server.call_service("light", "turn_on", {"entity_id": "light.x"})
+        mock_api.assert_called_once()
+
+    @patch("ha_mcp_server.ha_api_request")
+    def test_control_tool_routes_through_deny(self, mock_api):
+        """control_lock(unlock) must be blocked by a lock.unlock deny —
+        proving the chokepoint covers the dedicated control_* tools."""
+        ha_mcp_server.DENIED_SERVICES = ["lock.*"]
+        result = ha_mcp_server.control_lock("lock.front", "unlock")
+        self.assertIn("error", result)
+        mock_api.assert_not_called()

@@ -34,6 +34,25 @@ SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 HA_BASE_URL = os.environ.get("HA_BASE_URL", "http://supervisor/core/api")
 SUPERVISOR_API_URL = os.environ.get("SUPERVISOR_API_URL", "http://supervisor")
 
+# Per-channel service deny-list (e.g. a voice agent forbidden from
+# lock.unlock). Comma-separated patterns: exact "domain.service" or a
+# whole-domain "domain.*". Set per worker via env (see assist-worker-pool.py),
+# so it is inherited by this MCP subprocess. Every control_* tool routes
+# through call_service(), so enforcing here covers all of them.
+DENIED_SERVICES = [
+    p.strip().lower() for p in os.environ.get("BRUH_DENIED_SERVICES", "").split(",")
+    if p.strip()
+]
+
+
+def _service_denied(domain, service):
+    """True if calling domain.service is forbidden for this channel."""
+    target = f"{domain}.{service}".lower()
+    for pattern in DENIED_SERVICES:
+        if pattern == target or pattern == f"{domain.lower()}.*" or pattern == "*":
+            return True
+    return False
+
 
 def ha_api_request(endpoint, method="GET", data=None, accept=None):
     """Make a request to the Home Assistant API."""
@@ -165,7 +184,17 @@ def get_all_states(domain=None, name_filter=None):
 
 
 def call_service(domain, service, data=None):
-    """Call a Home Assistant service."""
+    """Call a Home Assistant service.
+
+    Single chokepoint: every control_* tool, activate_scene, run_script,
+    send_notification, and reload_config funnel through here, so the
+    deny-list check covers all of them, not just direct call_service use.
+    """
+    if _service_denied(domain, service):
+        return {"error": (
+            f"Service {domain}.{service} is not permitted for this assistant. "
+            "Tell the user this action is restricted; do not retry."
+        )}
     payload = data or {}
     result = ha_api_request(f"/api/services/{domain}/{service}", method="POST", data=payload)
     return result

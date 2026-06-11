@@ -185,7 +185,8 @@ def test_mcp_only_scoping_adds_settings_flag(tmp_path, monkeypatch):
     try:
         pool.handle(make_request("scoped"))
         spawns = [json.loads(line) for line in
-                  (tmp_path / "argv.log").read_text().splitlines()]
+                  (tmp_path / "argv.log").read_text().splitlines()
+                  if not line.startswith("ENV ")]
         argv = spawns[-1]
         assert "--settings" in argv
         assert argv[argv.index("--settings") + 1] == mod.ASSIST_SETTINGS_FILE
@@ -203,7 +204,8 @@ def test_full_access_skips_settings_flag(tmp_path, monkeypatch):
     try:
         pool.handle(make_request("unscoped"))
         spawns = [json.loads(line) for line in
-                  (tmp_path / "argv.log").read_text().splitlines()]
+                  (tmp_path / "argv.log").read_text().splitlines()
+                  if not line.startswith("ENV ")]
         assert "--settings" not in spawns[-1]
     finally:
         shutdown(pool)

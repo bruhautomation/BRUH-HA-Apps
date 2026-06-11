@@ -322,30 +322,46 @@ def build_system_prompt(custom: str) -> str:
     return prompt
 
 
-def save_last_profile(custom: str, model: str) -> None:
+def save_last_profile(custom: str, model: str, denied_csv: str = "") -> None:
     """Remember the agent profile so the next pool start pre-warms with it."""
     try:
         os.makedirs(CACHE_DIR, exist_ok=True)
         tmp = LAST_PROFILE_FILE + ".tmp"
         with open(tmp, "w") as fh:
-            json.dump({"system_prompt": custom, "model": model}, fh)
+            json.dump(
+                {"system_prompt": custom, "model": model, "denied": denied_csv}, fh
+            )
         os.replace(tmp, LAST_PROFILE_FILE)
     except OSError:
         pass
 
 
+def normalize_denied(value) -> str:
+    """Normalize a deny-list (list or csv) to a stable, sorted csv string so
+    it can key the worker profile and ride in the MCP env."""
+    if isinstance(value, str):
+        parts = value.split(",")
+    elif isinstance(value, (list, tuple)):
+        parts = value
+    else:
+        parts = []
+    cleaned = sorted({str(p).strip().lower() for p in parts if str(p).strip()})
+    return ",".join(cleaned)
+
+
 def prewarm_spare(pool: "Pool") -> None:
     """Spawn the spare at startup from the last-used agent profile, so even
     the first voice command after an add-on restart skips the cold start."""
-    custom, model = "", "default"
+    custom, model, denied = "", "default", ""
     try:
         with open(LAST_PROFILE_FILE) as fh:
             data = json.load(fh)
         custom = data.get("system_prompt") or ""
         model = data.get("model") or "default"
+        denied = data.get("denied") or ""
     except (OSError, json.JSONDecodeError, AttributeError):
         pass
-    pool._spawn_spare((build_system_prompt(custom), model))
+    pool._spawn_spare((build_system_prompt(custom), model, denied))
 
 
 # ---------------------------------------------------------------------------
@@ -354,15 +370,15 @@ def prewarm_spare(pool: "Pool") -> None:
 
 
 class Worker:
-    def __init__(self, profile: tuple[str, str], resume: str | None = None):
-        self.profile = profile  # (system_prompt, model)
+    def __init__(self, profile: tuple, resume: str | None = None):
+        self.profile = profile  # (system_prompt, model, denied_services_csv)
         self.created = time.time()
         self.last_used = self.created
         self.session_id: str | None = None
         self.lock = threading.Lock()  # serializes turns on this worker
         self._events: Queue = Queue()
 
-        system_prompt, model = profile
+        system_prompt, model, denied_csv = profile
         cmd = resolve_claude_cmd() + [
             "-p",
             "--verbose",
@@ -382,6 +398,10 @@ class Worker:
             cmd += ["--resume", resume]
             self.session_id = resume
 
+        # Pass this agent's service deny-list to the MCP server (inherited
+        # via claude's environment). Per-worker, so it is per-agent.
+        env = dict(os.environ)
+        env["BRUH_DENIED_SERVICES"] = denied_csv
         self.proc = subprocess.Popen(
             cmd,
             cwd=WORK_DIR,
@@ -389,6 +409,7 @@ class Worker:
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
+            env=env,
         )
         threading.Thread(target=self._reader, daemon=True).start()
 
@@ -609,9 +630,10 @@ class Pool:
 
         custom_prompt = req.get("system_prompt") or ""
         model = req.get("model") or "default"
+        denied_csv = normalize_denied(req.get("denied_services"))
         system_prompt = build_system_prompt(custom_prompt)
-        profile = (system_prompt, model)
-        save_last_profile(custom_prompt, model)
+        profile = (system_prompt, model, denied_csv)
+        save_last_profile(custom_prompt, model, denied_csv)
 
         debug_log([
             "================================================================",
@@ -656,11 +678,11 @@ class Pool:
                     # to a one-shot invocation within the remaining budget.
                     self._drop_worker(conv_id, worker)
                     mode += "+fallback"
-                    response = self._oneshot(req, system_prompt, model, deadline)
+                    response = self._oneshot(req, system_prompt, model, deadline, denied_csv)
             except Exception as exc:  # noqa: BLE001 — never drop a request
                 log(f"worker path failed for {req_id}: {exc}")
                 mode = "error+fallback"
-                response = self._oneshot(req, system_prompt, model, deadline)
+                response = self._oneshot(req, system_prompt, model, deadline, denied_csv)
 
         duration = time.time() - start
         if response is None:
@@ -693,7 +715,8 @@ class Pool:
 
     @staticmethod
     def _oneshot(
-        req: dict, system_prompt: str, model: str, deadline: float
+        req: dict, system_prompt: str, model: str, deadline: float,
+        denied_csv: str = "",
     ) -> str | None:
         """Classic spawn-per-request fallback — identical to the bash path."""
         remaining = int(deadline - time.time())
@@ -713,6 +736,8 @@ class Pool:
         ] + scoping_args()
         if model and model != "default":
             cmd += ["--model", model]
+        env = dict(os.environ)
+        env["BRUH_DENIED_SERVICES"] = denied_csv
         try:
             proc = subprocess.run(
                 cmd,
@@ -721,6 +746,7 @@ class Pool:
                 text=True,
                 timeout=remaining,
                 cwd=WORK_DIR,
+                env=env,
             )
             return proc.stdout.strip() or None
         except (subprocess.TimeoutExpired, OSError):

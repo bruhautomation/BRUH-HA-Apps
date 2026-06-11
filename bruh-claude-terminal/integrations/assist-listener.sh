@@ -390,8 +390,10 @@ invoke_claude() {
     # Run Claude in print mode from /config so it finds .mcp.json for HA tools
     # and .claude/settings.local.json for pre-approved tool permissions.
     # Plain text output (no --output-format json) — proven reliable here.
+    # BRUH_DENIED_SERVICES is inherited by the MCP server subprocess and
+    # enforced in call_service (covers every control_* tool).
     # shellcheck disable=SC2086
-    (cd /config && printf '%s' "$message" | timeout "$limit" \
+    (cd /config && printf '%s' "$message" | BRUH_DENIED_SERVICES="${DENIED_SERVICES_CSV:-}" timeout "$limit" \
         ${CLAUDE_BIN} -p --verbose --max-turns "$MAX_TURNS" \
         --system-prompt "$final_system_prompt" \
         "${session_args[@]}" "${scope_args[@]}" \
@@ -415,6 +417,9 @@ process_request() {
     system_prompt=$(jq -r '.system_prompt // empty' "$work_file" 2>/dev/null)
     history_json=$(jq -c '.conversation_history // []' "$work_file" 2>/dev/null)
     model=$(jq -r '.model // empty' "$work_file" 2>/dev/null)
+    # Per-agent service deny-list -> exported to the MCP server (see
+    # invoke_claude). Comma-joined "domain.service" / "domain.*" patterns.
+    DENIED_SERVICES_CSV=$(jq -r '(.denied_services // []) | join(",")' "$work_file" 2>/dev/null)
     # Older integrations used the conversation id as the request id
     conv_id=$(jq -r '.conversation_id // .id // empty' "$work_file" 2>/dev/null | tr -cd 'A-Za-z0-9_-')
     req_ts=$(jq -r '.ts // empty' "$work_file" 2>/dev/null)

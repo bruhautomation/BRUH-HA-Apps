@@ -6,6 +6,7 @@ CONF_TIMEOUT = "timeout"
 CONF_NAME = "name"
 CONF_SYSTEM_PROMPT = "system_prompt"
 CONF_MODEL = "model"
+CONF_DENIED_SERVICES = "denied_services"
 CONF_ENABLE_CONVERSATION = "enable_conversation"
 CONF_ENABLE_SENSORS = "enable_sensors"
 DEFAULT_TIMEOUT = 120

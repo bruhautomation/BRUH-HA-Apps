@@ -84,6 +84,18 @@ These cap how many agentic loops Claude runs before returning. Lower values are 
 
 ### Assist tool scoping
 
+Two layers, from coarse to fine:
+
+1. **`assist_tool_access`** (add-on option, below) — the coarse switch:
+   `mcp_only` (default) lets voice use every HA MCP tool but blocks shell,
+   file read/write, and web for ALL voice agents.
+2. **Per-agent Blocked services** (in each agent's config) — a picker of
+   service patterns that specific agent may never call, e.g. `lock.unlock`
+   or `alarm_control_panel.*`. Enforced in the MCP server's `call_service`
+   chokepoint, so it covers every device tool and phrasing — not just the
+   generic call. Pick common risky ones, choose a whole `domain.*`, or type
+   your own. Each agent has its own list; empty allows everything.
+
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `assist_tool_access` | `mcp_only` / `full` | `mcp_only` | What the voice channel may do. `mcp_only` allows every Home Assistant MCP tool (full device control, cameras, history, any service call) but denies shell commands and ALL file access (read and write) plus web access — so voice cannot author automations or read secrets.yaml. Automations and the terminal keep full access. Set `full` to lift the restriction for voice too. |
