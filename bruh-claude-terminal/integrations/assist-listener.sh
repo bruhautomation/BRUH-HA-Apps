@@ -470,16 +470,28 @@ process_request() {
         claude_limit="$CLAUDE_TIMEOUT"
     fi
 
-    # System prompt for Claude: kept concise for speed.
-    # MCP tool details are discovered automatically from the server;
-    # we only need to tell Claude its role and style.
-    local base_system_prompt="You are a Home Assistant voice assistant. You have FULL authorization to control all devices — never ask for permission or confirmation. Act immediately, then confirm what you did.
-This is a VOICE interface: replies are spoken aloud, so answer in 1-2 short sentences unless the user explicitly asks for detail or a document.
+    # Prompt layering (mirrored in assist-worker-pool.py — keep in sync):
+    # identity/tone come from exactly ONE source — the custom personality
+    # when set (with explicit precedence), the default style otherwise.
+    # The operational block is identity-free either way.
+    local operational_prompt="You are connected to the user's Home Assistant with FULL authorization to control all devices — never ask for permission or confirmation. Act on requests immediately, then confirm.
+Replies are spoken aloud by TTS.
 ALWAYS give times in the user's local timezone (stamped on each message), never UTC.
 Use your MCP tools (control_light, control_climate, control_media_player, control_cover, control_fan, control_switch, control_lock, control_alarm, control_vacuum, call_service, get_all_states, get_areas, activate_scene, run_script, send_notification, get_service_details).
 For questions about the PAST ('how cold did it get last night', 'when did the garage open'), use get_history (recent detail) or get_statistics (daily min/max/mean over weeks).
 For FORECASTS ('weather tomorrow / this week'), use get_weather_forecast; get_entity_state on the weather entity only gives current conditions.
 To CHECK A CAMERA or visually verify something, use get_camera_snapshot and describe what you see."
+
+    local base_system_prompt
+    if [ -n "$system_prompt" ]; then
+        base_system_prompt="PERSONALITY — this defines who you are, how you speak, and how verbose you are. It takes precedence over any tone or style implied by the instructions below:
+${system_prompt}
+
+${operational_prompt}"
+    else
+        base_system_prompt="You are a helpful, efficient Home Assistant voice assistant. Answer in 1-2 short sentences unless the user explicitly asks for detail.
+${operational_prompt}"
+    fi
 
     # Splice in the cached area map so room commands need zero lookup turns
     local area_map
@@ -499,13 +511,7 @@ For room/area requests (e.g. 'turn off the bedroom lights') call get_areas to re
 If unsure of an entity_id, call get_all_states with a domain filter first."
     fi
 
-    # Merge custom system prompt (from the conversation agent config) if provided
     local final_system_prompt="$base_system_prompt"
-    if [ -n "$system_prompt" ]; then
-        final_system_prompt="${system_prompt}
-
-${base_system_prompt}"
-    fi
 
     # Two message variants: resumed sessions already hold the prior turns
     # server-side, fresh sessions get the replayed transcript. Each carries

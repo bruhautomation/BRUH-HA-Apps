@@ -458,6 +458,22 @@ New conversation agents default to **Claude Haiku** for snappy voice
 responses; pick a different model per agent in the integration's options
 (`Default` inherits whatever model the terminal uses).
 
+#### Personalities & prompt layering
+
+Each voice request sends Claude one system prompt built from layers:
+
+1. **Your personality** (the agent's system prompt) — leads, with an explicit
+   note that it owns identity, tone, and verbosity.
+2. **Operational block** — HA capabilities: tools, the area map, timezone,
+   and tool-routing rules. Deliberately identity-free so it can't fight
+   your persona.
+
+Without a personality, a built-in default applies ("helpful, efficient,
+1-2 short sentences"). With one, that default is dropped entirely — so if
+your persona should still be brief for TTS, say so in the persona itself,
+e.g. *"…no matter how excited you get, keep spoken replies under two
+sentences."*
+
 #### Conversation memory
 
 Follow-up prompts work within a conversation: while the same Assist chat

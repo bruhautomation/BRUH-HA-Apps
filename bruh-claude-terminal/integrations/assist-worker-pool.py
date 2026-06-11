@@ -122,9 +122,18 @@ AREA_MAP_TEMPLATE = """\
 {%- endfor -%}
 """
 
-# Mirrors the base system prompt in assist-listener.sh. Keep in sync.
-BASE_SYSTEM_PROMPT = """You are a Home Assistant voice assistant. You have FULL authorization to control all devices — never ask for permission or confirmation. Act immediately, then confirm what you did.
-This is a VOICE interface: replies are spoken aloud, so answer in 1-2 short sentences unless the user explicitly asks for detail or a document.
+# Prompt layering (mirrored in assist-listener.sh — keep in sync):
+# identity/tone/verbosity come from exactly ONE source. A custom personality
+# leads with explicit precedence and the operational block stays
+# identity-free; without one, the default style applies. Mixing two
+# "You are X" statements is what waters personalities down.
+PERSONALITY_FRAME = """PERSONALITY — this defines who you are, how you speak, and how verbose you are. It takes precedence over any tone or style implied by the instructions below:
+{custom}"""
+
+DEFAULT_STYLE_PROMPT = """You are a helpful, efficient Home Assistant voice assistant. Answer in 1-2 short sentences unless the user explicitly asks for detail."""
+
+OPERATIONAL_PROMPT = """You are connected to the user's Home Assistant with FULL authorization to control all devices — never ask for permission or confirmation. Act on requests immediately, then confirm.
+Replies are spoken aloud by TTS.
 Use your MCP tools (control_light, control_climate, control_media_player, control_cover, control_fan, control_switch, control_lock, control_alarm, control_vacuum, call_service, get_all_states, get_areas, activate_scene, run_script, send_notification, get_service_details).
 For questions about the PAST ('how cold did it get last night', 'when did the garage open'), use get_history (recent detail) or get_statistics (daily min/max/mean over weeks).
 For FORECASTS ('weather tomorrow / this week'), use get_weather_forecast; get_entity_state on the weather entity only gives current conditions.
@@ -294,7 +303,10 @@ def local_time_line() -> str:
 
 
 def build_system_prompt(custom: str) -> str:
-    prompt = BASE_SYSTEM_PROMPT
+    if custom:
+        prompt = PERSONALITY_FRAME.format(custom=custom) + "\n\n" + OPERATIONAL_PROMPT
+    else:
+        prompt = DEFAULT_STYLE_PROMPT + "\n" + OPERATIONAL_PROMPT
     tz = get_ha_timezone()
     if tz:
         prompt += (
@@ -307,8 +319,6 @@ def build_system_prompt(custom: str) -> str:
         prompt += MAP_PROMPT.format(area_map=area_map.rstrip())
     else:
         prompt += NO_MAP_PROMPT
-    if custom:
-        prompt = f"{custom}\n\n{prompt}"
     return prompt
 
 

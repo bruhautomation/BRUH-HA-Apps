@@ -1,5 +1,21 @@
 # Changelog
 
+## 3.0.2
+
+**Personalities stop fighting the built-in prompt.**
+
+The voice system prompt used to merge your personality with a base that
+asserted its own identity ("You are a Home Assistant voice assistant")
+and its own style ("answer in 1-2 short sentences") — two "You are X"
+statements average out, which is exactly the watered-down persona effect.
+
+Now identity, tone, and verbosity come from exactly one source: a custom
+personality leads with an explicit precedence note, and the operational
+block (authorization, tools, area map, timezone, routing rules) is
+identity- and style-free. Agents without a personality keep the old
+default behavior. The agent config field and DOCS explain the layering,
+including the tip to put a length rule inside expansive personas.
+
 ## 3.0.1
 
 **Fix: blank "Add Service" dialog — plus a much friendlier insight setup.**
