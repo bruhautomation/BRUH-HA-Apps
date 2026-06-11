@@ -86,7 +86,7 @@ These cap how many agentic loops Claude runs before returning. Lower values are 
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `assist_tool_access` | `mcp_only` / `full` | `mcp_only` | What the voice channel may do. `mcp_only` allows every Home Assistant MCP tool (full device control, cameras, history) but denies shell commands, file edits, and web access — automations and the terminal keep full access. Set `full` to lift the restriction for voice too. |
+| `assist_tool_access` | `mcp_only` / `full` | `mcp_only` | What the voice channel may do. `mcp_only` allows every Home Assistant MCP tool (full device control, cameras, history, any service call) but denies shell commands and ALL file access (read and write) plus web access — so voice cannot author automations or read secrets.yaml. Automations and the terminal keep full access. Set `full` to lift the restriction for voice too. |
 
 ### Terminal permissions
 
@@ -123,7 +123,7 @@ Claude Code normally asks before each tool call. The add-on handles this differe
 | Channel | Mechanism | Default access |
 |---------|-----------|----------------|
 | **Interactive terminal** | Prompts, unless `dangerously_skip_permissions: true` | Everything (you approve actions) |
-| **Voice / conversation agents** | Pre-approved allowlist + `assist_tool_access` deny-list | All HA MCP tools; **no** shell/file-edit/web (`mcp_only`) |
+| **Voice / conversation agents** | Pre-approved allowlist + `assist_tool_access` deny-list | All HA MCP tools; **no** shell, file read/write, or web (`mcp_only`) |
 | **Automation tasks & insight jobs** | Pre-approved allowlist | All tools (MCP, shell, file edits, web) |
 
 Background channels never use `--dangerously-skip-permissions` — they can't prompt, so the add-on writes `/config/.claude/settings.local.json` pre-approving the tools they need. The voice channel additionally loads a deny-list (see `assist_tool_access` above) so a voice request can control the whole house but can't run shell commands or edit files.

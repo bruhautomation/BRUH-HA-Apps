@@ -16,6 +16,12 @@ identity- and style-free. Agents without a personality keep the old
 default behavior. The agent config field and DOCS explain the layering,
 including the tip to put a length rule inside expansive personas.
 
+Also: the voice deny-list (`assist_tool_access: mcp_only`) now blocks
+file READS (Read/Glob/Grep) as well as writes — voice gets HA data
+exclusively through MCP tools, so the only thing file access enabled
+was reading things like secrets.yaml aloud. Docs updated to state the
+boundary precisely.
+
 ## 3.0.1
 
 **Fix: blank "Add Service" dialog — plus a much friendlier insight setup.**

@@ -440,3 +440,15 @@ def test_bridge_does_not_resend_after_accepted_stream_break(tmp_path, monkeypatc
             server.close()
 
     asyncio.new_event_loop().run_until_complete(main())
+
+
+def test_runsh_voice_deny_list_blocks_all_file_access():
+    """The mcp_only deny-list must block shell, web, AND file reads —
+    voice gets HA data exclusively via MCP; Read/Glob/Grep would only
+    enable reading /config secrets aloud."""
+    run_sh = (REPO_ROOT / "bruh-claude-terminal" / "run.sh").read_text()
+    start = run_sh.index("assist_settings.json << 'SCOPE'")
+    deny_block = run_sh[start:run_sh.index("SCOPE", start + 40)]
+    for tool in ("Bash", "Read", "Glob", "Grep", "Write", "Edit",
+                 "WebFetch", "WebSearch", "Agent"):
+        assert f'"{tool}"' in deny_block, f"voice deny-list missing {tool}"
