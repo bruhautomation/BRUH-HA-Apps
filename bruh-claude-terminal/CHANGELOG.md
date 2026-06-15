@@ -2,16 +2,25 @@
 
 ## 3.1.1
 
-**Insight sensors refresh live again — no more event-loop error spamming the log.**
+**Two insight-sensor fixes: live refresh restored, and card scaffolding no longer leaks into reports.**
 
-The insight sensor subscribed to its update signal with a plain, undecorated
-handler, so Home Assistant delivered each update on a worker thread. From a
-worker thread `async_write_ha_state()` is illegal, and HA raised a
-`RuntimeError` on every insight run. The report card still rendered from the
-persisted file, so the only visible symptom was repeated errors in the log —
-but the sensor entity never updated in real time. The handler is now marked
-`@callback` so the dispatcher runs it on the event loop, which is the
-supported pattern for any dispatcher target that writes entity state.
+*Event-loop crash.* The insight sensor subscribed to its update signal with a
+plain, undecorated handler, so Home Assistant delivered each update on a worker
+thread — where `async_write_ha_state()` is illegal and raised a `RuntimeError`
+on every run. The report still rendered from the persisted file, so the only
+visible symptom was repeated errors in the log while the entity never updated
+live. The handler is now marked `@callback` so the dispatcher runs it on the
+event loop, the supported pattern for any dispatcher target that writes entity
+state.
+
+*Card scaffolding in the report.* Insight prompts asked Claude for "a markdown
+card," and the model often obliged literally — wrapping its answer in a Lovelace
+card (`type: markdown` / `title:` / `content: >-`) or a code fence. That
+scaffolding was stored verbatim in the `markdown` attribute and rendered as raw
+text inside the actual dashboard card (and the first-run notification preview).
+The result is now unwrapped to just the report body before storing — covering
+custom prompts too — and the shipped templates ask for the markdown body
+directly instead of a "card."
 
 ## 3.1.0
 

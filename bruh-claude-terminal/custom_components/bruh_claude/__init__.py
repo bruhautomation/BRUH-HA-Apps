@@ -67,6 +67,7 @@ from .insight_format import (
     INSIGHT_TEMPLATES,
     build_card_yaml,
     make_preview,
+    strip_card_wrapper,
     truncate_markdown,
 )
 
@@ -414,7 +415,7 @@ async def _async_run_insight(hass: HomeAssistant, entry: ConfigEntry) -> None:
                 prompt=prompt, timeout=timeout, model=model
             )
             payload = {
-                "markdown": truncate_markdown(result),
+                "markdown": truncate_markdown(strip_card_wrapper(result)),
                 "last_success": dt_util.utcnow().isoformat(),
                 "duration_s": round(time.monotonic() - started, 1),
                 "error": None,
