@@ -1,5 +1,18 @@
 # Changelog
 
+## 3.1.1
+
+**Insight sensors refresh live again — no more event-loop error spamming the log.**
+
+The insight sensor subscribed to its update signal with a plain, undecorated
+handler, so Home Assistant delivered each update on a worker thread. From a
+worker thread `async_write_ha_state()` is illegal, and HA raised a
+`RuntimeError` on every insight run. The report card still rendered from the
+persisted file, so the only visible symptom was repeated errors in the log —
+but the sensor entity never updated in real time. The handler is now marked
+`@callback` so the dispatcher runs it on the event loop, which is the
+supported pattern for any dispatcher target that writes entity state.
+
 ## 3.1.0
 
 **Per-agent service deny-lists — voice agents you can lock down individually.**
