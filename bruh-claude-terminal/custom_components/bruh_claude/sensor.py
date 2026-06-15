@@ -20,7 +20,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -286,6 +286,7 @@ class BruhClaudeInsightSensor(SensorEntity):
             )
         )
 
+    @callback
     def _handle_update(self, payload: dict) -> None:
         self._apply(payload)
         self.async_write_ha_state()
