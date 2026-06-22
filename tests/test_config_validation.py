@@ -194,8 +194,9 @@ class TestDockerfile(unittest.TestCase):
     def test_installs_claude_cli(self):
         """Claude CLI should be installed.
 
-        The Dockerfile installs via npm (the native installer downloads a
-        musl build that may miss symbols on Alpine 3.19's musl 1.2.4).
+        The Dockerfile installs Claude Code via npm; the package ships a
+        native musl binary that needs posix_getdents (musl 1.2.6), which is
+        why the base image is Alpine 3.24+.
         """
         self.assertIn("@anthropic-ai/claude-code", self.content)
         self.assertIn("npm install -g", self.content)

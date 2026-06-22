@@ -405,21 +405,19 @@ migrate_legacy_auth_files() {
 # Tool Installation
 # ============================================================================
 
-# Pinned, known-good Claude Code version.
+# Claude Code version to install. Defaults to "latest".
 #
-# The @anthropic-ai/claude-code npm package no longer ships a pure-JS CLI;
-# it now installs a prebuilt NATIVE binary (…-linux-*-musl optional
-# dependencies + a postinstall, install.cjs). Recent builds of that native
-# musl binary need posix_getdents — a symbol musl only added in 1.2.6 — so
-# they crash on start on Alpine 3.19 (musl 1.2.4) and even 3.20/3.21
-# (musl 1.2.5): "Error relocating … : posix_getdents: symbol not found".
-# When that happens `claude --version` prints nothing and the web terminal
-# opens then exits instantly. Chasing "latest" is therefore unsafe on this
-# base image, so we pin to the last version whose musl binary runs here.
-# Override with BRUH_CLAUDE_CODE_VERSION once a newer version is verified
-# working (or when the base image ships musl 1.2.6+). Keep this in sync with
-# the Dockerfile's CLAUDE_CODE_VERSION build arg.
-CLAUDE_CODE_PINNED_VERSION="2.1.173"
+# The @anthropic-ai/claude-code npm package installs a prebuilt NATIVE
+# binary (…-linux-*-musl optional dependencies + a postinstall,
+# install.cjs). Those musl builds need posix_getdents — a symbol musl added
+# in 1.2.6 — so they only run on Alpine 3.24+ (this add-on's base image; see
+# build.yaml). On older bases (3.19 = musl 1.2.4 … 3.21 = musl 1.2.5) the
+# binary fails to relocate ("posix_getdents: symbol not found"), `claude
+# --version` prints nothing, and the web terminal opens then exits instantly.
+# Now that we build on 3.24 we track upstream again. Pin a specific version
+# with BRUH_CLAUDE_CODE_VERSION (kept in sync with the Dockerfile's
+# CLAUDE_CODE_VERSION build arg) if a future release ever regresses.
+CLAUDE_CODE_DEFAULT_VERSION="latest"
 
 # Print Claude Code's version and return 0 only if the binary actually RUNS.
 # A broken native build installs fine but exits non-zero with no version
@@ -435,17 +433,17 @@ claude_version_or_empty() {
 }
 
 update_claude_code() {
-    local target_version="${BRUH_CLAUDE_CODE_VERSION:-$CLAUDE_CODE_PINNED_VERSION}"
-    bashio::log.info "Checking Claude Code (pinned to v${target_version})..."
+    local target_version="${BRUH_CLAUDE_CODE_VERSION:-$CLAUDE_CODE_DEFAULT_VERSION}"
+    bashio::log.info "Checking Claude Code (target: ${target_version})..."
 
     local current_version
     current_version=$(claude_version_or_empty || echo "unknown")
     bashio::log.info "  - Current Claude Code version: ${current_version}"
 
-    if [ "$current_version" != "$target_version" ]; then
-        # Install the pinned version. We pin rather than install "latest"
-        # because latest's native musl binary doesn't run on this base
-        # image's musl (see CLAUDE_CODE_PINNED_VERSION above).
+    # "latest" always reinstalls so auto-updates keep flowing. A pinned,
+    # specific version that's already installed and runs takes the fast path
+    # and skips the reinstall.
+    if [ "$target_version" = "latest" ] || [ "$current_version" != "$target_version" ]; then
         local install_output=""
         local attempt
         local install_success=false
@@ -476,13 +474,12 @@ update_claude_code() {
             # instead of leaving a bricked terminal.
             local new_version
             if new_version=$(claude_version_or_empty); then
-                bashio::log.info "  - Claude Code installed: ${current_version} -> v${new_version}"
+                bashio::log.info "  - Claude Code ready: ${current_version} -> v${new_version}"
             else
-                bashio::log.error "Claude Code v${target_version} installed but won't run here."
-                bashio::log.error "  The native musl binary likely needs a newer musl than this base"
-                bashio::log.error "  image provides (Alpine 3.19 = musl 1.2.4; posix_getdents needs 1.2.6)."
-                bashio::log.error "  The web terminal will open and exit instantly. Set"
-                bashio::log.error "  BRUH_CLAUDE_CODE_VERSION to a version whose musl binary runs here."
+                bashio::log.error "Claude Code (${target_version}) installed but won't run on this system."
+                bashio::log.error "  The native binary likely needs a newer musl than the base image"
+                bashio::log.error "  provides. The web terminal will open and exit instantly. Pin a"
+                bashio::log.error "  known-good version with the BRUH_CLAUDE_CODE_VERSION env var."
             fi
         else
             bashio::log.warning "Claude Code install failed after 4 attempts - continuing with current version"

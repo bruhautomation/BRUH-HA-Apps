@@ -1,38 +1,35 @@
 # Changelog
 
-## 3.1.1
+## 3.2.0
 
-**Fix: terminal opens and instantly closes after an update (Claude Code pinned).**
+**Fix: terminal opens and instantly closes after an update — and Claude Code updates flow again.**
 
 After a Home Assistant or add-on update, the web terminal could open and
-vanish in well under a second — the ttyd log shows `process exited with
-code 0` the instant you connect, and the startup log reads
+vanish in well under a second: the ttyd log showed `process exited with
+code 0` the instant you connected, and the startup log read
 `Claude Code updated: <ver> -> unknown`.
 
 Root cause: the `@anthropic-ai/claude-code` npm package no longer ships a
-pure-JS CLI. It now installs a prebuilt **native** binary (via
-`…-linux-*-musl` optional dependencies + a postinstall), and recent builds
-of that musl binary are linked against `posix_getdents` — a symbol musl
-only added in **1.2.6**. This add-on's base image is Alpine 3.19
-(musl 1.2.4), so the binary fails to start (`Error relocating … :
-posix_getdents: symbol not found`), `claude --version` prints nothing, and
-the terminal process exits immediately. The previous "install via npm
-instead of the binary installer" fix no longer helps, because the npm
-package itself is now native. (Bumping to Alpine 3.20/3.21 wouldn't help
-either — they ship musl 1.2.5; only 1.2.6 has the symbol.)
+pure-JS CLI — it now installs a prebuilt **native** binary (via
+`…-linux-*-musl` optional dependencies). Recent builds of that musl binary
+need `posix_getdents`, a symbol musl only added in **1.2.6**. The add-on
+was built on Alpine 3.19 (musl 1.2.4), so the binary failed to start
+(`Error relocating … : posix_getdents: symbol not found`) and the terminal
+process died immediately.
 
 The fix:
 
-- **Pin Claude Code to a known-good version** (2.1.173, which runs on
-  musl 1.2.4) in both the Dockerfile and the startup updater, instead of
-  always pulling "latest". Override with the `BRUH_CLAUDE_CODE_VERSION`
-  environment variable, or bump the Dockerfile's `CLAUDE_CODE_VERSION`
-  build arg, once a newer version is verified working — or once the base
-  image ships musl 1.2.6+.
-- **The startup updater now verifies the binary actually runs** after
-  installing. If it can't (e.g. a future musl mismatch), the log says so
-  explicitly with the fix to apply, instead of silently leaving a terminal
-  that opens and disappears.
+- **Base image upgraded from Alpine 3.19 to 3.24** (musl 1.2.6), which
+  provides the symbol the current Claude Code native binary needs. This
+  restores normal Claude Code updates — the add-on tracks the latest
+  release again instead of being frozen on an old one.
+- **The startup updater now verifies Claude Code actually runs** after
+  installing. If a future build ever needs a newer libc than the base image
+  provides, the log says so explicitly (with the fix) instead of silently
+  leaving a terminal that opens and disappears.
+- **You can pin Claude Code** to a specific version with the
+  `BRUH_CLAUDE_CODE_VERSION` environment variable (or the Dockerfile's
+  `CLAUDE_CODE_VERSION` build arg) if a release ever regresses.
 
 ## 3.1.0
 

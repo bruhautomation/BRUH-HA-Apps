@@ -42,30 +42,27 @@ RUN pip3 install --break-system-packages --no-cache-dir \
     pyyaml \
     yamllint
 
-# Install Claude Code CLI via npm, PINNED to a known-good version.
+# Install Claude Code CLI via npm.
 #
-# The @anthropic-ai/claude-code npm package no longer ships a pure-JS CLI.
-# It now installs a prebuilt NATIVE binary via platform-specific
-# optionalDependencies (…-linux-x64-musl, …-linux-arm64-musl) plus a
-# postinstall (install.cjs). Recent builds of that native musl binary are
-# linked against posix_getdents — a symbol musl only added in 1.2.6 — so
-# they fail to start on Alpine 3.19 (musl 1.2.4) and even 3.20/3.21
-# (musl 1.2.5): "Error relocating … : posix_getdents: symbol not found".
-# The web terminal then opens and exits instantly and `claude --version`
-# prints nothing. (This is why the older "switch to npm" fix no longer
-# helps — the npm package itself is now native.)
+# The @anthropic-ai/claude-code npm package installs a prebuilt NATIVE
+# binary via platform-specific optionalDependencies (…-linux-x64-musl,
+# …-linux-arm64-musl) plus a postinstall (install.cjs). Those musl builds
+# need posix_getdents — a symbol musl added in 1.2.6 — so they only run on
+# Alpine 3.24+ (this image's base; see build.yaml). On older bases
+# (3.19 = musl 1.2.4 … 3.21 = musl 1.2.5) the binary fails to relocate
+# ("posix_getdents: symbol not found") and the web terminal opens then
+# exits instantly — which is why this add-on was bumped from 3.19 to 3.24.
 #
-# So we pin to the last version whose musl binary runs on this base image
-# instead of installing "latest". Bump CLAUDE_CODE_VERSION once a newer
-# version is verified to run here, or once the base image ships musl 1.2.6+.
-# Keep this in sync with CLAUDE_CODE_PINNED_VERSION in run.sh.
+# We install "latest" by default. Pin a specific version with the
+# CLAUDE_CODE_VERSION build arg (kept in sync with BRUH_CLAUDE_CODE_VERSION
+# in run.sh) if a future release ever regresses.
 #
 # We symlink the installed binary to /root/.local/bin/claude so the
 # claude-run wrapper and persistent symlinks have a stable path.
 # NOTE: Do NOT symlink to /usr/local/bin/claude — Claude Code diagnostics
 # detects that path as an "npm-global" installation, causing misleading
 # warnings.
-ARG CLAUDE_CODE_VERSION=2.1.173
+ARG CLAUDE_CODE_VERSION=latest
 RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
     && mkdir -p /root/.local/bin \
     && ln -sf "$(readlink -f "$(command -v claude)")" /root/.local/bin/claude \
