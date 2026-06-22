@@ -1,5 +1,36 @@
 # Changelog
 
+## 3.2.0
+
+**Fix: terminal opens and instantly closes after an update — and Claude Code updates flow again.**
+
+After a Home Assistant or add-on update, the web terminal could open and
+vanish in well under a second: the ttyd log showed `process exited with
+code 0` the instant you connected, and the startup log read
+`Claude Code updated: <ver> -> unknown`.
+
+Root cause: the `@anthropic-ai/claude-code` npm package no longer ships a
+pure-JS CLI — it now installs a prebuilt **native** binary (via
+`…-linux-*-musl` optional dependencies). Recent builds of that musl binary
+need `posix_getdents`, a symbol musl only added in **1.2.6**. The add-on
+was built on Alpine 3.19 (musl 1.2.4), so the binary failed to start
+(`Error relocating … : posix_getdents: symbol not found`) and the terminal
+process died immediately.
+
+The fix:
+
+- **Base image upgraded from Alpine 3.19 to 3.24** (musl 1.2.6), which
+  provides the symbol the current Claude Code native binary needs. This
+  restores normal Claude Code updates — the add-on tracks the latest
+  release again instead of being frozen on an old one.
+- **The startup updater now verifies Claude Code actually runs** after
+  installing. If a future build ever needs a newer libc than the base image
+  provides, the log says so explicitly (with the fix) instead of silently
+  leaving a terminal that opens and disappears.
+- **You can pin Claude Code** to a specific version with the
+  `BRUH_CLAUDE_CODE_VERSION` environment variable (or the Dockerfile's
+  `CLAUDE_CODE_VERSION` build arg) if a release ever regresses.
+
 ## 3.1.0
 
 **Per-agent service deny-lists — voice agents you can lock down individually.**

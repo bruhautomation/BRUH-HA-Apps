@@ -405,62 +405,94 @@ migrate_legacy_auth_files() {
 # Tool Installation
 # ============================================================================
 
+# Claude Code version to install. Defaults to "latest".
+#
+# The @anthropic-ai/claude-code npm package installs a prebuilt NATIVE
+# binary (…-linux-*-musl optional dependencies + a postinstall,
+# install.cjs). Those musl builds need posix_getdents — a symbol musl added
+# in 1.2.6 — so they only run on Alpine 3.24+ (this add-on's base image; see
+# build.yaml). On older bases (3.19 = musl 1.2.4 … 3.21 = musl 1.2.5) the
+# binary fails to relocate ("posix_getdents: symbol not found"), `claude
+# --version` prints nothing, and the web terminal opens then exits instantly.
+# Now that we build on 3.24 we track upstream again. Pin a specific version
+# with BRUH_CLAUDE_CODE_VERSION (kept in sync with the Dockerfile's
+# CLAUDE_CODE_VERSION build arg) if a future release ever regresses.
+CLAUDE_CODE_DEFAULT_VERSION="latest"
+
+# Print Claude Code's version and return 0 only if the binary actually RUNS.
+# A broken native build installs fine but exits non-zero with no version
+# string, so this probe cleanly distinguishes "works" from "bricked".
+claude_version_or_empty() {
+    local v
+    v=$(/root/.local/bin/claude --version 2>/dev/null | head -1 | awk '{print $1}') || true
+    if printf '%s' "$v" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+'; then
+        printf '%s' "$v"
+        return 0
+    fi
+    return 1
+}
+
 update_claude_code() {
-    bashio::log.info "Checking for Claude Code updates..."
+    local target_version="${BRUH_CLAUDE_CODE_VERSION:-$CLAUDE_CODE_DEFAULT_VERSION}"
+    bashio::log.info "Checking Claude Code (target: ${target_version})..."
 
     local current_version
-    current_version=$(/root/.local/bin/claude --version 2>/dev/null | head -1 | awk '{print $1}' || echo "unknown")
+    current_version=$(claude_version_or_empty || echo "unknown")
     bashio::log.info "  - Current Claude Code version: ${current_version}"
 
-    # Use npm to update Claude Code instead of the binary installer.
-    # The binary installer downloads a native musl build that requires
-    # posix_getdents (musl 1.2.5+), but Alpine 3.19 ships musl 1.2.4.
-    # npm install uses the Node.js package which works on any musl version.
-    local install_output
-    local attempt
-    local install_success=false
+    # "latest" always reinstalls so auto-updates keep flowing. A pinned,
+    # specific version that's already installed and runs takes the fast path
+    # and skips the reinstall.
+    if [ "$target_version" = "latest" ] || [ "$current_version" != "$target_version" ]; then
+        local install_output=""
+        local attempt
+        local install_success=false
+        for attempt in 1 2 3 4; do
+            if install_output=$(npm install -g "@anthropic-ai/claude-code@${target_version}" 2>&1); then
+                install_success=true
+                break
+            fi
+            bashio::log.info "  - npm install attempt ${attempt}/4 failed, retrying in $((attempt * 2))s..."
+            sleep $((attempt * 2))
+        done
 
-    for attempt in 1 2 3 4; do
-        if install_output=$(npm install -g @anthropic-ai/claude-code 2>&1); then
-            install_success=true
-            break
-        fi
-        bashio::log.info "  - npm install attempt ${attempt}/4 failed, retrying in $((attempt * 2))s..."
-        sleep $((attempt * 2))
-    done
+        if [ "$install_success" = "true" ]; then
+            # Re-point /root/.local/bin/claude at whatever npm just installed
+            # (resolve the real file, not the /usr/local/bin symlink that
+            # setup_claude_user removes).
+            local npm_claude_bin
+            npm_claude_bin=$(readlink -f "$(command -v claude 2>/dev/null)" 2>/dev/null || echo "")
+            if [ -n "$npm_claude_bin" ] && [ -f "$npm_claude_bin" ]; then
+                mkdir -p /root/.local/bin
+                ln -sf "$npm_claude_bin" /root/.local/bin/claude
+            fi
 
-    if [ "$install_success" = "true" ]; then
-        # npm installs the binary to the global node_modules bin directory.
-        # Find where npm put it and update our expected paths.
-        local npm_claude_bin
-        # Resolve the real path of the npm-installed binary (not the
-        # /usr/local/bin symlink, which setup_claude_user will remove).
-        npm_claude_bin=$(readlink -f "$(command -v claude 2>/dev/null)" 2>/dev/null || echo "")
-
-        if [ -n "$npm_claude_bin" ] && [ -f "$npm_claude_bin" ]; then
-            # Ensure /root/.local/bin/claude points to the actual cli.js file
-            # so the claude-run wrapper and existing symlinks keep working.
-            mkdir -p /root/.local/bin
-            ln -sf "$npm_claude_bin" /root/.local/bin/claude
-        fi
-
-        local new_version
-        new_version=$(/root/.local/bin/claude --version 2>/dev/null | head -1 | awk '{print $1}' || echo "unknown")
-        if [ "$new_version" != "$current_version" ]; then
-            bashio::log.info "  - Claude Code updated: ${current_version} -> ${new_version}"
+            # CRITICAL: verify the freshly-installed binary actually RUNS.
+            # A native musl build that needs a symbol this base image lacks
+            # installs cleanly but dies on exec — which is exactly what makes
+            # the web terminal open and vanish. Catch it and say so loudly
+            # instead of leaving a bricked terminal.
+            local new_version
+            if new_version=$(claude_version_or_empty); then
+                bashio::log.info "  - Claude Code ready: ${current_version} -> v${new_version}"
+            else
+                bashio::log.error "Claude Code (${target_version}) installed but won't run on this system."
+                bashio::log.error "  The native binary likely needs a newer musl than the base image"
+                bashio::log.error "  provides. The web terminal will open and exit instantly. Pin a"
+                bashio::log.error "  known-good version with the BRUH_CLAUDE_CODE_VERSION env var."
+            fi
         else
-            bashio::log.info "  - Claude Code is up to date (v${new_version})"
+            bashio::log.warning "Claude Code install failed after 4 attempts - continuing with current version"
+            bashio::log.warning "Last npm output: ${install_output}"
         fi
-
-        # Refresh the symlink in persistent storage
-        local native_bin_dir="/data/home/.local/bin"
-        mkdir -p "$native_bin_dir"
-        ln -sf /root/.local/bin/claude "$native_bin_dir/claude"
     else
-        bashio::log.warning "Claude Code update failed after 4 attempts - continuing with current version"
-        bashio::log.warning "Last npm output: ${install_output}"
+        bashio::log.info "  - Claude Code is up to date (v${current_version})"
     fi
 
+    # Keep the persistent symlink + perms correct on every path.
+    local native_bin_dir="/data/home/.local/bin"
+    mkdir -p "$native_bin_dir"
+    ln -sf /root/.local/bin/claude "$native_bin_dir/claude"
     chmod 755 /root /root/.local /root/.local/bin 2>/dev/null || true
 }
 
