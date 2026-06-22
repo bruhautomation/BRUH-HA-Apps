@@ -42,17 +42,31 @@ RUN pip3 install --break-system-packages --no-cache-dir \
     pyyaml \
     yamllint
 
-# Install Claude Code CLI via npm (not the binary installer).
-# The binary installer downloads a native musl build that may require
-# symbols missing from Alpine 3.19's musl 1.2.4 (e.g. posix_getdents).
-# npm install uses the Node.js package which works on any musl version.
+# Install Claude Code CLI via npm, PINNED to a known-good version.
 #
-# We symlink the npm-installed binary to /root/.local/bin/claude so the
+# The @anthropic-ai/claude-code npm package no longer ships a pure-JS CLI.
+# It now installs a prebuilt NATIVE binary via platform-specific
+# optionalDependencies (…-linux-x64-musl, …-linux-arm64-musl) plus a
+# postinstall (install.cjs). Recent builds of that native musl binary are
+# linked against posix_getdents — a symbol musl only added in 1.2.6 — so
+# they fail to start on Alpine 3.19 (musl 1.2.4) and even 3.20/3.21
+# (musl 1.2.5): "Error relocating … : posix_getdents: symbol not found".
+# The web terminal then opens and exits instantly and `claude --version`
+# prints nothing. (This is why the older "switch to npm" fix no longer
+# helps — the npm package itself is now native.)
+#
+# So we pin to the last version whose musl binary runs on this base image
+# instead of installing "latest". Bump CLAUDE_CODE_VERSION once a newer
+# version is verified to run here, or once the base image ships musl 1.2.6+.
+# Keep this in sync with CLAUDE_CODE_PINNED_VERSION in run.sh.
+#
+# We symlink the installed binary to /root/.local/bin/claude so the
 # claude-run wrapper and persistent symlinks have a stable path.
 # NOTE: Do NOT symlink to /usr/local/bin/claude — Claude Code diagnostics
 # detects that path as an "npm-global" installation, causing misleading
 # warnings.
-RUN npm install -g @anthropic-ai/claude-code \
+ARG CLAUDE_CODE_VERSION=2.1.173
+RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
     && mkdir -p /root/.local/bin \
     && ln -sf "$(readlink -f "$(command -v claude)")" /root/.local/bin/claude \
     && chmod 755 /root /root/.local /root/.local/bin
