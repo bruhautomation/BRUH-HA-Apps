@@ -18,7 +18,7 @@ A bird's-eye view so you can skim to the sections that matter to you:
   - Per-world **Server Properties** editor (everything that's a `server.properties` key, validated server-side).
   - Plugins tab with curated one-click installers, install-by-URL, and duplicate-jar quarantine.
   - Backups tab browsing git snapshots and tar.gz archives with per-entry restore.
-  - Worlds tab — switch / create / **import-from-zip** / delete.
+  - Worlds tab — switch / create / **import-from-zip** / delete, plus **Featured worlds** one-click server-side installs (e.g. **Drehmal: APOTHEOSIS**) playable on iPad/iPhone via Geyser with zero installs.
   - Resource Packs tab — upload a pack, get a URL + SHA-1, *Apply* writes them into the active world.
 - **Bedrock cross-play** via Geyser (+ Floodgate when applicable). Auto-installed, auto-configured for your auth-type choice, and MTU / auth-type / validate-bedrock-login patched on every boot so iOS, Android, Switch, Xbox, PS and Windows 10/11 can connect.
 - **Offline mode done right.** Set a world's `online-mode: false` (panel → Server Properties) and the add-on silently forces `enforce-secure-profile: false`, switches Geyser to `auth-type: offline`, uninstalls Floodgate, and sets `validate-bedrock-login: false` — the full chain of changes Microsoft / Mojang's and GeyserMC's defaults gate behind one flag.
@@ -105,6 +105,64 @@ The panel is unreachable for ~30 s while the container restarts — refresh afte
 - The legacy `/config/minecraft/` path is migrated to the `default` profile on first boot of 1.3.0, so existing installs keep their world unchanged.
 - `delete` refuses to remove the currently-active profile. Switch away first.
 - `level-name` is now a **per-world** Server-Properties setting (panel), defaulting to `world`. Changing it makes the server load/generate a different save folder inside that world; the old `world/` stays on disk but isn't loaded.
+
+---
+
+## 0.25 Featured worlds (one-click, server-side — e.g. Drehmal)
+
+Since 1.14.0 the **Worlds** tab has a **Featured worlds** section: curated
+community worlds you can install with one click. Everything is hosted
+**server-side**, which is the whole point — players (including **iPad / iPhone**
+on Bedrock via Geyser) join and explore with **zero local installs**.
+
+**What "Install" does** (runs in the background; the panel shows progress):
+
+1. Downloads the complete world save — including its **bundled datapacks** —
+   onto the server and stages it as a **new switchable world profile**. Your
+   current world is untouched.
+2. Writes that world's `server.properties` from the catalog recipe (gamemode,
+   difficulty, command blocks, spawn protection, view distance, …).
+3. Records a `.curated.json` marker so the next step knows what the world needs.
+4. Downloads the world's resource pack, **hosts it for Java players**, and
+   **auto-converts it to a Bedrock pack** dropped into that world's
+   `plugins/Geyser-Spigot/packs/` folder.
+
+**Then click Switch** (in the Worlds table). Switching to a featured world also:
+
+- **Pins the server** to the software + Minecraft version the world requires
+  (these are global options — one JVM runs at a time). Switching back to one of
+  your own worlds may need you to re-pick a version on the Configuration tab.
+- **Enables Bedrock support** so the iPads/iPhones can join.
+- Restarts the add-on so it boots the new world (~30 s).
+
+### Drehmal: APOTHEOSIS
+
+[Drehmal: APOTHEOSIS](https://www.drehmal.net) is a hand-built 12k × 12k
+survival/adventure world (v2.2.2, **Minecraft 1.20.1**, **Paper**). The world
+download is ~1.5 GB and comes from Google Drive, so the first install can take
+several minutes and a chunk of disk.
+
+**iPad / iPhone (Bedrock) reality check** — this is hosted entirely server-side
+so the kids just join, but Bedrock has hard platform limits:
+
+- ✅ **The world + its datapacks run on the server.** Bedrock clients join via
+  Geyser and can explore the *entire* map with no install.
+- ✅ **Textures are auto-pushed by Geyser.** The converter turns Drehmal's Java
+  pack into a Bedrock pack Geyser sends on join — best-effort: vanilla block /
+  item retextures come across; **custom 3D models, CustomModelData items, and
+  animated textures don't convert** (a Bedrock limitation, not a bug).
+- ❌ **Drehmal's optional Fabric mods cannot run on Bedrock at all** — there's no
+  Java/Fabric on iPad/iPhone, and nothing server-side can change that. Per
+  Drehmal's own docs these mods are **client-side only** (shaders, ambience,
+  performance) and **aren't required to play**, so nothing gameplay-wise is lost.
+
+For full visual fidelity you'd play on **Java** with Drehmal's official
+installer (mods + pack) — but for family Bedrock play, the server-side install
+gets everyone into the map with zero setup.
+
+> **Tip:** if you have a hand-made or better Bedrock conversion of the pack,
+> drop the `.mcpack` into `/config/minecraft-worlds/<world>/plugins/Geyser-Spigot/packs/`
+> and Geyser will push it instead.
 
 ---
 

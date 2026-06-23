@@ -36,7 +36,7 @@
       if (tab.dataset.tab === 'properties') loadProperties();
       if (tab.dataset.tab === 'plugins')    loadPlugins();
       if (tab.dataset.tab === 'backups')    loadBackups();
-      if (tab.dataset.tab === 'worlds')     loadWorlds();
+      if (tab.dataset.tab === 'worlds')     { loadWorlds(); loadCuratedWorlds(); }
       if (tab.dataset.tab === 'resource-packs') loadPacks();
       // Reset main's scroll position when switching tabs so the user
       // lands at the top of the new content. main is the page's single
@@ -555,8 +555,11 @@
           ${exportBtn}
           <button class="btn btn-danger" data-delete="${esc(w.name)}">Delete</button>
         `;
+      const curatedBadge = w.curated
+        ? ` <span class="curated-badge" title="Installed from the Featured Worlds catalog">${esc(w.curated.name || w.curated.id)}${w.curated.version ? ' v' + esc(w.curated.version) : ''}</span>`
+        : '';
       tr.innerHTML = `
-        <td><code>${esc(w.name)}</code></td>
+        <td><code>${esc(w.name)}</code>${curatedBadge}</td>
         <td>${fmtSize(w.size_bytes)}</td>
         <td>${settingsCell}</td>
         <td>${activeBadge}</td>
@@ -586,6 +589,91 @@
         loadWorlds();
       });
     });
+  }
+
+  // ------------------------------------------------------------------
+  // Featured worlds (curated one-click installs, e.g. Drehmal) — new in 1.14.0
+  // ------------------------------------------------------------------
+  let curatedPollTimer = null;
+
+  async function loadCuratedWorlds() {
+    const root = $('#curated-list');
+    if (!root) return;
+    let data;
+    try {
+      data = await api('api/curated-worlds');
+    } catch (e) {
+      root.innerHTML = '<p class="muted">Could not load the featured-worlds catalog.</p>';
+      return;
+    }
+    const inst = data.install || {};
+    const running = inst.status === 'running';
+    root.innerHTML = '';
+    (data.worlds || []).forEach((w) => {
+      const card = document.createElement('div');
+      card.className = 'curated-card';
+      const installed = w.installed_as;
+      const busyThis = running && inst.id === w.id;
+      const btn = installed
+        ? `<span class="curated-installed">✓ Installed as <code>${esc(installed)}</code> — switch to it in the table above</span>`
+        : `<button class="btn btn-primary" data-curated-install="${esc(w.id)}" ${running ? 'disabled' : ''}>${busyThis ? 'Installing…' : 'Install'}</button>`;
+      card.innerHTML = `
+        <div class="curated-head">
+          <strong>${esc(w.name)}</strong>
+          ${w.version ? `<span class="muted">v${esc(w.version)}</span>` : ''}
+          ${w.minecraft_version ? `<span class="curated-pill">${esc(w.server_type)} ${esc(w.minecraft_version)}</span>` : ''}
+          ${w.size_estimate_mb ? `<span class="curated-pill">~${Math.round(w.size_estimate_mb / 1024 * 10) / 10} GB</span>` : ''}
+        </div>
+        ${w.tagline ? `<div class="curated-tagline">${esc(w.tagline)}</div>` : ''}
+        ${w.description ? `<p class="muted">${esc(w.description)}</p>` : ''}
+        ${w.notes ? `<p class="muted curated-notes">${esc(w.notes)}</p>` : ''}
+        ${w.homepage ? `<p class="muted"><a href="${esc(w.homepage)}" target="_blank" rel="noopener">${esc(w.homepage)}</a></p>` : ''}
+        <div class="curated-actions">${btn}</div>
+      `;
+      root.appendChild(card);
+    });
+
+    // Progress / log box while an install is running (or just finished).
+    const box = $('#curated-progress');
+    if (box) {
+      if (inst.status === 'idle') {
+        box.hidden = true;
+      } else {
+        box.hidden = false;
+        const tail = (inst.log || []).slice(-12).map(esc).join('\n');
+        box.innerHTML =
+          `<div class="curated-status curated-status-${esc(inst.status)}">` +
+          (inst.status === 'running' ? '⏳ ' : inst.status === 'done' ? '✓ ' : '✗ ') +
+          esc(inst.message || inst.status) + '</div>' +
+          (tail ? `<pre class="reply">${tail}</pre>` : '') +
+          (inst.error ? `<div class="curated-status curated-status-error">${esc(inst.error)}</div>` : '');
+      }
+    }
+
+    root.querySelectorAll('button[data-curated-install]').forEach((b) => {
+      b.addEventListener('click', async () => {
+        const id = b.dataset.curatedInstall;
+        if (!confirm(`Install "${id}"? This downloads the full world and resource pack (can take several minutes and a lot of disk). It will be staged as a new world you can switch to — your current world is untouched.`)) return;
+        const resp = await api(`api/curated-worlds/${encodeURIComponent(id)}/install`, { method: 'POST', body: JSON.stringify({}) });
+        if (resp.error) { alert(resp.error); }
+        loadCuratedWorlds();
+        startCuratedPolling();
+      });
+    });
+
+    // Keep polling while an install is in flight; stop once it settles.
+    if (running) {
+      startCuratedPolling();
+    } else if (curatedPollTimer) {
+      clearInterval(curatedPollTimer);
+      curatedPollTimer = null;
+      if (inst.status === 'done') loadWorlds();  // surface the new world above
+    }
+  }
+
+  function startCuratedPolling() {
+    if (curatedPollTimer) return;
+    curatedPollTimer = setInterval(loadCuratedWorlds, 2500);
   }
 
   // ------------------------------------------------------------------

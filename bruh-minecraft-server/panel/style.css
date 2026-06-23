@@ -753,3 +753,47 @@ footer {
 .setup-essential-callout strong { color: var(--fg); }
 .setup-essential-callout .muted { font-size: 0.92em; color: var(--muted); display: block; margin-top: 4px; }
 .setup-card h4 { margin: 14px 0 6px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+
+/* ── Featured / curated worlds (Worlds tab, 1.14.0) ───────────────────── */
+.curated-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+  margin: 8px 0;
+}
+.curated-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-raise);
+  padding: 14px;
+}
+.curated-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.curated-head strong { font-size: 15px; color: var(--fg); }
+.curated-tagline { color: var(--fg); margin: 6px 0; font-size: 0.95em; }
+.curated-notes { font-size: 0.88em; font-style: italic; }
+.curated-pill {
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+.curated-actions { margin-top: 10px; }
+.curated-installed { color: var(--accent); font-size: 0.92em; }
+.curated-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(111, 191, 67, 0.15);
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  vertical-align: middle;
+}
+.curated-progress { margin: 10px 0; }
+.curated-status { font-weight: 600; margin: 4px 0; }
+.curated-status-running { color: var(--accent); }
+.curated-status-done { color: var(--accent); }
+.curated-status-error { color: var(--warn, #e05252); }

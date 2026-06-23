@@ -1195,5 +1195,45 @@ class TestPropertiesPriorityOrder(PanelTestBase):
             self.assertIn(k, data["editable"])
 
 
+class TestCuratedWorlds(PanelTestBase):
+    """1.14.0: featured / curated worlds (Drehmal). The catalog endpoint lists
+    installable worlds + which are already installed (by reading each profile's
+    .curated.json marker)."""
+
+    async def get_application(self):
+        self._worlds_tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._worlds_tmp.cleanup)
+        wd = Path(self._worlds_tmp.name)
+        (wd / "drehmal").mkdir()
+        (wd / "drehmal" / ".curated.json").write_text(json.dumps({
+            "id": "drehmal", "name": "Drehmal: APOTHEOSIS", "version": "2.2.2",
+            "server_type": "paper", "minecraft_version": "1.20.1",
+            "requires_bedrock_support": True,
+        }))
+        os.environ["MC_WORLDS_DIR"] = str(wd)
+        os.environ["CURATED_WORLDS_FILE"] = os.path.join(
+            ADDON_DIR, "scripts", "curated-worlds.json")
+        self.addCleanup(lambda: os.environ.pop("MC_WORLDS_DIR", None))
+        self.addCleanup(lambda: os.environ.pop("CURATED_WORLDS_FILE", None))
+        return await super().get_application()
+
+    async def test_curated_list_includes_drehmal_and_installed_flag(self):
+        resp = await self.client.request("GET", "/api/curated-worlds")
+        self.assertEqual(resp.status, 200)
+        data = await resp.json()
+        by_id = {w["id"]: w for w in data["worlds"]}
+        self.assertIn("drehmal", by_id)
+        self.assertEqual(by_id["drehmal"]["minecraft_version"], "1.20.1")
+        self.assertEqual(by_id["drehmal"]["server_type"], "paper")
+        # The seeded marker means it reports as installed.
+        self.assertEqual(by_id["drehmal"]["installed_as"], "drehmal")
+        self.assertIn("install", data)
+
+    async def test_curated_install_unknown_id_404(self):
+        resp = await self.client.request(
+            "POST", "/api/curated-worlds/does-not-exist/install", json={})
+        self.assertEqual(resp.status, 404)
+
+
 if __name__ == "__main__":
     unittest.main()
