@@ -5,6 +5,37 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.14.0
+
+Featured worlds — one-click, fully server-side installs of big community
+worlds, starting with **Drehmal: APOTHEOSIS**.
+
+### Added: Featured worlds (Drehmal: APOTHEOSIS)
+
+The Worlds tab now has a **Featured worlds** section. Click **Install** and
+the add-on downloads a complete community world (the save plus its bundled
+datapacks) straight onto the server and stages it as a new switchable world —
+your current world is untouched until you **Switch** to it. Switching pins the
+server to the software + Minecraft version the world needs (Drehmal needs
+**Paper 1.20.1**) and turns Bedrock support on automatically.
+
+Because the world and its datapacks live entirely **server-side**, anyone can
+join and explore with **zero local installs** — including **iPad / iPhone
+players over Geyser**. Notes for Bedrock:
+
+* The world is fully playable/explorable on Bedrock through Geyser.
+* Drehmal's optional Fabric mods are **client-side only** (shaders, ambience,
+  performance) and aren't required to play. Bedrock can't load Java/Fabric
+  mods at all, so they're simply skipped.
+* The Java resource pack is hosted for Java players, and **auto-converted to a
+  Bedrock pack** that Geyser pushes to phones/tablets on join — so iPads get
+  the custom textures with no manual step (best-effort: custom 3D models and
+  animated textures don't convert).
+
+New pieces: `scripts/curated-worlds.json` (catalog), `install-curated-world.sh`
+(downloader/stager, Google-Drive-aware), `convert-java-pack-to-bedrock.py`
+(best-effort pack converter), and panel endpoints under `/api/curated-worlds`.
+
 ## 1.13.0
 
 A round of "the panel says X but the server is doing Y" fixes plus a

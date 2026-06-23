@@ -1337,11 +1337,17 @@ async def api_worlds_list(_: web.Request) -> web.Response:
             continue
         try:
             name = parts[0]
+            marker = _read_world_curated(name)
             worlds.append({
                 "name": name,
                 "size_bytes": int(parts[1]),
                 "active": parts[2] == "true",
                 "settings": _read_world_props(name),
+                "curated": (
+                    {"id": marker.get("id"), "name": marker.get("name"),
+                     "version": marker.get("version")}
+                    if marker else None
+                ),
             })
         except ValueError:
             continue
@@ -1449,6 +1455,25 @@ async def api_worlds_switch(request: web.Request) -> web.Response:
     if rc != 0:
         return web.json_response({"error": out.strip()}, status=400)
 
+    # Curated worlds (e.g. Drehmal) require a specific server software +
+    # Minecraft version and need Bedrock support on so the iPads can join.
+    # Those are GLOBAL add-on options (one JVM at a time), so apply them now —
+    # before the restart below — from the world's .curated.json marker.
+    curated_warnings: list[str] = []
+    curated = _read_world_curated(name)
+    if curated:
+        pins: list[tuple[str, object]] = []
+        if curated.get("server_type"):
+            pins.append(("server_type", str(curated["server_type"])))
+        if curated.get("minecraft_version"):
+            pins.append(("minecraft_version", str(curated["minecraft_version"])))
+        if curated.get("requires_bedrock_support"):
+            pins.append(("enable_bedrock_support", True))
+        for key, value in pins:
+            err = await _persist_option(key, value)
+            if err:
+                curated_warnings.append(f"{key}: {err}")
+
     # The active_world add-on option is now updated, but we still need the
     # `/config/minecraft` symlink repointed at the new profile — that happens
     # in `ensure_worlds_layout` inside `main()` of run.sh, which only runs
@@ -1471,13 +1496,23 @@ async def api_worlds_switch(request: web.Request) -> web.Response:
                 f"activate the switch."
             ),
         })
+    msg = (
+        f"Switched to '{name}'. The add-on is restarting now — "
+        f"this panel will be unreachable for ~30 seconds while the new "
+        f"world loads."
+    )
+    if curated:
+        pinned = []
+        if curated.get("server_type"):
+            pinned.append(str(curated["server_type"]))
+        if curated.get("minecraft_version"):
+            pinned.append(str(curated["minecraft_version"]))
+        if pinned:
+            msg += f" Pinned the server to {' '.join(pinned)} and enabled Bedrock for this world."
     return web.json_response({
         "ok": True,
-        "message": (
-            f"Switched to '{name}'. The add-on is restarting now — "
-            f"this panel will be unreachable for ~30 seconds while the new "
-            f"world loads."
-        ),
+        "message": msg,
+        "curated_warnings": curated_warnings or None,
     })
 
 
@@ -1908,6 +1943,188 @@ async def api_worlds_import(request: web.Request) -> web.Response:
 
 
 # ---------------------------------------------------------------------------
+# Routes: API — curated / featured worlds (one-click installs, e.g. Drehmal)
+# ---------------------------------------------------------------------------
+# Catalog of installable worlds + the installer script. The installer downloads
+# a complete world (with bundled datapacks), hosts the resource pack, and — so
+# Bedrock (iPad/iPhone) clients get textures with zero install — converts the
+# pack to Bedrock and drops it in the world's Geyser packs folder.
+CURATED_WORLDS_FILE = Path(os.environ.get(
+    "CURATED_WORLDS_FILE", str(SCRIPTS_DIR / "curated-worlds.json")))
+CURATED_INSTALLER = SCRIPTS_DIR / "install-curated-world.sh"
+
+# Single-flight install state. Drehmal is ~1.5 GB so installs run in the
+# background and the panel polls /api/curated-worlds/install-status. Only one
+# install at a time (they all write under /config and share the cache).
+_CURATED_INSTALL: dict = {
+    "id": None, "world": None, "status": "idle", "message": "",
+    "error": None, "log": [], "started": 0, "finished": 0,
+}
+
+
+def _load_curated_catalog() -> dict:
+    data = _read_json(CURATED_WORLDS_FILE, {})
+    worlds = data.get("worlds") if isinstance(data, dict) else None
+    return worlds if isinstance(worlds, dict) else {}
+
+
+def _read_world_curated(name: str) -> dict | None:
+    """Return the .curated.json marker for a world profile, or None."""
+    marker = MC_WORLDS_DIR / name / ".curated.json"
+    if not marker.is_file():
+        return None
+    data = _read_json(marker, {})
+    return data if isinstance(data, dict) and data else None
+
+
+def _curated_installed_map() -> dict[str, str]:
+    """Map curated id -> the world profile name it's installed as (by reading
+    each profile's .curated.json marker)."""
+    out: dict[str, str] = {}
+    if not MC_WORLDS_DIR.is_dir():
+        return out
+    for child in MC_WORLDS_DIR.iterdir():
+        if not child.is_dir():
+            continue
+        marker = _read_world_curated(child.name)
+        if marker and marker.get("id"):
+            out.setdefault(str(marker["id"]), child.name)
+    return out
+
+
+async def api_curated_list(_: web.Request) -> web.Response:
+    catalog = _load_curated_catalog()
+    installed = _curated_installed_map()
+    items = []
+    for cid, entry in catalog.items():
+        if not isinstance(entry, dict):
+            continue
+        items.append({
+            "id": cid,
+            "name": entry.get("name", cid),
+            "version": entry.get("version", ""),
+            "tagline": entry.get("tagline", ""),
+            "description": entry.get("description", ""),
+            "homepage": entry.get("homepage", ""),
+            "credits": entry.get("credits", ""),
+            "server_type": entry.get("server_type", ""),
+            "minecraft_version": entry.get("minecraft_version", ""),
+            "size_estimate_mb": entry.get("size_estimate_mb"),
+            "notes": entry.get("notes", ""),
+            "installed_as": installed.get(cid),
+        })
+    return web.json_response({"worlds": items, "install": _CURATED_INSTALL})
+
+
+def _curated_log(line: str) -> None:
+    log = _CURATED_INSTALL["log"]
+    log.append(line)
+    del log[:-200]  # keep the tail bounded
+    _CURATED_INSTALL["message"] = line
+
+
+async def _apply_curated_resource_pack(world_name: str, cid: str, host: str,
+                                       port: int) -> None:
+    """After a successful install, write the (Java) resource-pack URL + SHA-1
+    into the new world's server.properties so Java clients auto-download it.
+    Bedrock clients are served the converted pack by Geyser separately."""
+    catalog = _load_curated_catalog()
+    entry = catalog.get(cid, {})
+    rp = entry.get("resource_pack") if isinstance(entry, dict) else None
+    if not isinstance(rp, dict):
+        return
+    rp_name = rp.get("name") or f"{cid}-resource-pack.zip"
+    pack = MC_RESOURCE_PACKS / rp_name
+    if not pack.is_file():
+        return
+    props_path = MC_WORLDS_DIR / world_name / "server.properties"
+    props: dict[str, str] = {}
+    if props_path.is_file():
+        for line in props_path.read_text().splitlines():
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            props[k.strip()] = v
+    props["resource-pack"] = f"http://{host}:{port}/pack/{rp_name}"
+    props["resource-pack-sha1"] = _pack_sha1(pack)
+    props.setdefault("require-resource-pack", "false")
+    lines = [
+        "# server.properties — curated world; resource pack staged by panel.",
+        f"# {time.strftime('%Y-%m-%dT%H:%M:%S%z')}",
+    ]
+    lines.extend(f"{k}={props[k]}" for k in sorted(props))
+    props_path.write_text("\n".join(lines) + "\n")
+
+
+async def _run_curated_install(cid: str, world_name: str, host: str,
+                               port: int) -> None:
+    proc = await asyncio.create_subprocess_exec(
+        str(CURATED_INSTALLER), cid, world_name,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+        env={**os.environ},
+    )
+    assert proc.stdout is not None
+    async for raw in proc.stdout:
+        _curated_log(raw.decode("utf-8", "replace").rstrip("\n"))
+    rc = await proc.wait()
+    _CURATED_INSTALL["finished"] = int(time.time())
+    if rc == 0:
+        try:
+            await _apply_curated_resource_pack(world_name, cid, host, port)
+        except Exception as exc:  # noqa: BLE001
+            _curated_log(f"WARN: could not stage resource-pack URL: {exc}")
+        _CURATED_INSTALL["status"] = "done"
+        _CURATED_INSTALL["message"] = (
+            f"Installed '{cid}' as world '{world_name}'. Switch to it from the "
+            f"Worlds tab to play."
+        )
+    else:
+        _CURATED_INSTALL["status"] = "error"
+        _CURATED_INSTALL["error"] = f"installer exited {rc}"
+
+
+async def api_curated_install(request: web.Request) -> web.Response:
+    cid = request.match_info["id"]
+    if not VALID_WORLD_NAME.match(cid):
+        return web.json_response({"error": "invalid id"}, status=400)
+    catalog = _load_curated_catalog()
+    if cid not in catalog:
+        return web.json_response({"error": f"unknown curated world '{cid}'"}, status=404)
+    if _CURATED_INSTALL["status"] == "running":
+        return web.json_response(
+            {"error": "another install is already running", "install": _CURATED_INSTALL},
+            status=409,
+        )
+    body = await request.json() if request.body_exists else {}
+    world_name = str(body.get("name") or cid).strip()
+    if not VALID_WORLD_NAME.match(world_name):
+        return web.json_response({"error": "invalid world name"}, status=400)
+    if (MC_WORLDS_DIR / world_name).exists():
+        return web.json_response(
+            {"error": f"a world named '{world_name}' already exists"}, status=409)
+
+    # Host the panel is reached at, so the resource-pack URL we stamp into the
+    # world points back here (host_network: true makes :8099 LAN-reachable).
+    host = (body.get("host") or request.host).split(":", 1)[0]
+    try:
+        port = int(body.get("port") or 8099)
+    except (TypeError, ValueError):
+        port = 8099
+
+    _CURATED_INSTALL.update({
+        "id": cid, "world": world_name, "status": "running",
+        "message": "starting…", "error": None, "log": [],
+        "started": int(time.time()), "finished": 0,
+    })
+    asyncio.create_task(_run_curated_install(cid, world_name, host, port))
+    return web.json_response({"ok": True, "install": _CURATED_INSTALL})
+
+
+async def api_curated_install_status(_: web.Request) -> web.Response:
+    return web.json_response(_CURATED_INSTALL)
+
+
+# ---------------------------------------------------------------------------
 # App factory
 # ---------------------------------------------------------------------------
 def build_app() -> web.Application:
@@ -1952,6 +2169,10 @@ def build_app() -> web.Application:
     app.router.add_get("/api/worlds/{name}/export", api_worlds_export)
     app.router.add_post("/api/worlds/{name}/switch", api_worlds_switch)
     app.router.add_delete("/api/worlds/{name}", api_worlds_delete)
+    # Curated / featured worlds (one-click installs, e.g. Drehmal)
+    app.router.add_get("/api/curated-worlds", api_curated_list)
+    app.router.add_get("/api/curated-worlds/install-status", api_curated_install_status)
+    app.router.add_post("/api/curated-worlds/{id}/install", api_curated_install)
     # First-run wizard
     app.router.add_post("/api/setup", api_setup)
     # Resource-pack hosting (manage via authenticated panel endpoints,

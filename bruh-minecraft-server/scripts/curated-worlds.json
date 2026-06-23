@@ -1,0 +1,38 @@
+{
+  "_comment": "Curated / featured worlds the panel can one-click install. Each entry is a complete, server-side install recipe: a downloadable world save (with its bundled datapacks), an optional resource pack, the server software + Minecraft version the world REQUIRES, and the per-world server.properties it should boot with. Everything here is hosted SERVER-SIDE so Bedrock clients (iPad/iPhone via Geyser) can join and play with zero local installs. See DOCS.md > Featured worlds.",
+  "worlds": {
+    "drehmal": {
+      "name": "Drehmal: APOTHEOSIS",
+      "version": "2.2.2",
+      "tagline": "A 12k x 12k custom survival/adventure world",
+      "description": "Drehmal: APOTHEOSIS is a sprawling 12,000 x 12,000 block hand-built world packed with lore, ruins, dungeons, and seven titans to explore. The world ships with its own datapacks (custom recipes, structures, and mechanics) baked into the save, so everything runs server-side. Created by the Drehmal team.",
+      "homepage": "https://www.drehmal.net",
+      "credits": "World by the Drehmal team (https://www.drehmal.net). Installed via this add-on for personal/family server use.",
+      "server_type": "paper",
+      "minecraft_version": "1.20.1",
+      "size_estimate_mb": 1500,
+      "world": {
+        "gdrive_id": "14p5Z7mGCRNh5qkEt4wkOdtlu1rD4G7_Q",
+        "url": "https://drive.usercontent.google.com/download?id=14p5Z7mGCRNh5qkEt4wkOdtlu1rD4G7_Q&export=download&confirm=t"
+      },
+      "resource_pack": {
+        "url": "https://www.drehmal.net/_files/archives/a539b0_c4fdf77a5ea3495d80466bd940b832ae.zip?dn=Drehmal%20Resource%20Pack%20v2.2.2f.zip",
+        "name": "drehmal-resource-pack.zip",
+        "require": false,
+        "convert_to_bedrock": true
+      },
+      "properties": {
+        "difficulty": "normal",
+        "gamemode": "survival",
+        "spawn-protection": "0",
+        "enable-command-block": "true",
+        "allow-flight": "true",
+        "allow-nether": "true",
+        "view-distance": "10",
+        "simulation-distance": "8",
+        "max-players": "10"
+      },
+      "notes": "Drehmal's optional Fabric mods are CLIENT-SIDE only (shaders, ambience, performance) and are not required to play. Bedrock (iPad/iPhone) clients cannot run Java/Fabric mods at all, but join via Geyser and explore the entire map. The resource pack is auto-converted to a Bedrock pack and pushed by Geyser on join, so iPads get the custom textures with no manual install (best-effort: custom 3D models do not convert)."
+    }
+  }
+}
