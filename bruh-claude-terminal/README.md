@@ -36,6 +36,13 @@ Claude watches your house and writes markdown reports to sensors — daily brief
 - **Usage limit sensors**: your real Anthropic session/weekly utilization and reset times (the same numbers as claude.ai > Settings > Usage; requires OAuth/subscription login)
 - **Health sensor**: `binary_sensor … Assist healthy` with worker and latency attributes
 
+## Requirements
+
+- **Home Assistant OS or Supervised** — the add-on system needs the Supervisor
+- A **64-bit host**: `amd64` or `aarch64` (Pi 4/5, x86 NUC, or similar). 32-bit boards (Pi 3 and earlier) aren't supported
+- **~1 GB free RAM** beyond HA itself — fast voice keeps up to 3 pre-warmed workers (~150–300 MB each); tunable or off
+- An **Anthropic account** — a **Claude Pro/Max** subscription is most economical (OAuth-based), or an API key
+
 ## Installation
 
 1. Add this repository to your Home Assistant add-on store
@@ -43,8 +50,7 @@ Claude watches your house and writes markdown reports to sensors — daily brief
 3. **Restart Home Assistant** (Settings > System > Restart) — required on first install so HA loads the BRUH Claude integration
 4. Accept the discovered BRUH Claude integration (Settings > Devices & Services)
 5. Authenticate with your Anthropic account in the terminal
-
-> **After upgrades:** restart HA again when prompted (persistent notification + repair) so the updated integration code loads.
+6. **After every add-on upgrade, restart HA again** when prompted (persistent notification + repair) so the updated integration code loads
 
 ## Configuration
 

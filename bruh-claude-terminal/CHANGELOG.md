@@ -1,5 +1,9 @@
 # Changelog
 
+All notable changes to **BRUH Claude Terminal**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
+
+> 💡 Prefer a cleaner, categorized view? See the [formatted changelog at bruhautomation.com](https://bruhautomation.com/bruh-claude/changelog/).
+
 ## 3.2.0
 
 **Fix: terminal opens and instantly closes after an update — and Claude Code updates flow again.**

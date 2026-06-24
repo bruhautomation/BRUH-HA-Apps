@@ -6,6 +6,23 @@
 > [Reference](https://bruhautomation.com/bruh-claude/reference/) ·
 > [Changelog](https://bruhautomation.com/bruh-claude/changelog/).
 
+## Contents
+
+- [Quick start](#quick-start)
+- [Restart requirements](#restart-requirements)
+- [Configuration reference](#configuration-reference)
+- [Permissions](#permissions)
+- [CLI tools](#cli-tools-reference)
+- [Insight jobs](#insight-jobs-scheduled-claude-reports)
+- [MCP server](#mcp-server)
+- [Voice & automation integration](#bruh-claude-integration)
+- [Transport & health](#transport--health)
+- [Using the terminal on mobile](#using-the-terminal-on-ios--android)
+- [Troubleshooting](#troubleshooting)
+- [Debugging & logs](#debugging--logs)
+- [Changelog & releases](#changelog--releases)
+- [Support](#support) · [License](#license)
+
 ## Quick Start
 
 1. Install the app from the BRUH HA Apps repository
@@ -61,6 +78,7 @@ Every option from the add-on **Configuration** tab, grouped by what it controls.
 |--------|------|---------|-------------|
 | `auto_launch_claude` | bool | `true` | Launch Claude Code immediately in the web terminal. Turn off if you'd rather land on the shell and choose a session yourself (`claude-session-picker.sh`). |
 | `auto_generate_context` | bool | `true` | Regenerate `/config/CLAUDE.md` on every startup with a fresh snapshot of your HA install — entity counts by domain, automation list + states, installed add-ons and integrations, and a file-tree guide. Claude Code reads this file at the start of each session so it understands your setup without you having to explain it. |
+| `enable_mobile_ui` | bool | `true` | Splice the mobile touch toolbar and iOS fixes into the web terminal. Set `false` to fall back to ttyd's stock UI (the add-on also falls back automatically if the startup probe that builds the custom UI fails). |
 | `log_level` | `trace \| debug \| info \| notice \| warning \| error \| fatal` | `info` | Verbosity of the add-on's own startup log (the orange text in the add-on **Log** tab). Set to `debug` or `trace` when filing a bug report. |
 
 ### Config backup
@@ -299,6 +317,21 @@ If you still see doubled words:
 - **Bluetooth keyboard**: all real keys work — ESC, Ctrl, Option, arrows. Tap `×` to hide the on-screen toolbar if you don't need it.
 - **Disable the feature**: flip `enable_mobile_ui` to `false` in the add-on config to fall back to ttyd's stock UI. The add-on also falls back automatically if the startup probe that builds the custom UI fails.
 
+## Troubleshooting
+
+Start with **`ha-selftest`** in the terminal — it drives the whole stack end-to-end (HA API auth, the MCP server over stdio, the deployed integration, the listeners, your Claude login, and the usage sensors) and prints PASS/FAIL with a fix hint for each part.
+
+| Symptom | Fix |
+|---------|-----|
+| Add-on won't start | Check the **Log** tab. Almost always an architecture mismatch (only `amd64`/`aarch64`) or a port 7681 conflict. |
+| Terminal opens then immediately closes | Update to **3.2.0 or later** — older builds broke on a Claude Code native-binary/libc mismatch. |
+| Integration not discovered | Restart Home Assistant after the first add-on start, then check **Settings > Devices & Services** (or add **BRUH Claude** manually). |
+| OAuth fails / "auth error" in voice | Re-authenticate in the terminal. Existing agents keep working while the stored credentials are valid. |
+| Claude can't see your entities | Confirm `enable_ha_mcp_server: true`, then run `ha-selftest` — it reports any MCP tool that errors. |
+| Voice replies get cut off | Raise `assist_max_turns`. |
+| Voice acts on the wrong room | Run `ha-selftest` — the "Assist area map" check confirms the room map built. |
+| Usage-limit sensors stay *unavailable* | They need an OAuth/subscription login, not an `ANTHROPIC_API_KEY` (see [Usage Limit Sensors](#usage-limit-sensors)). |
+
 ## Debugging & Logs
 
 The app writes detailed debug logs for every conversation agent and automation task request. These help you understand what's being sent to Claude, how long it takes, and what comes back.
@@ -440,25 +473,24 @@ The built-in MCP server gives Claude Code these capabilities:
 
 ## Automation Integration
 
-To trigger Claude tasks from automations, create a JSON file in `/data/automation-tasks/`:
+Trigger Claude from your automations with the **`bruh_claude.run_task`** service — it runs Claude Code in the background and (optionally) notifies you when it's done. This is the supported entry point; you don't manage any files yourself.
 
 ```yaml
-# Example HA automation
+# Example: a morning error-log digest
 automation:
   - alias: "Morning Claude Report"
     trigger:
       - platform: time
         at: "07:00:00"
     action:
-      - service: shell_command.create_claude_task
+      - service: bruh_claude.run_task
         data:
-          command: >
-            echo '{"prompt": "Check my HA error log and summarize any issues from the last 24 hours", "notify": true, "notify_entity": "notify.mobile_app"}' > /config/claude-tasks/morning_report.json
-
-# In configuration.yaml
-shell_command:
-  create_claude_task: "cp /config/claude-tasks/{{ task }}.json /data/automation-tasks/"
+          prompt: "Check my HA error log and summarize any issues from the last 24 hours"
+          notify: true
+          timeout: 300
 ```
+
+See [Services](#services) for the full `run_task` / `send_prompt` / `run_insight` contracts. (Under the hood the listener watches `/config/.bruh_claude/tasks/`, but the service is the only interface you need.)
 
 ## BRUH Claude Integration
 
@@ -545,3 +577,26 @@ writing `/config/.bruh_claude/usage_limits.json`; the sensors poll it every
 > the terminal), **not** an `ANTHROPIC_API_KEY`. If you authenticate with an
 > API key, or before you've logged in, the sensors stay **unavailable** and
 > expose the reason in their `error` attribute. `ha-selftest` reports this.
+
+## Changelog & releases
+
+This add-on follows [Semantic Versioning](https://semver.org): the version in `config.yaml` moves **MAJOR** for breaking changes, **MINOR** for new backwards-compatible features, and **PATCH** for fixes. Home Assistant only offers an update when that version changes.
+
+- **Curated, formatted release notes:** [bruhautomation.com/bruh-claude/changelog](https://bruhautomation.com/bruh-claude/changelog/)
+- **Full history:** [`CHANGELOG.md`](CHANGELOG.md) in this repository, which follows [Keep a Changelog](https://keepachangelog.com).
+
+## Support
+
+Got a problem or an idea?
+
+1. Run **`ha-selftest`** in the terminal — it pinpoints most issues with a fix hint.
+2. Set `log_level: debug`, reproduce, then check the add-on **Log** tab and `/config/.bruh_claude/logs/`.
+3. Open an issue at [github.com/bruhautomation/BRUH-HA-Apps](https://github.com/bruhautomation/BRUH-HA-Apps/issues) with that log output.
+
+## Authors & contributors
+
+Built and maintained by **BRUH Automation**. Based on the excellent [Claude Terminal](https://github.com/heytcass/home-assistant-addons) add-on by Tom Cassady.
+
+## License
+
+MIT — see [`LICENSE`](../LICENSE) at the repository root.
