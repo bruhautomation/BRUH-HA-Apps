@@ -2,7 +2,7 @@
 
 Claude Code for Home Assistant: a full terminal with native HA API access, a fast voice assistant, scheduled AI insight reports, and deep HA integration.
 
-📖 **Full documentation:** [DOCS.md](DOCS.md) · [bruhautomation.com/bruh-claude](https://bruhautomation.com/bruh-claude/)
+📖 **Documentation:** [Quick Start](https://bruhautomation.com/bruh-claude/quickstart/) · [Configuration Reference](https://bruhautomation.com/bruh-claude/reference/) · [Changelog](https://bruhautomation.com/bruh-claude/changelog/) — or the in-repo [DOCS.md](DOCS.md) / [CHANGELOG.md](CHANGELOG.md)
 
 ## Features
 
@@ -61,6 +61,11 @@ See [DOCS.md — Configuration Reference](DOCS.md#configuration-reference) for e
 | `access_share` / `access_media` / `access_backup` / `access_addon_configs` / `access_addons` | `true` | Volume exposure toggles |
 | `additional_directories`, `persistent_apk_packages`, `persistent_pip_packages` | `[]` | Extra dirs / persistent packages |
 | `log_level` | `info` | Add-on log verbosity |
+
+## Support
+
+- **Something not working?** Run `ha-selftest` in the terminal first — it drives the whole stack end-to-end and prints PASS/FAIL with a fix hint for each part.
+- **Found a bug or have a request?** Open an issue at [github.com/bruhautomation/BRUH-HA-Apps](https://github.com/bruhautomation/BRUH-HA-Apps/issues). Set `log_level: debug` and include the relevant log output.
 
 ## Credits
 

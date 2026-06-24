@@ -1,5 +1,11 @@
 # BRUH Claude Terminal Documentation
 
+> **Prefer the web?** This same documentation, with diagrams and a polished layout, lives at
+> [bruhautomation.com/bruh-claude](https://bruhautomation.com/bruh-claude/) —
+> [Quick Start](https://bruhautomation.com/bruh-claude/quickstart/) ·
+> [Reference](https://bruhautomation.com/bruh-claude/reference/) ·
+> [Changelog](https://bruhautomation.com/bruh-claude/changelog/).
+
 ## Quick Start
 
 1. Install the app from the BRUH HA Apps repository
