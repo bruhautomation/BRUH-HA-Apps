@@ -5,6 +5,22 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.14.1
+
+### Fixed: Drehmal kicked iPad/iPhone players with "Please log into Xbox"
+
+The Drehmal recipe didn't set `online-mode`, so the staged world booted with
+`online-mode=true`. Geyser then resolved auth to **floodgate**, which requires
+an Xbox sign-in — and family Bedrock devices got *"Please log into Xbox to join
+this server"* and couldn't get in. The recipe now sets `online-mode=false`
+(and `enforce-secure-profile=false`) so Bedrock clients join via Geyser with no
+Xbox account, matching how a family LAN server is normally run.
+
+> Already installed Drehmal before this fix? Either set the add-on option
+> `geyser_auth_type: offline` (Configuration tab) and restart, or set
+> `online-mode` to `false` on the Drehmal world (panel → Server Properties)
+> and restart. New installs get this automatically.
+
 ## 1.14.0
 
 Featured worlds — one-click, fully server-side installs of big community

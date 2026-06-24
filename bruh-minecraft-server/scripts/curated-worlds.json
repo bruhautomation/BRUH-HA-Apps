@@ -30,9 +30,11 @@
         "allow-nether": "true",
         "view-distance": "10",
         "simulation-distance": "8",
-        "max-players": "10"
+        "max-players": "10",
+        "online-mode": "false",
+        "enforce-secure-profile": "false"
       },
-      "notes": "Drehmal's optional Fabric mods are CLIENT-SIDE only (shaders, ambience, performance) and are not required to play. Bedrock (iPad/iPhone) clients cannot run Java/Fabric mods at all, but join via Geyser and explore the entire map. The resource pack is auto-converted to a Bedrock pack and pushed by Geyser on join, so iPads get the custom textures with no manual install (best-effort: custom 3D models do not convert)."
+      "notes": "Set to offline/no-Xbox mode (online-mode=false) so family iPad/iPhone players join via Geyser with no Xbox sign-in. Drehmal's optional Fabric mods are CLIENT-SIDE only (shaders, ambience, performance) and are not required to play. Bedrock clients cannot run Java/Fabric mods at all, but join via Geyser and explore the entire map. The resource pack is auto-converted to a Bedrock pack and pushed by Geyser on join, so iPads get the custom textures with no manual install (best-effort: custom 3D models do not convert)."
     }
   }
 }

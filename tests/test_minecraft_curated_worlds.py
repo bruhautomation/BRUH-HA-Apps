@@ -91,6 +91,10 @@ class TestCatalog(unittest.TestCase):
         # Server props that matter for Drehmal.
         self.assertEqual(entry["properties"]["enable-command-block"], "true")
         self.assertEqual(entry["properties"]["spawn-protection"], "0")
+        # Offline/no-Xbox so family iPad/iPhone (Bedrock) clients join via
+        # Geyser without an Xbox sign-in (online-mode=true -> floodgate ->
+        # "Please log into Xbox to join this server").
+        self.assertEqual(entry["properties"]["online-mode"], "false")
 
 
 # ---------------------------------------------------------------------------

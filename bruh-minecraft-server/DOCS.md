@@ -142,6 +142,12 @@ survival/adventure world (v2.2.2, **Minecraft 1.20.1**, **Paper**). The world
 download is ~1.5 GB and comes from Google Drive, so the first install can take
 several minutes and a chunk of disk.
 
+It's installed in **offline mode** (`online-mode=false`) so family **iPad / iPhone**
+players join via Geyser with **no Xbox sign-in** — without this Geyser resolves auth to
+*floodgate* and Bedrock devices get *"Please log into Xbox to join this server."* If you
+want Xbox/Mojang auth instead, set `online-mode` to `true` on the Drehmal world (panel →
+Server Properties) and restart.
+
 **iPad / iPhone (Bedrock) reality check** — this is hosted entirely server-side
 so the kids just join, but Bedrock has hard platform limits:
 
