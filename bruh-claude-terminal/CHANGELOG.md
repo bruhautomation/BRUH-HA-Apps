@@ -1,5 +1,17 @@
 # Changelog
 
+All notable changes to **BRUH Claude Terminal**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
+
+> 💡 Prefer a cleaner, categorized view? See the [formatted changelog at bruhautomation.com](https://bruhautomation.com/bruh-claude/changelog/).
+
+## 3.2.1
+
+**Branding and documentation polish.**
+
+- **A proper landscape `logo.png`.** The store logo was a byte-identical copy of the square `icon.png`; it's now the BRUH Automation wordmark at Home Assistant's recommended landscape size.
+- **A terminal illustration in the README**, so the project leads with a picture of what it does.
+- **Documentation overhaul**: a table of contents, a consolidated troubleshooting table, Support / Authors / License sections and a SemVer policy, the `enable_mobile_ui` option documented, and a corrected automation example (the old one pointed at a task path the listener never watched — use the `bruh_claude.run_task` service).
+
 ## 3.2.0
 
 **Fix: terminal opens and instantly closes after an update — and Claude Code updates flow again.**

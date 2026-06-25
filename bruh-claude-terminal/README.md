@@ -2,7 +2,9 @@
 
 Claude Code for Home Assistant: a full terminal with native HA API access, a fast voice assistant, scheduled AI insight reports, and deep HA integration.
 
-📖 **Full documentation:** [DOCS.md](DOCS.md) · [bruhautomation.com/bruh-claude](https://bruhautomation.com/bruh-claude/)
+📖 **Documentation:** [Quick Start](https://bruhautomation.com/bruh-claude/quickstart/) · [Configuration Reference](https://bruhautomation.com/bruh-claude/reference/) · [Changelog](https://bruhautomation.com/bruh-claude/changelog/) — or the in-repo [DOCS.md](DOCS.md) / [CHANGELOG.md](CHANGELOG.md)
+
+![A BRUH Claude terminal session — asking why an automation didn't run, and getting a trace-based answer](images/terminal-demo.svg)
 
 ## Features
 
@@ -36,6 +38,13 @@ Claude watches your house and writes markdown reports to sensors — daily brief
 - **Usage limit sensors**: your real Anthropic session/weekly utilization and reset times (the same numbers as claude.ai > Settings > Usage; requires OAuth/subscription login)
 - **Health sensor**: `binary_sensor … Assist healthy` with worker and latency attributes
 
+## Requirements
+
+- **Home Assistant OS or Supervised** — the add-on system needs the Supervisor
+- A **64-bit host**: `amd64` or `aarch64` (Pi 4/5, x86 NUC, or similar). 32-bit boards (Pi 3 and earlier) aren't supported
+- **~1 GB free RAM** beyond HA itself — fast voice keeps up to 3 pre-warmed workers (~150–300 MB each); tunable or off
+- An **Anthropic account** — a **Claude Pro/Max** subscription is most economical (OAuth-based), or an API key
+
 ## Installation
 
 1. Add this repository to your Home Assistant add-on store
@@ -43,8 +52,7 @@ Claude watches your house and writes markdown reports to sensors — daily brief
 3. **Restart Home Assistant** (Settings > System > Restart) — required on first install so HA loads the BRUH Claude integration
 4. Accept the discovered BRUH Claude integration (Settings > Devices & Services)
 5. Authenticate with your Anthropic account in the terminal
-
-> **After upgrades:** restart HA again when prompted (persistent notification + repair) so the updated integration code loads.
+6. **After every add-on upgrade, restart HA again** when prompted (persistent notification + repair) so the updated integration code loads
 
 ## Configuration
 
@@ -61,6 +69,11 @@ See [DOCS.md — Configuration Reference](DOCS.md#configuration-reference) for e
 | `access_share` / `access_media` / `access_backup` / `access_addon_configs` / `access_addons` | `true` | Volume exposure toggles |
 | `additional_directories`, `persistent_apk_packages`, `persistent_pip_packages` | `[]` | Extra dirs / persistent packages |
 | `log_level` | `info` | Add-on log verbosity |
+
+## Support
+
+- **Something not working?** Run `ha-selftest` in the terminal first — it drives the whole stack end-to-end and prints PASS/FAIL with a fix hint for each part.
+- **Found a bug or have a request?** Open an issue at [github.com/bruhautomation/BRUH-HA-Apps](https://github.com/bruhautomation/BRUH-HA-Apps/issues). Set `log_level: debug` and include the relevant log output.
 
 ## Credits
 
