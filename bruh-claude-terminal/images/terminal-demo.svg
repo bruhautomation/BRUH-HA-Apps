@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 372" font-family="ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace" role="img" aria-label="A BRUH Claude terminal session: asking why an automation did not run and getting a trace-based answer">
+  <defs>
+    <linearGradient id="termbg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0d1117"/>
+      <stop offset="100%" stop-color="#161b22"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="0.5" y="0.5" width="719" height="371" rx="14" fill="url(#termbg)" stroke="#30363d"/>
+
+  <!-- title bar -->
+  <circle cx="26" cy="28" r="6.5" fill="#ff5f56"/>
+  <circle cx="48" cy="28" r="6.5" fill="#ffbd2e"/>
+  <circle cx="70" cy="28" r="6.5" fill="#27c93f"/>
+  <text x="360" y="33" text-anchor="middle" fill="#8b949e" font-size="13">BRUH Claude · Home Assistant</text>
+  <line x1="0" y1="56" x2="720" y2="56" stroke="#30363d"/>
+
+  <!-- body -->
+  <text font-size="14.5" xml:space="preserve">
+    <tspan x="28" y="92" fill="#1e90ff">&gt; </tspan><tspan fill="#e6edf3">Why didn't my morning routine run today?</tspan>
+    <tspan x="28" y="138" fill="#c9d1d9"></tspan><tspan fill="#58a6ff">automation.morning_routine</tspan><tspan fill="#c9d1d9"> last ran yesterday at 7:00 AM.</tspan>
+    <tspan x="28" y="164" fill="#c9d1d9">Today's trace: the trigger fired at 7:00 AM, but the</tspan>
+    <tspan x="28" y="190" fill="#c9d1d9">condition </tspan><tspan fill="#58a6ff">binary_sensor.workday</tspan><tspan fill="#c9d1d9"> was false — it's Saturday.</tspan>
+    <tspan x="28" y="236" fill="#c9d1d9">Want me to update the condition to run on weekends too?</tspan>
+  </text>
+
+  <!-- next prompt + cursor -->
+  <text x="28" y="290" font-size="14.5"><tspan fill="#1e90ff">&gt; </tspan></text>
+  <rect x="44" y="278" width="9" height="17" rx="1.5" fill="#1e90ff" opacity="0.9"/>
+</svg>

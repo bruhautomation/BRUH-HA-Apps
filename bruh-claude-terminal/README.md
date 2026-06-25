@@ -4,6 +4,8 @@ Claude Code for Home Assistant: a full terminal with native HA API access, a fas
 
 📖 **Documentation:** [Quick Start](https://bruhautomation.com/bruh-claude/quickstart/) · [Configuration Reference](https://bruhautomation.com/bruh-claude/reference/) · [Changelog](https://bruhautomation.com/bruh-claude/changelog/) — or the in-repo [DOCS.md](DOCS.md) / [CHANGELOG.md](CHANGELOG.md)
 
+![A BRUH Claude terminal session — asking why an automation didn't run, and getting a trace-based answer](images/terminal-demo.svg)
+
 ## Features
 
 ### Voice Assistant (Assist)
