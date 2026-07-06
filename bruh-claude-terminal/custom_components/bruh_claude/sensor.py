@@ -20,7 +20,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -286,7 +286,12 @@ class BruhClaudeInsightSensor(SensorEntity):
             )
         )
 
+    @callback
     def _handle_update(self, payload: dict) -> None:
+        # Must be a @callback: async_dispatcher_connect treats an
+        # undecorated sync target as an executor job (HassJobType.Executor),
+        # so async_write_ha_state() would run off the event loop and trip
+        # HA's thread-safety guard. @callback runs it inline on the loop.
         self._apply(payload)
         self.async_write_ha_state()
 

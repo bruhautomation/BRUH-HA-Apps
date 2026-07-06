@@ -4,6 +4,20 @@ All notable changes to **BRUH Claude Terminal**, newest first. This project adhe
 
 > 💡 Prefer a cleaner, categorized view? See the [formatted changelog at bruhautomation.com](https://bruhautomation.com/bruh-claude/changelog/).
 
+## 3.2.3
+
+**Fix: thread-safety error logged every time an Insight job completes.**
+
+On HA 2026.7 the log filled with `Detected that custom integration
+'bruh_claude' calls async_write_ha_state from a thread other than the event
+loop` each time an insight ran. The Insight sensor's dispatcher handler was
+an undecorated sync method, so `async_dispatcher_connect` scheduled it as an
+executor job — `async_write_ha_state()` then ran off the event loop and
+tripped HA's thread-safety guard. The handler is now a `@callback`, so it
+runs inline on the loop. Currently an error-level log; upcoming HA releases
+turn these off-loop writes into hard failures, so this also prevents a
+future break. (No functional change to the sensor's output.)
+
 ## 3.2.2
 
 **Compatibility with the latest Home Assistant (Core 2026.7 / Supervisor 2026.04+).**

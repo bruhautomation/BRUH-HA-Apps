@@ -412,6 +412,36 @@ class TestConversationPy(unittest.TestCase):
         self.assertIn("{**config_entry.data, **config_entry.options}", self.content)
 
 
+class TestSensorPy(unittest.TestCase):
+    """Test sensor.py patterns."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.content = read_file(os.path.join(INTEGRATION_DIR, "sensor.py"))
+
+    def test_dispatcher_handler_is_callback(self):
+        """The insight sensor's dispatcher handler must be a @callback.
+
+        async_dispatcher_connect schedules an undecorated sync target as an
+        executor job (HassJobType.Executor), so async_write_ha_state() would
+        run off the event loop and trip HA's thread-safety guard. Decorating
+        the handler with @callback keeps it on the loop.
+        """
+        # @callback must immediately precede the dispatcher handler def
+        self.assertRegex(
+            self.content,
+            r"@callback\s+def _handle_update",
+            "sensor._handle_update must be decorated with @callback",
+        )
+
+    def test_imports_callback(self):
+        """callback must be imported from homeassistant.core."""
+        self.assertRegex(
+            self.content,
+            r"from homeassistant\.core import [^\n]*\bcallback\b",
+        )
+
+
 class TestBridgePy(unittest.TestCase):
     """Test bridge.py patterns."""
 
