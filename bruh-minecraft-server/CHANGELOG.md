@@ -5,6 +5,31 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.14.1
+
+Compatibility with the latest Home Assistant (Supervisor 2026.04+).
+
+### Fixed
+
+- **The add-on can be built and updated again on current Home Assistant.**
+  Supervisor 2026.04.0 retired the legacy add-on builder: `build.yaml` is
+  ignored and the `BUILD_FROM` build argument is no longer passed, so the
+  Dockerfile's `FROM ${BUILD_FROM}` resolved to an empty base image and the
+  build failed before it started. The Dockerfile now carries its own default
+  (`ARG BUILD_FROM=ghcr.io/home-assistant/base:3.24`, the official
+  multi-arch base); older Supervisors keep overriding it per-architecture
+  through `build.yaml`. The startup banner's version fallback already
+  covered `ADDON_VERSION` no longer arriving from build.yaml args.
+
+### Changed
+
+- **Base image: Alpine 3.19 → 3.24.** Java still comes bundled from Eclipse
+  Temurin, so the server runtime is unchanged.
+- **The volume map uses the current `homeassistant_config` type** instead of
+  the legacy `config` alias (dropped from the Supervisor docs), with an
+  explicit `path: /config` so worlds, backups, and the panel keep their
+  long-standing mount point. Requires Supervisor 2023.09 or newer.
+
 ## 1.14.0
 
 Featured worlds — one-click, fully server-side installs of big community

@@ -1,7 +1,7 @@
 ---
 name: "BRUH Minecraft Server"
 description: "Rock-solid Minecraft Java Edition server with ingress panel, RCON, git world backups, auto-updates, plugin management, and deep Home Assistant integration"
-version: "1.14.0"
+version: "1.14.1"
 slug: "bruh_minecraft_server"
 init: false
 
@@ -350,9 +350,14 @@ schema:
   install_viabackwards: bool
   log_level: "list(trace|debug|info|notice|warning|error|fatal)"
 
-# Volume mappings for file access
+# Volume mappings for file access. The Home Assistant config directory uses
+# the current `homeassistant_config` type (the legacy `config` alias is no
+# longer documented) with an explicit /config path so the server, backups,
+# and every script keep their long-standing mount point.
 map:
-  - config:rw
+  - type: homeassistant_config
+    read_only: false
+    path: /config
   - share:rw
   - backup:rw
 

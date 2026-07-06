@@ -87,9 +87,22 @@ class TestConfigYaml(unittest.TestCase):
         self.assertIsNotNone(self.config.get("panel_title"))
 
     def test_map_includes_config(self):
-        """Volume map should include config:rw."""
+        """Volume map must mount the HA config dir read-write at /config.
+
+        Uses the modern `homeassistant_config` mapping type (the legacy
+        `config` alias is no longer documented by the Supervisor) with an
+        explicit /config path so scripts keep their historic mount point.
+        """
         maps = self.config.get("map", [])
-        self.assertIn("config:rw", maps)
+        ha_config = [
+            m for m in maps
+            if isinstance(m, dict) and m.get("type") == "homeassistant_config"
+        ]
+        self.assertEqual(len(ha_config), 1, "homeassistant_config mapping missing")
+        self.assertFalse(ha_config[0].get("read_only", True), "must be read-write")
+        self.assertEqual(ha_config[0].get("path"), "/config")
+        # The legacy alias must NOT come back
+        self.assertNotIn("config:rw", maps)
 
     def test_startup_type(self):
         """Startup should be 'services'."""
@@ -178,8 +191,20 @@ class TestDockerfile(unittest.TestCase):
             cls.lines = cls.content.strip().split("\n")
 
     def test_starts_with_arg_build_from(self):
-        """Dockerfile should start with ARG BUILD_FROM."""
-        self.assertTrue(self.lines[0].startswith("ARG BUILD_FROM"))
+        """First instruction must be ARG BUILD_FROM with a default base.
+
+        Supervisor 2026.04.0+ no longer reads build.yaml or passes
+        BUILD_FROM, so the ARG needs a self-contained default or the
+        add-on cannot be built (FROM would resolve to an empty string).
+        """
+        instructions = [
+            line for line in self.lines
+            if line.strip() and not line.strip().startswith("#")
+        ]
+        self.assertTrue(instructions[0].startswith("ARG BUILD_FROM="))
+        default = instructions[0].split("=", 1)[1].strip()
+        self.assertIn("ghcr.io/home-assistant/", default,
+                      "BUILD_FROM default should be an official HA base image")
 
     def test_uses_build_from(self):
         """Dockerfile should use BUILD_FROM as base."""

@@ -103,7 +103,7 @@ BRUH-HA-Apps/
 - **Listener speed**: Both listeners use `--max-turns` to limit agentic loops (defaults: 5 for Assist, 10 for Automation; configurable). The assist path splices a cached area→entity map (controllable domains + Weather/People) into the system prompt so most voice commands skip lookup turns. With `assist_fast_mode` (default) the assist channel runs as a worker pool (`assist-worker-pool.py`): persistent `claude --input-format stream-json` processes per conversation plus a pre-warmed spare, falling back to one-shot spawns on any worker error
 
 ### Container Environment
-- Base: Home Assistant Alpine Linux 3.19
+- Base: Home Assistant Alpine Linux 3.24 (Dockerfile `ARG BUILD_FROM` default; `build.yaml` only applies to Supervisor < 2026.04)
 - HOME: `/data/home` (persistent across restarts)
 - Config: `/data/.config/claude`
 - HA config: `/config` (read-write)
@@ -113,7 +113,7 @@ BRUH-HA-Apps/
 
 ### Build locally
 ```bash
-podman build --build-arg BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.19 -t local/bruh-claude-terminal ./bruh-claude-terminal
+podman build -t local/bruh-claude-terminal ./bruh-claude-terminal
 ```
 
 ### Run locally

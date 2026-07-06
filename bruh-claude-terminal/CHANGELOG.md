@@ -4,6 +4,38 @@ All notable changes to **BRUH Claude Terminal**, newest first. This project adhe
 
 > 💡 Prefer a cleaner, categorized view? See the [formatted changelog at bruhautomation.com](https://bruhautomation.com/bruh-claude/changelog/).
 
+## 3.2.2
+
+**Compatibility with the latest Home Assistant (Core 2026.7 / Supervisor 2026.04+).**
+
+The app could no longer be **built or updated** on current Home Assistant
+installations: Supervisor 2026.04.0 retired the legacy add-on builder, so
+`build.yaml` is ignored and the `BUILD_FROM` build argument is no longer
+passed. Our Dockerfile started with `FROM ${BUILD_FROM}` and relied on
+build.yaml to fill it in — on a current Supervisor that resolves to an
+empty base image and the build fails before it starts.
+
+- **The Dockerfile now carries its own default base image**
+  (`ARG BUILD_FROM=ghcr.io/home-assistant/base:3.24`, the official
+  multi-arch Alpine 3.24 base). Older Supervisors keep overriding it
+  per-architecture through `build.yaml`, so nothing changes for them.
+- **The volume map uses the current `homeassistant_config` type** instead
+  of the legacy `config` alias (dropped from the Supervisor docs), with an
+  explicit `path: /config` so every script keeps its long-standing mount
+  point. Requires Supervisor 2023.09 or newer — over two years old.
+- **Hassio discovery works again on HA 2026.x.** Core removed the old
+  `HassioServiceInfo` re-export from `homeassistant.components.hassio`;
+  the integration now imports it from its current home
+  (`homeassistant.helpers.service_info.hassio`) with a fallback for older
+  cores, so the Supervisor discovery payload is parsed instead of being
+  silently discarded.
+- **`DeviceInfo` is imported from `homeassistant.helpers.device_registry`**
+  (its canonical location) across all platforms, ahead of Core removing the
+  deprecated `homeassistant.helpers.entity` re-export.
+- Everything else was audited against HA Core 2026.7.1 source — the
+  conversation entity, chat-log streaming, options flow, repairs flow,
+  services, and sensors all use current APIs; no further changes needed.
+
 ## 3.2.1
 
 **Branding and documentation polish.**
