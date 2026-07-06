@@ -123,9 +123,18 @@ class TestConfigYaml(unittest.TestCase):
         self.assertIn("bruh_minecraft", self.cfg.get("discovery", []))
 
     def test_volume_maps_minimum(self):
-        maps = set(self.cfg["map"])
-        # /config must be RW so we can persist worlds and custom_components
-        self.assertIn("config:rw", maps)
+        maps = self.cfg["map"]
+        # /config must be RW so we can persist worlds and custom_components.
+        # Modern `homeassistant_config` type with an explicit /config path
+        # (the legacy `config` alias is no longer documented).
+        ha_config = [
+            m for m in maps
+            if isinstance(m, dict) and m.get("type") == "homeassistant_config"
+        ]
+        self.assertEqual(len(ha_config), 1, "homeassistant_config mapping missing")
+        self.assertFalse(ha_config[0].get("read_only", True), "must be read-write")
+        self.assertEqual(ha_config[0].get("path"), "/config")
+        self.assertNotIn("config:rw", maps)
 
 
 # ---------------------------------------------------------------------------
@@ -138,8 +147,8 @@ class TestBuildYaml(unittest.TestCase):
             cls.cfg = yaml.safe_load(f)
 
     def test_base_images(self):
-        self.assertIn("ghcr.io/home-assistant/amd64-base:3.19", self.cfg["build_from"]["amd64"])
-        self.assertIn("ghcr.io/home-assistant/aarch64-base:3.19", self.cfg["build_from"]["aarch64"])
+        self.assertIn("ghcr.io/home-assistant/amd64-base:3.24", self.cfg["build_from"]["amd64"])
+        self.assertIn("ghcr.io/home-assistant/aarch64-base:3.24", self.cfg["build_from"]["aarch64"])
 
     def test_labels(self):
         labels = self.cfg["labels"]
@@ -156,7 +165,13 @@ class TestDockerfile(unittest.TestCase):
         cls.text = _read(os.path.join(ADDON_DIR, "Dockerfile"))
 
     def test_from_build_arg(self):
-        self.assertRegex(self.text, r"^\s*ARG BUILD_FROM", msg="Missing ARG BUILD_FROM")
+        # Supervisor 2026.04.0+ no longer passes BUILD_FROM, so the ARG
+        # must carry a self-contained default base image.
+        self.assertRegex(
+            self.text,
+            r"(?m)^ARG BUILD_FROM=ghcr\.io/home-assistant/",
+            msg="ARG BUILD_FROM must default to an official HA base image",
+        )
         self.assertRegex(self.text, r"FROM \$\{?BUILD_FROM\}?")
 
     def test_no_entrypoint_override(self):

@@ -410,8 +410,9 @@ migrate_legacy_auth_files() {
 # The @anthropic-ai/claude-code npm package installs a prebuilt NATIVE
 # binary (…-linux-*-musl optional dependencies + a postinstall,
 # install.cjs). Those musl builds need posix_getdents — a symbol musl added
-# in 1.2.6 — so they only run on Alpine 3.24+ (this add-on's base image; see
-# build.yaml). On older bases (3.19 = musl 1.2.4 … 3.21 = musl 1.2.5) the
+# in 1.2.6 — so they only run on Alpine 3.24+ (this add-on's base image;
+# see the Dockerfile's BUILD_FROM default). On older bases (3.19 = musl
+# 1.2.4 … 3.21 = musl 1.2.5) the
 # binary fails to relocate ("posix_getdents: symbol not found"), `claude
 # --version` prints nothing, and the web terminal opens then exits instantly.
 # Now that we build on 3.24 we track upstream again. Pin a specific version

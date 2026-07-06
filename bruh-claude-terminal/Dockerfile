@@ -1,4 +1,8 @@
-ARG BUILD_FROM
+# Default base: Supervisor 2026.04.0+ no longer reads build.yaml or passes
+# BUILD_FROM, so the default must stand on its own (multi-arch manifest —
+# docker resolves amd64/aarch64 automatically). Older Supervisors still
+# override this per-arch via build.yaml.
+ARG BUILD_FROM=ghcr.io/home-assistant/base:3.24
 FROM ${BUILD_FROM}
 
 # Install system packages and development tools

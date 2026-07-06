@@ -18,10 +18,17 @@ import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, OptionsFlow
 
+# HassioServiceInfo moved to homeassistant.helpers.service_info.hassio in
+# HA 2024.12; the old re-export under homeassistant.components.hassio was
+# removed entirely in 2026.x. Try new location first, then old, then None
+# (plain-dict discovery payloads still work without it).
 try:
-    from homeassistant.components.hassio import HassioServiceInfo
+    from homeassistant.helpers.service_info.hassio import HassioServiceInfo
 except ImportError:
-    HassioServiceInfo = None  # type: ignore[assignment,misc]
+    try:
+        from homeassistant.components.hassio import HassioServiceInfo
+    except ImportError:
+        HassioServiceInfo = None  # type: ignore[assignment,misc]
 
 from .const import (
     AVAILABLE_MODELS,

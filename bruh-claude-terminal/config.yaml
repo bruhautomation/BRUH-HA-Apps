@@ -1,7 +1,7 @@
 ---
 name: "BRUH Claude Terminal"
 description: "Enhanced Claude Code terminal for Home Assistant with native HA API access, auto-backup, context generation, and Assist integration"
-version: "3.2.1"
+version: "3.2.2"
 slug: "bruh_claude_terminal"
 init: false
 
@@ -77,9 +77,14 @@ schema:
     - str
   log_level: "list(trace|debug|info|notice|warning|error|fatal)?"
 
-# Volume mappings for file access
+# Volume mappings for file access. The Home Assistant config directory uses
+# the current `homeassistant_config` type (the legacy `config` alias is no
+# longer documented) with an explicit /config path so every script keeps its
+# long-standing mount point.
 map:
-  - config:rw
+  - type: homeassistant_config
+    read_only: false
+    path: /config
   - share:rw
   - media:rw
   - backup:ro
