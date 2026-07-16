@@ -163,6 +163,24 @@ cleanup_stale_files() {
     find "$TASKS_DIR" -name '*.work.*' -mmin +120 -delete 2>/dev/null || true
 }
 
+# Extract the assistant's final text from a `claude -p --output-format json`
+# result file. That mode emits a single JSON object whose .result field holds
+# the final text. Falls back to the raw file for any non-JSON output (older
+# CLI, hard errors) so genuine error text still surfaces.
+#
+# This replaces scraping the CLI's `--verbose` text stdout wholesale: newer
+# Claude Code builds pad that stream with diagnostics — including "MCP server
+# ... unavailable" connection notices — which leaked into automation results.
+extract_claude_result() {
+    local out_file="$1" text
+    text=$(jq -r 'if (type == "object" and (.result | type) == "string" and (.result | length) > 0) then .result else empty end' "$out_file" 2>/dev/null)
+    if [ -n "$text" ]; then
+        printf '%s' "$text"
+    else
+        cat "$out_file" 2>/dev/null || true
+    fi
+}
+
 # Process an automation task file
 process_task() {
     local task_file="$1"
@@ -261,15 +279,18 @@ process_task() {
     local start_time
     start_time=$(date +%s)
 
+    # --output-format json: capture the structured result and pull .result,
+    # instead of scraping verbose stdout (which now carries MCP/diagnostic
+    # lines). See extract_claude_result().
     # shellcheck disable=SC2086
-    (cd /config && printf '%s' "$prompt" | timeout "$claude_limit" ${CLAUDE_BIN} -p --verbose --max-turns "$MAX_TURNS" ${model_flag} > "$output_file" 2>"$stderr_file") || true
+    (cd /config && printf '%s' "$prompt" | timeout "$claude_limit" ${CLAUDE_BIN} -p --output-format json --max-turns "$MAX_TURNS" ${model_flag} > "$output_file" 2>"$stderr_file") || true
 
     local end_time duration
     end_time=$(date +%s)
     duration=$((end_time - start_time))
 
     local result stderr_output
-    result=$(cat "$output_file" 2>/dev/null || echo "")
+    result=$(extract_claude_result "$output_file")
     stderr_output=$(cat "$stderr_file" 2>/dev/null || echo "")
     rm -f "$output_file" "$stderr_file"
 
@@ -285,12 +306,12 @@ process_task() {
             stderr_file=$(mktemp)
 
             # shellcheck disable=SC2086
-            (cd /config && printf '%s' "$prompt" | timeout "$remaining" ${CLAUDE_BIN} -p --verbose --max-turns "$MAX_TURNS" ${model_flag} > "$output_file" 2>"$stderr_file") || true
+            (cd /config && printf '%s' "$prompt" | timeout "$remaining" ${CLAUDE_BIN} -p --output-format json --max-turns "$MAX_TURNS" ${model_flag} > "$output_file" 2>"$stderr_file") || true
 
             end_time=$(date +%s)
             duration=$((end_time - start_time))
 
-            result=$(cat "$output_file" 2>/dev/null || echo "")
+            result=$(extract_claude_result "$output_file")
             stderr_output=$(cat "$stderr_file" 2>/dev/null || echo "")
             rm -f "$output_file" "$stderr_file"
             bashio::log.info "Retried task [$task_id] after /api/mcp cleanup"
