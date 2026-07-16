@@ -4,6 +4,34 @@ All notable changes to **BRUH Claude Terminal**, newest first. This project adhe
 
 > 💡 Prefer a cleaner, categorized view? See the [formatted changelog at bruhautomation.com](https://bruhautomation.com/bruh-claude/changelog/).
 
+## 3.2.4
+
+**Fix: automations calling BRUH Claude fail with an "MCP server unavailable"
+error, even though voice/conversation still works.**
+
+Recent Claude Code builds require project-scoped MCP servers (the ones
+declared in `/config/.mcp.json`, including this add-on's Home Assistant
+server) to be **approved/trusted** before they load. In non-interactive
+runs — exactly how the Automation listener invokes Claude for
+`bruh_claude.run_task` — an unapproved server is silently skipped, so Claude
+has no HA tools and reports the connection as unavailable. Since the add-on
+un-pinned Claude Code (3.2.0), updating pulled in a CLI new enough to enforce
+this, which is why automations broke after a Home Assistant/add-on update
+while the default fast-mode conversation path kept working.
+
+- **The HA MCP server is now explicitly approved for headless runs.** The
+  add-on writes `enableAllProjectMcpServers` / `enabledMcpjsonServers` into
+  the Claude settings it already manages (`/config/.claude/settings.local.json`
+  and the Assist scoping file), the documented way to trust a project
+  `.mcp.json` server without the interactive trust dialog. This is separate
+  from the existing tool-permission allow-list, which only governs whether an
+  already-loaded tool may run unattended.
+- **The Automation listener reads Claude's structured result** (`--output-format
+  json` → the `.result` field) instead of scraping `--verbose` stdout, so
+  diagnostic lines (including any MCP connection notices) can never again be
+  returned verbatim as a task result. Non-JSON output still falls back to the
+  raw text, so genuine errors keep surfacing.
+
 ## 3.2.3
 
 **Fix: thread-safety error logged every time an Insight job completes.**

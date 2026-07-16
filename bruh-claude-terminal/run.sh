@@ -1043,6 +1043,8 @@ setup_assist_scoping() {
     mkdir -p /config/.bruh_claude
     cat > /config/.bruh_claude/assist_settings.json << 'SCOPE'
 {
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": ["home-assistant"],
   "permissions": {
     "deny": [
       "Bash",
@@ -1069,8 +1071,20 @@ SCOPE
 setup_claude_settings() {
     local claude_settings_dir="/config/.claude"
     mkdir -p "$claude_settings_dir"
+    # enableAllProjectMcpServers / enabledMcpjsonServers pre-APPROVE the
+    # project-scoped home-assistant server declared in /config/.mcp.json.
+    # Current Claude Code requires project .mcp.json servers to be trusted
+    # before they load; in non-interactive `-p` runs (Automation tasks,
+    # classic Assist) an unapproved server is silently skipped, so Claude
+    # reports "MCP server unavailable" and can't touch HA. Approving it here
+    # (a non-checked-in local settings file — the documented way to skip the
+    # interactive trust dialog) makes the HA tools load in every headless run.
+    # NOTE: this is separate from the permissions.allow entry below, which
+    # only governs whether an already-loaded tool may run without a prompt.
     cat > "$claude_settings_dir/settings.local.json" << 'SETTINGS'
 {
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": ["home-assistant"],
   "permissions": {
     "allow": [
       "mcp__home-assistant__*",

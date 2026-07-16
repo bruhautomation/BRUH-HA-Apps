@@ -153,6 +153,20 @@ class TestRunSh(unittest.TestCase):
         backup_section = backup_section[:backup_section.index("# ====", 10)]
         self.assertNotIn("cd /config", backup_section)
 
+    def test_approves_project_mcp_servers_for_headless(self):
+        """run.sh must pre-approve the project .mcp.json HA server so it
+        loads in non-interactive `-p` runs (Automation / classic Assist).
+        Without this, current Claude Code silently skips the unapproved
+        server and reports it as unavailable."""
+        self.assertIn("enableAllProjectMcpServers", self.content)
+        self.assertIn('"enabledMcpjsonServers": ["home-assistant"]', self.content)
+        # Both the project settings and the Assist scoping file must carry it,
+        # since the two non-interactive channels load different settings.
+        settings_fn = self.content[self.content.index("setup_claude_settings()"):]
+        self.assertIn("enableAllProjectMcpServers", settings_fn)
+        scoping_fn = self.content[self.content.index("setup_assist_scoping()"):]
+        self.assertIn("enableAllProjectMcpServers", scoping_fn)
+
     def test_mcp_config_no_token(self):
         """MCP JSON config should NOT embed SUPERVISOR_TOKEN value."""
         # Find the MCP entry JSON template in run.sh. The function definition
@@ -314,6 +328,15 @@ class TestIntegrationListeners(unittest.TestCase):
                 if re.search(r'-d\s+"\$\{?[a-z]', line):
                     # This is fine - using a variable built by jq
                     pass
+
+    def test_automation_listener_reads_structured_result(self):
+        """automation-listener.sh should read Claude's JSON result (.result)
+        rather than scraping --verbose stdout, so MCP/diagnostic lines can't
+        be returned as a task result."""
+        content = read_file(os.path.join(INTEGRATIONS_DIR, "automation-listener.sh"))
+        self.assertIn("--output-format json", content)
+        self.assertIn("extract_claude_result", content)
+        self.assertNotIn("-p --verbose", content)
 
     def test_automation_listener_pipes_prompt(self):
         """automation-listener.sh should pipe prompt to claude, not pass as arg."""
