@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.0.3
+
+- Fix the "Exchanging code…" watchdog never firing on a *silent* hang: it only ran
+  when the CLI produced output, and a hung exchange produces none. It now runs on
+  every tick, so a dead exchange errors out after 2 minutes with a clear message
+- Treat the CLI's saved credential file (`~/.claude/.credentials.json`) as sign-in
+  success — some CLI versions save the credential without printing a token to the
+  terminal, which previously looked like a hang even though sign-in had worked
+- Recognize an existing CLI login as a valid connection (auth type `cli_login`);
+  sign-out now clears it too
+- Press Enter into a silent exchange at 45s/90s in case an unknown confirmation
+  screen is blocking the CLI
+- Log the guided sign-in's CLI output (token-masked) to the add-on log so stuck
+  flows are actually diagnosable
+
 ## 1.0.2
 
 - Fix guided sign-in hanging forever on "Exchanging code…": when the code exchange

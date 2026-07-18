@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import fcntl
 import json
+import logging
 import os
 import pty
 import re
@@ -38,6 +39,8 @@ import subprocess
 import termios
 import threading
 import time
+
+log = logging.getLogger("bruh-insights.auth")
 
 SECRETS_DIR = os.environ.get("BRUH_INSIGHTS_SECRETS", "/data/secrets")
 CLAUDE_HOME = os.environ.get("BRUH_INSIGHTS_HOME", "/data/home")
@@ -56,6 +59,8 @@ RETRY_RE = re.compile(r"Press\s*Enter\s*to\s*retry", re.IGNORECASE)
 OAUTH_ERR_RE = re.compile(r"OAuth error:[^\n]*?(?=Press\s*Enter|$)", re.IGNORECASE)
 # How long a code exchange may sit in "working" before we declare it dead
 EXCHANGE_TIMEOUT = int(os.environ.get("BRUH_EXCHANGE_TIMEOUT", "120"))
+# When to press Enter into a silent exchange (unknown confirmation screens)
+NUDGE_TIMES = (45, 90)
 
 # pty terminal geometry: the authorize URL is many hundreds of characters
 # long; a normal-width terminal hard-wraps it and a wrapped URL is what
@@ -97,8 +102,30 @@ def extract_oauth_url(buf: str) -> str:
 # Credential storage
 # ---------------------------------------------------------------------------
 
+def _credentials_path() -> str:
+    """The CLI's own credential store (written by a successful setup-token/login)."""
+    return os.path.join(CLAUDE_HOME, ".claude", ".credentials.json")
+
+
+def _cli_credentials_present() -> bool:
+    """True when the Claude CLI holds a usable OAuth credential in its own store.
+
+    When this file exists under our HOME, `claude -p` authenticates by itself —
+    no env token needed. It's also the most reliable SUCCESS signal for the
+    guided sign-in: some CLI versions save the credential without printing a
+    token to the terminal.
+    """
+    try:
+        with open(_credentials_path(), "r", encoding="utf-8") as f:
+            data = json.load(f)
+        token = (data.get("claudeAiOauth") or {}).get("accessToken", "")
+        return isinstance(token, str) and token.startswith("sk-ant-")
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
 def get_auth() -> dict | None:
-    """Return {'type': 'oauth_token'|'api_key', 'value': str} or None."""
+    """Return {'type': 'oauth_token'|'api_key'|'cli_login', 'value': str} or None."""
     try:
         with open(AUTH_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -106,6 +133,8 @@ def get_auth() -> dict | None:
             return data
     except (OSError, ValueError):
         pass
+    if _cli_credentials_present():
+        return {"type": "cli_login", "value": ""}
     return None
 
 
@@ -132,10 +161,11 @@ def save_auth(value: str, cred_type: str | None = None) -> dict:
 
 
 def clear_auth() -> None:
-    try:
-        os.remove(AUTH_FILE)
-    except OSError:
-        pass
+    for path in (AUTH_FILE, _credentials_path()):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -158,6 +188,10 @@ def _claude_env() -> dict[str, str]:
     if auth:
         if auth["type"] == "api_key":
             env["ANTHROPIC_API_KEY"] = auth["value"]
+            env.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
+        elif auth["type"] == "cli_login":
+            # the CLI authenticates from its own ~/.claude/.credentials.json
+            env.pop("ANTHROPIC_API_KEY", None)
             env.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
         else:
             env["CLAUDE_CODE_OAUTH_TOKEN"] = auth["value"]
@@ -292,6 +326,7 @@ class SetupTokenFlow:
         self._url_from = 0        # scan offset: URLs before this are stale
         self._code_from = 0       # scan offset: only look for errors after the code
         self._code_sent_at = 0.0
+        self._nudges = 0
 
     # -- public API --------------------------------------------------------
 
@@ -365,6 +400,7 @@ class SetupTokenFlow:
             self.error = ""
             self._code_from = len(self.output)
             self._code_sent_at = time.time()
+            self._nudges = 0
         try:
             os.write(self._fd, (code + "\r").encode())
         except OSError as exc:
@@ -396,37 +432,66 @@ class SetupTokenFlow:
         try:
             while proc and proc.poll() is None and time.time() < self._deadline:
                 ready, _, _ = select.select([fd], [], [], 1.0)
-                if not ready:
-                    continue
-                try:
-                    chunk = os.read(fd, 4096)
-                except OSError:
-                    break
-                if not chunk:
-                    break
-                buf += ANSI_RE.sub("", chunk.decode("utf-8", "replace"))
-                with self._lock:
-                    self.output = buf
-                self._scan(buf)
-                with self._lock:
-                    if self.phase == "done":
+                if ready:
+                    try:
+                        chunk = os.read(fd, 4096)
+                    except OSError:
                         break
+                    if not chunk:
+                        break
+                    text = ANSI_RE.sub("", chunk.decode("utf-8", "replace"))
+                    buf += text
+                    stripped = OAUTH_TOKEN_RE.sub("sk-ant-oat…", text).strip()
+                    if stripped:
+                        log.info("setup-token: %s", stripped[:400])
+                    with self._lock:
+                        self.output = buf
+                    self._scan(buf)
+                    with self._lock:
+                        if self.phase == "done":
+                            break
+
+                # ---- per-tick checks (MUST run even when there is NO new
+                # output: a silent hang produces exactly zero output) --------
+                with self._lock:
+                    working = self.phase == "working"
+                    sent_at = self._code_sent_at
+                if not working or not sent_at:
+                    continue
+                elapsed = time.time() - sent_at
+                # some CLI versions save the credential without printing the
+                # token — the credentials file appearing IS success
+                if _cli_credentials_present():
+                    log.info("setup-token: credentials file detected — success")
+                    with self._lock:
+                        self.phase = "done"
+                    break
+                # gentle Enter nudges in case an unknown confirmation screen
+                # ("press enter to continue") is blocking the CLI
+                for i, at in enumerate(NUDGE_TIMES):
+                    if elapsed > at and self._nudges <= i:
+                        self._nudges = i + 1
+                        log.info("setup-token: no output for %.0fs — nudging with Enter", elapsed)
+                        try:
+                            os.write(fd, b"\r")
+                        except OSError:
+                            pass
                 # watchdog: a code exchange that neither succeeds nor prints a
                 # retry prompt within the window is declared dead so the UI
                 # never hangs on "Exchanging code…" again
-                with self._lock:
-                    if (
-                        self.phase == "working"
-                        and self._code_sent_at
-                        and time.time() - self._code_sent_at > EXCHANGE_TIMEOUT
-                    ):
+                if elapsed > EXCHANGE_TIMEOUT:
+                    with self._lock:
                         tail = buf[self._code_from:].strip()[-200:]
                         self.phase = "error"
                         self.error = (
-                            "Timed out exchanging the code. "
-                            + (f"CLI output: …{tail}" if tail else "No response from the sign-in CLI.")
+                            "Timed out exchanging the code — no response from the sign-in "
+                            "process. This usually means the add-on cannot reach "
+                            "claude.com/anthropic.com (check the network), or the CLI is stuck. "
+                            "The 'Paste a token' tab is a reliable alternative."
+                            + (f" CLI output: …{tail}" if tail else "")
                         )
-                        break
+                    log.warning("setup-token: exchange timed out after %.0fs", elapsed)
+                    break
         finally:
             # process ended (or timed out) — one final scan, then settle state
             self._scan(buf)
@@ -434,7 +499,7 @@ class SetupTokenFlow:
                 if self.phase not in ("done", "idle"):
                     if self.phase == "error":
                         pass
-                    elif OAUTH_TOKEN_RE.search(buf):
+                    elif OAUTH_TOKEN_RE.search(buf) or _cli_credentials_present():
                         self.phase = "done"
                     else:
                         self.phase = "error"
@@ -470,6 +535,12 @@ class SetupTokenFlow:
             code_from = self._code_from
 
         if phase == "working":
+            # success may arrive as a saved credentials file instead of a
+            # token printed to the terminal
+            if _cli_credentials_present():
+                with self._lock:
+                    self.phase = "done"
+                return
             # Failed exchange: the CLI prints "OAuth error: …Press Enter to
             # retry." and blocks. Press Enter for the user — the CLI then mints
             # a FRESH authorize URL (new state/code_challenge; the old page's
