@@ -46,7 +46,9 @@ jobs:
             bruh-claude-terminal/config.yaml \
             bruh-claude-terminal/build.yaml \
             bruh-minecraft-server/config.yaml \
-            bruh-minecraft-server/build.yaml
+            bruh-minecraft-server/build.yaml \
+            bruh-insights/config.yaml \
+            bruh-insights/build.yaml
 
   shellcheck:
     name: Shellcheck
@@ -79,6 +81,16 @@ jobs:
             bruh-minecraft-server/custom_components
             bruh-minecraft-server/panel
 
+      - name: Run shellcheck (insights)
+        uses: ludeeus/action-shellcheck@master
+        env:
+          SHELLCHECK_OPTS: -s bash -e SC1091
+        with:
+          scandir: ./bruh-insights
+          severity: error
+          ignore_paths: >-
+            bruh-insights/panel
+
   hadolint:
     name: Dockerfile lint
     runs-on: ubuntu-latest
@@ -95,6 +107,12 @@ jobs:
         uses: hadolint/hadolint-action@v3.3.0
         with:
           dockerfile: bruh-minecraft-server/Dockerfile
+          failure-threshold: error
+
+      - name: Lint Insights Dockerfile
+        uses: hadolint/hadolint-action@v3.3.0
+        with:
+          dockerfile: bruh-insights/Dockerfile
           failure-threshold: error
 
   manifest-versions:
@@ -134,6 +152,11 @@ jobs:
       - name: Check Minecraft changelog matches shipped version
         run: .github/scripts/check-changelog-version.sh bruh-minecraft-server
 
+      # BRUH Insights has no companion HA integration, so no manifest
+      # parity check — just the changelog/version consistency.
+      - name: Check Insights changelog matches shipped version
+        run: .github/scripts/check-changelog-version.sh bruh-insights
+
   version-bump:
     # On every PR that touches addon files, verify the version in
     # config.yaml has bumped vs. the base branch. HA only picks up new
@@ -154,3 +177,6 @@ jobs:
 
       - name: Verify Minecraft Server version bumped if files changed
         run: .github/scripts/check-version-bump.sh "origin/${{ github.base_ref }}" bruh-minecraft-server
+
+      - name: Verify Insights version bumped if files changed
+        run: .github/scripts/check-version-bump.sh "origin/${{ github.base_ref }}" bruh-insights
