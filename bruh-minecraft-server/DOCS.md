@@ -1,4 +1,4 @@
-# BRUH Minecraft Server — Documentation
+# BRUH Minecraft — Documentation
 
 Complete configuration reference, operational notes, and integration details.
 
@@ -38,7 +38,7 @@ A bird's-eye view so you can skim to the sections that matter to you:
    ```
    https://github.com/bruhautomation/BRUH-HA-Apps
    ```
-2. Install **BRUH Minecraft Server** and click **Start**.
+2. Install **BRUH Minecraft** and click **Start**.
 3. Open the sidebar **Minecraft** entry. The **welcome wizard** asks for the EULA, the online/offline mode for the first world, and the server type (Paper is the default). Click *Start the server* — the add-on restarts and the panel takes over.
 4. **Connect.** Java Edition → `<your-HA-host>:25565`. Bedrock → `<your-HA-host>:19132` (UDP; on the same LAN the server auto-appears in Minecraft's **Friends** tab).
 5. **OP yourself.** Join once, then on the panel's **Players** tab click *op* next to your name. Ops persist in `ops.json` per world.
@@ -214,7 +214,7 @@ These are **not** add-on options. Each world has its own `server.properties`; ed
 
 | Key | Type / values | Default | Notes |
 |-----|---------------|---------|-------|
-| `motd` | string | `A BRUH Minecraft Server` | Server-list message. |
+| `motd` | string | `A BRUH Minecraft` | Server-list message. |
 | `difficulty` | `peaceful \| easy \| normal \| hard` | `normal` | |
 | `gamemode` | `survival \| creative \| adventure \| spectator` | `survival` | |
 | `force-gamemode` | bool | `true` | Put every player back into `gamemode` on each join — the fix for "I set creative but it keeps loading survival". Set `false` to let players keep their last mode. |
@@ -465,7 +465,7 @@ The add-on deploys a companion integration to `/config/custom_components/bruh_mi
 
 ### Device & entities
 
-All entities live under a single device **BRUH Minecraft Server**. Default entities:
+All entities live under a single device **BRUH Minecraft**. Default entities:
 
 | Platform | Key | Notes |
 |----------|-----|-------|
@@ -656,7 +656,7 @@ script:
           command: "fill ~-10 ~ ~-10 ~10 ~ ~10 minecraft:stone"
 ```
 
-**Assist voice control** — the BRUH Claude Terminal add-on pairs with this to let you say "tell everyone dinner's ready" and have it hit the `say` service. See the Claude Terminal docs for setup; no config change needed on the Minecraft side.
+**Assist voice control** — the BRUH Terminal add-on pairs with this to let you say "tell everyone dinner's ready" and have it hit the `say` service. See the Claude Terminal docs for setup; no config change needed on the Minecraft side.
 
 ## 4.3 Security considerations
 

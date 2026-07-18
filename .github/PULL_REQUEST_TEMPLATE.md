@@ -4,8 +4,8 @@
 
 ## Add-on affected
 
-- [ ] BRUH Claude Terminal
-- [ ] BRUH Minecraft Server
+- [ ] BRUH Terminal
+- [ ] BRUH Minecraft
 - [ ] Repo-wide (CI, docs, etc.)
 
 ## Checklist

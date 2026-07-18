@@ -160,8 +160,15 @@ async function pollSetup() {
   let st;
   try {
     st = await api("api/auth/setup/status");
+    pollSetup.failures = 0;
   } catch (e) {
-    showSetupError(e.message);
+    // NEVER let a transient fetch failure kill the poll loop (mobile apps
+    // suspend the webview in the background and abort in-flight requests —
+    // previously that left the UI frozen on "Exchanging code…" even after
+    // the backend had finished). Keep retrying quietly.
+    pollSetup.failures = (pollSetup.failures || 0) + 1;
+    if (pollSetup.failures > 5) showSetupError("Connection to the add-on lost — retrying…");
+    state.setupTimer = setTimeout(pollSetup, 3000);
     return;
   }
   const phaseChip = $("#setupPhase");
@@ -200,7 +207,11 @@ async function pollSetup() {
     }
   }
   if (st.phase === "working") {
-    phaseText.textContent = "Exchanging code…";
+    if (pollSetup.lastPhase !== "working") pollSetup.workingSince = Date.now();
+    const secs = Math.round((Date.now() - (pollSetup.workingSince || Date.now())) / 1000);
+    phaseText.textContent = secs > 15
+      ? `Exchanging code… ${secs}s (can take a minute — we'll keep nudging it)`
+      : "Exchanging code…";
     $("#setupCodeRow").classList.remove("hidden"); // keep Cancel reachable
     $("#setupSubmit").disabled = true;
   }
@@ -502,6 +513,20 @@ $("#askForm").addEventListener("submit", async (ev) => {
   $("#askInput").value = "";
   toast("Asking Claude about your home…");
   await generate(null, q);
+});
+
+// Coming back to the tab/app: poll immediately — mobile webviews suspend
+// timers in the background, so the completed state may be waiting for us.
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") return;
+  refreshStatus().then(async () => {
+    if (anyActive()) return;
+    await refreshInsights().catch(() => {});
+    renderIfChanged();
+  }).catch(() => {});
+  api("api/auth/setup/status").then((st) => {
+    if (["starting", "awaiting_code", "working", "done"].includes(st.phase)) pollSetup();
+  }).catch(() => {});
 });
 
 (async function init() {

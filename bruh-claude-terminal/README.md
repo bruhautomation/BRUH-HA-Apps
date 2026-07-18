@@ -1,4 +1,4 @@
-# BRUH Claude Terminal
+# BRUH Terminal
 
 Claude Code for Home Assistant: a full terminal with native HA API access, a fast voice assistant, scheduled AI insight reports, and deep HA integration.
 
@@ -48,7 +48,7 @@ Claude watches your house and writes markdown reports to sensors — daily brief
 ## Installation
 
 1. Add this repository to your Home Assistant add-on store
-2. Install "BRUH Claude Terminal" and start it
+2. Install "BRUH Terminal" and start it
 3. **Restart Home Assistant** (Settings > System > Restart) — required on first install so HA loads the BRUH Claude integration
 4. Accept the discovered BRUH Claude integration (Settings > Devices & Services)
 5. Authenticate with your Anthropic account in the terminal

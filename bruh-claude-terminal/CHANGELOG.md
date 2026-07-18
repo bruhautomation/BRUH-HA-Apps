@@ -4,6 +4,12 @@ All notable changes to **BRUH Claude Terminal**, newest first. This project adhe
 
 > 💡 Prefer a cleaner, categorized view? See the [formatted changelog at bruhautomation.com](https://bruhautomation.com/bruh-claude/changelog/).
 
+## 3.2.5
+
+- Renamed the add-on to **BRUH Terminal** (sidebar panel: "Terminal") as part of the
+  unified BRUH Apps branding; new "Solid Blocks" icon and logo from the BRUH Automation
+  brand system. No functional changes.
+
 ## 3.2.4
 
 **Fix: automations calling BRUH Claude fail with an "MCP server unavailable"

@@ -334,7 +334,7 @@ class TestIcons(unittest.TestCase):
 class TestRepositoryListing(unittest.TestCase):
     def test_addon_referenced_in_top_readme(self):
         readme = _read(os.path.join(BASE_DIR, "README.md"))
-        self.assertIn("BRUH Minecraft Server", readme)
+        self.assertIn("BRUH Minecraft", readme)
         self.assertIn("bruh-minecraft-server/", readme)
 
 

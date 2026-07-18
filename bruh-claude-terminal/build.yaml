@@ -5,7 +5,7 @@ build_from:
   amd64: ghcr.io/home-assistant/amd64-base:3.24
 
 labels:
-  org.opencontainers.image.title: "Home Assistant App: BRUH Claude Terminal"
+  org.opencontainers.image.title: "Home Assistant App: BRUH Terminal"
   org.opencontainers.image.description: "Enhanced Claude Code terminal with native HA API access, auto-backup, and context generation"
   org.opencontainers.image.source: "https://github.com/bruhautomation/BRUH-HA-Apps"
   org.opencontainers.image.licenses: "MIT"

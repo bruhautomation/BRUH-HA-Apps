@@ -59,8 +59,10 @@ RETRY_RE = re.compile(r"Press\s*Enter\s*to\s*retry", re.IGNORECASE)
 OAUTH_ERR_RE = re.compile(r"OAuth error:[^\n]*?(?=Press\s*Enter|$)", re.IGNORECASE)
 # How long a code exchange may sit in "working" before we declare it dead
 EXCHANGE_TIMEOUT = int(os.environ.get("BRUH_EXCHANGE_TIMEOUT", "120"))
-# When to press Enter into a silent exchange (unknown confirmation screens)
-NUDGE_TIMES = (45, 90)
+# When to press Enter into a silent exchange (unknown confirmation screens).
+# Early nudges: a success/confirmation screen blocked on a keypress resolves
+# in seconds instead of the user staring at "Exchanging code…".
+NUDGE_TIMES = (10, 30, 75)
 
 # pty terminal geometry: the authorize URL is many hundreds of characters
 # long; a normal-width terminal hard-wraps it and a wrapped URL is what
@@ -204,13 +206,21 @@ def run_claude(
     system_prompt: str,
     model: str = "",
     timeout: int = 480,
-    max_turns: int = 1,
+    max_turns: int = 4,
 ) -> dict:
-    """Run `claude -p` headlessly. Returns {'ok', 'text', 'error', 'meta'}."""
+    """Run `claude -p` headlessly. Returns {'ok', 'text', 'error', 'meta'}.
+
+    Tools are disallowed outright: insights are pure generation over the data
+    bundle in the prompt. Without this, the model sometimes attempted tool
+    calls that non-interactive mode denies, burning through --max-turns and
+    dying with "max number of turns" instead of producing the insight. The
+    max_turns margin covers any residual multi-turn behavior.
+    """
     argv = _claude_argv() + [
         "-p",
         "--output-format", "json",
         "--max-turns", str(max_turns),
+        "--disallowedTools", "*",
         "--system-prompt", system_prompt,
     ]
     if model:
@@ -255,7 +265,11 @@ def run_claude(
         if envelope.get(k) is not None
     }
     if envelope.get("is_error") or not text:
-        err = text or envelope.get("subtype") or stderr[-500:] or "empty result"
+        if envelope.get("subtype") == "error_max_turns":
+            err = ("Claude hit the turn limit before finishing the insight — "
+                   "hit Regenerate to try again")
+        else:
+            err = text or envelope.get("subtype") or stderr[-500:] or "empty result"
         return {"ok": False, "error": str(err)[:1000], "text": "", "meta": meta}
     return {"ok": True, "text": text, "error": "", "meta": meta}
 

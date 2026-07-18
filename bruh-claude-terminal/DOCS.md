@@ -1,4 +1,4 @@
-# BRUH Claude Terminal Documentation
+# BRUH Terminal Documentation
 
 > **Prefer the web?** This same documentation, with diagrams and a polished layout, lives at
 > [bruhautomation.com/bruh-claude](https://bruhautomation.com/bruh-claude/) —
@@ -173,7 +173,7 @@ The `dangerously_skip_permissions` config option **only affects the interactive 
 - **`false` (default):** The terminal will prompt for confirmation before each tool call. This is the safer mode and the right choice while you're still learning what Claude will do to your HA config.
 - **`true`:** The terminal runs Claude Code without per-action confirmation prompts. Conversation agents and automation tasks are **not affected** by this toggle — they always skip permissions regardless of the setting.
 
-To change: go to **Settings > Apps > BRUH Claude Terminal > Configuration**.
+To change: go to **Settings > Apps > BRUH Terminal > Configuration**.
 
 ### OAuth Authentication
 
@@ -371,7 +371,7 @@ ls -la /config/.bruh_claude/logs/
 
 ### Add-on system logs
 
-For startup issues and overall add-on health, check the add-on logs in Settings > Apps > BRUH Claude Terminal > Log tab, or:
+For startup issues and overall add-on health, check the add-on logs in Settings > Apps > BRUH Terminal > Log tab, or:
 ```bash
 ha-log addon bruh_claude_terminal
 ```

@@ -1,6 +1,6 @@
 #!/usr/bin/with-contenv bashio
 # ============================================================================
-# BRUH Minecraft Server - startup orchestrator
+# BRUH Minecraft - startup orchestrator
 # ----------------------------------------------------------------------------
 # 1.  Validates the EULA
 # 2.  Ensures persistent layout + permissions
@@ -773,7 +773,7 @@ run_server_loop() {
 # the HA Supervisor is supposed to render to the real version from
 # config.yaml. Some Supervisor build paths (and most local-build flows) skip
 # that Jinja rendering, leaving the literal string `{{ version }}` — which
-# then shows up in the banner as "BRUH Minecraft Server v{{ version }}".
+# then shows up in the banner as "BRUH Minecraft v{{ version }}".
 #
 # The Dockerfile bakes config.yaml into /opt/bruh-mc/config.yaml, so we can
 # read the authoritative version with a lightweight YAML parse. Fallback
@@ -805,7 +805,7 @@ except Exception:
 main() {
     resolve_addon_version
     bashio::log.info "================================================================"
-    bashio::log.info " BRUH Minecraft Server v${ADDON_VERSION:-unknown} starting"
+    bashio::log.info " BRUH Minecraft v${ADDON_VERSION:-unknown} starting"
     bashio::log.info "================================================================"
 
     load_config

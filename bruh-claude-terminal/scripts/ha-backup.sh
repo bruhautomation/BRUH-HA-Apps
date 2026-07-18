@@ -22,11 +22,11 @@ do_backup() {
 
         git -C "$CONFIG_DIR" init
         git -C "$CONFIG_DIR" config user.email "bruh-claude@homeassistant.local"
-        git -C "$CONFIG_DIR" config user.name "BRUH Claude Terminal"
+        git -C "$CONFIG_DIR" config user.name "BRUH Terminal"
 
         if [ ! -f "$CONFIG_DIR/.gitignore" ]; then
             cat > "$CONFIG_DIR/.gitignore" << 'GITIGNORE'
-# BRUH Claude Terminal auto-backup gitignore
+# BRUH Terminal auto-backup gitignore
 secrets.yaml
 .storage/
 .cloud/

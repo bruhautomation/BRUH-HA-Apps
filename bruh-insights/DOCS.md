@@ -26,7 +26,7 @@ The add-on works with a **Claude subscription (Pro / Max)** — no API key neede
   Anthropic sign-in link, and you paste back the one-time code. The resulting long-lived
   token is stored inside the add-on (`/data/secrets`, mode 0600) and never leaves it.
 - **Paste a token**: run `claude setup-token` anywhere you use Claude Code — for example the
-  **BRUH Claude Terminal** add-on — and paste the `sk-ant-oat…` token into the panel.
+  **BRUH Terminal** add-on — and paste the `sk-ant-oat…` token into the panel.
 - **API key**: an Anthropic API key (`sk-ant-api…`) from console.anthropic.com also works;
   usage is then billed to your API account instead of the subscription.
 
@@ -58,7 +58,7 @@ in one by one.
   cannot touch your Home Assistant session, cookies, or the panel itself.
 - The panel is only reachable through HA Ingress (admin users), never exposed on a host port.
 - The add-on's `/config` mount is **read-only**; it only reads `CLAUDE.md` (context generated
-  by BRUH Claude Terminal, if present) to understand your naming conventions.
+  by BRUH Terminal, if present) to understand your naming conventions.
 
 ## Troubleshooting
 

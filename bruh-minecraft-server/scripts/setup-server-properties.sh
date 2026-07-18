@@ -47,7 +47,7 @@ declare -A INFRA=(
 # existing server.properties. Edit these from the panel per world; they are
 # never overwritten here once present.
 declare -A DEFAULTS=(
-    [motd]="A BRUH Minecraft Server"
+    [motd]="A BRUH Minecraft"
     [difficulty]="normal"
     [gamemode]="survival"
     [force-gamemode]="true"

@@ -1,20 +1,19 @@
 /* BRUH Insights — panel stylesheet
-   Dark-first, follows the validated data-viz chrome tokens.
+   Dark-first, BRUH Automation brand tokens (azure/sky/navy/slate).
    Light mode via prefers-color-scheme. */
 
 :root {
   color-scheme: dark;
-  --plane: #0d0d0d;
-  --surface: #1a1a19;
-  --surface-2: #222221;
+  --plane: #0a1622;
+  --surface: #0e1e30;
+  --surface-2: #15293f;
   --ink: #ffffff;
-  --ink-2: #c3c2b7;
-  --ink-3: #898781;
+  --ink-2: #b9ccdd;
+  --ink-3: #7e96aa;
   --hairline: rgba(255, 255, 255, 0.10);
-  --grid: #2c2c2a;
-  --accent: #3987e5;
-  --accent-2: #9085e9;
-  --accent-3: #d55181;
+  --grid: #1c3349;
+  --accent: #1e9fe0;
+  --accent-2: #5ac4f2;
   --good: #0ca30c;
   --warning: #fab219;
   --serious: #ec835a;
@@ -26,18 +25,17 @@
 @media (prefers-color-scheme: light) {
   :root {
     color-scheme: light;
-    --plane: #f9f9f7;
-    --surface: #fcfcfb;
-    --surface-2: #f0efec;
-    --ink: #0b0b0b;
-    --ink-2: #52514e;
-    --ink-3: #898781;
-    --hairline: rgba(11, 11, 11, 0.10);
-    --grid: #e1e0d9;
-    --accent: #2a78d6;
-    --accent-2: #4a3aa7;
-    --accent-3: #e87ba4;
-    --shadow: 0 8px 28px rgba(11, 11, 11, 0.08);
+    --plane: #f5f9fc;
+    --surface: #ffffff;
+    --surface-2: #e8f1f8;
+    --ink: #0a1622;
+    --ink-2: #33506a;
+    --ink-3: #7e96aa;
+    --hairline: rgba(10, 22, 34, 0.10);
+    --grid: #dbe6ef;
+    --accent: #1e9fe0;
+    --accent-2: #0d7fbe;
+    --shadow: 0 8px 28px rgba(10, 22, 34, 0.08);
   }
 }
 
@@ -78,14 +76,18 @@ html, body {
   white-space: nowrap;
 }
 
-.brand .spark {
-  width: 26px;
-  height: 26px;
+.brand .tile {
+  width: 28px;
+  height: 28px;
   flex: none;
+  border-radius: 22.5%;
+  overflow: hidden;
+  display: inline-block;
 }
+.brand .tile svg { display: block; width: 100%; height: 100%; }
 
 .brand .grad {
-  background: linear-gradient(100deg, var(--accent), var(--accent-2), var(--accent-3), var(--accent));
+  background: linear-gradient(100deg, var(--accent), var(--accent-2), var(--accent), var(--accent-2));
   background-size: 250% 100%;
   -webkit-background-clip: text;
   background-clip: text;
@@ -93,14 +95,8 @@ html, body {
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  .brand .grad { animation: shimmer 7s linear infinite; }
+  .brand .grad { animation: shimmer 8s linear infinite; }
   @keyframes shimmer { to { background-position: 250% 0; } }
-  .brand .spark { animation: sparkspin 14s linear infinite; transform-origin: 50% 50%; }
-  @keyframes sparkspin {
-    0%, 88% { transform: rotate(0deg); }
-    94% { transform: rotate(190deg); }
-    100% { transform: rotate(360deg); }
-  }
 }
 
 .topbar .spacer { flex: 1; }

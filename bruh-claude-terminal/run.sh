@@ -1,6 +1,6 @@
 #!/usr/bin/with-contenv bashio
 
-# BRUH Claude Terminal - Enhanced startup script
+# BRUH Terminal - Enhanced startup script
 # Features: HA MCP server, auto-backup, context generation, config reload, log access
 
 set -e
@@ -36,7 +36,7 @@ init_environment() {
     local state_dir="/data/.local/state"
     local claude_config_dir="/data/.config/claude"
 
-    bashio::log.info "Initializing BRUH Claude Terminal environment..."
+    bashio::log.info "Initializing BRUH Terminal environment..."
 
     if ! mkdir -p \
         "$data_home" \
@@ -345,7 +345,7 @@ WRAPPER
     # 3. The `claude` command resolves to the native binary
     local profile="/data/home/.bashrc"
     cat > "$profile" << 'PROFILE'
-# BRUH Claude Terminal shell profile (auto-generated at startup)
+# BRUH Terminal shell profile (auto-generated at startup)
 export PATH="$HOME/.local/bin:$PATH"
 
 # Source HA environment if available
@@ -674,12 +674,12 @@ setup_auto_backup() {
         bashio::log.info "Initializing git repository in /config..."
         git -C /config init
         git -C /config config user.email "bruh-claude@homeassistant.local"
-        git -C /config config user.name "BRUH Claude Terminal"
+        git -C /config config user.name "BRUH Terminal"
 
         # Create .gitignore for HA config
         if [ ! -f "/config/.gitignore" ]; then
             cat > /config/.gitignore << 'GITIGNORE'
-# BRUH Claude Terminal auto-backup gitignore
+# BRUH Terminal auto-backup gitignore
 # Secrets and sensitive files
 secrets.yaml
 .storage/
@@ -718,7 +718,7 @@ GITIGNORE
         fi
 
         git -C /config add -A
-        git -C /config commit -m "Initial BRUH Claude Terminal backup" --allow-empty || true
+        git -C /config commit -m "Initial BRUH Terminal backup" --allow-empty || true
         bashio::log.info "Git repository initialized in /config"
     fi
 
@@ -1253,7 +1253,7 @@ send_discovery_message() {
     local config
     config=$(bashio::var.json \
         addon "bruh_claude_terminal" \
-        addon_name "BRUH Claude Terminal" \
+        addon_name "BRUH Terminal" \
         version "${addon_version}" \
     )
 
@@ -1469,7 +1469,7 @@ get_claude_launch_command() {
 
 start_web_terminal() {
     local port=7681
-    bashio::log.info "Starting BRUH Claude Terminal on port ${port}..."
+    bashio::log.info "Starting BRUH Terminal on port ${port}..."
 
     bashio::log.info "Environment:"
     bashio::log.info "  ANTHROPIC_CONFIG_DIR=${ANTHROPIC_CONFIG_DIR}"
@@ -1567,7 +1567,7 @@ trap cleanup SIGTERM SIGINT EXIT
 
 main() {
     bashio::log.info "============================================"
-    bashio::log.info "  BRUH Claude Terminal v2.2.1"
+    bashio::log.info "  BRUH Terminal v2.2.1"
     bashio::log.info "  Enhanced Claude Code for Home Assistant"
     bashio::log.info "============================================"
 

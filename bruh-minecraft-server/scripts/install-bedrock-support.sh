@@ -201,7 +201,7 @@ configure_geyser() {
     mkdir -p "${plugin_dir}"
 
     local motd
-    motd="$(read_prop motd 'A BRUH Minecraft Server')"
+    motd="$(read_prop motd 'A BRUH Minecraft')"
     local motd_sub="Powered by BRUH HA Apps"
 
     log "Resolved Geyser auth-type: ${auth_type} (requested='${GEYSER_AUTH_TYPE:-auto}', online-mode='$(read_prop online-mode true)')"
@@ -292,7 +292,7 @@ configure_geyser() {
         local fresh_mtu="${GEYSER_MTU:-1400}"
         log "Staging fresh Geyser config at ${cfg} (auth-type: ${auth_type}, validate-bedrock-login: ${fresh_validate}, mtu: ${fresh_mtu})"
         cat > "${cfg}" <<YAML
-# Managed by BRUH Minecraft Server add-on.
+# Managed by BRUH Minecraft add-on.
 # auth-type, validate-bedrock-login, and mtu are re-asserted on every
 # add-on boot from the add-on options. See the README / DOCS for the
 # tradeoffs between floodgate / offline / online. Every other key here
