@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>BRUH Insights</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css?v={{VERSION}}">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <svg class="spark" viewBox="0 0 24 24" aria-hidden="true">
+      <defs>
+        <linearGradient id="sg" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#3987e5"/>
+          <stop offset="0.55" stop-color="#9085e9"/>
+          <stop offset="1" stop-color="#d55181"/>
+        </linearGradient>
+      </defs>
+      <path fill="url(#sg)" d="M12 1.6l2.1 6.1a2 2 0 0 0 1.2 1.2l6.1 2.1-6.1 2.1a2 2 0 0 0-1.2 1.2L12 20.4l-2.1-6.1a2 2 0 0 0-1.2-1.2L2.6 11l6.1-2.1a2 2 0 0 0 1.2-1.2L12 1.6z"/>
+      <circle fill="url(#sg)" cx="19.4" cy="18.6" r="2.1"/>
+    </svg>
+    <span class="txt">BRUH <span class="grad">Insights</span></span>
+  </div>
+  <div class="spacer"></div>
+  <span id="authChip" class="chip"><span class="dot"></span><span id="authChipText">Checking…</span></span>
+  <button id="refreshAll" class="btn primary hidden">↻&nbsp; Refresh all</button>
+</header>
+
+<main class="wrap">
+
+  <!-- Connect / setup screen (shown when no credential is stored) -->
+  <section id="setup" class="setup hidden">
+    <h2>Connect your Claude account&nbsp;✨</h2>
+    <p class="sub">BRUH Insights uses your Claude subscription (Pro or Max) to analyze your home and
+      generate live interactive visualizations. Connect once — the credential is stored only inside
+      this add-on.</p>
+
+    <div class="tabs">
+      <button class="btn small tab active" data-pane="guided">Guided sign-in</button>
+      <button class="btn small tab" data-pane="paste">Paste a token</button>
+      <button class="btn small tab" data-pane="apikey">API key</button>
+    </div>
+
+    <div class="pane active" data-pane="guided">
+      <ol class="steps">
+        <li>Click <b>Start sign-in</b> — we'll prepare a secure Anthropic sign-in link.</li>
+        <li>Open the link, sign in with your Claude account, and copy the code it gives you.</li>
+        <li>Paste the code below. Done — no API key needed.</li>
+      </ol>
+      <div class="row">
+        <button id="setupStart" class="btn primary">Start sign-in</button>
+        <span id="setupPhase" class="chip hidden"><span class="dot"></span><span id="setupPhaseText"></span></span>
+      </div>
+      <div id="setupUrlBox" class="urlbox hidden">
+        Open this link to authorize:<br>
+        <a id="setupUrl" href="#" target="_blank" rel="noopener"></a>
+      </div>
+      <div id="setupCodeRow" class="hidden">
+        <label for="setupCode">Authorization code</label>
+        <input id="setupCode" type="text" autocomplete="off" placeholder="Paste the code from the sign-in page">
+        <div class="row">
+          <button id="setupSubmit" class="btn primary">Connect</button>
+          <button id="setupCancel" class="btn ghost">Cancel</button>
+        </div>
+      </div>
+      <div id="setupErr" class="flowerr hidden"></div>
+    </div>
+
+    <div class="pane" data-pane="paste">
+      <p class="hint">Already use the <b>BRUH Claude Terminal</b> add-on (or Claude Code anywhere)?
+        Run <code>claude setup-token</code> there and paste the resulting
+        <code>sk-ant-oat…</code> token here. It uses your subscription, not API credits.</p>
+      <label for="pasteToken">Long-lived token</label>
+      <input id="pasteToken" type="password" placeholder="sk-ant-oat01-…">
+      <div class="row"><button id="pasteSave" class="btn primary">Connect</button></div>
+    </div>
+
+    <div class="pane" data-pane="apikey">
+      <p class="hint">Prefer pay-as-you-go? Paste an Anthropic API key from
+        console.anthropic.com. (Subscription users should use the other tabs — they're included in
+        your plan.)</p>
+      <label for="apiKey">API key</label>
+      <input id="apiKey" type="password" placeholder="sk-ant-api…">
+      <div class="row"><button id="apiSave" class="btn primary">Connect</button></div>
+    </div>
+  </section>
+
+  <!-- Dashboard -->
+  <section id="dash" class="hidden">
+    <form id="askForm" class="askbar">
+      <input id="askInput" type="text" maxlength="500" autocomplete="off"
+             placeholder="Ask Claude anything about your home — “How’s my energy use trending?” “Which rooms are coldest at night?”">
+      <button class="btn primary" type="submit">Ask&nbsp;✨</button>
+    </form>
+
+    <div id="filters" class="filters"></div>
+    <div id="grid" class="grid"></div>
+  </section>
+
+</main>
+
+<div id="modal" class="modal" role="dialog" aria-modal="true">
+  <div class="box">
+    <header>
+      <span id="modalIcon"></span>
+      <span id="modalTitle"></span>
+      <div class="spacer"></div>
+      <button id="modalClose" class="btn icon" aria-label="Close">✕</button>
+    </header>
+    <iframe id="modalFrame" sandbox="allow-scripts" title="Insight visualization"></iframe>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script src="app.js?v={{VERSION}}"></script>
+</body>
+</html>
