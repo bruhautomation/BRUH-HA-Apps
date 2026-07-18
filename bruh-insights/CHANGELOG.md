@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.0.2
+
+- Fix guided sign-in hanging forever on "Exchanging code…": when the code exchange
+  fails, the Claude CLI prints "OAuth error … Press Enter to retry." and blocks —
+  the flow now detects this, presses Enter for you, surfaces the error, and offers
+  the **fresh** sign-in link the CLI mints on retry (the old page's code is dead
+  after a failed attempt, so re-pasting it can never work)
+- Add a 2-minute watchdog on the code exchange so the panel errors out with the
+  CLI's output instead of hanging silently
+- "Start sign-in" now tears down a dead or wedged previous flow instead of
+  silently re-attaching to it; reloading the page mid-flow still reattaches to a
+  healthy one
+- Show live CLI status under the phase chip while exchanging, keep the Cancel
+  button reachable during the exchange, and clear the stale code box when a fresh
+  link arrives
+- Accept future token prefixes (`sk-ant-oatNN-…`)
+
 ## 1.0.1
 
 - Fix guided Claude sign-in showing a truncated OAuth link ("Invalid OAuth Request:

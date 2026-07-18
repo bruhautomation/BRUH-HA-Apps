@@ -213,6 +213,61 @@ class TestClaudeClient(unittest.TestCase):
         buf = f"{url}\nPaste code here if prompted:"
         self.assertEqual(claude_client.extract_oauth_url(buf), url)
 
+    def test_token_regex_accepts_future_prefixes(self):
+        self.assertTrue(claude_client.OAUTH_TOKEN_RE.search("sk-ant-oat01-" + "a" * 24))
+        self.assertTrue(claude_client.OAUTH_TOKEN_RE.search("sk-ant-oat05-" + "b" * 24))
+        self.assertFalse(claude_client.OAUTH_TOKEN_RE.search("sk-ant-api03-" + "c" * 24))
+
+    def test_setup_flow_retry_after_failed_exchange(self):
+        """Failed code exchange: CLI prints 'OAuth error…Press Enter to retry.'
+        and blocks; the flow must press Enter, loop to awaiting_code, and pick
+        up the FRESH URL (new state) while ignoring the stale one."""
+        flow = claude_client.SetupTokenFlow()
+        read_fd, write_fd = os.pipe()
+        try:
+            old_url = ("https://claude.ai/oauth/authorize?code=true&client_id=a"
+                       "&redirect_uri=r&state=OLD")
+            new_url = ("https://claude.ai/oauth/authorize?code=true&client_id=a"
+                       "&redirect_uri=r&state=NEWSTATE")
+            buf = (f"Use the url below to sign in\n{old_url}\n"
+                   "Paste code here if prompted >\n")
+            flow.phase = "starting"
+            flow._scan(buf)
+            self.assertEqual(flow.phase, "awaiting_code")
+            self.assertEqual(flow.url, old_url)
+
+            # user submits a bad code (simulate the state transition)
+            flow.phase = "working"
+            flow._fd = write_fd
+            flow._code_from = len(buf)
+            flow._code_sent_at = 1.0
+            buf += "OAuth error: Request failed with status code 400Press Enter to retry."
+            flow.output = buf
+            flow._scan(buf)
+            self.assertEqual(flow.phase, "starting")
+            self.assertIn("OAuth error", flow.error)
+            self.assertIn("fresh sign-in link", flow.error)
+            self.assertEqual(flow.url, "")
+            self.assertEqual(os.read(read_fd, 10), b"\r")  # Enter was pressed
+
+            # CLI mints a fresh URL; the stale one must not be re-surfaced
+            buf += f"Retrying…\n{new_url}\nPaste code here if prompted >\n"
+            flow.output = buf
+            flow._scan(buf)
+            self.assertEqual(flow.phase, "awaiting_code")
+            self.assertEqual(flow.url, new_url)
+        finally:
+            os.close(read_fd)
+            os.close(write_fd)
+            flow._fd = None
+
+    def test_setup_flow_status_masks_token_in_detail(self):
+        flow = claude_client.SetupTokenFlow()
+        flow.output = "some line\nyour token: sk-ant-oat01-" + "z" * 30
+        status = flow.status()
+        self.assertIn("detail", status)
+        self.assertNotIn("z" * 30, status["detail"])
+
     def test_run_claude_with_stub(self):
         stub = Path(self.tmp.name) / "claude"
         envelope = {"type": "result", "result": '{"title":"T"}',

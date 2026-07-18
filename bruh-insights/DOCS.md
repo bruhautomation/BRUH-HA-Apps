@@ -68,6 +68,11 @@ in one by one.
   `model`.
 - **Cards look thin** ("data for this angle is thin"): the category found few matching
   entities. That's honest — check the entity list in HA (areas assigned? sensors enabled?).
+- **"OAuth error … status code 400" during guided sign-in**: the one-time code
+  didn't match this sign-in attempt — codes are tied to the exact link that produced
+  them and expire quickly. The panel automatically fetches a **fresh link** after a
+  failed attempt: open the new link (not an old tab!), sign in again, and paste the
+  new code. Always copy the entire code shown on the callback page.
 - **Guided sign-in never shows a link**: use the *Paste a token* tab instead (run
   `claude setup-token` in any terminal with Claude Code installed) — same result.
 - Logs: **Settings → Add-ons → BRUH Insights → Log**.
