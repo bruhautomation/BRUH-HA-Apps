@@ -186,6 +186,33 @@ class TestClaudeClient(unittest.TestCase):
     def test_extract_json_invalid(self):
         self.assertIsNone(claude_client.extract_json("no json here"))
 
+    def test_extract_oauth_url_single_line(self):
+        url = ("https://claude.ai/oauth/authorize?code=true&client_id=abc"
+               "&redirect_uri=https%3A%2F%2Fconsole.anthropic.com%2Foauth%2Fcode%2Fcallback"
+               "&code_challenge=xyz")
+        buf = f"Browse to the following URL:\n{url}\nPaste code here if prompted:"
+        self.assertEqual(claude_client.extract_oauth_url(buf), url)
+
+    def test_extract_oauth_url_stitches_wrapped_lines(self):
+        """A pty hard-wraps the long authorize URL; fragments must be rejoined."""
+        full = ("https://claude.ai/oauth/authorize?code=true&client_id=abcdef123456"
+                "&response_type=code"
+                "&redirect_uri=https%3A%2F%2Fconsole.anthropic.com%2Foauth%2Fcode%2Fcallback"
+                "&scope=org%3Acreate_api_key&code_challenge=AbCdEf&state=XyZ")
+        wrapped = "\n".join([full[i:i + 60] for i in range(0, len(full), 60)])
+        buf = f"Browse to the following URL:\n{wrapped}\n\nPaste code here if prompted:"
+        self.assertEqual(claude_client.extract_oauth_url(buf), full)
+
+    def test_extract_oauth_url_rejects_truncated(self):
+        """A bare origin with no query string is a wrap artifact, not a link."""
+        buf = "Browse to the following URL:\nhttps://claude.ai/oauth/authorize\n"
+        self.assertEqual(claude_client.extract_oauth_url(buf), "")
+
+    def test_extract_oauth_url_does_not_glue_prose(self):
+        url = "https://claude.ai/oauth/authorize?code=true&client_id=abc&redirect_uri=x"
+        buf = f"{url}\nPaste code here if prompted:"
+        self.assertEqual(claude_client.extract_oauth_url(buf), url)
+
     def test_run_claude_with_stub(self):
         stub = Path(self.tmp.name) / "claude"
         envelope = {"type": "result", "result": '{"title":"T"}',

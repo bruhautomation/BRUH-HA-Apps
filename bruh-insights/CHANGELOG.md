@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.1
+
+- Fix guided Claude sign-in showing a truncated OAuth link ("Invalid OAuth Request:
+  Missing redirect_uri parameter"): the pty terminal hard-wrapped the very long
+  authorize URL and only the first line was captured. The setup flow now runs the
+  CLI in an ultra-wide pseudo-terminal, stitches wrapped URL lines back together as
+  a fallback, and never surfaces a link that lost its OAuth query parameters.
+
 ## 1.0.0
 
 Initial release 🎉
