@@ -1,7 +1,7 @@
 ---
-name: "BRUH Claude Terminal"
+name: "BRUH Terminal"
 description: "Enhanced Claude Code terminal for Home Assistant with native HA API access, auto-backup, context generation, and Assist integration"
-version: "3.2.4"
+version: "3.2.5"
 slug: "bruh_claude_terminal"
 init: false
 
@@ -17,7 +17,7 @@ url: "https://github.com/bruhautomation/BRUH-HA-Apps"
 ingress: true
 ingress_port: 7681
 panel_icon: mdi:creation
-panel_title: "BRUH Claude"
+panel_title: "Terminal"
 panel_admin: true
 
 # Port configuration

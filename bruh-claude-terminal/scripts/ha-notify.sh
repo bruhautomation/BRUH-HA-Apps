@@ -26,7 +26,7 @@ Usage:
   ha-notify "message" [--title "title"] [--target <name>|all]
 
 Options:
-  --title    Notification title (default: "BRUH Claude Terminal")
+  --title    Notification title (default: "BRUH Terminal")
   --target   Notification target: a mobile_app name suffix or "all"
              If omitted, sends a persistent notification to the HA UI
 
@@ -70,7 +70,7 @@ get_notify_services() {
 check_token
 
 message=""
-title="BRUH Claude Terminal"
+title="BRUH Terminal"
 target=""
 
 # Parse arguments

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 ## Project Overview
 
-This repository contains Home Assistant add-ons by BRUH Automation. The primary add-on is **BRUH Claude Terminal** - an enhanced Claude Code terminal for Home Assistant with native HA API access, auto-backup, context generation, and deep HA integration.
+This repository contains Home Assistant add-ons by BRUH Automation. The primary add-on is **BRUH Terminal** - an enhanced Claude Code terminal for Home Assistant with native HA API access, auto-backup, context generation, and deep HA integration.
 
 ## Repository Structure
 

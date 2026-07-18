@@ -1,6 +1,6 @@
 #!/usr/bin/with-contenv bashio
 
-# Home Assistant API Examples for BRUH Claude Terminal
+# Home Assistant API Examples for BRUH Terminal
 # Demonstrates how to interact with Home Assistant APIs
 
 RED='\033[0;31m'
@@ -11,7 +11,7 @@ NC='\033[0m'
 
 echo "╔══════════════════════════════════════════════════════════════╗"
 echo "║          Home Assistant API Examples                        ║"
-echo "║          BRUH Claude Terminal                               ║"
+echo "║          BRUH Terminal                               ║"
 echo "╚══════════════════════════════════════════════════════════════╝"
 echo ""
 
@@ -64,7 +64,7 @@ api_call "core/api/system_health/info" | jq '.'
 echo ""
 
 echo "════════════════════════════════════════════════════════════════"
-echo -e "${BLUE}BRUH Claude Terminal enhanced tools:${NC}"
+echo -e "${BLUE}BRUH Terminal enhanced tools:${NC}"
 echo ""
 echo "  ha-reload automations  - Reload automations after YAML edit"
 echo "  ha-reload all          - Reload all configurations"

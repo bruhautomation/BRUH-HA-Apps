@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Set up BRUH Minecraft",
-        "description": "This integration talks to the BRUH Minecraft Server add-on running on this Home Assistant host. The add-on exposes sensors, buttons, and services for controlling your Minecraft server.\n\nServer files live at `{server_dir}` and backups at `{backup_dir}`."
+        "description": "This integration talks to the BRUH Minecraft add-on running on this Home Assistant host. The add-on exposes sensors, buttons, and services for controlling your Minecraft server.\n\nServer files live at `{server_dir}` and backups at `{backup_dir}`."
       },
       "confirm": {
         "title": "BRUH Minecraft discovered",

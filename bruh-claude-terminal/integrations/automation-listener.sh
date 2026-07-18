@@ -325,14 +325,14 @@ process_task() {
         bashio::log.error "Empty result for task [$task_id] after ${duration}s"
         bashio::log.error "Stderr: ${stderr_output:0:500}"
         if [ "$duration" -ge "$((claude_limit - 5))" ] 2>/dev/null; then
-            result="Claude task timed out after ${duration}s. This may be caused by a broken MCP server connection. Try restarting the BRUH Claude Terminal add-on."
+            result="Claude task timed out after ${duration}s. This may be caused by a broken MCP server connection. Try restarting the BRUH Terminal add-on."
             bashio::log.error "Claude process timed out (limit=${claude_limit}s)"
         elif echo "$stderr_output" | grep -qi "not logged in\|please log in\|authentication"; then
-            result="Claude is not logged in. Please open the BRUH Claude Terminal sidebar and complete the OAuth login first."
+            result="Claude is not logged in. Please open the BRUH Terminal sidebar and complete the OAuth login first."
         elif echo "$stderr_output" | grep -qi "permission\|not allowed\|denied"; then
             result="Claude encountered a permission error. Check the add-on logs for details."
         else
-            result="Task failed — Claude didn't produce a result. Check the BRUH Claude Terminal add-on logs."
+            result="Task failed — Claude didn't produce a result. Check the BRUH Terminal add-on logs."
         fi
     fi
 
@@ -357,7 +357,7 @@ process_task() {
 
     # Check for auth errors in the result text
     if echo "$result" | grep -qi "not logged in\|please log in\|authentication required"; then
-        result="Claude is not logged in. Please open the BRUH Claude Terminal sidebar and complete the OAuth login first."
+        result="Claude is not logged in. Please open the BRUH Terminal sidebar and complete the OAuth login first."
         bashio::log.error "Claude auth error - user needs to log in via the terminal"
     fi
 

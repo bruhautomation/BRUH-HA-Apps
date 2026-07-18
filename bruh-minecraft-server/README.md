@@ -1,4 +1,4 @@
-<h1 align="center">BRUH Minecraft Server</h1>
+<h1 align="center">BRUH Minecraft</h1>
 
 <p align="center">
   A complete Minecraft server add-on for Home Assistant — ingress panel,
@@ -35,7 +35,7 @@
    ```
    https://github.com/bruhautomation/BRUH-HA-Apps
    ```
-2. Install **BRUH Minecraft Server** and **Start** it.
+2. Install **BRUH Minecraft** and **Start** it.
 3. Open the sidebar **Minecraft** entry. The **Welcome wizard** walks you through the EULA, online/offline mode, and server type. Click *Start the server* — that's it.
 
 > The wizard is the only setup step. After it finishes the server boots and the panel takes over.

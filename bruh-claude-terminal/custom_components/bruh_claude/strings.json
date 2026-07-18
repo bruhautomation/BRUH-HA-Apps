@@ -31,7 +31,7 @@
       },
       "hassio_confirm": {
         "title": "BRUH Claude Discovered",
-        "description": "The BRUH Claude Terminal add-on has been detected. Click Submit to create a conversation agent and usage limit sensors.\n\nYou can add more agents with different personalities later from the integration page."
+        "description": "The BRUH Terminal add-on has been detected. Click Submit to create a conversation agent and usage limit sensors.\n\nYou can add more agents with different personalities later from the integration page."
       },
       "user": {
         "title": "Add BRUH Claude",
@@ -63,7 +63,7 @@
       }
     },
     "error": {
-      "addon_not_running": "The BRUH Claude Terminal add-on does not appear to be running. Start the add-on and try again.",
+      "addon_not_running": "The BRUH Terminal add-on does not appear to be running. Start the add-on and try again.",
       "no_features": "Please enable at least one feature.",
       "invalid_daily_at": "Daily time must be HH:MM (24-hour), e.g. 07:30."
     },

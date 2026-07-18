@@ -112,7 +112,7 @@ cmd_switch() {
     # Supervisor's POST /addons/self/options REPLACES the options object and
     # runs the full add-on schema validation against the new payload. A bare
     # {"active_world": "<name>"} is rejected with
-    #   "Missing option 'allow_nether' in root in BRUH Minecraft Server…"
+    #   "Missing option 'allow_nether' in root in BRUH Minecraft…"
     # because every required field that isn't in the payload is treated as
     # missing. Fetch the current options first, merge in the new
     # active_world, then POST the merged object so the rest of the config

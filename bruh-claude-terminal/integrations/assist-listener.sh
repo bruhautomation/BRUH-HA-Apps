@@ -638,18 +638,18 @@ USER: ${stamped_text}"
         bashio::log.error "Empty response for [$req_id] after ${duration}s (exit=$exit_code)"
         bashio::log.error "Stderr: ${stderr_output:0:500}"
         if [ "$exit_code" -ge 124 ] 2>/dev/null && [ "$duration" -ge "$((claude_limit - 5))" ] 2>/dev/null; then
-            response="Claude timed out after ${duration}s. This may be caused by a broken MCP server connection. Try restarting the BRUH Claude Terminal add-on."
+            response="Claude timed out after ${duration}s. This may be caused by a broken MCP server connection. Try restarting the BRUH Terminal add-on."
             bashio::log.error "Claude process timed out (exit=$exit_code, limit=${claude_limit}s)"
         elif echo "$stderr_output" | grep -qi "not logged in\|please log in\|authentication"; then
-            response="Claude is not logged in. Please open the BRUH Claude Terminal sidebar and complete the OAuth login first."
+            response="Claude is not logged in. Please open the BRUH Terminal sidebar and complete the OAuth login first."
         elif echo "$stderr_output" | grep -qi "/api/mcp\|invalid authentication.*mcp"; then
-            response="Claude encountered a broken MCP server connection (/api/mcp auth error). Restart the BRUH Claude Terminal add-on to clean it up."
+            response="Claude encountered a broken MCP server connection (/api/mcp auth error). Restart the BRUH Terminal add-on to clean it up."
             bashio::log.error "Detected /api/mcp auth error — running deep MCP cleanup for the next request"
             verify_mcp_config_full
         elif echo "$stderr_output" | grep -qi "permission\|not allowed\|denied"; then
             response="Claude encountered a permission error. Check the add-on logs for details."
         else
-            response="Sorry, Claude didn't produce a response. Check the BRUH Claude Terminal add-on logs for details."
+            response="Sorry, Claude didn't produce a response. Check the BRUH Terminal add-on logs for details."
         fi
     fi
 
@@ -660,7 +660,7 @@ USER: ${stamped_text}"
 
     # Check for auth errors in the response text
     if echo "$response" | grep -qi "not logged in\|please log in\|authentication required"; then
-        response="Claude is not logged in. Please open the BRUH Claude Terminal sidebar and complete the OAuth login first."
+        response="Claude is not logged in. Please open the BRUH Terminal sidebar and complete the OAuth login first."
         bashio::log.error "Claude auth error - user needs to log in via the terminal"
     fi
 

@@ -1,7 +1,7 @@
 ---
 name: "BRUH Insights"
 description: "AI-powered insights dashboard — Claude analyzes your Home Assistant data and generates beautiful interactive visualizations in the sidebar"
-version: "1.0.3"
+version: "1.0.4"
 slug: "bruh_insights"
 init: false
 
@@ -35,7 +35,7 @@ schema:
   log_level: "list(trace|debug|info|notice|warning|error|fatal)?"
 
 # Read-only view of the HA config directory. Used to pick up the CLAUDE.md
-# home context that BRUH Claude Terminal generates (if installed) so insights
+# home context that BRUH Terminal generates (if installed) so insights
 # know about the user's naming conventions and setup. Never written to.
 map:
   - type: homeassistant_config

@@ -1,7 +1,7 @@
 # Plugin command reference
 
 A practical, copy-pasteable reference for every plugin shipped by the
-**BRUH Minecraft Server** add-on. Each section opens with what the
+**BRUH Minecraft** add-on. Each section opens with what the
 plugin actually does, then lists the commands you'll reach for daily,
 plus a few "killer combo" recipes that show the plugin at its best.
 

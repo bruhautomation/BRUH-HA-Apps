@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# BRUH Claude Terminal - Enhanced Session Picker
+# BRUH Terminal - Enhanced Session Picker
 # Adds background task support, multi-session via tmux windows
 
 TMUX_SESSION_NAME="claude"
@@ -20,7 +20,7 @@ fi
 show_banner() {
     clear
     echo "╔══════════════════════════════════════════════════════════════╗"
-    echo "║             BRUH Claude Terminal                           ║"
+    echo "║             BRUH Terminal                           ║"
     echo "║             Enhanced Session Picker                        ║"
     echo "╚══════════════════════════════════════════════════════════════╝"
     echo ""

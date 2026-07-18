@@ -1,6 +1,6 @@
 #!/usr/bin/with-contenv bashio
 
-# BRUH Claude Terminal - Health check script
+# BRUH Terminal - Health check script
 # Validates environment and provides diagnostic information
 
 check_system_resources() {
@@ -269,7 +269,7 @@ check_network_connectivity() {
 
 run_diagnostics() {
     bashio::log.info "========================================="
-    bashio::log.info "BRUH Claude Terminal Health Check"
+    bashio::log.info "BRUH Terminal Health Check"
     bashio::log.info "========================================="
 
     local errors=0

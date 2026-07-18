@@ -11,7 +11,7 @@ args:
   ADDON_VERSION: "{{ version }}"
 
 labels:
-  org.opencontainers.image.title: "Home Assistant App: BRUH Minecraft Server"
+  org.opencontainers.image.title: "Home Assistant App: BRUH Minecraft"
   org.opencontainers.image.description: "Rock-solid Minecraft Java Edition server with ingress panel, RCON, git backups, and deep HA integration"
   org.opencontainers.image.source: "https://github.com/bruhautomation/BRUH-HA-Apps"
   org.opencontainers.image.licenses: "MIT"

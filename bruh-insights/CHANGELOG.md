@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.0.4
+
+- Fix insight generation failing with "max number of turns": tools are now disallowed
+  outright for generation runs (insights are pure generation over the data snapshot),
+  so the model can no longer burn its turn limit attempting tool calls; turn margin
+  raised as well, and the error message is friendlier if it ever recurs
+- Smoother guided sign-in: the status poll now survives transient connection drops
+  (mobile apps suspend the webview in the background — previously the UI could stay
+  frozen on "Exchanging code…" after sign-in had already succeeded), returning to the
+  tab refreshes state immediately, elapsed time is shown during the exchange, and the
+  silent-exchange nudges fire earlier (10s/30s/75s)
+- Unified BRUH Apps branding: new "Solid Blocks" icon, logo, and favicon from the
+  BRUH Automation brand system; panel restyled with the brand palette (azure/sky on
+  navy) in dark and light mode
+
 ## 1.0.3
 
 - Fix the "Exchanging code…" watchdog never firing on a *silent* hang: it only ran
