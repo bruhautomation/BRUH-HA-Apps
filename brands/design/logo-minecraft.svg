@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 320">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#182432"/>
+      <stop offset="1" stop-color="#0b111a"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.58" r="0.62">
+      <stop offset="0" stop-color="#6fbf43" stop-opacity="0.26"/>
+      <stop offset="1" stop-color="#6fbf43" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1024" height="320" rx="56" fill="url(#bg)"/>
+  <rect x="7" y="7" width="1010" height="306" rx="49"
+        fill="none" stroke="#4aa3ff" stroke-opacity="0.16" stroke-width="3"/>
+  <defs>
+    <clipPath id="banner"><rect width="1024" height="320" rx="56"/></clipPath>
+  </defs>
+  <g clip-path="url(#banner)">
+    <g stroke="#1e90ff" fill="none">
+      <circle cx="1004" cy="40" r="70" stroke-width="10" stroke-opacity="0.10"/>
+      <circle cx="1004" cy="40" r="130" stroke-width="9" stroke-opacity="0.07"/>
+      <circle cx="1004" cy="40" r="195" stroke-width="8" stroke-opacity="0.045"/>
+    </g>
+    <circle cx="1004" cy="40" r="18" fill="#1e90ff" fill-opacity="0.14"/>
+  </g>
+  <g transform="translate(56,54) scale(0.414)">
+    <rect width="512" height="512" rx="116" fill="#141e2a"/>
+    <rect width="512" height="512" rx="116" fill="url(#glow)"/>
+    <rect x="8" y="8" width="496" height="496" rx="108"
+          fill="none" stroke="#4aa3ff" stroke-opacity="0.2" stroke-width="4"/>
+  <g transform="translate(56,56) scale(1.0)">
+    <rect width="128" height="128" rx="28" fill="#1e90ff"/>
+    <circle cx="64" cy="34" r="5.5" fill="white"/>
+    <path d="M 51 32 A 13 13 0 0 1 77 32" fill="none" stroke="white"
+          stroke-width="6" stroke-linecap="round"/>
+    <path d="M 42 30 A 22 22 0 0 1 86 30" fill="none" stroke="white"
+          stroke-width="6" stroke-linecap="round"/>
+    <path fill="white" fill-rule="evenodd" d="
+      M 46 57 L 69 57 Q 85 57 85 71.5 Q 85 81 76 85
+      Q 88 88.5 88 99 Q 88 112 70 112 L 46 112 Z
+      M 58 68 L 67 68 Q 73.5 68 73.5 73.5 Q 73.5 79 67 79 L 58 79 Z
+      M 58 89 L 69 89 Q 76.5 89 76.5 95 Q 76.5 101 69 101 L 58 101 Z"/>
+  </g>
+  <defs>
+    <clipPath id="block">
+      <rect x="144" y="196" width="224" height="224" rx="24"/>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#block)">
+    <rect x="144" y="196" width="224" height="84" fill="#5da838"/>
+    <rect x="144" y="280" width="224" height="140" fill="#7a4f26"/>
+    <rect x="172" y="196" width="28" height="28" fill="#6fbf43"/>
+    <rect x="256" y="196" width="28" height="28" fill="#6fbf43"/>
+    <rect x="312" y="224" width="28" height="28" fill="#6fbf43"/>
+    <rect x="200" y="224" width="28" height="28" fill="#6fbf43"/>
+    <rect x="144" y="252" width="28" height="28" fill="#6fbf43"/>
+    <rect x="284" y="252" width="28" height="28" fill="#6fbf43"/>
+    <rect x="340" y="196" width="28" height="28" fill="#6fbf43"/>
+    <rect x="228" y="252" width="28" height="28" fill="#6fbf43"/>
+    <rect x="200" y="196" width="28" height="28" fill="#4a9a28"/>
+    <rect x="284" y="224" width="28" height="28" fill="#4a9a28"/>
+    <rect x="340" y="252" width="28" height="28" fill="#4a9a28"/>
+    <rect x="144" y="224" width="28" height="28" fill="#4a9a28"/>
+    <rect x="228" y="224" width="28" height="28" fill="#4a9a28"/>
+    <rect x="312" y="252" width="28" height="28" fill="#4a9a28"/>
+    <rect x="172" y="280" width="28" height="28" fill="#6e4522"/>
+    <rect x="256" y="308" width="28" height="28" fill="#6e4522"/>
+    <rect x="312" y="280" width="28" height="28" fill="#6e4522"/>
+    <rect x="144" y="336" width="28" height="28" fill="#6e4522"/>
+    <rect x="228" y="364" width="28" height="28" fill="#6e4522"/>
+    <rect x="340" y="336" width="28" height="28" fill="#6e4522"/>
+    <rect x="200" y="392" width="28" height="28" fill="#6e4522"/>
+    <rect x="284" y="392" width="28" height="28" fill="#6e4522"/>
+    <rect x="144" y="280" width="28" height="28" fill="#6e4522"/>
+    <rect x="200" y="308" width="28" height="28" fill="#8a5a2b"/>
+    <rect x="284" y="336" width="28" height="28" fill="#8a5a2b"/>
+    <rect x="340" y="392" width="28" height="28" fill="#8a5a2b"/>
+    <rect x="144" y="364" width="28" height="28" fill="#8a5a2b"/>
+    <rect x="312" y="364" width="28" height="28" fill="#8a5a2b"/>
+    <rect x="228" y="308" width="28" height="28" fill="#8a5a2b"/>
+    <rect x="172" y="364" width="28" height="28" fill="#8a5a2b"/>
+    <rect x="228" y="280" width="28" height="28" fill="#4a9a28"/>
+    <rect x="312" y="308" width="28" height="28" fill="#4a9a28"/>
+    <rect x="144" y="308" width="28" height="28" fill="#4a9a28"/>
+  </g>
+  </g>
+  <text x="330" y="122" font-family="Liberation Sans" font-weight="bold"
+        font-size="52" letter-spacing="16" fill="#1e90ff">BRUH</text>
+  <text x="330" y="207" font-family="Liberation Sans" font-weight="bold"
+        font-size="72" fill="#edf3fa">Minecraft Server</text>
+  <text x="330" y="262" font-family="Liberation Sans" font-weight="bold"
+        font-size="26" letter-spacing="7" fill="#8fa8c4">HOME ASSISTANT ADD-ON</text>
+</svg>

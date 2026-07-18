@@ -6,6 +6,8 @@ Home Assistant add-on repository by BRUH Automation.
 
 ### [BRUH Claude Terminal](bruh-claude-terminal/)
 
+<img src="bruh-claude-terminal/logo.png" alt="BRUH Claude Terminal logo" width="400">
+
 Claude Code for Home Assistant — terminal, voice assistant, and proactive AI in one add-on:
 
 - **Fast voice assistant** - pre-warmed Claude workers (~3-5s commands), streaming TTS, conversation memory, multiple personalities, area-aware control
@@ -19,6 +21,8 @@ Claude Code for Home Assistant — terminal, voice assistant, and proactive AI i
 - **Automation integration** - trigger Claude tasks from HA automations
 
 ### [BRUH Minecraft Server](bruh-minecraft-server/)
+
+<img src="bruh-minecraft-server/logo.png" alt="BRUH Minecraft Server logo" width="400">
 
 Rock-solid Minecraft **Java Edition** server add-on with an ingress management panel, git-based world version control, RCON, and a first-class HA integration:
 

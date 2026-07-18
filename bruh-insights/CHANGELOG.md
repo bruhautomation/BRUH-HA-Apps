@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.1
+
+- **New unified BRUH Automation branding.** Redesigned `icon.png`,
+  `logo.png`, and the panel favicon using the shared BRUH add-on design
+  system — dark navy tile, the brand-blue BRUH chip (a bold B
+  broadcasting signal waves), and the Insights rising bars in the
+  blue → violet → pink gradient with a sparkle.
+
 ## 1.0.0
 
 Initial release 🎉

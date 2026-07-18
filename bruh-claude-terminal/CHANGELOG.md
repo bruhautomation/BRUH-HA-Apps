@@ -4,6 +4,20 @@ All notable changes to **BRUH Claude Terminal**, newest first. This project adhe
 
 > 💡 Prefer a cleaner, categorized view? See the [formatted changelog at bruhautomation.com](https://bruhautomation.com/bruh-claude/changelog/).
 
+## 3.2.5
+
+**New unified BRUH Automation branding.**
+
+- **Redesigned `icon.png` and `logo.png`** using the shared BRUH add-on
+  design system: dark navy tile, hairline blue ring, and a
+  terminal prompt chevron with a coral AI spark as the cursor. Every
+  icon carries the brand-blue BRUH chip — a bold white B broadcasting
+  signal waves.
+- The `bruh_claude` integration icon (`custom_components` and the staged
+  Home Assistant brands assets) now matches the add-on icon.
+- SVG masters and the render script live in `brands/design/` so the whole
+  set can be regenerated with one command.
+
 ## 3.2.4
 
 **Fix: automations calling BRUH Claude fail with an "MCP server unavailable"

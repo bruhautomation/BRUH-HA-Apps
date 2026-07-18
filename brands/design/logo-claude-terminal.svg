@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 320">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#182432"/>
+      <stop offset="1" stop-color="#0b111a"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.58" r="0.62">
+      <stop offset="0" stop-color="#d97757" stop-opacity="0.26"/>
+      <stop offset="1" stop-color="#d97757" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1024" height="320" rx="56" fill="url(#bg)"/>
+  <rect x="7" y="7" width="1010" height="306" rx="49"
+        fill="none" stroke="#4aa3ff" stroke-opacity="0.16" stroke-width="3"/>
+  <defs>
+    <clipPath id="banner"><rect width="1024" height="320" rx="56"/></clipPath>
+  </defs>
+  <g clip-path="url(#banner)">
+    <g stroke="#1e90ff" fill="none">
+      <circle cx="1004" cy="40" r="70" stroke-width="10" stroke-opacity="0.10"/>
+      <circle cx="1004" cy="40" r="130" stroke-width="9" stroke-opacity="0.07"/>
+      <circle cx="1004" cy="40" r="195" stroke-width="8" stroke-opacity="0.045"/>
+    </g>
+    <circle cx="1004" cy="40" r="18" fill="#1e90ff" fill-opacity="0.14"/>
+  </g>
+  <g transform="translate(56,54) scale(0.414)">
+    <rect width="512" height="512" rx="116" fill="#141e2a"/>
+    <rect width="512" height="512" rx="116" fill="url(#glow)"/>
+    <rect x="8" y="8" width="496" height="496" rx="108"
+          fill="none" stroke="#4aa3ff" stroke-opacity="0.2" stroke-width="4"/>
+  <g transform="translate(56,56) scale(1.0)">
+    <rect width="128" height="128" rx="28" fill="#1e90ff"/>
+    <circle cx="64" cy="34" r="5.5" fill="white"/>
+    <path d="M 51 32 A 13 13 0 0 1 77 32" fill="none" stroke="white"
+          stroke-width="6" stroke-linecap="round"/>
+    <path d="M 42 30 A 22 22 0 0 1 86 30" fill="none" stroke="white"
+          stroke-width="6" stroke-linecap="round"/>
+    <path fill="white" fill-rule="evenodd" d="
+      M 46 57 L 69 57 Q 85 57 85 71.5 Q 85 81 76 85
+      Q 88 88.5 88 99 Q 88 112 70 112 L 46 112 Z
+      M 58 68 L 67 68 Q 73.5 68 73.5 73.5 Q 73.5 79 67 79 L 58 79 Z
+      M 58 89 L 69 89 Q 76.5 89 76.5 95 Q 76.5 101 69 101 L 58 101 Z"/>
+  </g>
+  <path d="M 136 224 L 244 318 L 136 412" fill="none" stroke="#1e90ff"
+        stroke-width="46" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="298" y="390" width="112" height="30" rx="15" fill="#1e90ff"/>
+  <path fill="#d97757" fill-opacity="1.0" d="M 354 204 C 368.28 256.584 385.416 273.72 438 288 C 385.416 302.28 368.28 319.416 354 372 C 339.72 319.416 322.584 302.28 270 288 C 322.584 273.72 339.72 256.584 354 204 Z"/>
+  <path fill="#d97757" fill-opacity="0.85" d="M 432 170 C 436.42 186.276 441.724 191.58 458 196 C 441.724 200.42 436.42 205.724 432 222 C 427.58 205.724 422.276 200.42 406 196 C 422.276 191.58 427.58 186.276 432 170 Z"/>
+  </g>
+  <text x="330" y="122" font-family="Liberation Sans" font-weight="bold"
+        font-size="52" letter-spacing="16" fill="#1e90ff">BRUH</text>
+  <text x="330" y="207" font-family="Liberation Sans" font-weight="bold"
+        font-size="72" fill="#edf3fa">Claude Terminal</text>
+  <text x="330" y="262" font-family="Liberation Sans" font-weight="bold"
+        font-size="26" letter-spacing="7" fill="#8fa8c4">HOME ASSISTANT ADD-ON</text>
+</svg>

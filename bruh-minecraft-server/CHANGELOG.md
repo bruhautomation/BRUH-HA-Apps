@@ -5,6 +5,18 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.14.2
+
+New unified BRUH Automation branding.
+
+### Changed
+
+- **Redesigned `icon.png`, `logo.png`, and the panel favicon** using the
+  shared BRUH add-on design system: dark navy tile, the brand-blue BRUH
+  chip (a bold B broadcasting signal waves), and the pixel grass block
+  in a harmonised palette. SVG masters
+  live in `brands/design/` and can be re-rendered with one command.
+
 ## 1.14.1
 
 Compatibility with the latest Home Assistant (Supervisor 2026.04+).
