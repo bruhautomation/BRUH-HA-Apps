@@ -26,13 +26,16 @@ without the add-on runtime.
 """
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import pty
 import re
 import select
 import shutil
+import struct
 import subprocess
+import termios
 import threading
 import time
 
@@ -42,7 +45,44 @@ AUTH_FILE = os.path.join(SECRETS_DIR, "claude_auth.json")
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Z0-9]|[\r\x08]")
 URL_RE = re.compile(r"https://[^\s\"'\x1b]+")
+# characters legal inside the OAuth authorize URL (used to stitch hard-wrapped lines)
+URL_CHARS_RE = re.compile(r"^[A-Za-z0-9&?=%._~:/#+\-]+$")
 OAUTH_TOKEN_RE = re.compile(r"sk-ant-oat01-[A-Za-z0-9_\-]{20,}")
+
+# pty terminal geometry: the authorize URL is many hundreds of characters
+# long; a normal-width terminal hard-wraps it and a wrapped URL is what
+# produced truncated "Missing redirect_uri parameter" links. Make the pty
+# absurdly wide so the CLI never wraps it in the first place.
+PTY_COLS = 4000
+PTY_ROWS = 50
+
+
+def extract_oauth_url(buf: str) -> str:
+    """Find the complete OAuth authorize URL in (possibly wrapped) pty output.
+
+    Two defenses against terminal hard-wrapping:
+    - if a URL match runs to the end of its line, stitch on following lines
+      that consist purely of URL characters (wrap continuations);
+    - reject any candidate that lost its query string — showing a bare
+      origin sends the user to "Invalid OAuth Request: Missing redirect_uri".
+    """
+    candidates = []
+    lines = [ln.strip() for ln in buf.split("\n")]
+    for i, line in enumerate(lines):
+        match = URL_RE.search(line)
+        if not match:
+            continue
+        url = match.group(0)
+        if line.endswith(url):
+            j = i + 1
+            while j < len(lines) and lines[j] and URL_CHARS_RE.match(lines[j]):
+                url += lines[j]
+                j += 1
+        url = url.rstrip(".,)\"'")
+        if any(h in url for h in ("oauth", "claude.ai", "console.anthropic.com")):
+            candidates.append(url)
+    complete = [u for u in candidates if "?" in u and "=" in u]
+    return max(complete, key=len) if complete else ""
 
 
 # ---------------------------------------------------------------------------
@@ -257,10 +297,18 @@ class SetupTokenFlow:
             self._deadline = time.time() + 600
         try:
             leader, follower = pty.openpty()
+            # ultra-wide terminal so the OAuth URL is never hard-wrapped
+            try:
+                winsz = struct.pack("HHHH", PTY_ROWS, PTY_COLS, 0, 0)
+                fcntl.ioctl(follower, termios.TIOCSWINSZ, winsz)
+            except OSError:
+                pass
             argv = _claude_argv() + ["setup-token"]
             env = dict(os.environ)
             env["HOME"] = CLAUDE_HOME
             env["TERM"] = "xterm-256color"
+            env["COLUMNS"] = str(PTY_COLS)
+            env["LINES"] = str(PTY_ROWS)
             self._proc = subprocess.Popen(
                 argv, stdin=follower, stdout=follower, stderr=follower,
                 env=env, close_fds=True,
@@ -366,14 +414,12 @@ class SetupTokenFlow:
                     self.error = f"Token capture failed: {exc}"
             return
         if self.phase in ("starting",) or not self.url:
-            for match in URL_RE.finditer(buf):
-                url = match.group(0).rstrip(".,)")
-                if "oauth" in url or "claude.ai" in url or "console.anthropic.com" in url:
-                    with self._lock:
-                        self.url = url
-                        if self.phase == "starting":
-                            self.phase = "awaiting_code"
-                    break
+            url = extract_oauth_url(buf)
+            if url:
+                with self._lock:
+                    self.url = url
+                    if self.phase == "starting":
+                        self.phase = "awaiting_code"
 
 
 # module-level singleton used by the server
