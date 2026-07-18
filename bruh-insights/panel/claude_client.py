@@ -47,7 +47,15 @@ ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|
 URL_RE = re.compile(r"https://[^\s\"'\x1b]+")
 # characters legal inside the OAuth authorize URL (used to stitch hard-wrapped lines)
 URL_CHARS_RE = re.compile(r"^[A-Za-z0-9&?=%._~:/#+\-]+$")
-OAUTH_TOKEN_RE = re.compile(r"sk-ant-oat01-[A-Za-z0-9_\-]{20,}")
+OAUTH_TOKEN_RE = re.compile(r"sk-ant-oat\d{2}-[A-Za-z0-9_\-]{20,}")
+# Post-code failure markers, observed from the real CLI: on a failed exchange
+# it prints e.g. "OAuth error: Request failed with status code 400Press Enter
+# to retry." and BLOCKS waiting for Enter. (\s* because the pty renderer
+# sometimes draws spaces as cursor movements that ANSI-stripping removes.)
+RETRY_RE = re.compile(r"Press\s*Enter\s*to\s*retry", re.IGNORECASE)
+OAUTH_ERR_RE = re.compile(r"OAuth error:[^\n]*?(?=Press\s*Enter|$)", re.IGNORECASE)
+# How long a code exchange may sit in "working" before we declare it dead
+EXCHANGE_TIMEOUT = int(os.environ.get("BRUH_EXCHANGE_TIMEOUT", "120"))
 
 # pty terminal geometry: the authorize URL is many hundreds of characters
 # long; a normal-width terminal hard-wraps it and a wrapped URL is what
@@ -281,17 +289,39 @@ class SetupTokenFlow:
         self._proc: subprocess.Popen | None = None
         self._thread: threading.Thread | None = None
         self._deadline = 0.0
+        self._url_from = 0        # scan offset: URLs before this are stale
+        self._code_from = 0       # scan offset: only look for errors after the code
+        self._code_sent_at = 0.0
 
     # -- public API --------------------------------------------------------
 
     def status(self) -> dict:
         with self._lock:
-            return {"phase": self.phase, "url": self.url, "error": self.error}
+            detail = ""
+            for line in reversed(self.output.split("\n")):
+                line = line.strip()
+                if line:
+                    detail = OAUTH_TOKEN_RE.sub("sk-ant-oat…", line)[:200]
+                    break
+            return {"phase": self.phase, "url": self.url, "error": self.error,
+                    "detail": detail}
 
     def start(self) -> dict:
         with self._lock:
-            if self.phase in ("starting", "awaiting_code", "working"):
-                return {"phase": self.phase, "url": self.url, "error": self.error}
+            active = self.phase in ("starting", "awaiting_code", "working")
+            proc_dead = self._proc is None or self._proc.poll() is not None
+            stuck = (
+                self.phase == "working"
+                and self._code_sent_at
+                and time.time() - self._code_sent_at > EXCHANGE_TIMEOUT + 30
+            )
+        if active and not proc_dead and not stuck:
+            # a live flow exists (e.g. the page was reloaded) — reattach to it
+            return self.status()
+        if active:
+            # the previous flow died or wedged — tear it down and start fresh
+            self.cancel()
+        with self._lock:
             self._reset_locked()
             self.phase = "starting"
             self._deadline = time.time() + 600
@@ -329,8 +359,12 @@ class SetupTokenFlow:
         with self._lock:
             if self.phase != "awaiting_code" or self._fd is None:
                 return {"phase": self.phase, "url": self.url,
-                        "error": self.error or "Flow is not waiting for a code"}
+                        "error": self.error or "Flow is not waiting for a code",
+                        "detail": ""}
             self.phase = "working"
+            self.error = ""
+            self._code_from = len(self.output)
+            self._code_sent_at = time.time()
         try:
             os.write(self._fd, (code + "\r").encode())
         except OSError as exc:
@@ -371,11 +405,27 @@ class SetupTokenFlow:
                 if not chunk:
                     break
                 buf += ANSI_RE.sub("", chunk.decode("utf-8", "replace"))
-                buf = buf[-20000:]
-                self._scan(buf)
                 with self._lock:
                     self.output = buf
+                self._scan(buf)
+                with self._lock:
                     if self.phase == "done":
+                        break
+                # watchdog: a code exchange that neither succeeds nor prints a
+                # retry prompt within the window is declared dead so the UI
+                # never hangs on "Exchanging code…" again
+                with self._lock:
+                    if (
+                        self.phase == "working"
+                        and self._code_sent_at
+                        and time.time() - self._code_sent_at > EXCHANGE_TIMEOUT
+                    ):
+                        tail = buf[self._code_from:].strip()[-200:]
+                        self.phase = "error"
+                        self.error = (
+                            "Timed out exchanging the code. "
+                            + (f"CLI output: …{tail}" if tail else "No response from the sign-in CLI.")
+                        )
                         break
         finally:
             # process ended (or timed out) — one final scan, then settle state
@@ -413,8 +463,39 @@ class SetupTokenFlow:
                     self.phase = "error"
                     self.error = f"Token capture failed: {exc}"
             return
-        if self.phase in ("starting",) or not self.url:
-            url = extract_oauth_url(buf)
+
+        with self._lock:
+            phase = self.phase
+            url_from = self._url_from
+            code_from = self._code_from
+
+        if phase == "working":
+            # Failed exchange: the CLI prints "OAuth error: …Press Enter to
+            # retry." and blocks. Press Enter for the user — the CLI then mints
+            # a FRESH authorize URL (new state/code_challenge; the old page's
+            # code is dead) — and loop back to the awaiting-code stage.
+            after_code = buf[code_from:]
+            if RETRY_RE.search(after_code):
+                err = OAUTH_ERR_RE.search(after_code)
+                msg = (err.group(0).strip() if err else "The sign-in attempt failed.")
+                with self._lock:
+                    self.error = (
+                        f"{msg} — a fresh sign-in link was generated. "
+                        "Open the new link below and paste the new code."
+                    )
+                    self.url = ""
+                    self._url_from = len(buf)
+                    self._code_sent_at = 0.0
+                    self.phase = "starting"
+                try:
+                    if self._fd is not None:
+                        os.write(self._fd, b"\r")
+                except OSError:
+                    pass
+            return
+
+        if phase == "starting" or not self.url:
+            url = extract_oauth_url(buf[url_from:])
             if url:
                 with self._lock:
                     self.url = url

@@ -168,7 +168,22 @@ async function pollSetup() {
   const phaseText = $("#setupPhaseText");
   phaseChip.classList.remove("hidden");
   phaseChip.classList.add("busy");
-  if (st.phase === "starting") phaseText.textContent = "Preparing sign-in…";
+  // Surface flow errors whatever the phase — a failed code exchange loops
+  // back to awaiting_code with a fresh link, and the error explains that.
+  if (st.error) showSetupError(st.error);
+  else $("#setupErr").classList.add("hidden");
+  const detail = $("#setupDetail");
+  if (st.phase === "working" && st.detail) {
+    detail.textContent = st.detail;
+    detail.classList.remove("hidden");
+  } else {
+    detail.classList.add("hidden");
+  }
+  if (st.phase === "starting") {
+    phaseText.textContent = st.error ? "Getting a fresh link…" : "Preparing sign-in…";
+    $("#setupUrlBox").classList.add("hidden");
+    $("#setupSubmit").disabled = true;
+  }
   if (st.phase === "awaiting_code") {
     phaseText.textContent = "Waiting for your code";
     if (st.url) {
@@ -178,8 +193,18 @@ async function pollSetup() {
       a.textContent = st.url;
     }
     $("#setupCodeRow").classList.remove("hidden");
+    $("#setupSubmit").disabled = false;
+    if (st.error && pollSetup.lastPhase !== "awaiting_code") {
+      // fresh link after a failed attempt — the old code is dead
+      $("#setupCode").value = "";
+    }
   }
-  if (st.phase === "working") phaseText.textContent = "Exchanging code…";
+  if (st.phase === "working") {
+    phaseText.textContent = "Exchanging code…";
+    $("#setupCodeRow").classList.remove("hidden"); // keep Cancel reachable
+    $("#setupSubmit").disabled = true;
+  }
+  pollSetup.lastPhase = st.phase;
   if (st.phase === "done") {
     phaseChip.classList.remove("busy");
     phaseChip.classList.add("ok");
