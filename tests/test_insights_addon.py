@@ -17,6 +17,7 @@ import os
 import stat
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -144,13 +145,22 @@ class TestCategories(unittest.TestCase):
 class TestClaudeClient(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self._old = (claude_client.SECRETS_DIR, claude_client.AUTH_FILE)
+        self._old = (claude_client.SECRETS_DIR, claude_client.AUTH_FILE,
+                     claude_client.CLAUDE_HOME)
         claude_client.SECRETS_DIR = self.tmp.name
         claude_client.AUTH_FILE = os.path.join(self.tmp.name, "claude_auth.json")
+        claude_client.CLAUDE_HOME = os.path.join(self.tmp.name, "home")
 
     def tearDown(self):
-        claude_client.SECRETS_DIR, claude_client.AUTH_FILE = self._old
+        (claude_client.SECRETS_DIR, claude_client.AUTH_FILE,
+         claude_client.CLAUDE_HOME) = self._old
         self.tmp.cleanup()
+
+    def _write_cli_credentials(self, token="sk-ant-oat01-" + "x" * 30):
+        cred_dir = os.path.join(claude_client.CLAUDE_HOME, ".claude")
+        os.makedirs(cred_dir, exist_ok=True)
+        with open(os.path.join(cred_dir, ".credentials.json"), "w") as f:
+            json.dump({"claudeAiOauth": {"accessToken": token}}, f)
 
     def test_classify(self):
         self.assertEqual(claude_client.classify_credential("sk-ant-oat01-abc"), "oauth_token")
@@ -261,12 +271,84 @@ class TestClaudeClient(unittest.TestCase):
             os.close(write_fd)
             flow._fd = None
 
+    def test_cli_credentials_detected_as_auth(self):
+        self.assertIsNone(claude_client.get_auth())
+        self._write_cli_credentials()
+        auth = claude_client.get_auth()
+        self.assertEqual(auth["type"], "cli_login")
+        # CLI-managed login must not inject env tokens
+        env = claude_client._claude_env()
+        self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", env)
+        self.assertNotIn("ANTHROPIC_API_KEY", env)
+        # logout must also forget the CLI credential
+        claude_client.clear_auth()
+        self.assertIsNone(claude_client.get_auth())
+
+    def test_cli_credentials_ignores_bad_file(self):
+        cred_dir = os.path.join(claude_client.CLAUDE_HOME, ".claude")
+        os.makedirs(cred_dir, exist_ok=True)
+        with open(os.path.join(cred_dir, ".credentials.json"), "w") as f:
+            f.write("not json")
+        self.assertIsNone(claude_client.get_auth())
+
+    def test_setup_flow_credentials_file_completes_working_phase(self):
+        """Some CLI versions save the credential without printing a token —
+        the appearing credentials file must count as sign-in success."""
+        flow = claude_client.SetupTokenFlow()
+        flow.phase = "working"
+        flow._code_from = 0
+        self._write_cli_credentials()
+        flow._scan("some output without a token or retry prompt")
+        self.assertEqual(flow.phase, "done")
+
     def test_setup_flow_status_masks_token_in_detail(self):
         flow = claude_client.SetupTokenFlow()
         flow.output = "some line\nyour token: sk-ant-oat01-" + "z" * 30
         status = flow.status()
         self.assertIn("detail", status)
         self.assertNotIn("z" * 30, status["detail"])
+
+    def test_setup_flow_watchdog_fires_on_silent_hang(self):
+        """A code exchange that produces NO output must still time out —
+        the watchdog runs on idle select ticks, not only when output arrives."""
+        stub = Path(self.tmp.name) / "claude-hang"
+        stub.write_text(
+            "#!/bin/bash\n"
+            "echo 'Use the url below to sign in'\n"
+            "echo 'https://claude.ai/oauth/authorize?code=true&client_id=x&redirect_uri=y&state=z'\n"
+            "echo 'Paste code here if prompted >'\n"
+            "read -r line\n"
+            "sleep 600\n"
+        )
+        stub.chmod(0o755)
+        old_argv = claude_client._claude_argv
+        old_timeout = claude_client.EXCHANGE_TIMEOUT
+        old_nudges = claude_client.NUDGE_TIMES
+        claude_client._claude_argv = lambda: [str(stub)]
+        claude_client.EXCHANGE_TIMEOUT = 5
+        claude_client.NUDGE_TIMES = (2, 3)
+        flow = claude_client.SetupTokenFlow()
+        try:
+            flow.start()
+            for _ in range(40):
+                if flow.status()["phase"] == "awaiting_code":
+                    break
+                time.sleep(0.25)
+            self.assertEqual(flow.status()["phase"], "awaiting_code")
+            flow.submit_code("some-code#state")
+            deadline = time.time() + 15
+            while time.time() < deadline:
+                if flow.status()["phase"] == "error":
+                    break
+                time.sleep(0.25)
+            status = flow.status()
+            self.assertEqual(status["phase"], "error", status)
+            self.assertIn("Timed out exchanging the code", status["error"])
+        finally:
+            flow.cancel()
+            claude_client._claude_argv = old_argv
+            claude_client.EXCHANGE_TIMEOUT = old_timeout
+            claude_client.NUDGE_TIMES = old_nudges
 
     def test_run_claude_with_stub(self):
         stub = Path(self.tmp.name) / "claude"
