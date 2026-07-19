@@ -311,6 +311,85 @@ html, body {
 }
 .card .foot .spacer { flex: 1; }
 
+/* dimmed disabled category */
+.card.off > :not(.card-head) { opacity: 0.45; }
+.card.off .card-head .ctitles { opacity: 0.6; }
+
+/* small badges next to the category label */
+.badge {
+  display: inline-block;
+  margin-left: 7px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--hairline));
+  color: var(--accent);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  vertical-align: 1px;
+}
+.badge.off { border-color: var(--hairline); color: var(--ink-3); }
+
+/* ------------------------------------------------------ insight history */
+.card .foot .hist { display: inline-flex; align-items: center; gap: 4px; }
+.card .foot .histsel {
+  appearance: none;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ink-2);
+  background: var(--surface-2);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  padding: 3px 8px;
+  max-width: 130px;
+  cursor: pointer;
+}
+.card .foot .histsel:focus { border-color: var(--accent); outline: none; }
+.card .foot .hstep { padding: 2px 7px; font-size: 13px; border-radius: 8px; }
+
+.histpill {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 16px 0;
+  padding: 6px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--hairline));
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  border-radius: 999px;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.histpill span { flex: 1; }
+
+.hl .prev { font-size: 10.5px; color: var(--ink-3); margin-top: 2px; font-style: italic; }
+
+/* --------------------------------------------------- analyst questions */
+.questions { padding: 10px 16px 0; display: flex; flex-direction: column; gap: 8px; }
+.qrow {
+  border: 1px dashed color-mix(in srgb, var(--accent) 40%, var(--hairline));
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+  border-radius: 10px;
+  padding: 8px 11px;
+}
+.qrow .qtext { font-size: 13px; color: var(--ink-2); font-weight: 600; }
+.qrow .qform { display: flex; gap: 7px; margin-top: 7px; }
+.qrow .qform input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--ink);
+  background: var(--plane);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  outline: none;
+}
+.qrow .qform input:focus { border-color: var(--accent); }
+
 /* --------------------------------------------------- skeleton + states */
 .card.pending .viz-skel {
   margin: 12px;
@@ -439,6 +518,40 @@ html, body {
 }
 .modal .box header .spacer { flex: 1; }
 .modal iframe { border: 0; width: 100%; flex: 1; min-height: 60vh; background: transparent; }
+
+/* prompt-edit modal */
+.modal .box.edit { width: min(640px, 100%); }
+.edit-body { padding: 16px 18px 18px; overflow-y: auto; }
+.edit-body label {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--ink-2);
+  margin: 12px 0 5px;
+}
+.edit-body label.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.edit-body textarea, .edit-body input[type="number"] {
+  width: 100%;
+  padding: 10px 13px;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--ink);
+  background: var(--plane);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  outline: none;
+  resize: vertical;
+}
+.edit-body textarea:focus, .edit-body input[type="number"]:focus { border-color: var(--accent); }
+.edit-body input[type="number"] { max-width: 130px; }
+.edit-body .hint { font-size: 12.5px; color: var(--ink-3); margin: 10px 0 0; }
+.edit-body .row { display: flex; gap: 10px; align-items: center; margin-top: 16px; flex-wrap: wrap; }
 
 /* --------------------------------------------------------------- toast */
 .toast {

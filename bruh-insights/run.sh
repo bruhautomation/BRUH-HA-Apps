@@ -30,6 +30,8 @@ chown -R claude:claude "${DATA_HOME}" 2>/dev/null || true
 # ------------------------------------------------------------------------------
 export BRUH_INSIGHTS_REFRESH_HOURS="$(bashio::config 'auto_refresh_hours' '6')"
 export BRUH_INSIGHTS_HISTORY_DAYS="$(bashio::config 'history_days' '7')"
+export BRUH_INSIGHTS_HISTORY_KEEP_RUNS="$(bashio::config 'history_keep_runs' '40')"
+export BRUH_INSIGHTS_HISTORY_KEEP_DAYS="$(bashio::config 'history_keep_days' '30')"
 export BRUH_INSIGHTS_MODEL="$(bashio::config 'model' '')"
 export BRUH_INSIGHTS_TIMEOUT_MIN="$(bashio::config 'generation_timeout_minutes' '8')"
 export BRUH_INSIGHTS_LOG_LEVEL="$(bashio::config 'log_level' 'info')"

@@ -19,6 +19,9 @@ SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 CORE_API = os.environ.get("BRUH_CORE_API", "http://supervisor/core/api")
 CORE_WS = os.environ.get("BRUH_CORE_WS", "ws://supervisor/core/websocket")
 CONTEXT_FILE = os.environ.get("BRUH_CONTEXT_FILE", "/config/CLAUDE.md")
+# Learned facts about the home, maintained by the bruh_claude integration
+# (memory features). Plain markdown; may not exist.
+MEMORY_FILE = os.environ.get("BRUH_MEMORY_FILE", "/config/.bruh_claude/memory/memory.md")
 
 # Hard caps that keep the bundle inside the prompt budget
 MAX_ENTITIES = 500
@@ -26,7 +29,7 @@ MAX_HISTORY_ENTITIES = 28
 MAX_STATE_CHANGES = 50
 MAX_STAT_IDS = 24
 MAX_BUNDLE_CHARS = 120_000
-CONTEXT_CHARS = 1_500
+CONTEXT_CHARS = 4_000
 
 # Per-domain extra attributes worth surfacing (kept tiny on purpose)
 EXTRA_ATTRS: dict[str, list[str]] = {
@@ -64,6 +67,21 @@ async def _rest_get(session: aiohttp.ClientSession, path: str, timeout: int = 30
     ) as resp:
         resp.raise_for_status()
         return await resp.json()
+
+
+async def call_service(service: str, data: dict, timeout: int = 15) -> Any:
+    """Call a bruh_claude.<service> HA service through the Supervisor proxy.
+
+    Raises on HTTP errors / network failure — the integration may simply
+    not be installed, so callers must treat failures as expected.
+    """
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            f"{CORE_API}/services/bruh_claude/{service}", headers=_headers(),
+            json=data, timeout=aiohttp.ClientTimeout(total=timeout),
+        ) as resp:
+            resp.raise_for_status()
+            return await resp.json()
 
 
 async def _ws_commands(session: aiohttp.ClientSession, commands: list[dict]) -> list[Any]:
@@ -307,12 +325,30 @@ async def get_statistics(
 # Bundle assembly
 # ---------------------------------------------------------------------------
 
-def _read_context() -> str:
+def _read_capped(path: str, limit: int) -> str:
+    if limit <= 0:
+        return ""
     try:
-        with open(CONTEXT_FILE, "r", encoding="utf-8", errors="replace") as f:
-            return f.read(CONTEXT_CHARS).strip()
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            return f.read(limit).strip()
     except OSError:
         return ""
+
+
+def _read_context() -> str:
+    """Learned memory (memory.md) first, then the CLAUDE.md excerpt.
+
+    Memory facts lead because they are distilled knowledge about this home;
+    the CLAUDE.md excerpt fills whatever budget remains.
+    """
+    parts: list[str] = []
+    memory = _read_capped(MEMORY_FILE, CONTEXT_CHARS)
+    if memory:
+        parts.append(memory)
+    claude_md = _read_capped(CONTEXT_FILE, CONTEXT_CHARS - len(memory))
+    if claude_md:
+        parts.append(claude_md)
+    return "\n\n".join(parts)
 
 
 def _shrink_to_budget(bundle: dict) -> dict:
@@ -328,11 +364,12 @@ def _shrink_to_budget(bundle: dict) -> dict:
         while section and size() > MAX_BUNDLE_CHARS:
             longest = max(section, key=lambda k: len(json.dumps(section[k])))
             del section[longest]
-    # 2. trim entity list from the tail
+    # 2. trim entity list from the tail — raw entity rows go before the
+    #    learned context, which is distilled knowledge about this home
     ents = bundle.get("entities") or []
-    while len(ents) > 50 and size() > MAX_BUNDLE_CHARS:
+    while len(ents) > 20 and size() > MAX_BUNDLE_CHARS:
         del ents[len(ents) // 2:]  # keep the front half
-    # 3. drop free-text context
+    # 3. drop free-text context only as a last resort
     if size() > MAX_BUNDLE_CHARS:
         bundle.pop("context", None)
     return bundle

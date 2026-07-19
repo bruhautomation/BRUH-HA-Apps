@@ -41,6 +41,8 @@
     <p class="sub">BRUH Insights uses your Claude subscription (Pro or Max) to analyze your home and
       generate live interactive visualizations. Connect once — the credential is stored only inside
       this add-on.</p>
+    <p class="hint">Tip: if <b>BRUH Terminal</b> is installed, run <code>ha-share-login</code> there
+      and Insights will pick it up automatically — no pasting needed.</p>
 
     <div class="tabs">
       <button class="btn small tab active" data-pane="guided">Guided sign-in</button>
@@ -75,8 +77,9 @@
     </div>
 
     <div class="pane" data-pane="paste">
-      <p class="hint">Already use the <b>BRUH Terminal</b> add-on (or Claude Code anywhere)?
-        Run <code>claude setup-token</code> there and paste the resulting
+      <p class="hint">Already use the <b>BRUH Terminal</b> add-on? Run <code>ha-share-login</code>
+        there instead — Insights picks the shared login up automatically. Or run
+        <code>claude setup-token</code> anywhere Claude Code is installed and paste the resulting
         <code>sk-ant-oat…</code> token here. It uses your subscription, not API credits.</p>
       <label for="pasteToken">Long-lived token</label>
       <input id="pasteToken" type="password" placeholder="sk-ant-oat01-…">
@@ -116,6 +119,33 @@
       <button id="modalClose" class="btn icon" aria-label="Close">✕</button>
     </header>
     <iframe id="modalFrame" sandbox="allow-scripts" title="Insight visualization"></iframe>
+  </div>
+</div>
+
+<div id="editModal" class="modal" role="dialog" aria-modal="true">
+  <div class="box edit">
+    <header>
+      <span id="editIcon"></span>
+      <span id="editTitle"></span>
+      <div class="spacer"></div>
+      <button id="editClose" class="btn icon" aria-label="Close">✕</button>
+    </header>
+    <div class="edit-body">
+      <p id="editDesc" class="hint"></p>
+      <label for="editFocus">Analysis focus (the prompt for this category)</label>
+      <textarea id="editFocus" maxlength="4000" rows="7" spellcheck="false"></textarea>
+      <label class="check"><input id="editEnabled" type="checkbox">
+        Enabled — include in auto-refresh and “Refresh all”</label>
+      <label for="editHours">Refresh every N hours (empty = add-on default, 0 = manual only)</label>
+      <input id="editHours" type="number" min="0" max="168" step="1" placeholder="default">
+      <p class="hint">The analyst only sees the collected data snapshot — prompts can steer the
+        analysis, not fetch new data.</p>
+      <div class="row">
+        <button id="editSave" class="btn primary">Save</button>
+        <button id="editSaveRegen" class="btn">Save &amp; regenerate</button>
+        <button id="editReset" class="btn ghost hidden">Restore default</button>
+      </div>
+    </div>
   </div>
 </div>
 
