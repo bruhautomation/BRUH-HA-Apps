@@ -60,6 +60,12 @@ TASK_RESULTS_DIR = "task_results"
 SESSIONS_DIR = "sessions"
 # Persisted insight results (survive HA restarts)
 INSIGHTS_DIR = "insights"
+# Long-term home memory (managed by the add-on's ha-memory tooling).
+# Paths are relative to SHARED_DIR, i.e. /config/.bruh_claude/memory/.
+MEMORY_DIR = "memory"
+MEMORY_INBOX_DIR = "inbox"
+MEMORY_FILE = "memory.md"
+QUESTIONS_FILE = "questions.jsonl"
 
 # Internal HTTP API published by the add-on's worker pool (fast mode).
 # Endpoint + token are exchanged over the shared /config volume; the

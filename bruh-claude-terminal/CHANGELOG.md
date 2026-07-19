@@ -4,6 +4,40 @@ All notable changes to **BRUH Claude Terminal**, newest first. This project adhe
 
 > 💡 Prefer a cleaner, categorized view? See the [formatted changelog at bruhautomation.com](https://bruhautomation.com/bruh-claude/changelog/).
 
+## 3.3.0
+
+**New: long-term home memory & learning, plus one-command login sharing
+with other BRUH add-ons.**
+
+- **Memory store** at `/config/.bruh_claude/memory/`: a user-editable
+  `memory.md` (preferences, entity nicknames, household patterns, device
+  notes), a ≤2 KB `voice.md` distillate spliced into every voice prompt,
+  and an append-only `inbox/` of candidate facts. A background
+  consolidator merges the inbox into both files with one cheap Haiku pass
+  — daily, or early when more than 20 facts are pending.
+- **`ha-memory` CLI**: `add`, `list`, `inbox`, `questions`, `answer`,
+  `consolidate`, `edit`, and `clear --confirm`.
+- **Voice assistants learn**: a new `remember_fact` MCP tool lets agents
+  store facts the moment you state them ("actually, we call that lamp the
+  beacon"), and finished conversations get a bounded background
+  reflection pass that extracts durable facts. Learned knowledge is
+  injected into voice prompts, insight jobs (which also see their
+  previous report for continuity), and the generated `CLAUDE.md`.
+- **New HA services** `bruh_claude.add_memory` and
+  `bruh_claude.answer_question` feed the memory store from automations.
+- **Kill switches**: new `assist_learning` (reflection + consolidator) and
+  `memory_injection` (prompt splicing) options, both on by default, plus
+  `memory_max_kb` (default 8) to cap the memory file.
+- **`ha-share-login`**: runs `claude setup-token` interactively, captures
+  the long-lived token, and writes the shared auth file
+  (`/config/.bruh_claude/secrets/claude_auth.json`, 0600) that other BRUH
+  add-ons like **BRUH Insights** pick up automatically — one login for
+  the whole family. Also `--token`, `--status`, `--revoke`, `--force`.
+- **`ha-context-gen` now preserves your notes**: content between
+  `<!-- bruh:user-notes:start -->` / `<!-- bruh:user-notes:end -->`
+  survives regeneration, and the generated context inlines the learned
+  home knowledge.
+
 ## 3.2.5
 
 - Renamed the add-on to **BRUH Terminal** (sidebar panel: "Terminal") as part of the

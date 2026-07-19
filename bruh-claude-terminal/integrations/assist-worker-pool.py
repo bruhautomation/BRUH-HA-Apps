@@ -68,6 +68,38 @@ SPARE_RECYCLE = int(os.environ.get("BRUH_ASSIST_SPARE_RECYCLE", "600"))
 AREA_MAP_TTL = 300
 AREA_MAP_MAX_BYTES = 16000
 
+# Learned household memory (see ha-memory / ha-memory-consolidate). The
+# voice distillate is spliced into the system prompt, and finished
+# conversations can be reflected into new candidate facts.
+MEMORY_DIR = os.environ.get("BRUH_MEMORY_DIR", "/config/.bruh_claude/memory")
+MEMORY_FILE = os.path.join(MEMORY_DIR, "memory.md")
+VOICE_FILE = os.path.join(MEMORY_DIR, "voice.md")
+MEMORY_INBOX_DIR = os.path.join(MEMORY_DIR, "inbox")
+MEMORY_MAX_BYTES = 2048
+MEMORY_TTL = 300
+MEMORY_INJECTION = os.environ.get("BRUH_MEMORY_INJECTION", "true").lower() != "false"
+ASSIST_LEARNING = os.environ.get("BRUH_ASSIST_LEARNING", "true").lower() != "false"
+
+# Transcript buffer caps (per worker) and the trigger heuristic for the
+# end-of-conversation reflection pass.
+TRANSCRIPT_MAX_EXCHANGES = 8
+TRANSCRIPT_MAX_BYTES = 4096
+REFLECT_KEYWORDS = (
+    "actually", "remember", "call it", "we call", "always", "never",
+    "prefer", "instead",
+)
+REFLECT_TIMEOUT = 60
+REFLECT_MODEL = os.environ.get("BRUH_MEMORY_MODEL", "haiku")
+
+REFLECTION_PROMPT = (
+    "From this smart-home voice conversation, extract 0-3 durable facts "
+    "worth remembering about the household (preferences, corrections, "
+    "entity nicknames, patterns). Exclude transient states, one-off "
+    "commands, secrets, anything sensitive. Output one JSON object per "
+    'line: {"fact": ..., "confidence": "high|medium|low"} or the single '
+    "word NONE."
+)
+
 # HA's configured timezone (written by run.sh at startup; refreshed here as
 # a fallback). Voice answers must use local time, never the container UTC.
 TIMEZONE_FILE = os.path.join(CACHE_DIR, "ha_timezone")
@@ -137,7 +169,8 @@ Replies are spoken aloud by TTS.
 Use your MCP tools (control_light, control_climate, control_media_player, control_cover, control_fan, control_switch, control_lock, control_alarm, control_vacuum, call_service, get_all_states, get_areas, activate_scene, run_script, send_notification, get_service_details).
 For questions about the PAST ('how cold did it get last night', 'when did the garage open'), use get_history (recent detail) or get_statistics (daily min/max/mean over weeks).
 For FORECASTS ('weather tomorrow / this week'), use get_weather_forecast; get_entity_state on the weather entity only gives current conditions.
-To CHECK A CAMERA or visually verify something, use get_camera_snapshot and describe what you see."""
+To CHECK A CAMERA or visually verify something, use get_camera_snapshot and describe what you see.
+When the user states a durable preference, correction, or nickname ('actually...', 'we call X...', 'always/never...'), call the remember_fact tool so it sticks for future conversations."""
 
 MAP_PROMPT = """
 
@@ -259,6 +292,53 @@ def get_area_map() -> str:
             return ""
 
 
+# ---------------------------------------------------------------------------
+# Learned household memory (voice distillate)
+# ---------------------------------------------------------------------------
+
+_memory_lock = threading.Lock()
+# text=None means "never loaded" (get_memory then loads synchronously once).
+_memory_cache: dict = {"text": None, "ts": 0.0}
+
+
+def refresh_memory() -> None:
+    """(Re)load the learned-household snippet for the system prompt.
+
+    Prefers voice.md (the consolidator's distillate), falls back to the
+    first 2 KB of memory.md. The result is CACHED: the system prompt is
+    part of the worker profile tuple, so it must stay stable between the
+    spare pre-warm and the requests that would adopt that spare (see the
+    area-map note in main()). Refreshes happen only at startup and on the
+    housekeeping cadence — never per request.
+    """
+    text = ""
+    for path in (VOICE_FILE, MEMORY_FILE):
+        try:
+            with open(path) as fh:
+                text = fh.read(MEMORY_MAX_BYTES + 1)
+        except OSError:
+            continue
+        if text.strip():
+            break
+        text = ""
+    if len(text) > MEMORY_MAX_BYTES:
+        text = _truncate_at_line(text, MEMORY_MAX_BYTES)
+    with _memory_lock:
+        _memory_cache["text"] = text
+        _memory_cache["ts"] = time.time()
+
+
+def get_memory() -> str:
+    """Cached memory snippet (loads synchronously on first use)."""
+    with _memory_lock:
+        cached = _memory_cache["text"]
+    if cached is None:
+        refresh_memory()
+        with _memory_lock:
+            cached = _memory_cache["text"] or ""
+    return cached
+
+
 def get_ha_timezone() -> str:
     """HA's time_zone, from the startup cache or fetched directly."""
     try:
@@ -319,6 +399,10 @@ def build_system_prompt(custom: str) -> str:
         prompt += MAP_PROMPT.format(area_map=area_map.rstrip())
     else:
         prompt += NO_MAP_PROMPT
+    if MEMORY_INJECTION:
+        memory = get_memory()
+        if memory.strip():
+            prompt += "\n\nKnown about this household (learned):\n" + memory.rstrip()
     return prompt
 
 
@@ -365,6 +449,116 @@ def prewarm_spare(pool: "Pool") -> None:
 
 
 # ---------------------------------------------------------------------------
+# Assist learning: end-of-conversation reflection into the memory inbox
+# ---------------------------------------------------------------------------
+
+
+def _record_exchange(worker: "Worker", user_text: str, response_text: str) -> None:
+    """Append one exchange to a worker's bounded transcript buffer."""
+    try:
+        worker.transcript.append(
+            (str(user_text)[:800], str(response_text)[:800])
+        )
+        while len(worker.transcript) > TRANSCRIPT_MAX_EXCHANGES or sum(
+            len(u) + len(a) for u, a in worker.transcript
+        ) > TRANSCRIPT_MAX_BYTES:
+            worker.transcript.pop(0)
+    except Exception:  # noqa: BLE001 — bookkeeping must never break requests
+        pass
+
+
+def _transcript_worth_reflecting(transcript: list) -> bool:
+    """Cheap heuristic: multi-exchange conversations, or single exchanges
+    containing corrective/preference language, are worth a reflection."""
+    if not transcript:
+        return False
+    if len(transcript) >= 2:
+        return True
+    blob = " ".join(u.lower() for u, _ in transcript)
+    return any(kw in blob for kw in REFLECT_KEYWORDS)
+
+
+def reflect_on_transcript(transcript: list) -> None:
+    """One-shot cheap Claude pass extracting durable facts (daemon thread).
+
+    Never raises: any failure (unauthenticated, timeout, garbage output)
+    just means no facts are stored this time.
+    """
+    try:
+        convo = "\n".join(f"USER: {u}\nASSISTANT: {a}" for u, a in transcript)
+        cmd = resolve_claude_cmd() + [
+            "-p",
+            "--disallowedTools", "*",
+            "--max-turns", "1",
+            "--model", REFLECT_MODEL,
+        ]
+        proc = subprocess.run(
+            cmd,
+            input=REFLECTION_PROMPT + "\n\nConversation:\n" + convo,
+            capture_output=True,
+            text=True,
+            timeout=REFLECT_TIMEOUT,
+            cwd=WORK_DIR,
+        )
+        if proc.returncode != 0:
+            return
+        facts = []
+        for line in (proc.stdout or "").splitlines():
+            line = line.strip()
+            if not line or line.upper() == "NONE":
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(obj, dict):
+                continue
+            fact = obj.get("fact")
+            if not isinstance(fact, str) or not fact.strip():
+                continue
+            confidence = obj.get("confidence")
+            if confidence not in ("high", "medium", "low"):
+                confidence = "medium"
+            facts.append({
+                "ts": int(time.time()),
+                "source": "assist",
+                "fact": fact.strip()[:500],
+                "confidence": confidence,
+            })
+            if len(facts) >= 3:
+                break
+        if not facts:
+            return
+        os.makedirs(MEMORY_INBOX_DIR, exist_ok=True)
+        path = os.path.join(MEMORY_INBOX_DIR, f"{int(time.time())}-assist.jsonl")
+        with open(path, "a") as fh:
+            for record in facts:
+                fh.write(json.dumps(record) + "\n")
+        log(f"reflection stored {len(facts)} candidate fact(s)")
+    except Exception as exc:  # noqa: BLE001 — reflection must never crash the pool
+        try:
+            log(f"reflection skipped: {exc}")
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def maybe_reflect(worker: "Worker") -> None:
+    """Kick off a background reflection for a worker being retired."""
+    if not ASSIST_LEARNING:
+        return
+    try:
+        transcript = list(worker.transcript)
+        worker.transcript = []  # never reflect the same exchanges twice
+    except Exception:  # noqa: BLE001
+        return
+    if not _transcript_worth_reflecting(transcript):
+        return
+    threading.Thread(
+        target=reflect_on_transcript, args=(transcript,), daemon=True
+    ).start()
+
+
+# ---------------------------------------------------------------------------
 # Worker: one live `claude` stream-json process
 # ---------------------------------------------------------------------------
 
@@ -377,6 +571,9 @@ class Worker:
         self.session_id: str | None = None
         self.lock = threading.Lock()  # serializes turns on this worker
         self._events: Queue = Queue()
+        # Bounded conversation buffer for the end-of-life reflection pass
+        # (see _record_exchange / maybe_reflect).
+        self.transcript: list = []
 
         system_prompt, model, denied_csv = profile
         cmd = resolve_claude_cmd() + [
@@ -560,6 +757,7 @@ class Pool:
         return worker, "cold" if not resume else "cold-resume"
 
     def _drop_worker(self, conv_id: str, worker: Worker) -> None:
+        maybe_reflect(worker)
         worker.kill()
         with self.lock:
             if self.workers.get(conv_id) is worker:
@@ -594,12 +792,15 @@ class Pool:
                     or now - worker.last_used > WORKER_IDLE_REAP
                     or now - worker.created > WORKER_MAX_AGE
                 ):
+                    maybe_reflect(worker)
                     worker.kill()
                     self.workers.pop(conv_id, None)
             # Enforce the cap (LRU), keeping the most recently used.
             while len(self.workers) > MAX_WORKERS - 1:
                 oldest = min(self.workers, key=lambda c: self.workers[c].last_used)
-                self.workers.pop(oldest).kill()
+                evicted = self.workers.pop(oldest)
+                maybe_reflect(evicted)
+                evicted.kill()
             # Recycle a stale spare so its baked-in area map stays fresh.
             if self.spare is not None and (
                 not self.spare.alive() or now - self.spare.created > SPARE_RECYCLE
@@ -608,6 +809,13 @@ class Pool:
                 self.spare.kill()
                 self.spare = None
                 self._spawn_spare(profile)
+        # Refresh the cached memory snippet on the same housekeeping
+        # cadence the spare/area map use — never per request, because the
+        # system prompt keys the worker profile (spare adoption).
+        with _memory_lock:
+            memory_age = now - _memory_cache["ts"]
+        if memory_age > MEMORY_TTL:
+            threading.Thread(target=refresh_memory, daemon=True).start()
 
     # -- request handling -----------------------------------------------------
 
@@ -673,6 +881,7 @@ class Pool:
                 if response is not None:
                     worker.last_used = time.time()
                     self._store_session(conv_id, worker.session_id)
+                    _record_exchange(worker, text, response)
                 else:
                     # Worker hung, died, or errored — drop it and fall back
                     # to a one-shot invocation within the remaining budget.
@@ -980,8 +1189,12 @@ def main() -> None:
     )
     # Refresh the map synchronously first so the pre-warmed spare bakes in
     # the same map the first request will build — otherwise their system
-    # prompts differ and the spare is never adopted.
+    # prompts differ and the spare is never adopted. The learned-memory
+    # snippet is part of the same system prompt, so it gets the identical
+    # treatment: loaded synchronously once here, then only refreshed on the
+    # housekeeping cadence (see Pool.reap), never per request.
     refresh_area_map()
+    refresh_memory()
     cleanup_stale_files()
 
     pool = Pool()

@@ -497,6 +497,8 @@ class TestMCPProtocol(unittest.TestCase):
             "get_history", "get_statistics", "get_weather_forecast",
             "get_error_log", "render_template", "fire_event",
             "get_supervisor_info", "reload_config",
+            # Memory
+            "remember_fact",
         }
         self.assertEqual(tool_names, expected_tools)
 

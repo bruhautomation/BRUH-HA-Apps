@@ -6,6 +6,8 @@ Provides:
 - bruh_claude.send_prompt          — send a one-shot prompt to Claude
 - bruh_claude.run_task             — run a Claude task with optional notification
 - bruh_claude.clear_conversation   — clear a persistent conversation session
+- bruh_claude.add_memory           — queue a fact for the home memory store
+- bruh_claude.answer_question      — answer an open memory question
 
 Both conversation agent and sensors are independently toggleable per config entry.
 """
@@ -60,6 +62,10 @@ from .const import (
     ENTRY_TYPE_INSIGHT,
     EVENT_INSIGHT_COMPLETE,
     INSIGHTS_DIR,
+    MEMORY_DIR,
+    MEMORY_FILE,
+    MEMORY_INBOX_DIR,
+    QUESTIONS_FILE,
     SHARED_DIR,
     SIGNAL_INSIGHT_UPDATE,
 )
@@ -109,6 +115,24 @@ CLEAR_CONVERSATION_SCHEMA = vol.Schema(
 RUN_INSIGHT_SCHEMA = vol.Schema(
     {
         vol.Optional("name"): str,
+    }
+)
+
+ADD_MEMORY_SCHEMA = vol.Schema(
+    {
+        vol.Required("fact"): vol.All(str, vol.Length(min=1)),
+        vol.Optional("source", default="service"): str,
+        vol.Optional("confidence", default="medium"): vol.In(
+            ["high", "medium", "low"]
+        ),
+    }
+)
+
+ANSWER_QUESTION_SCHEMA = vol.Schema(
+    {
+        vol.Required("question"): vol.All(str, vol.Length(min=1)),
+        vol.Required("answer"): vol.All(str, vol.Length(min=1)),
+        vol.Optional("source", default="service"): str,
     }
 )
 
@@ -242,7 +266,14 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Last entry removed — tear down the domain services so they don't
         # linger and raise "not configured" if called with no bridge.
         if not remaining:
-            for service in ("send_prompt", "run_task", "clear_conversation", "run_insight"):
+            for service in (
+                "send_prompt",
+                "run_task",
+                "clear_conversation",
+                "run_insight",
+                "add_memory",
+                "answer_question",
+            ):
                 if hass.services.has_service(DOMAIN, service):
                     hass.services.async_remove(DOMAIN, service)
     return unload_ok
@@ -335,6 +366,82 @@ def _remove_file(path: str) -> None:
         pass
 
 
+def _read_text_capped(path: str, cap: int) -> str:
+    """Read at most `cap` bytes of a text file; '' on any error."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            return fh.read(cap)
+    except OSError:
+        return ""
+
+
+# ---------------------------------------------------------------------------
+# Home memory store (shared with the add-on's ha-memory tooling)
+#
+# Contract (see the add-on's ha-memory-consolidate.sh):
+#   inbox/<epoch>-<source>.jsonl  one candidate fact per line:
+#       {"ts": <epoch int>, "source": "...", "fact": "...",
+#        "confidence": "high|medium|low"}
+#   questions.jsonl               question + answer records; an answer is
+#       {"q": "...", "a": "...", "source": "...", "ts": <epoch int>}
+# ---------------------------------------------------------------------------
+
+
+def _sanitize_source(source: str) -> str:
+    """Keep inbox filenames safe: alnum/underscore/dash only."""
+    cleaned = "".join(c for c in str(source) if c.isalnum() or c in "_-")
+    return cleaned or "service"
+
+
+def _append_memory_fact(
+    memory_dir: str, fact: str, source: str, confidence: str
+) -> str:
+    """Append one candidate fact to a new memory-inbox JSONL file.
+
+    Returns the path written. Executor-safe (blocking file IO).
+    """
+    source = _sanitize_source(source)
+    if confidence not in ("high", "medium", "low"):
+        confidence = "medium"
+    inbox = os.path.join(memory_dir, MEMORY_INBOX_DIR)
+    os.makedirs(inbox, exist_ok=True)
+    now = int(time.time())
+    record = {
+        "ts": now,
+        "source": source,
+        "fact": str(fact).strip(),
+        "confidence": confidence,
+    }
+    path = os.path.join(inbox, f"{now}-{source}.jsonl")
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(record) + "\n")
+    return path
+
+
+def _append_question_answer(
+    memory_dir: str, question: str, answer: str, source: str
+) -> None:
+    """Record an answer in questions.jsonl AND queue it as an inbox fact."""
+    source = _sanitize_source(source)
+    os.makedirs(memory_dir, exist_ok=True)
+    record = {
+        "q": str(question).strip(),
+        "a": str(answer).strip(),
+        "source": source,
+        "ts": int(time.time()),
+    }
+    with open(
+        os.path.join(memory_dir, QUESTIONS_FILE), "a", encoding="utf-8"
+    ) as fh:
+        fh.write(json.dumps(record) + "\n")
+    _append_memory_fact(
+        memory_dir,
+        f"Q: {record['q']} → A: {record['a']}",
+        source,
+        "high",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Insight jobs
 # ---------------------------------------------------------------------------
@@ -404,6 +511,31 @@ async def _async_run_insight(hass: HomeAssistant, entry: ConfigEntry) -> None:
             )
             prompt = prompt_text
 
+        # Context blocks: learned home memory + the previous report, so
+        # recurring insights build on what's known instead of rediscovering
+        # the house every run.
+        prior = await hass.async_add_executor_job(
+            load_insight_payload, hass, entry.entry_id
+        )
+        memory_text = await hass.async_add_executor_job(
+            _read_text_capped,
+            hass.config.path(SHARED_DIR, MEMORY_DIR, MEMORY_FILE),
+            2048,
+        )
+        context_blocks = []
+        if memory_text.strip():
+            context_blocks.append(
+                "Known about this home:\n" + memory_text.strip()
+            )
+        prev_markdown = ((prior or {}).get("markdown") or "").strip()
+        if prev_markdown:
+            context_blocks.append(
+                "Previous report (for continuity, note meaningful changes "
+                "rather than rediscovering):\n" + prev_markdown[:1536]
+            )
+        if context_blocks:
+            prompt = "\n\n".join(context_blocks) + "\n\n" + prompt
+
         bridge = _get_bridge(hass)
         timeout = opts.get(CONF_TIMEOUT) or DEFAULT_INSIGHT_TIMEOUT
         model = opts.get(CONF_MODEL) or "default"
@@ -428,9 +560,7 @@ async def _async_run_insight(hass: HomeAssistant, entry: ConfigEntry) -> None:
         # Onboarding: after a job's FIRST successful run, send one
         # notification containing the ready-to-paste dashboard card —
         # the bridge from "it ran" to "I can see it".
-        prior = await hass.async_add_executor_job(
-            load_insight_payload, hass, entry.entry_id
-        )
+        # (`prior` was loaded above, before the run, for the context block.)
         payload["ever_succeeded"] = bool(
             (prior or {}).get("ever_succeeded") or payload.get("error") is None
         )
@@ -603,6 +733,28 @@ def _register_services(hass: HomeAssistant) -> None:
             conversation_id or "ALL",
         )
 
+    async def handle_add_memory(call: ServiceCall):
+        memory_dir = hass.config.path(SHARED_DIR, MEMORY_DIR)
+        await hass.async_add_executor_job(
+            _append_memory_fact,
+            memory_dir,
+            call.data["fact"],
+            call.data.get("source", "service"),
+            call.data.get("confidence", "medium"),
+        )
+        _LOGGER.debug("Queued memory fact from %s", call.data.get("source"))
+
+    async def handle_answer_question(call: ServiceCall):
+        memory_dir = hass.config.path(SHARED_DIR, MEMORY_DIR)
+        await hass.async_add_executor_job(
+            _append_question_answer,
+            memory_dir,
+            call.data["question"],
+            call.data["answer"],
+            call.data.get("source", "service"),
+        )
+        _LOGGER.debug("Recorded answer for memory question")
+
     extra_kwargs: dict = {}
     if SupportsResponse is not None:
         extra_kwargs["supports_response"] = SupportsResponse.OPTIONAL
@@ -635,4 +787,18 @@ def _register_services(hass: HomeAssistant) -> None:
         "run_insight",
         handle_run_insight,
         schema=RUN_INSIGHT_SCHEMA,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "add_memory",
+        handle_add_memory,
+        schema=ADD_MEMORY_SCHEMA,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "answer_question",
+        handle_answer_question,
+        schema=ANSWER_QUESTION_SCHEMA,
     )
