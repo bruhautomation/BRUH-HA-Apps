@@ -18,6 +18,9 @@ const state = {
   pollTimer: null,
   setupTimer: null,
   frameSeq: 0,
+  history: {},    // id -> [{ts, generated_at, title}] newest first (lazy)
+  prevLatest: {}, // id -> full previous-run object (for "prev:" diffs)
+  viewing: {},    // id -> {ts, data, prev} when a card is pinned to a past run
 };
 
 // ---------------------------------------------------------------- helpers
@@ -77,6 +80,10 @@ function renderAuth() {
     text.textContent = "Claude auth failed";
     chip.classList.add("bad");
     chip.title = s.auth_check.error || "";
+  } else if (s.auth_source === "shared") {
+    text.textContent = "Claude · shared login";
+    chip.classList.add("ok");
+    chip.title = "Using BRUH Terminal's shared login";
   } else {
     text.textContent = s.auth_type === "api_key" ? "Claude · API key" : "Claude · subscription";
     chip.classList.add("ok");
@@ -252,6 +259,76 @@ function phaseLabel(jobState) {
   }[jobState] || "Working…";
 }
 
+// ------------------------------------------------------- insight history
+
+// generated_at ISO → history filename stamp ("2026-07-19T08:30:00" → "…T08-30-00")
+function stampOf(iso) {
+  return String(iso || "").replace(/:/g, "-");
+}
+
+function fmtRun(ts) {
+  const d = new Date(ts.slice(0, 10) + "T" + ts.slice(11).replace(/-/g, ":"));
+  if (isNaN(d.getTime())) return ts;
+  return d.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+async function loadHistory(id) {
+  if (state.history[id]) return state.history[id];
+  const data = await api(`api/insight/${id}/history`).catch(() => ({ runs: [] }));
+  const runs = data.runs || [];
+  state.history[id] = runs;
+  // fetch the run just before "latest" so highlight diffs work on the live card
+  const ins = insightFor(id);
+  if (ins && !state.prevLatest[id]) {
+    const prev = runs.find((r) => r.ts !== stampOf(ins.generated_at));
+    if (prev) {
+      state.prevLatest[id] =
+        await api(`api/insight/${id}/history/${prev.ts}`).catch(() => null);
+    }
+  }
+  return runs;
+}
+
+async function viewRun(id, ts) {
+  if (!ts) {
+    delete state.viewing[id];
+    renderIfChanged();
+    return;
+  }
+  try {
+    const data = await api(`api/insight/${id}/history/${ts}`);
+    const runs = await loadHistory(id);
+    const idx = runs.findIndex((r) => r.ts === ts);
+    let prev = null;
+    if (idx >= 0 && idx + 1 < runs.length) {
+      prev = await api(`api/insight/${id}/history/${runs[idx + 1].ts}`).catch(() => null);
+    }
+    state.viewing[id] = { ts, data, prev };
+    renderIfChanged();
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+// ["" (latest), ts, ts, …] oldest last — the latest run's own history copy
+// (same stamp as the live card) is folded into "Latest"
+function historyEntries(id, insight) {
+  const latestStamp = stampOf(insight.generated_at);
+  return [""].concat(
+    (state.history[id] || []).filter((r) => r.ts !== latestStamp).map((r) => r.ts));
+}
+
+async function stepRun(id, insight, dir) {
+  await loadHistory(id);
+  const entries = historyEntries(id, insight);
+  const cur = state.viewing[id] ? state.viewing[id].ts : "";
+  let idx = entries.indexOf(cur);
+  if (idx === -1) idx = 0;
+  const next = Math.min(Math.max(idx + dir, 0), entries.length - 1);
+  if (next === idx) return;
+  viewRun(id, entries[next] || null);
+}
+
 function makeFrame(insight) {
   const wrapper = el("div", "viz");
   const frame = document.createElement("iframe");
@@ -265,35 +342,139 @@ function makeFrame(insight) {
   return wrapper;
 }
 
+function makeQuestions(insight) {
+  const wrap = el("div", "questions");
+  insight.questions.forEach((q) => {
+    const row = el("div", "qrow");
+    row.appendChild(el("div", "qtext", `❓ ${q}`));
+    const form = el("form", "qform");
+    const input = el("input");
+    input.type = "text";
+    input.maxLength = 500;
+    input.placeholder = "Answer to help future insights…";
+    const btn = el("button", "btn small primary", "Send");
+    btn.type = "submit";
+    form.appendChild(input);
+    form.appendChild(btn);
+    form.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const answer = input.value.trim();
+      if (!answer) return;
+      btn.disabled = true;
+      try {
+        await api("api/questions/answer", {
+          method: "POST",
+          body: JSON.stringify({ insight_id: insight.id, question: q, answer }),
+        });
+        toast("Answer saved — the home will remember it");
+        await refreshInsights();
+        renderIfChanged();
+      } catch (e) {
+        toast(e.message);
+        btn.disabled = false;
+      }
+    });
+    row.appendChild(form);
+    wrap.appendChild(row);
+  });
+  return wrap;
+}
+
+function makeHistoryControls(id, insight, view) {
+  const wrap = el("span", "hist");
+  const older = el("button", "btn icon hstep", "‹");
+  older.title = "Older run";
+  older.addEventListener("click", () => stepRun(id, insight, 1));
+  const sel = document.createElement("select");
+  sel.className = "histsel";
+  sel.title = "View a past run";
+  const populate = () => {
+    sel.textContent = "";
+    historyEntries(id, insight).forEach((ts) => {
+      const opt = document.createElement("option");
+      opt.value = ts;
+      opt.textContent = ts ? fmtRun(ts) : "Latest";
+      sel.appendChild(opt);
+    });
+    sel.value = view ? view.ts : "";
+  };
+  if (state.history[id]) {
+    populate();
+  } else {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "Latest";
+    sel.appendChild(opt);
+    // lazy-load past runs on first interaction
+    sel.addEventListener("focus", async () => {
+      await loadHistory(id);
+      populate();
+    }, { once: true });
+  }
+  sel.addEventListener("change", () => viewRun(id, sel.value || null));
+  const newer = el("button", "btn icon hstep", "›");
+  newer.title = "Newer run";
+  newer.addEventListener("click", () => stepRun(id, insight, -1));
+  wrap.appendChild(older);
+  wrap.appendChild(sel);
+  wrap.appendChild(newer);
+  return wrap;
+}
+
 function makeCard(catInfo, insight) {
   const id = insight ? insight.id : catInfo.id;
   const job = jobFor(id);
-  const active = ["queued", "collecting", "generating", "parsing"].includes(job.state);
-  const card = el("article", "card" + (active ? " pending" : ""));
+  const view = insight ? state.viewing[id] : null;
+  const shown = view && view.data ? view.data : insight;
+  const active = !view && ["queued", "collecting", "generating", "parsing"].includes(job.state);
+  const disabled = !!(catInfo && catInfo.enabled === false);
+  const card = el("article", "card" + (active ? " pending" : "") + (disabled ? " off" : ""));
   card.dataset.id = id;
 
   // head
   const head = el("div", "card-head");
-  head.appendChild(el("span", "cicon", (insight && insight.icon) || (catInfo && catInfo.icon) || "✨"));
+  head.appendChild(el("span", "cicon", (shown && shown.icon) || (catInfo && catInfo.icon) || "✨"));
   const titles = el("div", "ctitles");
-  const catName = insight ? insight.category_title || "Custom" : catInfo.title;
-  titles.appendChild(el("div", "cat", catName));
+  const catName = insight ? (shown.category_title || "Custom") : catInfo.title;
+  const catRow = el("div", "cat", catName);
+  if (catInfo && catInfo.focus_overridden) {
+    catRow.appendChild(el("span", "badge", "custom prompt"));
+  }
+  if (disabled) catRow.appendChild(el("span", "badge off", "disabled"));
+  titles.appendChild(catRow);
   titles.appendChild(el("h3", null,
-    insight ? insight.title : (catInfo ? catInfo.title : "Custom insight")));
+    shown ? shown.title : (catInfo ? catInfo.title : "Custom insight")));
   head.appendChild(titles);
   const actions = el("div", "actions");
-  if (!active) {
+  if (disabled) {
+    const enable = el("button", "btn small", "Enable");
+    enable.addEventListener("click", async () => {
+      try {
+        await api(`api/prompt/${id}`, { method: "PUT", body: JSON.stringify({ enabled: true }) });
+        await refreshStatus();
+        render();
+      } catch (e) { toast(e.message); }
+    });
+    actions.appendChild(enable);
+  }
+  if (!active && !view) {
     const regen = el("button", "btn icon", "↻");
     regen.title = "Regenerate";
     regen.addEventListener("click", () => generate(id, insight && insight.question));
     actions.appendChild(regen);
   }
-  if (insight) {
+  if (catInfo) {
+    const edit = el("button", "btn icon", "✎");
+    edit.title = "Edit prompt";
+    edit.addEventListener("click", () => openEdit(catInfo));
+    actions.appendChild(edit);
+  }
+  if (shown) {
     const expand = el("button", "btn icon", "⤢");
     expand.title = "Expand";
-    expand.addEventListener("click", () => openModal(insight));
+    expand.addEventListener("click", () => openModal(shown));
     actions.appendChild(expand);
-    if (insight.category === "custom") {
+    if (insight && insight.category === "custom") {
       const del = el("button", "btn icon", "✕");
       del.title = "Delete";
       del.addEventListener("click", async () => {
@@ -307,8 +488,17 @@ function makeCard(catInfo, insight) {
   head.appendChild(actions);
   card.appendChild(head);
 
-  if (insight && insight.question) {
-    card.appendChild(el("div", "summary", `“${insight.question}”`));
+  if (view) {
+    const pill = el("div", "histpill");
+    pill.appendChild(el("span", null, `Viewing ${fmtRun(view.ts)}`));
+    const back = el("button", "btn small", "Back to latest");
+    back.addEventListener("click", () => viewRun(id, null));
+    pill.appendChild(back);
+    card.appendChild(pill);
+  }
+
+  if (shown && shown.question) {
+    card.appendChild(el("div", "summary", `“${shown.question}”`));
   }
 
   // body
@@ -318,26 +508,39 @@ function makeCard(catInfo, insight) {
     phase.appendChild(el("span", null, phaseLabel(job.state)));
     card.appendChild(phase);
     card.appendChild(el("div", "viz-skel"));
-  } else if (insight) {
-    if (insight.summary) card.appendChild(el("div", "summary", insight.summary));
-    if (insight.highlights && insight.highlights.length) {
+  } else if (shown) {
+    if (shown.summary) card.appendChild(el("div", "summary", shown.summary));
+    if (shown.highlights && shown.highlights.length) {
+      const prevData = view ? view.prev : state.prevLatest[id];
+      const prevHls = (prevData && prevData.highlights) || [];
       const hls = el("div", "highlights");
-      insight.highlights.forEach((h) => {
+      shown.highlights.forEach((h) => {
         if (!h || !h.label) return;
         const box = el("div", "hl" + (h.status ? ` status-${h.status}` : ""));
         box.appendChild(el("div", "l", String(h.label)));
         box.appendChild(el("div", "v", String(h.value != null ? h.value : "—")));
         if (h.delta) box.appendChild(el("div", "d", String(h.delta)));
+        const prev = prevHls.find((p) => p && p.label === h.label);
+        if (prev && prev.value != null) {
+          box.appendChild(el("div", "prev", `prev: ${prev.value}`));
+        }
         hls.appendChild(box);
       });
       card.appendChild(hls);
     }
-    card.appendChild(makeFrame(insight));
+    if (!view && insight && insight.questions && insight.questions.length) {
+      card.appendChild(makeQuestions(insight));
+    }
+    card.appendChild(makeFrame(shown));
     const foot = el("div", "foot");
-    foot.appendChild(el("span", null, `Updated ${timeAgo(insight.generated_at)}`));
+    foot.appendChild(el("span", null,
+      view ? `Generated ${timeAgo(shown.generated_at)}` : `Updated ${timeAgo(shown.generated_at)}`));
     foot.appendChild(el("span", "spacer"));
-    if (insight.meta && insight.meta.duration_ms) {
-      foot.appendChild(el("span", null, `${(insight.meta.duration_ms / 1000).toFixed(0)}s`));
+    if (shown.meta && shown.meta.duration_ms) {
+      foot.appendChild(el("span", null, `${(shown.meta.duration_ms / 1000).toFixed(0)}s`));
+    }
+    if (insight && catInfo) {
+      foot.appendChild(makeHistoryControls(id, insight, view));
     }
     card.appendChild(foot);
   } else if (job.state === "error") {
@@ -414,9 +617,16 @@ let lastRenderKey = "";
 function renderIfChanged() {
   const s = state.status;
   const key = JSON.stringify({
-    auth: s && [s.authenticated, s.auth_check.state],
+    auth: s && [s.authenticated, s.auth_check.state, s.auth_source],
     jobs: s && s.jobs,
-    gen: state.insights.map((i) => i.id + i.generated_at),
+    // a card pinned to a past run keys on that run, not generated_at — the
+    // poll loop must not clobber it when the latest regenerates elsewhere
+    gen: state.insights.map((i) => i.id
+      + (state.viewing[i.id] ? "@" + state.viewing[i.id].ts : i.generated_at)
+      + ":q" + ((i.questions || []).length)),
+    view: Object.keys(state.viewing).map((k) => k + state.viewing[k].ts),
+    cats: s && s.categories.map((c) =>
+      [c.id, c.enabled, c.focus_overridden, c.refresh_hours]),
     filter: state.filter,
   });
   if (key !== lastRenderKey) {
@@ -450,7 +660,16 @@ async function refreshStatus() {
 
 async function refreshInsights() {
   const data = await api("api/insights");
+  const prev = state.insights;
   state.insights = data.insights || [];
+  // a regenerated insight invalidates its cached history/diff data
+  state.insights.forEach((i) => {
+    const old = prev.find((p) => p.id === i.id);
+    if (old && old.generated_at !== i.generated_at) {
+      delete state.history[i.id];
+      delete state.prevLatest[i.id];
+    }
+  });
 }
 
 function anyActive() {
@@ -490,7 +709,67 @@ $("#modal").addEventListener("click", (ev) => {
   if (ev.target === $("#modal")) $("#modal").classList.remove("open");
 });
 document.addEventListener("keydown", (ev) => {
-  if (ev.key === "Escape") $("#modal").classList.remove("open");
+  if (ev.key === "Escape") {
+    $("#modal").classList.remove("open");
+    $("#editModal").classList.remove("open");
+  }
+});
+
+// ------------------------------------------------------ prompt edit modal
+
+let editCatId = null;
+
+function openEdit(cat) {
+  editCatId = cat.id;
+  $("#editIcon").textContent = cat.icon || "✨";
+  $("#editTitle").textContent = `${cat.title} — prompt`;
+  $("#editDesc").textContent = cat.description || "";
+  $("#editFocus").value = cat.focus || "";
+  $("#editEnabled").checked = cat.enabled !== false;
+  $("#editHours").value = cat.refresh_hours == null ? "" : cat.refresh_hours;
+  const overridden = cat.focus_overridden || cat.enabled === false || cat.refresh_hours != null;
+  $("#editReset").classList.toggle("hidden", !overridden);
+  $("#editModal").classList.add("open");
+}
+
+async function saveEdit(regen) {
+  const hours = $("#editHours").value.trim();
+  const body = {
+    focus: $("#editFocus").value,
+    enabled: $("#editEnabled").checked,
+    refresh_hours: hours === "" ? null : Math.round(Number(hours)),
+  };
+  try {
+    await api(`api/prompt/${editCatId}`, { method: "PUT", body: JSON.stringify(body) });
+    $("#editModal").classList.remove("open");
+    await refreshStatus();
+    render();
+    if (regen) {
+      generate(editCatId);
+    } else {
+      toast("Prompt saved");
+    }
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+$("#editSave").addEventListener("click", () => saveEdit(false));
+$("#editSaveRegen").addEventListener("click", () => saveEdit(true));
+$("#editReset").addEventListener("click", async () => {
+  try {
+    await api(`api/prompt/${editCatId}`, { method: "DELETE" });
+    $("#editModal").classList.remove("open");
+    toast("Restored the default prompt");
+    await refreshStatus();
+    render();
+  } catch (e) {
+    toast(e.message);
+  }
+});
+$("#editClose").addEventListener("click", () => $("#editModal").classList.remove("open"));
+$("#editModal").addEventListener("click", (ev) => {
+  if (ev.target === $("#editModal")) $("#editModal").classList.remove("open");
 });
 
 // ------------------------------------------------------------------ boot

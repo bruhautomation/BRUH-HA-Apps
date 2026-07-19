@@ -118,6 +118,44 @@
       "invalid_daily_at": "Daily time must be HH:MM (24-hour), e.g. 07:30."
     }
   },
+  "services": {
+    "add_memory": {
+      "name": "Add memory fact",
+      "description": "Queue a durable fact about your home for Claude's long-term memory.",
+      "fields": {
+        "fact": {
+          "name": "Fact",
+          "description": "The fact to remember, e.g. We call the office lamp 'the beacon'."
+        },
+        "source": {
+          "name": "Source",
+          "description": "Where this fact came from (defaults to service)."
+        },
+        "confidence": {
+          "name": "Confidence",
+          "description": "How certain the fact is (defaults to medium)."
+        }
+      }
+    },
+    "answer_question": {
+      "name": "Answer memory question",
+      "description": "Answer an open question from Claude's memory system. The answer is recorded and also queued as a memory fact.",
+      "fields": {
+        "question": {
+          "name": "Question",
+          "description": "The open question being answered."
+        },
+        "answer": {
+          "name": "Answer",
+          "description": "Your answer."
+        },
+        "source": {
+          "name": "Source",
+          "description": "Where this answer came from (defaults to service)."
+        }
+      }
+    }
+  },
   "issues": {
     "restart_required": {
       "title": "BRUH Claude: Restart required (v{version})",

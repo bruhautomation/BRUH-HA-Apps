@@ -1,5 +1,32 @@
 # Changelog
 
+## 1.1.0
+
+- **Shared login with BRUH Terminal**: if the BRUH Terminal add-on has shared its Claude
+  credential (`ha-share-login` there), Insights picks it up automatically — no more
+  copying tokens between add-ons. A locally connected credential always wins, and
+  signing out of Insights never touches the shared login. The auth chip shows
+  "Claude · shared login" when the shared credential is in use
+- **Insight history with a date selector**: every category run is kept as a dated copy
+  (custom question cards excluded). Each card's footer grows a run selector plus ‹/›
+  step buttons — pick a past run to view it in place, with a "Back to latest" pill and
+  small "prev:" comparisons on the highlight stats. Retention is configurable via the
+  new `history_keep_runs` (default 40) and `history_keep_days` (default 30) options;
+  set either to 0 to disable history
+- **Editable per-category prompts**: the new ✎ button on each card opens an editor for
+  that category's analysis focus, an enable/disable toggle, and an optional per-category
+  refresh interval. Overridden cards show a "custom prompt" badge; disabled categories
+  are dimmed and skipped by auto-refresh and "Refresh all". The scheduler now refreshes
+  each category on its own clock instead of re-queueing everything at once
+- **Questions, findings, and memory**: the analyst can now ask up to two clarifying
+  questions per insight (answer them inline on the card) and record durable findings
+  about your home. Both are handed to the `bruh_claude` integration
+  (`add_memory` / `answer_question`) when it's installed, with a `/share` inbox fallback
+  for the BRUH Terminal add-on to ingest; learned facts in
+  `/config/.bruh_claude/memory/memory.md` are folded into every data snapshot (context
+  budget raised to ~4000 chars, and learned context now outlives raw entity rows when
+  the bundle is trimmed)
+
 ## 1.0.4
 
 - Fix insight generation failing with "max number of turns": tools are now disallowed

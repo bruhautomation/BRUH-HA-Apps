@@ -28,6 +28,12 @@
     },
     "run_insight": {
       "service": "mdi:lightbulb-on-outline"
+    },
+    "add_memory": {
+      "service": "mdi:brain"
+    },
+    "answer_question": {
+      "service": "mdi:comment-question-outline"
     }
   }
 }

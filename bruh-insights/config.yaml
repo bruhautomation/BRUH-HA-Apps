@@ -1,7 +1,7 @@
 ---
 name: "BRUH Insights"
 description: "AI-powered insights dashboard — Claude analyzes your Home Assistant data and generates beautiful interactive visualizations in the sidebar"
-version: "1.0.4"
+version: "1.1.0"
 slug: "bruh_insights"
 init: false
 
@@ -24,23 +24,32 @@ panel_admin: true
 options:
   auto_refresh_hours: 6
   history_days: 7
+  history_keep_runs: 40
+  history_keep_days: 30
   model: ""
   generation_timeout_minutes: 8
   log_level: info
 schema:
   auto_refresh_hours: "int(0,168)?"
   history_days: "int(1,30)?"
+  history_keep_runs: "int(0,200)?"
+  history_keep_days: "int(0,365)?"
   model: "str?"
   generation_timeout_minutes: "int(2,30)?"
   log_level: "list(trace|debug|info|notice|warning|error|fatal)?"
 
 # Read-only view of the HA config directory. Used to pick up the CLAUDE.md
-# home context that BRUH Terminal generates (if installed) so insights
-# know about the user's naming conventions and setup. Never written to.
+# home context and the shared memory/credential files that BRUH Terminal
+# maintains (if installed). Never written to.
+# /share is writable: when the bruh_claude integration isn't installed,
+# learned findings are dropped into /share/bruh_claude/memory-inbox/ for
+# the BRUH Terminal add-on to ingest.
 map:
   - type: homeassistant_config
     read_only: true
     path: /config
+  - type: share
+    read_only: false
 
 # API access for Home Assistant data collection (states, history,
 # statistics, registries) via the Supervisor proxy

@@ -15,6 +15,7 @@ import io
 import json
 import os
 import sys
+import time
 import urllib.request
 import urllib.error
 
@@ -43,6 +44,11 @@ DENIED_SERVICES = [
     p.strip().lower() for p in os.environ.get("BRUH_DENIED_SERVICES", "").split(",")
     if p.strip()
 ]
+
+
+# Long-term memory store shared with the ha-memory tooling and the
+# consolidator daemon. Env-overridable so tests can point it at a temp dir.
+MEMORY_DIR = os.environ.get("BRUH_MEMORY_DIR", "/config/.bruh_claude/memory")
 
 
 def _service_denied(domain, service):
@@ -1010,6 +1016,41 @@ def reload_config(target):
     return {"error": "Invalid reload endpoint"}
 
 
+def remember_fact(fact, confidence="high"):
+    """Queue a durable household fact for the memory consolidator.
+
+    Appends one JSONL record to a fresh inbox file (one file per call —
+    lock-free by construction). The ha-memory consolidator later merges
+    pending records into /config/.bruh_claude/memory/memory.md.
+    """
+    if not isinstance(fact, str) or not fact.strip():
+        return {"error": "fact must be a non-empty string"}
+    if confidence not in ("high", "medium", "low"):
+        confidence = "high"
+
+    inbox_dir = os.path.join(MEMORY_DIR, "inbox")
+    try:
+        os.makedirs(inbox_dir, exist_ok=True)
+        now = int(time.time())
+        record = {
+            "ts": now,
+            "source": "assist",
+            "fact": fact.strip(),
+            "confidence": confidence,
+        }
+        path = os.path.join(inbox_dir, f"{now}-assist.jsonl")
+        with open(path, "a") as fh:
+            fh.write(json.dumps(record) + "\n")
+    except OSError as exc:
+        return {"error": f"Could not store fact: {exc}"}
+    return {
+        "status": "remembered",
+        "fact": fact.strip(),
+        "confidence": confidence,
+        "note": "Queued for memory consolidation.",
+    }
+
+
 # ============================================================================
 # MCP Tool Definitions
 # ============================================================================
@@ -1765,6 +1806,31 @@ TOOLS = [
         }
     },
     {
+        "name": "remember_fact",
+        "description": (
+            "Remember a durable fact about this household for future "
+            "conversations — a preference, correction, entity nickname, or "
+            "pattern (e.g. \"the family calls the office lamp 'the "
+            "beacon'\", \"always leave the porch light on at night\"). Do "
+            "NOT store transient states, one-off commands, or secrets."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "fact": {
+                    "type": "string",
+                    "description": "The durable fact to remember, phrased as one short standalone sentence."
+                },
+                "confidence": {
+                    "type": "string",
+                    "enum": ["high", "medium", "low"],
+                    "description": "How certain the fact is (default 'high' — the user stated it directly)."
+                }
+            },
+            "required": ["fact"]
+        }
+    },
+    {
         "name": "reload_config",
         "description": "Reload a specific Home Assistant configuration area after making YAML changes. Valid targets: automations, scripts, scenes, groups, input_booleans, input_numbers, input_selects, input_texts, input_datetimes, timers, counters, core, all.",
         "inputSchema": {
@@ -1828,6 +1894,8 @@ TOOL_IMPLEMENTATIONS = {
     "fire_event": "fire_event",
     "get_supervisor_info": "get_supervisor_info",
     "reload_config": "reload_config",
+    # Memory / learning
+    "remember_fact": "remember_fact",
 }
 
 

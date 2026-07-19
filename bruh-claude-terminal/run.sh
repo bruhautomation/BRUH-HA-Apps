@@ -102,6 +102,32 @@ init_environment() {
         bashio::log.info "  - Timezone: $ha_tz (from HA config)"
     fi
 
+    # Shared secrets directory for cross-add-on auth (ha-share-login writes
+    # /config/.bruh_claude/secrets/claude_auth.json for e.g. BRUH Insights).
+    mkdir -p /config/.bruh_claude/secrets
+    chmod 700 /config/.bruh_claude/secrets
+
+    # Long-term home memory store (ha-memory / ha-memory-consolidate).
+    mkdir -p /config/.bruh_claude/memory/inbox
+    if [ ! -f /config/.bruh_claude/memory/memory.md ]; then
+        cat > /config/.bruh_claude/memory/memory.md << 'MEMORYMD'
+# Home Memory
+
+<!-- This file is user-editable — add, correct, or delete anything. -->
+<!-- It is also auto-consolidated: the ha-memory consolidator merges new
+     facts from the inbox into it (newest wins on contradictions). -->
+
+## Preferences
+
+## Entity nicknames
+
+## Household patterns
+
+## Device notes
+MEMORYMD
+        bashio::log.info "  - Memory store seeded at /config/.bruh_claude/memory/"
+    fi
+
     # Volume mount directories — only export if enabled in config
     local access_share access_media access_backup access_addon_configs access_addons
     access_share=$(bashio::config 'access_share' 'true')
@@ -199,6 +225,17 @@ init_environment() {
     local assist_tool_access
     assist_tool_access=$(bashio::config 'assist_tool_access' 'mcp_only')
 
+    # Memory / learning options — exported here too (not just written to the
+    # env file) so the worker pool and listeners launched by this script
+    # inherit them directly.
+    local assist_learning memory_injection memory_max_kb
+    assist_learning=$(bashio::config 'assist_learning' 'true')
+    memory_injection=$(bashio::config 'memory_injection' 'true')
+    memory_max_kb=$(bashio::config 'memory_max_kb' '8')
+    export BRUH_ASSIST_LEARNING="$assist_learning"
+    export BRUH_MEMORY_INJECTION="$memory_injection"
+    export BRUH_MEMORY_MAX_KB="$memory_max_kb"
+
     local env_file="/data/.bruh_claude_env"
     cat > "$env_file" << ENVEOF
 export HOME="${data_home}"
@@ -217,6 +254,9 @@ export SUPERVISOR_API_URL="http://supervisor"
 export BRUH_ASSIST_MAX_TURNS="${assist_max_turns}"
 export BRUH_AUTOMATION_MAX_TURNS="${automation_max_turns}"
 export BRUH_ASSIST_TOOL_ACCESS="${assist_tool_access}"
+export BRUH_ASSIST_LEARNING="${assist_learning}"
+export BRUH_MEMORY_INJECTION="${memory_injection}"
+export BRUH_MEMORY_MAX_KB="${memory_max_kb}"
 export TZ="${TZ:-}"
 export CLAUDE_CODE_DISABLE_MCP_DISCOVERY=1
 export CLAUDE_MCP_SERVERS_OVERRIDE="/config/.mcp.json"
@@ -571,15 +611,17 @@ install_cli_tools() {
         chmod +x /usr/local/bin/persist-install
     fi
 
-    # New CLI tools: ha-addon, ha-entity, ha-service, ha-notify, ha-share, ha-selftest
-    for script in ha-addon ha-entity ha-service ha-notify ha-share ha-selftest; do
+    # New CLI tools: ha-addon, ha-entity, ha-service, ha-notify, ha-share,
+    # ha-selftest, ha-share-login, ha-memory, ha-memory-consolidate
+    for script in ha-addon ha-entity ha-service ha-notify ha-share ha-selftest \
+                  ha-share-login ha-memory ha-memory-consolidate; do
         if [ -f "/opt/scripts/${script}.sh" ]; then
             cp "/opt/scripts/${script}.sh" "/usr/local/bin/${script}"
             chmod +x "/usr/local/bin/${script}"
         fi
     done
 
-    bashio::log.info "CLI tools installed: ha-reload, ha-log, ha-context-gen, ha-backup, ha-yaml-check, ha-addon, ha-entity, ha-service, ha-notify, ha-share, ha-selftest"
+    bashio::log.info "CLI tools installed: ha-reload, ha-log, ha-context-gen, ha-backup, ha-yaml-check, ha-addon, ha-entity, ha-service, ha-notify, ha-share, ha-selftest, ha-share-login, ha-memory"
 }
 
 # ============================================================================
@@ -1353,6 +1395,38 @@ start_usage_limits_tracker() {
 }
 
 # ============================================================================
+# Memory Consolidator (learned home knowledge)
+# ============================================================================
+
+start_memory_consolidator() {
+    # One-line hint (independent of the learning toggle): logged in, but the
+    # login isn't shared with other BRUH add-ons yet — ha-share-login makes
+    # that a one-command fix.
+    if [ ! -f /config/.bruh_claude/secrets/claude_auth.json ]; then
+        if [ -f /data/home/.claude/.credentials.json ] || [ -f /data/.config/claude/.credentials.json ]; then
+            bashio::log.info "Tip: run 'ha-share-login' in the terminal to share this Claude login with other BRUH add-ons (like BRUH Insights)."
+        fi
+    fi
+
+    local learning
+    learning=$(bashio::config 'assist_learning' 'true')
+
+    if [ "$learning" != "true" ]; then
+        bashio::log.info "Memory consolidator disabled (assist_learning: false)"
+        return
+    fi
+
+    if [ -f "/opt/scripts/ha-memory-consolidate.sh" ]; then
+        # Run as the claude user so memory files stay claude-owned and the
+        # Claude CLI can read its OAuth credentials.
+        su-exec claude bash /opt/scripts/ha-memory-consolidate.sh &
+        bashio::log.info "Memory consolidator started (merges /config/.bruh_claude/memory/inbox daily or at >20 pending facts)"
+    else
+        bashio::log.warning "Memory consolidator script not found, skipping"
+    fi
+}
+
+# ============================================================================
 # Assist Integration
 # ============================================================================
 
@@ -1586,6 +1660,7 @@ main() {
     setup_assist_scoping
     deploy_custom_integration
     start_usage_limits_tracker
+    start_memory_consolidator
     setup_assist_integration
     setup_automation_integration
     start_web_terminal

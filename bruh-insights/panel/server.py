@@ -17,6 +17,14 @@ POST /api/auth/setup/code    — submit the pasted one-time code
 GET  /api/auth/setup/status  — poll the guided flow
 POST /api/auth/setup/cancel  — abort the guided flow
 DELETE /api/insight/{id}     — delete a stored insight (custom cards)
+GET  /api/insight/{id}/history       — past runs of a category (no html)
+GET  /api/insight/{id}/history/{ts}  — one stored past run in full
+DELETE /api/insight/{id}/history/{ts} — remove one past run
+GET  /api/prompts            — per-category prompt/override listing
+PUT  /api/prompt/{id}        — set focus/enabled/refresh_hours override
+DELETE /api/prompt/{id}      — reset a category to shipped defaults
+GET  /api/questions          — open analyst questions across insights
+POST /api/questions/answer   — answer one (forwards to bruh_claude, if installed)
 
 Runs on 0.0.0.0:8099. The HA Supervisor proxies the ingress URL into
 /api/hassio_ingress/<token>/...; we therefore use only relative links in the
@@ -38,6 +46,7 @@ from aiohttp import web
 
 import categories as cat_mod
 import claude_client
+import prompt_store
 from categories import CATEGORIES, SYSTEM_PROMPT, build_prompt, get_category
 
 HERE = Path(__file__).resolve().parent
@@ -45,6 +54,13 @@ INSIGHTS_DIR = Path(os.environ.get("BRUH_INSIGHTS_DIR", "/data/insights"))
 ADDON_VERSION = os.environ.get("ADDON_VERSION", "dev")
 REFRESH_HOURS = float(os.environ.get("BRUH_INSIGHTS_REFRESH_HOURS", "6") or 0)
 HISTORY_DAYS = int(os.environ.get("BRUH_INSIGHTS_HISTORY_DAYS", "7") or 7)
+# Dated per-run copies of each category insight (0 for either disables history)
+HISTORY_KEEP_RUNS = int(os.environ.get("BRUH_INSIGHTS_HISTORY_KEEP_RUNS", "40") or 40)
+HISTORY_KEEP_DAYS = int(os.environ.get("BRUH_INSIGHTS_HISTORY_KEEP_DAYS", "30") or 30)
+# Fallback drop-box for learned facts when the bruh_claude integration
+# isn't installed — the BRUH Terminal add-on ingests it from /share
+MEMORY_INBOX_DIR = Path(os.environ.get(
+    "BRUH_INSIGHTS_MEMORY_INBOX", "/share/bruh_claude/memory-inbox"))
 MODEL = os.environ.get("BRUH_INSIGHTS_MODEL", "").strip()
 TIMEOUT_S = int(float(os.environ.get("BRUH_INSIGHTS_TIMEOUT_MIN", "8") or 8) * 60)
 BIND_HOST = "0.0.0.0"
@@ -65,7 +81,6 @@ log = logging.getLogger("bruh-insights")
 JOBS: dict[str, dict] = {}
 QUEUE: asyncio.Queue[str] = asyncio.Queue()
 AUTH_CHECK: dict = {"state": "unchecked", "error": "", "checked_at": 0}
-LAST_FULL_REFRESH = 0.0
 
 
 def _job_active(insight_id: str) -> bool:
@@ -84,12 +99,21 @@ def _set_job(insight_id: str, **fields) -> None:
 # ---------------------------------------------------------------------------
 
 _SAFE_ID = re.compile(r"^[a-z0-9][a-z0-9_\-]{0,63}$")
+# `generated_at` with ':' → '-' (filesystem-safe); strict so it can be
+# safely joined into a path
+_STAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}$")
 
 
 def _insight_path(insight_id: str) -> Path:
     if not _SAFE_ID.match(insight_id):
         raise web.HTTPBadRequest(text="bad insight id")
     return INSIGHTS_DIR / f"{insight_id}.json"
+
+
+def _history_dir(insight_id: str) -> Path:
+    if not _SAFE_ID.match(insight_id):
+        raise web.HTTPBadRequest(text="bad insight id")
+    return INSIGHTS_DIR / "history" / insight_id
 
 
 def load_insights() -> list[dict]:
@@ -106,9 +130,11 @@ def load_insights() -> list[dict]:
                 pass
     for stem, p in files.items():
         try:
-            custom.append(json.loads(p.read_text(encoding="utf-8")))
+            obj = json.loads(p.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            pass
+            continue
+        if isinstance(obj, dict) and obj.get("id"):
+            custom.append(obj)
     custom.sort(key=lambda i: i.get("generated_at", ""), reverse=True)
     return out + custom
 
@@ -130,16 +156,125 @@ def save_insight(insight: dict) -> None:
             old.unlink()
         except OSError:
             pass
+    _write_history_copy(insight)
+
+
+def _write_history_copy(insight: dict) -> None:
+    """Dated copy under history/<id>/<stamp>.json so past runs stay browsable.
+
+    Custom question cards are excluded, and load_insights() never sees the
+    history/ subdir (its glob is non-recursive). Setting either keep option
+    to 0 disables history entirely.
+    """
+    if insight["id"].startswith("custom-"):
+        return
+    if HISTORY_KEEP_RUNS <= 0 or HISTORY_KEEP_DAYS <= 0:
+        return
+    stamp = str(insight.get("generated_at", "")).replace(":", "-")
+    if not _STAMP_RE.match(stamp):
+        return
+    hdir = _history_dir(insight["id"])
+    try:
+        hdir.mkdir(parents=True, exist_ok=True)
+        tmp = hdir / f"{stamp}.tmp"
+        tmp.write_text(json.dumps(insight, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(hdir / f"{stamp}.json")
+    except OSError as exc:
+        log.warning("could not store history run for %s: %s", insight["id"], exc)
+        return
+    _prune_history(hdir)
+
+
+def _prune_history(hdir: Path) -> None:
+    """Keep at most HISTORY_KEEP_RUNS files, none older than HISTORY_KEEP_DAYS
+    (age judged by the filename stamp — lexicographic order matches time)."""
+    files = sorted(hdir.glob("*.json"), key=lambda p: p.name, reverse=True)
+    cutoff = time.strftime(
+        "%Y-%m-%dT%H-%M-%S", time.localtime(time.time() - HISTORY_KEEP_DAYS * 86400))
+    for i, path in enumerate(files):
+        if i < HISTORY_KEEP_RUNS and path.stem >= cutoff:
+            continue
+        try:
+            path.unlink()
+        except OSError:
+            pass
+
+
+# ---------------------------------------------------------------------------
+# Memory hand-off (bruh_claude integration, /share inbox fallback)
+# ---------------------------------------------------------------------------
+
+async def _call_ha_service(service: str, data: dict) -> bool:
+    """Call a bruh_claude.<service> HA service; False when it isn't there.
+
+    The integration ships with the BRUH Terminal add-on and may simply not
+    be installed — every failure here is expected and non-fatal.
+    """
+    try:
+        import ha_data  # deferred so the module loads without aiohttp in tests
+        await ha_data.call_service(service, data)
+        return True
+    except Exception as exc:  # noqa: BLE001 — best-effort hand-off
+        log.debug("bruh_claude.%s unavailable: %s", service, exc)
+        return False
+
+
+def _write_memory_inbox(fact: str) -> None:
+    """Fallback: append the fact as JSONL to the shared /share inbox.
+
+    Best-effort only — if /share isn't writable, log and drop silently;
+    memory hand-off must never break an insight run.
+    """
+    try:
+        MEMORY_INBOX_DIR.mkdir(parents=True, exist_ok=True)
+        line = json.dumps(
+            {"ts": int(time.time()), "source": "insights", "fact": fact,
+             "confidence": "medium"},
+            ensure_ascii=False,
+        )
+        path = MEMORY_INBOX_DIR / f"{int(time.time())}-insights.jsonl"
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except OSError as exc:
+        log.debug("memory inbox write failed: %s", exc)
+
+
+async def _submit_memory(fact: str) -> None:
+    if not await _call_ha_service(
+            "add_memory", {"fact": fact, "source": "insights", "confidence": "medium"}):
+        await asyncio.to_thread(_write_memory_inbox, fact)
+
+
+async def _submit_answer(question: str, answer: str) -> None:
+    if not await _call_ha_service(
+            "answer_question", {"question": question, "answer": answer, "source": "insights"}):
+        await asyncio.to_thread(_write_memory_inbox, f"Q: {question} → A: {answer}")
 
 
 # ---------------------------------------------------------------------------
 # Generation worker
 # ---------------------------------------------------------------------------
 
+def _clean_strings(value, max_items: int, max_chars: int) -> list[str]:
+    """Sanitize a model-returned string array: strings only, trimmed, capped."""
+    if not isinstance(value, list):
+        return []
+    out: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        item = item.strip()
+        if item:
+            out.append(item[:max_chars])
+        if len(out) >= max_items:
+            break
+    return out
+
+
 async def _generate(insight_id: str) -> None:
     job = JOBS.get(insight_id, {})
     question = job.get("question")
-    category = get_category(insight_id) if question is None else None
+    category = prompt_store.effective_category(insight_id) if question is None else None
     if question is None and category is None:
         _set_job(insight_id, state="error", error="unknown category")
         return
@@ -174,6 +309,8 @@ async def _generate(insight_id: str) -> None:
         highlights = obj.get("highlights")
         if not isinstance(highlights, list):
             highlights = []
+        questions = _clean_strings(obj.get("questions"), 2, 300)
+        findings = _clean_strings(obj.get("findings"), 3, 500)
         insight = {
             "id": insight_id,
             "category": cat["id"] if question is None else "custom",
@@ -183,11 +320,17 @@ async def _generate(insight_id: str) -> None:
             "title": str(obj.get("title", ""))[:120],
             "summary": str(obj.get("summary", ""))[:2000],
             "highlights": highlights[:6],
+            "questions": questions,
+            "findings": findings,
+            "focus_used": cat.get("focus", "") if question is None else "",
             "html": html,
             "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "meta": result.get("meta", {}),
         }
         save_insight(insight)
+        # hand durable findings to the home's memory (never breaks the run)
+        for fact in findings:
+            await _submit_memory(fact)
         _set_job(insight_id, state="done", error="")
         log.info("insight %s generated (%s)", insight_id, insight["title"])
     except Exception as exc:  # noqa: BLE001 — job errors surface in the UI
@@ -204,26 +347,40 @@ async def _worker() -> None:
             QUEUE.task_done()
 
 
+def _refresh_due(eff: dict, generated_at: str, now: float) -> bool:
+    """True when a category's stored insight is older than its effective
+    interval (per-category refresh_hours override, else global REFRESH_HOURS;
+    0 disables). A missing or unparseable timestamp counts as ancient, so
+    first boot generates every enabled category."""
+    if not eff.get("enabled", True):
+        return False
+    hours = eff.get("refresh_hours")
+    if hours is None:
+        hours = REFRESH_HOURS
+    if hours <= 0:
+        return False
+    if not generated_at:
+        return True
+    try:
+        age = now - time.mktime(time.strptime(generated_at[:19], "%Y-%m-%dT%H:%M:%S"))
+    except (ValueError, OverflowError):
+        return True
+    return age >= hours * 3600
+
+
 async def _scheduler() -> None:
-    """Auto-refresh all categories every REFRESH_HOURS (0 disables)."""
-    global LAST_FULL_REFRESH
-    if REFRESH_HOURS <= 0:
-        return
-    # on boot, count existing insights as fresh enough to avoid a thundering start
-    LAST_FULL_REFRESH = time.time()
-    stored = load_insights()
-    if not stored:
-        LAST_FULL_REFRESH = 0
+    """Per-category auto-refresh: each tick, queue any enabled category whose
+    stored insight has outlived its effective refresh interval."""
     while True:
         await asyncio.sleep(60)
         if not claude_client.get_auth():
             continue
-        if time.time() - LAST_FULL_REFRESH < REFRESH_HOURS * 3600:
-            continue
-        LAST_FULL_REFRESH = time.time()
-        log.info("auto-refresh: queueing all categories")
+        stored = {i["id"]: i.get("generated_at", "") for i in load_insights()}
+        now = time.time()
         for cat in CATEGORIES:
-            _enqueue(cat["id"])
+            eff = prompt_store.effective_category(cat["id"]) or cat
+            if _refresh_due(eff, stored.get(cat["id"], ""), now) and _enqueue(cat["id"]):
+                log.info("auto-refresh: queued %s", cat["id"])
 
 
 def _enqueue(insight_id: str, question: str | None = None) -> bool:
@@ -264,6 +421,23 @@ def _static(name: str, ctype: str):
     return handler
 
 
+def _category_status(c: dict, insights: dict) -> dict:
+    eff = prompt_store.effective_category(c["id"]) or c
+    return {
+        "id": c["id"],
+        "title": c["title"],
+        "icon": c["icon"],
+        "description": c["description"],
+        "generated_at": insights.get(c["id"]),
+        "focus": eff.get("focus", c["focus"]),
+        "default_focus": c["focus"],
+        "focus_overridden": "focus" in eff.get("overridden", []),
+        "enabled": eff.get("enabled", True),
+        "refresh_hours": eff.get("refresh_hours"),
+        "job": {k: JOBS.get(c["id"], {}).get(k) for k in ("state", "error")},
+    }
+
+
 async def h_status(request: web.Request) -> web.Response:
     auth = claude_client.get_auth()
     insights = {i["id"]: i.get("generated_at") for i in load_insights()}
@@ -271,21 +445,12 @@ async def h_status(request: web.Request) -> web.Response:
         "version": ADDON_VERSION,
         "authenticated": bool(auth),
         "auth_type": auth["type"] if auth else None,
+        "auth_source": auth.get("source") if auth else None,
         "auth_check": AUTH_CHECK,
         "model": MODEL or "default",
         "refresh_hours": REFRESH_HOURS,
         "history_days": HISTORY_DAYS,
-        "categories": [
-            {
-                "id": c["id"],
-                "title": c["title"],
-                "icon": c["icon"],
-                "description": c["description"],
-                "generated_at": insights.get(c["id"]),
-                "job": {k: JOBS.get(c["id"], {}).get(k) for k in ("state", "error")},
-            }
-            for c in CATEGORIES
-        ],
+        "categories": [_category_status(c, insights) for c in CATEGORIES],
         "jobs": {jid: {"state": j.get("state"), "error": j.get("error")}
                  for jid, j in JOBS.items()},
         "queue_size": QUEUE.qsize(),
@@ -313,9 +478,13 @@ async def h_generate(request: web.Request) -> web.Response:
 
 
 async def h_generate_all(request: web.Request) -> web.Response:
-    global LAST_FULL_REFRESH
-    LAST_FULL_REFRESH = time.time()
-    queued = [c["id"] for c in CATEGORIES if _enqueue(c["id"])]
+    queued = []
+    for c in CATEGORIES:
+        eff = prompt_store.effective_category(c["id"])
+        if eff and not eff.get("enabled", True):
+            continue
+        if _enqueue(c["id"]):
+            queued.append(c["id"])
     return web.json_response({"queued": queued})
 
 
@@ -328,6 +497,148 @@ async def h_delete_insight(request: web.Request) -> web.Response:
         raise web.HTTPNotFound(text="no such insight")
     JOBS.pop(insight_id, None)
     return web.json_response({"deleted": insight_id})
+
+
+# -- insight history --------------------------------------------------------
+
+def _history_run_path(request: web.Request) -> Path:
+    hdir = _history_dir(request.match_info["id"])
+    ts = request.match_info["ts"]
+    if not _STAMP_RE.match(ts):
+        raise web.HTTPBadRequest(text="bad timestamp")
+    return hdir / f"{ts}.json"
+
+
+async def h_history_list(request: web.Request) -> web.Response:
+    hdir = _history_dir(request.match_info["id"])
+    runs = []
+    for path in sorted(hdir.glob("*.json"), key=lambda p: p.name, reverse=True):
+        if not _STAMP_RE.match(path.stem):
+            continue
+        try:
+            obj = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        runs.append({
+            "ts": path.stem,
+            "generated_at": obj.get("generated_at"),
+            "title": obj.get("title"),
+        })
+    return web.json_response({"runs": runs})
+
+
+async def h_history_get(request: web.Request) -> web.Response:
+    path = _history_run_path(request)
+    try:
+        return web.json_response(json.loads(path.read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        raise web.HTTPNotFound(text="no such run")
+
+
+async def h_history_delete(request: web.Request) -> web.Response:
+    path = _history_run_path(request)
+    try:
+        path.unlink()
+    except OSError:
+        raise web.HTTPNotFound(text="no such run")
+    return web.json_response({"deleted": request.match_info["ts"]})
+
+
+# -- prompt overrides -------------------------------------------------------
+
+def _prompt_record(cat_id: str) -> dict:
+    c = get_category(cat_id)
+    eff = prompt_store.effective_category(cat_id)
+    return {
+        "id": cat_id,
+        "title": c["title"],
+        "default_focus": c["focus"],
+        "focus": eff["focus"],
+        "overridden": eff["overridden"],
+        "enabled": eff["enabled"],
+        "refresh_hours": eff["refresh_hours"],
+    }
+
+
+async def h_prompts(request: web.Request) -> web.Response:
+    return web.json_response({"prompts": [_prompt_record(c["id"]) for c in CATEGORIES]})
+
+
+async def h_prompt_put(request: web.Request) -> web.Response:
+    cat_id = request.match_info["id"]
+    cat = get_category(cat_id)
+    if not cat:
+        raise web.HTTPBadRequest(text="unknown category")
+    body = await request.json()
+    fields: dict = {}
+    if "focus" in body:
+        focus = body["focus"]
+        if not isinstance(focus, str):
+            raise web.HTTPBadRequest(text="focus must be a string")
+        focus = focus.strip()[:4000]
+        # empty or identical-to-default focus clears the override
+        fields["focus"] = focus if focus and focus != cat["focus"] else None
+    if "enabled" in body:
+        if not isinstance(body["enabled"], bool):
+            raise web.HTTPBadRequest(text="enabled must be a boolean")
+        # enabled is the default — only a disable is worth storing
+        fields["enabled"] = None if body["enabled"] else False
+    if "refresh_hours" in body:
+        hours = body["refresh_hours"]
+        if hours is not None and (
+                not isinstance(hours, int) or isinstance(hours, bool)
+                or not 0 <= hours <= 168):
+            raise web.HTTPBadRequest(text="refresh_hours must be an integer 0-168 or null")
+        fields["refresh_hours"] = hours
+    prompt_store.save_override(cat_id, fields)
+    return web.json_response(_prompt_record(cat_id))
+
+
+async def h_prompt_delete(request: web.Request) -> web.Response:
+    cat_id = request.match_info["id"]
+    if not get_category(cat_id):
+        raise web.HTTPBadRequest(text="unknown category")
+    prompt_store.reset_override(cat_id)
+    return web.json_response(_prompt_record(cat_id))
+
+
+# -- analyst questions ------------------------------------------------------
+
+async def h_questions(request: web.Request) -> web.Response:
+    out = []
+    for ins in load_insights():
+        for q in ins.get("questions") or []:
+            if isinstance(q, str) and q.strip():
+                out.append({
+                    "insight_id": ins["id"],
+                    "category_title": ins.get("category_title", ""),
+                    "question": q,
+                })
+    return web.json_response({"questions": out})
+
+
+async def h_answer_question(request: web.Request) -> web.Response:
+    body = await request.json()
+    insight_id = str(body.get("insight_id") or "")
+    question = str(body.get("question") or "").strip()
+    answer = str(body.get("answer") or "").strip()
+    if not question or not answer:
+        raise web.HTTPBadRequest(text="question and answer required")
+    if len(answer) > 1000:
+        raise web.HTTPBadRequest(text="answer too long")
+    path = _insight_path(insight_id)
+    try:
+        insight = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raise web.HTTPNotFound(text="no such insight")
+    questions = [q for q in (insight.get("questions") or []) if isinstance(q, str)]
+    if question not in questions:
+        raise web.HTTPNotFound(text="no such open question")
+    await _submit_answer(question, answer)
+    # answered — stop surfacing it
+    insight["questions"] = [q for q in questions if q != question]
+    save_insight(insight)
+    return web.json_response({"answered": True, "remaining": len(insight["questions"])})
 
 
 # -- auth -------------------------------------------------------------------
@@ -395,6 +706,14 @@ def make_app() -> web.Application:
     app.router.add_post("/api/generate", h_generate)
     app.router.add_post("/api/generate_all", h_generate_all)
     app.router.add_delete("/api/insight/{id}", h_delete_insight)
+    app.router.add_get("/api/insight/{id}/history", h_history_list)
+    app.router.add_get("/api/insight/{id}/history/{ts}", h_history_get)
+    app.router.add_delete("/api/insight/{id}/history/{ts}", h_history_delete)
+    app.router.add_get("/api/prompts", h_prompts)
+    app.router.add_put("/api/prompt/{id}", h_prompt_put)
+    app.router.add_delete("/api/prompt/{id}", h_prompt_delete)
+    app.router.add_get("/api/questions", h_questions)
+    app.router.add_post("/api/questions/answer", h_answer_question)
     app.router.add_post("/api/auth/token", h_auth_token)
     app.router.add_post("/api/auth/logout", h_auth_logout)
     app.router.add_post("/api/auth/setup/start", h_setup_start)

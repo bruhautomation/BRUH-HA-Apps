@@ -8,6 +8,9 @@ Works with a Claude subscription (Pro/Max) — no API key required:
     the resulting long-lived token (sk-ant-oat01-…).
   * Paste flow: the user runs `claude setup-token` anywhere (e.g. the BRUH
     Claude Terminal add-on) and pastes the token into the panel.
+  * Shared login: the BRUH Terminal add-on's `ha-share-login` writes a
+    credential to /config/.bruh_claude/secrets/claude_auth.json; Insights
+    picks it up automatically (read-only fallback, local creds win).
   * API key: a plain Anthropic API key also works, for users who prefer it.
 The credential is stored at $BRUH_INSIGHTS_SECRETS/claude_auth.json (0600)
 and injected into the CLI environment (CLAUDE_CODE_OAUTH_TOKEN /
@@ -45,6 +48,11 @@ log = logging.getLogger("bruh-insights.auth")
 SECRETS_DIR = os.environ.get("BRUH_INSIGHTS_SECRETS", "/data/secrets")
 CLAUDE_HOME = os.environ.get("BRUH_INSIGHTS_HOME", "/data/home")
 AUTH_FILE = os.path.join(SECRETS_DIR, "claude_auth.json")
+# Credential shared by the BRUH Terminal add-on (its `ha-share-login` tool
+# writes it to the /config volume, which we mount read-only). Insights only
+# ever READS this file — logout must never touch it.
+SHARED_AUTH_FILE = os.environ.get(
+    "BRUH_INSIGHTS_SHARED_AUTH", "/config/.bruh_claude/secrets/claude_auth.json")
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Z0-9]|[\r\x08]")
 URL_RE = re.compile(r"https://[^\s\"'\x1b]+")
@@ -126,17 +134,49 @@ def _cli_credentials_present() -> bool:
         return False
 
 
+def _read_shared_auth() -> dict | None:
+    """The credential the BRUH Terminal add-on shares via `ha-share-login`.
+
+    Shape contract: {"type": "oauth_token"|"api_key", "value": "<str>",
+    "saved_at": <epoch int>}. Missing, unreadable, or malformed files are
+    silently ignored — the shared file is entirely optional.
+    """
+    try:
+        with open(SHARED_AUTH_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    value = data.get("value")
+    if data.get("type") not in ("oauth_token", "api_key"):
+        return None
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return {"type": data["type"], "value": value.strip()}
+
+
 def get_auth() -> dict | None:
-    """Return {'type': 'oauth_token'|'api_key'|'cli_login', 'value': str} or None."""
+    """Return {'type': 'oauth_token'|'api_key'|'cli_login', 'value': str,
+    'source': 'local'|'shared'|'cli'} or None.
+
+    Resolution order: locally stored credential → credential shared by the
+    BRUH Terminal add-on → the CLI's own saved login.
+    """
     try:
         with open(AUTH_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
         if data.get("value"):
+            data["source"] = "local"
             return data
     except (OSError, ValueError):
         pass
+    shared = _read_shared_auth()
+    if shared:
+        shared["source"] = "shared"
+        return shared
     if _cli_credentials_present():
-        return {"type": "cli_login", "value": ""}
+        return {"type": "cli_login", "value": "", "source": "cli"}
     return None
 
 
@@ -163,6 +203,11 @@ def save_auth(value: str, cred_type: str | None = None) -> dict:
 
 
 def clear_auth() -> None:
+    """Forget the locally stored credential and the CLI's own login.
+
+    NEVER touches SHARED_AUTH_FILE — that file belongs to the BRUH Terminal
+    add-on (and our /config mount is read-only anyway).
+    """
     for path in (AUTH_FILE, _credentials_path()):
         try:
             os.remove(path)

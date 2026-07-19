@@ -516,6 +516,24 @@ For room/area requests (e.g. 'turn off the bedroom lights') call get_areas to re
 If unsure of an entity_id, call get_all_states with a domain filter first."
     fi
 
+    # Splice in the learned household memory (voice distillate, 2 KB cap) —
+    # mirrored in assist-worker-pool.py's build_system_prompt (keep in sync).
+    if [ "${BRUH_MEMORY_INJECTION:-true}" != "false" ]; then
+        local memory_dir="${BRUH_MEMORY_DIR:-/config/.bruh_claude/memory}"
+        local memory_text=""
+        if [ -s "$memory_dir/voice.md" ]; then
+            memory_text=$(head -c 2048 "$memory_dir/voice.md" 2>/dev/null)
+        elif [ -s "$memory_dir/memory.md" ]; then
+            memory_text=$(head -c 2048 "$memory_dir/memory.md" 2>/dev/null)
+        fi
+        if [ -n "$memory_text" ]; then
+            base_system_prompt="${base_system_prompt}
+
+Known about this household (learned):
+${memory_text}"
+        fi
+    fi
+
     local final_system_prompt="$base_system_prompt"
 
     # Two message variants: resumed sessions already hold the prior turns

@@ -31,6 +31,7 @@ sys.path.insert(0, str(PANEL_DIR))
 
 import categories  # noqa: E402
 import claude_client  # noqa: E402
+import prompt_store  # noqa: E402
 
 
 class TestInsightsConfigYaml(unittest.TestCase):
@@ -469,6 +470,627 @@ class TestPanelServer(unittest.TestCase):
 
         asyncio.run(run())
         self.server.JOBS.clear()
+
+
+class TestSharedAuth(unittest.TestCase):
+    """Shared-credential fallback (written by the BRUH Terminal add-on)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self._old = (claude_client.SECRETS_DIR, claude_client.AUTH_FILE,
+                     claude_client.CLAUDE_HOME, claude_client.SHARED_AUTH_FILE)
+        claude_client.SECRETS_DIR = self.tmp.name
+        claude_client.AUTH_FILE = os.path.join(self.tmp.name, "claude_auth.json")
+        claude_client.CLAUDE_HOME = os.path.join(self.tmp.name, "home")
+        claude_client.SHARED_AUTH_FILE = os.path.join(self.tmp.name, "shared_auth.json")
+
+    def tearDown(self):
+        (claude_client.SECRETS_DIR, claude_client.AUTH_FILE,
+         claude_client.CLAUDE_HOME, claude_client.SHARED_AUTH_FILE) = self._old
+        self.tmp.cleanup()
+
+    def _write_shared(self, payload):
+        with open(claude_client.SHARED_AUTH_FILE, "w") as f:
+            if isinstance(payload, str):
+                f.write(payload)
+            else:
+                json.dump(payload, f)
+
+    def test_shared_auth_picked_up(self):
+        token = "sk-ant-oat01-" + "s" * 30
+        self._write_shared({"type": "oauth_token", "value": token, "saved_at": 1752000000})
+        auth = claude_client.get_auth()
+        self.assertEqual(auth["type"], "oauth_token")
+        self.assertEqual(auth["value"], token)
+        self.assertEqual(auth["source"], "shared")
+        env = claude_client._claude_env()
+        self.assertEqual(env.get("CLAUDE_CODE_OAUTH_TOKEN"), token)
+        self.assertNotIn("ANTHROPIC_API_KEY", env)
+
+    def test_shared_api_key_injected_as_api_key(self):
+        key = "sk-ant-api03-" + "k" * 30
+        self._write_shared({"type": "api_key", "value": key, "saved_at": 1752000000})
+        env = claude_client._claude_env()
+        self.assertEqual(env.get("ANTHROPIC_API_KEY"), key)
+        self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", env)
+
+    def test_local_wins_over_shared(self):
+        local = "sk-ant-oat01-" + "l" * 30
+        claude_client.save_auth(local)
+        self._write_shared({"type": "oauth_token", "value": "sk-ant-oat01-" + "s" * 30,
+                            "saved_at": 1752000000})
+        auth = claude_client.get_auth()
+        self.assertEqual(auth["value"], local)
+        self.assertEqual(auth["source"], "local")
+
+    def test_source_reported_for_local(self):
+        claude_client.save_auth("sk-ant-oat01-" + "a" * 30)
+        self.assertEqual(claude_client.get_auth()["source"], "local")
+
+    def test_malformed_shared_tolerated(self):
+        for payload in ("not json", ["a", "b"],
+                        {"type": "weird", "value": "x"},
+                        {"type": "oauth_token", "value": ""},
+                        {"type": "oauth_token", "value": 42},
+                        {"value": "sk-ant-oat01-zzz"}):
+            self._write_shared(payload)
+            self.assertIsNone(claude_client.get_auth(), payload)
+
+    def test_missing_shared_tolerated(self):
+        self.assertIsNone(claude_client.get_auth())
+
+    def test_logout_leaves_shared_file_intact(self):
+        claude_client.save_auth("sk-ant-oat01-" + "l" * 30)
+        self._write_shared({"type": "oauth_token", "value": "sk-ant-oat01-" + "s" * 30,
+                            "saved_at": 1752000000})
+        claude_client.clear_auth()
+        self.assertTrue(os.path.exists(claude_client.SHARED_AUTH_FILE))
+        # after logout, the shared credential takes over again
+        auth = claude_client.get_auth()
+        self.assertEqual(auth["source"], "shared")
+
+    def test_status_reports_auth_source(self):
+        from aiohttp.test_utils import TestClient, TestServer
+        server = importlib.import_module("server")
+        old_dir = server.INSIGHTS_DIR
+        server.INSIGHTS_DIR = Path(self.tmp.name) / "insights"
+        # fresh queue so the app worker never awaits a queue bound to a
+        # previous test's event loop
+        server.QUEUE = asyncio.Queue()
+        # keep the startup auth check from invoking a real claude binary
+        old_validate = claude_client.validate_auth
+        claude_client.validate_auth = lambda timeout=120: {"ok": True, "error": ""}
+        self._write_shared({"type": "oauth_token", "value": "sk-ant-oat01-" + "s" * 30,
+                            "saved_at": 1752000000})
+
+        async def run():
+            client = TestClient(TestServer(server.make_app()))
+            await client.start_server()
+            try:
+                resp = await client.get("/api/status")
+                data = await resp.json()
+                self.assertTrue(data["authenticated"])
+                self.assertEqual(data["auth_source"], "shared")
+            finally:
+                await client.close()
+
+        try:
+            asyncio.run(run())
+        finally:
+            server.INSIGHTS_DIR = old_dir
+            claude_client.validate_auth = old_validate
+
+
+class TestPromptStore(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self._old = prompt_store.OVERRIDES_FILE
+        prompt_store.OVERRIDES_FILE = os.path.join(self.tmp.name, "prompt_overrides.json")
+
+    def tearDown(self):
+        prompt_store.OVERRIDES_FILE = self._old
+        self.tmp.cleanup()
+
+    def test_defaults_without_overrides(self):
+        eff = prompt_store.effective_category("energy")
+        self.assertEqual(eff["focus"], categories.get_category("energy")["focus"])
+        self.assertTrue(eff["enabled"])
+        self.assertIsNone(eff["refresh_hours"])
+        self.assertEqual(eff["overridden"], [])
+
+    def test_merge_and_persist(self):
+        prompt_store.save_override("energy", {"focus": "Watch the dryer", "refresh_hours": 3})
+        eff = prompt_store.effective_category("energy")
+        self.assertEqual(eff["focus"], "Watch the dryer")
+        self.assertEqual(eff["refresh_hours"], 3)
+        self.assertIn("focus", eff["overridden"])
+        self.assertIn("refresh_hours", eff["overridden"])
+        # non-overridden fields keep shipped values
+        self.assertEqual(eff["domains"], categories.get_category("energy")["domains"])
+        # persisted on disk, not just in memory
+        with open(prompt_store.OVERRIDES_FILE) as f:
+            stored = json.load(f)
+        self.assertEqual(stored["categories"]["energy"]["focus"], "Watch the dryer")
+
+    def test_none_clears_single_field(self):
+        prompt_store.save_override("energy", {"focus": "X", "enabled": False})
+        prompt_store.save_override("energy", {"focus": None})
+        eff = prompt_store.effective_category("energy")
+        self.assertEqual(eff["focus"], categories.get_category("energy")["focus"])
+        self.assertFalse(eff["enabled"])
+
+    def test_reset_override(self):
+        prompt_store.save_override("energy", {"focus": "X", "enabled": False})
+        prompt_store.reset_override("energy")
+        eff = prompt_store.effective_category("energy")
+        self.assertEqual(eff["overridden"], [])
+        self.assertTrue(eff["enabled"])
+
+    def test_unknown_category(self):
+        self.assertIsNone(prompt_store.effective_category("nope"))
+
+    def test_corrupt_file_tolerated(self):
+        with open(prompt_store.OVERRIDES_FILE, "w") as f:
+            f.write("not json")
+        self.assertEqual(prompt_store.load_overrides(), {"categories": {}})
+        self.assertTrue(prompt_store.effective_category("energy")["enabled"])
+
+
+class InsightsServerCase(unittest.TestCase):
+    """Shared fixture: isolated insight dir, overrides file, queue and jobs."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.server = importlib.import_module("server")
+        cls.ha_data = importlib.import_module("ha_data")
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self._old_dir = self.server.INSIGHTS_DIR
+        self._old_overrides = prompt_store.OVERRIDES_FILE
+        self._old_inbox = self.server.MEMORY_INBOX_DIR
+        self.server.INSIGHTS_DIR = Path(self.tmp.name)
+        # NOT inside INSIGHTS_DIR — mirrors production (/data vs /data/insights)
+        prompt_store.OVERRIDES_FILE = os.path.join(
+            self.tmp.name, "overrides", "prompt_overrides.json")
+        self.server.MEMORY_INBOX_DIR = Path(self.tmp.name) / "memory-inbox"
+        self.server.JOBS.clear()
+        self.server.QUEUE = asyncio.Queue()
+
+    def tearDown(self):
+        self.server.INSIGHTS_DIR = self._old_dir
+        prompt_store.OVERRIDES_FILE = self._old_overrides
+        self.server.MEMORY_INBOX_DIR = self._old_inbox
+        self.server.JOBS.clear()
+        self.tmp.cleanup()
+
+    def _save(self, insight_id, generated_at, **extra):
+        insight = {"id": insight_id, "category": insight_id, "title": f"T {generated_at}",
+                   "generated_at": generated_at, "html": "<p>x</p>"}
+        insight.update(extra)
+        self.server.save_insight(insight)
+        return insight
+
+    def _client(self):
+        from aiohttp.test_utils import TestClient, TestServer
+        return TestClient(TestServer(self.server.make_app()))
+
+
+class TestInsightHistory(InsightsServerCase):
+    def test_history_copy_written_and_invisible_to_load(self):
+        self._save("energy", "2026-07-18T10:00:00")
+        run_file = Path(self.tmp.name) / "history" / "energy" / "2026-07-18T10-00-00.json"
+        self.assertTrue(run_file.exists())
+        # load_insights must not see the history subdir
+        loaded = self.server.load_insights()
+        self.assertEqual([i["id"] for i in loaded], ["energy"])
+
+    def test_custom_cards_excluded_from_history(self):
+        self._save("custom-1234", "2026-07-18T10:00:00", category="custom")
+        self.assertFalse((Path(self.tmp.name) / "history" / "custom-1234").exists())
+
+    def test_bad_stamp_skipped(self):
+        self._save("energy", "garbage")
+        self.assertFalse((Path(self.tmp.name) / "history" / "energy").exists())
+
+    def test_history_disabled_by_zero(self):
+        old = self.server.HISTORY_KEEP_RUNS
+        self.server.HISTORY_KEEP_RUNS = 0
+        try:
+            self._save("energy", "2026-07-18T10:00:00")
+        finally:
+            self.server.HISTORY_KEEP_RUNS = old
+        self.assertFalse((Path(self.tmp.name) / "history" / "energy").exists())
+
+    def test_prune_keeps_newest_runs(self):
+        old = self.server.HISTORY_KEEP_RUNS
+        self.server.HISTORY_KEEP_RUNS = 3
+        try:
+            for i in range(6):
+                self._save("energy", f"2026-07-18T10:00:{i:02d}")
+        finally:
+            self.server.HISTORY_KEEP_RUNS = old
+        files = sorted(p.stem for p in
+                       (Path(self.tmp.name) / "history" / "energy").glob("*.json"))
+        self.assertEqual(files, ["2026-07-18T10-00-03", "2026-07-18T10-00-04",
+                                 "2026-07-18T10-00-05"])
+
+    def test_prune_drops_runs_older_than_keep_days(self):
+        self._save("energy", "2020-01-01T00:00:00")
+        self._save("energy", "2026-07-18T10:00:00")
+        stems = [p.stem for p in
+                 (Path(self.tmp.name) / "history" / "energy").glob("*.json")]
+        self.assertEqual(stems, ["2026-07-18T10-00-00"])
+
+    def test_history_endpoints(self):
+        self._save("energy", "2026-07-18T09:00:00")
+        self._save("energy", "2026-07-18T10:00:00")
+
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                resp = await client.get("/api/insight/energy/history")
+                self.assertEqual(resp.status, 200)
+                runs = (await resp.json())["runs"]
+                self.assertEqual([r["ts"] for r in runs],
+                                 ["2026-07-18T10-00-00", "2026-07-18T09-00-00"])
+                for r in runs:
+                    self.assertNotIn("html", r)
+                    self.assertTrue(r["title"])
+
+                resp = await client.get("/api/insight/energy/history/2026-07-18T09-00-00")
+                self.assertEqual(resp.status, 200)
+                full = await resp.json()
+                self.assertEqual(full["generated_at"], "2026-07-18T09:00:00")
+                self.assertIn("html", full)
+
+                # bad ids / stamps rejected before touching the filesystem
+                resp = await client.get("/api/insight/UPPER/history")
+                self.assertEqual(resp.status, 400)
+                resp = await client.get("/api/insight/energy/history/..%2F..%2Fetc")
+                self.assertEqual(resp.status, 400)
+                resp = await client.get("/api/insight/energy/history/2026-07-18T99-99")
+                self.assertEqual(resp.status, 400)
+                resp = await client.get("/api/insight/energy/history/2026-01-01T00-00-00")
+                self.assertEqual(resp.status, 404)
+
+                resp = await client.delete("/api/insight/energy/history/2026-07-18T09-00-00")
+                self.assertEqual(resp.status, 200)
+                resp = await client.get("/api/insight/energy/history")
+                runs = (await resp.json())["runs"]
+                self.assertEqual([r["ts"] for r in runs], ["2026-07-18T10-00-00"])
+                resp = await client.delete("/api/insight/energy/history/2026-07-18T09-00-00")
+                self.assertEqual(resp.status, 404)
+            finally:
+                await client.close()
+
+        asyncio.run(run())
+
+
+class TestPromptEndpoints(InsightsServerCase):
+    def test_prompts_roundtrip(self):
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                resp = await client.get("/api/prompts")
+                self.assertEqual(resp.status, 200)
+                prompts = {p["id"]: p for p in (await resp.json())["prompts"]}
+                self.assertEqual(prompts["energy"]["focus"],
+                                 categories.get_category("energy")["focus"])
+                self.assertEqual(prompts["energy"]["overridden"], [])
+
+                resp = await client.put("/api/prompt/energy", json={
+                    "focus": "Watch the dryer", "refresh_hours": 3})
+                self.assertEqual(resp.status, 200)
+                rec = await resp.json()
+                self.assertEqual(rec["focus"], "Watch the dryer")
+                self.assertEqual(rec["refresh_hours"], 3)
+                self.assertIn("focus", rec["overridden"])
+
+                # reflected in /api/status categories
+                resp = await client.get("/api/status")
+                cats = {c["id"]: c for c in (await resp.json())["categories"]}
+                self.assertEqual(cats["energy"]["focus"], "Watch the dryer")
+                self.assertTrue(cats["energy"]["focus_overridden"])
+                self.assertEqual(cats["energy"]["default_focus"],
+                                 categories.get_category("energy")["focus"])
+                self.assertEqual(cats["energy"]["refresh_hours"], 3)
+
+                # empty focus clears the focus override
+                resp = await client.put("/api/prompt/energy", json={"focus": ""})
+                rec = await resp.json()
+                self.assertNotIn("focus", rec["overridden"])
+                self.assertEqual(rec["refresh_hours"], 3)
+
+                # validation
+                resp = await client.put("/api/prompt/bogus", json={"focus": "x"})
+                self.assertEqual(resp.status, 400)
+                resp = await client.put("/api/prompt/energy", json={"refresh_hours": 999})
+                self.assertEqual(resp.status, 400)
+                resp = await client.put("/api/prompt/energy", json={"focus": 42})
+                self.assertEqual(resp.status, 400)
+                resp = await client.put("/api/prompt/energy", json={"enabled": "yes"})
+                self.assertEqual(resp.status, 400)
+
+                # reset restores defaults
+                resp = await client.delete("/api/prompt/energy")
+                rec = await resp.json()
+                self.assertEqual(rec["overridden"], [])
+                self.assertIsNone(rec["refresh_hours"])
+            finally:
+                await client.close()
+
+        asyncio.run(run())
+
+    def test_generate_all_skips_disabled(self):
+        prompt_store.save_override("energy", {"enabled": False})
+        old_generate = self.server._generate
+
+        async def noop_generate(insight_id):
+            self.server._set_job(insight_id, state="done", error="")
+
+        self.server._generate = noop_generate
+
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                resp = await client.post("/api/generate_all")
+                queued = (await resp.json())["queued"]
+                self.assertNotIn("energy", queued)
+                self.assertIn("climate", queued)
+            finally:
+                await client.close()
+
+        try:
+            asyncio.run(run())
+        finally:
+            self.server._generate = old_generate
+
+    def test_refresh_due_logic(self):
+        due = self.server._refresh_due
+        now = time.mktime(time.strptime("2026-07-18T12:00:00", "%Y-%m-%dT%H:%M:%S"))
+        base = {"enabled": True, "refresh_hours": None}
+        # global default (6h in tests' env-free import) applies when no override
+        self.assertFalse(due({**base, "enabled": False}, "", now))
+        self.assertTrue(due({**base, "refresh_hours": 1}, "2026-07-18T10:00:00", now))
+        self.assertFalse(due({**base, "refresh_hours": 6}, "2026-07-18T10:00:00", now))
+        self.assertFalse(due({**base, "refresh_hours": 0}, "2020-01-01T00:00:00", now))
+        # missing or unparseable timestamps count as ancient
+        self.assertTrue(due({**base, "refresh_hours": 1}, "", now))
+        self.assertTrue(due({**base, "refresh_hours": 1}, "garbage", now))
+
+
+class TestGenerateFlow(InsightsServerCase):
+    """_generate end-to-end with stubbed collection + Claude + HA services."""
+
+    def setUp(self):
+        super().setUp()
+        self._old_collect = self.ha_data.collect_bundle
+        self._old_run = claude_client.run_claude
+        self._old_service = self.ha_data.call_service
+
+        async def fake_bundle(cat, days, question=None):
+            self.bundle_focus = cat.get("focus")
+            return {"meta": {"now": "2026-07-18T12:00:00"}, "entities": []}
+
+        self.ha_data.collect_bundle = fake_bundle
+        self.reply = {
+            "title": "Dryer watch", "summary": "S.",
+            "highlights": [{"label": "Loads", "value": "3"}],
+            "questions": ["Is the garage fridge meant to run overnight?", "  ", 42],
+            "findings": ["Hall sensor drops offline at 2 AM", ""],
+            "html": "<!DOCTYPE html><p>ok</p>",
+        }
+        claude_client.run_claude = lambda *a, **k: {
+            "ok": True, "text": json.dumps(self.reply), "error": "",
+            "meta": {"duration_ms": 5}}
+
+    def tearDown(self):
+        self.ha_data.collect_bundle = self._old_collect
+        claude_client.run_claude = self._old_run
+        self.ha_data.call_service = self._old_service
+        super().tearDown()
+
+    def _stored(self, insight_id="energy"):
+        with open(Path(self.tmp.name) / f"{insight_id}.json") as f:
+            return json.load(f)
+
+    def test_generate_uses_override_and_persists_new_fields(self):
+        prompt_store.save_override("energy", {"focus": "Watch the dryer"})
+        calls = []
+
+        async def ok_service(service, data):
+            calls.append((service, data))
+
+        self.ha_data.call_service = ok_service
+        asyncio.run(self.server._generate("energy"))
+        self.assertEqual(self.server.JOBS["energy"]["state"],
+                         "done", self.server.JOBS["energy"])
+        self.assertEqual(self.bundle_focus, "Watch the dryer")
+        stored = self._stored()
+        self.assertEqual(stored["focus_used"], "Watch the dryer")
+        self.assertEqual(stored["questions"],
+                         ["Is the garage fridge meant to run overnight?"])
+        self.assertEqual(stored["findings"], ["Hall sensor drops offline at 2 AM"])
+        # findings handed to bruh_claude.add_memory
+        self.assertEqual(calls, [("add_memory", {
+            "fact": "Hall sensor drops offline at 2 AM",
+            "source": "insights", "confidence": "medium"})])
+        # no fallback writes when the service worked
+        self.assertFalse(self.server.MEMORY_INBOX_DIR.exists())
+
+    def test_findings_fall_back_to_share_inbox(self):
+        async def broken_service(service, data):
+            raise RuntimeError("integration not installed")
+
+        self.ha_data.call_service = broken_service
+        asyncio.run(self.server._generate("energy"))
+        self.assertEqual(self.server.JOBS["energy"]["state"], "done")
+        files = list(self.server.MEMORY_INBOX_DIR.glob("*-insights.jsonl"))
+        self.assertEqual(len(files), 1)
+        lines = [json.loads(l) for l in files[0].read_text().splitlines()]
+        self.assertEqual(lines[0]["fact"], "Hall sensor drops offline at 2 AM")
+        self.assertEqual(lines[0]["source"], "insights")
+        self.assertEqual(lines[0]["confidence"], "medium")
+        self.assertIsInstance(lines[0]["ts"], int)
+
+    def test_missing_optional_fields_default_empty(self):
+        self.reply.pop("questions")
+        self.reply.pop("findings")
+        asyncio.run(self.server._generate("energy"))
+        stored = self._stored()
+        self.assertEqual(stored["questions"], [])
+        self.assertEqual(stored["findings"], [])
+
+
+class TestQuestionsEndpoints(InsightsServerCase):
+    def setUp(self):
+        super().setUp()
+        self._old_service = self.ha_data.call_service
+        self.calls = []
+
+        async def ok_service(service, data):
+            self.calls.append((service, data))
+
+        self.ha_data.call_service = ok_service
+
+    def tearDown(self):
+        self.ha_data.call_service = self._old_service
+        super().tearDown()
+
+    def test_questions_listed_and_answered(self):
+        self._save("energy", "2026-07-18T10:00:00",
+                   category_title="Energy", questions=["Is X on purpose?"])
+
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                resp = await client.get("/api/questions")
+                qs = (await resp.json())["questions"]
+                self.assertEqual(qs, [{"insight_id": "energy",
+                                       "category_title": "Energy",
+                                       "question": "Is X on purpose?"}])
+
+                resp = await client.post("/api/questions/answer", json={
+                    "insight_id": "energy", "question": "Is X on purpose?",
+                    "answer": "Yes, it runs the pond pump."})
+                self.assertEqual(resp.status, 200)
+                self.assertEqual(self.calls, [("answer_question", {
+                    "question": "Is X on purpose?",
+                    "answer": "Yes, it runs the pond pump.",
+                    "source": "insights"})])
+
+                # the question stops surfacing
+                resp = await client.get("/api/questions")
+                self.assertEqual((await resp.json())["questions"], [])
+                with open(Path(self.tmp.name) / "energy.json") as f:
+                    self.assertEqual(json.load(f)["questions"], [])
+
+                # unknown question / insight and bad bodies
+                resp = await client.post("/api/questions/answer", json={
+                    "insight_id": "energy", "question": "Is X on purpose?",
+                    "answer": "again"})
+                self.assertEqual(resp.status, 404)
+                resp = await client.post("/api/questions/answer", json={
+                    "insight_id": "nope", "question": "q", "answer": "a"})
+                self.assertEqual(resp.status, 404)
+                resp = await client.post("/api/questions/answer", json={
+                    "insight_id": "energy", "question": "", "answer": "a"})
+                self.assertEqual(resp.status, 400)
+            finally:
+                await client.close()
+
+        asyncio.run(run())
+
+    def test_answer_falls_back_to_share_inbox(self):
+        self._save("energy", "2026-07-18T10:00:00", questions=["Why cold?"])
+
+        async def broken_service(service, data):
+            raise RuntimeError("no integration")
+
+        self.ha_data.call_service = broken_service
+
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                resp = await client.post("/api/questions/answer", json={
+                    "insight_id": "energy", "question": "Why cold?",
+                    "answer": "Broken vent."})
+                self.assertEqual(resp.status, 200)
+            finally:
+                await client.close()
+
+        asyncio.run(run())
+        files = list(self.server.MEMORY_INBOX_DIR.glob("*-insights.jsonl"))
+        self.assertEqual(len(files), 1)
+        fact = json.loads(files[0].read_text().splitlines()[0])["fact"]
+        self.assertEqual(fact, "Q: Why cold? → A: Broken vent.")
+
+
+class TestMemoryContext(unittest.TestCase):
+    """memory.md feeds the bundle context and outlives raw entity rows."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.ha_data = importlib.import_module("ha_data")
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self._old = (self.ha_data.CONTEXT_FILE, self.ha_data.MEMORY_FILE)
+        self.ha_data.CONTEXT_FILE = os.path.join(self.tmp.name, "CLAUDE.md")
+        self.ha_data.MEMORY_FILE = os.path.join(self.tmp.name, "memory.md")
+
+    def tearDown(self):
+        (self.ha_data.CONTEXT_FILE, self.ha_data.MEMORY_FILE) = self._old
+        self.tmp.cleanup()
+
+    def _write(self, path, text):
+        with open(path, "w") as f:
+            f.write(text)
+
+    def test_memory_prepended_before_claude_md(self):
+        self._write(self.ha_data.MEMORY_FILE, "# Memory\nThe pond pump runs at night.")
+        self._write(self.ha_data.CONTEXT_FILE, "# Home\nNaming conventions here.")
+        ctx = self.ha_data._read_context()
+        self.assertLess(ctx.index("pond pump"), ctx.index("Naming conventions"))
+
+    def test_missing_memory_file_fine(self):
+        self._write(self.ha_data.CONTEXT_FILE, "# Home\nJust CLAUDE.md.")
+        self.assertIn("Just CLAUDE.md.", self.ha_data._read_context())
+
+    def test_no_files_no_context(self):
+        self.assertEqual(self.ha_data._read_context(), "")
+
+    def test_total_budget_capped(self):
+        self._write(self.ha_data.MEMORY_FILE, "m" * 10_000)
+        self._write(self.ha_data.CONTEXT_FILE, "c" * 10_000)
+        ctx = self.ha_data._read_context()
+        self.assertLessEqual(len(ctx), self.ha_data.CONTEXT_CHARS + 2)
+
+    def test_shrink_trims_entities_before_context(self):
+        big = "n" * 3000
+        bundle = {
+            "entities": [{"e": f"sensor.x{i}", "n": big} for i in range(60)],
+            "context": "learned facts",
+        }
+        out = self.ha_data._shrink_to_budget(bundle)
+        self.assertEqual(out["context"], "learned facts")
+        self.assertLess(len(out["entities"]), 50)
+
+    def test_shrink_drops_context_only_as_last_resort(self):
+        big = "n" * 3000
+        bundle = {
+            "entities": [{"e": f"sensor.x{i}", "n": big} for i in range(20)],
+            "context": "c" * 70_000,
+        }
+        out = self.ha_data._shrink_to_budget(bundle)
+        self.assertNotIn("context", out)
+        self.assertEqual(len(out["entities"]), 20)
 
 
 if __name__ == "__main__":
