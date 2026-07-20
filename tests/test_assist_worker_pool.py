@@ -152,6 +152,42 @@ def test_worker_crash_falls_back_to_oneshot(tmp_path, monkeypatch):
         shutdown(pool)
 
 
+def test_auth_error_recycles_pool_and_gives_guidance(tmp_path, monkeypatch):
+    """An expired OAuth login must not leak the raw CLI error to the voice
+    channel: the pool replaces it with an actionable /login instruction and
+    drops its workers so post-relogin requests spawn fresh processes."""
+    mod = load_pool_module(tmp_path, monkeypatch)
+    monkeypatch.setenv("FAKE_MODE", "autherror")
+    pool = mod.Pool()
+    try:
+        req = make_request("what's going on at home?", timeout=40)
+        pool.handle(req)
+        resp = read_response(mod, req["id"])
+        assert "OAuth session expired" not in resp
+        assert "/login" in resp and "BRUH Terminal" in resp
+        assert "convA" not in pool.workers, "broken worker must be dropped"
+    finally:
+        shutdown(pool)
+
+
+def test_auth_error_regex_matches_cli_phrasings(tmp_path, monkeypatch):
+    mod = load_pool_module(tmp_path, monkeypatch)
+    for text in (
+        "Failed to authenticate: OAuth session expired and could not be refreshed",
+        "OAuth token refresh failed: authentication_error",
+        "Not logged in. Please run /login",
+        "Invalid API key · Fix external API key",
+    ):
+        assert mod.AUTH_ERROR_RE.search(text), text
+    # ordinary answers that merely mention logins/refreshing must not trip it
+    for text in (
+        "ONESHOT: turn on the lights",
+        "The Netflix account is not logged in on the living room TV.",
+        "The sensor data could not be refreshed, so I used the last reading.",
+    ):
+        assert not mod.AUTH_ERROR_RE.search(text), text
+
+
 def test_hang_produces_timeout_message(tmp_path, monkeypatch):
     mod = load_pool_module(
         tmp_path, monkeypatch, BRUH_ASSIST_LIMIT_FLOOR="3"

@@ -320,6 +320,16 @@ process_task() {
         fi
     fi
 
+    # Auth failures come back as the result text in -p mode ("Failed to
+    # authenticate: OAuth session expired and could not be refreshed").
+    # Replace the raw CLI error with something the user can act on — the
+    # fix is a one-time /login in the interactive terminal, which every
+    # background channel picks up automatically on its next spawn.
+    if printf '%s' "$result" | grep -qiE "OAuth session expired|OAuth token (refresh failed|revoked)|failed to authenticate|please run /login|invalid api key"; then
+        bashio::log.error "Claude auth failure in task [$task_id]: ${result:0:200}"
+        result="Claude's saved login has expired and could not be refreshed automatically. Open the BRUH Terminal add-on from the sidebar and run /login once — background tasks and insights pick up the fresh login automatically."
+    fi
+
     # If result is empty, something went wrong — check stderr for clues
     if [ -z "$result" ]; then
         bashio::log.error "Empty result for task [$task_id] after ${duration}s"

@@ -194,9 +194,11 @@ OUTPUT CONTRACT (strict JSON; title, summary, highlights, and html are required)
   "highlights": [ {"label": "Metric name", "value": "42 kWh", "delta": "+12% vs avg (optional)", "status": "good|warning|serious|critical (optional)"} ],
   "questions": [ "Optional: short clarifying questions for the homeowner" ],
   "findings": [ "Optional: durable facts about this home worth remembering" ],
+  "tags": [ "2-4 short lowercase topic tags" ],
   "html": "<!DOCTYPE html>... one complete self-contained HTML document ..."
 }
 Provide 2-4 highlights. Escape the HTML correctly as a JSON string.
+"tags" (2-4): short lowercase topic tags describing what this card is actually about — single words or hyphenated (e.g. "energy", "anomaly", "batteries", "left-on", "comfort"). Tag by CONTENT, not by the requested category: a lighting card that found a battery problem should carry "batteries" too. The dashboard uses tags to group related cards, so reuse plain common words over inventive ones.
 "questions" (optional, max 2): things you could NOT resolve from the data, phrased as short questions directly to the homeowner (e.g. "Is the garage fridge meant to run overnight?"). Omit the field or use [] when the data speaks for itself.
 "findings" (optional, max 3): durable discoveries about this home worth remembering for future analyses — sensor reliability issues, recurring patterns, quirks (e.g. "The hallway motion sensor drops offline most nights around 2 AM"). One plain factual sentence each, no advice. Omit when nothing new was learned.
 
@@ -231,8 +233,17 @@ ANALYSIS RULES:
 # Prompt assembly
 # ---------------------------------------------------------------------------
 
-def build_prompt(category: dict, bundle: dict, question: str | None = None) -> str:
-    """Assemble the user prompt: analysis focus + the data bundle."""
+def build_prompt(
+    category: dict,
+    bundle: dict,
+    question: str | None = None,
+    feedback: list[str] | None = None,
+) -> str:
+    """Assemble the user prompt: analysis focus + the data bundle.
+
+    ``feedback`` is the homeowner's standing feedback on earlier versions of
+    this card — injected as instructions the new insight must honor.
+    """
     parts: list[str] = []
     if question:
         parts.append(
@@ -247,6 +258,15 @@ def build_prompt(category: dict, bundle: dict, question: str | None = None) -> s
     else:
         parts.append(f"INSIGHT CATEGORY: {category['title']}")
         parts.append(f"ANALYSIS FOCUS: {category['focus']}")
+
+    cleaned_feedback = [f.strip() for f in (feedback or []) if f and f.strip()]
+    if cleaned_feedback:
+        parts.append(
+            "\nHOMEOWNER FEEDBACK on earlier versions of this card — standing "
+            "instructions you MUST honor in this run (adjust the analysis, "
+            "wording, and visualization accordingly):\n"
+            + "\n".join(f"- {f}" for f in cleaned_feedback)
+        )
 
     parts.append(
         "\nHOME DATA SNAPSHOT (JSON). Sections: meta (now, timezone, location name), areas, "

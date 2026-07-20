@@ -31,6 +31,16 @@ _replace_dir_with_symlink() {
                     base=$(basename "$entry")
                     if [ ! -e "$link_dest/$base" ]; then
                         cp -a "$entry" "$link_dest/" 2>/dev/null || true
+                    elif [ "$base" = ".credentials.json" ] && [ "$entry" -nt "$link_dest/$base" ]; then
+                        # Two credential files = two OAuth refresh-token
+                        # lineages, and rotation means only the most recently
+                        # refreshed one is still usable. Keeping the older
+                        # copy here is what caused "OAuth session expired and
+                        # could not be refreshed" in background channels
+                        # after the 3.3.1 unification — take the newer file.
+                        cp -a "$link_dest/$base" "$link_dest/$base.stale" 2>/dev/null || true
+                        cp -a "$entry" "$link_dest/$base" 2>/dev/null || true
+                        bashio::log.warning "  - Newer .credentials.json in $dir_path wins (old copy kept as .credentials.json.stale)"
                     fi
                 done
             )

@@ -1,7 +1,7 @@
 ---
 name: "BRUH Insights"
 description: "AI-powered insights dashboard — Claude analyzes your Home Assistant data and generates beautiful interactive visualizations in the sidebar"
-version: "1.1.1"
+version: "1.2.0"
 slug: "bruh_insights"
 init: false
 
@@ -19,6 +19,15 @@ ingress_port: 8099
 panel_icon: mdi:chart-timeline-variant-shimmer
 panel_title: "BRUH Insights"
 panel_admin: true
+
+# Optional dashboard-card server: serves each insight's visualization as a
+# token-protected HTML page so HA "Webpage" dashboard cards can embed live
+# insights. Disabled (unmapped) by default — map it in the add-on's Network
+# settings to use "Add to dashboard" from the panel.
+ports:
+  8100/tcp: null
+ports_description:
+  8100/tcp: "Dashboard card server (token-protected insight HTML for Webpage cards)"
 
 # App configuration options
 options:

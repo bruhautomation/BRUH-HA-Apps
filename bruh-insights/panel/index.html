@@ -30,6 +30,7 @@
   </div>
   <div class="spacer"></div>
   <span id="authChip" class="chip"><span class="dot"></span><span id="authChipText">Checking…</span></span>
+  <button id="newInsight" class="btn hidden">＋&nbsp; New insight</button>
   <button id="refreshAll" class="btn primary hidden">↻&nbsp; Refresh all</button>
 </header>
 
@@ -145,6 +146,96 @@
         <button id="editSaveRegen" class="btn">Save &amp; regenerate</button>
         <button id="editReset" class="btn ghost hidden">Restore default</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<div id="newModal" class="modal" role="dialog" aria-modal="true">
+  <div class="box edit">
+    <header>
+      <span>✨</span>
+      <span id="newTitleBar">New insight</span>
+      <div class="spacer"></div>
+      <button id="newClose" class="btn icon" aria-label="Close">✕</button>
+    </header>
+    <div class="edit-body">
+      <p class="hint">Describe what Claude should analyze — it becomes a card that regenerates on
+        its own schedule, just like the built-in ones.</p>
+      <div class="row nowrap">
+        <div class="grow">
+          <label for="newName">Name</label>
+          <input id="newName" type="text" maxlength="60" placeholder="e.g. Garage fridge watch">
+        </div>
+        <div>
+          <label for="newIcon">Icon</label>
+          <input id="newIcon" type="text" maxlength="4" class="iconin" placeholder="✨">
+        </div>
+      </div>
+      <label for="newFocus">What should Claude analyze?</label>
+      <textarea id="newFocus" maxlength="4000" rows="6" spellcheck="false"
+        placeholder="e.g. Track the garage fridge temperature and door sensor. Flag any period above 5°C and estimate how often the compressor runs."></textarea>
+      <label for="newHours">Refresh every N hours (empty = add-on default, 0 = manual only)</label>
+      <input id="newHours" type="number" min="0" max="168" step="1" placeholder="default">
+      <label class="check hidden" id="newEnabledRow"><input id="newEnabled" type="checkbox">
+        Enabled — include in auto-refresh and “Refresh all”</label>
+      <div class="row">
+        <button id="newSave" class="btn primary">Create &amp; generate</button>
+        <button id="newDelete" class="btn ghost danger hidden">Delete insight</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="fbModal" class="modal" role="dialog" aria-modal="true">
+  <div class="box edit">
+    <header>
+      <span id="fbIcon">💬</span>
+      <span id="fbTitle">Feedback</span>
+      <div class="spacer"></div>
+      <button id="fbClose" class="btn icon" aria-label="Close">✕</button>
+    </header>
+    <div class="edit-body">
+      <p class="hint">Tell Claude what to do differently — it's remembered and applied every time
+        this insight regenerates (e.g. “ignore the guest room sensor”, “show costs in dollars”,
+        “less text, bigger chart”).</p>
+      <label for="fbText">Your feedback</label>
+      <textarea id="fbText" maxlength="500" rows="3" spellcheck="true"
+        placeholder="What should be different next time?"></textarea>
+      <div class="row">
+        <button id="fbSave" class="btn primary">Send feedback</button>
+        <button id="fbSaveRegen" class="btn">Send &amp; regenerate</button>
+      </div>
+      <div id="fbListWrap" class="hidden">
+        <label>Active feedback on this insight</label>
+        <div id="fbList" class="fblist"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="cardModal" class="modal" role="dialog" aria-modal="true">
+  <div class="box edit">
+    <header>
+      <span>▦</span>
+      <span id="cardTitle">Add to dashboard</span>
+      <div class="spacer"></div>
+      <button id="cardClose" class="btn icon" aria-label="Close">✕</button>
+    </header>
+    <div class="edit-body">
+      <p class="hint">Embed this insight on any Home Assistant dashboard as a live card. It always
+        shows the latest run.</p>
+      <ol class="steps">
+        <li>One-time setup: open <b>Settings → Add-ons → BRUH Insights → Configuration → Network</b>
+          and map port <b>8100</b> (host port 8100), then restart the add-on.</li>
+        <li>On your dashboard choose <b>Add card → Webpage</b>, or paste this YAML in the card
+          editor:</li>
+      </ol>
+      <pre id="cardYaml" class="yamlbox"></pre>
+      <div class="row">
+        <button id="cardCopy" class="btn primary">Copy YAML</button>
+      </div>
+      <p class="hint" id="cardHint">The URL contains this add-on's private card token — anyone with
+        the link on your network can view the insight, nothing else.</p>
     </div>
   </div>
 </div>

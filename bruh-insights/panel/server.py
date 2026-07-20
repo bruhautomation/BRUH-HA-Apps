@@ -23,6 +23,13 @@ DELETE /api/insight/{id}/history/{ts} — remove one past run
 GET  /api/prompts            — per-category prompt/override listing
 PUT  /api/prompt/{id}        — set focus/enabled/refresh_hours override
 DELETE /api/prompt/{id}      — reset a category to shipped defaults
+POST /api/user_category      — create a user-defined recurring insight
+PUT  /api/user_category/{id} — edit a user-defined insight
+DELETE /api/user_category/{id} — delete one (definition + insight + history)
+GET  /api/insight/{id}/feedback      — standing feedback for a category
+POST /api/insight/{id}/feedback      — add feedback (steers future runs)
+DELETE /api/insight/{id}/feedback/{ts} — drop one feedback entry
+GET  /api/card_info          — dashboard-card server port/token + HA URLs
 GET  /api/questions          — open analyst questions across insights
 POST /api/questions/answer   — answer one (forwards to bruh_claude, if installed)
 
@@ -31,6 +38,11 @@ Runs on 0.0.0.0:8099. The HA Supervisor proxies the ingress URL into
 HTML and let aiohttp serve at /. Generation jobs run through a single-worker
 queue so only one Claude invocation is in flight at a time (subscription
 rate-limit friendly).
+
+A second, token-protected mini server on :8100 (the "card server") serves
+each stored insight's self-contained HTML so HA dashboard webpage cards can
+embed live insights. The port is unexposed by default; users map it in the
+add-on's network settings when they want dashboard cards.
 """
 from __future__ import annotations
 
@@ -39,6 +51,8 @@ import json
 import logging
 import os
 import re
+import secrets
+import shutil
 import time
 from pathlib import Path
 
@@ -46,7 +60,9 @@ from aiohttp import web
 
 import categories as cat_mod
 import claude_client
+import feedback_store
 import prompt_store
+import user_categories
 from categories import CATEGORIES, SYSTEM_PROMPT, build_prompt, get_category
 
 HERE = Path(__file__).resolve().parent
@@ -65,6 +81,10 @@ MODEL = os.environ.get("BRUH_INSIGHTS_MODEL", "").strip()
 TIMEOUT_S = int(float(os.environ.get("BRUH_INSIGHTS_TIMEOUT_MIN", "8") or 8) * 60)
 BIND_HOST = "0.0.0.0"
 BIND_PORT = 8099
+# Dashboard-card mini server (HTML for HA webpage cards); token-protected.
+CARD_PORT = int(os.environ.get("BRUH_INSIGHTS_CARD_PORT", "8100") or 8100)
+CARD_TOKEN_FILE = Path(
+    os.environ.get("BRUH_INSIGHTS_SECRETS", "/data/secrets")) / "card_token"
 MAX_HTML_BYTES = 400_000
 MAX_CUSTOM_KEPT = 12
 
@@ -116,12 +136,25 @@ def _history_dir(insight_id: str) -> Path:
     return INSIGHTS_DIR / "history" / insight_id
 
 
+def all_categories() -> list[dict]:
+    """Shipped categories followed by user-defined ones (creation order)."""
+    return CATEGORIES + user_categories.load()
+
+
+def resolve_category(cat_id: str) -> dict | None:
+    """Effective category for generation: shipped (with overrides) or user-defined."""
+    if get_category(cat_id):
+        return prompt_store.effective_category(cat_id)
+    return user_categories.get(cat_id)
+
+
 def load_insights() -> list[dict]:
-    """All stored insights: standard categories in canonical order, then custom (newest first)."""
+    """All stored insights: standard categories in canonical order, then
+    user-defined insights (creation order), then custom asks (newest first)."""
     out: list[dict] = []
     custom: list[dict] = []
     files = {p.stem: p for p in INSIGHTS_DIR.glob("*.json")}
-    for cat in CATEGORIES:
+    for cat in all_categories():
         p = files.pop(cat["id"], None)
         if p:
             try:
@@ -133,7 +166,9 @@ def load_insights() -> list[dict]:
             obj = json.loads(p.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
-        if isinstance(obj, dict) and obj.get("id"):
+        # leftovers are ad-hoc Ask cards; orphaned user-* files (definition
+        # deleted mid-write) are skipped rather than shown as ghost cards
+        if isinstance(obj, dict) and obj.get("id") and not stem.startswith("user-"):
             custom.append(obj)
     custom.sort(key=lambda i: i.get("generated_at", ""), reverse=True)
     return out + custom
@@ -274,7 +309,7 @@ def _clean_strings(value, max_items: int, max_chars: int) -> list[str]:
 async def _generate(insight_id: str) -> None:
     job = JOBS.get(insight_id, {})
     question = job.get("question")
-    category = prompt_store.effective_category(insight_id) if question is None else None
+    category = resolve_category(insight_id) if question is None else None
     if question is None and category is None:
         _set_job(insight_id, state="error", error="unknown category")
         return
@@ -292,7 +327,9 @@ async def _generate(insight_id: str) -> None:
                  len(json.dumps(bundle)))
 
         _set_job(insight_id, state="generating")
-        prompt = build_prompt(cat, bundle, question=question)
+        feedback = [] if question is not None else [
+            f["text"] for f in feedback_store.list_feedback(insight_id)]
+        prompt = build_prompt(cat, bundle, question=question, feedback=feedback)
         result = await asyncio.to_thread(
             claude_client.run_claude, prompt, SYSTEM_PROMPT, MODEL, TIMEOUT_S,
         )
@@ -311,6 +348,11 @@ async def _generate(insight_id: str) -> None:
             highlights = []
         questions = _clean_strings(obj.get("questions"), 2, 300)
         findings = _clean_strings(obj.get("findings"), 3, 500)
+        tags: list[str] = []
+        for tag in _clean_strings(obj.get("tags"), 4, 24):
+            tag = tag.lower().strip("#- ")
+            if tag and tag not in tags:
+                tags.append(tag)
         insight = {
             "id": insight_id,
             "category": cat["id"] if question is None else "custom",
@@ -322,6 +364,7 @@ async def _generate(insight_id: str) -> None:
             "highlights": highlights[:6],
             "questions": questions,
             "findings": findings,
+            "tags": tags,
             "focus_used": cat.get("focus", "") if question is None else "",
             "html": html,
             "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -377,8 +420,8 @@ async def _scheduler() -> None:
             continue
         stored = {i["id"]: i.get("generated_at", "") for i in load_insights()}
         now = time.time()
-        for cat in CATEGORIES:
-            eff = prompt_store.effective_category(cat["id"]) or cat
+        for cat in all_categories():
+            eff = resolve_category(cat["id"]) or cat
             if _refresh_due(eff, stored.get(cat["id"], ""), now) and _enqueue(cat["id"]):
                 log.info("auto-refresh: queued %s", cat["id"])
 
@@ -422,6 +465,21 @@ def _static(name: str, ctype: str):
 
 
 def _category_status(c: dict, insights: dict) -> dict:
+    if c.get("user"):
+        return {
+            "id": c["id"],
+            "title": c["title"],
+            "icon": c["icon"],
+            "description": c["description"],
+            "generated_at": insights.get(c["id"]),
+            "focus": c["focus"],
+            "default_focus": c["focus"],
+            "focus_overridden": False,
+            "enabled": c.get("enabled", True),
+            "refresh_hours": c.get("refresh_hours"),
+            "user": True,
+            "job": {k: JOBS.get(c["id"], {}).get(k) for k in ("state", "error")},
+        }
     eff = prompt_store.effective_category(c["id"]) or c
     return {
         "id": c["id"],
@@ -450,7 +508,7 @@ async def h_status(request: web.Request) -> web.Response:
         "model": MODEL or "default",
         "refresh_hours": REFRESH_HOURS,
         "history_days": HISTORY_DAYS,
-        "categories": [_category_status(c, insights) for c in CATEGORIES],
+        "categories": [_category_status(c, insights) for c in all_categories()],
         "jobs": {jid: {"state": j.get("state"), "error": j.get("error")}
                  for jid, j in JOBS.items()},
         "queue_size": QUEUE.qsize(),
@@ -471,7 +529,7 @@ async def h_generate(request: web.Request) -> web.Response:
         _enqueue(insight_id, question=question)
         return web.json_response({"queued": [insight_id]})
     cat_id = body.get("category", "")
-    if not get_category(cat_id):
+    if not resolve_category(cat_id):
         raise web.HTTPBadRequest(text="unknown category")
     started = _enqueue(cat_id)
     return web.json_response({"queued": [cat_id] if started else []})
@@ -479,9 +537,9 @@ async def h_generate(request: web.Request) -> web.Response:
 
 async def h_generate_all(request: web.Request) -> web.Response:
     queued = []
-    for c in CATEGORIES:
-        eff = prompt_store.effective_category(c["id"])
-        if eff and not eff.get("enabled", True):
+    for c in all_categories():
+        eff = resolve_category(c["id"]) or c
+        if not eff.get("enabled", True):
             continue
         if _enqueue(c["id"]):
             queued.append(c["id"])
@@ -602,6 +660,176 @@ async def h_prompt_delete(request: web.Request) -> web.Response:
     return web.json_response(_prompt_record(cat_id))
 
 
+# -- user-defined insights --------------------------------------------------
+
+async def h_user_category_create(request: web.Request) -> web.Response:
+    body = await request.json()
+    try:
+        cat = user_categories.create(body if isinstance(body, dict) else {})
+    except ValueError as exc:
+        raise web.HTTPBadRequest(text=str(exc))
+    if body.get("generate_now", True) and cat.get("enabled", True):
+        _enqueue(cat["id"])
+    return web.json_response(cat)
+
+
+async def h_user_category_put(request: web.Request) -> web.Response:
+    cat_id = request.match_info["id"]
+    body = await request.json()
+    try:
+        cat = user_categories.update(cat_id, body if isinstance(body, dict) else {})
+    except ValueError as exc:
+        raise web.HTTPBadRequest(text=str(exc))
+    if cat is None:
+        raise web.HTTPNotFound(text="no such insight")
+    return web.json_response(cat)
+
+
+async def h_user_category_delete(request: web.Request) -> web.Response:
+    cat_id = request.match_info["id"]
+    if not user_categories.delete(cat_id):
+        raise web.HTTPNotFound(text="no such insight")
+    # drop everything that belonged to it: insight, history runs, feedback
+    try:
+        _insight_path(cat_id).unlink()
+    except OSError:
+        pass
+    shutil.rmtree(_history_dir(cat_id), ignore_errors=True)
+    feedback_store.clear(cat_id)
+    JOBS.pop(cat_id, None)
+    return web.json_response({"deleted": cat_id})
+
+
+# -- insight feedback ---------------------------------------------------------
+
+def _feedback_category(cat_id: str) -> dict:
+    cat = get_category(cat_id) or user_categories.get(cat_id)
+    if not cat:
+        raise web.HTTPBadRequest(text="feedback works on recurring insights only")
+    return cat
+
+
+async def h_feedback_list(request: web.Request) -> web.Response:
+    cat_id = request.match_info["id"]
+    _feedback_category(cat_id)
+    return web.json_response({"feedback": feedback_store.list_feedback(cat_id)})
+
+
+async def h_feedback_add(request: web.Request) -> web.Response:
+    cat_id = request.match_info["id"]
+    cat = _feedback_category(cat_id)
+    body = await request.json()
+    try:
+        entry = feedback_store.add_feedback(cat_id, body.get("feedback"))
+    except ValueError as exc:
+        raise web.HTTPBadRequest(text=str(exc))
+    # feedback is durable knowledge about this home's preferences — remember it
+    await _submit_memory(
+        f'Homeowner feedback on the "{cat["title"]}" insight card: {entry["text"]}')
+    return web.json_response(
+        {"added": entry, "feedback": feedback_store.list_feedback(cat_id)})
+
+
+async def h_feedback_delete(request: web.Request) -> web.Response:
+    cat_id = request.match_info["id"]
+    _feedback_category(cat_id)
+    try:
+        ts = int(request.match_info["ts"])
+    except ValueError:
+        raise web.HTTPBadRequest(text="bad feedback id")
+    if not feedback_store.remove_feedback(cat_id, ts):
+        raise web.HTTPNotFound(text="no such feedback entry")
+    return web.json_response({"feedback": feedback_store.list_feedback(cat_id)})
+
+
+# -- dashboard card server ----------------------------------------------------
+# A separate mini HTTP app on CARD_PORT serving ONLY stored insight HTML,
+# guarded by a per-install random token. The HA dashboard "Webpage" (iframe)
+# card can't ride the ingress session, so this is the bridge: the user maps
+# the port in the add-on network settings and pastes YAML the panel offers.
+
+def get_card_token() -> str:
+    try:
+        token = CARD_TOKEN_FILE.read_text(encoding="utf-8").strip()
+        if len(token) >= 16:
+            return token
+    except OSError:
+        pass
+    token = secrets.token_hex(16)
+    CARD_TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
+    CARD_TOKEN_FILE.write_text(token, encoding="utf-8")
+    try:
+        CARD_TOKEN_FILE.chmod(0o600)
+    except OSError:
+        pass
+    return token
+
+
+# reload periodically so a dashboard card tracks regenerated insights
+_CARD_RELOAD_SNIPPET = (
+    '\n<script>setTimeout(function(){location.reload();},900000);</script>'
+)
+
+
+async def h_card(request: web.Request) -> web.Response:
+    token = request.query.get("token", "")
+    if not secrets.compare_digest(token, get_card_token()):
+        raise web.HTTPUnauthorized(text="bad or missing token")
+    path = _insight_path(request.match_info["id"])
+    try:
+        insight = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raise web.HTTPNotFound(text="no such insight")
+    html = insight.get("html")
+    if not isinstance(html, str) or not html:
+        raise web.HTTPNotFound(text="insight has no visualization")
+    return web.Response(
+        text=html + _CARD_RELOAD_SNIPPET,
+        content_type="text/html",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+def make_card_app() -> web.Application:
+    app = web.Application(client_max_size=1024)
+    app.router.add_get("/card/{id}", h_card)
+    return app
+
+
+_HA_URLS_CACHE: dict = {"ts": 0.0, "urls": {}}
+
+
+async def _ha_urls() -> dict:
+    """internal_url/external_url from HA core config (best-effort, cached)."""
+    if time.time() - _HA_URLS_CACHE["ts"] < 300:
+        return _HA_URLS_CACHE["urls"]
+    urls: dict = {}
+    try:
+        import aiohttp
+
+        import ha_data
+        async with aiohttp.ClientSession() as session:
+            cfg = await ha_data._rest_get(session, "/config", timeout=10)
+        urls = {
+            "internal_url": cfg.get("internal_url"),
+            "external_url": cfg.get("external_url"),
+        }
+    except Exception as exc:  # noqa: BLE001 — cosmetic; YAML falls back to a template host
+        log.debug("could not fetch HA urls: %s", exc)
+    _HA_URLS_CACHE.update(ts=time.time(), urls=urls)
+    return urls
+
+
+async def h_card_info(request: web.Request) -> web.Response:
+    urls = await _ha_urls()
+    return web.json_response({
+        "port": CARD_PORT,
+        "token": get_card_token(),
+        "internal_url": urls.get("internal_url"),
+        "external_url": urls.get("external_url"),
+    })
+
+
 # -- analyst questions ------------------------------------------------------
 
 async def h_questions(request: web.Request) -> web.Response:
@@ -712,6 +940,13 @@ def make_app() -> web.Application:
     app.router.add_get("/api/prompts", h_prompts)
     app.router.add_put("/api/prompt/{id}", h_prompt_put)
     app.router.add_delete("/api/prompt/{id}", h_prompt_delete)
+    app.router.add_post("/api/user_category", h_user_category_create)
+    app.router.add_put("/api/user_category/{id}", h_user_category_put)
+    app.router.add_delete("/api/user_category/{id}", h_user_category_delete)
+    app.router.add_get("/api/insight/{id}/feedback", h_feedback_list)
+    app.router.add_post("/api/insight/{id}/feedback", h_feedback_add)
+    app.router.add_delete("/api/insight/{id}/feedback/{ts}", h_feedback_delete)
+    app.router.add_get("/api/card_info", h_card_info)
     app.router.add_get("/api/questions", h_questions)
     app.router.add_post("/api/questions/answer", h_answer_question)
     app.router.add_post("/api/auth/token", h_auth_token)
@@ -727,8 +962,23 @@ def make_app() -> web.Application:
         app["scheduler"] = asyncio.create_task(_scheduler())
         if claude_client.get_auth():
             asyncio.create_task(_check_auth_bg())
+        # dashboard-card mini server (best-effort — panel works without it)
+        try:
+            runner = web.AppRunner(make_card_app())
+            await runner.setup()
+            await web.TCPSite(runner, BIND_HOST, CARD_PORT).start()
+            app["card_runner"] = runner
+            log.info("card server listening on %s:%d", BIND_HOST, CARD_PORT)
+        except OSError as exc:
+            log.warning("card server failed to start on port %d: %s", CARD_PORT, exc)
+
+    async def on_cleanup(app: web.Application) -> None:
+        runner = app.get("card_runner")
+        if runner:
+            await runner.cleanup()
 
     app.on_startup.append(on_startup)
+    app.on_cleanup.append(on_cleanup)
     return app
 
 

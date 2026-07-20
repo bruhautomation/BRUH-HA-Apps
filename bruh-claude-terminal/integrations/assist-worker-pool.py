@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 import shlex
 import socket
@@ -123,6 +124,27 @@ PARTIAL_MESSAGES_OK = True
 # Last-used agent profile (custom prompt + model), persisted so the spare
 # can be pre-warmed right at startup instead of after the first request.
 LAST_PROFILE_FILE = os.path.join(CACHE_DIR, "last_profile.json")
+
+# Claude CLI auth failures surface as the response text in -p / stream-json
+# modes ("Failed to authenticate: OAuth session expired and could not be
+# refreshed", "Please run /login", ...). Detect them so users get an
+# actionable message instead of a raw CLI error, and so the pool recycles
+# its workers — fresh processes re-read the credentials file, which the
+# user fixes by logging in once in the interactive terminal.
+# Deliberately specific phrasings — a legitimate assistant answer that
+# merely mentions logins/refreshing must never trip this.
+AUTH_ERROR_RE = re.compile(
+    r"OAuth session expired|OAuth token (?:refresh failed|revoked)"
+    r"|failed to authenticate|please run /login|invalid api key"
+    r"|authentication[_ ]error",
+    re.IGNORECASE,
+)
+AUTH_ERROR_MESSAGE = (
+    "Claude's saved login has expired and could not be refreshed "
+    "automatically. Open the BRUH Terminal add-on from the sidebar and run "
+    "/login once — Assist and background tasks pick up the fresh login "
+    "automatically."
+)
 
 SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 TEMPLATE_API = os.environ.get(
@@ -756,6 +778,18 @@ class Pool:
             self._spawn_spare(profile)
         return worker, "cold" if not resume else "cold-resume"
 
+    def drop_all(self) -> None:
+        """Kill every pooled worker and the spare (e.g. after an auth
+        failure) so the next request spawns fresh processes that re-read
+        the credentials file from disk."""
+        with self.lock:
+            for conv_id, worker in list(self.workers.items()):
+                worker.kill()
+                self.workers.pop(conv_id, None)
+            if self.spare is not None:
+                self.spare.kill()
+                self.spare = None
+
     def _drop_worker(self, conv_id: str, worker: Worker) -> None:
         maybe_reflect(worker)
         worker.kill()
@@ -894,6 +928,11 @@ class Pool:
                 response = self._oneshot(req, system_prompt, model, deadline, denied_csv)
 
         duration = time.time() - start
+        if response and AUTH_ERROR_RE.search(response):
+            log(f"request {req_id}: Claude auth failure — recycling worker pool "
+                f"({response[:160]!r})")
+            self.drop_all()
+            response = AUTH_ERROR_MESSAGE
         if response is None:
             if time.time() >= deadline:
                 response = (

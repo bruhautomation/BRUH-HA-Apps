@@ -11,6 +11,8 @@ Speaks just enough of the two invocation shapes the worker pool uses:
 Behavior switches via env:
   FAKE_CLAUDE_LOG  append each invocation's argv as a JSON line
   FAKE_MODE        ok (default) | hang (never answer) | crash (die after read)
+                   | autherror (reply with the CLI's OAuth-expired error, the
+                     way the real CLI does when a token refresh fails)
 """
 
 import json
@@ -27,6 +29,9 @@ if log_path:
                  + os.environ.get("BRUH_DENIED_SERVICES", "") + "\n")
 
 mode = os.environ.get("FAKE_MODE", "ok")
+
+AUTH_ERROR = ("Failed to authenticate: OAuth session expired and could not "
+              "be refreshed")
 
 if "--input-format" in argv:
     sid = "11111111-1111-1111-1111-111111111111"
@@ -45,6 +50,16 @@ if "--input-format" in argv:
             continue
         if mode == "crash":
             sys.exit(1)
+        if mode == "autherror":
+            # the real CLI marks the result event as an error
+            print(json.dumps({
+                "type": "result",
+                "subtype": "error",
+                "is_error": True,
+                "result": AUTH_ERROR,
+                "session_id": sid,
+            }), flush=True)
+            continue
         result = f"OK[{os.getpid()}]: {text}"
         if "--include-partial-messages" in argv:
             # Mirror the real CLI: token-level stream_event deltas, then an
@@ -73,4 +88,8 @@ else:
     data = sys.stdin.read()
     if mode == "hang":
         time.sleep(60)
-    print(f"ONESHOT: {data}")
+    if mode == "autherror":
+        # -p mode prints the auth error to stdout as the whole "response"
+        print(AUTH_ERROR)
+    else:
+        print(f"ONESHOT: {data}")
