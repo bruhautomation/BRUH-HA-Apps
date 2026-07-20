@@ -1,7 +1,7 @@
 ---
 name: "BRUH Insights"
 description: "AI-powered insights dashboard — Claude analyzes your Home Assistant data and generates beautiful interactive visualizations in the sidebar"
-version: "1.1.0"
+version: "1.1.1"
 slug: "bruh_insights"
 init: false
 
@@ -17,7 +17,7 @@ url: "https://github.com/bruhautomation/BRUH-HA-Apps/tree/main/bruh-insights"
 ingress: true
 ingress_port: 8099
 panel_icon: mdi:chart-timeline-variant-shimmer
-panel_title: "Insights"
+panel_title: "BRUH Insights"
 panel_admin: true
 
 # App configuration options

@@ -1,7 +1,7 @@
 ---
 name: "BRUH Minecraft"
 description: "Rock-solid Minecraft Java Edition server with ingress panel, RCON, git world backups, auto-updates, plugin management, and deep Home Assistant integration"
-version: "1.14.2"
+version: "1.14.3"
 slug: "bruh_minecraft_server"
 init: false
 
@@ -25,7 +25,7 @@ stage: stable
 ingress: true
 ingress_port: 8099
 panel_icon: mdi:minecraft
-panel_title: "Minecraft"
+panel_title: "BRUH Minecraft"
 panel_admin: true
 
 # Minecraft networking

@@ -19,10 +19,21 @@ _replace_dir_with_symlink() {
     local link_dest="$2"
 
     if [ -d "$dir_path" ] && [ ! -L "$dir_path" ]; then
-        # Real directory found — salvage any auth files to persistent storage
+        # Real directory found — salvage any auth files to persistent storage.
+        # NOTE: the glob must include dotfiles (.credentials.json!) and must
+        # never clobber newer files already in persistent storage — an image-
+        # baked default overwriting a real credential file logs the user out.
         if [ "$(ls -A "$dir_path" 2>/dev/null)" ]; then
             bashio::log.info "  - Salvaging credentials from $dir_path to persistent storage"
-            cp -a "$dir_path"/* "$link_dest/" 2>/dev/null || true
+            (
+                shopt -s dotglob nullglob
+                for entry in "$dir_path"/*; do
+                    base=$(basename "$entry")
+                    if [ ! -e "$link_dest/$base" ]; then
+                        cp -a "$entry" "$link_dest/" 2>/dev/null || true
+                    fi
+                done
+            )
         fi
         rm -rf "$dir_path"
     fi
@@ -72,6 +83,17 @@ init_environment() {
     # Claude-specific environment variables
     export ANTHROPIC_CONFIG_DIR="$claude_config_dir"
     export ANTHROPIC_HOME="/data"
+
+    # Pin Claude Code's config/credential directory to persistent storage.
+    # Without this, Claude Code resolves ~/.claude from the process HOME —
+    # and any launch path that loses or resets HOME (tmux respawns, su/login
+    # shells, passwd-home lookups) silently reads/writes credentials in the
+    # container layer instead, which survives restarts but is wiped on every
+    # add-on update ("I have to re-login after every update", issue #102).
+    # CLAUDE_CONFIG_DIR is the documented override and removes the HOME
+    # dependency entirely. /data/home/.claude is where HOME-based resolution
+    # already put existing logins, so no credential migration is needed.
+    export CLAUDE_CONFIG_DIR="$data_home/.claude"
 
     # Disable Claude Code's built-in auto-updater — the add-on handles
     # updates at startup via update_claude_code() running as root.
@@ -184,6 +206,38 @@ MEMORYMD
     # Symlink from /root/.claude → persistent storage
     _replace_dir_with_symlink "/root/.claude" "$data_home/.claude"
 
+    # If a previous session wrote credentials to the claude user's passwd
+    # home (/home/claude — container layer, wiped on update), rescue them
+    # into persistent storage before they're lost to the next update.
+    mkdir -p /home/claude
+    _replace_dir_with_symlink "/home/claude/.claude" "$data_home/.claude"
+
+    # With CLAUDE_CONFIG_DIR set, Claude Code keeps its global config at
+    # $CLAUDE_CONFIG_DIR/.claude.json rather than ~/.claude.json. Carry the
+    # existing file over once so onboarding state and OAuth account metadata
+    # survive the switch (never overwrite — the new location wins once used).
+    if [ -f "$data_home/.claude.json" ] && [ ! -f "$data_home/.claude/.claude.json" ]; then
+        cp -a "$data_home/.claude.json" "$data_home/.claude/.claude.json"
+        bashio::log.info "  - Migrated ~/.claude.json to CLAUDE_CONFIG_DIR"
+    fi
+
+    # Credential backup / restore safety net. Claude Code deletes or
+    # truncates .credentials.json in some failure modes (e.g. a token
+    # refresh that errors out mid-flight at boot). Keep the last known
+    # good copy in /data and restore it when the live file has vanished —
+    # worst case the restored token is stale and the user logs in anyway,
+    # best case a re-login is avoided entirely.
+    local auth_backup_dir="/data/.bruh_claude_auth_backup"
+    mkdir -p "$auth_backup_dir"
+    chmod 700 "$auth_backup_dir"
+    if [ -s "$data_home/.claude/.credentials.json" ]; then
+        cp -a "$data_home/.claude/.credentials.json" "$auth_backup_dir/.credentials.json"
+    elif [ -s "$auth_backup_dir/.credentials.json" ]; then
+        cp -a "$auth_backup_dir/.credentials.json" "$data_home/.claude/.credentials.json"
+        chmod 600 "$data_home/.claude/.credentials.json"
+        bashio::log.warning "  - .credentials.json was missing — restored last known good copy"
+    fi
+
     bashio::log.info "  - Auth symlinks refreshed for persistent OAuth"
 
     # Log credential status for debugging
@@ -245,6 +299,7 @@ export XDG_STATE_HOME="${state_dir}"
 export XDG_DATA_HOME="/data/.local/share"
 export ANTHROPIC_CONFIG_DIR="${claude_config_dir}"
 export ANTHROPIC_HOME="/data"
+export CLAUDE_CONFIG_DIR="${data_home}/.claude"
 export PATH="${data_home}/.local/bin:\${PATH}"
 export BRUH_CLAUDE_PERMS_FLAG="${perms_flag}"
 export SUPERVISOR_TOKEN="${SUPERVISOR_TOKEN}"
@@ -301,9 +356,16 @@ ENVEOF
 setup_claude_user() {
     bashio::log.info "Setting up non-root Claude user..."
 
-    # Create user if not present (may already exist from Dockerfile)
+    # Create user if not present (may already exist from Dockerfile).
+    # The passwd home MUST be the persistent /data/home: anything that
+    # resolves the home from /etc/passwd instead of $HOME (login shells,
+    # `su`, some libc/homedir fallbacks) would otherwise land credentials
+    # and state in /home/claude — container layer, wiped on every update.
     if ! id -u claude >/dev/null 2>&1; then
-        adduser -D -s /bin/bash -u 1000 claude
+        adduser -D -s /bin/bash -u 1000 -h /data/home claude
+    elif [ "$(getent passwd claude | cut -d: -f6)" != "/data/home" ]; then
+        sed -i 's|^\(claude:[^:]*:[^:]*:[^:]*:[^:]*:\)[^:]*\(:.*\)$|\1/data/home\2|' /etc/passwd
+        bashio::log.info "  - claude user home repointed to /data/home"
     fi
 
     # Ensure Claude binary is accessible to non-root user
@@ -936,9 +998,10 @@ cleanup_all_mcp_references() {
     #    added by marketplace plugins. Previous cleanup steps missed this file
     #    because it's not in the searched directories and not named .mcp.json.
     # -------------------------------------------------------------------------
-    local claude_json="/data/home/.claude.json"
+    local claude_json
+    for claude_json in "/data/home/.claude.json" "/data/home/.claude/.claude.json"; do
     if [ -f "$claude_json" ] && grep -q "/api/mcp\|homeassistant-config\|claude-homeassistant-plugins" "$claude_json" 2>/dev/null; then
-        bashio::log.info "  Cleaning stale entries from ~/.claude.json"
+        bashio::log.info "  Cleaning stale entries from ${claude_json}"
         local tmp
         tmp=$(mktemp)
         if jq '
@@ -964,11 +1027,12 @@ cleanup_all_mcp_references() {
         ' "$claude_json" > "$tmp" 2>/dev/null; then
             mv "$tmp" "$claude_json"
             chown claude:claude "$claude_json" 2>/dev/null || true
-            bashio::log.info "  ~/.claude.json cleaned"
+            bashio::log.info "  ${claude_json} cleaned"
         else
             rm -f "$tmp"
         fi
     fi
+    done
 
     bashio::log.info "Deep MCP cleanup complete"
 }
@@ -1045,9 +1109,10 @@ setup_mcp_server() {
     done
 
     # ~/.claude.json needs surgical cleaning (contains OAuth creds and other config)
-    local global_claude="/data/home/.claude.json"
+    local global_claude
+    for global_claude in "/data/home/.claude.json" "/data/home/.claude/.claude.json"; do
     if [ -f "$global_claude" ] && grep -q "/api/mcp\|homeassistant-config\|claude-homeassistant-plugins" "$global_claude" 2>/dev/null; then
-        bashio::log.warning "Cleaning stale MCP entries from ~/.claude.json"
+        bashio::log.warning "Cleaning stale MCP entries from ${global_claude}"
         local tmp
         tmp=$(mktemp)
         if jq '
@@ -1063,11 +1128,12 @@ setup_mcp_server() {
         ' "$global_claude" > "$tmp" 2>/dev/null; then
             mv "$tmp" "$global_claude"
             chown claude:claude "$global_claude" 2>/dev/null || true
-            bashio::log.info "  ~/.claude.json cleaned"
+            bashio::log.info "  ${global_claude} cleaned"
         else
             rm -f "$tmp"
         fi
     fi
+    done
 
     # Write project-level Claude Code settings that pre-allow all necessary
     # tools.  This is the PRIMARY permission mechanism for background listeners
@@ -1546,7 +1612,7 @@ start_web_terminal() {
     bashio::log.info "Starting BRUH Terminal on port ${port}..."
 
     bashio::log.info "Environment:"
-    bashio::log.info "  ANTHROPIC_CONFIG_DIR=${ANTHROPIC_CONFIG_DIR}"
+    bashio::log.info "  CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR}"
     bashio::log.info "  HOME=${HOME}"
     bashio::log.info "  HA MCP Server: $(bashio::config 'enable_ha_mcp_server' 'true')"
     bashio::log.info "  Auto-backup: $(bashio::config 'auto_backup' 'true')"
@@ -1641,7 +1707,7 @@ trap cleanup SIGTERM SIGINT EXIT
 
 main() {
     bashio::log.info "============================================"
-    bashio::log.info "  BRUH Terminal v2.2.1"
+    bashio::log.info "  BRUH Terminal v$(bashio::addon.version 2>/dev/null || echo '3.3.1')"
     bashio::log.info "  Enhanced Claude Code for Home Assistant"
     bashio::log.info "============================================"
 
