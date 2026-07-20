@@ -31,7 +31,9 @@ sys.path.insert(0, str(PANEL_DIR))
 
 import categories  # noqa: E402
 import claude_client  # noqa: E402
+import feedback_store  # noqa: E402
 import prompt_store  # noqa: E402
+import user_categories  # noqa: E402
 
 
 class TestInsightsConfigYaml(unittest.TestCase):
@@ -80,6 +82,13 @@ class TestInsightsConfigYaml(unittest.TestCase):
         self.assertIn("amd64", self.config["arch"])
         self.assertIn("aarch64", self.config["arch"])
 
+    def test_card_server_port_declared_but_unmapped(self):
+        """8100 must be offered (so users can map it) but default to unmapped."""
+        ports = self.config.get("ports", {})
+        self.assertIn("8100/tcp", ports)
+        self.assertIsNone(ports["8100/tcp"])
+        self.assertIn("8100/tcp", self.config.get("ports_description", {}))
+
 
 class TestInsightsBuildFiles(unittest.TestCase):
     def test_build_yaml(self):
@@ -96,7 +105,9 @@ class TestInsightsBuildFiles(unittest.TestCase):
         for name in ("run.sh", "panel/server.py", "panel/index.html",
                      "panel/app.js", "panel/style.css", "panel/favicon.svg",
                      "panel/categories.py", "panel/ha_data.py",
-                     "panel/claude_client.py", "icon.png", "logo.png",
+                     "panel/claude_client.py", "panel/prompt_store.py",
+                     "panel/user_categories.py", "panel/feedback_store.py",
+                     "icon.png", "logo.png",
                      "README.md", "DOCS.md", "CHANGELOG.md"):
             self.assertTrue((ADDON_DIR / name).exists(), f"missing {name}")
 
@@ -141,6 +152,22 @@ class TestCategories(unittest.TestCase):
             categories.CATEGORIES[0], {"entities": []}, question="How cold is it?")
         self.assertIn("QUESTION: How cold is it?", prompt)
         self.assertNotIn("INSIGHT CATEGORY", prompt)
+
+    def test_system_prompt_requests_tags(self):
+        self.assertIn('"tags"', categories.SYSTEM_PROMPT)
+
+    def test_build_prompt_feedback_injected(self):
+        prompt = categories.build_prompt(
+            categories.CATEGORIES[0], {"entities": []},
+            feedback=["Show costs in dollars", "  ", ""])
+        self.assertIn("HOMEOWNER FEEDBACK", prompt)
+        self.assertIn("- Show costs in dollars", prompt)
+
+    def test_build_prompt_no_feedback_block_when_empty(self):
+        for feedback in (None, [], ["", "  "]):
+            prompt = categories.build_prompt(
+                categories.CATEGORIES[0], {"entities": []}, feedback=feedback)
+            self.assertNotIn("HOMEOWNER FEEDBACK", prompt)
 
 
 class TestClaudeClient(unittest.TestCase):
@@ -636,6 +663,121 @@ class TestPromptStore(unittest.TestCase):
         self.assertTrue(prompt_store.effective_category("energy")["enabled"])
 
 
+class TestFeedbackStore(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self._old = feedback_store.FEEDBACK_FILE
+        feedback_store.FEEDBACK_FILE = os.path.join(self.tmp.name, "feedback.json")
+
+    def tearDown(self):
+        feedback_store.FEEDBACK_FILE = self._old
+        self.tmp.cleanup()
+
+    def test_add_list_remove_roundtrip(self):
+        self.assertEqual(feedback_store.list_feedback("energy"), [])
+        entry = feedback_store.add_feedback("energy", "  Show costs in dollars  ")
+        self.assertEqual(entry["text"], "Show costs in dollars")
+        listed = feedback_store.list_feedback("energy")
+        self.assertEqual([e["text"] for e in listed], ["Show costs in dollars"])
+        self.assertTrue(feedback_store.remove_feedback("energy", entry["ts"]))
+        self.assertEqual(feedback_store.list_feedback("energy"), [])
+        self.assertFalse(feedback_store.remove_feedback("energy", entry["ts"]))
+
+    def test_entries_get_unique_ts(self):
+        a = feedback_store.add_feedback("energy", "one")
+        b = feedback_store.add_feedback("energy", "two")
+        self.assertNotEqual(a["ts"], b["ts"])
+        feedback_store.remove_feedback("energy", a["ts"])
+        self.assertEqual([e["text"] for e in feedback_store.list_feedback("energy")],
+                         ["two"])
+
+    def test_validation(self):
+        with self.assertRaises(ValueError):
+            feedback_store.add_feedback("energy", "   ")
+        with self.assertRaises(ValueError):
+            feedback_store.add_feedback("energy", "x" * 501)
+
+    def test_cap_keeps_newest(self):
+        for i in range(feedback_store.MAX_PER_CATEGORY + 3):
+            feedback_store.add_feedback("energy", f"note {i}")
+        listed = feedback_store.list_feedback("energy")
+        self.assertEqual(len(listed), feedback_store.MAX_PER_CATEGORY)
+        self.assertEqual(listed[-1]["text"],
+                         f"note {feedback_store.MAX_PER_CATEGORY + 2}")
+
+    def test_corrupt_file_tolerated(self):
+        with open(feedback_store.FEEDBACK_FILE, "w") as f:
+            f.write("not json")
+        self.assertEqual(feedback_store.list_feedback("energy"), [])
+        feedback_store.add_feedback("energy", "works anyway")
+        self.assertEqual(len(feedback_store.list_feedback("energy")), 1)
+
+
+class TestUserCategories(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self._old = user_categories.USER_CATS_FILE
+        user_categories.USER_CATS_FILE = os.path.join(self.tmp.name, "user_cats.json")
+
+    def tearDown(self):
+        user_categories.USER_CATS_FILE = self._old
+        self.tmp.cleanup()
+
+    def test_create_and_shape(self):
+        cat = user_categories.create({
+            "title": "Garage fridge watch", "focus": "Track the fridge",
+            "icon": "🧊", "refresh_hours": 12})
+        self.assertTrue(cat["id"].startswith("user-"))
+        self.assertTrue(cat["user"])
+        self.assertEqual(cat["refresh_hours"], 12)
+        # category shape usable by collect_bundle/build_prompt
+        for key in ("domains", "device_classes", "history", "stats", "focus"):
+            self.assertIn(key, cat)
+        self.assertEqual(user_categories.get(cat["id"])["title"],
+                         "Garage fridge watch")
+
+    def test_ids_unique_within_a_second(self):
+        a = user_categories.create({"title": "A", "focus": "fa"})
+        b = user_categories.create({"title": "B", "focus": "fb"})
+        self.assertNotEqual(a["id"], b["id"])
+
+    def test_validation(self):
+        for bad in ({"title": "", "focus": "x"},
+                    {"title": "x", "focus": " "},
+                    {"title": "x", "focus": "y", "refresh_hours": 999},
+                    {"title": "x", "focus": "y", "refresh_hours": "soon"}):
+            with self.assertRaises(ValueError):
+                user_categories.create(bad)
+
+    def test_update_partial(self):
+        cat = user_categories.create({"title": "A", "focus": "fa"})
+        updated = user_categories.update(cat["id"], {"refresh_hours": 3,
+                                                     "enabled": False})
+        self.assertEqual(updated["refresh_hours"], 3)
+        self.assertFalse(updated["enabled"])
+        self.assertEqual(updated["title"], "A")
+        self.assertIsNone(user_categories.update("user-nope", {"title": "X"}))
+
+    def test_delete(self):
+        cat = user_categories.create({"title": "A", "focus": "fa"})
+        self.assertTrue(user_categories.delete(cat["id"]))
+        self.assertFalse(user_categories.delete(cat["id"]))
+        self.assertIsNone(user_categories.get(cat["id"]))
+
+    def test_limit_enforced(self):
+        for i in range(user_categories.MAX_USER_CATEGORIES):
+            user_categories.create({"title": f"T{i}", "focus": "f"})
+        with self.assertRaises(ValueError):
+            user_categories.create({"title": "one too many", "focus": "f"})
+
+    def test_corrupt_file_tolerated(self):
+        with open(user_categories.USER_CATS_FILE, "w") as f:
+            f.write("not json")
+        self.assertEqual(user_categories.load(), [])
+        user_categories.create({"title": "A", "focus": "fa"})
+        self.assertEqual(len(user_categories.load()), 1)
+
+
 class InsightsServerCase(unittest.TestCase):
     """Shared fixture: isolated insight dir, overrides file, queue and jobs."""
 
@@ -649,11 +791,18 @@ class InsightsServerCase(unittest.TestCase):
         self._old_dir = self.server.INSIGHTS_DIR
         self._old_overrides = prompt_store.OVERRIDES_FILE
         self._old_inbox = self.server.MEMORY_INBOX_DIR
+        self._old_feedback = feedback_store.FEEDBACK_FILE
+        self._old_user_cats = user_categories.USER_CATS_FILE
+        self._old_card_token = self.server.CARD_TOKEN_FILE
         self.server.INSIGHTS_DIR = Path(self.tmp.name)
         # NOT inside INSIGHTS_DIR — mirrors production (/data vs /data/insights)
         prompt_store.OVERRIDES_FILE = os.path.join(
             self.tmp.name, "overrides", "prompt_overrides.json")
         self.server.MEMORY_INBOX_DIR = Path(self.tmp.name) / "memory-inbox"
+        feedback_store.FEEDBACK_FILE = os.path.join(self.tmp.name, "feedback.json")
+        user_categories.USER_CATS_FILE = os.path.join(
+            self.tmp.name, "user_categories.json")
+        self.server.CARD_TOKEN_FILE = Path(self.tmp.name) / "secrets" / "card_token"
         self.server.JOBS.clear()
         self.server.QUEUE = asyncio.Queue()
 
@@ -661,6 +810,9 @@ class InsightsServerCase(unittest.TestCase):
         self.server.INSIGHTS_DIR = self._old_dir
         prompt_store.OVERRIDES_FILE = self._old_overrides
         self.server.MEMORY_INBOX_DIR = self._old_inbox
+        feedback_store.FEEDBACK_FILE = self._old_feedback
+        user_categories.USER_CATS_FILE = self._old_user_cats
+        self.server.CARD_TOKEN_FILE = self._old_card_token
         self.server.JOBS.clear()
         self.tmp.cleanup()
 
@@ -944,6 +1096,52 @@ class TestGenerateFlow(InsightsServerCase):
         stored = self._stored()
         self.assertEqual(stored["questions"], [])
         self.assertEqual(stored["findings"], [])
+        self.assertEqual(stored["tags"], [])
+
+    def test_feedback_injected_and_tags_stored(self):
+        feedback_store.add_feedback("energy", "No pie charts")
+        self.reply["tags"] = ["Energy ", "#anomaly", "energy", 42]
+        prompts = []
+
+        def capture(prompt, *a, **k):
+            prompts.append(prompt)
+            return {"ok": True, "text": json.dumps(self.reply), "error": "",
+                    "meta": {"duration_ms": 5}}
+
+        claude_client.run_claude = capture
+        asyncio.run(self.server._generate("energy"))
+        stored = self._stored()
+        self.assertEqual(stored["tags"], ["energy", "anomaly"])
+        self.assertIn("HOMEOWNER FEEDBACK", prompts[0])
+        self.assertIn("- No pie charts", prompts[0])
+
+    def test_question_generation_skips_feedback(self):
+        feedback_store.add_feedback("energy", "No pie charts")
+        prompts = []
+
+        def capture(prompt, *a, **k):
+            prompts.append(prompt)
+            return {"ok": True, "text": json.dumps(self.reply), "error": "",
+                    "meta": {"duration_ms": 5}}
+
+        claude_client.run_claude = capture
+        self.server._set_job("custom-77", state="queued", question="Why cold?")
+        asyncio.run(self.server._generate("custom-77"))
+        self.assertNotIn("HOMEOWNER FEEDBACK", prompts[0])
+
+    def test_generate_user_category(self):
+        cat = user_categories.create({
+            "title": "Fridge", "focus": "Watch the fridge", "icon": "🧊"})
+        asyncio.run(self.server._generate(cat["id"]))
+        self.assertEqual(self.server.JOBS[cat["id"]]["state"], "done",
+                         self.server.JOBS[cat["id"]])
+        self.assertEqual(self.bundle_focus, "Watch the fridge")
+        stored = self._stored(cat["id"])
+        self.assertEqual(stored["category"], cat["id"])
+        self.assertEqual(stored["category_title"], "Fridge")
+        self.assertEqual(stored["icon"], "🧊")
+        # user categories keep run history like shipped ones
+        self.assertTrue((Path(self.tmp.name) / "history" / cat["id"]).exists())
 
 
 class TestQuestionsEndpoints(InsightsServerCase):
@@ -1030,6 +1228,239 @@ class TestQuestionsEndpoints(InsightsServerCase):
         self.assertEqual(len(files), 1)
         fact = json.loads(files[0].read_text().splitlines()[0])["fact"]
         self.assertEqual(fact, "Q: Why cold? → A: Broken vent.")
+
+
+class TestUserCategoryEndpoints(InsightsServerCase):
+    def test_crud_and_status(self):
+        old_generate = self.server._generate
+
+        async def noop_generate(insight_id):
+            self.server._set_job(insight_id, state="done", error="")
+
+        self.server._generate = noop_generate
+
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                resp = await client.post("/api/user_category", json={
+                    "title": "Garage fridge", "focus": "Watch it", "icon": "🧊",
+                    "refresh_hours": 6})
+                self.assertEqual(resp.status, 200)
+                cat = await resp.json()
+                self.assertTrue(cat["id"].startswith("user-"))
+                # creating queues an immediate first generation by default
+                self.assertIn(self.server.JOBS.get(cat["id"], {}).get("state"),
+                              ("queued", "done"))
+
+                # visible in /api/status categories, flagged as user-defined
+                resp = await client.get("/api/status")
+                cats = {c["id"]: c for c in (await resp.json())["categories"]}
+                self.assertIn(cat["id"], cats)
+                self.assertTrue(cats[cat["id"]].get("user"))
+                self.assertEqual(cats[cat["id"]]["refresh_hours"], 6)
+
+                # /api/generate accepts the user id
+                self.server.JOBS.clear()
+                resp = await client.post("/api/generate",
+                                         json={"category": cat["id"]})
+                self.assertEqual(resp.status, 200)
+                self.assertEqual((await resp.json())["queued"], [cat["id"]])
+
+                # edit
+                resp = await client.put(f"/api/user_category/{cat['id']}", json={
+                    "title": "Fridge watch", "refresh_hours": None})
+                self.assertEqual(resp.status, 200)
+                rec = await resp.json()
+                self.assertEqual(rec["title"], "Fridge watch")
+                self.assertIsNone(rec["refresh_hours"])
+
+                # validation
+                resp = await client.post("/api/user_category", json={"title": ""})
+                self.assertEqual(resp.status, 400)
+                resp = await client.put(f"/api/user_category/{cat['id']}",
+                                        json={"refresh_hours": 999})
+                self.assertEqual(resp.status, 400)
+                resp = await client.put("/api/user_category/user-nope",
+                                        json={"title": "X"})
+                self.assertEqual(resp.status, 404)
+
+                # generate_all includes enabled user categories
+                self.server.JOBS.clear()
+                resp = await client.post("/api/generate_all")
+                self.assertIn(cat["id"], (await resp.json())["queued"])
+
+                # delete cleans up definition, insight, history, feedback
+                self._save(cat["id"], "2026-07-18T10:00:00")
+                feedback_store.add_feedback(cat["id"], "note")
+                resp = await client.delete(f"/api/user_category/{cat['id']}")
+                self.assertEqual(resp.status, 200)
+                self.assertFalse(
+                    (Path(self.tmp.name) / f"{cat['id']}.json").exists())
+                self.assertFalse(
+                    (Path(self.tmp.name) / "history" / cat["id"]).exists())
+                self.assertEqual(feedback_store.list_feedback(cat["id"]), [])
+                resp = await client.delete(f"/api/user_category/{cat['id']}")
+                self.assertEqual(resp.status, 404)
+            finally:
+                await client.close()
+
+        try:
+            asyncio.run(run())
+        finally:
+            self.server._generate = old_generate
+
+    def test_scheduler_sees_user_categories(self):
+        cat = user_categories.create(
+            {"title": "T", "focus": "F", "refresh_hours": 1})
+        eff = self.server.resolve_category(cat["id"])
+        now = time.mktime(time.strptime("2026-07-18T12:00:00", "%Y-%m-%dT%H:%M:%S"))
+        self.assertTrue(self.server._refresh_due(eff, "2026-07-18T10:00:00", now))
+        self.assertFalse(self.server._refresh_due(eff, "2026-07-18T11:30:00", now))
+        user_categories.update(cat["id"], {"enabled": False})
+        eff = self.server.resolve_category(cat["id"])
+        self.assertFalse(self.server._refresh_due(eff, "2026-07-18T10:00:00", now))
+
+    def test_load_insights_orders_user_after_builtin(self):
+        cat = user_categories.create({"title": "U", "focus": "f"})
+        self._save("custom-99", "2026-07-18T12:00:00", category="custom")
+        self._save(cat["id"], "2026-07-18T10:00:00")
+        self._save("energy", "2026-07-18T09:00:00")
+        ids = [i["id"] for i in self.server.load_insights()]
+        self.assertEqual(ids, ["energy", cat["id"], "custom-99"])
+
+    def test_orphaned_user_insight_hidden(self):
+        self._save("user-123", "2026-07-18T10:00:00")
+        self.assertEqual(self.server.load_insights(), [])
+
+
+class TestFeedbackEndpoints(InsightsServerCase):
+    def setUp(self):
+        super().setUp()
+        self._old_service = self.ha_data.call_service
+        self.calls = []
+
+        async def ok_service(service, data):
+            self.calls.append((service, data))
+
+        self.ha_data.call_service = ok_service
+
+    def tearDown(self):
+        self.ha_data.call_service = self._old_service
+        super().tearDown()
+
+    def test_feedback_roundtrip_and_memory_handoff(self):
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                resp = await client.post("/api/insight/energy/feedback",
+                                         json={"feedback": "Show cost in dollars"})
+                self.assertEqual(resp.status, 200)
+                data = await resp.json()
+                self.assertEqual(
+                    [e["text"] for e in data["feedback"]], ["Show cost in dollars"])
+                ts = data["added"]["ts"]
+                # handed to the home's memory as a durable preference
+                self.assertEqual(self.calls[0][0], "add_memory")
+                self.assertIn('"Energy" insight card: Show cost in dollars',
+                              self.calls[0][1]["fact"])
+
+                resp = await client.get("/api/insight/energy/feedback")
+                self.assertEqual(
+                    [e["text"] for e in (await resp.json())["feedback"]],
+                    ["Show cost in dollars"])
+
+                resp = await client.delete(f"/api/insight/energy/feedback/{ts}")
+                self.assertEqual(resp.status, 200)
+                resp = await client.delete(f"/api/insight/energy/feedback/{ts}")
+                self.assertEqual(resp.status, 404)
+
+                # validation: empty text, ad-hoc ids, malformed ts
+                resp = await client.post("/api/insight/energy/feedback",
+                                         json={"feedback": ""})
+                self.assertEqual(resp.status, 400)
+                resp = await client.post("/api/insight/custom-1/feedback",
+                                         json={"feedback": "x"})
+                self.assertEqual(resp.status, 400)
+                resp = await client.delete("/api/insight/energy/feedback/abc")
+                self.assertEqual(resp.status, 400)
+            finally:
+                await client.close()
+
+        asyncio.run(run())
+
+    def test_feedback_works_for_user_categories(self):
+        cat = user_categories.create({"title": "Fridge", "focus": "watch"})
+
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                resp = await client.post(f"/api/insight/{cat['id']}/feedback",
+                                         json={"feedback": "Celsius please"})
+                self.assertEqual(resp.status, 200)
+            finally:
+                await client.close()
+
+        asyncio.run(run())
+        self.assertIn('"Fridge" insight card: Celsius please',
+                      self.calls[0][1]["fact"])
+
+
+class TestCardServer(InsightsServerCase):
+    def test_token_created_and_stable(self):
+        t1 = self.server.get_card_token()
+        t2 = self.server.get_card_token()
+        self.assertEqual(t1, t2)
+        self.assertGreaterEqual(len(t1), 16)
+
+    def test_card_routes(self):
+        from aiohttp.test_utils import TestClient, TestServer
+        self._save("energy", "2026-07-18T10:00:00")
+        token = self.server.get_card_token()
+
+        async def run():
+            client = TestClient(TestServer(self.server.make_card_app()))
+            await client.start_server()
+            try:
+                resp = await client.get(f"/card/energy?token={token}")
+                self.assertEqual(resp.status, 200)
+                text = await resp.text()
+                self.assertIn("<p>x</p>", text)
+                self.assertIn("location.reload", text)
+
+                for url in ("/card/energy?token=wrong", "/card/energy"):
+                    resp = await client.get(url)
+                    self.assertEqual(resp.status, 401)
+
+                resp = await client.get(f"/card/nope?token={token}")
+                self.assertEqual(resp.status, 404)
+                resp = await client.get(f"/card/UPPER?token={token}")
+                self.assertEqual(resp.status, 400)
+            finally:
+                await client.close()
+
+        asyncio.run(run())
+
+    def test_card_info_endpoint(self):
+        self.server._HA_URLS_CACHE.update(
+            ts=time.time(), urls={"internal_url": "http://ha.lan:8123"})
+
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                resp = await client.get("/api/card_info")
+                self.assertEqual(resp.status, 200)
+                data = await resp.json()
+                self.assertEqual(data["port"], self.server.CARD_PORT)
+                self.assertEqual(data["token"], self.server.get_card_token())
+                self.assertEqual(data["internal_url"], "http://ha.lan:8123")
+            finally:
+                await client.close()
+
+        asyncio.run(run())
 
 
 class TestMemoryContext(unittest.TestCase):

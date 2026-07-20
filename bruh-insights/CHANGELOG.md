@@ -1,5 +1,33 @@
 # Changelog
 
+## 1.2.0
+
+- **Create your own insights**: a new "＋ New insight" button lets you define custom
+  recurring insights — name, icon, an analysis prompt, and an optional per-insight
+  refresh interval (empty = add-on default, 0 = manual only). They live alongside the
+  built-in categories: auto-refreshed on their own schedule, included in "Refresh all",
+  with full run history, and editable or deletable any time via ✎
+- **Turn a question into a recurring insight**: every Ask card now has a
+  "＋ Make recurring" button that promotes the question into a scheduled insight,
+  prefilled and ready to tweak
+- **Insights as dashboard cards**: the new ▦ button on each card produces ready-to-paste
+  YAML for a Home Assistant **Webpage** dashboard card that embeds the live
+  visualization (always the latest run, auto-reloading). Served by a token-protected
+  card server on port 8100 — unmapped by default; map it once under the add-on's
+  Network settings
+- **Feedback that sticks**: the new 💬 button lets you tell Claude what to change
+  ("ignore the guest room sensor", "show costs in dollars"). Feedback is stored as a
+  standing instruction injected into every future generation of that card, forwarded to
+  the home's memory, and manageable (view/remove) from the same dialog. "Send &
+  regenerate" applies it immediately
+- **Real tag filtering**: filter chips are now content tags. The analyst tags each card
+  by what it actually found (e.g. `#anomaly`, `#batteries`, `#left-on`), and one chip
+  surfaces every matching card across categories — instead of the old one-card-per-chip
+  table of contents. Card counts show on each chip; `#asked` collects your Ask cards
+- **Fixed: background scroll bleed** — opening an expanded view (or any dialog) no
+  longer scrolls the dashboard behind it while the popup scrolls too; the page freezes
+  in place and picks up exactly where it was on close
+
 ## 1.1.1
 
 - **Sidebar naming**: the ingress panel is now titled "BRUH Insights"

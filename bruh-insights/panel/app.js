@@ -34,6 +34,35 @@ async function api(path, opts = {}) {
   return resp.json();
 }
 
+// ------------------------------------------------------- modal scroll lock
+// Freezing the body while a modal is open stops the page behind the overlay
+// from scrolling along with it (double-scroll bug, esp. iOS/ingress webview).
+const modalLock = { y: 0 };
+
+function syncModalLock() {
+  const anyOpen = !!document.querySelector(".modal.open");
+  const locked = document.body.classList.contains("modal-open");
+  if (anyOpen && !locked) {
+    modalLock.y = window.scrollY || document.documentElement.scrollTop || 0;
+    document.body.style.top = `-${modalLock.y}px`;
+    document.body.classList.add("modal-open");
+  } else if (!anyOpen && locked) {
+    document.body.classList.remove("modal-open");
+    document.body.style.top = "";
+    window.scrollTo(0, modalLock.y);
+  }
+}
+
+function openBox(sel) {
+  $(sel).classList.add("open");
+  syncModalLock();
+}
+
+function closeBox(sel) {
+  $(sel).classList.remove("open");
+  syncModalLock();
+}
+
 function toast(msg) {
   const t = $("#toast");
   t.textContent = msg;
@@ -91,6 +120,7 @@ function renderAuth() {
   $("#setup").classList.toggle("hidden", s.authenticated);
   $("#dash").classList.toggle("hidden", !s.authenticated);
   $("#refreshAll").classList.toggle("hidden", !s.authenticated);
+  $("#newInsight").classList.toggle("hidden", !s.authenticated);
 }
 
 function bindSetup() {
@@ -449,8 +479,9 @@ function makeCard(catInfo, insight) {
   if (disabled) {
     const enable = el("button", "btn small", "Enable");
     enable.addEventListener("click", async () => {
+      const path = catInfo.user ? `api/user_category/${id}` : `api/prompt/${id}`;
       try {
-        await api(`api/prompt/${id}`, { method: "PUT", body: JSON.stringify({ enabled: true }) });
+        await api(path, { method: "PUT", body: JSON.stringify({ enabled: true }) });
         await refreshStatus();
         render();
       } catch (e) { toast(e.message); }
@@ -465,15 +496,24 @@ function makeCard(catInfo, insight) {
   }
   if (catInfo) {
     const edit = el("button", "btn icon", "✎");
-    edit.title = "Edit prompt";
-    edit.addEventListener("click", () => openEdit(catInfo));
+    edit.title = catInfo.user ? "Edit insight" : "Edit prompt";
+    edit.addEventListener("click", () =>
+      catInfo.user ? openUserEdit(catInfo) : openEdit(catInfo));
     actions.appendChild(edit);
+    const fb = el("button", "btn icon", "💬");
+    fb.title = "Give feedback — remembered for every future run";
+    fb.addEventListener("click", () => openFeedback(catInfo));
+    actions.appendChild(fb);
   }
   if (shown) {
     const expand = el("button", "btn icon", "⤢");
     expand.title = "Expand";
     expand.addEventListener("click", () => openModal(shown));
     actions.appendChild(expand);
+    const dash = el("button", "btn icon", "▦");
+    dash.title = "Add to dashboard";
+    dash.addEventListener("click", () => openCardModal(shown));
+    actions.appendChild(dash);
     if (insight && insight.category === "custom") {
       const del = el("button", "btn icon", "✕");
       del.title = "Delete";
@@ -542,6 +582,17 @@ function makeCard(catInfo, insight) {
     if (insight && catInfo) {
       foot.appendChild(makeHistoryControls(id, insight, view));
     }
+    if (!view && insight && insight.category === "custom" && insight.question) {
+      const mk = el("button", "btn small", "＋ Make recurring");
+      mk.title = "Turn this question into a scheduled insight";
+      mk.addEventListener("click", () => openNewInsight({
+        title: (insight.title || insight.question).slice(0, 60),
+        icon: insight.icon || "✨",
+        focus: "Answer this question about the home, keeping the analysis "
+          + `fresh each run: "${insight.question}"`,
+      }));
+      foot.appendChild(mk);
+    }
     card.appendChild(foot);
   } else if (job.state === "error") {
     const box = el("div", "errbox");
@@ -566,23 +617,40 @@ function makeCard(catInfo, insight) {
   return card;
 }
 
+// Tags a card can be found under: the model's content tags plus its own
+// category id ("asked" for ad-hoc questions). One tag chip can therefore
+// match many cards — e.g. #batteries surfaces every card that found a
+// battery problem, whatever category it belongs to.
+function effectiveTags(i) {
+  const tags = (Array.isArray(i.tags) ? i.tags : [])
+    .filter((t) => typeof t === "string" && t.trim())
+    .map((t) => t.trim().toLowerCase());
+  if (i.category === "custom") tags.push("asked");
+  else if (i.category) tags.unshift(i.category);
+  return [...new Set(tags)];
+}
+
 function render() {
   const s = state.status;
   if (!s) return;
   renderAuth();
   if (!s.authenticated) return;
 
-  // filter chips
+  // filter chips — the dynamic union of tags across all generated cards
   const filters = $("#filters");
   filters.textContent = "";
-  const chips = [{ id: "all", title: "All", icon: "✦" }]
-    .concat(s.categories.map((c) => ({ id: c.id, title: c.title, icon: c.icon })));
-  if (state.insights.some((i) => i.category === "custom")) {
-    chips.push({ id: "custom", title: "Asked", icon: "💬" });
-  }
+  const counts = {};
+  state.insights.forEach((i) => effectiveTags(i).forEach((t) => {
+    counts[t] = (counts[t] || 0) + 1;
+  }));
+  if (state.filter !== "all" && !counts[state.filter]) state.filter = "all";
+  const tagList = Object.keys(counts).sort((a, b) =>
+    counts[b] - counts[a] || a.localeCompare(b)).slice(0, 16);
+  const chips = [{ id: "all", label: "✦ All" }]
+    .concat(tagList.map((t) => ({ id: t, label: `#${t}`, n: counts[t] })));
   chips.forEach((c) => {
     const chip = el("button", "fchip" + (state.filter === c.id ? " active" : ""),
-      `${c.icon} ${c.title}`);
+      c.n > 1 ? `${c.label} · ${c.n}` : c.label);
     chip.addEventListener("click", () => { state.filter = c.id; render(); });
     filters.appendChild(chip);
   });
@@ -590,6 +658,7 @@ function render() {
   // cards
   const grid = $("#grid");
   grid.textContent = "";
+  const matches = (i) => state.filter === "all" || effectiveTags(i).includes(state.filter);
   const customs = state.insights.filter((i) => i.category === "custom");
   // custom in-flight jobs that have no stored insight yet
   Object.keys(s.jobs || {}).forEach((jid) => {
@@ -598,18 +667,17 @@ function render() {
       customs.unshift({ id: jid, category: "custom", category_title: "Custom", icon: "✨", virtual: true });
     }
   });
-  if (state.filter === "all" || state.filter === "custom") {
-    customs.forEach((i) => {
-      grid.appendChild(makeCard(null, i.virtual ? null : i));
-      if (i.virtual) grid.lastChild.dataset.id = i.id;
-    });
-  }
-  if (state.filter !== "custom") {
-    s.categories.forEach((c) => {
-      if (state.filter !== "all" && state.filter !== c.id) return;
-      grid.appendChild(makeCard(c, insightFor(c.id)));
-    });
-  }
+  customs.forEach((i) => {
+    if (i.virtual ? (state.filter !== "all" && state.filter !== "asked") : !matches(i)) return;
+    grid.appendChild(makeCard(null, i.virtual ? null : i));
+    if (i.virtual) grid.lastChild.dataset.id = i.id;
+  });
+  s.categories.forEach((c) => {
+    const ins = insightFor(c.id);
+    // not-yet-generated placeholders only clutter tag views — All only
+    if (state.filter !== "all" && !(ins && matches(ins))) return;
+    grid.appendChild(makeCard(c, ins));
+  });
 }
 
 // Rebuild only when something meaningful changed (avoid iframe reloads)
@@ -626,7 +694,7 @@ function renderIfChanged() {
       + ":q" + ((i.questions || []).length)),
     view: Object.keys(state.viewing).map((k) => k + state.viewing[k].ts),
     cats: s && s.categories.map((c) =>
-      [c.id, c.enabled, c.focus_overridden, c.refresh_hours]),
+      [c.id, c.title, c.icon, c.enabled, c.focus_overridden, c.refresh_hours]),
     filter: state.filter,
   });
   if (key !== lastRenderKey) {
@@ -701,17 +769,17 @@ function openModal(insight) {
   const frameId = `modal-${state.frameSeq++}`;
   frame.dataset.frame = frameId;
   frame.srcdoc = insight.html + SIZE_SNIPPET(frameId);
-  $("#modal").classList.add("open");
+  openBox("#modal");
 }
 
-$("#modalClose").addEventListener("click", () => $("#modal").classList.remove("open"));
+$("#modalClose").addEventListener("click", () => closeBox("#modal"));
 $("#modal").addEventListener("click", (ev) => {
-  if (ev.target === $("#modal")) $("#modal").classList.remove("open");
+  if (ev.target === $("#modal")) closeBox("#modal");
 });
 document.addEventListener("keydown", (ev) => {
   if (ev.key === "Escape") {
-    $("#modal").classList.remove("open");
-    $("#editModal").classList.remove("open");
+    document.querySelectorAll(".modal.open").forEach((m) => m.classList.remove("open"));
+    syncModalLock();
   }
 });
 
@@ -729,7 +797,7 @@ function openEdit(cat) {
   $("#editHours").value = cat.refresh_hours == null ? "" : cat.refresh_hours;
   const overridden = cat.focus_overridden || cat.enabled === false || cat.refresh_hours != null;
   $("#editReset").classList.toggle("hidden", !overridden);
-  $("#editModal").classList.add("open");
+  openBox("#editModal");
 }
 
 async function saveEdit(regen) {
@@ -741,7 +809,7 @@ async function saveEdit(regen) {
   };
   try {
     await api(`api/prompt/${editCatId}`, { method: "PUT", body: JSON.stringify(body) });
-    $("#editModal").classList.remove("open");
+    closeBox("#editModal");
     await refreshStatus();
     render();
     if (regen) {
@@ -759,7 +827,7 @@ $("#editSaveRegen").addEventListener("click", () => saveEdit(true));
 $("#editReset").addEventListener("click", async () => {
   try {
     await api(`api/prompt/${editCatId}`, { method: "DELETE" });
-    $("#editModal").classList.remove("open");
+    closeBox("#editModal");
     toast("Restored the default prompt");
     await refreshStatus();
     render();
@@ -767,9 +835,227 @@ $("#editReset").addEventListener("click", async () => {
     toast(e.message);
   }
 });
-$("#editClose").addEventListener("click", () => $("#editModal").classList.remove("open"));
+$("#editClose").addEventListener("click", () => closeBox("#editModal"));
 $("#editModal").addEventListener("click", (ev) => {
-  if (ev.target === $("#editModal")) $("#editModal").classList.remove("open");
+  if (ev.target === $("#editModal")) closeBox("#editModal");
+});
+
+// ------------------------------------------------ user-defined insights UI
+
+let userEditId = null; // null = create mode
+
+function openNewInsight(prefill) {
+  userEditId = null;
+  $("#newTitleBar").textContent =
+    prefill && prefill.focus ? "Save as recurring insight" : "New insight";
+  $("#newName").value = (prefill && prefill.title) || "";
+  $("#newIcon").value = (prefill && prefill.icon) || "";
+  $("#newFocus").value = (prefill && prefill.focus) || "";
+  $("#newHours").value = "";
+  $("#newEnabledRow").classList.add("hidden");
+  $("#newDelete").classList.add("hidden");
+  $("#newSave").textContent = "Create & generate";
+  openBox("#newModal");
+}
+
+function openUserEdit(cat) {
+  userEditId = cat.id;
+  $("#newTitleBar").textContent = `${cat.title} — edit insight`;
+  $("#newName").value = cat.title || "";
+  $("#newIcon").value = cat.icon || "";
+  $("#newFocus").value = cat.focus || "";
+  $("#newHours").value = cat.refresh_hours == null ? "" : cat.refresh_hours;
+  $("#newEnabled").checked = cat.enabled !== false;
+  $("#newEnabledRow").classList.remove("hidden");
+  $("#newDelete").classList.remove("hidden");
+  $("#newSave").textContent = "Save";
+  openBox("#newModal");
+}
+
+async function saveUserInsight() {
+  const hours = $("#newHours").value.trim();
+  const body = {
+    title: $("#newName").value.trim(),
+    icon: $("#newIcon").value.trim(),
+    focus: $("#newFocus").value.trim(),
+    refresh_hours: hours === "" ? null : Math.round(Number(hours)),
+  };
+  if (!body.title) { toast("Give the insight a name"); return; }
+  if (!body.focus) { toast("Describe what Claude should analyze"); return; }
+  try {
+    if (userEditId) {
+      body.enabled = $("#newEnabled").checked;
+      await api(`api/user_category/${userEditId}`, {
+        method: "PUT", body: JSON.stringify(body) });
+      toast("Insight updated");
+    } else {
+      await api("api/user_category", { method: "POST", body: JSON.stringify(body) });
+      toast("Insight created — generating…");
+    }
+    closeBox("#newModal");
+    await refreshStatus();
+    render();
+    fastPoll();
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+$("#newSave").addEventListener("click", saveUserInsight);
+$("#newDelete").addEventListener("click", async () => {
+  if (!userEditId) return;
+  if (!window.confirm("Delete this insight and its history?")) return;
+  try {
+    await api(`api/user_category/${userEditId}`, { method: "DELETE" });
+    closeBox("#newModal");
+    toast("Insight deleted");
+    await Promise.all([refreshStatus(), refreshInsights()]);
+    render();
+  } catch (e) {
+    toast(e.message);
+  }
+});
+$("#newClose").addEventListener("click", () => closeBox("#newModal"));
+$("#newModal").addEventListener("click", (ev) => {
+  if (ev.target === $("#newModal")) closeBox("#newModal");
+});
+$("#newInsight").addEventListener("click", () => openNewInsight(null));
+
+// -------------------------------------------------------- feedback modal
+
+let fbCatId = null;
+
+function fmtWhen(ts) {
+  const d = new Date(ts * 1000);
+  return isNaN(d.getTime()) ? "" :
+    d.toLocaleString([], { month: "short", day: "numeric" });
+}
+
+async function renderFbList() {
+  const wrapEl = $("#fbListWrap");
+  const list = $("#fbList");
+  list.textContent = "";
+  let entries = [];
+  try {
+    entries = (await api(`api/insight/${fbCatId}/feedback`)).feedback || [];
+  } catch (e) { /* list stays hidden */ }
+  wrapEl.classList.toggle("hidden", !entries.length);
+  entries.slice().reverse().forEach((f) => {
+    const row = el("div", "fbitem");
+    const txt = el("div", "txt");
+    txt.appendChild(el("div", null, f.text));
+    txt.appendChild(el("div", "when", fmtWhen(f.ts)));
+    row.appendChild(txt);
+    const del = el("button", "btn icon", "✕");
+    del.title = "Remove — stop applying this feedback";
+    del.addEventListener("click", async () => {
+      try {
+        await api(`api/insight/${fbCatId}/feedback/${f.ts}`, { method: "DELETE" });
+        renderFbList();
+      } catch (e) {
+        toast(e.message);
+      }
+    });
+    row.appendChild(del);
+    list.appendChild(row);
+  });
+}
+
+function openFeedback(cat) {
+  fbCatId = cat.id;
+  $("#fbIcon").textContent = cat.icon || "💬";
+  $("#fbTitle").textContent = `${cat.title} — feedback`;
+  $("#fbText").value = "";
+  $("#fbListWrap").classList.add("hidden");
+  openBox("#fbModal");
+  renderFbList();
+}
+
+async function sendFeedback(regen) {
+  const text = $("#fbText").value.trim();
+  if (!text) { toast("Write the feedback first"); return; }
+  try {
+    await api(`api/insight/${fbCatId}/feedback`, {
+      method: "POST", body: JSON.stringify({ feedback: text }) });
+    $("#fbText").value = "";
+    if (regen) {
+      closeBox("#fbModal");
+      toast("Feedback saved — regenerating with it now");
+      generate(fbCatId);
+    } else {
+      toast("Feedback saved — applied on every future run");
+      renderFbList();
+    }
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+$("#fbSave").addEventListener("click", () => sendFeedback(false));
+$("#fbSaveRegen").addEventListener("click", () => sendFeedback(true));
+$("#fbClose").addEventListener("click", () => closeBox("#fbModal"));
+$("#fbModal").addEventListener("click", (ev) => {
+  if (ev.target === $("#fbModal")) closeBox("#fbModal");
+});
+
+// -------------------------------------------------- dashboard card modal
+
+let cardInfoCache = null;
+
+function copyFallback(text) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+  ta.remove();
+  return ok;
+}
+
+function copyText(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    return navigator.clipboard.writeText(text).then(() => true, () => copyFallback(text));
+  }
+  return Promise.resolve(copyFallback(text));
+}
+
+async function openCardModal(insight) {
+  openBox("#cardModal");
+  const pre = $("#cardYaml");
+  pre.textContent = "Loading…";
+  try {
+    if (!cardInfoCache) cardInfoCache = await api("api/card_info");
+  } catch (e) {
+    pre.textContent = "Could not load card info: " + e.message;
+    return;
+  }
+  const info = cardInfoCache;
+  // best guess for a LAN-reachable host: HA's internal URL, else the
+  // default mDNS name — the user can adjust the hostname in the YAML
+  let host = "homeassistant.local";
+  const src = info.internal_url || info.external_url || "";
+  const m = src.match(/^https?:\/\/([^/:]+)/);
+  if (m) host = m[1];
+  const url = `http://${host}:${info.port}/card/${insight.id}?token=${info.token}`;
+  pre.textContent = [
+    "type: iframe",
+    `url: ${url}`,
+    `title: ${(insight.title || "Insight").replace(/[:#"\n]/g, " ").trim()}`,
+    "aspect_ratio: 90%",
+  ].join("\n");
+}
+
+$("#cardCopy").addEventListener("click", () => {
+  copyText($("#cardYaml").textContent).then((ok) =>
+    toast(ok ? "YAML copied — paste it into a dashboard card" :
+      "Copy failed — select the YAML and copy manually"));
+});
+$("#cardClose").addEventListener("click", () => closeBox("#cardModal"));
+$("#cardModal").addEventListener("click", (ev) => {
+  if (ev.target === $("#cardModal")) closeBox("#cardModal");
 });
 
 // ------------------------------------------------------------------ boot

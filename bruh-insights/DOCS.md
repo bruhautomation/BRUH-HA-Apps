@@ -81,6 +81,62 @@ The ✎ button on every category card opens the prompt editor:
 
 Each stored insight records the focus it was generated with (`focus_used`).
 
+## Your own insights
+
+**＋ New insight** (top bar) creates a fully custom recurring insight: give it a name, an
+icon, an analysis prompt, and an optional refresh interval (empty = the add-on's
+`auto_refresh_hours` default, `0` = manual only). Custom insights behave exactly like the
+shipped categories — auto-refreshed on their own clock, included in "Refresh all", with
+run history and feedback — and the ✎ button edits or deletes them.
+
+Ad-hoc Ask cards can be promoted too: **＋ Make recurring** in an answer card's footer
+prefills a new insight from that question, so a one-off "which rooms are coldest at
+night?" becomes a card that stays fresh.
+
+Up to 24 custom insights are supported. Because they're prompt-driven rather than
+domain-filtered, the analyst sees the whole (slimmed) home snapshot plus recent history —
+write the prompt to steer what it looks at.
+
+## Feedback
+
+The 💬 button on any recurring card records feedback for the analyst ("ignore the guest
+room sensor", "show costs in dollars", "less text, bigger chart"). Feedback entries are
+**standing instructions**: they're injected into every future generation of that card
+until you remove them (same dialog), and each one is also handed to the home's memory via
+the bruh_claude integration (with the `/share` inbox fallback). "Send & regenerate"
+applies the feedback immediately.
+
+## Filtering by tags
+
+The analyst tags every card by what it actually found (`#anomaly`, `#batteries`,
+`#left-on`, …). The chip row above the grid is the live union of those tags — one chip
+can match several cards across categories, and the count on the chip tells you how many.
+`#asked` collects your ad-hoc question cards. Cards that haven't generated yet only
+appear under "All".
+
+## Dashboard cards
+
+Every generated insight can be embedded on a Home Assistant dashboard:
+
+1. **One-time setup**: the add-on serves insight HTML on port **8100** (token-protected),
+   but the port is *unmapped by default*. Map it under **Settings → Add-ons →
+   BRUH Insights → Configuration → Network** and restart the add-on.
+2. Press **▦** on a card — the dialog shows ready-to-paste YAML for a **Webpage** card,
+   e.g.:
+
+   ```yaml
+   type: iframe
+   url: http://homeassistant.local:8100/card/energy?token=<your-card-token>
+   title: Energy
+   aspect_ratio: 90%
+   ```
+
+The card always shows the **latest run** of that insight and reloads itself every
+15 minutes. The `token` query parameter is a per-install random secret (stored in
+`/data/secrets/card_token`); the card server serves *only* stored insight HTML — no API,
+no credentials, no controls. Anyone with the exact URL on your network can view that
+insight, so treat the token like any other dashboard-level secret.
+
 ## Questions, findings, and memory
 
 The analyst may attach up to two **clarifying questions** to an insight ("Is the garage
@@ -107,7 +163,10 @@ facts inform every future insight.
   `not_home`, zone names) and areas are.
 - Generated visualizations render in **sandboxed iframes** (`sandbox="allow-scripts"`) — they
   cannot touch your Home Assistant session, cookies, or the panel itself.
-- The panel is only reachable through HA Ingress (admin users), never exposed on a host port.
+- The panel is only reachable through HA Ingress (admin users), never exposed on a host
+  port. The optional dashboard-card server (port 8100, unmapped by default) is a separate
+  mini server that serves only stored insight HTML and requires the per-install card
+  token on every request.
 - The add-on's `/config` mount is **read-only**; it only reads `CLAUDE.md`, the shared
   memory file, and the shared login credential (all maintained by BRUH Terminal, if
   present). The `/share` mount is writable solely for the memory-inbox drop-files

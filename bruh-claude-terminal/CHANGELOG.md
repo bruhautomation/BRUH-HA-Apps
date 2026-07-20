@@ -4,6 +4,31 @@ All notable changes to **BRUH Claude Terminal**, newest first. This project adhe
 
 > 💡 Prefer a cleaner, categorized view? See the [formatted changelog at bruhautomation.com](https://bruhautomation.com/bruh-claude/changelog/).
 
+## 3.3.2
+
+**Fixed: "Failed to authenticate: OAuth session expired and could not be
+refreshed" in Assist conversations and insight cards after the 3.3.1
+update, while the sidebar terminal kept working.**
+
+- **Root cause.** Before 3.3.1 some launch paths kept a second credential
+  file in the container layer (`/home/claude/.claude`). OAuth refresh
+  tokens rotate, so only the most recently refreshed copy stays valid.
+  3.3.1's credential unification kept the copy already in persistent
+  storage — which could be the *dead* lineage — and discarded the fresh
+  one, leaving every newly spawned background Claude (Assist worker pool,
+  automation/insight tasks) unable to refresh. The long-lived interactive
+  terminal session kept working, which made it look random.
+- **Salvage now keeps the newer `.credentials.json`** when both a
+  container-layer copy and a persistent copy exist (the older one is kept
+  next to it as `.credentials.json.stale`, just in case).
+- **Auth failures are now detected and actionable.** The Assist worker
+  pool and the automation/task listener recognize CLI auth errors,
+  recycle pooled workers, and reply with a clear instruction instead of
+  the raw error: open BRUH Terminal and run `/login` once — every
+  background channel picks the fresh login up automatically on its next
+  run. (If you're seeing this error today, that one-time `/login` is the
+  fix.)
+
 ## 3.3.1
 
 **Fixed: having to log in to Claude again after every add-on update
