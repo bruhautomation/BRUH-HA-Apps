@@ -79,8 +79,11 @@ RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
 RUN rm -rf /root/.config/claude /root/.config/anthropic /root/.claude 2>/dev/null; true
 
 # Create non-root user for Claude Code
-# Claude Code should run as non-root inside the container
-RUN adduser -D -s /bin/bash -u 1000 claude
+# Claude Code should run as non-root inside the container.
+# Home is the persistent /data/home (mounted at runtime) so that anything
+# resolving the home from /etc/passwd never writes credentials or state
+# into the container layer, which is wiped on every add-on update.
+RUN adduser -D -s /bin/bash -u 1000 -h /data/home claude
 
 # Create directory structure
 RUN mkdir -p /config/claude-config \

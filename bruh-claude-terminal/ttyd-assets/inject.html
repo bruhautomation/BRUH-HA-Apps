@@ -314,37 +314,94 @@
     }
   }
 
-  // Attempt to write to the system clipboard. If the API rejects
-  // (typically because the page no longer has transient user
-  // activation), stash the text and surface a "Tap to copy" toast
-  // that retries on tap (the tap *does* count as activation).
+  // Attempt to write to the system clipboard. Order of preference:
+  //   1. navigator.clipboard.writeText — the modern API, but it only
+  //      exists in secure contexts (HTTPS / Nabu Casa). Plain-HTTP LAN
+  //      access (http://homeassistant.local:8123) has NO
+  //      navigator.clipboard at all, and inside HA's ingress iframe the
+  //      clipboard-write permission can be denied even on HTTPS.
+  //   2. document.execCommand('copy') on a hidden textarea — the legacy
+  //      path. Works in insecure contexts and iframes, which is exactly
+  //      where (1) fails. This is what fixes "press c → clipboard API
+  //      failed" on LAN setups.
+  //   3. A "Tap to copy" toast that retries on tap (the tap counts as
+  //      fresh user activation for both APIs).
   var pendingClipboardText = null;
+
+  // Legacy copy via a temporary off-screen textarea. Synchronous;
+  // returns true when the browser reports the copy succeeded.
+  function legacyExecCopy(text) {
+    var prevFocus = document.activeElement;
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    // Off-screen but NOT display:none (hidden elements can't be
+    // selected). readonly stops iOS from popping the keyboard for it;
+    // the explicit selection range is what iOS Safari needs to allow
+    // programmatic selection.
+    ta.style.cssText = 'position:fixed;top:0;left:-9999px;opacity:0;';
+    ta.setAttribute('readonly', '');
+    document.body.appendChild(ta);
+    var ok = false;
+    try {
+      ta.focus();
+      ta.select();
+      ta.setSelectionRange(0, ta.value.length);
+      ok = document.execCommand('copy');
+    } catch (_e) {
+      ok = false;
+    }
+    document.body.removeChild(ta);
+    // Hand focus back to the terminal so the soft keyboard / xterm
+    // input textarea isn't left dangling by the temporary element.
+    if (prevFocus && prevFocus.focus) {
+      try { prevFocus.focus(); } catch (_e2) { /* no-op */ }
+    }
+    return ok;
+  }
+
   function writeClipboardWithFallback(text) {
     if (!navigator.clipboard || !navigator.clipboard.writeText) {
-      // No Clipboard API at all — surface so the user knows it
-      // didn't go through.
-      pendingClipboardText = text;
-      showCopyToast('Clipboard API unavailable', text, /*tapRetries*/ false);
+      // No Clipboard API (insecure context) — go straight to the
+      // legacy path instead of giving up.
+      if (legacyExecCopy(text)) {
+        showCopyToast('Copied to clipboard', text, false);
+      } else {
+        pendingClipboardText = text;
+        showCopyToast('Tap to copy', text, true);
+      }
       return;
     }
     navigator.clipboard.writeText(text).then(function () {
       showCopyToast('Copied to clipboard', text, false);
     }, function () {
-      pendingClipboardText = text;
-      showCopyToast('Tap to copy', text, true);
+      // Modern API rejected (iframe permission policy, lost
+      // activation…) — try the legacy path before bothering the user.
+      if (legacyExecCopy(text)) {
+        showCopyToast('Copied to clipboard', text, false);
+      } else {
+        pendingClipboardText = text;
+        showCopyToast('Tap to copy', text, true);
+      }
     });
   }
 
   function retryPendingClipboard() {
     if (!pendingClipboardText) return;
-    if (!navigator.clipboard || !navigator.clipboard.writeText) return;
     var text = pendingClipboardText;
-    navigator.clipboard.writeText(text).then(function () {
+    var done = function () {
       pendingClipboardText = null;
       showCopyToast('Copied to clipboard', text, false);
-    }, function () {
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, function () {
+        if (legacyExecCopy(text)) done();
+        else showCopyToast('Copy failed', text, true);
+      });
+    } else if (legacyExecCopy(text)) {
+      done();
+    } else {
       showCopyToast('Copy failed', text, true);
-    });
+    }
   }
 
   // Minimal toast: a fixed-position div near the top of the visible

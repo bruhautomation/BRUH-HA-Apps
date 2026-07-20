@@ -4,6 +4,44 @@ All notable changes to **BRUH Claude Terminal**, newest first. This project adhe
 
 > 💡 Prefer a cleaner, categorized view? See the [formatted changelog at bruhautomation.com](https://bruhautomation.com/bruh-claude/changelog/).
 
+## 3.3.1
+
+**Fixed: having to log in to Claude again after every add-on update
+(#102), and "press c to copy" failing on plain-HTTP setups.**
+
+- **Login now survives add-on updates.** Claude Code's config/credential
+  directory is pinned to persistent storage with `CLAUDE_CONFIG_DIR`
+  (`/data/home/.claude`) instead of being derived from `HOME` at runtime.
+  Any code path that resolved the home directory differently (login
+  shells, passwd lookups, tmux respawns) could silently read and write
+  credentials in the container layer — which survives plain restarts but
+  is wiped by every update, producing the "re-authenticate after each
+  update" loop. Belt and suspenders on top:
+  - the `claude` user's passwd home entry now points at `/data/home`
+    (existing installs are repointed at startup), and any credentials
+    found in the old `/home/claude` container-layer home are rescued
+    into persistent storage;
+  - directory salvage during symlink setup now includes dotfiles —
+    previously `.credentials.json` itself was skipped by the glob — and
+    never overwrites a newer persistent copy;
+  - the last known good `.credentials.json` is kept in
+    `/data/.bruh_claude_auth_backup/` and restored automatically if the
+    live file vanishes.
+- **Startup auth diagnostics fixed**: the health check grepped an empty
+  legacy directory for snake_case token keys and warned "OAuth tokens:
+  NOT found" even when you were logged in. It now checks the real
+  credential file (camelCase keys) and logs its owner/mode/mtime so
+  future auth reports are actionable.
+- **"Press c to copy" now works over plain HTTP / LAN access.** The
+  modern clipboard API only exists in secure contexts (HTTPS), so on
+  `http://homeassistant.local:8123` every OSC 52 copy surfaced a
+  "Clipboard API unavailable" toast. The terminal now falls back to the
+  legacy `document.execCommand('copy')` path (which also covers ingress
+  iframe permission denials) before bothering you, keeping the
+  "Tap to copy" toast as the last resort.
+- **Sidebar naming**: the ingress panel is now titled "BRUH Terminal"
+  (was "Terminal") to match the BRUH family branding.
+
 ## 3.3.0
 
 **New: long-term home memory & learning, plus one-command login sharing

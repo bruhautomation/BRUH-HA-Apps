@@ -204,9 +204,24 @@ check_auth_status() {
     dot_files=$(find "$claude_dot" -type f 2>/dev/null | wc -l)
     bashio::log.info "Credential files in $claude_dot: $dot_files"
 
-    # Check for OAuth tokens (without revealing content)
-    if find "$claude_config" -name "*.json" -exec grep -ql "access_token\|refresh_token" {} \; 2>/dev/null | head -1 | grep -q .; then
-        bashio::log.info "OAuth tokens: FOUND in config dir"
+    # Check for OAuth tokens (without revealing content).
+    # Claude Code 2.x stores them at $CLAUDE_CONFIG_DIR/.credentials.json
+    # (= /data/home/.claude/) with camelCase keys — the old check grepped
+    # the wrong directory for snake_case keys and always cried "NOT found",
+    # which made real auth-loss reports impossible to tell from noise (#102).
+    local cred_file=""
+    for candidate in \
+        "$claude_dot/.credentials.json" \
+        "$claude_config/.credentials.json"; do
+        if [ -s "$candidate" ] && grep -ql "accessToken\|access_token" "$candidate" 2>/dev/null; then
+            cred_file="$candidate"
+            break
+        fi
+    done
+    if [ -n "$cred_file" ]; then
+        local cred_meta
+        cred_meta=$(stat -c 'owner=%U mode=%a mtime=%y' "$cred_file" 2>/dev/null || echo "stat failed")
+        bashio::log.info "OAuth tokens: FOUND ($cred_file, $cred_meta)"
     else
         bashio::log.warning "OAuth tokens: NOT found - user needs to authenticate"
     fi
@@ -218,6 +233,7 @@ check_auth_status() {
         "/data/home/.config/claude"
         "/data/home/.config/anthropic"
         "/root/.claude"
+        "/home/claude/.claude"
     )
 
     for link in "${symlinks[@]}"; do

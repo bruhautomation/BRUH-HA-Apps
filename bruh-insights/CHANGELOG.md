@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.1
+
+- **Sidebar naming**: the ingress panel is now titled "BRUH Insights"
+  (was "Insights") to match the BRUH family branding.
+
 ## 1.1.0
 
 - **Shared login with BRUH Terminal**: if the BRUH Terminal add-on has shared its Claude
