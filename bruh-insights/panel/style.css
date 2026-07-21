@@ -601,6 +601,26 @@ body.modal-open {
 .fbitem .txt { flex: 1; min-width: 0; word-break: break-word; }
 .fbitem .when { font-size: 11px; color: var(--ink-3); margin-top: 2px; }
 
+/* knowledge (memory) modal */
+.klist { display: flex; flex-direction: column; gap: 7px; margin-top: 4px; }
+.kempty { font-size: 13px; color: var(--ink-3); padding: 6px 2px; }
+.kadd { display: flex; gap: 7px; margin: 4px 0 8px; }
+.kadd input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 11px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--plane);
+  border: 1px solid var(--hairline);
+  border-radius: 9px;
+  outline: none;
+}
+.kadd input:focus { border-color: var(--accent); }
+.fbitem .kans { color: var(--ink-2); margin-top: 2px; }
+.kmem { max-height: 280px; overflow: auto; white-space: pre-wrap; }
+
 /* ready-to-paste YAML block in the dashboard-card modal */
 .yamlbox {
   margin: 10px 0 0;

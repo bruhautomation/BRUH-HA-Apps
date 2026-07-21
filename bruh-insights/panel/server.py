@@ -32,6 +32,12 @@ DELETE /api/insight/{id}/feedback/{ts} — drop one feedback entry
 GET  /api/card_info          — dashboard-card server port/token + HA URLs
 GET  /api/questions          — open analyst questions across insights
 POST /api/questions/answer   — answer one (forwards to bruh_claude, if installed)
+GET  /api/knowledge          — learned facts + question ledger + shared memory.md
+POST /api/knowledge/fact     — add a fact by hand {text}
+DELETE /api/knowledge/fact/{ts}            — forget one fact
+POST /api/knowledge/question/{ts}/answer   — answer an open question {answer}
+POST /api/knowledge/question/{ts}/dismiss  — retire a question unanswered
+DELETE /api/knowledge/question/{ts}        — forget a question (askable again)
 
 Runs on 0.0.0.0:8099. The HA Supervisor proxies the ingress URL into
 /api/hassio_ingress/<token>/...; we therefore use only relative links in the
@@ -61,6 +67,7 @@ from aiohttp import web
 import categories as cat_mod
 import claude_client
 import feedback_store
+import knowledge_store
 import prompt_store
 import user_categories
 from categories import CATEGORIES, SYSTEM_PROMPT, build_prompt, get_category
@@ -77,6 +84,10 @@ HISTORY_KEEP_DAYS = int(os.environ.get("BRUH_INSIGHTS_HISTORY_KEEP_DAYS", "30") 
 # isn't installed — the BRUH Terminal add-on ingests it from /share
 MEMORY_INBOX_DIR = Path(os.environ.get(
     "BRUH_INSIGHTS_MEMORY_INBOX", "/share/bruh_claude/memory-inbox"))
+# The BRUH Terminal integration's consolidated memory file (read-only view
+# for the knowledge panel; same default as ha_data.MEMORY_FILE)
+SHARED_MEMORY_FILE = Path(os.environ.get(
+    "BRUH_MEMORY_FILE", "/config/.bruh_claude/memory/memory.md"))
 MODEL = os.environ.get("BRUH_INSIGHTS_MODEL", "").strip()
 TIMEOUT_S = int(float(os.environ.get("BRUH_INSIGHTS_TIMEOUT_MIN", "8") or 8) * 60)
 BIND_HOST = "0.0.0.0"
@@ -329,7 +340,19 @@ async def _generate(insight_id: str) -> None:
         _set_job(insight_id, state="generating")
         feedback = [] if question is not None else [
             f["text"] for f in feedback_store.list_feedback(insight_id)]
-        prompt = build_prompt(cat, bundle, question=question, feedback=feedback)
+        # Continuity: what the analyst already knows, and what this card
+        # said last time — so runs build on each other instead of looping.
+        knowledge = knowledge_store.prompt_block()
+        previous = None
+        if question is None:
+            try:
+                prev = json.loads(_insight_path(insight_id).read_text(encoding="utf-8"))
+                previous = {k: prev.get(k) for k in
+                            ("generated_at", "title", "summary", "highlights", "findings")}
+            except (OSError, ValueError):
+                pass
+        prompt = build_prompt(cat, bundle, question=question, feedback=feedback,
+                              knowledge=knowledge, previous=previous)
         result = await asyncio.to_thread(
             claude_client.run_claude, prompt, SYSTEM_PROMPT, MODEL, TIMEOUT_S,
         )
@@ -346,7 +369,17 @@ async def _generate(insight_id: str) -> None:
         highlights = obj.get("highlights")
         if not isinstance(highlights, list):
             highlights = []
-        questions = _clean_strings(obj.get("questions"), 2, 300)
+        # Backstop against re-asking: drop any question equivalent to one
+        # already in the knowledge store (whatever its status), then record
+        # the genuinely new ones so THEY are never asked twice either.
+        questions = []
+        for q in _clean_strings(obj.get("questions"), 2, 300):
+            entry = knowledge_store.record_question(q, cat["id"])
+            if (entry is None or entry.get("status") != "open"
+                    or int(entry.get("asked_count") or 1) > 1):
+                log.info("dropping re-asked question: %s", q)
+                continue
+            questions.append(q)
         findings = _clean_strings(obj.get("findings"), 3, 500)
         tags: list[str] = []
         for tag in _clean_strings(obj.get("tags"), 4, 24):
@@ -371,9 +404,15 @@ async def _generate(insight_id: str) -> None:
             "meta": result.get("meta", {}),
         }
         save_insight(insight)
-        # hand durable findings to the home's memory (never breaks the run)
+        # Learn the durable findings: store NEW ones in our own knowledge
+        # base (dedup by content) and hand those on to the home's shared
+        # memory. Already-known "findings" are silently swallowed — the
+        # model was told not to repeat them, this enforces it.
         for fact in findings:
-            await _submit_memory(fact)
+            _, created = knowledge_store.add_fact(
+                fact, source="insights", category=cat["id"])
+            if created:
+                await _submit_memory(fact)
         _set_job(insight_id, state="done", error="")
         log.info("insight %s generated (%s)", insight_id, insight["title"])
     except Exception as exc:  # noqa: BLE001 — job errors surface in the UI
@@ -724,8 +763,9 @@ async def h_feedback_add(request: web.Request) -> web.Response:
     except ValueError as exc:
         raise web.HTTPBadRequest(text=str(exc))
     # feedback is durable knowledge about this home's preferences — remember it
-    await _submit_memory(
-        f'Homeowner feedback on the "{cat["title"]}" insight card: {entry["text"]}')
+    fact = f'Homeowner feedback on the "{cat["title"]}" insight card: {entry["text"]}'
+    knowledge_store.add_fact(fact, source="feedback", category=cat_id)
+    await _submit_memory(fact)
     return web.json_response(
         {"added": entry, "feedback": feedback_store.list_feedback(cat_id)})
 
@@ -862,11 +902,115 @@ async def h_answer_question(request: web.Request) -> web.Response:
     questions = [q for q in (insight.get("questions") or []) if isinstance(q, str)]
     if question not in questions:
         raise web.HTTPNotFound(text="no such open question")
+    # the answer is durable knowledge: retire the question locally and keep
+    # the Q→A as a fact every future run sees
+    knowledge_store.answer_question(question, answer)
+    knowledge_store.add_fact(f"Q: {question} → A: {answer}",
+                             source="homeowner", category=insight.get("category", ""))
     await _submit_answer(question, answer)
     # answered — stop surfacing it
     insight["questions"] = [q for q in questions if q != question]
     save_insight(insight)
     return web.json_response({"answered": True, "remaining": len(insight["questions"])})
+
+
+# -- knowledge (the analyst's viewable memory) ------------------------------
+
+def _retire_question_everywhere(text: str) -> None:
+    """Remove a question string from every stored insight card so the UI
+    stops surfacing it once it's answered or dismissed in the store."""
+    for ins in load_insights():
+        qs = [q for q in (ins.get("questions") or []) if isinstance(q, str)]
+        kept = [q for q in qs
+                if knowledge_store.normalize(q) != knowledge_store.normalize(text)]
+        if len(kept) != len(qs):
+            ins["questions"] = kept
+            save_insight(ins)
+
+
+async def h_knowledge(request: web.Request) -> web.Response:
+    """Everything the analyst has learned, in one payload for the panel."""
+    memory_text = ""
+    try:
+        memory_text = SHARED_MEMORY_FILE.read_text(
+            encoding="utf-8", errors="replace")[:20_000]
+    except OSError:
+        pass
+    return web.json_response({
+        "facts": knowledge_store.list_facts(),
+        "questions": knowledge_store.list_questions(),
+        "shared_memory": memory_text,
+    })
+
+
+async def h_knowledge_fact_add(request: web.Request) -> web.Response:
+    body = await request.json()
+    text = str(body.get("text") or "").strip()
+    if not text:
+        raise web.HTTPBadRequest(text="fact text required")
+    if len(text) > knowledge_store.MAX_TEXT_CHARS:
+        raise web.HTTPBadRequest(
+            text=f"fact too long (max {knowledge_store.MAX_TEXT_CHARS} chars)")
+    entry, created = knowledge_store.add_fact(text, source="user")
+    if created:
+        await _submit_memory(text)
+    return web.json_response({"added": created, "fact": entry})
+
+
+async def h_knowledge_fact_delete(request: web.Request) -> web.Response:
+    try:
+        ts = int(request.match_info["ts"])
+    except ValueError:
+        raise web.HTTPBadRequest(text="bad fact id")
+    if not knowledge_store.remove_fact(ts):
+        raise web.HTTPNotFound(text="no such fact")
+    return web.json_response({"deleted": ts})
+
+
+async def h_knowledge_answer(request: web.Request) -> web.Response:
+    """Answer an open question from the knowledge panel (by ts)."""
+    try:
+        ts = int(request.match_info["ts"])
+    except ValueError:
+        raise web.HTTPBadRequest(text="bad question id")
+    body = await request.json()
+    answer = str(body.get("answer") or "").strip()
+    if not answer:
+        raise web.HTTPBadRequest(text="answer required")
+    if len(answer) > 1000:
+        raise web.HTTPBadRequest(text="answer too long")
+    match = next((q for q in knowledge_store.list_questions() if q["ts"] == ts), None)
+    if match is None:
+        raise web.HTTPNotFound(text="no such question")
+    knowledge_store.answer_question(match["text"], answer)
+    knowledge_store.add_fact(f"Q: {match['text']} → A: {answer}",
+                             source="homeowner", category=match.get("category", ""))
+    await _submit_answer(match["text"], answer)
+    _retire_question_everywhere(match["text"])
+    return web.json_response({"answered": True})
+
+
+async def h_knowledge_dismiss(request: web.Request) -> web.Response:
+    try:
+        ts = int(request.match_info["ts"])
+    except ValueError:
+        raise web.HTTPBadRequest(text="bad question id")
+    match = next((q for q in knowledge_store.list_questions() if q["ts"] == ts), None)
+    if match is None or not knowledge_store.dismiss_question(ts):
+        raise web.HTTPNotFound(text="no such question")
+    _retire_question_everywhere(match["text"])
+    return web.json_response({"dismissed": ts})
+
+
+async def h_knowledge_question_delete(request: web.Request) -> web.Response:
+    """Forget a question entirely — it becomes askable again."""
+    try:
+        ts = int(request.match_info["ts"])
+    except ValueError:
+        raise web.HTTPBadRequest(text="bad question id")
+    if not knowledge_store.remove_question(ts):
+        raise web.HTTPNotFound(text="no such question")
+    return web.json_response({"deleted": ts})
 
 
 # -- auth -------------------------------------------------------------------
@@ -949,6 +1093,12 @@ def make_app() -> web.Application:
     app.router.add_get("/api/card_info", h_card_info)
     app.router.add_get("/api/questions", h_questions)
     app.router.add_post("/api/questions/answer", h_answer_question)
+    app.router.add_get("/api/knowledge", h_knowledge)
+    app.router.add_post("/api/knowledge/fact", h_knowledge_fact_add)
+    app.router.add_delete("/api/knowledge/fact/{ts}", h_knowledge_fact_delete)
+    app.router.add_post("/api/knowledge/question/{ts}/answer", h_knowledge_answer)
+    app.router.add_post("/api/knowledge/question/{ts}/dismiss", h_knowledge_dismiss)
+    app.router.add_delete("/api/knowledge/question/{ts}", h_knowledge_question_delete)
     app.router.add_post("/api/auth/token", h_auth_token)
     app.router.add_post("/api/auth/logout", h_auth_logout)
     app.router.add_post("/api/auth/setup/start", h_setup_start)

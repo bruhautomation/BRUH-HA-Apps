@@ -121,6 +121,7 @@ function renderAuth() {
   $("#dash").classList.toggle("hidden", !s.authenticated);
   $("#refreshAll").classList.toggle("hidden", !s.authenticated);
   $("#newInsight").classList.toggle("hidden", !s.authenticated);
+  $("#knowledgeBtn").classList.toggle("hidden", !s.authenticated);
 }
 
 function bindSetup() {
@@ -996,6 +997,155 @@ $("#fbSaveRegen").addEventListener("click", () => sendFeedback(true));
 $("#fbClose").addEventListener("click", () => closeBox("#fbModal"));
 $("#fbModal").addEventListener("click", (ev) => {
   if (ev.target === $("#fbModal")) closeBox("#fbModal");
+});
+
+// ------------------------------------------------------- knowledge modal
+// The viewer for everything the analyst has learned: open questions (answer
+// or dismiss), learned facts (add/remove), answered Q&A, and the shared
+// memory.md the BRUH Terminal maintains.
+
+function kSourceLabel(src) {
+  return { insights: "discovered", homeowner: "your answer",
+    feedback: "feedback", user: "added by you" }[src] || src;
+}
+
+async function renderKnowledge() {
+  let data;
+  try {
+    data = await api("api/knowledge");
+  } catch (e) {
+    toast("Could not load knowledge: " + e.message);
+    return;
+  }
+
+  // open questions — answer inline or dismiss
+  const openBoxEl = $("#kOpenQs");
+  openBoxEl.textContent = "";
+  const open = (data.questions || []).filter((q) => q.status === "open");
+  if (!open.length) {
+    openBoxEl.appendChild(el("div", "kempty", "No open questions — the analyst has everything it needs."));
+  }
+  open.slice().reverse().forEach((q) => {
+    const row = el("div", "qrow");
+    const head = el("div", "qtext", `❓ ${q.text}`);
+    row.appendChild(head);
+    const form = el("form", "qform");
+    const input = el("input");
+    input.type = "text";
+    input.maxLength = 1000;
+    input.placeholder = "Answer — it becomes a learned fact…";
+    const send = el("button", "btn small primary", "Answer");
+    send.type = "submit";
+    const dismiss = el("button", "btn small", "Dismiss");
+    dismiss.type = "button";
+    dismiss.title = "Retire without answering — it won't be asked again";
+    form.appendChild(input);
+    form.appendChild(send);
+    form.appendChild(dismiss);
+    form.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const answer = input.value.trim();
+      if (!answer) return;
+      send.disabled = true;
+      try {
+        await api(`api/knowledge/question/${q.ts}/answer`, {
+          method: "POST", body: JSON.stringify({ answer }) });
+        toast("Answered — every future insight will use it");
+        await refreshInsights().catch(() => {});
+        renderIfChanged();
+        renderKnowledge();
+      } catch (e) { toast(e.message); send.disabled = false; }
+    });
+    dismiss.addEventListener("click", async () => {
+      try {
+        await api(`api/knowledge/question/${q.ts}/dismiss`, { method: "POST" });
+        await refreshInsights().catch(() => {});
+        renderIfChanged();
+        renderKnowledge();
+      } catch (e) { toast(e.message); }
+    });
+    row.appendChild(form);
+    openBoxEl.appendChild(row);
+  });
+
+  // learned facts
+  const factsEl = $("#kFacts");
+  factsEl.textContent = "";
+  const facts = data.facts || [];
+  if (!facts.length) {
+    factsEl.appendChild(el("div", "kempty",
+      "Nothing learned yet — facts appear as insights discover them, or teach it one above."));
+  }
+  facts.slice().reverse().forEach((f) => {
+    const row = el("div", "fbitem");
+    const txt = el("div", "txt");
+    txt.appendChild(el("div", null, f.text));
+    const when = new Date(f.ts * 1000);
+    txt.appendChild(el("div", "when",
+      `${kSourceLabel(f.source)}${f.category ? " · " + f.category : ""}` +
+      (isNaN(when.getTime()) ? "" :
+        " · " + when.toLocaleDateString([], { month: "short", day: "numeric" }))));
+    row.appendChild(txt);
+    const del = el("button", "btn icon", "✕");
+    del.title = "Forget this fact";
+    del.addEventListener("click", async () => {
+      try {
+        await api(`api/knowledge/fact/${f.ts}`, { method: "DELETE" });
+        renderKnowledge();
+      } catch (e) { toast(e.message); }
+    });
+    row.appendChild(del);
+    factsEl.appendChild(row);
+  });
+
+  // answered questions
+  const answered = (data.questions || []).filter((q) => q.status === "answered");
+  $("#kAnsweredWrap").classList.toggle("hidden", !answered.length);
+  const ansEl = $("#kAnswered");
+  ansEl.textContent = "";
+  answered.slice().reverse().forEach((q) => {
+    const row = el("div", "fbitem");
+    const txt = el("div", "txt");
+    txt.appendChild(el("div", null, `Q: ${q.text}`));
+    txt.appendChild(el("div", "kans", `A: ${q.answer}`));
+    row.appendChild(txt);
+    const del = el("button", "btn icon", "✕");
+    del.title = "Forget — the analyst may ask this again";
+    del.addEventListener("click", async () => {
+      try {
+        await api(`api/knowledge/question/${q.ts}`, { method: "DELETE" });
+        renderKnowledge();
+      } catch (e) { toast(e.message); }
+    });
+    row.appendChild(del);
+    ansEl.appendChild(row);
+  });
+
+  // shared memory.md (BRUH Terminal)
+  const mem = (data.shared_memory || "").trim();
+  $("#kMemWrap").classList.toggle("hidden", !mem);
+  if (mem) $("#kMemText").textContent = mem;
+}
+
+$("#knowledgeBtn").addEventListener("click", () => {
+  openBox("#kModal");
+  renderKnowledge();
+});
+$("#kAddForm").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const text = $("#kAddInput").value.trim();
+  if (!text) return;
+  try {
+    const res = await api("api/knowledge/fact", {
+      method: "POST", body: JSON.stringify({ text }) });
+    $("#kAddInput").value = "";
+    toast(res.added ? "Learned — every future insight will know it" : "Already known");
+    renderKnowledge();
+  } catch (e) { toast(e.message); }
+});
+$("#kClose").addEventListener("click", () => closeBox("#kModal"));
+$("#kModal").addEventListener("click", (ev) => {
+  if (ev.target === $("#kModal")) closeBox("#kModal");
 });
 
 // -------------------------------------------------- dashboard card modal

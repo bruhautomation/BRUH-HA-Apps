@@ -30,6 +30,7 @@
   </div>
   <div class="spacer"></div>
   <span id="authChip" class="chip"><span class="dot"></span><span id="authChipText">Checking…</span></span>
+  <button id="knowledgeBtn" class="btn hidden" title="What Insights has learned about your home">🧠&nbsp; Memory</button>
   <button id="newInsight" class="btn hidden">＋&nbsp; New insight</button>
   <button id="refreshAll" class="btn primary hidden">↻&nbsp; Refresh all</button>
 </header>
@@ -236,6 +237,45 @@
       </div>
       <p class="hint" id="cardHint">The URL contains this add-on's private card token — anyone with
         the link on your network can view the insight, nothing else.</p>
+    </div>
+  </div>
+</div>
+
+<div id="kModal" class="modal" role="dialog" aria-modal="true">
+  <div class="box edit">
+    <header>
+      <span>🧠</span>
+      <span>Memory — what Insights has learned</span>
+      <div class="spacer"></div>
+      <button id="kClose" class="btn icon" aria-label="Close">✕</button>
+    </header>
+    <div class="edit-body">
+      <p class="hint">Every durable discovery, homeowner answer, and piece of feedback lands here
+        and is fed back into every future analysis — so the analyst builds on what it knows
+        instead of rediscovering it. Remove anything that's wrong; it will stop being used.</p>
+
+      <label>Open questions from the analyst</label>
+      <div id="kOpenQs" class="klist"></div>
+
+      <label>Learned facts</label>
+      <form id="kAddForm" class="kadd">
+        <input id="kAddInput" type="text" maxlength="500" autocomplete="off"
+               placeholder="Teach it something — “The garage fridge is supposed to run 24/7”">
+        <button class="btn small primary" type="submit">Add</button>
+      </form>
+      <div id="kFacts" class="klist"></div>
+
+      <div id="kAnsweredWrap" class="hidden">
+        <label>Answered questions</label>
+        <div id="kAnswered" class="klist"></div>
+      </div>
+
+      <div id="kMemWrap" class="hidden">
+        <label>Shared home memory (maintained by BRUH Terminal)</label>
+        <p class="hint">Read-only here — edit it from the BRUH Terminal add-on with
+          <code>ha-memory</code>. Insights reads it before every run.</p>
+        <pre id="kMemText" class="yamlbox kmem"></pre>
+      </div>
     </div>
   </div>
 </div>

@@ -30,6 +30,9 @@ MAX_STATE_CHANGES = 50
 MAX_STAT_IDS = 24
 MAX_BUNDLE_CHARS = 120_000
 CONTEXT_CHARS = 4_000
+# Device-context expansion (sibling sensors of presence trackers)
+MAX_CONTEXT_ENTITIES = 150
+MAX_CONTEXT_PER_DEVICE = 40
 
 # Per-domain extra attributes worth surfacing (kept tiny on purpose)
 EXTRA_ATTRS: dict[str, list[str]] = {
@@ -41,7 +44,8 @@ EXTRA_ATTRS: dict[str, list[str]] = {
     "script": ["last_triggered"],
     "update": ["installed_version", "latest_version"],
     "vacuum": ["battery_level", "status"],
-    "person": ["source"],
+    "person": ["source", "device_trackers"],
+    "device_tracker": ["source_type", "battery_level", "gps_accuracy"],
     "sun": ["next_rising", "next_setting"],
     "weather": ["temperature", "humidity", "wind_speed"],
     "lock": ["changed_by"],
@@ -128,7 +132,10 @@ async def _ws_commands_inner(session: aiohttp.ClientSession, commands: list[dict
 # ---------------------------------------------------------------------------
 
 async def get_registries(session: aiohttp.ClientSession) -> dict[str, dict]:
-    """Return {entity_id: area_name} plus the raw area list."""
+    """Return {entity_id: area_name}, entity→device mappings, and the raw
+    area list. The device mappings power device-context expansion: finding
+    the sibling sensors (SSID, geocoded location, activity…) that live on
+    the same physical device as a presence tracker."""
     areas, devices, entities = await _ws_commands(session, [
         {"type": "config/area_registry/list"},
         {"type": "config/device_registry/list"},
@@ -136,19 +143,29 @@ async def get_registries(session: aiohttp.ClientSession) -> dict[str, dict]:
     ])
     area_names = {a["area_id"]: a["name"] for a in (areas or [])}
     device_area = {d["id"]: d.get("area_id") for d in (devices or [])}
+    device_names = {
+        d["id"]: (d.get("name_by_user") or d.get("name") or "")
+        for d in (devices or [])
+    }
     ent_area: dict[str, str] = {}
+    ent_device: dict[str, str] = {}
     hidden: set[str] = set()
     for e in entities or []:
         eid = e.get("entity_id", "")
         if e.get("disabled_by") or e.get("hidden_by"):
             hidden.add(eid)
             continue
-        area_id = e.get("area_id") or device_area.get(e.get("device_id") or "", None)
+        device_id = e.get("device_id")
+        if device_id:
+            ent_device[eid] = device_id
+        area_id = e.get("area_id") or device_area.get(device_id or "", None)
         name = area_names.get(area_id or "")
         if name:
             ent_area[eid] = name
     return {
         "entity_area": ent_area,
+        "entity_device": ent_device,
+        "device_names": device_names,
         "hidden": hidden,
         "areas": sorted(area_names.values()),
     }
@@ -223,6 +240,61 @@ def filter_states(
                 continue
         out.append(slim_state(st, ent_area.get(eid)))
     return out[:MAX_ENTITIES]
+
+
+def related_device_entities(
+    states: list[dict],
+    registries: dict,
+    present_ids: set[str],
+) -> list[dict]:
+    """Sibling entities of presence trackers — the phone context.
+
+    A `device_tracker.*` entity says "home"/"not_home"; the *interesting*
+    signals (WiFi SSID, geocoded address, detected activity, battery/charging
+    state, distance sensors) are separate `sensor.*` entities that live on
+    the same physical device (the companion-app phone). Category filters
+    never match them, so this walks the device registry: every device that
+    owns a tracker contributes its other entities, slimmed and tagged with
+    the device name (`d`) so the analyst can group signals per phone.
+    """
+    ent_device = registries.get("entity_device") or {}
+    device_names = registries.get("device_names") or {}
+    hidden = registries.get("hidden") or set()
+    ent_area = registries.get("entity_area") or {}
+
+    tracker_devices: list[str] = []
+    for st in states:
+        eid = st.get("entity_id", "")
+        if not eid.startswith("device_tracker.") or eid in hidden:
+            continue
+        device_id = ent_device.get(eid)
+        if device_id and device_id not in tracker_devices:
+            tracker_devices.append(device_id)
+    if not tracker_devices:
+        return []
+
+    by_device: dict[str, list[dict]] = {d: [] for d in tracker_devices}
+    for st in states:
+        eid = st.get("entity_id", "")
+        if eid in present_ids or eid in hidden:
+            continue
+        if st.get("state") in ("unavailable", "unknown"):
+            continue
+        device_id = ent_device.get(eid)
+        if device_id not in by_device:
+            continue
+        if len(by_device[device_id]) >= MAX_CONTEXT_PER_DEVICE:
+            continue
+        slim = slim_state(st, ent_area.get(eid))
+        name = device_names.get(device_id)
+        if name:
+            slim["d"] = name
+        by_device[device_id].append(slim)
+
+    out: list[dict] = []
+    for device_id in tracker_devices:
+        out.extend(by_device[device_id])
+    return out[:MAX_CONTEXT_ENTITIES]
 
 
 # ---------------------------------------------------------------------------
@@ -364,6 +436,11 @@ def _shrink_to_budget(bundle: dict) -> dict:
         while section and size() > MAX_BUNDLE_CHARS:
             longest = max(section, key=lambda k: len(json.dumps(section[k])))
             del section[longest]
+    # 1b. trim device context from the tail (it's ordered per-device, so the
+    #     front devices keep their full context)
+    ctx = bundle.get("device_context") or []
+    while len(ctx) > 20 and size() > MAX_BUNDLE_CHARS:
+        del ctx[len(ctx) // 2:]
     # 2. trim entity list from the tail — raw entity rows go before the
     #    learned context, which is distilled knowledge about this home
     ents = bundle.get("entities") or []
@@ -396,6 +473,11 @@ async def collect_bundle(category: dict, history_days: int, question: str | None
         if question is not None:
             entities = filter_states(states, registries, [], [], include_unavailable=True)
 
+        device_context: list[dict] = []
+        if category.get("device_context") or question is not None:
+            present = {e["e"] for e in entities}
+            device_context = related_device_entities(states, registries, present)
+
         bundle: dict[str, Any] = {
             "meta": {
                 "now": now.isoformat()[:19],
@@ -407,6 +489,8 @@ async def collect_bundle(category: dict, history_days: int, question: str | None
             "areas": registries["areas"],
             "entities": entities,
         }
+        if device_context:
+            bundle["device_context"] = device_context
 
         start = now - dt.timedelta(days=history_days)
 
@@ -419,6 +503,10 @@ async def collect_bundle(category: dict, history_days: int, question: str | None
                     if e["e"].split(".")[0] in category.get("domains", []) and e["e"] not in ids
                 ]
                 ids += primary
+            if len(ids) < MAX_HISTORY_ENTITIES:
+                # device-context state changes (SSID joins, geocoded address
+                # moves) carry the arrival/departure story for presence
+                ids += [e["e"] for e in device_context if e["e"] not in ids]
             try:
                 hist = await get_history(session, ids, start)
                 if hist:

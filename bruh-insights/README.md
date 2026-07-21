@@ -19,9 +19,16 @@ your sidebar.
 - 🩺 **Device Health** — dead devices, weak batteries, pending updates
 - 🤖 **Automations** — what runs, what never does, what to improve
 - ✨ **Ask anything** — type a question, get a bespoke insight card
+- 🧠 **Memory** — the analyst learns your home over time: findings, your answers, and
+  feedback are stored, viewable (and editable) in the Memory panel, and fed back into
+  every future analysis — questions are never asked twice, and each run builds on the
+  last instead of repeating it
 
 Every card is a self-contained interactive visualization (hover tooltips, tasteful animations,
 light & dark mode, colorblind-safe palette) designed by Claude specifically for *your* data.
+Presence analysis digs into the *context* on each person's phone — WiFi SSID, geocoded
+address, activity, charging state — to say where people actually are, with evidence, instead
+of a flat "home/away".
 
 ## Works with your Claude subscription
 

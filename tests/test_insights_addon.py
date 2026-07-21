@@ -32,6 +32,7 @@ sys.path.insert(0, str(PANEL_DIR))
 import categories  # noqa: E402
 import claude_client  # noqa: E402
 import feedback_store  # noqa: E402
+import knowledge_store  # noqa: E402
 import prompt_store  # noqa: E402
 import user_categories  # noqa: E402
 
@@ -107,6 +108,7 @@ class TestInsightsBuildFiles(unittest.TestCase):
                      "panel/categories.py", "panel/ha_data.py",
                      "panel/claude_client.py", "panel/prompt_store.py",
                      "panel/user_categories.py", "panel/feedback_store.py",
+                     "panel/knowledge_store.py",
                      "icon.png", "logo.png",
                      "README.md", "DOCS.md", "CHANGELOG.md"):
             self.assertTrue((ADDON_DIR / name).exists(), f"missing {name}")
@@ -794,6 +796,10 @@ class InsightsServerCase(unittest.TestCase):
         self._old_feedback = feedback_store.FEEDBACK_FILE
         self._old_user_cats = user_categories.USER_CATS_FILE
         self._old_card_token = self.server.CARD_TOKEN_FILE
+        self._old_knowledge = knowledge_store.KNOWLEDGE_FILE
+        self._old_shared_mem = self.server.SHARED_MEMORY_FILE
+        knowledge_store.KNOWLEDGE_FILE = os.path.join(self.tmp.name, "knowledge.json")
+        self.server.SHARED_MEMORY_FILE = Path(self.tmp.name) / "memory.md"
         self.server.INSIGHTS_DIR = Path(self.tmp.name)
         # NOT inside INSIGHTS_DIR — mirrors production (/data vs /data/insights)
         prompt_store.OVERRIDES_FILE = os.path.join(
@@ -813,6 +819,8 @@ class InsightsServerCase(unittest.TestCase):
         feedback_store.FEEDBACK_FILE = self._old_feedback
         user_categories.USER_CATS_FILE = self._old_user_cats
         self.server.CARD_TOKEN_FILE = self._old_card_token
+        knowledge_store.KNOWLEDGE_FILE = self._old_knowledge
+        self.server.SHARED_MEMORY_FILE = self._old_shared_mem
         self.server.JOBS.clear()
         self.tmp.cleanup()
 
