@@ -30,7 +30,7 @@
   </div>
   <div class="spacer"></div>
   <span id="authChip" class="chip"><span class="dot"></span><span id="authChipText">Checking…</span></span>
-  <button id="knowledgeBtn" class="btn hidden" title="What Insights has learned about your home">🧠&nbsp; Memory</button>
+  <button id="knowledgeBtn" class="btn hidden" data-tip="What Insights has learned about your home">🧠&nbsp; Memory</button>
   <button id="newInsight" class="btn hidden">＋&nbsp; New insight</button>
   <button id="refreshAll" class="btn primary hidden">↻&nbsp; Refresh all</button>
 </header>
@@ -118,7 +118,7 @@
       <span id="modalIcon"></span>
       <span id="modalTitle"></span>
       <div class="spacer"></div>
-      <button id="modalClose" class="btn icon" aria-label="Close">✕</button>
+      <button id="modalClose" class="btn icon" data-tip="Close" aria-label="Close">✕</button>
     </header>
     <iframe id="modalFrame" sandbox="allow-scripts" title="Insight visualization"></iframe>
   </div>
@@ -130,7 +130,7 @@
       <span id="editIcon"></span>
       <span id="editTitle"></span>
       <div class="spacer"></div>
-      <button id="editClose" class="btn icon" aria-label="Close">✕</button>
+      <button id="editClose" class="btn icon" data-tip="Close" aria-label="Close">✕</button>
     </header>
     <div class="edit-body">
       <p id="editDesc" class="hint"></p>
@@ -157,7 +157,7 @@
       <span>✨</span>
       <span id="newTitleBar">New insight</span>
       <div class="spacer"></div>
-      <button id="newClose" class="btn icon" aria-label="Close">✕</button>
+      <button id="newClose" class="btn icon" data-tip="Close" aria-label="Close">✕</button>
     </header>
     <div class="edit-body">
       <p class="hint">Describe what Claude should analyze — it becomes a card that regenerates on
@@ -193,7 +193,7 @@
       <span id="fbIcon">💬</span>
       <span id="fbTitle">Feedback</span>
       <div class="spacer"></div>
-      <button id="fbClose" class="btn icon" aria-label="Close">✕</button>
+      <button id="fbClose" class="btn icon" data-tip="Close" aria-label="Close">✕</button>
     </header>
     <div class="edit-body">
       <p class="hint">Tell Claude what to do differently — it's remembered and applied every time
@@ -220,7 +220,7 @@
       <span>▦</span>
       <span id="cardTitle">Add to dashboard</span>
       <div class="spacer"></div>
-      <button id="cardClose" class="btn icon" aria-label="Close">✕</button>
+      <button id="cardClose" class="btn icon" data-tip="Close" aria-label="Close">✕</button>
     </header>
     <div class="edit-body">
       <p class="hint">Embed this insight on any Home Assistant dashboard as a live card. It always
@@ -231,6 +231,7 @@
         <li>On your dashboard choose <b>Add card → Webpage</b>, or paste this YAML in the card
           editor:</li>
       </ol>
+      <div id="cardWarn" class="flowerr hidden"></div>
       <pre id="cardYaml" class="yamlbox"></pre>
       <div class="row">
         <button id="cardCopy" class="btn primary">Copy YAML</button>
@@ -247,7 +248,7 @@
       <span>🧠</span>
       <span>Memory — what Insights has learned</span>
       <div class="spacer"></div>
-      <button id="kClose" class="btn icon" aria-label="Close">✕</button>
+      <button id="kClose" class="btn icon" data-tip="Close" aria-label="Close">✕</button>
     </header>
     <div class="edit-body">
       <p class="hint">Every durable discovery, homeowner answer, and piece of feedback lands here

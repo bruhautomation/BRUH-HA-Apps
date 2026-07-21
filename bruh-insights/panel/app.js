@@ -10,6 +10,13 @@ const el = (tag, cls, text) => {
   if (text != null) node.textContent = text;
   return node;
 };
+// Icon-only controls get an instant styled tooltip (CSS [data-tip]) instead
+// of the browser's sluggish native title bubble, plus a matching aria-label.
+const tip = (node, text) => {
+  node.dataset.tip = text;
+  node.setAttribute("aria-label", text);
+  return node;
+};
 
 const state = {
   status: null,
@@ -414,7 +421,7 @@ function makeQuestions(insight) {
 function makeHistoryControls(id, insight, view) {
   const wrap = el("span", "hist");
   const older = el("button", "btn icon hstep", "‹");
-  older.title = "Older run";
+  tip(older, "Older run");
   older.addEventListener("click", () => stepRun(id, insight, 1));
   const sel = document.createElement("select");
   sel.className = "histsel";
@@ -444,7 +451,7 @@ function makeHistoryControls(id, insight, view) {
   }
   sel.addEventListener("change", () => viewRun(id, sel.value || null));
   const newer = el("button", "btn icon hstep", "›");
-  newer.title = "Newer run";
+  tip(newer, "Newer run");
   newer.addEventListener("click", () => stepRun(id, insight, -1));
   wrap.appendChild(older);
   wrap.appendChild(sel);
@@ -491,33 +498,33 @@ function makeCard(catInfo, insight) {
   }
   if (!active && !view) {
     const regen = el("button", "btn icon", "↻");
-    regen.title = "Regenerate";
+    tip(regen, "Regenerate");
     regen.addEventListener("click", () => generate(id, insight && insight.question));
     actions.appendChild(regen);
   }
   if (catInfo) {
     const edit = el("button", "btn icon", "✎");
-    edit.title = catInfo.user ? "Edit insight" : "Edit prompt";
+    tip(edit, catInfo.user ? "Edit insight" : "Edit prompt");
     edit.addEventListener("click", () =>
       catInfo.user ? openUserEdit(catInfo) : openEdit(catInfo));
     actions.appendChild(edit);
     const fb = el("button", "btn icon", "💬");
-    fb.title = "Give feedback — remembered for every future run";
+    tip(fb, "Give feedback — remembered for every future run");
     fb.addEventListener("click", () => openFeedback(catInfo));
     actions.appendChild(fb);
   }
   if (shown) {
     const expand = el("button", "btn icon", "⤢");
-    expand.title = "Expand";
+    tip(expand, "Expand");
     expand.addEventListener("click", () => openModal(shown));
     actions.appendChild(expand);
     const dash = el("button", "btn icon", "▦");
-    dash.title = "Add to dashboard";
+    tip(dash, "Add to dashboard");
     dash.addEventListener("click", () => openCardModal(shown));
     actions.appendChild(dash);
     if (insight && insight.category === "custom") {
       const del = el("button", "btn icon", "✕");
-      del.title = "Delete";
+      tip(del, "Delete this card");
       del.addEventListener("click", async () => {
         await api(`api/insight/${id}`, { method: "DELETE" }).catch(() => {});
         await refreshInsights();
@@ -585,7 +592,7 @@ function makeCard(catInfo, insight) {
     }
     if (!view && insight && insight.category === "custom" && insight.question) {
       const mk = el("button", "btn small", "＋ Make recurring");
-      mk.title = "Turn this question into a scheduled insight";
+      tip(mk, "Turn this question into a scheduled insight");
       mk.addEventListener("click", () => openNewInsight({
         title: (insight.title || insight.question).slice(0, 60),
         icon: insight.icon || "✨",
@@ -948,7 +955,7 @@ async function renderFbList() {
     txt.appendChild(el("div", "when", fmtWhen(f.ts)));
     row.appendChild(txt);
     const del = el("button", "btn icon", "✕");
-    del.title = "Remove — stop applying this feedback";
+    tip(del, "Remove — stop applying this feedback");
     del.addEventListener("click", async () => {
       try {
         await api(`api/insight/${fbCatId}/feedback/${f.ts}`, { method: "DELETE" });
@@ -1038,7 +1045,7 @@ async function renderKnowledge() {
     send.type = "submit";
     const dismiss = el("button", "btn small", "Dismiss");
     dismiss.type = "button";
-    dismiss.title = "Retire without answering — it won't be asked again";
+    tip(dismiss, "Retire without answering — it won't be asked again");
     form.appendChild(input);
     form.appendChild(send);
     form.appendChild(dismiss);
@@ -1087,7 +1094,7 @@ async function renderKnowledge() {
         " · " + when.toLocaleDateString([], { month: "short", day: "numeric" }))));
     row.appendChild(txt);
     const del = el("button", "btn icon", "✕");
-    del.title = "Forget this fact";
+    tip(del, "Forget this fact");
     del.addEventListener("click", async () => {
       try {
         await api(`api/knowledge/fact/${f.ts}`, { method: "DELETE" });
@@ -1110,7 +1117,7 @@ async function renderKnowledge() {
     txt.appendChild(el("div", "kans", `A: ${q.answer}`));
     row.appendChild(txt);
     const del = el("button", "btn icon", "✕");
-    del.title = "Forget — the analyst may ask this again";
+    tip(del, "Forget — the analyst may ask this again");
     del.addEventListener("click", async () => {
       try {
         await api(`api/knowledge/question/${q.ts}`, { method: "DELETE" });
@@ -1172,9 +1179,34 @@ function copyText(text) {
   return Promise.resolve(copyFallback(text));
 }
 
+// The card server (port 8100, plain HTTP) is only reachable on the LAN —
+// never through the Nabu Casa cloud proxy. Pick the host the browser is
+// ACTUALLY using to reach HA when it's a LAN address (hassio.local,
+// homeassistant.local, a raw IP — whatever the user typed), because that
+// name provably resolves for them; fall back to HA's internal_url for
+// cloud/remote sessions.
+function isCloudHost(host) {
+  return /\.nabu\.casa$/i.test(host || "");
+}
+
+function cardHost(info) {
+  const fromUrl = (u) => {
+    const m = (u || "").match(/^https?:\/\/([^/:]+)/);
+    return m ? m[1] : "";
+  };
+  const page = window.location.hostname;
+  if (page && !isCloudHost(page)) return page;
+  const internal = fromUrl(info.internal_url);
+  if (internal && !isCloudHost(internal)) return internal;
+  return "homeassistant.local";
+}
+
 async function openCardModal(insight) {
   openBox("#cardModal");
   const pre = $("#cardYaml");
+  const warn = $("#cardWarn");
+  const hint = $("#cardHint");
+  warn.classList.add("hidden");
   pre.textContent = "Loading…";
   try {
     if (!cardInfoCache) cardInfoCache = await api("api/card_info");
@@ -1183,12 +1215,7 @@ async function openCardModal(insight) {
     return;
   }
   const info = cardInfoCache;
-  // best guess for a LAN-reachable host: HA's internal URL, else the
-  // default mDNS name — the user can adjust the hostname in the YAML
-  let host = "homeassistant.local";
-  const src = info.internal_url || info.external_url || "";
-  const m = src.match(/^https?:\/\/([^/:]+)/);
-  if (m) host = m[1];
+  const host = cardHost(info);
   const url = `http://${host}:${info.port}/card/${insight.id}?token=${info.token}`;
   pre.textContent = [
     "type: iframe",
@@ -1196,6 +1223,29 @@ async function openCardModal(insight) {
     `title: ${(insight.title || "Insight").replace(/[:#"\n]/g, " ").trim()}`,
     "aspect_ratio: 90%",
   ].join("\n");
+
+  const cloud = isCloudHost(window.location.hostname);
+  if (window.location.protocol === "https:") {
+    // an http:// iframe inside an https:// dashboard is mixed content —
+    // the browser blanks it. Say so instead of letting the card "not work".
+    warn.textContent = cloud
+      ? "You're connected through Nabu Casa remote access right now. This card is served "
+        + "over plain HTTP on your local network, so browsers will show it EMPTY on any "
+        + "HTTPS dashboard (mixed content) — including this remote session. It works when "
+        + `you open Home Assistant locally, e.g. http://${host}:8123. The YAML below uses `
+        + "your local address — fix the hostname if it isn't right."
+      : "You're viewing Home Assistant over HTTPS. Browsers block plain-HTTP iframes "
+        + "inside an HTTPS page (mixed content), so this card will show EMPTY on dashboards "
+        + `opened this way — it works when you open HA over HTTP, e.g. http://${host}:8123.`;
+    warn.classList.remove("hidden");
+    hint.textContent = "The URL contains this add-on's private card token — anyone with "
+      + "the link on your network can view the insight, nothing else.";
+  } else {
+    hint.textContent = `This URL uses the address you're connected with right now `
+      + `(“${host}”), so it resolves for every device that reaches HA the same way. `
+      + "It contains this add-on's private card token — anyone with the link on your "
+      + "network can view the insight, nothing else.";
+  }
 }
 
 $("#cardCopy").addEventListener("click", () => {

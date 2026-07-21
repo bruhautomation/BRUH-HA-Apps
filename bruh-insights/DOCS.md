@@ -126,10 +126,22 @@ Every generated insight can be embedded on a Home Assistant dashboard:
 
    ```yaml
    type: iframe
-   url: http://homeassistant.local:8100/card/energy?token=<your-card-token>
+   url: http://hassio.local:8100/card/energy?token=<your-card-token>
    title: Energy
    aspect_ratio: 90%
    ```
+
+The hostname in the YAML is the **address your browser is using right now** (be it
+`hassio.local`, `homeassistant.local`, or a raw IP), so the URL resolves for every device
+that reaches HA the same way you do. When you're connected through **Nabu Casa** remote
+access the panel falls back to HA's internal URL instead — a `*.ui.nabu.casa` host can
+never reach port 8100.
+
+**HTTPS caveat**: the card server speaks plain HTTP, and browsers block HTTP iframes
+inside an HTTPS page (mixed content). So on dashboards opened over HTTPS — Nabu Casa
+remote, or a local SSL setup — the card renders **empty**; it works when HA is opened
+over HTTP on the local network (e.g. `http://hassio.local:8123`). The dialog detects
+this and warns you up front.
 
 The card always shows the **latest run** of that insight and reloads itself every
 15 minutes. The `token` query parameter is a per-install random secret (stored in

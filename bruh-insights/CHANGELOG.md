@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.3.1
+
+- **Dashboard-card YAML uses your real address**: the ▦ dialog now builds the card URL
+  from the hostname your browser is actually using to reach Home Assistant
+  (`hassio.local`, `homeassistant.local`, a raw IP — whatever you typed), instead of
+  guessing from HA's internal/external URL. Nabu Casa hosts (`*.ui.nabu.casa`) are never
+  used — the card port isn't reachable through the cloud proxy — falling back to HA's
+  internal URL for remote sessions
+- **Mixed-content warning**: when you're viewing HA over HTTPS (Nabu Casa remote or
+  local SSL), the dialog now says up front that browsers will render the plain-HTTP card
+  empty on HTTPS dashboards, and that it works when HA is opened over HTTP locally —
+  instead of handing out YAML that silently doesn't load
+- **Instant tooltips**: every icon-only button (↻ regenerate, ✎ edit, 💬 feedback,
+  ⤢ expand, ▦ add to dashboard, ‹ › run history, ✕ close/delete, and the Memory-panel
+  actions) now shows a fast styled tooltip on hover and keyboard focus explaining what
+  it does — no more mystery icons
+
 ## 1.3.0
 
 A depth release: the analyst now remembers, builds on what it knows, and reasons
