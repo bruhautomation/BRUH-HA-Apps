@@ -4,6 +4,38 @@ All notable changes to **BRUH Insights**, newest first. This project adheres to 
 
 > 💡 Prefer a cleaner, categorized view? See the [formatted changelog at bruhautomation.com](https://bruhautomation.com/bruh-insights/changelog/).
 
+## 1.3.1
+
+- **Dashboard-card YAML uses your real address**: the ▦ dialog now builds the card URL
+  from the hostname your browser is actually using to reach Home Assistant
+  (`hassio.local`, `homeassistant.local`, a raw IP — whatever you typed), instead of
+  guessing from HA's internal/external URL. Nabu Casa hosts (`*.ui.nabu.casa`) are never
+  used — the card port isn't reachable through the cloud proxy — falling back to HA's
+  internal URL for remote sessions
+- **Mixed-content warning**: when you're viewing HA over HTTPS (Nabu Casa remote or
+  local SSL), the dialog now says up front that browsers will render the plain-HTTP card
+  empty on HTTPS dashboards, and that it works when HA is opened over HTTP locally —
+  instead of handing out YAML that silently doesn't load
+- **Instant tooltips**: every icon-only button (↻ regenerate, ✎ edit, 💬 feedback,
+  ⤢ expand, ▦ add to dashboard, ‹ › run history, ✕ close/delete, and the Memory-panel
+  actions) now shows a fast styled tooltip on hover and keyboard focus explaining what
+  it does — no more mystery icons
+- **Memory file, readable and editable**: the home memory document in the 🧠 Memory
+  panel now renders as formatted markdown instead of a raw dump, with an
+  **✎ Edit markdown** mode for direct editing (Save/Cancel, unsaved-edits badge).
+  Works standalone — the `/config` mount is now writable for this one file
+  (`/config/.bruh_claude/memory/memory.md`, shared with BRUH Terminal's `ha-memory`);
+  nothing else under `/config` is ever written
+- **Teach → Claude files it**: adding a fact via "Teach it something" now has Claude
+  merge it into the memory document — right section, deduplicated, newest wins — with
+  a live "merging…" indicator; without Claude access the fact is parked under a
+  "Recently added" heading instead. If you have unsaved manual edits, a warning pops
+  up before the rewrite so they can't be lost silently
+- **"Not relevant" on card questions**: every clarifying question on an insight card
+  has an ✕ button that dismisses it permanently and tells the analyst it was on the
+  wrong track — dismissed topics are injected into future prompts as dead ends, not
+  just never re-asked
+
 ## 1.3.0
 
 A depth release: the analyst now remembers, builds on what it knows, and reasons

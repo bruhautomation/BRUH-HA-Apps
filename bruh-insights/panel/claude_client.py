@@ -206,7 +206,8 @@ def clear_auth() -> None:
     """Forget the locally stored credential and the CLI's own login.
 
     NEVER touches SHARED_AUTH_FILE — that file belongs to the BRUH Terminal
-    add-on (and our /config mount is read-only anyway).
+    add-on. (The /config mount is writable for the memory file, but this
+    module never writes anything under it.)
     """
     for path in (AUTH_FILE, _credentials_path()):
         try:

@@ -126,10 +126,22 @@ Every generated insight can be embedded on a Home Assistant dashboard:
 
    ```yaml
    type: iframe
-   url: http://homeassistant.local:8100/card/energy?token=<your-card-token>
+   url: http://hassio.local:8100/card/energy?token=<your-card-token>
    title: Energy
    aspect_ratio: 90%
    ```
+
+The hostname in the YAML is the **address your browser is using right now** (be it
+`hassio.local`, `homeassistant.local`, or a raw IP), so the URL resolves for every device
+that reaches HA the same way you do. When you're connected through **Nabu Casa** remote
+access the panel falls back to HA's internal URL instead — a `*.ui.nabu.casa` host can
+never reach port 8100.
+
+**HTTPS caveat**: the card server speaks plain HTTP, and browsers block HTTP iframes
+inside an HTTPS page (mixed content). So on dashboards opened over HTTPS — Nabu Casa
+remote, or a local SSL setup — the card renders **empty**; it works when HA is opened
+over HTTP on the local network (e.g. `http://hassio.local:8123`). The dialog detects
+this and warns you up front.
 
 The card always shows the **latest run** of that insight and reloads itself every
 15 minutes. The `token` query parameter is a per-install random secret (stored in
@@ -154,9 +166,22 @@ instructed to lead with what changed and dig deeper — not to regenerate the sa
 
 The 🧠 **Memory** button in the top bar shows all of it: open questions (answer or
 dismiss them right there), learned facts (remove anything wrong, or type in a fact to
-teach it), answered Q&A, and — when BRUH Terminal maintains one — the shared memory file
-at `/config/.bruh_claude/memory/memory.md`, whose contents are also folded into every
-data snapshot.
+teach it), answered Q&A, and the **home memory file** at
+`/config/.bruh_claude/memory/memory.md`, whose contents are folded into every data
+snapshot.
+
+The memory file is shown as **formatted markdown** and is directly editable: press
+**✎ Edit markdown** to switch to the raw document, then Save. Teaching a fact via the
+box above has Claude **merge it into the file for you** — filed under the right
+section, deduplicated, newest-wins on contradictions (when Claude isn't reachable the
+fact is parked under a "Recently added" heading instead, so nothing is lost). If you
+have unsaved manual edits when you add a fact, the panel warns you before the rewrite
+so they can't be silently lost. The same file is shared with BRUH Terminal's
+`ha-memory` when that add-on is installed — but it works standalone too.
+
+Every question on an insight card also has an ✕ **"not relevant"** button: one click
+retires the question permanently and records that the analyst was on the wrong track,
+so future runs stop building analysis around that line of inquiry.
 
 Findings and answers are additionally handed to the **bruh_claude** integration
 (`bruh_claude.add_memory` / `bruh_claude.answer_question`) so the whole home shares
@@ -190,9 +215,10 @@ since 10:41 PM") instead of parroting `home`/`not_home`.
   port. The optional dashboard-card server (port 8100, unmapped by default) is a separate
   mini server that serves only stored insight HTML and requires the per-install card
   token on every request.
-- The add-on's `/config` mount is **read-only**; it only reads `CLAUDE.md`, the shared
-  memory file, and the shared login credential (all maintained by BRUH Terminal, if
-  present). The `/share` mount is writable solely for the memory-inbox drop-files
+- The add-on's `/config` mount is writable for **exactly one file**: the home memory
+  document at `/config/.bruh_claude/memory/memory.md`, maintained by the panel's Memory
+  editor. Everything else under `/config` (`CLAUDE.md`, the shared login credential) is
+  only ever read. The `/share` mount is writable solely for the memory-inbox drop-files
   described above.
 
 ## Troubleshooting

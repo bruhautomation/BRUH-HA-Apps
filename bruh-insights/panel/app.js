@@ -10,6 +10,13 @@ const el = (tag, cls, text) => {
   if (text != null) node.textContent = text;
   return node;
 };
+// Icon-only controls get an instant styled tooltip (CSS [data-tip]) instead
+// of the browser's sluggish native title bubble, plus a matching aria-label.
+const tip = (node, text) => {
+  node.dataset.tip = text;
+  node.setAttribute("aria-label", text);
+  return node;
+};
 
 const state = {
   status: null,
@@ -377,7 +384,28 @@ function makeQuestions(insight) {
   const wrap = el("div", "questions");
   insight.questions.forEach((q) => {
     const row = el("div", "qrow");
-    row.appendChild(el("div", "qtext", `❓ ${q}`));
+    const head = el("div", "qhead");
+    head.appendChild(el("div", "qtext", `❓ ${q}`));
+    const dis = el("button", "btn icon qdismiss", "✕");
+    dis.type = "button";
+    tip(dis, "Not relevant — tell Insights it's on the wrong track; this won't be asked again");
+    dis.addEventListener("click", async () => {
+      dis.disabled = true;
+      try {
+        await api("api/questions/dismiss", {
+          method: "POST",
+          body: JSON.stringify({ insight_id: insight.id, question: q }),
+        });
+        toast("Dismissed — Insights will drop that line of inquiry");
+        await refreshInsights();
+        renderIfChanged();
+      } catch (e) {
+        toast(e.message);
+        dis.disabled = false;
+      }
+    });
+    head.appendChild(dis);
+    row.appendChild(head);
     const form = el("form", "qform");
     const input = el("input");
     input.type = "text";
@@ -414,7 +442,7 @@ function makeQuestions(insight) {
 function makeHistoryControls(id, insight, view) {
   const wrap = el("span", "hist");
   const older = el("button", "btn icon hstep", "‹");
-  older.title = "Older run";
+  tip(older, "Older run");
   older.addEventListener("click", () => stepRun(id, insight, 1));
   const sel = document.createElement("select");
   sel.className = "histsel";
@@ -444,7 +472,7 @@ function makeHistoryControls(id, insight, view) {
   }
   sel.addEventListener("change", () => viewRun(id, sel.value || null));
   const newer = el("button", "btn icon hstep", "›");
-  newer.title = "Newer run";
+  tip(newer, "Newer run");
   newer.addEventListener("click", () => stepRun(id, insight, -1));
   wrap.appendChild(older);
   wrap.appendChild(sel);
@@ -491,33 +519,33 @@ function makeCard(catInfo, insight) {
   }
   if (!active && !view) {
     const regen = el("button", "btn icon", "↻");
-    regen.title = "Regenerate";
+    tip(regen, "Regenerate");
     regen.addEventListener("click", () => generate(id, insight && insight.question));
     actions.appendChild(regen);
   }
   if (catInfo) {
     const edit = el("button", "btn icon", "✎");
-    edit.title = catInfo.user ? "Edit insight" : "Edit prompt";
+    tip(edit, catInfo.user ? "Edit insight" : "Edit prompt");
     edit.addEventListener("click", () =>
       catInfo.user ? openUserEdit(catInfo) : openEdit(catInfo));
     actions.appendChild(edit);
     const fb = el("button", "btn icon", "💬");
-    fb.title = "Give feedback — remembered for every future run";
+    tip(fb, "Give feedback — remembered for every future run");
     fb.addEventListener("click", () => openFeedback(catInfo));
     actions.appendChild(fb);
   }
   if (shown) {
     const expand = el("button", "btn icon", "⤢");
-    expand.title = "Expand";
+    tip(expand, "Expand");
     expand.addEventListener("click", () => openModal(shown));
     actions.appendChild(expand);
     const dash = el("button", "btn icon", "▦");
-    dash.title = "Add to dashboard";
+    tip(dash, "Add to dashboard");
     dash.addEventListener("click", () => openCardModal(shown));
     actions.appendChild(dash);
     if (insight && insight.category === "custom") {
       const del = el("button", "btn icon", "✕");
-      del.title = "Delete";
+      tip(del, "Delete this card");
       del.addEventListener("click", async () => {
         await api(`api/insight/${id}`, { method: "DELETE" }).catch(() => {});
         await refreshInsights();
@@ -585,7 +613,7 @@ function makeCard(catInfo, insight) {
     }
     if (!view && insight && insight.category === "custom" && insight.question) {
       const mk = el("button", "btn small", "＋ Make recurring");
-      mk.title = "Turn this question into a scheduled insight";
+      tip(mk, "Turn this question into a scheduled insight");
       mk.addEventListener("click", () => openNewInsight({
         title: (insight.title || insight.question).slice(0, 60),
         icon: insight.icon || "✨",
@@ -948,7 +976,7 @@ async function renderFbList() {
     txt.appendChild(el("div", "when", fmtWhen(f.ts)));
     row.appendChild(txt);
     const del = el("button", "btn icon", "✕");
-    del.title = "Remove — stop applying this feedback";
+    tip(del, "Remove — stop applying this feedback");
     del.addEventListener("click", async () => {
       try {
         await api(`api/insight/${fbCatId}/feedback/${f.ts}`, { method: "DELETE" });
@@ -1038,7 +1066,7 @@ async function renderKnowledge() {
     send.type = "submit";
     const dismiss = el("button", "btn small", "Dismiss");
     dismiss.type = "button";
-    dismiss.title = "Retire without answering — it won't be asked again";
+    tip(dismiss, "Retire without answering — it won't be asked again");
     form.appendChild(input);
     form.appendChild(send);
     form.appendChild(dismiss);
@@ -1087,7 +1115,7 @@ async function renderKnowledge() {
         " · " + when.toLocaleDateString([], { month: "short", day: "numeric" }))));
     row.appendChild(txt);
     const del = el("button", "btn icon", "✕");
-    del.title = "Forget this fact";
+    tip(del, "Forget this fact");
     del.addEventListener("click", async () => {
       try {
         await api(`api/knowledge/fact/${f.ts}`, { method: "DELETE" });
@@ -1110,7 +1138,7 @@ async function renderKnowledge() {
     txt.appendChild(el("div", "kans", `A: ${q.answer}`));
     row.appendChild(txt);
     const del = el("button", "btn icon", "✕");
-    del.title = "Forget — the analyst may ask this again";
+    tip(del, "Forget — the analyst may ask this again");
     del.addEventListener("click", async () => {
       try {
         await api(`api/knowledge/question/${q.ts}`, { method: "DELETE" });
@@ -1121,11 +1149,118 @@ async function renderKnowledge() {
     ansEl.appendChild(row);
   });
 
-  // shared memory.md (BRUH Terminal)
-  const mem = (data.shared_memory || "").trim();
-  $("#kMemWrap").classList.toggle("hidden", !mem);
-  if (mem) $("#kMemText").textContent = mem;
+  renderMemory(data);
 }
+
+// ---- home memory file: formatted view, raw-markdown edit, Claude merge ----
+
+const memState = { editing: false, dirty: false, text: "", pollTimer: null };
+
+const MEM_TEMPLATE = "# Home Memory\n\n## Preferences\n\n## Entity nicknames\n\n"
+  + "## Household patterns\n\n## Device notes\n";
+
+// Minimal markdown renderer for the memory document (headings, lists, bold,
+// italic, inline code, links). Input is escaped first, so the produced HTML
+// contains only tags we emit ourselves.
+function mdInline(s) {
+  return s
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+    .replace(/\*([^*]+)\*/g, "<i>$1</i>")
+    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g,
+      '<a href="$2" target="_blank" rel="noopener">$1</a>');
+}
+
+function mdToHtml(md) {
+  md = String(md || "").replace(/<!--[\s\S]*?-->/g, "");
+  md = md.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const out = [];
+  let list = null;
+  const closeList = () => { if (list) { out.push(`</${list}>`); list = null; } };
+  md.split("\n").forEach((raw) => {
+    const line = raw.trimEnd();
+    const h = line.match(/^(#{1,6})\s+(.*)/);
+    const ul = line.match(/^\s*[-*]\s+(.*)/);
+    const ol = line.match(/^\s*\d+\.\s+(.*)/);
+    if (h) { closeList(); out.push(`<h${h[1].length}>${mdInline(h[2])}</h${h[1].length}>`); }
+    else if (ul) {
+      if (list !== "ul") { closeList(); out.push("<ul>"); list = "ul"; }
+      out.push(`<li>${mdInline(ul[1])}</li>`);
+    } else if (ol) {
+      if (list !== "ol") { closeList(); out.push("<ol>"); list = "ol"; }
+      out.push(`<li>${mdInline(ol[1])}</li>`);
+    } else if (!line.trim()) { closeList(); }
+    else { closeList(); out.push(`<p>${mdInline(line)}</p>`); }
+  });
+  closeList();
+  return out.join("\n");
+}
+
+function renderMemory(data) {
+  const merging = !!(data.memory_state && data.memory_state.merging);
+  $("#kMemMerging").classList.toggle("hidden", !merging);
+  if (merging) pollMemoryMerge();
+  if (memState.editing) return; // never clobber an edit in progress
+  memState.text = data.shared_memory || "";
+  const has = !!memState.text.trim();
+  $("#kMemView").innerHTML = has ? mdToHtml(memState.text) : "";
+  $("#kMemView").classList.toggle("hidden", !has);
+  $("#kMemEmpty").classList.toggle("hidden", has);
+  if (data.memory_state && data.memory_state.error) {
+    toast("Memory merge problem: " + data.memory_state.error);
+  }
+}
+
+function setMemEditing(on) {
+  memState.editing = on;
+  memState.dirty = false;
+  $("#kMemTa").classList.toggle("hidden", !on);
+  $("#kMemView").classList.toggle("hidden", on || !memState.text.trim());
+  $("#kMemEmpty").classList.toggle("hidden", on || !!memState.text.trim());
+  $("#kMemEdit").classList.toggle("hidden", on);
+  $("#kMemSave").classList.toggle("hidden", !on);
+  $("#kMemCancel").classList.toggle("hidden", !on);
+  $("#kMemDirty").classList.add("hidden");
+}
+
+// while a Claude merge is running, poll until it lands and show the result
+function pollMemoryMerge() {
+  clearTimeout(memState.pollTimer);
+  memState.pollTimer = setTimeout(async () => {
+    if (!$("#kModal").classList.contains("open")) return;
+    try {
+      const data = await api("api/knowledge");
+      renderMemory(data);
+      if (data.memory_state && data.memory_state.merging) pollMemoryMerge();
+      else if (!memState.editing) toast("Memory file updated");
+    } catch (e) { /* transient; next open re-renders */ }
+  }, 2500);
+}
+
+$("#kMemEdit").addEventListener("click", () => {
+  $("#kMemTa").value = memState.text.trim() ? memState.text : MEM_TEMPLATE;
+  setMemEditing(true);
+});
+$("#kMemTa").addEventListener("input", () => {
+  memState.dirty = true;
+  $("#kMemDirty").classList.remove("hidden");
+});
+$("#kMemCancel").addEventListener("click", () => {
+  if (memState.dirty &&
+      !window.confirm("Discard your unsaved memory edits?")) return;
+  setMemEditing(false);
+  renderKnowledge();
+});
+$("#kMemSave").addEventListener("click", async () => {
+  const text = $("#kMemTa").value;
+  try {
+    await api("api/memory", { method: "PUT", body: JSON.stringify({ text }) });
+    memState.text = text;
+    setMemEditing(false);
+    toast("Memory saved");
+    renderKnowledge();
+  } catch (e) { toast(e.message); }
+});
 
 $("#knowledgeBtn").addEventListener("click", () => {
   openBox("#kModal");
@@ -1135,17 +1270,37 @@ $("#kAddForm").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const text = $("#kAddInput").value.trim();
   if (!text) return;
+  // adding a fact has Claude REWRITE the memory file — unsaved manual edits
+  // in the editor below would be overwritten, so make the user choose first
+  if (memState.editing && memState.dirty) {
+    if (!window.confirm(
+      "You have unsaved manual edits to the home memory file below.\n\n"
+      + "Adding this fact makes Claude rewrite that file, and your unsaved "
+      + "edits would be lost. Press Cancel to go save them first, or OK to "
+      + "discard them and continue.")) return;
+    setMemEditing(false);
+  }
   try {
     const res = await api("api/knowledge/fact", {
       method: "POST", body: JSON.stringify({ text }) });
     $("#kAddInput").value = "";
-    toast(res.added ? "Learned — every future insight will know it" : "Already known");
+    toast(res.added ? "Learned — merging it into the memory file…" : "Already known");
+    if (res.merging) {
+      $("#kMemMerging").classList.remove("hidden");
+      pollMemoryMerge();
+    }
     renderKnowledge();
   } catch (e) { toast(e.message); }
 });
-$("#kClose").addEventListener("click", () => closeBox("#kModal"));
+function closeKnowledge() {
+  if (memState.editing && memState.dirty &&
+      !window.confirm("Discard your unsaved memory edits?")) return;
+  if (memState.editing) setMemEditing(false);
+  closeBox("#kModal");
+}
+$("#kClose").addEventListener("click", closeKnowledge);
 $("#kModal").addEventListener("click", (ev) => {
-  if (ev.target === $("#kModal")) closeBox("#kModal");
+  if (ev.target === $("#kModal")) closeKnowledge();
 });
 
 // -------------------------------------------------- dashboard card modal
@@ -1172,9 +1327,34 @@ function copyText(text) {
   return Promise.resolve(copyFallback(text));
 }
 
+// The card server (port 8100, plain HTTP) is only reachable on the LAN —
+// never through the Nabu Casa cloud proxy. Pick the host the browser is
+// ACTUALLY using to reach HA when it's a LAN address (hassio.local,
+// homeassistant.local, a raw IP — whatever the user typed), because that
+// name provably resolves for them; fall back to HA's internal_url for
+// cloud/remote sessions.
+function isCloudHost(host) {
+  return /\.nabu\.casa$/i.test(host || "");
+}
+
+function cardHost(info) {
+  const fromUrl = (u) => {
+    const m = (u || "").match(/^https?:\/\/([^/:]+)/);
+    return m ? m[1] : "";
+  };
+  const page = window.location.hostname;
+  if (page && !isCloudHost(page)) return page;
+  const internal = fromUrl(info.internal_url);
+  if (internal && !isCloudHost(internal)) return internal;
+  return "homeassistant.local";
+}
+
 async function openCardModal(insight) {
   openBox("#cardModal");
   const pre = $("#cardYaml");
+  const warn = $("#cardWarn");
+  const hint = $("#cardHint");
+  warn.classList.add("hidden");
   pre.textContent = "Loading…";
   try {
     if (!cardInfoCache) cardInfoCache = await api("api/card_info");
@@ -1183,12 +1363,7 @@ async function openCardModal(insight) {
     return;
   }
   const info = cardInfoCache;
-  // best guess for a LAN-reachable host: HA's internal URL, else the
-  // default mDNS name — the user can adjust the hostname in the YAML
-  let host = "homeassistant.local";
-  const src = info.internal_url || info.external_url || "";
-  const m = src.match(/^https?:\/\/([^/:]+)/);
-  if (m) host = m[1];
+  const host = cardHost(info);
   const url = `http://${host}:${info.port}/card/${insight.id}?token=${info.token}`;
   pre.textContent = [
     "type: iframe",
@@ -1196,6 +1371,29 @@ async function openCardModal(insight) {
     `title: ${(insight.title || "Insight").replace(/[:#"\n]/g, " ").trim()}`,
     "aspect_ratio: 90%",
   ].join("\n");
+
+  const cloud = isCloudHost(window.location.hostname);
+  if (window.location.protocol === "https:") {
+    // an http:// iframe inside an https:// dashboard is mixed content —
+    // the browser blanks it. Say so instead of letting the card "not work".
+    warn.textContent = cloud
+      ? "You're connected through Nabu Casa remote access right now. This card is served "
+        + "over plain HTTP on your local network, so browsers will show it EMPTY on any "
+        + "HTTPS dashboard (mixed content) — including this remote session. It works when "
+        + `you open Home Assistant locally, e.g. http://${host}:8123. The YAML below uses `
+        + "your local address — fix the hostname if it isn't right."
+      : "You're viewing Home Assistant over HTTPS. Browsers block plain-HTTP iframes "
+        + "inside an HTTPS page (mixed content), so this card will show EMPTY on dashboards "
+        + `opened this way — it works when you open HA over HTTP, e.g. http://${host}:8123.`;
+    warn.classList.remove("hidden");
+    hint.textContent = "The URL contains this add-on's private card token — anyone with "
+      + "the link on your network can view the insight, nothing else.";
+  } else {
+    hint.textContent = `This URL uses the address you're connected with right now `
+      + `(“${host}”), so it resolves for every device that reaches HA the same way. `
+      + "It contains this add-on's private card token — anyone with the link on your "
+      + "network can view the insight, nothing else.";
+  }
 }
 
 $("#cardCopy").addEventListener("click", () => {

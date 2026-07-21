@@ -33,11 +33,13 @@ GET  /api/card_info          — dashboard-card server port/token + HA URLs
 GET  /api/questions          — open analyst questions across insights
 POST /api/questions/answer   — answer one (forwards to bruh_claude, if installed)
 GET  /api/knowledge          — learned facts + question ledger + shared memory.md
-POST /api/knowledge/fact     — add a fact by hand {text}
+POST /api/knowledge/fact     — add a fact by hand {text}; Claude merges it into memory.md
 DELETE /api/knowledge/fact/{ts}            — forget one fact
 POST /api/knowledge/question/{ts}/answer   — answer an open question {answer}
 POST /api/knowledge/question/{ts}/dismiss  — retire a question unanswered
 DELETE /api/knowledge/question/{ts}        — forget a question (askable again)
+POST /api/questions/dismiss  — dismiss from a card {insight_id, question} ("not relevant")
+PUT  /api/memory             — save a manual edit of the memory file {text}
 
 Runs on 0.0.0.0:8099. The HA Supervisor proxies the ingress URL into
 /api/hassio_ingress/<token>/...; we therefore use only relative links in the
@@ -84,10 +86,45 @@ HISTORY_KEEP_DAYS = int(os.environ.get("BRUH_INSIGHTS_HISTORY_KEEP_DAYS", "30") 
 # isn't installed — the BRUH Terminal add-on ingests it from /share
 MEMORY_INBOX_DIR = Path(os.environ.get(
     "BRUH_INSIGHTS_MEMORY_INBOX", "/share/bruh_claude/memory-inbox"))
-# The BRUH Terminal integration's consolidated memory file (read-only view
-# for the knowledge panel; same default as ha_data.MEMORY_FILE)
+# The home's consolidated memory file (same default as ha_data.MEMORY_FILE;
+# shared with BRUH Terminal's ha-memory when that add-on is installed).
+# Viewable AND editable from the knowledge panel — the /config mount is
+# writable solely so this one file can be maintained; nothing else under
+# /config is ever written.
 SHARED_MEMORY_FILE = Path(os.environ.get(
     "BRUH_MEMORY_FILE", "/config/.bruh_claude/memory/memory.md"))
+MAX_MEMORY_CHARS = 100_000
+
+# Same skeleton BRUH Terminal's ha-memory tool starts from, so both add-ons
+# agree on the document's shape.
+MEMORY_TEMPLATE = """# Home Memory
+
+<!-- This file is user-editable — add, correct, or delete anything. -->
+
+## Preferences
+
+## Entity nicknames
+
+## Household patterns
+
+## Device notes
+"""
+
+MEMORY_MERGE_SYSTEM = """You maintain a home's long-term memory file: a small, well-organized markdown document of durable facts about a smart home and its household (preferences, entity nicknames, household patterns, device notes).
+
+You receive the current document and one or more new facts. Merge the facts in:
+- Put each fact in the most fitting existing section; create a new section only when nothing fits.
+- Never duplicate: if a fact is already present keep one copy; if it contradicts an older one, the NEW fact wins.
+- Keep the document's headings, HTML comments, and the homeowner's own wording and edits intact wherever possible.
+- Stay concise — one bullet per fact, plain factual language.
+
+Reply with ONLY the complete updated markdown document. No code fences, no commentary before or after."""
+
+# merge status surfaced to the panel; MEMORY_LAST_TASK lets tests (and
+# shutdown) await the in-flight merge deterministically
+MEMORY_STATE: dict = {"merging": False, "error": ""}
+MEMORY_LOCK = asyncio.Lock()
+MEMORY_LAST_TASK: asyncio.Task | None = None
 MODEL = os.environ.get("BRUH_INSIGHTS_MODEL", "").strip()
 TIMEOUT_S = int(float(os.environ.get("BRUH_INSIGHTS_TIMEOUT_MIN", "8") or 8) * 60)
 BIND_HOST = "0.0.0.0"
@@ -914,7 +951,100 @@ async def h_answer_question(request: web.Request) -> web.Response:
     return web.json_response({"answered": True, "remaining": len(insight["questions"])})
 
 
+async def h_dismiss_question_card(request: web.Request) -> web.Response:
+    """"Not relevant" from an insight card: retire the question everywhere
+    and mark it dismissed in the ledger so the analyst learns it was a
+    dead end and never asks it (or close variants) again."""
+    body = await request.json()
+    insight_id = str(body.get("insight_id") or "")
+    question = str(body.get("question") or "").strip()
+    if not question:
+        raise web.HTTPBadRequest(text="question required")
+    path = _insight_path(insight_id)
+    try:
+        insight = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raise web.HTTPNotFound(text="no such insight")
+    questions = [q for q in (insight.get("questions") or []) if isinstance(q, str)]
+    if question not in questions:
+        raise web.HTTPNotFound(text="no such open question")
+    entry = knowledge_store.record_question(question, insight.get("category", ""))
+    if entry and entry.get("status") != "answered":
+        knowledge_store.dismiss_question(entry["ts"])
+    _retire_question_everywhere(question)
+    return web.json_response({"dismissed": True})
+
+
 # -- knowledge (the analyst's viewable memory) ------------------------------
+
+def _read_shared_memory() -> str:
+    try:
+        return SHARED_MEMORY_FILE.read_text(
+            encoding="utf-8", errors="replace")[:MAX_MEMORY_CHARS]
+    except OSError:
+        return ""
+
+
+def _write_shared_memory(text: str) -> None:
+    SHARED_MEMORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = SHARED_MEMORY_FILE.with_suffix(".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(SHARED_MEMORY_FILE)
+
+
+def _append_memory_fallback(current: str, facts: list[str]) -> None:
+    """No-Claude path: park new facts under a "Recently added" section so
+    they are visible immediately (a later merge can file them properly)."""
+    base = current.strip() or MEMORY_TEMPLATE.strip()
+    if "## Recently added" not in base:
+        base += "\n\n## Recently added"
+    base += "".join(f"\n- {f}" for f in facts) + "\n"
+    _write_shared_memory(base)
+
+
+def _strip_md_fences(text: str) -> str:
+    text = text.strip()
+    fence = re.match(r"^```(?:markdown|md)?\s*\n(.*?)\n?```\s*$", text, re.DOTALL)
+    return fence.group(1).strip() if fence else text
+
+
+async def _merge_memory_task(facts: list[str]) -> None:
+    """Fold new facts into memory.md with a cheap Claude pass (serialized;
+    falls back to a plain append when Claude is unavailable or misbehaves)."""
+    async with MEMORY_LOCK:
+        MEMORY_STATE.update(merging=True, error="")
+        try:
+            current = _read_shared_memory()
+            merged = ""
+            if claude_client.get_auth():
+                prompt = (
+                    "CURRENT MEMORY DOCUMENT:\n\n"
+                    + (current.strip() or MEMORY_TEMPLATE)
+                    + "\n\nNEW FACTS to merge in:\n"
+                    + "\n".join(f"- {f}" for f in facts)
+                )
+                result = await asyncio.to_thread(
+                    claude_client.run_claude, prompt, MEMORY_MERGE_SYSTEM, MODEL, 180)
+                if result["ok"]:
+                    merged = _strip_md_fences(result["text"])
+            # sanity: a merged doc is markdown of plausible size, not an
+            # apology or an empty string — otherwise take the fallback path
+            if merged and "#" in merged and len(merged) >= 40 \
+                    and len(merged) <= MAX_MEMORY_CHARS:
+                await asyncio.to_thread(_write_shared_memory, merged)
+            else:
+                await asyncio.to_thread(_append_memory_fallback, current, facts)
+        except Exception as exc:  # noqa: BLE001 — surface in the panel, never crash
+            MEMORY_STATE["error"] = str(exc)[:300]
+            log.warning("memory merge failed: %s", exc)
+        finally:
+            MEMORY_STATE["merging"] = False
+
+
+def _start_memory_merge(facts: list[str]) -> None:
+    global MEMORY_LAST_TASK
+    MEMORY_LAST_TASK = asyncio.create_task(_merge_memory_task(facts))
+
 
 def _retire_question_everywhere(text: str) -> None:
     """Remove a question string from every stored insight card so the UI
@@ -930,16 +1060,11 @@ def _retire_question_everywhere(text: str) -> None:
 
 async def h_knowledge(request: web.Request) -> web.Response:
     """Everything the analyst has learned, in one payload for the panel."""
-    memory_text = ""
-    try:
-        memory_text = SHARED_MEMORY_FILE.read_text(
-            encoding="utf-8", errors="replace")[:20_000]
-    except OSError:
-        pass
     return web.json_response({
         "facts": knowledge_store.list_facts(),
         "questions": knowledge_store.list_questions(),
-        "shared_memory": memory_text,
+        "shared_memory": _read_shared_memory(),
+        "memory_state": dict(MEMORY_STATE),
     })
 
 
@@ -954,7 +1079,25 @@ async def h_knowledge_fact_add(request: web.Request) -> web.Response:
     entry, created = knowledge_store.add_fact(text, source="user")
     if created:
         await _submit_memory(text)
-    return web.json_response({"added": created, "fact": entry})
+        # fold it into the memory document in the background
+        _start_memory_merge([text])
+    return web.json_response(
+        {"added": created, "fact": entry, "merging": created})
+
+
+async def h_memory_put(request: web.Request) -> web.Response:
+    """Save a manual edit of the memory file from the panel."""
+    body = await request.json()
+    text = body.get("text")
+    if not isinstance(text, str):
+        raise web.HTTPBadRequest(text="text must be a string")
+    if len(text) > MAX_MEMORY_CHARS:
+        raise web.HTTPBadRequest(text=f"memory too large (max {MAX_MEMORY_CHARS} chars)")
+    try:
+        await asyncio.to_thread(_write_shared_memory, text)
+    except OSError as exc:
+        raise web.HTTPInternalServerError(text=f"could not write memory file: {exc}")
+    return web.json_response({"saved": True})
 
 
 async def h_knowledge_fact_delete(request: web.Request) -> web.Response:
@@ -1068,7 +1211,9 @@ async def h_health(request: web.Request) -> web.Response:
 # ---------------------------------------------------------------------------
 
 def make_app() -> web.Application:
-    app = web.Application(client_max_size=1024 * 64)
+    # 256 KiB: leaves room for a full memory-file edit (MAX_MEMORY_CHARS
+    # plus JSON escaping) — everything else is far smaller
+    app = web.Application(client_max_size=1024 * 256)
     app.router.add_get("/", h_index)
     app.router.add_get("/style.css", _static("style.css", "text/css"))
     app.router.add_get("/app.js", _static("app.js", "application/javascript"))
@@ -1093,7 +1238,9 @@ def make_app() -> web.Application:
     app.router.add_get("/api/card_info", h_card_info)
     app.router.add_get("/api/questions", h_questions)
     app.router.add_post("/api/questions/answer", h_answer_question)
+    app.router.add_post("/api/questions/dismiss", h_dismiss_question_card)
     app.router.add_get("/api/knowledge", h_knowledge)
+    app.router.add_put("/api/memory", h_memory_put)
     app.router.add_post("/api/knowledge/fact", h_knowledge_fact_add)
     app.router.add_delete("/api/knowledge/fact/{ts}", h_knowledge_fact_delete)
     app.router.add_post("/api/knowledge/question/{ts}/answer", h_knowledge_answer)
