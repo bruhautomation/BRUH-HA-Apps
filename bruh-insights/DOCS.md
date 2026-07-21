@@ -116,38 +116,39 @@ appear under "All".
 
 ## Dashboard cards
 
-Every generated insight can be embedded on a Home Assistant dashboard:
+Every generated insight can be embedded on a Home Assistant dashboard: press **▦** on a
+card — the dialog shows ready-to-paste YAML for a **Webpage** card, e.g.:
 
-1. **One-time setup**: the add-on serves insight HTML on port **8100** (token-protected),
-   but the port is *unmapped by default*. Map it under **Settings → Add-ons →
-   BRUH Insights → Configuration → Network** and restart the add-on.
-2. Press **▦** on a card — the dialog shows ready-to-paste YAML for a **Webpage** card,
-   e.g.:
+```yaml
+type: iframe
+url: /local/bruh_insights/energy-<your-card-token>.html
+title: Energy
+aspect_ratio: 90%
+```
 
-   ```yaml
-   type: iframe
-   url: http://hassio.local:8100/card/energy?token=<your-card-token>
-   title: Energy
-   aspect_ratio: 90%
-   ```
+That URL is served by **Home Assistant itself**: the first time you open the ▦ dialog,
+the add-on starts mirroring each insight's HTML into `/config/www/bruh_insights/`
+(refreshed on every regeneration, removed when an insight is deleted). Because the card
+is same-origin with your dashboard, it works everywhere — plain HTTP on the LAN, local
+SSL, and **Nabu Casa remote access** — with no port mapping and no mixed-content
+blocking. One edge case: if the `www` folder didn't exist before, Home Assistant needs a
+single restart to start serving `/local/…`; the dialog checks the URL live and tells you
+when that's the case.
 
-The hostname in the YAML is the **address your browser is using right now** (be it
-`hassio.local`, `homeassistant.local`, or a raw IP), so the URL resolves for every device
-that reaches HA the same way you do. When you're connected through **Nabu Casa** remote
-access the panel falls back to HA's internal URL instead — a `*.ui.nabu.casa` host can
-never reach port 8100.
-
-**HTTPS caveat**: the card server speaks plain HTTP, and browsers block HTTP iframes
-inside an HTTPS page (mixed content). So on dashboards opened over HTTPS — Nabu Casa
-remote, or a local SSL setup — the card renders **empty**; it works when HA is opened
-over HTTP on the local network (e.g. `http://hassio.local:8123`). The dialog detects
-this and warns you up front.
+There is also a classic plain-HTTP card server on port **8100** (mapped by default; set
+it to null in the add-on's Network settings to close it) serving
+`http://<host>:8100/card/<id>?token=<your-card-token>`. The dialog only falls back to it
+when the `/local` mirror can't be written, and only shows the port-mapping setup step
+when the Supervisor reports the port is actually closed. Remember that browsers block
+plain-HTTP iframes inside HTTPS dashboards — the mixed-content warning in the dialog
+explains this when it applies.
 
 The card always shows the **latest run** of that insight and reloads itself every
-15 minutes. The `token` query parameter is a per-install random secret (stored in
-`/data/secrets/card_token`); the card server serves *only* stored insight HTML — no API,
-no credentials, no controls. Anyone with the exact URL on your network can view that
-insight, so treat the token like any other dashboard-level secret.
+15 minutes. The card token is a per-install random secret (stored in
+`/data/secrets/card_token`) embedded in the `/local` file name and the port-8100 `token`
+parameter; both paths serve *only* stored insight HTML — no API, no credentials, no
+controls. Anyone with the exact URL can view that insight, so treat the token like any
+other dashboard-level secret.
 
 ## Questions, findings, and memory
 
@@ -164,20 +165,23 @@ analysis as known facts the analyst must build on rather than rediscover. Each c
 also sees its own **previous run** (title, summary, highlights, findings) and is
 instructed to lead with what changed and dig deeper — not to regenerate the same story.
 
-The 🧠 **Memory** button in the top bar shows all of it: open questions (answer or
-dismiss them right there), learned facts (remove anything wrong, or type in a fact to
-teach it), answered Q&A, and the **home memory file** at
-`/config/.bruh_claude/memory/memory.md`, whose contents are folded into every data
-snapshot.
+The 🧠 **Memory** button in the top bar shows all of it — on desktop as a wide
+two-column dialog: open questions and the analyst's learned facts on the left (answer,
+dismiss, or remove anything wrong right there), and the **home memory file** at
+`/config/.bruh_claude/memory/memory.md` on the right at full height, whose contents are
+folded into every data snapshot.
 
 The memory file is shown as **formatted markdown** and is directly editable: press
-**✎ Edit markdown** to switch to the raw document, then Save. Teaching a fact via the
-box above has Claude **merge it into the file for you** — filed under the right
-section, deduplicated, newest-wins on contradictions (when Claude isn't reachable the
-fact is parked under a "Recently added" heading instead, so nothing is lost). If you
-have unsaved manual edits when you add a fact, the panel warns you before the rewrite
-so they can't be silently lost. The same file is shared with BRUH Terminal's
-`ha-memory` when that add-on is installed — but it works standalone too.
+**✎ Edit markdown** to switch to the raw document, then Save. The "Teach it something"
+box sits right above the document, and the document is a taught fact's **only home**:
+Claude merges it straight into the file — filed under the right section, deduplicated,
+newest-wins on contradictions — rather than also keeping a duplicate row in the facts
+list (that list is purely what the analyst discovered on its own). When Claude isn't
+reachable the fact is parked under a "Recently added" heading instead, so nothing is
+ever lost, and teaching something that's already in the document just says "already
+known". If you have unsaved manual edits when you add a fact, the panel warns you
+before the rewrite so they can't be silently lost. The same file is shared with BRUH
+Terminal's `ha-memory` when that add-on is installed — but it works standalone too.
 
 Every question on an insight card also has an ✕ **"not relevant"** button: one click
 retires the question permanently and records that the analyst was on the wrong track,
@@ -212,14 +216,17 @@ since 10:41 PM") instead of parroting `home`/`not_home`.
 - Generated visualizations render in **sandboxed iframes** (`sandbox="allow-scripts"`) — they
   cannot touch your Home Assistant session, cookies, or the panel itself.
 - The panel is only reachable through HA Ingress (admin users), never exposed on a host
-  port. The optional dashboard-card server (port 8100, unmapped by default) is a separate
-  mini server that serves only stored insight HTML and requires the per-install card
-  token on every request.
-- The add-on's `/config` mount is writable for **exactly one file**: the home memory
+  port. The dashboard-card server (port 8100, mapped by default; set to null to close
+  it) is a separate mini server that serves only stored insight HTML and requires the
+  per-install card token on every request. The `/local` card mirror likewise serves only
+  insight HTML, from file names that embed the same token (HA serves `/local/…` without
+  authentication, so the unguessable name is the lock).
+- The add-on's `/config` mount is writable for **two things only**: the home memory
   document at `/config/.bruh_claude/memory/memory.md`, maintained by the panel's Memory
-  editor. Everything else under `/config` (`CLAUDE.md`, the shared login credential) is
-  only ever read. The `/share` mount is writable solely for the memory-inbox drop-files
-  described above.
+  editor, and — only after you first use the ▦ dashboard-card dialog — the card mirror
+  under `/config/www/bruh_insights/`. Everything else under `/config` (`CLAUDE.md`, the
+  shared login credential) is only ever read. The `/share` mount is writable solely for
+  the memory-inbox drop-files described above.
 
 ## Troubleshooting
 

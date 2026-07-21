@@ -4,6 +4,32 @@ All notable changes to **BRUH Insights**, newest first. This project adheres to 
 
 > 💡 Prefer a cleaner, categorized view? See the [formatted changelog at bruhautomation.com](https://bruhautomation.com/bruh-insights/changelog/).
 
+## 1.4.0
+
+- **Dashboard cards now work over HTTPS and Nabu Casa**: insight HTML is mirrored into
+  `/config/www/bruh_insights/` (created only the first time you open the ▦ dialog), where
+  Home Assistant itself serves it at a same-origin `/local/…` URL — no port, no mixed
+  content, works on HTTP, HTTPS, and remote dashboards alike. File names embed the
+  per-install card token, so links stay unguessable. The dialog verifies the URL actually
+  serves and tells you the one case where a single HA restart is needed (brand-new `www`
+  folder)
+- **Card port open by default**: port 8100 is now mapped out of the box, so the classic
+  plain-HTTP card URLs work without a trip to the add-on's Network settings; the dialog's
+  "map the port" setup step now only appears when the port is actually closed (checked
+  live via the Supervisor). Set the port to null to close it — cards keep working via
+  `/local`
+- **Memory dialog uses your screen**: on desktop the 🧠 Memory dialog is now wide and
+  two-column — questions and learned facts on the left, the home memory document on the
+  right at full height (no more pinched 320px window); editing the markdown gets the same
+  room. Phones keep the stacked layout
+- **Teaching a fact no longer leaves a duplicate row**: the "Teach it something" box now
+  lives with the memory document, and a taught fact's only home is that document — Claude
+  merges it straight in (with a live indicator), instead of also parking a permanent copy
+  in the "Learned facts" list. Re-teaching something already in the document says
+  "already known" instead of re-merging, and if the merge fails for any reason the fact
+  is still appended under "Recently added" so nothing is ever lost. The facts list is now
+  purely what the analyst discovered on its own
+
 ## 1.3.1
 
 - **Dashboard-card YAML uses your real address**: the ▦ dialog now builds the card URL

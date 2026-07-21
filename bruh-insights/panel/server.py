@@ -29,11 +29,13 @@ DELETE /api/user_category/{id} — delete one (definition + insight + history)
 GET  /api/insight/{id}/feedback      — standing feedback for a category
 POST /api/insight/{id}/feedback      — add feedback (steers future runs)
 DELETE /api/insight/{id}/feedback/{ts} — drop one feedback entry
-GET  /api/card_info          — dashboard-card server port/token + HA URLs
+GET  /api/card_info          — dashboard-card info (port mapping, token, /local
+                               mirror paths, HA URLs); also (re)syncs the mirror
 GET  /api/questions          — open analyst questions across insights
 POST /api/questions/answer   — answer one (forwards to bruh_claude, if installed)
 GET  /api/knowledge          — learned facts + question ledger + shared memory.md
-POST /api/knowledge/fact     — add a fact by hand {text}; Claude merges it into memory.md
+POST /api/knowledge/fact     — teach a fact {text}; Claude merges it into memory.md
+                               (its only home — never duplicated into the ledger)
 DELETE /api/knowledge/fact/{ts}            — forget one fact
 POST /api/knowledge/question/{ts}/answer   — answer an open question {answer}
 POST /api/knowledge/question/{ts}/dismiss  — retire a question unanswered
@@ -47,10 +49,11 @@ HTML and let aiohttp serve at /. Generation jobs run through a single-worker
 queue so only one Claude invocation is in flight at a time (subscription
 rate-limit friendly).
 
-A second, token-protected mini server on :8100 (the "card server") serves
-each stored insight's self-contained HTML so HA dashboard webpage cards can
-embed live insights. The port is unexposed by default; users map it in the
-add-on's network settings when they want dashboard cards.
+Dashboard cards are served two ways: a /local mirror (insight HTML copied to
+/config/www/bruh_insights/ where HA itself serves it — works on HTTP and
+HTTPS/Nabu Casa dashboards alike; created on first use of the ▦ dialog), and
+a token-protected mini server on :8100 (the "card server", mapped by default)
+as the plain-HTTP fallback when /config/www isn't writable.
 """
 from __future__ import annotations
 
@@ -228,6 +231,7 @@ def save_insight(insight: dict) -> None:
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(insight, ensure_ascii=False), encoding="utf-8")
     tmp.replace(path)
+    _mirror_card(insight)  # keep the /local dashboard-card copy fresh
     # keep only the newest N custom insights
     customs = sorted(
         (p for p in INSIGHTS_DIR.glob("custom-*.json")),
@@ -629,6 +633,7 @@ async def h_delete_insight(request: web.Request) -> web.Response:
         path.unlink()
     except OSError:
         raise web.HTTPNotFound(text="no such insight")
+    _unmirror_card(insight_id)
     JOBS.pop(insight_id, None)
     return web.json_response({"deleted": insight_id})
 
@@ -873,6 +878,104 @@ def make_card_app() -> web.Application:
     return app
 
 
+# -- /local card mirror -------------------------------------------------------
+# HTTPS dashboards (Nabu Casa remote, local SSL) block plain-HTTP iframes, so
+# the port-8100 server can never reach them (mixed content). The mirror writes
+# each stored insight's HTML into /config/www/bruh_insights/, where Home
+# Assistant ITSELF serves it at /local/… — same origin as every dashboard, so
+# the card works over HTTP, HTTPS, and Nabu Casa alike. Opt-in by first use:
+# the folder is only created the first time the ▦ dialog is opened; from then
+# on save/delete keep it in sync. File names embed the per-install card token
+# (standing in for the ?token= check — HA serves /local without auth).
+
+WWW_CARD_DIR = Path(os.environ.get(
+    "BRUH_INSIGHTS_WWW_DIR", "/config/www/bruh_insights"))
+
+
+def _card_file_name(insight_id: str) -> str:
+    return f"{insight_id}-{get_card_token()}.html"
+
+
+def _mirror_card(insight: dict) -> None:
+    """Best-effort mirror of one insight; a no-op until the dir exists."""
+    if not WWW_CARD_DIR.is_dir():
+        return
+    html = insight.get("html")
+    insight_id = str(insight.get("id") or "")
+    if not isinstance(html, str) or not html or not _SAFE_ID.match(insight_id):
+        return
+    try:
+        path = WWW_CARD_DIR / _card_file_name(insight_id)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(html + _CARD_RELOAD_SNIPPET, encoding="utf-8")
+        tmp.replace(path)
+    except OSError as exc:
+        log.debug("card mirror write failed: %s", exc)
+
+
+def _unmirror_card(insight_id: str) -> None:
+    if not WWW_CARD_DIR.is_dir():
+        return
+    try:
+        (WWW_CARD_DIR / _card_file_name(insight_id)).unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _sync_card_mirrors() -> bool:
+    """Create the mirror dir and bring it in line with the stored insights
+    (runs when the ▦ dialog opens). False when /config/www isn't writable —
+    the dialog then falls back to the port-8100 URL."""
+    try:
+        WWW_CARD_DIR.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        log.debug("cannot create card mirror dir: %s", exc)
+        return False
+    insights = [i for i in load_insights()
+                if isinstance(i.get("html"), str) and i["html"]]
+    keep = {_card_file_name(i["id"]) for i in insights}
+    try:
+        for stale in WWW_CARD_DIR.glob("*.html"):
+            if stale.name not in keep:
+                stale.unlink()
+    except OSError:
+        pass
+    for ins in insights:
+        _mirror_card(ins)
+    return True
+
+
+_PORT_CACHE: dict = {"ts": 0.0, "checked": False, "host_port": None}
+
+
+async def _card_host_port() -> dict:
+    """Whether the Supervisor currently maps the card port to a host port:
+    {"checked": bool, "host_port": int|None}. checked=False when the
+    Supervisor can't be asked (tests, dev) — the dialog then doesn't nag."""
+    if time.time() - _PORT_CACHE["ts"] < 60:
+        return {"checked": _PORT_CACHE["checked"],
+                "host_port": _PORT_CACHE["host_port"]}
+    checked, host_port = False, None
+    token = os.environ.get("SUPERVISOR_TOKEN", "")
+    if token:
+        try:
+            import aiohttp
+
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                        "http://supervisor/addons/self/info",
+                        headers={"Authorization": f"Bearer {token}"},
+                        timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                    data = await resp.json()
+            network = (data.get("data") or {}).get("network") or {}
+            mapped = network.get(f"{CARD_PORT}/tcp")
+            checked, host_port = True, (int(mapped) if mapped else None)
+        except Exception as exc:  # noqa: BLE001 — cosmetic; dialog just won't nag
+            log.debug("could not read add-on network info: %s", exc)
+    _PORT_CACHE.update(ts=time.time(), checked=checked, host_port=host_port)
+    return {"checked": checked, "host_port": host_port}
+
+
 _HA_URLS_CACHE: dict = {"ts": 0.0, "urls": {}}
 
 
@@ -899,9 +1002,16 @@ async def _ha_urls() -> dict:
 
 async def h_card_info(request: web.Request) -> web.Response:
     urls = await _ha_urls()
+    www_ok = await asyncio.to_thread(_sync_card_mirrors)
+    port_info = await _card_host_port()
     return web.json_response({
         "port": CARD_PORT,
+        "host_port": port_info["host_port"],
+        "port_checked": port_info["checked"],
         "token": get_card_token(),
+        "www_cards": www_ok,
+        "local_dir": f"/local/{WWW_CARD_DIR.name}",
+        "local_suffix": f"-{get_card_token()}.html",
         "internal_url": urls.get("internal_url"),
         "external_url": urls.get("external_url"),
     })
@@ -1009,34 +1119,47 @@ def _strip_md_fences(text: str) -> str:
 
 
 async def _merge_memory_task(facts: list[str]) -> None:
-    """Fold new facts into memory.md with a cheap Claude pass (serialized;
-    falls back to a plain append when Claude is unavailable or misbehaves)."""
+    """Fold new facts into memory.md with a cheap Claude pass (serialized).
+
+    The facts ALWAYS land in the document: any failure — Claude unreachable,
+    a timeout, an implausible reply — falls back to a plain append under
+    "## Recently added" (a later merge files them properly). This guarantee
+    is what lets taught facts live only in the document, with no shadow copy
+    in the facts ledger."""
     async with MEMORY_LOCK:
         MEMORY_STATE.update(merging=True, error="")
+        current = ""
+        written = False
         try:
-            current = _read_shared_memory()
-            merged = ""
-            if claude_client.get_auth():
-                prompt = (
-                    "CURRENT MEMORY DOCUMENT:\n\n"
-                    + (current.strip() or MEMORY_TEMPLATE)
-                    + "\n\nNEW FACTS to merge in:\n"
-                    + "\n".join(f"- {f}" for f in facts)
-                )
-                result = await asyncio.to_thread(
-                    claude_client.run_claude, prompt, MEMORY_MERGE_SYSTEM, MODEL, 180)
-                if result["ok"]:
-                    merged = _strip_md_fences(result["text"])
-            # sanity: a merged doc is markdown of plausible size, not an
-            # apology or an empty string — otherwise take the fallback path
-            if merged and "#" in merged and len(merged) >= 40 \
-                    and len(merged) <= MAX_MEMORY_CHARS:
-                await asyncio.to_thread(_write_shared_memory, merged)
-            else:
-                await asyncio.to_thread(_append_memory_fallback, current, facts)
-        except Exception as exc:  # noqa: BLE001 — surface in the panel, never crash
-            MEMORY_STATE["error"] = str(exc)[:300]
-            log.warning("memory merge failed: %s", exc)
+            try:
+                current = _read_shared_memory()
+                merged = ""
+                if claude_client.get_auth():
+                    prompt = (
+                        "CURRENT MEMORY DOCUMENT:\n\n"
+                        + (current.strip() or MEMORY_TEMPLATE)
+                        + "\n\nNEW FACTS to merge in:\n"
+                        + "\n".join(f"- {f}" for f in facts)
+                    )
+                    result = await asyncio.to_thread(
+                        claude_client.run_claude, prompt, MEMORY_MERGE_SYSTEM, MODEL, 180)
+                    if result["ok"]:
+                        merged = _strip_md_fences(result["text"])
+                # sanity: a merged doc is markdown of plausible size, not an
+                # apology or an empty string — otherwise take the fallback path
+                if merged and "#" in merged and len(merged) >= 40 \
+                        and len(merged) <= MAX_MEMORY_CHARS:
+                    await asyncio.to_thread(_write_shared_memory, merged)
+                    written = True
+            except Exception as exc:  # noqa: BLE001 — surface in the panel, never crash
+                MEMORY_STATE["error"] = str(exc)[:300]
+                log.warning("memory merge failed: %s", exc)
+            if not written:
+                try:
+                    await asyncio.to_thread(_append_memory_fallback, current, facts)
+                except Exception as exc:  # noqa: BLE001
+                    MEMORY_STATE["error"] = str(exc)[:300]
+                    log.warning("memory fallback append failed: %s", exc)
         finally:
             MEMORY_STATE["merging"] = False
 
@@ -1069,6 +1192,12 @@ async def h_knowledge(request: web.Request) -> web.Response:
 
 
 async def h_knowledge_fact_add(request: web.Request) -> web.Response:
+    """Teach a fact from the panel. A taught fact's home is the memory
+    DOCUMENT — Claude merges it into memory.md, so it shows up exactly once,
+    in the markdown. It is deliberately NOT stored in the facts ledger (that
+    stays reserved for what the analyst discovered on its own); the merge
+    task guarantees the fact lands in the document even when Claude is
+    unreachable."""
     body = await request.json()
     text = str(body.get("text") or "").strip()
     if not text:
@@ -1076,13 +1205,17 @@ async def h_knowledge_fact_add(request: web.Request) -> web.Response:
     if len(text) > knowledge_store.MAX_TEXT_CHARS:
         raise web.HTTPBadRequest(
             text=f"fact too long (max {knowledge_store.MAX_TEXT_CHARS} chars)")
-    entry, created = knowledge_store.add_fact(text, source="user")
-    if created:
-        await _submit_memory(text)
-        # fold it into the memory document in the background
-        _start_memory_merge([text])
-    return web.json_response(
-        {"added": created, "fact": entry, "merging": created})
+    key = knowledge_store.normalize(text)
+    known = any(knowledge_store.normalize(f["text"]) == key
+                for f in knowledge_store.list_facts())
+    if not known and key:
+        # re-add guard: the same wording already sits in the document
+        known = key in knowledge_store.normalize(_read_shared_memory())
+    if known:
+        return web.json_response({"added": False, "merging": False})
+    await _submit_memory(text)
+    _start_memory_merge([text])
+    return web.json_response({"added": True, "merging": True})
 
 
 async def h_memory_put(request: web.Request) -> web.Response:

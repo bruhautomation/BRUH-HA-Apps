@@ -226,8 +226,9 @@
       <p class="hint">Embed this insight on any Home Assistant dashboard as a live card. It always
         shows the latest run.</p>
       <ol class="steps">
-        <li>One-time setup: open <b>Settings → Add-ons → BRUH Insights → Configuration → Network</b>
-          and map port <b>8100</b> (host port 8100), then restart the add-on.</li>
+        <li id="cardPortStep" class="hidden">One-time setup: open <b>Settings → Add-ons →
+          BRUH Insights → Configuration → Network</b> and map port <b>8100</b> (host port 8100),
+          then restart the add-on.</li>
         <li>On your dashboard choose <b>Add card → Webpage</b>, or paste this YAML in the card
           editor:</li>
       </ol>
@@ -243,39 +244,41 @@
 </div>
 
 <div id="kModal" class="modal" role="dialog" aria-modal="true">
-  <div class="box edit">
+  <div class="box edit kwide">
     <header>
       <span>🧠</span>
       <span>Memory — what Insights has learned</span>
       <div class="spacer"></div>
       <button id="kClose" class="btn icon" data-tip="Close" aria-label="Close">✕</button>
     </header>
-    <div class="edit-body">
-      <p class="hint">Every durable discovery, homeowner answer, and piece of feedback lands here
-        and is fed back into every future analysis — so the analyst builds on what it knows
-        instead of rediscovering it. Remove anything that's wrong; it will stop being used.</p>
+    <div class="edit-body ksplit">
+      <div class="kcol">
+        <p class="hint">Every durable discovery, homeowner answer, and piece of feedback lands here
+          and is fed back into every future analysis — so the analyst builds on what it knows
+          instead of rediscovering it. Remove anything that's wrong; it will stop being used.</p>
 
-      <label>Open questions from the analyst</label>
-      <div id="kOpenQs" class="klist"></div>
+        <label>Open questions from the analyst</label>
+        <div id="kOpenQs" class="klist"></div>
 
-      <label>Learned facts</label>
-      <form id="kAddForm" class="kadd">
-        <input id="kAddInput" type="text" maxlength="500" autocomplete="off"
-               placeholder="Teach it something — “The garage fridge is supposed to run 24/7”">
-        <button class="btn small primary" type="submit">Add</button>
-      </form>
-      <div id="kFacts" class="klist"></div>
+        <label>Learned facts</label>
+        <div id="kFacts" class="klist"></div>
 
-      <div id="kAnsweredWrap" class="hidden">
-        <label>Answered questions</label>
-        <div id="kAnswered" class="klist"></div>
+        <div id="kAnsweredWrap" class="hidden">
+          <label>Answered questions</label>
+          <div id="kAnswered" class="klist"></div>
+        </div>
       </div>
 
-      <div id="kMemWrap">
+      <div id="kMemWrap" class="kcol kmemcol">
         <label>Home memory file</label>
-        <p class="hint">The consolidated memory document, injected into every analysis. Facts you
-          teach above are merged in automatically by Claude. Shared with BRUH Terminal's
-          <code>ha-memory</code> when that add-on is installed.</p>
+        <p class="hint">The consolidated memory document, injected into every analysis. Teach it a
+          fact and Claude files it into the document below — or edit the markdown yourself.
+          Shared with BRUH Terminal's <code>ha-memory</code> when that add-on is installed.</p>
+        <form id="kAddForm" class="kadd">
+          <input id="kAddInput" type="text" maxlength="500" autocomplete="off"
+                 placeholder="Teach it something — “The garage fridge is supposed to run 24/7”">
+          <button class="btn small primary" type="submit">Add</button>
+        </form>
         <div id="kMemMerging" class="kmerging hidden">✨ Claude is merging the new fact into the
           memory file…</div>
         <div class="row kmemrow">
@@ -285,8 +288,8 @@
           <span id="kMemDirty" class="kdirty hidden">unsaved edits</span>
         </div>
         <div id="kMemView" class="kmd"></div>
-        <div id="kMemEmpty" class="kempty hidden">No memory file yet — teach a fact above, or press
-          “Edit markdown” to start one.</div>
+        <div id="kMemEmpty" class="kempty hidden">No memory file yet — teach it a fact above, or
+          press “Edit markdown” to start one.</div>
         <textarea id="kMemTa" class="kmemedit hidden" rows="14" maxlength="100000"
                   spellcheck="false"></textarea>
       </div>
