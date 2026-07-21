@@ -513,10 +513,12 @@ class TestKnowledgeEndpoints(InsightsServerCase):
                 # the Q→A became a fact
                 self.assertTrue(any("Yes, security" in f["text"] for f in data["facts"]))
 
-                # delete the fact
+                # delete the fact — also kicks off a memory-file scrub
                 ts = data["facts"][0]["ts"]
                 resp = await client.delete(f"/api/knowledge/fact/{ts}")
                 self.assertEqual(resp.status, 200)
+                self.assertTrue((await resp.json())["removing"])
+                await self.server.MEMORY_LAST_TASK
                 resp = await client.delete(f"/api/knowledge/fact/{ts}")
                 self.assertEqual(resp.status, 404)
             finally:
@@ -769,6 +771,83 @@ class TestMemoryFile(InsightsServerCase):
         self.assertIn("## Recently added", text)
         self.assertIn("- New fact", text)
         self.assertNotIn("Sorry", text)
+
+    def test_fact_delete_scrubs_memory_without_claude(self):
+        """Fallback path: the matching bullet is stripped deterministically."""
+        claude_client.get_auth = lambda: None
+        entry, _ = knowledge_store.add_fact("Hall sensor drops offline at 2 AM")
+        self.server.SHARED_MEMORY_FILE.write_text(
+            "# Home Memory\n\n## Device notes\n"
+            "- Hall sensor drops offline at 2 AM\n- Keep me\n")
+
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                resp = await client.delete(f"/api/knowledge/fact/{entry['ts']}")
+                self.assertEqual(resp.status, 200)
+                self.assertTrue((await resp.json())["removing"])
+                await self.server.MEMORY_LAST_TASK
+            finally:
+                await client.close()
+
+        asyncio.run(run())
+        text = self.server.SHARED_MEMORY_FILE.read_text()
+        self.assertNotIn("Hall sensor drops offline", text)
+        self.assertIn("- Keep me", text)
+        self.assertEqual(knowledge_store.list_facts(), [])
+
+    def test_fact_delete_scrubs_memory_via_claude(self):
+        """Claude path: reworded statements are removed by the model."""
+        entry, _ = knowledge_store.add_fact("The garage fridge runs 24/7")
+        self.server.SHARED_MEMORY_FILE.write_text(
+            "# Home Memory\n\n## Device notes\n"
+            "- Garage refrigerator is expected to run around the clock\n"
+            "- Keep me\n")
+        prompts = []
+        claude_client.get_auth = lambda: {"type": "api_key", "value": "k"}
+
+        def fake_run(prompt, system, *a, **k):
+            prompts.append((prompt, system))
+            return {"ok": True, "text":
+                    "# Home Memory\n\n## Device notes\n- Keep me\n",
+                    "error": "", "meta": {}}
+
+        claude_client.run_claude = fake_run
+
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                await client.delete(f"/api/knowledge/fact/{entry['ts']}")
+                await self.server.MEMORY_LAST_TASK
+            finally:
+                await client.close()
+
+        asyncio.run(run())
+        text = self.server.SHARED_MEMORY_FILE.read_text()
+        self.assertNotIn("around the clock", text)
+        self.assertIn("- Keep me", text)
+        removal_calls = [p for p in prompts if "DELETED" in p[0]]
+        self.assertEqual(len(removal_calls), 1)
+        self.assertIn("The garage fridge runs 24/7", removal_calls[0][0])
+        self.assertIn("even if reworded", removal_calls[0][1])
+
+    def test_fact_delete_without_memory_file_skips_scrub(self):
+        entry, _ = knowledge_store.add_fact("Orphan fact")
+
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                resp = await client.delete(f"/api/knowledge/fact/{entry['ts']}")
+                self.assertEqual(resp.status, 200)
+                self.assertFalse((await resp.json())["removing"])
+                self.assertIsNone(self.server.MEMORY_LAST_TASK)
+            finally:
+                await client.close()
+
+        asyncio.run(run())
 
     def test_duplicate_fact_does_not_merge(self):
         knowledge_store.add_fact("Already known")

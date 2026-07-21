@@ -4,6 +4,28 @@ All notable changes to **BRUH Insights**, newest first. This project adheres to 
 
 > 💡 Prefer a cleaner, categorized view? See the [formatted changelog at bruhautomation.com](https://bruhautomation.com/bruh-insights/changelog/).
 
+## 1.5.0
+
+- **Port 8100 removed entirely**: dashboard cards are now served exclusively by Home
+  Assistant itself via the `/local` mirror, which works on HTTP, HTTPS, and Nabu Casa
+  dashboards alike — so the plain-HTTP card server (and the last exposed port) is gone.
+  Cards created with the old `http://<host>:8100/card/…` YAML should be re-added from
+  the ▦ dialog to pick up the `/local/…` URL
+- **Deleting a learned fact scrubs the memory file too**: removing a fact from the 🧠
+  dialog now also removes it from the home memory document — Claude rewrites the file
+  without it (catching reworded copies); when Claude isn't reachable, the matching
+  bullet line is stripped directly. One delete, gone everywhere
+- **Clearer memory explanations**: the 🧠 dialog now spells out the two kinds of memory —
+  the analyst's own learned facts (auto-discovered, left column) vs the curated home
+  memory file (editable source of truth, right column) — and what each is used for
+- **Questions only when they matter**: the analyst is now instructed to ask a clarifying
+  question only on a genuine blocker whose answer would materially change future
+  analyses — most runs should ask none, and filler/conversational questions are
+  explicitly banned
+- **Run-history polish**: the › "Newer run" stepper no longer shows when you're already
+  on the latest run (and ‹ hides at the oldest), and card-footer tooltips now open
+  upward so they aren't cut off by the bottom of the card
+
 ## 1.4.0
 
 - **Dashboard cards now work over HTTPS and Nabu Casa**: insight HTML is mirrored into

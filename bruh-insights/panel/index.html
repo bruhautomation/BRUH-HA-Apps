@@ -224,14 +224,8 @@
     </header>
     <div class="edit-body">
       <p class="hint">Embed this insight on any Home Assistant dashboard as a live card. It always
-        shows the latest run.</p>
-      <ol class="steps">
-        <li id="cardPortStep" class="hidden">One-time setup: open <b>Settings → Add-ons →
-          BRUH Insights → Configuration → Network</b> and map port <b>8100</b> (host port 8100),
-          then restart the add-on.</li>
-        <li>On your dashboard choose <b>Add card → Webpage</b>, or paste this YAML in the card
-          editor:</li>
-      </ol>
+        shows the latest run. On your dashboard choose <b>Add card → Webpage</b>, or paste this
+        YAML in the card editor:</p>
       <div id="cardWarn" class="flowerr hidden"></div>
       <pre id="cardYaml" class="yamlbox"></pre>
       <div class="row">
@@ -253,14 +247,18 @@
     </header>
     <div class="edit-body ksplit">
       <div class="kcol">
-        <p class="hint">Every durable discovery, homeowner answer, and piece of feedback lands here
-          and is fed back into every future analysis — so the analyst builds on what it knows
-          instead of rediscovering it. Remove anything that's wrong; it will stop being used.</p>
+        <p class="hint">Insights remembers two ways, and both are given to the analyst on every
+          run. <b>This column</b> is what the analyst picked up on its own while analyzing your
+          home: questions it asked you, and facts it discovered. <b>The document on the right</b>
+          is the curated home memory file — the source of truth you can edit.</p>
 
         <label>Open questions from the analyst</label>
         <div id="kOpenQs" class="klist"></div>
 
         <label>Learned facts</label>
+        <p class="hint">Discovered automatically during insight runs (plus your answers and
+          feedback). Treated as established truth in every future analysis. Delete anything
+          wrong — it stops being used <i>and</i> is scrubbed from the memory file.</p>
         <div id="kFacts" class="klist"></div>
 
         <div id="kAnsweredWrap" class="hidden">
@@ -271,16 +269,17 @@
 
       <div id="kMemWrap" class="kcol kmemcol">
         <label>Home memory file</label>
-        <p class="hint">The consolidated memory document, injected into every analysis. Teach it a
-          fact and Claude files it into the document below — or edit the markdown yourself.
-          Shared with BRUH Terminal's <code>ha-memory</code> when that add-on is installed.</p>
+        <p class="hint">The home's curated memory document — preferences, nicknames, patterns,
+          device notes — injected into every analysis, and shared with BRUH Terminal's
+          <code>ha-memory</code> when that add-on is installed. Teach it a fact and Claude files
+          it into the right section below, or edit the markdown yourself.</p>
         <form id="kAddForm" class="kadd">
           <input id="kAddInput" type="text" maxlength="500" autocomplete="off"
                  placeholder="Teach it something — “The garage fridge is supposed to run 24/7”">
           <button class="btn small primary" type="submit">Add</button>
         </form>
-        <div id="kMemMerging" class="kmerging hidden">✨ Claude is merging the new fact into the
-          memory file…</div>
+        <div id="kMemMerging" class="kmerging hidden">✨ Claude is updating the memory
+          file…</div>
         <div class="row kmemrow">
           <button id="kMemEdit" class="btn small">✎ Edit markdown</button>
           <button id="kMemSave" class="btn small primary hidden">Save</button>

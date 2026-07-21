@@ -135,25 +135,22 @@ blocking. One edge case: if the `www` folder didn't exist before, Home Assistant
 single restart to start serving `/local/…`; the dialog checks the URL live and tells you
 when that's the case.
 
-There is also a classic plain-HTTP card server on port **8100** (mapped by default; set
-it to null in the add-on's Network settings to close it) serving
-`http://<host>:8100/card/<id>?token=<your-card-token>`. The dialog only falls back to it
-when the `/local` mirror can't be written, and only shows the port-mapping setup step
-when the Supervisor reports the port is actually closed. Remember that browsers block
-plain-HTTP iframes inside HTTPS dashboards — the mixed-content warning in the dialog
-explains this when it applies.
-
 The card always shows the **latest run** of that insight and reloads itself every
 15 minutes. The card token is a per-install random secret (stored in
-`/data/secrets/card_token`) embedded in the `/local` file name and the port-8100 `token`
-parameter; both paths serve *only* stored insight HTML — no API, no credentials, no
-controls. Anyone with the exact URL can view that insight, so treat the token like any
-other dashboard-level secret.
+`/data/secrets/card_token`) embedded in the `/local` file name; the mirror holds *only*
+stored insight HTML — no API, no credentials, no controls. Anyone with the exact URL can
+view that insight, so treat the token like any other dashboard-level secret.
+
+> Upgrading from ≤ 1.4.x: the plain-HTTP card server on port 8100 has been removed —
+> cards made with the old `http://<host>:8100/card/…` YAML should be re-added from the
+> ▦ dialog to get the new `/local/…` URL.
 
 ## Questions, findings, and memory
 
 The analyst may attach up to two **clarifying questions** to an insight ("Is the garage
-fridge meant to run overnight?"). They appear on the card with an inline answer box, and
+fridge meant to run overnight?") — but only when it hits a genuine blocker whose answer
+would materially change future analyses; most runs ask none.
+They appear on the card with an inline answer box, and
 every question is tracked in the add-on's own knowledge base with a lifecycle —
 **open → answered/dismissed**. Asked and answered questions are shown to the analyst on
 every run with a hard never-re-ask rule (plus a server-side filter as backstop), so you
@@ -167,7 +164,8 @@ instructed to lead with what changed and dig deeper — not to regenerate the sa
 
 The 🧠 **Memory** button in the top bar shows all of it — on desktop as a wide
 two-column dialog: open questions and the analyst's learned facts on the left (answer,
-dismiss, or remove anything wrong right there), and the **home memory file** at
+dismiss, or remove anything wrong right there — deleting a fact also scrubs it from the
+memory file, so it's gone everywhere), and the **home memory file** at
 `/config/.bruh_claude/memory/memory.md` on the right at full height, whose contents are
 folded into every data snapshot.
 
@@ -215,12 +213,10 @@ since 10:41 PM") instead of parroting `home`/`not_home`.
   companion app or hide the entities in HA and they'll be excluded.
 - Generated visualizations render in **sandboxed iframes** (`sandbox="allow-scripts"`) — they
   cannot touch your Home Assistant session, cookies, or the panel itself.
-- The panel is only reachable through HA Ingress (admin users), never exposed on a host
-  port. The dashboard-card server (port 8100, mapped by default; set to null to close
-  it) is a separate mini server that serves only stored insight HTML and requires the
-  per-install card token on every request. The `/local` card mirror likewise serves only
-  insight HTML, from file names that embed the same token (HA serves `/local/…` without
-  authentication, so the unguessable name is the lock).
+- The panel is only reachable through HA Ingress (admin users) — the add-on exposes no
+  host ports at all. The `/local` card mirror serves only insight HTML, from file names
+  that embed the per-install card token (HA serves `/local/…` without authentication, so
+  the unguessable name is the lock).
 - The add-on's `/config` mount is writable for **two things only**: the home memory
   document at `/config/.bruh_claude/memory/memory.md`, maintained by the panel's Memory
   editor, and — only after you first use the ▦ dashboard-card dialog — the card mirror

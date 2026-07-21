@@ -441,9 +441,16 @@ function makeQuestions(insight) {
 
 function makeHistoryControls(id, insight, view) {
   const wrap = el("span", "hist");
+  const entries = state.history[id] ? historyEntries(id, insight) : null;
   const older = el("button", "btn icon hstep", "‹");
   tip(older, "Older run");
   older.addEventListener("click", () => stepRun(id, insight, 1));
+  // hide steppers that can't go anywhere: ‹ once history is known to end
+  // here, › whenever the latest run is already showing
+  if (entries) {
+    const idx = Math.max(entries.indexOf(view ? view.ts : ""), 0);
+    if (idx >= entries.length - 1) older.classList.add("hidden");
+  }
   const sel = document.createElement("select");
   sel.className = "histsel";
   sel.title = "View a past run";
@@ -474,6 +481,7 @@ function makeHistoryControls(id, insight, view) {
   const newer = el("button", "btn icon hstep", "›");
   tip(newer, "Newer run");
   newer.addEventListener("click", () => stepRun(id, insight, -1));
+  if (!view) newer.classList.add("hidden");
   wrap.appendChild(older);
   wrap.appendChild(sel);
   wrap.appendChild(newer);
@@ -1116,10 +1124,15 @@ async function renderKnowledge() {
         " · " + when.toLocaleDateString([], { month: "short", day: "numeric" }))));
     row.appendChild(txt);
     const del = el("button", "btn icon", "✕");
-    tip(del, "Forget this fact");
+    tip(del, "Forget this fact — it's also removed from the memory file");
     del.addEventListener("click", async () => {
       try {
-        await api(`api/knowledge/fact/${f.ts}`, { method: "DELETE" });
+        const res = await api(`api/knowledge/fact/${f.ts}`, { method: "DELETE" });
+        if (res.removing) {
+          toast("Forgotten — removing it from the memory file too…");
+          $("#kMemMerging").classList.remove("hidden");
+          pollMemoryMerge();
+        }
         renderKnowledge();
       } catch (e) { toast(e.message); }
     });
@@ -1328,36 +1341,12 @@ function copyText(text) {
   return Promise.resolve(copyFallback(text));
 }
 
-// The card server (port 8100, plain HTTP) is only reachable on the LAN —
-// never through the Nabu Casa cloud proxy. Pick the host the browser is
-// ACTUALLY using to reach HA when it's a LAN address (hassio.local,
-// homeassistant.local, a raw IP — whatever the user typed), because that
-// name provably resolves for them; fall back to HA's internal_url for
-// cloud/remote sessions.
-function isCloudHost(host) {
-  return /\.nabu\.casa$/i.test(host || "");
-}
-
-function cardHost(info) {
-  const fromUrl = (u) => {
-    const m = (u || "").match(/^https?:\/\/([^/:]+)/);
-    return m ? m[1] : "";
-  };
-  const page = window.location.hostname;
-  if (page && !isCloudHost(page)) return page;
-  const internal = fromUrl(info.internal_url);
-  if (internal && !isCloudHost(internal)) return internal;
-  return "homeassistant.local";
-}
-
 async function openCardModal(insight) {
   openBox("#cardModal");
   const pre = $("#cardYaml");
   const warn = $("#cardWarn");
   const hint = $("#cardHint");
-  const portStep = $("#cardPortStep");
   warn.classList.add("hidden");
-  portStep.classList.add("hidden");
   pre.textContent = "Loading…";
   try {
     if (!cardInfoCache) cardInfoCache = await api("api/card_info");
@@ -1366,63 +1355,33 @@ async function openCardModal(insight) {
     return;
   }
   const info = cardInfoCache;
-  const yamlFor = (url) => [
+  if (!info.www_cards) {
+    pre.textContent = "Dashboard cards are unavailable: the add-on could not write to "
+      + "/config/www. Check that the /config mount is writable and restart the add-on.";
+    return;
+  }
+  // HA itself serves the mirrored HTML at /local/… — same origin as every
+  // dashboard, so the card works over HTTP, HTTPS, and Nabu Casa alike.
+  const localUrl = `${info.local_dir}/${insight.id}${info.local_suffix}`;
+  pre.textContent = [
     "type: iframe",
-    `url: ${url}`,
+    `url: ${localUrl}`,
     `title: ${(insight.title || "Insight").replace(/[:#"\n]/g, " ").trim()}`,
     "aspect_ratio: 90%",
   ].join("\n");
-
-  if (info.www_cards) {
-    // Preferred path: HA itself serves the mirrored HTML at /local/… — same
-    // origin as every dashboard, so it works over HTTP, HTTPS, and Nabu Casa.
-    const localUrl = `${info.local_dir}/${insight.id}${info.local_suffix}`;
-    pre.textContent = yamlFor(localUrl);
-    hint.textContent = "Home Assistant serves this file itself, so the card works on any "
-      + "dashboard — local, HTTPS, and Nabu Casa remote alike. The file name contains this "
-      + "add-on's private card token — anyone with the exact link can view the insight, "
-      + "nothing else.";
-    try {
-      // the panel shares HA's origin (ingress), so we can verify /local works
-      const probe = await fetch(localUrl, { cache: "no-store" });
-      if (!probe.ok) throw new Error(String(probe.status));
-    } catch (e) {
-      warn.textContent = "Home Assistant isn't serving this file yet — its www folder was "
-        + "just created. Restart Home Assistant once (Settings → System → ⋮ → Restart "
-        + "Home Assistant), then the card will load.";
-      warn.classList.remove("hidden");
-    }
-    return;
-  }
-
-  // Fallback (no /config/www access): the plain-HTTP card server on the
-  // mapped host port.
-  const host = cardHost(info);
-  const port = info.host_port || info.port;
-  pre.textContent = yamlFor(`http://${host}:${port}/card/${insight.id}?token=${info.token}`);
-  if (info.port_checked && !info.host_port) portStep.classList.remove("hidden");
-
-  const cloud = isCloudHost(window.location.hostname);
-  if (window.location.protocol === "https:") {
-    // an http:// iframe inside an https:// dashboard is mixed content —
-    // the browser blanks it. Say so instead of letting the card "not work".
-    warn.textContent = cloud
-      ? "You're connected through Nabu Casa remote access right now. This card is served "
-        + "over plain HTTP on your local network, so browsers will show it EMPTY on any "
-        + "HTTPS dashboard (mixed content) — including this remote session. It works when "
-        + `you open Home Assistant locally, e.g. http://${host}:8123. The YAML below uses `
-        + "your local address — fix the hostname if it isn't right."
-      : "You're viewing Home Assistant over HTTPS. Browsers block plain-HTTP iframes "
-        + "inside an HTTPS page (mixed content), so this card will show EMPTY on dashboards "
-        + `opened this way — it works when you open HA over HTTP, e.g. http://${host}:8123.`;
+  hint.textContent = "Home Assistant serves this file itself, so the card works on any "
+    + "dashboard — local, HTTPS, and Nabu Casa remote alike. The file name contains this "
+    + "add-on's private card token — anyone with the exact link can view the insight, "
+    + "nothing else.";
+  try {
+    // the panel shares HA's origin (ingress), so we can verify /local works
+    const probe = await fetch(localUrl, { cache: "no-store" });
+    if (!probe.ok) throw new Error(String(probe.status));
+  } catch (e) {
+    warn.textContent = "Home Assistant isn't serving this file yet — its www folder was "
+      + "just created. Restart Home Assistant once (Settings → System → ⋮ → Restart "
+      + "Home Assistant), then the card will load.";
     warn.classList.remove("hidden");
-    hint.textContent = "The URL contains this add-on's private card token — anyone with "
-      + "the link on your network can view the insight, nothing else.";
-  } else {
-    hint.textContent = `This URL uses the address you're connected with right now `
-      + `(“${host}”), so it resolves for every device that reaches HA the same way. `
-      + "It contains this add-on's private card token — anyone with the link on your "
-      + "network can view the insight, nothing else.";
   }
 }
 

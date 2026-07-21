@@ -633,6 +633,12 @@ body.modal-open {
   opacity: 1;
   transform: translateY(0);
 }
+/* card-footer controls sit at the card's bottom edge — open their tooltips
+   upward so they aren't clipped by the card boundary */
+.card .foot [data-tip]::after {
+  top: auto;
+  bottom: calc(100% + 7px);
+}
 
 /* knowledge (memory) modal */
 .klist { display: flex; flex-direction: column; gap: 7px; margin-top: 4px; }

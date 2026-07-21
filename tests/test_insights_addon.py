@@ -85,13 +85,11 @@ class TestInsightsConfigYaml(unittest.TestCase):
         self.assertIn("amd64", self.config["arch"])
         self.assertIn("aarch64", self.config["arch"])
 
-    def test_card_server_port_mapped_by_default(self):
-        """8100 is mapped out of the box so dashboard cards just work; users
-        can still set it to null in the Network settings to close it."""
-        ports = self.config.get("ports", {})
-        self.assertIn("8100/tcp", ports)
-        self.assertEqual(ports["8100/tcp"], 8100)
-        self.assertIn("8100/tcp", self.config.get("ports_description", {}))
+    def test_no_ports_exposed(self):
+        """Cards are served via the /local mirror by HA itself — the add-on
+        exposes no host ports at all."""
+        self.assertNotIn("ports", self.config)
+        self.assertNotIn("ports_description", self.config)
 
 
 class TestInsightsBuildFiles(unittest.TestCase):
@@ -1429,39 +1427,7 @@ class TestCardServer(InsightsServerCase):
         self.assertEqual(t1, t2)
         self.assertGreaterEqual(len(t1), 16)
 
-    def test_card_routes(self):
-        from aiohttp.test_utils import TestClient, TestServer
-        self._save("energy", "2026-07-18T10:00:00")
-        token = self.server.get_card_token()
-
-        async def run():
-            client = TestClient(TestServer(self.server.make_card_app()))
-            await client.start_server()
-            try:
-                resp = await client.get(f"/card/energy?token={token}")
-                self.assertEqual(resp.status, 200)
-                text = await resp.text()
-                self.assertIn("<p>x</p>", text)
-                self.assertIn("location.reload", text)
-
-                for url in ("/card/energy?token=wrong", "/card/energy"):
-                    resp = await client.get(url)
-                    self.assertEqual(resp.status, 401)
-
-                resp = await client.get(f"/card/nope?token={token}")
-                self.assertEqual(resp.status, 404)
-                resp = await client.get(f"/card/UPPER?token={token}")
-                self.assertEqual(resp.status, 400)
-            finally:
-                await client.close()
-
-        asyncio.run(run())
-
     def test_card_info_endpoint(self):
-        self.server._HA_URLS_CACHE.update(
-            ts=time.time(), urls={"internal_url": "http://ha.lan:8123"})
-        self.server._PORT_CACHE.update(ts=0.0, checked=False, host_port=None)
-
         async def run():
             client = self._client()
             await client.start_server()
@@ -1469,18 +1435,12 @@ class TestCardServer(InsightsServerCase):
                 resp = await client.get("/api/card_info")
                 self.assertEqual(resp.status, 200)
                 data = await resp.json()
-                self.assertEqual(data["port"], self.server.CARD_PORT)
-                self.assertEqual(data["token"], self.server.get_card_token())
-                self.assertEqual(data["internal_url"], "http://ha.lan:8123")
                 # /local mirror enabled (dir created) and addressable
                 self.assertTrue(data["www_cards"])
                 self.assertEqual(data["local_dir"], "/local/bruh_insights")
                 self.assertEqual(
                     data["local_suffix"],
                     f"-{self.server.get_card_token()}.html")
-                # no Supervisor in tests → port mapping unknown, no nagging
-                self.assertFalse(data["port_checked"])
-                self.assertIsNone(data["host_port"])
             finally:
                 await client.close()
 

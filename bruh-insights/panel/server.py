@@ -29,8 +29,8 @@ DELETE /api/user_category/{id} — delete one (definition + insight + history)
 GET  /api/insight/{id}/feedback      — standing feedback for a category
 POST /api/insight/{id}/feedback      — add feedback (steers future runs)
 DELETE /api/insight/{id}/feedback/{ts} — drop one feedback entry
-GET  /api/card_info          — dashboard-card info (port mapping, token, /local
-                               mirror paths, HA URLs); also (re)syncs the mirror
+GET  /api/card_info          — dashboard-card /local mirror paths; also (re)syncs
+                               the mirror
 GET  /api/questions          — open analyst questions across insights
 POST /api/questions/answer   — answer one (forwards to bruh_claude, if installed)
 GET  /api/knowledge          — learned facts + question ledger + shared memory.md
@@ -49,11 +49,11 @@ HTML and let aiohttp serve at /. Generation jobs run through a single-worker
 queue so only one Claude invocation is in flight at a time (subscription
 rate-limit friendly).
 
-Dashboard cards are served two ways: a /local mirror (insight HTML copied to
-/config/www/bruh_insights/ where HA itself serves it — works on HTTP and
-HTTPS/Nabu Casa dashboards alike; created on first use of the ▦ dialog), and
-a token-protected mini server on :8100 (the "card server", mapped by default)
-as the plain-HTTP fallback when /config/www isn't writable.
+Dashboard cards are served by HA itself via a /local mirror: insight HTML is
+copied to /config/www/bruh_insights/ (created on first use of the ▦ dialog,
+kept in sync on save/delete), so Webpage cards are same-origin and work on
+HTTP and HTTPS/Nabu Casa dashboards alike. File names embed a per-install
+random token to keep the unauthenticated /local URLs unguessable.
 """
 from __future__ import annotations
 
@@ -123,6 +123,15 @@ You receive the current document and one or more new facts. Merge the facts in:
 
 Reply with ONLY the complete updated markdown document. No code fences, no commentary before or after."""
 
+MEMORY_REMOVE_SYSTEM = """You maintain a home's long-term memory file: a small, well-organized markdown document of durable facts about a smart home and its household (preferences, entity nicknames, household patterns, device notes).
+
+You receive the current document and one or more facts the homeowner DELETED — they are wrong, stale, or unwanted. Remove them:
+- Delete any bullet or statement that expresses the same information, even if reworded.
+- If nothing in the document matches a deleted fact, leave the document unchanged.
+- Change nothing else — keep the headings, HTML comments, and the homeowner's own wording and edits intact.
+
+Reply with ONLY the complete updated markdown document. No code fences, no commentary before or after."""
+
 # merge status surfaced to the panel; MEMORY_LAST_TASK lets tests (and
 # shutdown) await the in-flight merge deterministically
 MEMORY_STATE: dict = {"merging": False, "error": ""}
@@ -132,8 +141,7 @@ MODEL = os.environ.get("BRUH_INSIGHTS_MODEL", "").strip()
 TIMEOUT_S = int(float(os.environ.get("BRUH_INSIGHTS_TIMEOUT_MIN", "8") or 8) * 60)
 BIND_HOST = "0.0.0.0"
 BIND_PORT = 8099
-# Dashboard-card mini server (HTML for HA webpage cards); token-protected.
-CARD_PORT = int(os.environ.get("BRUH_INSIGHTS_CARD_PORT", "8100") or 8100)
+# Per-install secret embedded in /local card-mirror file names.
 CARD_TOKEN_FILE = Path(
     os.environ.get("BRUH_INSIGHTS_SECRETS", "/data/secrets")) / "card_token"
 MAX_HTML_BYTES = 400_000
@@ -824,11 +832,10 @@ async def h_feedback_delete(request: web.Request) -> web.Response:
     return web.json_response({"feedback": feedback_store.list_feedback(cat_id)})
 
 
-# -- dashboard card server ----------------------------------------------------
-# A separate mini HTTP app on CARD_PORT serving ONLY stored insight HTML,
-# guarded by a per-install random token. The HA dashboard "Webpage" (iframe)
-# card can't ride the ingress session, so this is the bridge: the user maps
-# the port in the add-on network settings and pastes YAML the panel offers.
+# -- dashboard cards ----------------------------------------------------------
+# Cards are served by Home Assistant itself via the /local mirror below. The
+# per-install random token is embedded in the mirror file names, keeping the
+# unauthenticated /local URLs unguessable.
 
 def get_card_token() -> str:
     try:
@@ -853,40 +860,13 @@ _CARD_RELOAD_SNIPPET = (
 )
 
 
-async def h_card(request: web.Request) -> web.Response:
-    token = request.query.get("token", "")
-    if not secrets.compare_digest(token, get_card_token()):
-        raise web.HTTPUnauthorized(text="bad or missing token")
-    path = _insight_path(request.match_info["id"])
-    try:
-        insight = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        raise web.HTTPNotFound(text="no such insight")
-    html = insight.get("html")
-    if not isinstance(html, str) or not html:
-        raise web.HTTPNotFound(text="insight has no visualization")
-    return web.Response(
-        text=html + _CARD_RELOAD_SNIPPET,
-        content_type="text/html",
-        headers={"Cache-Control": "no-store"},
-    )
-
-
-def make_card_app() -> web.Application:
-    app = web.Application(client_max_size=1024)
-    app.router.add_get("/card/{id}", h_card)
-    return app
-
-
 # -- /local card mirror -------------------------------------------------------
-# HTTPS dashboards (Nabu Casa remote, local SSL) block plain-HTTP iframes, so
-# the port-8100 server can never reach them (mixed content). The mirror writes
-# each stored insight's HTML into /config/www/bruh_insights/, where Home
-# Assistant ITSELF serves it at /local/… — same origin as every dashboard, so
-# the card works over HTTP, HTTPS, and Nabu Casa alike. Opt-in by first use:
-# the folder is only created the first time the ▦ dialog is opened; from then
-# on save/delete keep it in sync. File names embed the per-install card token
-# (standing in for the ?token= check — HA serves /local without auth).
+# The mirror writes each stored insight's HTML into /config/www/bruh_insights/,
+# where Home Assistant ITSELF serves it at /local/… — same origin as every
+# dashboard, so the card works over HTTP, HTTPS, and Nabu Casa alike. Opt-in
+# by first use: the folder is only created the first time the ▦ dialog is
+# opened; from then on save/delete keep it in sync. File names embed the
+# per-install card token (HA serves /local without auth).
 
 WWW_CARD_DIR = Path(os.environ.get(
     "BRUH_INSIGHTS_WWW_DIR", "/config/www/bruh_insights"))
@@ -925,7 +905,7 @@ def _unmirror_card(insight_id: str) -> None:
 def _sync_card_mirrors() -> bool:
     """Create the mirror dir and bring it in line with the stored insights
     (runs when the ▦ dialog opens). False when /config/www isn't writable —
-    the dialog then falls back to the port-8100 URL."""
+    the dialog then explains cards are unavailable."""
     try:
         WWW_CARD_DIR.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
@@ -945,75 +925,12 @@ def _sync_card_mirrors() -> bool:
     return True
 
 
-_PORT_CACHE: dict = {"ts": 0.0, "checked": False, "host_port": None}
-
-
-async def _card_host_port() -> dict:
-    """Whether the Supervisor currently maps the card port to a host port:
-    {"checked": bool, "host_port": int|None}. checked=False when the
-    Supervisor can't be asked (tests, dev) — the dialog then doesn't nag."""
-    if time.time() - _PORT_CACHE["ts"] < 60:
-        return {"checked": _PORT_CACHE["checked"],
-                "host_port": _PORT_CACHE["host_port"]}
-    checked, host_port = False, None
-    token = os.environ.get("SUPERVISOR_TOKEN", "")
-    if token:
-        try:
-            import aiohttp
-
-            async with aiohttp.ClientSession() as session:
-                async with session.get(
-                        "http://supervisor/addons/self/info",
-                        headers={"Authorization": f"Bearer {token}"},
-                        timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                    data = await resp.json()
-            network = (data.get("data") or {}).get("network") or {}
-            mapped = network.get(f"{CARD_PORT}/tcp")
-            checked, host_port = True, (int(mapped) if mapped else None)
-        except Exception as exc:  # noqa: BLE001 — cosmetic; dialog just won't nag
-            log.debug("could not read add-on network info: %s", exc)
-    _PORT_CACHE.update(ts=time.time(), checked=checked, host_port=host_port)
-    return {"checked": checked, "host_port": host_port}
-
-
-_HA_URLS_CACHE: dict = {"ts": 0.0, "urls": {}}
-
-
-async def _ha_urls() -> dict:
-    """internal_url/external_url from HA core config (best-effort, cached)."""
-    if time.time() - _HA_URLS_CACHE["ts"] < 300:
-        return _HA_URLS_CACHE["urls"]
-    urls: dict = {}
-    try:
-        import aiohttp
-
-        import ha_data
-        async with aiohttp.ClientSession() as session:
-            cfg = await ha_data._rest_get(session, "/config", timeout=10)
-        urls = {
-            "internal_url": cfg.get("internal_url"),
-            "external_url": cfg.get("external_url"),
-        }
-    except Exception as exc:  # noqa: BLE001 — cosmetic; YAML falls back to a template host
-        log.debug("could not fetch HA urls: %s", exc)
-    _HA_URLS_CACHE.update(ts=time.time(), urls=urls)
-    return urls
-
-
 async def h_card_info(request: web.Request) -> web.Response:
-    urls = await _ha_urls()
     www_ok = await asyncio.to_thread(_sync_card_mirrors)
-    port_info = await _card_host_port()
     return web.json_response({
-        "port": CARD_PORT,
-        "host_port": port_info["host_port"],
-        "port_checked": port_info["checked"],
-        "token": get_card_token(),
         "www_cards": www_ok,
         "local_dir": f"/local/{WWW_CARD_DIR.name}",
         "local_suffix": f"-{get_card_token()}.html",
-        "internal_url": urls.get("internal_url"),
-        "external_url": urls.get("external_url"),
     })
 
 
@@ -1169,6 +1086,81 @@ def _start_memory_merge(facts: list[str]) -> None:
     MEMORY_LAST_TASK = asyncio.create_task(_merge_memory_task(facts))
 
 
+def _strip_memory_fallback(current: str, facts: list[str]) -> str:
+    """No-Claude removal: drop bullet lines whose normalized text matches a
+    deleted fact — exact, or a substring either way when both are long enough
+    for the overlap to be meaningful."""
+    keys = [k for k in (knowledge_store.normalize(f) for f in facts) if k]
+
+    def matches(line_key: str) -> bool:
+        for k in keys:
+            if k == line_key:
+                return True
+            short, long_ = sorted((k, line_key), key=len)
+            if len(short) >= 12 and short in long_:
+                return True
+        return False
+
+    out = []
+    for line in current.split("\n"):
+        m = re.match(r"\s*[-*]\s+(.*)", line)
+        if m and matches(knowledge_store.normalize(m.group(1))):
+            continue
+        out.append(line)
+    return "\n".join(out)
+
+
+async def _remove_memory_task(facts: list[str]) -> None:
+    """Scrub deleted facts out of memory.md — Claude removes rewordings too;
+    without Claude, a normalized bullet-line match is stripped instead."""
+    async with MEMORY_LOCK:
+        MEMORY_STATE.update(merging=True, error="")
+        current = ""
+        done = False
+        try:
+            try:
+                current = _read_shared_memory()
+                if not current.strip():
+                    done = True
+                else:
+                    merged = ""
+                    if claude_client.get_auth():
+                        prompt = (
+                            "CURRENT MEMORY DOCUMENT:\n\n" + current
+                            + "\n\nFACTS THE HOMEOWNER DELETED — remove them "
+                            "from the document:\n"
+                            + "\n".join(f"- {f}" for f in facts)
+                        )
+                        result = await asyncio.to_thread(
+                            claude_client.run_claude, prompt,
+                            MEMORY_REMOVE_SYSTEM, MODEL, 180)
+                        if result["ok"]:
+                            merged = _strip_md_fences(result["text"])
+                    # a removal never grows the doc much or empties the headings
+                    if merged and "#" in merged and len(merged) <= MAX_MEMORY_CHARS:
+                        if merged != current:
+                            await asyncio.to_thread(_write_shared_memory, merged)
+                        done = True
+            except Exception as exc:  # noqa: BLE001 — surface in the panel, never crash
+                MEMORY_STATE["error"] = str(exc)[:300]
+                log.warning("memory removal failed: %s", exc)
+            if not done and current.strip():
+                try:
+                    stripped = _strip_memory_fallback(current, facts)
+                    if stripped != current:
+                        await asyncio.to_thread(_write_shared_memory, stripped)
+                except Exception as exc:  # noqa: BLE001
+                    MEMORY_STATE["error"] = str(exc)[:300]
+                    log.warning("memory removal fallback failed: %s", exc)
+        finally:
+            MEMORY_STATE["merging"] = False
+
+
+def _start_memory_removal(facts: list[str]) -> None:
+    global MEMORY_LAST_TASK
+    MEMORY_LAST_TASK = asyncio.create_task(_remove_memory_task(facts))
+
+
 def _retire_question_everywhere(text: str) -> None:
     """Remove a question string from every stored insight card so the UI
     stops surfacing it once it's answered or dismissed in the store."""
@@ -1234,13 +1226,20 @@ async def h_memory_put(request: web.Request) -> web.Response:
 
 
 async def h_knowledge_fact_delete(request: web.Request) -> web.Response:
+    """Forget a fact — and scrub it from the home memory document too, so a
+    deleted fact is gone everywhere, not just from the ledger."""
     try:
         ts = int(request.match_info["ts"])
     except ValueError:
         raise web.HTTPBadRequest(text="bad fact id")
+    text = next((f["text"] for f in knowledge_store.list_facts()
+                 if f["ts"] == ts), "")
     if not knowledge_store.remove_fact(ts):
         raise web.HTTPNotFound(text="no such fact")
-    return web.json_response({"deleted": ts})
+    removing = bool(text) and bool(_read_shared_memory().strip())
+    if removing:
+        _start_memory_removal([text])
+    return web.json_response({"deleted": ts, "removing": removing})
 
 
 async def h_knowledge_answer(request: web.Request) -> web.Response:
@@ -1392,23 +1391,8 @@ def make_app() -> web.Application:
         app["scheduler"] = asyncio.create_task(_scheduler())
         if claude_client.get_auth():
             asyncio.create_task(_check_auth_bg())
-        # dashboard-card mini server (best-effort — panel works without it)
-        try:
-            runner = web.AppRunner(make_card_app())
-            await runner.setup()
-            await web.TCPSite(runner, BIND_HOST, CARD_PORT).start()
-            app["card_runner"] = runner
-            log.info("card server listening on %s:%d", BIND_HOST, CARD_PORT)
-        except OSError as exc:
-            log.warning("card server failed to start on port %d: %s", CARD_PORT, exc)
-
-    async def on_cleanup(app: web.Application) -> None:
-        runner = app.get("card_runner")
-        if runner:
-            await runner.cleanup()
 
     app.on_startup.append(on_startup)
-    app.on_cleanup.append(on_cleanup)
     return app
 
 
