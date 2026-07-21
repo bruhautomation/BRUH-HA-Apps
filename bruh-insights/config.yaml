@@ -1,7 +1,7 @@
 ---
 name: "BRUH Insights"
 description: "AI-powered insights dashboard — Claude analyzes your Home Assistant data and generates beautiful interactive visualizations in the sidebar"
-version: "1.4.0"
+version: "1.5.0"
 slug: "bruh_insights"
 init: false
 
@@ -20,16 +20,10 @@ panel_icon: mdi:chart-timeline-variant-shimmer
 panel_title: "BRUH Insights"
 panel_admin: true
 
-# Dashboard-card server: serves each insight's visualization as a
-# token-protected HTML page so HA "Webpage" dashboard cards can embed live
-# insights. Mapped by default so "Add to dashboard" works out of the box;
-# set to null in the add-on's Network settings to close it. (Cards primarily
-# use the /local mirror served by HA itself — see `map` below — so they also
-# work on HTTPS/Nabu Casa dashboards, where this plain-HTTP port can't.)
-ports:
-  8100/tcp: 8100
-ports_description:
-  8100/tcp: "Dashboard card server (token-protected insight HTML for Webpage cards)"
+# Dashboard cards need no port: insight HTML is mirrored to
+# /config/www/bruh_insights/ (see `map` below) and served by Home Assistant
+# itself at /local/…, which works on HTTP, HTTPS, and Nabu Casa dashboards
+# alike.
 
 # App configuration options
 options:
