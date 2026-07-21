@@ -1,7 +1,7 @@
 ---
 name: "BRUH Insights"
 description: "AI-powered insights dashboard — Claude analyzes your Home Assistant data and generates beautiful interactive visualizations in the sidebar"
-version: "1.3.1"
+version: "1.4.0"
 slug: "bruh_insights"
 init: false
 
@@ -20,12 +20,14 @@ panel_icon: mdi:chart-timeline-variant-shimmer
 panel_title: "BRUH Insights"
 panel_admin: true
 
-# Optional dashboard-card server: serves each insight's visualization as a
+# Dashboard-card server: serves each insight's visualization as a
 # token-protected HTML page so HA "Webpage" dashboard cards can embed live
-# insights. Disabled (unmapped) by default — map it in the add-on's Network
-# settings to use "Add to dashboard" from the panel.
+# insights. Mapped by default so "Add to dashboard" works out of the box;
+# set to null in the add-on's Network settings to close it. (Cards primarily
+# use the /local mirror served by HA itself — see `map` below — so they also
+# work on HTTPS/Nabu Casa dashboards, where this plain-HTTP port can't.)
 ports:
-  8100/tcp: null
+  8100/tcp: 8100
 ports_description:
   8100/tcp: "Dashboard card server (token-protected insight HTML for Webpage cards)"
 
@@ -48,10 +50,13 @@ schema:
   log_level: "list(trace|debug|info|notice|warning|error|fatal)?"
 
 # HA config directory. Read for the CLAUDE.md home context and the shared
-# credential file BRUH Terminal maintains (if installed). Writable for ONE
-# purpose: the panel's Memory editor maintains the home memory file at
+# credential file BRUH Terminal maintains (if installed). Writable for TWO
+# purposes: the panel's Memory editor maintains the home memory file at
 # /config/.bruh_claude/memory/memory.md (shared with BRUH Terminal's
-# ha-memory). Nothing else under /config is ever written.
+# ha-memory), and — only once dashboard cards are first used — insight HTML
+# is mirrored to /config/www/bruh_insights/ so HA serves it at /local/…
+# (same-origin Webpage cards that also work over HTTPS/Nabu Casa). Nothing
+# else under /config is ever written.
 # /share is writable: when the bruh_claude integration isn't installed,
 # learned findings are dropped into /share/bruh_claude/memory-inbox/ for
 # the BRUH Terminal add-on to ingest.

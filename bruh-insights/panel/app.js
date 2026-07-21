@@ -1102,7 +1102,8 @@ async function renderKnowledge() {
   const facts = data.facts || [];
   if (!facts.length) {
     factsEl.appendChild(el("div", "kempty",
-      "Nothing learned yet — facts appear as insights discover them, or teach it one above."));
+      "Nothing learned yet — facts appear here as insights discover them. "
+      + "(Facts you teach live in the memory file instead.)"));
   }
   facts.slice().reverse().forEach((f) => {
     const row = el("div", "fbitem");
@@ -1354,7 +1355,9 @@ async function openCardModal(insight) {
   const pre = $("#cardYaml");
   const warn = $("#cardWarn");
   const hint = $("#cardHint");
+  const portStep = $("#cardPortStep");
   warn.classList.add("hidden");
+  portStep.classList.add("hidden");
   pre.textContent = "Loading…";
   try {
     if (!cardInfoCache) cardInfoCache = await api("api/card_info");
@@ -1363,14 +1366,41 @@ async function openCardModal(insight) {
     return;
   }
   const info = cardInfoCache;
-  const host = cardHost(info);
-  const url = `http://${host}:${info.port}/card/${insight.id}?token=${info.token}`;
-  pre.textContent = [
+  const yamlFor = (url) => [
     "type: iframe",
     `url: ${url}`,
     `title: ${(insight.title || "Insight").replace(/[:#"\n]/g, " ").trim()}`,
     "aspect_ratio: 90%",
   ].join("\n");
+
+  if (info.www_cards) {
+    // Preferred path: HA itself serves the mirrored HTML at /local/… — same
+    // origin as every dashboard, so it works over HTTP, HTTPS, and Nabu Casa.
+    const localUrl = `${info.local_dir}/${insight.id}${info.local_suffix}`;
+    pre.textContent = yamlFor(localUrl);
+    hint.textContent = "Home Assistant serves this file itself, so the card works on any "
+      + "dashboard — local, HTTPS, and Nabu Casa remote alike. The file name contains this "
+      + "add-on's private card token — anyone with the exact link can view the insight, "
+      + "nothing else.";
+    try {
+      // the panel shares HA's origin (ingress), so we can verify /local works
+      const probe = await fetch(localUrl, { cache: "no-store" });
+      if (!probe.ok) throw new Error(String(probe.status));
+    } catch (e) {
+      warn.textContent = "Home Assistant isn't serving this file yet — its www folder was "
+        + "just created. Restart Home Assistant once (Settings → System → ⋮ → Restart "
+        + "Home Assistant), then the card will load.";
+      warn.classList.remove("hidden");
+    }
+    return;
+  }
+
+  // Fallback (no /config/www access): the plain-HTTP card server on the
+  // mapped host port.
+  const host = cardHost(info);
+  const port = info.host_port || info.port;
+  pre.textContent = yamlFor(`http://${host}:${port}/card/${insight.id}?token=${info.token}`);
+  if (info.port_checked && !info.host_port) portStep.classList.remove("hidden");
 
   const cloud = isCloudHost(window.location.hostname);
   if (window.location.protocol === "https:") {

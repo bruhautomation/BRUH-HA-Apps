@@ -713,6 +713,46 @@ body.modal-open {
   padding: 2px 9px;
 }
 
+/* Desktop: the knowledge modal goes wide and splits into two columns —
+   questions/facts on the left, the memory document on the right. The right
+   column is a flex stack whose document view/editor takes all remaining
+   height, so the memory file finally gets real screen estate. On narrow
+   screens everything stacks and scrolls as one column (default flow). */
+.modal .box.kwide { width: min(1100px, 100%); }
+@media (min-width: 900px) {
+  .modal .box.kwide { height: min(880px, 94vh); }
+  .kwide .edit-body.ksplit {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+    grid-template-rows: minmax(0, 1fr);
+    gap: 0 28px;
+    padding-bottom: 0;
+    overflow: hidden;
+  }
+  .ksplit .kcol {
+    min-width: 0;
+    overflow-y: auto;
+    padding-bottom: 18px;
+  }
+  .ksplit .kcol.kmemcol {
+    display: flex;
+    flex-direction: column;
+    overflow: visible;
+  }
+  .ksplit .kmemcol .kmd {
+    flex: 1;
+    min-height: 0;
+    max-height: none;
+  }
+  .ksplit .kmemcol .kmemedit {
+    flex: 1;
+    min-height: 0;
+    resize: none;
+  }
+}
+
 /* card-question header with the "not relevant" dismiss */
 .qhead { display: flex; align-items: flex-start; gap: 7px; }
 .qhead .qtext { flex: 1; min-width: 0; }

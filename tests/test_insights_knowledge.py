@@ -324,6 +324,8 @@ class InsightsServerCase(unittest.TestCase):
         self.server.CARD_TOKEN_FILE = Path(self.tmp.name) / "secrets" / "card_token"
         knowledge_store.KNOWLEDGE_FILE = os.path.join(self.tmp.name, "knowledge.json")
         self.server.SHARED_MEMORY_FILE = Path(self.tmp.name) / "memory.md"
+        self._old_www = self.server.WWW_CARD_DIR
+        self.server.WWW_CARD_DIR = Path(self.tmp.name) / "www" / "bruh_insights"
         self.server.MEMORY_STATE.update(merging=False, error="")
         self.server.MEMORY_LAST_TASK = None
         self.server.JOBS.clear()
@@ -334,6 +336,7 @@ class InsightsServerCase(unittest.TestCase):
          self.server.MEMORY_INBOX_DIR, feedback_store.FEEDBACK_FILE,
          user_categories.USER_CATS_FILE, self.server.CARD_TOKEN_FILE,
          knowledge_store.KNOWLEDGE_FILE, self.server.SHARED_MEMORY_FILE) = self._olds
+        self.server.WWW_CARD_DIR = self._old_www
         self.server.JOBS.clear()
         self.tmp.cleanup()
 
@@ -450,6 +453,10 @@ class TestKnowledgeEndpoints(InsightsServerCase):
     def setUp(self):
         super().setUp()
         self._old_service = self.ha_data.call_service
+        # taught facts trigger a background memory merge — pin auth off so
+        # the merge deterministically takes the plain-append path
+        self._old_auth = claude_client.get_auth
+        claude_client.get_auth = lambda: None
 
         async def ok_service(service, data):
             pass
@@ -458,6 +465,7 @@ class TestKnowledgeEndpoints(InsightsServerCase):
 
     def tearDown(self):
         self.ha_data.call_service = self._old_service
+        claude_client.get_auth = self._old_auth
         super().tearDown()
 
     def test_knowledge_roundtrip(self):
@@ -467,12 +475,17 @@ class TestKnowledgeEndpoints(InsightsServerCase):
             client = self._client()
             await client.start_server()
             try:
-                # add a fact by hand
+                # teach a fact — it goes into the memory DOCUMENT, not the
+                # facts ledger (no duplicate row under the Add button)
                 resp = await client.post("/api/knowledge/fact",
                                          json={"text": "Garage fridge runs 24/7"})
                 self.assertEqual(resp.status, 200)
                 self.assertTrue((await resp.json())["added"])
-                # duplicate → added: false
+                await self.server.MEMORY_LAST_TASK
+                self.assertIn("Garage fridge runs 24/7",
+                              self.server.SHARED_MEMORY_FILE.read_text())
+                self.assertEqual(knowledge_store.list_facts(), [])
+                # duplicate (already in the document) → added: false
                 resp = await client.post("/api/knowledge/fact",
                                          json={"text": "garage fridge runs 24/7!"})
                 self.assertFalse((await resp.json())["added"])
@@ -485,8 +498,7 @@ class TestKnowledgeEndpoints(InsightsServerCase):
                 resp = await client.get("/api/knowledge")
                 self.assertEqual(resp.status, 200)
                 data = await resp.json()
-                self.assertEqual([f["text"] for f in data["facts"]],
-                                 ["Garage fridge runs 24/7"])
+                self.assertEqual(data["facts"], [])
                 self.assertEqual(data["questions"][0]["status"], "open")
                 self.assertIn("a note", data["shared_memory"])
 

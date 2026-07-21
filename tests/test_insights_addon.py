@@ -85,11 +85,12 @@ class TestInsightsConfigYaml(unittest.TestCase):
         self.assertIn("amd64", self.config["arch"])
         self.assertIn("aarch64", self.config["arch"])
 
-    def test_card_server_port_declared_but_unmapped(self):
-        """8100 must be offered (so users can map it) but default to unmapped."""
+    def test_card_server_port_mapped_by_default(self):
+        """8100 is mapped out of the box so dashboard cards just work; users
+        can still set it to null in the Network settings to close it."""
         ports = self.config.get("ports", {})
         self.assertIn("8100/tcp", ports)
-        self.assertIsNone(ports["8100/tcp"])
+        self.assertEqual(ports["8100/tcp"], 8100)
         self.assertIn("8100/tcp", self.config.get("ports_description", {}))
 
 
@@ -811,6 +812,8 @@ class InsightsServerCase(unittest.TestCase):
         user_categories.USER_CATS_FILE = os.path.join(
             self.tmp.name, "user_categories.json")
         self.server.CARD_TOKEN_FILE = Path(self.tmp.name) / "secrets" / "card_token"
+        self._old_www = self.server.WWW_CARD_DIR
+        self.server.WWW_CARD_DIR = Path(self.tmp.name) / "www" / "bruh_insights"
         self.server.JOBS.clear()
         self.server.QUEUE = asyncio.Queue()
 
@@ -823,6 +826,7 @@ class InsightsServerCase(unittest.TestCase):
         self.server.CARD_TOKEN_FILE = self._old_card_token
         knowledge_store.KNOWLEDGE_FILE = self._old_knowledge
         self.server.SHARED_MEMORY_FILE = self._old_shared_mem
+        self.server.WWW_CARD_DIR = self._old_www
         self.server.JOBS.clear()
         self.tmp.cleanup()
 
@@ -1456,6 +1460,7 @@ class TestCardServer(InsightsServerCase):
     def test_card_info_endpoint(self):
         self.server._HA_URLS_CACHE.update(
             ts=time.time(), urls={"internal_url": "http://ha.lan:8123"})
+        self.server._PORT_CACHE.update(ts=0.0, checked=False, host_port=None)
 
         async def run():
             client = self._client()
@@ -1467,10 +1472,61 @@ class TestCardServer(InsightsServerCase):
                 self.assertEqual(data["port"], self.server.CARD_PORT)
                 self.assertEqual(data["token"], self.server.get_card_token())
                 self.assertEqual(data["internal_url"], "http://ha.lan:8123")
+                # /local mirror enabled (dir created) and addressable
+                self.assertTrue(data["www_cards"])
+                self.assertEqual(data["local_dir"], "/local/bruh_insights")
+                self.assertEqual(
+                    data["local_suffix"],
+                    f"-{self.server.get_card_token()}.html")
+                # no Supervisor in tests → port mapping unknown, no nagging
+                self.assertFalse(data["port_checked"])
+                self.assertIsNone(data["host_port"])
             finally:
                 await client.close()
 
         asyncio.run(run())
+        self.assertTrue(self.server.WWW_CARD_DIR.is_dir())
+
+    def test_card_mirror_lifecycle(self):
+        """card_info syncs the /local mirror; save/delete keep it fresh."""
+        self._save("energy", "2026-07-18T10:00:00")
+        token = self.server.get_card_token()
+        mirror = self.server.WWW_CARD_DIR / f"energy-{token}.html"
+
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                # first ▦ open: mirror dir created and backfilled
+                await client.get("/api/card_info")
+                self.assertTrue(mirror.exists())
+                text = mirror.read_text()
+                self.assertIn("<p>x</p>", text)
+                self.assertIn("location.reload", text)
+
+                # a regenerated insight refreshes its mirror on save
+                self._save("energy", "2026-07-18T11:00:00", html="<p>y</p>")
+                self.assertIn("<p>y</p>", mirror.read_text())
+
+                # stale files (old token / deleted insight) are swept on sync
+                stale = self.server.WWW_CARD_DIR / "energy-oldtoken.html"
+                stale.write_text("old")
+                await client.get("/api/card_info")
+                self.assertFalse(stale.exists())
+
+                # deleting the insight removes its mirror
+                resp = await client.delete("/api/insight/energy")
+                self.assertEqual(resp.status, 200)
+                self.assertFalse(mirror.exists())
+            finally:
+                await client.close()
+
+        asyncio.run(run())
+
+    def test_mirror_noop_until_first_use(self):
+        """No writes anywhere near /config/www before the ▦ dialog is used."""
+        self._save("energy", "2026-07-18T10:00:00")
+        self.assertFalse(self.server.WWW_CARD_DIR.exists())
 
 
 class TestMemoryContext(unittest.TestCase):
