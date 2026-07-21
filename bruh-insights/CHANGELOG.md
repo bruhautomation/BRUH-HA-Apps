@@ -1,5 +1,9 @@
 # Changelog
 
+All notable changes to **BRUH Insights**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
+
+> 💡 Prefer a cleaner, categorized view? See the [formatted changelog at bruhautomation.com](https://bruhautomation.com/bruh-insights/changelog/).
+
 ## 1.3.1
 
 - **Dashboard-card YAML uses your real address**: the ▦ dialog now builds the card URL

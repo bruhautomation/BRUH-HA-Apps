@@ -7,8 +7,9 @@ body:
     attributes:
       label: Which add-on?
       options:
-        - BRUH Claude Terminal
-        - BRUH Minecraft Server
+        - BRUH Terminal
+        - BRUH Insights
+        - BRUH Minecraft
         - Other / unsure
     validations:
       required: true
@@ -18,7 +19,7 @@ body:
     attributes:
       label: Add-on version
       description: Find this in Settings > Add-ons > (the add-on) > Info.
-      placeholder: "1.15.2"
+      placeholder: "3.3.2"
     validations:
       required: true
 

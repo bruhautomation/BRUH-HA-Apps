@@ -20,7 +20,7 @@ Claude as a conversation agent in Settings > Voice Assistants:
 Claude watches your house and writes markdown reports to sensors — daily briefing, anomaly watch, battery & maintenance, camera check, or your own prompt (HA templating supported). Schedule by interval/daily time or trigger via `bruh_claude.run_insight`; each sensor includes ready-to-paste dashboard card YAML.
 
 ### Native HA API Access (MCP Server)
-32 tools give Claude real-time access to your installation:
+33 tools give Claude real-time access to your installation:
 - Entity states, service calls, device control for every major domain
 - **Camera vision** — Claude can look at a camera and describe what it sees
 - **History, statistics & forecasts** — "how cold did it get last night?", "what's the weather tomorrow?"
@@ -78,3 +78,7 @@ See [DOCS.md — Configuration Reference](DOCS.md#configuration-reference) for e
 ## Credits
 
 Based on the excellent [Claude Terminal](https://github.com/heytcass/home-assistant-addons) by Tom Cassady.
+
+## Disclaimer
+
+This is an independent project, **not affiliated with, endorsed by, or sponsored by Anthropic**. "Claude" and "Claude Code" are trademarks of Anthropic, PBC. The add-on runs the official Claude Code CLI under your own Anthropic account; your use of Claude through it is governed by [Anthropic's terms](https://www.anthropic.com/legal/consumer-terms).
