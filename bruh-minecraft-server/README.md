@@ -164,15 +164,13 @@ Full option reference with rationale for every default: [`config.yaml`](config.y
 
 ---
 
-## What's new in 1.10.0
+## What's new in 1.14
 
-- **First-run wizard.** Install → start → answer 3 questions → done.
-- **Crash banner.** When the JVM exits unexpectedly the dashboard shows the last lines of error context. No more "where do I look?"
-- **World import.** Drop a `.zip` of an existing world into the **Worlds** tab → it becomes a switchable world.
-- **Resource-pack hosting.** Upload a pack, get a URL and SHA-1, click *Apply* to wire it into the active world automatically.
-- **Smart performance hints.** When TPS slips, the Performance card suggests the most useful knob to turn first.
+- **Featured worlds.** One-click, fully server-side installs of big community worlds (starting with **Drehmal: APOTHEOSIS**) from the Worlds tab — staged as a switchable world, with the Java resource pack auto-converted for Bedrock/Geyser players.
+- **New-world setup wizard.** Creating a world walks a multi-step wizard (name + seed → gameplay → rules → players & access → review) so every per-world setting is staged in one go.
+- **Unified BRUH branding.** The add-on is now **BRUH Minecraft**, with the "Solid Blocks" icon, logo, and panel favicon from the BRUH Automation brand system.
 
-See [CHANGELOG.md](CHANGELOG.md) for everything, including 1.9.0's popular-plugin tidy-up and the *Tune for my hardware* recommender.
+See [CHANGELOG.md](CHANGELOG.md) for the full release-by-release history, including the 9-step first-run wizard, world import, resource-pack hosting, and performance hints from earlier releases.
 
 ---
 
@@ -181,3 +179,7 @@ See [CHANGELOG.md](CHANGELOG.md) for everything, including 1.9.0's popular-plugi
 MIT — see [LICENSE](../LICENSE).
 
 Issues and feature requests: <https://github.com/bruhautomation/BRUH-HA-Apps/issues>.
+
+## Disclaimer
+
+This is an independent project, **not affiliated with, endorsed by, or sponsored by Mojang or Microsoft**. "Minecraft" is a trademark of Mojang Synergies AB. Server software is downloaded from official upstream sources at runtime, and you must accept the [Minecraft EULA](https://www.minecraft.net/eula) yourself before the server will start.

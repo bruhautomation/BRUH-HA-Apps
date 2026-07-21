@@ -17,6 +17,14 @@ updates:
       - docker
 
   - package-ecosystem: docker
+    directory: /bruh-insights
+    schedule:
+      interval: weekly
+    labels:
+      - dependencies
+      - docker
+
+  - package-ecosystem: docker
     directory: /bruh-minecraft-server
     schedule:
       interval: weekly

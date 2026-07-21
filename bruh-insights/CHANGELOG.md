@@ -1,5 +1,9 @@
 # Changelog
 
+All notable changes to **BRUH Insights**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
+
+> 💡 Prefer a cleaner, categorized view? See the [formatted changelog at bruhautomation.com](https://bruhautomation.com/bruh-insights/changelog/).
+
 ## 1.3.0
 
 A depth release: the analyst now remembers, builds on what it knows, and reasons

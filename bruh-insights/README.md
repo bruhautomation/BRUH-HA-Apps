@@ -45,3 +45,7 @@ too if you prefer pay-as-you-go.
 4. Hit **Refresh all** — enjoy the show.
 
 See [DOCS.md](DOCS.md) for configuration options and details.
+
+## Disclaimer
+
+This is an independent project, **not affiliated with, endorsed by, or sponsored by Anthropic**. "Claude" and "Claude Code" are trademarks of Anthropic, PBC. The add-on runs the official Claude Code CLI under your own Anthropic account; your use of Claude through it is governed by [Anthropic's terms](https://www.anthropic.com/legal/consumer-terms).
