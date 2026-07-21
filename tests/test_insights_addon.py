@@ -71,11 +71,13 @@ class TestInsightsConfigYaml(unittest.TestCase):
         schema = self.config.get("schema", {})
         self.assertEqual(set(options), set(schema))
 
-    def test_config_map_read_only(self):
-        """The HA config mount must stay read-only for this add-on."""
+    def test_config_map_writable_for_memory(self):
+        """/config is writable since 1.3.1 — solely so the panel's Memory
+        editor can maintain /config/.bruh_claude/memory/memory.md. Server
+        code must never write anywhere else under /config."""
         for entry in self.config.get("map", []):
             if isinstance(entry, dict) and entry.get("type") == "homeassistant_config":
-                self.assertTrue(entry.get("read_only"))
+                self.assertFalse(entry.get("read_only"))
                 return
         self.fail("homeassistant_config mapping missing")
 

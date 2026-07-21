@@ -47,15 +47,17 @@ schema:
   generation_timeout_minutes: "int(2,30)?"
   log_level: "list(trace|debug|info|notice|warning|error|fatal)?"
 
-# Read-only view of the HA config directory. Used to pick up the CLAUDE.md
-# home context and the shared memory/credential files that BRUH Terminal
-# maintains (if installed). Never written to.
+# HA config directory. Read for the CLAUDE.md home context and the shared
+# credential file BRUH Terminal maintains (if installed). Writable for ONE
+# purpose: the panel's Memory editor maintains the home memory file at
+# /config/.bruh_claude/memory/memory.md (shared with BRUH Terminal's
+# ha-memory). Nothing else under /config is ever written.
 # /share is writable: when the bruh_claude integration isn't installed,
 # learned findings are dropped into /share/bruh_claude/memory-inbox/ for
 # the BRUH Terminal add-on to ingest.
 map:
   - type: homeassistant_config
-    read_only: true
+    read_only: false
     path: /config
   - type: share
     read_only: false

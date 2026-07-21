@@ -271,11 +271,24 @@
         <div id="kAnswered" class="klist"></div>
       </div>
 
-      <div id="kMemWrap" class="hidden">
-        <label>Shared home memory (maintained by BRUH Terminal)</label>
-        <p class="hint">Read-only here — edit it from the BRUH Terminal add-on with
-          <code>ha-memory</code>. Insights reads it before every run.</p>
-        <pre id="kMemText" class="yamlbox kmem"></pre>
+      <div id="kMemWrap">
+        <label>Home memory file</label>
+        <p class="hint">The consolidated memory document, injected into every analysis. Facts you
+          teach above are merged in automatically by Claude. Shared with BRUH Terminal's
+          <code>ha-memory</code> when that add-on is installed.</p>
+        <div id="kMemMerging" class="kmerging hidden">✨ Claude is merging the new fact into the
+          memory file…</div>
+        <div class="row kmemrow">
+          <button id="kMemEdit" class="btn small">✎ Edit markdown</button>
+          <button id="kMemSave" class="btn small primary hidden">Save</button>
+          <button id="kMemCancel" class="btn small ghost hidden">Cancel</button>
+          <span id="kMemDirty" class="kdirty hidden">unsaved edits</span>
+        </div>
+        <div id="kMemView" class="kmd"></div>
+        <div id="kMemEmpty" class="kempty hidden">No memory file yet — teach a fact above, or press
+          “Edit markdown” to start one.</div>
+        <textarea id="kMemTa" class="kmemedit hidden" rows="14" maxlength="100000"
+                  spellcheck="false"></textarea>
       </div>
     </div>
   </div>

@@ -308,11 +308,15 @@ def prompt_block() -> str:
         parts.append("\nANSWERED QUESTIONS (the homeowner already told you — use these "
                      "answers, never ask again):")
         parts += [f"- Q: {q['text']}\n  A: {q['answer']}" for q in reversed(answered)]
-    asked = open_qs + dismissed
-    if asked:
-        parts.append("\nQUESTIONS ALREADY ASKED (do NOT ask these, or minor variations "
-                     "of them, again):")
-        parts += [f"- {q['text']}" for q in asked]
+    if open_qs:
+        parts.append("\nQUESTIONS ALREADY ASKED, awaiting an answer (do NOT ask these, "
+                     "or minor variations of them, again):")
+        parts += [f"- {q['text']}" for q in open_qs]
+    if dismissed:
+        parts.append("\nQUESTIONS THE HOMEOWNER DISMISSED AS NOT RELEVANT — you were on "
+                     "the wrong track. Treat these lines of inquiry as dead ends: don't "
+                     "re-ask them and don't build analysis around them:")
+        parts += [f"- {q['text']}" for q in dismissed]
     if not parts:
         return ""
     block = "\n".join(parts)

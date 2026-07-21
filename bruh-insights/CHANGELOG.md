@@ -20,6 +20,21 @@ All notable changes to **BRUH Insights**, newest first. This project adheres to 
   ⤢ expand, ▦ add to dashboard, ‹ › run history, ✕ close/delete, and the Memory-panel
   actions) now shows a fast styled tooltip on hover and keyboard focus explaining what
   it does — no more mystery icons
+- **Memory file, readable and editable**: the home memory document in the 🧠 Memory
+  panel now renders as formatted markdown instead of a raw dump, with an
+  **✎ Edit markdown** mode for direct editing (Save/Cancel, unsaved-edits badge).
+  Works standalone — the `/config` mount is now writable for this one file
+  (`/config/.bruh_claude/memory/memory.md`, shared with BRUH Terminal's `ha-memory`);
+  nothing else under `/config` is ever written
+- **Teach → Claude files it**: adding a fact via "Teach it something" now has Claude
+  merge it into the memory document — right section, deduplicated, newest wins — with
+  a live "merging…" indicator; without Claude access the fact is parked under a
+  "Recently added" heading instead. If you have unsaved manual edits, a warning pops
+  up before the rewrite so they can't be lost silently
+- **"Not relevant" on card questions**: every clarifying question on an insight card
+  has an ✕ button that dismisses it permanently and tells the analyst it was on the
+  wrong track — dismissed topics are injected into future prompts as dead ends, not
+  just never re-asked
 
 ## 1.3.0
 

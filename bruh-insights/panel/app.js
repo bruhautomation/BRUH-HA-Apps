@@ -384,7 +384,28 @@ function makeQuestions(insight) {
   const wrap = el("div", "questions");
   insight.questions.forEach((q) => {
     const row = el("div", "qrow");
-    row.appendChild(el("div", "qtext", `❓ ${q}`));
+    const head = el("div", "qhead");
+    head.appendChild(el("div", "qtext", `❓ ${q}`));
+    const dis = el("button", "btn icon qdismiss", "✕");
+    dis.type = "button";
+    tip(dis, "Not relevant — tell Insights it's on the wrong track; this won't be asked again");
+    dis.addEventListener("click", async () => {
+      dis.disabled = true;
+      try {
+        await api("api/questions/dismiss", {
+          method: "POST",
+          body: JSON.stringify({ insight_id: insight.id, question: q }),
+        });
+        toast("Dismissed — Insights will drop that line of inquiry");
+        await refreshInsights();
+        renderIfChanged();
+      } catch (e) {
+        toast(e.message);
+        dis.disabled = false;
+      }
+    });
+    head.appendChild(dis);
+    row.appendChild(head);
     const form = el("form", "qform");
     const input = el("input");
     input.type = "text";
@@ -1128,11 +1149,118 @@ async function renderKnowledge() {
     ansEl.appendChild(row);
   });
 
-  // shared memory.md (BRUH Terminal)
-  const mem = (data.shared_memory || "").trim();
-  $("#kMemWrap").classList.toggle("hidden", !mem);
-  if (mem) $("#kMemText").textContent = mem;
+  renderMemory(data);
 }
+
+// ---- home memory file: formatted view, raw-markdown edit, Claude merge ----
+
+const memState = { editing: false, dirty: false, text: "", pollTimer: null };
+
+const MEM_TEMPLATE = "# Home Memory\n\n## Preferences\n\n## Entity nicknames\n\n"
+  + "## Household patterns\n\n## Device notes\n";
+
+// Minimal markdown renderer for the memory document (headings, lists, bold,
+// italic, inline code, links). Input is escaped first, so the produced HTML
+// contains only tags we emit ourselves.
+function mdInline(s) {
+  return s
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+    .replace(/\*([^*]+)\*/g, "<i>$1</i>")
+    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g,
+      '<a href="$2" target="_blank" rel="noopener">$1</a>');
+}
+
+function mdToHtml(md) {
+  md = String(md || "").replace(/<!--[\s\S]*?-->/g, "");
+  md = md.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const out = [];
+  let list = null;
+  const closeList = () => { if (list) { out.push(`</${list}>`); list = null; } };
+  md.split("\n").forEach((raw) => {
+    const line = raw.trimEnd();
+    const h = line.match(/^(#{1,6})\s+(.*)/);
+    const ul = line.match(/^\s*[-*]\s+(.*)/);
+    const ol = line.match(/^\s*\d+\.\s+(.*)/);
+    if (h) { closeList(); out.push(`<h${h[1].length}>${mdInline(h[2])}</h${h[1].length}>`); }
+    else if (ul) {
+      if (list !== "ul") { closeList(); out.push("<ul>"); list = "ul"; }
+      out.push(`<li>${mdInline(ul[1])}</li>`);
+    } else if (ol) {
+      if (list !== "ol") { closeList(); out.push("<ol>"); list = "ol"; }
+      out.push(`<li>${mdInline(ol[1])}</li>`);
+    } else if (!line.trim()) { closeList(); }
+    else { closeList(); out.push(`<p>${mdInline(line)}</p>`); }
+  });
+  closeList();
+  return out.join("\n");
+}
+
+function renderMemory(data) {
+  const merging = !!(data.memory_state && data.memory_state.merging);
+  $("#kMemMerging").classList.toggle("hidden", !merging);
+  if (merging) pollMemoryMerge();
+  if (memState.editing) return; // never clobber an edit in progress
+  memState.text = data.shared_memory || "";
+  const has = !!memState.text.trim();
+  $("#kMemView").innerHTML = has ? mdToHtml(memState.text) : "";
+  $("#kMemView").classList.toggle("hidden", !has);
+  $("#kMemEmpty").classList.toggle("hidden", has);
+  if (data.memory_state && data.memory_state.error) {
+    toast("Memory merge problem: " + data.memory_state.error);
+  }
+}
+
+function setMemEditing(on) {
+  memState.editing = on;
+  memState.dirty = false;
+  $("#kMemTa").classList.toggle("hidden", !on);
+  $("#kMemView").classList.toggle("hidden", on || !memState.text.trim());
+  $("#kMemEmpty").classList.toggle("hidden", on || !!memState.text.trim());
+  $("#kMemEdit").classList.toggle("hidden", on);
+  $("#kMemSave").classList.toggle("hidden", !on);
+  $("#kMemCancel").classList.toggle("hidden", !on);
+  $("#kMemDirty").classList.add("hidden");
+}
+
+// while a Claude merge is running, poll until it lands and show the result
+function pollMemoryMerge() {
+  clearTimeout(memState.pollTimer);
+  memState.pollTimer = setTimeout(async () => {
+    if (!$("#kModal").classList.contains("open")) return;
+    try {
+      const data = await api("api/knowledge");
+      renderMemory(data);
+      if (data.memory_state && data.memory_state.merging) pollMemoryMerge();
+      else if (!memState.editing) toast("Memory file updated");
+    } catch (e) { /* transient; next open re-renders */ }
+  }, 2500);
+}
+
+$("#kMemEdit").addEventListener("click", () => {
+  $("#kMemTa").value = memState.text.trim() ? memState.text : MEM_TEMPLATE;
+  setMemEditing(true);
+});
+$("#kMemTa").addEventListener("input", () => {
+  memState.dirty = true;
+  $("#kMemDirty").classList.remove("hidden");
+});
+$("#kMemCancel").addEventListener("click", () => {
+  if (memState.dirty &&
+      !window.confirm("Discard your unsaved memory edits?")) return;
+  setMemEditing(false);
+  renderKnowledge();
+});
+$("#kMemSave").addEventListener("click", async () => {
+  const text = $("#kMemTa").value;
+  try {
+    await api("api/memory", { method: "PUT", body: JSON.stringify({ text }) });
+    memState.text = text;
+    setMemEditing(false);
+    toast("Memory saved");
+    renderKnowledge();
+  } catch (e) { toast(e.message); }
+});
 
 $("#knowledgeBtn").addEventListener("click", () => {
   openBox("#kModal");
@@ -1142,17 +1270,37 @@ $("#kAddForm").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const text = $("#kAddInput").value.trim();
   if (!text) return;
+  // adding a fact has Claude REWRITE the memory file — unsaved manual edits
+  // in the editor below would be overwritten, so make the user choose first
+  if (memState.editing && memState.dirty) {
+    if (!window.confirm(
+      "You have unsaved manual edits to the home memory file below.\n\n"
+      + "Adding this fact makes Claude rewrite that file, and your unsaved "
+      + "edits would be lost. Press Cancel to go save them first, or OK to "
+      + "discard them and continue.")) return;
+    setMemEditing(false);
+  }
   try {
     const res = await api("api/knowledge/fact", {
       method: "POST", body: JSON.stringify({ text }) });
     $("#kAddInput").value = "";
-    toast(res.added ? "Learned — every future insight will know it" : "Already known");
+    toast(res.added ? "Learned — merging it into the memory file…" : "Already known");
+    if (res.merging) {
+      $("#kMemMerging").classList.remove("hidden");
+      pollMemoryMerge();
+    }
     renderKnowledge();
   } catch (e) { toast(e.message); }
 });
-$("#kClose").addEventListener("click", () => closeBox("#kModal"));
+function closeKnowledge() {
+  if (memState.editing && memState.dirty &&
+      !window.confirm("Discard your unsaved memory edits?")) return;
+  if (memState.editing) setMemEditing(false);
+  closeBox("#kModal");
+}
+$("#kClose").addEventListener("click", closeKnowledge);
 $("#kModal").addEventListener("click", (ev) => {
-  if (ev.target === $("#kModal")) closeBox("#kModal");
+  if (ev.target === $("#kModal")) closeKnowledge();
 });
 
 // -------------------------------------------------- dashboard card modal

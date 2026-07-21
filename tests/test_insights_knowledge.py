@@ -324,6 +324,8 @@ class InsightsServerCase(unittest.TestCase):
         self.server.CARD_TOKEN_FILE = Path(self.tmp.name) / "secrets" / "card_token"
         knowledge_store.KNOWLEDGE_FILE = os.path.join(self.tmp.name, "knowledge.json")
         self.server.SHARED_MEMORY_FILE = Path(self.tmp.name) / "memory.md"
+        self.server.MEMORY_STATE.update(merging=False, error="")
+        self.server.MEMORY_LAST_TASK = None
         self.server.JOBS.clear()
         self.server.QUEUE = asyncio.Queue()
 
@@ -553,6 +555,36 @@ class TestKnowledgeEndpoints(InsightsServerCase):
         stored = json.loads((Path(self.tmp.name) / "energy.json").read_text())
         self.assertEqual(stored["questions"], [])
 
+    def test_card_question_dismissed_as_not_relevant(self):
+        self.server.save_insight({
+            "id": "energy", "category": "energy", "title": "T",
+            "generated_at": "2026-07-20T10:00:00", "html": "<p>x</p>",
+            "questions": ["Is the attic fan broken?"]})
+
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                resp = await client.post("/api/questions/dismiss", json={
+                    "insight_id": "energy", "question": "Is the attic fan broken?"})
+                self.assertEqual(resp.status, 200)
+                # unknown question → 404
+                resp = await client.post("/api/questions/dismiss", json={
+                    "insight_id": "energy", "question": "Never asked?"})
+                self.assertEqual(resp.status, 404)
+            finally:
+                await client.close()
+
+        asyncio.run(run())
+        dismissed = knowledge_store.list_questions("dismissed")
+        self.assertEqual([q["text"] for q in dismissed], ["Is the attic fan broken?"])
+        stored = json.loads((Path(self.tmp.name) / "energy.json").read_text())
+        self.assertEqual(stored["questions"], [])
+        # the wrong-track signal reaches the prompt
+        block = knowledge_store.prompt_block()
+        self.assertIn("NOT RELEVANT", block)
+        self.assertIn("Is the attic fan broken?", block)
+
     def test_card_answer_records_in_store(self):
         self.server.save_insight({
             "id": "energy", "category": "energy", "title": "T",
@@ -575,6 +607,175 @@ class TestKnowledgeEndpoints(InsightsServerCase):
         self.assertEqual(answered[0]["answer"], "Yes")
         self.assertTrue(knowledge_store.is_known_question("Is X ok?"))
         self.assertTrue(any("Yes" in f["text"] for f in knowledge_store.list_facts()))
+
+
+class TestMemoryFile(InsightsServerCase):
+    """The editable home memory file behind the panel's Memory section."""
+
+    def setUp(self):
+        super().setUp()
+        self._old_auth = claude_client.get_auth
+        self._old_run = claude_client.run_claude
+        self._old_service = self.ha_data.call_service
+
+        async def ok_service(service, data):
+            pass
+
+        self.ha_data.call_service = ok_service
+
+    def tearDown(self):
+        claude_client.get_auth = self._old_auth
+        claude_client.run_claude = self._old_run
+        self.ha_data.call_service = self._old_service
+        super().tearDown()
+
+    def test_put_and_read_roundtrip(self):
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                resp = await client.put("/api/memory", json={
+                    "text": "# Home Memory\n\n## Preferences\n- Lights warm at night\n"})
+                self.assertEqual(resp.status, 200)
+                data = await (await client.get("/api/knowledge")).json()
+                self.assertIn("Lights warm at night", data["shared_memory"])
+                self.assertFalse(data["memory_state"]["merging"])
+                # invalid bodies rejected
+                resp = await client.put("/api/memory", json={"text": 42})
+                self.assertEqual(resp.status, 400)
+                resp = await client.put("/api/memory", json={
+                    "text": "x" * (self.server.MAX_MEMORY_CHARS + 1)})
+                self.assertEqual(resp.status, 400)
+            finally:
+                await client.close()
+
+        asyncio.run(run())
+        self.assertIn("Lights warm at night",
+                      self.server.SHARED_MEMORY_FILE.read_text())
+
+    def test_teach_fact_merges_via_claude(self):
+        self.server.SHARED_MEMORY_FILE.write_text(
+            "# Home Memory\n\n## Device notes\n- Old note\n")
+        prompts = []
+        claude_client.get_auth = lambda: {"type": "api_key", "value": "k"}
+
+        def fake_run(prompt, system, *a, **k):
+            prompts.append((prompt, system))
+            return {"ok": True, "text":
+                    "# Home Memory\n\n## Device notes\n- Old note\n"
+                    "- Garage fridge runs 24/7 by design\n",
+                    "error": "", "meta": {}}
+
+        claude_client.run_claude = fake_run
+
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                resp = await client.post("/api/knowledge/fact", json={
+                    "text": "Garage fridge runs 24/7 by design"})
+                self.assertEqual(resp.status, 200)
+                body = await resp.json()
+                self.assertTrue(body["added"])
+                self.assertTrue(body["merging"])
+                await self.server.MEMORY_LAST_TASK
+            finally:
+                await client.close()
+
+        asyncio.run(run())
+        merged = self.server.SHARED_MEMORY_FILE.read_text()
+        self.assertIn("Garage fridge runs 24/7 by design", merged)
+        self.assertIn("Old note", merged)
+        # the merge prompt carried the current doc and the new fact (skip the
+        # startup auth-check call, which also goes through run_claude)
+        merge_calls = [p for p in prompts if "NEW FACTS" in p[0]]
+        self.assertEqual(len(merge_calls), 1)
+        self.assertIn("Old note", merge_calls[0][0])
+        self.assertIn("Garage fridge runs 24/7", merge_calls[0][0])
+        self.assertIn("ONLY the complete updated markdown", merge_calls[0][1])
+        self.assertFalse(self.server.MEMORY_STATE["merging"])
+
+    def test_merge_strips_code_fences(self):
+        claude_client.get_auth = lambda: {"type": "api_key", "value": "k"}
+        claude_client.run_claude = lambda *a, **k: {
+            "ok": True,
+            "text": "```markdown\n# Home Memory\n\n## Preferences\n- A fact\n```",
+            "error": "", "meta": {}}
+
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                await client.post("/api/knowledge/fact", json={"text": "A fact"})
+                await self.server.MEMORY_LAST_TASK
+            finally:
+                await client.close()
+
+        asyncio.run(run())
+        text = self.server.SHARED_MEMORY_FILE.read_text()
+        self.assertNotIn("```", text)
+        self.assertIn("- A fact", text)
+
+    def test_no_auth_falls_back_to_append(self):
+        claude_client.get_auth = lambda: None
+
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                await client.post("/api/knowledge/fact", json={
+                    "text": "The beacon is the office lamp"})
+                await self.server.MEMORY_LAST_TASK
+            finally:
+                await client.close()
+
+        asyncio.run(run())
+        text = self.server.SHARED_MEMORY_FILE.read_text()
+        self.assertIn("## Recently added", text)
+        self.assertIn("- The beacon is the office lamp", text)
+        # started from the shared template since no file existed
+        self.assertIn("# Home Memory", text)
+
+    def test_bogus_merge_output_falls_back(self):
+        self.server.SHARED_MEMORY_FILE.write_text("# Home Memory\n\n- Keep me\n")
+        claude_client.get_auth = lambda: {"type": "api_key", "value": "k"}
+        claude_client.run_claude = lambda *a, **k: {
+            "ok": True, "text": "Sorry, I can't do that.", "error": "", "meta": {}}
+
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                await client.post("/api/knowledge/fact", json={"text": "New fact"})
+                await self.server.MEMORY_LAST_TASK
+            finally:
+                await client.close()
+
+        asyncio.run(run())
+        text = self.server.SHARED_MEMORY_FILE.read_text()
+        self.assertIn("Keep me", text)
+        self.assertIn("## Recently added", text)
+        self.assertIn("- New fact", text)
+        self.assertNotIn("Sorry", text)
+
+    def test_duplicate_fact_does_not_merge(self):
+        knowledge_store.add_fact("Already known")
+
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                resp = await client.post("/api/knowledge/fact",
+                                         json={"text": "Already known"})
+                body = await resp.json()
+                self.assertFalse(body["added"])
+                self.assertFalse(body["merging"])
+                self.assertIsNone(self.server.MEMORY_LAST_TASK)
+            finally:
+                await client.close()
+
+        asyncio.run(run())
+        self.assertFalse(self.server.SHARED_MEMORY_FILE.exists())
 
 
 if __name__ == "__main__":
