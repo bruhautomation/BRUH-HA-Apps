@@ -1,5 +1,36 @@
 # Changelog
 
+## 1.3.0
+
+A depth release: the analyst now remembers, builds on what it knows, and reasons
+across sensors instead of reading them one at a time.
+
+- **Viewable memory**: the new 🧠 **Memory** button opens everything Insights has
+  learned about your home — discovered facts, your answers, standing feedback — plus
+  the shared memory file BRUH Terminal maintains. Remove anything that's wrong, or
+  teach it a fact directly; the whole store is injected into every future analysis
+- **No more repeated questions**: every clarifying question the analyst asks is
+  tracked with a lifecycle (open → answered/dismissed). Asked and answered questions
+  are shown to the model with a hard "never re-ask" rule, and a server-side backstop
+  drops any repeat that slips through. Open questions are answerable (or dismissable)
+  from the Memory panel
+- **Learning that actually loops**: findings now land in Insights' own local
+  knowledge base (deduplicated by content) *and* are handed to the home's shared
+  memory — previously they only went to a memory inbox that required BRUH Terminal
+  to be running. Known facts are fed back into every run so they're built upon, never
+  rediscovered
+- **Runs build on each other**: each category's previous analysis (title, summary,
+  highlights, findings) is included in the next run's prompt with instructions to
+  lead with what *changed* and dig deeper on what didn't — instead of regenerating
+  the same surface story every refresh
+- **Presence that's actually smart**: a new device-context pass walks the device
+  registry and pulls in the sibling sensors living on each presence tracker's
+  physical device — phone WiFi SSID, geocoded address, detected activity,
+  battery/charging state — with their recent history. The analyst is instructed to
+  reason like a detective ("phone on 'OfficeNet' near 5th & Main, stationary → at
+  work") instead of parroting `person.state`, and to cite the evidence chain.
+  Overview and Presence use it out of the box; Ask questions get it too
+
 ## 1.2.0
 
 - **Create your own insights**: a new "＋ New insight" button lets you define custom

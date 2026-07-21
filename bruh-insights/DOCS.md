@@ -140,19 +140,39 @@ insight, so treat the token like any other dashboard-level secret.
 ## Questions, findings, and memory
 
 The analyst may attach up to two **clarifying questions** to an insight ("Is the garage
-fridge meant to run overnight?"). They appear on the card with an inline answer box —
-answering forwards the answer to the **bruh_claude** integration
-(`bruh_claude.answer_question`) so the home remembers it, and removes the question from
-the card. Open questions across all insights are listed at `GET /api/questions`.
+fridge meant to run overnight?"). They appear on the card with an inline answer box, and
+every question is tracked in the add-on's own knowledge base with a lifecycle —
+**open → answered/dismissed**. Asked and answered questions are shown to the analyst on
+every run with a hard never-re-ask rule (plus a server-side filter as backstop), so you
+answer a question once and it stays answered.
 
-Durable **findings** (sensor reliability issues, recurring patterns) are recorded with
-each insight and submitted automatically via `bruh_claude.add_memory`. When the
-integration isn't installed (it ships with the BRUH Terminal add-on), both fall back to
-JSONL drop-files in `/share/bruh_claude/memory-inbox/` for BRUH Terminal to ingest.
+Durable **findings** (sensor reliability issues, recurring patterns, quirks) land in the
+same local knowledge base, deduplicated by content, and are fed back into every future
+analysis as known facts the analyst must build on rather than rediscover. Each category
+also sees its own **previous run** (title, summary, highlights, findings) and is
+instructed to lead with what changed and dig deeper — not to regenerate the same story.
 
-If BRUH Terminal maintains a memory file at `/config/.bruh_claude/memory/memory.md`, its
-contents are folded into every data snapshot ahead of the CLAUDE.md excerpt, so learned
-facts inform every future insight.
+The 🧠 **Memory** button in the top bar shows all of it: open questions (answer or
+dismiss them right there), learned facts (remove anything wrong, or type in a fact to
+teach it), answered Q&A, and — when BRUH Terminal maintains one — the shared memory file
+at `/config/.bruh_claude/memory/memory.md`, whose contents are also folded into every
+data snapshot.
+
+Findings and answers are additionally handed to the **bruh_claude** integration
+(`bruh_claude.add_memory` / `bruh_claude.answer_question`) so the whole home shares
+them. When the integration isn't installed (it ships with the BRUH Terminal add-on),
+they fall back to JSONL drop-files in `/share/bruh_claude/memory-inbox/` for BRUH
+Terminal to ingest — but Insights' own memory works either way.
+
+## Device context (deep presence)
+
+Presence analysis goes beyond `person` states. For the Overview and Presence categories
+(and every Ask question), the add-on walks the device registry and includes the sibling
+entities that live on the same physical device as each presence tracker — typically the
+companion-app phone: WiFi SSID, geocoded address, detected activity, battery and
+charging state — along with their recent history. The analyst is instructed to
+cross-reference these signals and cite its evidence ("phone on home WiFi and charging
+since 10:41 PM") instead of parroting `home`/`not_home`.
 
 ## Privacy & security
 
@@ -160,7 +180,10 @@ facts inform every future insight.
   point — but nothing else leaves your machine. Nothing is sent on a schedule unless
   `auto_refresh_hours` is enabled and you've connected an account.
 - Person **GPS coordinates are not** included in snapshots; only zone/state (`home`,
-  `not_home`, zone names) and areas are.
+  `not_home`, zone names) and areas are. Device-context expansion does include the
+  *states* of phone sensors such as the geocoded-address sensor (that's what makes
+  presence analysis smart) — if you don't want that, disable those sensors in the
+  companion app or hide the entities in HA and they'll be excluded.
 - Generated visualizations render in **sandboxed iframes** (`sandbox="allow-scripts"`) — they
   cannot touch your Home Assistant session, cookies, or the panel itself.
 - The panel is only reachable through HA Ingress (admin users), never exposed on a host

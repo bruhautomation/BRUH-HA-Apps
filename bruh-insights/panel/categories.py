@@ -31,11 +31,13 @@ CATEGORIES: list[dict] = [
         "device_classes": [],
         "history": False,
         "stats": False,
+        "device_context": True,
         "focus": (
             "Give a delightful executive summary of the whole home right now: counts of what is "
-            "on/open/active by area, who is home, anything unusual or worth attention. Build a "
-            "visualization that maps the state of the home at a glance — for example an area-by-area "
-            "grid or a radial 'home at a glance' diagram with animated state dots."
+            "on/open/active by area, who is home (corroborated by their phones' context sensors, "
+            "not just person state), anything unusual or worth attention. Build a visualization "
+            "that maps the state of the home at a glance — for example an area-by-area grid or a "
+            "radial 'home at a glance' diagram with animated state dots."
         ),
     },
     {
@@ -111,10 +113,18 @@ CATEGORIES: list[dict] = [
         "device_classes": ["motion", "occupancy", "presence"],
         "history": True,
         "stats": False,
+        "device_context": True,
         "focus": (
-            "Analyze presence and activity: who is home now, arrival/departure patterns over the "
-            "period, and the home's activity rhythm from motion sensors. Visualize a presence "
-            "timeline per person and/or an activity heat pattern by hour."
+            "Analyze presence with real depth, not just person states. Use the device_context "
+            "section — each person's phone contributes rich signals on the same physical device: "
+            "WiFi SSID (home network = home, another network names WHERE they are), geocoded "
+            "address, detected activity (still/walking/driving), battery and charging state "
+            "(charging at night usually = home, in bed). Cross-reference these with "
+            "arrival/departure history and motion sensors to tell the real story: where each "
+            "person is, what they're likely doing, and how today's rhythm compares to the "
+            "period's patterns. State conclusions with their evidence (e.g. \"phone on home WiFi "
+            "and charging since 10:41 PM\"). Visualize a presence timeline per person and/or an "
+            "activity heat pattern by hour."
         ),
     },
     {
@@ -199,8 +209,8 @@ OUTPUT CONTRACT (strict JSON; title, summary, highlights, and html are required)
 }
 Provide 2-4 highlights. Escape the HTML correctly as a JSON string.
 "tags" (2-4): short lowercase topic tags describing what this card is actually about — single words or hyphenated (e.g. "energy", "anomaly", "batteries", "left-on", "comfort"). Tag by CONTENT, not by the requested category: a lighting card that found a battery problem should carry "batteries" too. The dashboard uses tags to group related cards, so reuse plain common words over inventive ones.
-"questions" (optional, max 2): things you could NOT resolve from the data, phrased as short questions directly to the homeowner (e.g. "Is the garage fridge meant to run overnight?"). Omit the field or use [] when the data speaks for itself.
-"findings" (optional, max 3): durable discoveries about this home worth remembering for future analyses — sensor reliability issues, recurring patterns, quirks (e.g. "The hallway motion sensor drops offline most nights around 2 AM"). One plain factual sentence each, no advice. Omit when nothing new was learned.
+"questions" (optional, max 2): things you could NOT resolve from the data, phrased as short questions directly to the homeowner (e.g. "Is the garage fridge meant to run overnight?"). Only ask when the answer would genuinely change future analyses. NEVER ask a question that appears in the prompt's already-asked or answered lists, or any rephrasing of one — an answered question is settled, use the answer. Omit the field or use [] when the data speaks for itself.
+"findings" (optional, max 3): durable NEW discoveries about this home worth remembering for future analyses — sensor reliability issues, recurring patterns, quirks (e.g. "The hallway motion sensor drops offline most nights around 2 AM"). One plain factual sentence each, no advice. A finding must be genuinely new: never restate a KNOWN FACT from the prompt, and never restate the current snapshot ("3 lights are on" is a state, not a finding). Omit when nothing new was learned.
 
 THE HTML DOCUMENT:
 - Fully self-contained: inline CSS and JS only. NO external resources (no CDNs, fonts, images, fetch). It renders inside a sandboxed iframe with scripts enabled.
@@ -224,6 +234,10 @@ DESIGN SYSTEM (follow exactly):
 ANALYSIS RULES:
 - Be specific to this home: use real entity names (their friendly names), real areas, real numbers and times. Convert entity_ids to friendly names in all user-facing text.
 - Find the STORY in the data — a trend, an outlier, a pattern, a risk — don't just restate states.
+- REASON LIKE A DETECTIVE, not a meter reader. Cross-reference related entities to reach conclusions no single sensor states outright, and cite the evidence chain. Presence is the canonical example: person.state says "not_home", but the phone's WiFi SSID names the network they're on, the geocoded-address sensor says where, detected activity says whether they're driving or still, and battery/charging state hints at context — combine them ("Ben's phone is on 'OfficeNet' near 5th & Main, stationary, so he's at work") instead of parroting "away". Apply the same rigor everywhere: tie HVAC runtime to room temps and outdoor weather, energy spikes to which device turned on at that minute, lights left on to whether the room saw motion.
+- Use the "device_context" section when present: entities that live on the SAME physical device as a presence tracker (d = device name, usually someone's phone). These are your context clues — SSID, geocoded address, activity, battery — group them per device/person.
+- BUILD ON what you already know. The prompt may include KNOWN FACTS and ANSWERED QUESTIONS — treat them as established truth: use them to interpret the data, don't rediscover or contradict them without new evidence, and never re-ask what's answered.
+- GO DEEPER each run, don't repeat. When the prompt shows your previous analysis of this card, lead with what CHANGED since then and push one level deeper on what didn't — a repeat reading of the same headline is a failed run.
 - If the data for the requested angle is thin, say so honestly in the summary and visualize what IS there.
 - Times in the data are ISO timestamps in the home's local timezone unless suffixed Z. Present times in a friendly way (e.g. "6:42 PM").
 - Never invent data. Every number shown must come from the snapshot."""
@@ -233,16 +247,47 @@ ANALYSIS RULES:
 # Prompt assembly
 # ---------------------------------------------------------------------------
 
+def _previous_block(previous: dict) -> str:
+    """Compact rendering of the last run of this card for the prompt."""
+    lines = [
+        "YOUR PREVIOUS ANALYSIS of this card"
+        + (f" (generated {previous['generated_at']})" if previous.get("generated_at") else "")
+        + " — do NOT repeat it. Lead with what changed since then; where nothing "
+        "changed, dig one level deeper instead of restating:",
+    ]
+    if previous.get("title"):
+        lines.append(f"- Title: {previous['title']}")
+    if previous.get("summary"):
+        lines.append(f"- Summary: {previous['summary']}")
+    hls = [
+        f"{h.get('label')}: {h.get('value')}"
+        for h in (previous.get("highlights") or [])
+        if isinstance(h, dict) and h.get("label")
+    ]
+    if hls:
+        lines.append(f"- Highlights: {'; '.join(hls)}")
+    for f in previous.get("findings") or []:
+        if isinstance(f, str) and f.strip():
+            lines.append(f"- Finding already reported: {f.strip()}")
+    return "\n".join(lines)
+
+
 def build_prompt(
     category: dict,
     bundle: dict,
     question: str | None = None,
     feedback: list[str] | None = None,
+    knowledge: str | None = None,
+    previous: dict | None = None,
 ) -> str:
     """Assemble the user prompt: analysis focus + the data bundle.
 
     ``feedback`` is the homeowner's standing feedback on earlier versions of
     this card — injected as instructions the new insight must honor.
+    ``knowledge`` is the rendered knowledge-store block (known facts,
+    answered questions, questions already asked). ``previous`` is the last
+    stored run of this card, injected so the analyst advances the story
+    instead of regenerating it.
     """
     parts: list[str] = []
     if question:
@@ -268,12 +313,19 @@ def build_prompt(
             + "\n".join(f"- {f}" for f in cleaned_feedback)
         )
 
+    if knowledge and knowledge.strip():
+        parts.append("\n" + knowledge.strip())
+
+    if previous:
+        parts.append("\n" + _previous_block(previous))
+
     parts.append(
         "\nHOME DATA SNAPSHOT (JSON). Sections: meta (now, timezone, location name), areas, "
         "entities (e=entity_id, s=state, n=friendly name, a=area, u=unit, dc=device_class, "
-        "lc=last_changed, x=extra attributes), history (per entity: h=[[time, value|state], ...] "
-        "downsampled), statistics (per entity hourly sum/mean), context (optional notes about "
-        "this home)."
+        "lc=last_changed, x=extra attributes), device_context (entities sharing a physical "
+        "device with a presence tracker — phone SSID/geocoded address/activity/battery; "
+        "d=device name), history (per entity: h=[[time, value|state], ...] downsampled), "
+        "statistics (per entity hourly sum/mean), context (optional notes about this home)."
     )
     parts.append(json.dumps(bundle, ensure_ascii=False, separators=(",", ":")))
     parts.append(
