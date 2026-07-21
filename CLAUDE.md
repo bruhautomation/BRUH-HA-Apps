@@ -4,7 +4,13 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 ## Project Overview
 
-This repository contains Home Assistant add-ons by BRUH Automation. The primary add-on is **BRUH Terminal** - an enhanced Claude Code terminal for Home Assistant with native HA API access, auto-backup, context generation, and deep HA integration.
+This repository contains three Home Assistant add-ons by BRUH Automation:
+
+- **BRUH Terminal** (`bruh-claude-terminal/`) - an enhanced Claude Code terminal for Home Assistant with native HA API access, auto-backup, context generation, and deep HA integration. The primary add-on; its architecture is documented in detail below.
+- **BRUH Insights** (`bruh-insights/`) - an AI insights dashboard: Claude analyzes HA data (states, history, statistics) and generates interactive visualizations served through an Ingress panel (`bruh-insights/panel/`).
+- **BRUH Minecraft** (`bruh-minecraft-server/`) - a Minecraft Java Edition server with an ingress management panel, git-based world version control, RCON, and a companion `bruh_minecraft` custom integration.
+
+Shared brand sources live in `branding/` (Solid Blocks icon SVGs) and `brands/` (home-assistant/brands submission assets); cross-add-on tests live in `tests/`.
 
 ## Repository Structure
 
