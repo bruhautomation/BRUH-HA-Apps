@@ -30,6 +30,8 @@
   </div>
   <div class="spacer"></div>
   <span id="authChip" class="chip"><span class="dot"></span><span id="authChipText">Checking…</span></span>
+  <button id="pausedChip" class="chip clickable warn hidden"><span class="dot"></span><span id="pausedChipText"></span></button>
+  <button id="settingsBtn" class="btn hidden" data-tip="Settings — auto-refresh, plan &amp; usage budget">⚙&nbsp; Settings</button>
   <button id="knowledgeBtn" class="btn hidden" data-tip="What Insights has learned about your home">🧠&nbsp; Memory</button>
   <button id="newInsight" class="btn hidden">＋&nbsp; New insight</button>
   <button id="refreshAll" class="btn primary hidden">↻&nbsp; Refresh all</button>
@@ -140,6 +142,9 @@
         Enabled — include in auto-refresh and “Refresh all”</label>
       <label for="editHours">Refresh every N hours (empty = add-on default, 0 = manual only)</label>
       <input id="editHours" type="number" min="0" max="168" step="1" placeholder="default">
+      <label for="editTimes">…or run at fixed times daily (overrides the interval — saves tokens)</label>
+      <input id="editTimes" type="text" maxlength="60" autocomplete="off"
+             placeholder="e.g. 07:00, 19:00 (empty = use the interval)">
       <p class="hint">The analyst only sees the collected data snapshot — prompts can steer the
         analysis, not fetch new data.</p>
       <div class="row">
@@ -177,12 +182,60 @@
         placeholder="e.g. Track the garage fridge temperature and door sensor. Flag any period above 5°C and estimate how often the compressor runs."></textarea>
       <label for="newHours">Refresh every N hours (empty = add-on default, 0 = manual only)</label>
       <input id="newHours" type="number" min="0" max="168" step="1" placeholder="default">
+      <label for="newTimes">…or run at fixed times daily (overrides the interval — saves tokens)</label>
+      <input id="newTimes" type="text" maxlength="60" autocomplete="off"
+             placeholder="e.g. 07:00, 19:00 (empty = use the interval)">
       <label class="check hidden" id="newEnabledRow"><input id="newEnabled" type="checkbox">
         Enabled — include in auto-refresh and “Refresh all”</label>
       <div class="row">
         <button id="newSave" class="btn primary">Create &amp; generate</button>
         <button id="newDelete" class="btn ghost danger hidden">Delete insight</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<div id="setModal" class="modal" role="dialog" aria-modal="true">
+  <div class="box edit">
+    <header>
+      <span>⚙</span>
+      <span>Settings</span>
+      <div class="spacer"></div>
+      <button id="setClose" class="btn icon" data-tip="Close" aria-label="Close">✕</button>
+    </header>
+    <div class="edit-body">
+      <label class="check bigcheck"><input id="setEnabled" type="checkbox">
+        <span><b>Automatic insights</b><br>
+        <span class="subtext">Generate cards on their intervals and schedules. Turn off to pause
+        all background generation — nothing runs (or spends tokens) until you turn it back on.
+        Manual “Generate” and “Ask” always work.</span></span></label>
+
+      <label for="setPlan">Your Claude subscription</label>
+      <select id="setPlan" class="selin">
+        <option value="pro">Claude Pro</option>
+        <option value="max5">Claude Max (5×)</option>
+        <option value="max20">Claude Max (20×)</option>
+      </select>
+
+      <label for="setBudget">Session usage budget — let Insights use up to
+        <b id="setBudgetVal">25%</b> of each 5-hour session</label>
+      <input id="setBudget" type="range" min="5" max="100" step="5" value="25">
+      <p class="hint">Your Claude plan refills a usage window every 5 hours. Once the window's
+        usage reaches this share, Insights pauses automatic runs so it never crowds out your own
+        Claude use — they resume as the window rolls over. Manual clicks are never blocked.</p>
+
+      <div class="usagewrap">
+        <label>This session right now</label>
+        <div class="usagebar" aria-hidden="true">
+          <div id="usageFill"></div>
+          <div id="usageMark"></div>
+        </div>
+        <div id="usageText" class="hint"></div>
+      </div>
+
+      <p class="hint">💡 Token-saving tips: each card's ✎ dialog can set fixed daily run times
+        (e.g. “07:00, 19:00”), a longer every-N-hours interval, or disable that card entirely —
+        scheduled times use far fewer tokens than short intervals.</p>
     </div>
   </div>
 </div>

@@ -4,6 +4,31 @@ All notable changes to **BRUH Insights**, newest first. This project adheres to 
 
 > 💡 Prefer a cleaner, categorized view? See the [formatted changelog at bruhautomation.com](https://bruhautomation.com/bruh-insights/changelog/).
 
+## 1.6.0
+
+- **⚙ Settings dialog**: a new Settings button in the panel puts the token controls one tap
+  away — a master **Automatic insights** switch (turn everything off for a while without
+  uninstalling; manual Generate/Ask still work), your **Claude plan** (Pro, Max 5×, Max 20×),
+  and a **session usage budget slider**: let Insights use up to N% of each 5-hour
+  subscription session. Once the session hits the budget, auto-refresh pauses until the
+  window rolls over — a topbar chip shows why, and manual clicks are never blocked
+- **Real account usage when available**: if the BRUH Terminal add-on is installed, the
+  budget runs against your ACTUAL Anthropic 5-hour utilization (its usage-limits tracker);
+  otherwise Insights counts its own tokens per run against a per-plan estimate. The ⚙
+  dialog shows a live usage meter with the budget mark either way
+- **Per-card run schedules**: every card's ✎ dialog (and the New-insight form) can now set
+  fixed daily run times — e.g. "07:00, 19:00" — instead of an every-N-hours interval.
+  Scheduled cards regenerate right after each set time and spend nothing in between
+- **Concise cards, retooled prompts**: the analyst's contract was rewritten around
+  glanceable data points — 3-6 sharp highlights (real value + entity + time) as the main
+  content, a 1-2 sentence summary hard-capped server-side, ONE compact focused visual
+  (220-420px) instead of sprawling multi-chart reports, and an explicit "every sentence
+  carries a number, a name, or a time" rule. All built-in category prompts were trimmed to
+  match
+- **Fewer background runs by default**: the default auto-refresh interval is now 24 h
+  (was 6 h) — the ⚙ budget, per-card schedules, and per-card intervals are the intended
+  controls for anything more frequent
+
 ## 1.5.0
 
 - **Port 8100 removed entirely**: dashboard cards are now served exclusively by Home
