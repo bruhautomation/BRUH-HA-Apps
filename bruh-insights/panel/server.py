@@ -6,7 +6,9 @@ Routes
 ------
 GET  /                       — dashboard HTML
 GET  /style.css, /app.js     — static assets
-GET  /api/status             — auth state, categories, job states
+GET  /api/status             — auth state, categories, job states, settings, usage
+GET  /api/settings           — runtime settings + session-budget state + plans
+PUT  /api/settings           — update {auto_enabled, plan, budget_percent}
 GET  /api/insights           — all stored insights (with rendered HTML)
 POST /api/generate           — queue generation {category} or {question}
 POST /api/generate_all       — queue every standard category
@@ -74,13 +76,15 @@ import claude_client
 import feedback_store
 import knowledge_store
 import prompt_store
+import settings_store
+import usage_store
 import user_categories
 from categories import CATEGORIES, SYSTEM_PROMPT, build_prompt, get_category
 
 HERE = Path(__file__).resolve().parent
 INSIGHTS_DIR = Path(os.environ.get("BRUH_INSIGHTS_DIR", "/data/insights"))
 ADDON_VERSION = os.environ.get("ADDON_VERSION", "dev")
-REFRESH_HOURS = float(os.environ.get("BRUH_INSIGHTS_REFRESH_HOURS", "6") or 0)
+REFRESH_HOURS = float(os.environ.get("BRUH_INSIGHTS_REFRESH_HOURS", "24") or 0)
 HISTORY_DAYS = int(os.environ.get("BRUH_INSIGHTS_HISTORY_DAYS", "7") or 7)
 # Dated per-run copies of each category insight (0 for either disables history)
 HISTORY_KEEP_RUNS = int(os.environ.get("BRUH_INSIGHTS_HISTORY_KEEP_RUNS", "40") or 40)
@@ -350,6 +354,16 @@ async def _submit_answer(question: str, answer: str) -> None:
 # Generation worker
 # ---------------------------------------------------------------------------
 
+def _record_usage(result: dict, insight_id: str) -> None:
+    """Book a finished Claude invocation's tokens against the session budget
+    (best-effort — usage accounting must never break a run)."""
+    try:
+        tokens = usage_store.tokens_from_meta(result.get("meta") or {})
+        usage_store.record_run(tokens, insight_id)
+    except Exception as exc:  # noqa: BLE001
+        log.debug("usage recording failed: %s", exc)
+
+
 def _clean_strings(value, max_items: int, max_chars: int) -> list[str]:
     """Sanitize a model-returned string array: strings only, trimmed, capped."""
     if not isinstance(value, list):
@@ -405,6 +419,7 @@ async def _generate(insight_id: str) -> None:
         result = await asyncio.to_thread(
             claude_client.run_claude, prompt, SYSTEM_PROMPT, MODEL, TIMEOUT_S,
         )
+        _record_usage(result, insight_id)
         if not result["ok"]:
             raise RuntimeError(result["error"] or "generation failed")
 
@@ -442,7 +457,9 @@ async def _generate(insight_id: str) -> None:
             "category_title": cat.get("title", "Custom"),
             "question": question,
             "title": str(obj.get("title", ""))[:120],
-            "summary": str(obj.get("summary", ""))[:2000],
+            # concise contract: summaries are 1-2 sentences — a long one is
+            # a model miss, so a hard cap keeps cards scannable regardless
+            "summary": str(obj.get("summary", ""))[:600],
             "highlights": highlights[:6],
             "questions": questions,
             "findings": findings,
@@ -478,13 +495,50 @@ async def _worker() -> None:
             QUEUE.task_done()
 
 
+def _parse_generated_at(generated_at: str) -> float | None:
+    try:
+        return time.mktime(time.strptime(generated_at[:19], "%Y-%m-%dT%H:%M:%S"))
+    except (ValueError, OverflowError):
+        return None
+
+
+def _schedule_due(times: list[str], generated_at: str, now: float) -> bool:
+    """Fixed daily run times ("HH:MM", local): due when the most recent
+    scheduled instant has passed and the stored insight predates it."""
+    lt = time.localtime(now)
+    passed: list[float] = []
+    for t in times:
+        try:
+            hh, mm = t.split(":")
+            hh, mm = int(hh), int(mm)
+        except ValueError:
+            continue
+        # today's and yesterday's occurrence; mktime normalizes day-1
+        for day_off in (0, -1):
+            stamp = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday + day_off,
+                                 hh, mm, 0, 0, 0, -1))
+            if stamp <= now:
+                passed.append(stamp)
+    if not passed:
+        return False
+    last_scheduled = max(passed)
+    gen = _parse_generated_at(generated_at) if generated_at else None
+    return gen is None or gen < last_scheduled
+
+
 def _refresh_due(eff: dict, generated_at: str, now: float) -> bool:
-    """True when a category's stored insight is older than its effective
-    interval (per-category refresh_hours override, else global REFRESH_HOURS;
-    0 disables). A missing or unparseable timestamp counts as ancient, so
-    first boot generates every enabled category."""
+    """True when a category's stored insight should regenerate.
+
+    A non-empty per-category schedule (fixed daily times) takes precedence;
+    otherwise the age-based interval applies (per-category refresh_hours
+    override, else global REFRESH_HOURS; 0 disables). A missing or
+    unparseable timestamp counts as ancient, so first boot generates every
+    enabled category."""
     if not eff.get("enabled", True):
         return False
+    schedule = eff.get("schedule")
+    if isinstance(schedule, list) and schedule:
+        return _schedule_due(schedule, generated_at, now)
     hours = eff.get("refresh_hours")
     if hours is None:
         hours = REFRESH_HOURS
@@ -492,20 +546,35 @@ def _refresh_due(eff: dict, generated_at: str, now: float) -> bool:
         return False
     if not generated_at:
         return True
-    try:
-        age = now - time.mktime(time.strptime(generated_at[:19], "%Y-%m-%dT%H:%M:%S"))
-    except (ValueError, OverflowError):
+    gen = _parse_generated_at(generated_at)
+    if gen is None:
         return True
-    return age >= hours * 3600
+    return now - gen >= hours * 3600
 
 
 async def _scheduler() -> None:
     """Per-category auto-refresh: each tick, queue any enabled category whose
-    stored insight has outlived its effective refresh interval."""
+    stored insight has outlived its effective refresh interval (or whose
+    scheduled run time has passed). Respects the ⚙ master switch and the
+    session token budget — manual generation is never gated here."""
+    budget_logged = False
     while True:
         await asyncio.sleep(60)
         if not claude_client.get_auth():
             continue
+        settings = settings_store.load()
+        if not settings["auto_enabled"]:
+            continue
+        budget = usage_store.budget_state(settings)
+        if budget["blocked"]:
+            if not budget_logged:
+                log.info(
+                    "auto-refresh paused: session usage %.0f%% ≥ budget %d%% (%s)",
+                    budget["used_percent"], budget["budget_percent"],
+                    budget["source"])
+                budget_logged = True
+            continue
+        budget_logged = False
         stored = {i["id"]: i.get("generated_at", "") for i in load_insights()}
         now = time.time()
         for cat in all_categories():
@@ -565,6 +634,7 @@ def _category_status(c: dict, insights: dict) -> dict:
             "focus_overridden": False,
             "enabled": c.get("enabled", True),
             "refresh_hours": c.get("refresh_hours"),
+            "schedule": c.get("schedule"),
             "user": True,
             "job": {k: JOBS.get(c["id"], {}).get(k) for k in ("state", "error")},
         }
@@ -580,6 +650,7 @@ def _category_status(c: dict, insights: dict) -> dict:
         "focus_overridden": "focus" in eff.get("overridden", []),
         "enabled": eff.get("enabled", True),
         "refresh_hours": eff.get("refresh_hours"),
+        "schedule": eff.get("schedule"),
         "job": {k: JOBS.get(c["id"], {}).get(k) for k in ("state", "error")},
     }
 
@@ -587,6 +658,7 @@ def _category_status(c: dict, insights: dict) -> dict:
 async def h_status(request: web.Request) -> web.Response:
     auth = claude_client.get_auth()
     insights = {i["id"]: i.get("generated_at") for i in load_insights()}
+    settings = settings_store.load()
     return web.json_response({
         "version": ADDON_VERSION,
         "authenticated": bool(auth),
@@ -596,6 +668,8 @@ async def h_status(request: web.Request) -> web.Response:
         "model": MODEL or "default",
         "refresh_hours": REFRESH_HOURS,
         "history_days": HISTORY_DAYS,
+        "settings": settings,
+        "usage": usage_store.budget_state(settings),
         "categories": [_category_status(c, insights) for c in all_categories()],
         "jobs": {jid: {"state": j.get("state"), "error": j.get("error")}
                  for jid, j in JOBS.items()},
@@ -704,6 +778,7 @@ def _prompt_record(cat_id: str) -> dict:
         "overridden": eff["overridden"],
         "enabled": eff["enabled"],
         "refresh_hours": eff["refresh_hours"],
+        "schedule": eff["schedule"],
     }
 
 
@@ -737,6 +812,11 @@ async def h_prompt_put(request: web.Request) -> web.Response:
                 or not 0 <= hours <= 168):
             raise web.HTTPBadRequest(text="refresh_hours must be an integer 0-168 or null")
         fields["refresh_hours"] = hours
+    if "schedule" in body:
+        try:
+            fields["schedule"] = settings_store.clean_schedule(body["schedule"])
+        except ValueError as exc:
+            raise web.HTTPBadRequest(text=str(exc))
     prompt_store.save_override(cat_id, fields)
     return web.json_response(_prompt_record(cat_id))
 
@@ -1060,6 +1140,7 @@ async def _merge_memory_task(facts: list[str]) -> None:
                     )
                     result = await asyncio.to_thread(
                         claude_client.run_claude, prompt, MEMORY_MERGE_SYSTEM, MODEL, 180)
+                    _record_usage(result, "memory")
                     if result["ok"]:
                         merged = _strip_md_fences(result["text"])
                 # sanity: a merged doc is markdown of plausible size, not an
@@ -1134,6 +1215,7 @@ async def _remove_memory_task(facts: list[str]) -> None:
                         result = await asyncio.to_thread(
                             claude_client.run_claude, prompt,
                             MEMORY_REMOVE_SYSTEM, MODEL, 180)
+                        _record_usage(result, "memory")
                         if result["ok"]:
                             merged = _strip_md_fences(result["text"])
                     # a removal never grows the doc much or empties the headings
@@ -1288,6 +1370,35 @@ async def h_knowledge_question_delete(request: web.Request) -> web.Response:
     return web.json_response({"deleted": ts})
 
 
+# -- runtime settings (⚙ dialog) --------------------------------------------
+
+async def h_settings_get(request: web.Request) -> web.Response:
+    settings = settings_store.load()
+    return web.json_response({
+        "settings": settings,
+        "usage": usage_store.budget_state(settings),
+        "plans": [
+            {"id": p, "label": usage_store.PLAN_LABELS[p],
+             "session_tokens": usage_store.PLAN_SESSION_TOKENS[p]}
+            for p in settings_store.PLANS
+        ],
+    })
+
+
+async def h_settings_put(request: web.Request) -> web.Response:
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise web.HTTPBadRequest(text="settings must be an object")
+    try:
+        settings = settings_store.save(body)
+    except ValueError as exc:
+        raise web.HTTPBadRequest(text=str(exc))
+    return web.json_response({
+        "settings": settings,
+        "usage": usage_store.budget_state(settings),
+    })
+
+
 # -- auth -------------------------------------------------------------------
 
 async def h_auth_token(request: web.Request) -> web.Response:
@@ -1351,6 +1462,8 @@ def make_app() -> web.Application:
     app.router.add_get("/app.js", _static("app.js", "application/javascript"))
     app.router.add_get("/favicon.svg", _static("favicon.svg", "image/svg+xml"))
     app.router.add_get("/api/status", h_status)
+    app.router.add_get("/api/settings", h_settings_get)
+    app.router.add_put("/api/settings", h_settings_put)
     app.router.add_get("/api/insights", h_insights)
     app.router.add_post("/api/generate", h_generate)
     app.router.add_post("/api/generate_all", h_generate_all)

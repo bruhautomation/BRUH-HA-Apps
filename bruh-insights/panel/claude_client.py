@@ -310,6 +310,8 @@ def run_claude(
         for k in ("total_cost_usd", "duration_ms", "num_turns", "session_id", "subtype")
         if envelope.get(k) is not None
     }
+    if isinstance(envelope.get("usage"), dict):
+        meta["usage"] = envelope["usage"]
     if envelope.get("is_error") or not text:
         if envelope.get("subtype") == "error_max_turns":
             err = ("Claude hit the turn limit before finishing the insight — "

@@ -7,8 +7,10 @@ from categories.py at read time — categories.py itself stays untouched and
 dependency-free.
 
 File shape: {"categories": {"<id>": {"focus": "...", "enabled": false,
-"refresh_hours": 12}}} — every key is optional per category; an absent key
-means "use the shipped default".
+"refresh_hours": 12, "schedule": ["07:00", "19:00"]}}} — every key is
+optional per category; an absent key means "use the shipped default". A
+non-empty schedule (fixed daily run times) takes precedence over
+refresh_hours for that category.
 
 This module deliberately avoids aiohttp so the test suite can import it
 without the add-on runtime.
@@ -23,7 +25,7 @@ from categories import get_category
 
 OVERRIDES_FILE = os.environ.get("BRUH_INSIGHTS_PROMPTS_FILE", "/data/prompt_overrides.json")
 
-OVERRIDE_FIELDS = ("focus", "enabled", "refresh_hours")
+OVERRIDE_FIELDS = ("focus", "enabled", "refresh_hours", "schedule")
 
 
 def load_overrides() -> dict:
@@ -78,9 +80,11 @@ def reset_override(cat_id: str) -> None:
 def effective_category(cat_id: str) -> dict | None:
     """The shipped category merged with any stored override.
 
-    Adds three keys on top of the categories.py shape:
+    Adds four keys on top of the categories.py shape:
       enabled        — bool, default True
       refresh_hours  — int override, or None (= use the global default)
+      schedule       — list of "HH:MM" daily run times, or None; a non-empty
+                       schedule takes precedence over refresh_hours
       overridden     — list of field names an override is active for
     """
     base = get_category(cat_id)
@@ -107,5 +111,12 @@ def effective_category(cat_id: str) -> dict | None:
         overridden.append("refresh_hours")
     else:
         eff["refresh_hours"] = None
+    schedule = entry.get("schedule")
+    if isinstance(schedule, list) and schedule \
+            and all(isinstance(t, str) for t in schedule):
+        eff["schedule"] = schedule
+        overridden.append("schedule")
+    else:
+        eff["schedule"] = None
     eff["overridden"] = overridden
     return eff

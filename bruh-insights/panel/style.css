@@ -803,8 +803,64 @@ body.modal-open {
 .hidden { display: none !important; }
 
 @media (max-width: 640px) {
-  .topbar { padding: 10px 12px; gap: 8px; }
+  /* wrap: the usage/paused chips flow to a second row instead of clipping */
+  .topbar { padding: 10px 12px; gap: 8px; flex-wrap: wrap; }
   .brand span.txt { display: none; }
   .wrap { padding: 12px 12px 60px; }
   .grid { gap: 12px; }
+}
+
+/* --------------------------------------------------- settings (⚙) dialog */
+.chip.clickable { cursor: pointer; border: 1px solid var(--hairline); font: inherit; font-size: 12.5px; }
+.chip.clickable:hover { background: var(--surface-2); }
+
+.edit-body label.bigcheck { align-items: flex-start; margin-bottom: 4px; }
+.edit-body label.bigcheck input { margin-top: 3px; }
+.edit-body label.bigcheck .subtext { font-weight: 400; color: var(--ink-3); font-size: 12.5px; }
+
+.edit-body .selin {
+  width: 100%;
+  max-width: 260px;
+  padding: 9px 12px;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--ink);
+  background: var(--plane);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  outline: none;
+}
+.edit-body .selin:focus { border-color: var(--accent); }
+
+.edit-body input[type="range"] {
+  width: 100%;
+  margin: 6px 0 2px;
+  accent-color: var(--accent);
+}
+
+.usagewrap { margin-top: 14px; }
+.usagebar {
+  position: relative;
+  height: 10px;
+  border-radius: 6px;
+  background: var(--surface-2);
+  border: 1px solid var(--hairline);
+  overflow: hidden;
+}
+#usageFill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0%;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  border-radius: 6px;
+  transition: width 400ms ease-out;
+}
+#usageFill.over { background: linear-gradient(90deg, var(--serious), var(--critical)); }
+#usageMark {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  background: var(--ink-2);
+  opacity: 0.85;
 }

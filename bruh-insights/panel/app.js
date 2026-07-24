@@ -129,6 +129,60 @@ function renderAuth() {
   $("#refreshAll").classList.toggle("hidden", !s.authenticated);
   $("#newInsight").classList.toggle("hidden", !s.authenticated);
   $("#knowledgeBtn").classList.toggle("hidden", !s.authenticated);
+  $("#settingsBtn").classList.toggle("hidden", !s.authenticated);
+  renderUsageChip();
+  renderPausedChip();
+}
+
+function fmtClock(epoch) {
+  const d = new Date(epoch * 1000);
+  return isNaN(d.getTime()) ? "" :
+    d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+// Topbar chip: current 5-hour-session usage + when the window resets
+// (click opens ⚙). Dot goes warning-colored once the budget is reached.
+function renderUsageChip() {
+  const s = state.status;
+  const chip = $("#usageChip");
+  const u = s && s.authenticated && s.usage;
+  if (!u || u.used_percent == null) {
+    chip.classList.add("hidden");
+    return;
+  }
+  let label = `${Math.round(u.used_percent)}% used`;
+  const reset = u.resets_at ? fmtClock(u.resets_at) : "";
+  if (reset) label += ` · resets ${reset}`;
+  $("#usageChipText").textContent = label;
+  chip.classList.toggle("ok", !u.blocked);
+  chip.classList.toggle("warn", !!u.blocked);
+  chip.title = (u.source === "account"
+    ? `Your Anthropic account's 5-hour session: ${u.used_percent}% used`
+    : `≈${u.used_percent}% of a ${u.plan_label} session used by Insights (estimate)`)
+    + ` — budget ${u.budget_percent}%`
+    + (reset ? `, window resets at ${reset}` : "")
+    + ". Tap for settings.";
+  chip.classList.remove("hidden");
+}
+
+// Topbar chip that says WHY nothing is auto-generating (click opens ⚙)
+function renderPausedChip() {
+  const s = state.status;
+  const chip = $("#pausedChip");
+  const text = $("#pausedChipText");
+  let label = "";
+  if (s && s.authenticated) {
+    if (s.settings && s.settings.auto_enabled === false) {
+      label = "Auto insights off";
+      chip.title = "Automatic generation is switched off in Settings";
+    } else if (s.usage && s.usage.blocked) {
+      label = "Usage budget reached";
+      chip.title = `Session usage ${s.usage.used_percent}% ≥ budget `
+        + `${s.usage.budget_percent}% — auto-refresh paused until the 5-hour window rolls over`;
+    }
+  }
+  text.textContent = label;
+  chip.classList.toggle("hidden", !label);
 }
 
 function bindSetup() {
@@ -731,7 +785,9 @@ function renderIfChanged() {
       + ":q" + ((i.questions || []).length)),
     view: Object.keys(state.viewing).map((k) => k + state.viewing[k].ts),
     cats: s && s.categories.map((c) =>
-      [c.id, c.title, c.icon, c.enabled, c.focus_overridden, c.refresh_hours]),
+      [c.id, c.title, c.icon, c.enabled, c.focus_overridden, c.refresh_hours, c.schedule]),
+    paused: s && [s.settings && s.settings.auto_enabled, s.usage && s.usage.blocked],
+    usage: s && s.usage && [s.usage.used_percent, s.usage.resets_at],
     filter: state.filter,
   });
   if (key !== lastRenderKey) {
@@ -822,6 +878,28 @@ document.addEventListener("keydown", (ev) => {
 
 // ------------------------------------------------------ prompt edit modal
 
+// "07:00, 19:00" ⇄ ["07:00","19:00"]. Returns null for empty, undefined
+// (after a toast) when a chunk isn't a valid HH:MM time.
+function parseTimes(text) {
+  const chunks = String(text || "").split(/[,\s]+/).filter(Boolean);
+  if (!chunks.length) return null;
+  const out = [];
+  for (const c of chunks) {
+    const m = c.match(/^([01]?\d|2[0-3]):([0-5]\d)$/);
+    if (!m) {
+      toast(`“${c}” isn't a time — use 24h HH:MM, e.g. 07:00, 19:00`);
+      return undefined;
+    }
+    const norm = `${m[1].padStart(2, "0")}:${m[2]}`;
+    if (!out.includes(norm)) out.push(norm);
+  }
+  return out.sort();
+}
+
+function timesToText(schedule) {
+  return Array.isArray(schedule) ? schedule.join(", ") : "";
+}
+
 let editCatId = null;
 
 function openEdit(cat) {
@@ -832,17 +910,22 @@ function openEdit(cat) {
   $("#editFocus").value = cat.focus || "";
   $("#editEnabled").checked = cat.enabled !== false;
   $("#editHours").value = cat.refresh_hours == null ? "" : cat.refresh_hours;
-  const overridden = cat.focus_overridden || cat.enabled === false || cat.refresh_hours != null;
+  $("#editTimes").value = timesToText(cat.schedule);
+  const overridden = cat.focus_overridden || cat.enabled === false
+    || cat.refresh_hours != null || (cat.schedule && cat.schedule.length);
   $("#editReset").classList.toggle("hidden", !overridden);
   openBox("#editModal");
 }
 
 async function saveEdit(regen) {
   const hours = $("#editHours").value.trim();
+  const schedule = parseTimes($("#editTimes").value);
+  if (schedule === undefined) return;
   const body = {
     focus: $("#editFocus").value,
     enabled: $("#editEnabled").checked,
     refresh_hours: hours === "" ? null : Math.round(Number(hours)),
+    schedule,
   };
   try {
     await api(`api/prompt/${editCatId}`, { method: "PUT", body: JSON.stringify(body) });
@@ -889,6 +972,7 @@ function openNewInsight(prefill) {
   $("#newIcon").value = (prefill && prefill.icon) || "";
   $("#newFocus").value = (prefill && prefill.focus) || "";
   $("#newHours").value = "";
+  $("#newTimes").value = "";
   $("#newEnabledRow").classList.add("hidden");
   $("#newDelete").classList.add("hidden");
   $("#newSave").textContent = "Create & generate";
@@ -902,6 +986,7 @@ function openUserEdit(cat) {
   $("#newIcon").value = cat.icon || "";
   $("#newFocus").value = cat.focus || "";
   $("#newHours").value = cat.refresh_hours == null ? "" : cat.refresh_hours;
+  $("#newTimes").value = timesToText(cat.schedule);
   $("#newEnabled").checked = cat.enabled !== false;
   $("#newEnabledRow").classList.remove("hidden");
   $("#newDelete").classList.remove("hidden");
@@ -911,11 +996,14 @@ function openUserEdit(cat) {
 
 async function saveUserInsight() {
   const hours = $("#newHours").value.trim();
+  const schedule = parseTimes($("#newTimes").value);
+  if (schedule === undefined) return;
   const body = {
     title: $("#newName").value.trim(),
     icon: $("#newIcon").value.trim(),
     focus: $("#newFocus").value.trim(),
     refresh_hours: hours === "" ? null : Math.round(Number(hours)),
+    schedule,
   };
   if (!body.title) { toast("Give the insight a name"); return; }
   if (!body.focus) { toast("Describe what Claude should analyze"); return; }
@@ -957,6 +1045,81 @@ $("#newModal").addEventListener("click", (ev) => {
   if (ev.target === $("#newModal")) closeBox("#newModal");
 });
 $("#newInsight").addEventListener("click", () => openNewInsight(null));
+
+// -------------------------------------------------------- settings modal
+// Auto-saves on change (no Save button) — the point is setting a budget in
+// two taps. Slider commits on release ("change"), not on every pixel.
+
+function renderUsageMeter(usage, budgetPct) {
+  if (!usage) return;
+  const pct = Math.min(100, usage.used_percent || 0);
+  const fill = $("#usageFill");
+  fill.style.width = pct + "%";
+  fill.classList.toggle("over", pct >= budgetPct);
+  $("#usageMark").style.left = Math.min(100, budgetPct) + "%";
+  const spent = usage.window_tokens >= 1000
+    ? `${Math.round(usage.window_tokens / 1000)}k` : String(usage.window_tokens || 0);
+  const reset = usage.resets_at
+    ? ` Session resets at ${fmtClock(usage.resets_at)}.` : "";
+  $("#usageText").textContent = (usage.source === "account"
+    ? `${usage.used_percent}% of your account's 5-hour session used (live from Anthropic — `
+      + `all Claude use counts, not just Insights). Budget mark at ${budgetPct}%.`
+    : `≈${spent} tokens spent by Insights in the last 5 h — about ${usage.used_percent}% of a `
+      + `${usage.plan_label} session (rough estimate; install BRUH Terminal for live account `
+      + `usage). Budget mark at ${budgetPct}%.`) + reset;
+}
+
+function renderSettingsForm(data) {
+  $("#setEnabled").checked = data.settings.auto_enabled !== false;
+  $("#setPlan").value = data.settings.plan || "pro";
+  $("#setBudget").value = data.settings.budget_percent;
+  $("#setBudgetVal").textContent = data.settings.budget_percent + "%";
+  renderUsageMeter(data.usage, data.settings.budget_percent);
+}
+
+async function openSettings() {
+  openBox("#setModal");
+  try {
+    renderSettingsForm(await api("api/settings"));
+  } catch (e) {
+    toast("Could not load settings: " + e.message);
+  }
+}
+
+async function saveSettings(fields) {
+  try {
+    const data = await api("api/settings", {
+      method: "PUT", body: JSON.stringify(fields) });
+    renderSettingsForm(data);
+    if (state.status) {
+      state.status.settings = data.settings;
+      state.status.usage = data.usage;
+    }
+    renderUsageChip();
+    renderPausedChip();
+    toast("Saved");
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+$("#settingsBtn").addEventListener("click", openSettings);
+$("#usageChip").addEventListener("click", openSettings);
+$("#pausedChip").addEventListener("click", openSettings);
+$("#setEnabled").addEventListener("change", () =>
+  saveSettings({ auto_enabled: $("#setEnabled").checked }));
+$("#setPlan").addEventListener("change", () =>
+  saveSettings({ plan: $("#setPlan").value }));
+$("#setBudget").addEventListener("input", () => {
+  $("#setBudgetVal").textContent = $("#setBudget").value + "%";
+  $("#usageMark").style.left = Math.min(100, Number($("#setBudget").value)) + "%";
+});
+$("#setBudget").addEventListener("change", () =>
+  saveSettings({ budget_percent: Math.round(Number($("#setBudget").value)) }));
+$("#setClose").addEventListener("click", () => closeBox("#setModal"));
+$("#setModal").addEventListener("click", (ev) => {
+  if (ev.target === $("#setModal")) closeBox("#setModal");
+});
 
 // -------------------------------------------------------- feedback modal
 

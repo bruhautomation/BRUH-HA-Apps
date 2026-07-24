@@ -44,7 +44,7 @@ it automatically.
 
 | Option | Default | Description |
 |---|---|---|
-| `auto_refresh_hours` | `6` | Regenerate each category every N hours (categories can override this individually — see prompt editing). `0` disables scheduled refresh (manual only). |
+| `auto_refresh_hours` | `24` | Fallback interval: regenerate each category every N hours when it has no schedule or interval of its own (see prompt editing and the ⚙ Settings dialog). `0` disables scheduled refresh (manual only). |
 | `history_days` | `7` | How many days of history/statistics to analyze. |
 | `history_keep_runs` | `40` | Past runs kept per category for the date selector. `0` disables insight history. |
 | `history_keep_days` | `30` | Past runs older than this are pruned. `0` disables insight history. |
@@ -55,6 +55,31 @@ it automatically.
 Generation runs **one insight at a time** through a queue, which keeps things friendly to
 subscription rate limits. A full "Refresh all" therefore takes several minutes — cards fill
 in one by one.
+
+## Settings (⚙) — token budget & master switch
+
+The **⚙ Settings** button in the panel controls how much of your Claude subscription
+Insights may spend — no add-on restart needed:
+
+- **Automatic insights** — the master switch. Off pauses every scheduled run (nothing
+  spends tokens) while manual **Generate**, **Refresh all**, and **Ask** still work. A
+  topbar chip reminds you it's off.
+- **Your Claude subscription** — Pro, Max 5×, or Max 20×. Used to estimate the size of
+  your 5-hour session window.
+- **Session usage budget** — a slider: *let Insights use up to N% of each 5-hour session.*
+  Claude subscriptions refill a usage window every 5 hours; once the window's usage
+  reaches your budget, Insights pauses automatic runs until it rolls over (a topbar chip
+  says so). Manual clicks are never blocked.
+
+The dialog shows a live usage meter, and a **topbar chip** keeps the current session's
+usage and reset time in view at all times (e.g. "34% used · resets 3:15 PM" — tap it to
+open Settings; it turns warning-colored once the budget is reached). When the
+**BRUH Terminal** add-on is installed, the meter, chip, and budget use your **real
+Anthropic account utilization** (its usage-limits tracker at
+`/config/.bruh_claude/usage_limits.json` — all Claude use on the account counts, which
+is what you want: Insights backs off when *you* are using Claude). Without it, Insights
+counts the tokens of its own runs against a rough per-plan session estimate, and the
+reset time reflects when the oldest counted run ages out of the 5-hour window.
 
 ## Insight history
 
@@ -78,6 +103,10 @@ The ✎ button on every category card opens the prompt editor:
   and can be re-enabled from the card.
 - **Refresh every N hours** — a per-category interval overriding `auto_refresh_hours`
   (`0` = manual only for that category, empty = use the add-on default).
+- **Run at fixed times daily** — e.g. `07:00, 19:00` (24h clock, up to 6 times). When set,
+  it takes precedence over the interval: the card regenerates right after each listed time
+  and spends nothing in between — the cheapest way to keep a card fresh exactly when you
+  read it.
 
 Each stored insight records the focus it was generated with (`focus_used`).
 
@@ -85,7 +114,8 @@ Each stored insight records the focus it was generated with (`focus_used`).
 
 **＋ New insight** (top bar) creates a fully custom recurring insight: give it a name, an
 icon, an analysis prompt, and an optional refresh interval (empty = the add-on's
-`auto_refresh_hours` default, `0` = manual only). Custom insights behave exactly like the
+`auto_refresh_hours` default, `0` = manual only) or fixed daily run times (e.g.
+`07:00, 19:00`). Custom insights behave exactly like the
 shipped categories — auto-refreshed on their own clock, included in "Refresh all", with
 run history and feedback — and the ✎ button edits or deletes them.
 

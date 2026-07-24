@@ -14,7 +14,9 @@ what the analyst looks at.
 
 File shape: {"categories": [{"id": "user-...", "title": "...",
 "icon": "...", "focus": "...", "enabled": true, "refresh_hours": 12,
-"created_at": 1752…}]} — refresh_hours may be null (= add-on default).
+"schedule": ["07:00"], "created_at": 1752…}]} — refresh_hours may be null
+(= add-on default); a non-empty schedule (fixed daily run times) takes
+precedence over refresh_hours.
 
 This module deliberately avoids aiohttp so the test suite can import it
 without the add-on runtime.
@@ -25,6 +27,8 @@ import json
 import os
 import time
 from pathlib import Path
+
+import settings_store
 
 USER_CATS_FILE = os.environ.get(
     "BRUH_INSIGHTS_USER_CATS_FILE", "/data/user_categories.json")
@@ -62,6 +66,10 @@ def _as_category(entry: dict) -> dict:
     hours = entry.get("refresh_hours")
     if not isinstance(hours, int) or isinstance(hours, bool):
         hours = None
+    schedule = entry.get("schedule")
+    if not (isinstance(schedule, list) and schedule
+            and all(isinstance(t, str) for t in schedule)):
+        schedule = None
     return {
         "id": str(entry["id"]),
         "title": str(entry.get("title") or "Custom insight")[:MAX_TITLE],
@@ -75,6 +83,7 @@ def _as_category(entry: dict) -> dict:
         "focus": str(entry.get("focus") or ""),
         "enabled": entry.get("enabled") is not False,
         "refresh_hours": hours,
+        "schedule": schedule,
         "created_at": entry.get("created_at"),
         "user": True,
     }
@@ -119,6 +128,8 @@ def _clean_fields(fields: dict, *, partial: bool) -> dict:
                 or not 0 <= hours <= 168):
             raise ValueError("refresh_hours must be an integer 0-168 or null")
         out["refresh_hours"] = hours
+    if "schedule" in fields:
+        out["schedule"] = settings_store.clean_schedule(fields["schedule"])
     return out
 
 
@@ -142,6 +153,7 @@ def create(fields: dict) -> dict:
         "focus": clean["focus"],
         "enabled": clean.get("enabled", True),
         "refresh_hours": clean.get("refresh_hours"),
+        "schedule": clean.get("schedule"),
         "created_at": now,
     }
     cats.append(entry)

@@ -28,7 +28,7 @@ chown -R claude:claude "${DATA_HOME}" 2>/dev/null || true
 # ------------------------------------------------------------------------------
 # Options → environment
 # ------------------------------------------------------------------------------
-export BRUH_INSIGHTS_REFRESH_HOURS="$(bashio::config 'auto_refresh_hours' '6')"
+export BRUH_INSIGHTS_REFRESH_HOURS="$(bashio::config 'auto_refresh_hours' '24')"
 export BRUH_INSIGHTS_HISTORY_DAYS="$(bashio::config 'history_days' '7')"
 export BRUH_INSIGHTS_HISTORY_KEEP_RUNS="$(bashio::config 'history_keep_runs' '40')"
 export BRUH_INSIGHTS_HISTORY_KEEP_DAYS="$(bashio::config 'history_keep_days' '30')"

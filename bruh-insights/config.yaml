@@ -1,7 +1,7 @@
 ---
 name: "BRUH Insights"
 description: "AI-powered insights dashboard — Claude analyzes your Home Assistant data and generates beautiful interactive visualizations in the sidebar"
-version: "1.5.0"
+version: "1.6.0"
 slug: "bruh_insights"
 init: false
 
@@ -25,9 +25,11 @@ panel_admin: true
 # itself at /local/…, which works on HTTP, HTTPS, and Nabu Casa dashboards
 # alike.
 
-# App configuration options
+# App configuration options. auto_refresh_hours is only the fallback
+# interval — the panel's ⚙ dialog (master switch, session token budget) and
+# each card's per-category schedule/interval are the primary controls now.
 options:
-  auto_refresh_hours: 6
+  auto_refresh_hours: 24
   history_days: 7
   history_keep_runs: 40
   history_keep_days: 30
