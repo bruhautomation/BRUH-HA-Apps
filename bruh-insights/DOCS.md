@@ -71,11 +71,15 @@ Insights may spend — no add-on restart needed:
   reaches your budget, Insights pauses automatic runs until it rolls over (a topbar chip
   says so). Manual clicks are never blocked.
 
-The dialog shows a live usage meter. When the **BRUH Terminal** add-on is installed, the
-meter and budget use your **real Anthropic account utilization** (its usage-limits
-tracker at `/config/.bruh_claude/usage_limits.json` — all Claude use on the account
-counts, which is what you want: Insights backs off when *you* are using Claude). Without
-it, Insights counts the tokens of its own runs against a rough per-plan session estimate.
+The dialog shows a live usage meter, and a **topbar chip** keeps the current session's
+usage and reset time in view at all times (e.g. "34% used · resets 3:15 PM" — tap it to
+open Settings; it turns warning-colored once the budget is reached). When the
+**BRUH Terminal** add-on is installed, the meter, chip, and budget use your **real
+Anthropic account utilization** (its usage-limits tracker at
+`/config/.bruh_claude/usage_limits.json` — all Claude use on the account counts, which
+is what you want: Insights backs off when *you* are using Claude). Without it, Insights
+counts the tokens of its own runs against a rough per-plan session estimate, and the
+reset time reflects when the oldest counted run ages out of the 5-hour window.
 
 ## Insight history
 

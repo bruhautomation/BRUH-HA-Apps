@@ -118,12 +118,30 @@ class TestUsageStore(TempStoresMixin, unittest.TestCase):
         self.assertFalse(st["blocked"])  # 100k of 6M ≈ 1.7%
 
     def test_real_utilization_wins(self):
-        fresh = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        now_dt = datetime.datetime.now(datetime.timezone.utc)
+        resets = now_dt + datetime.timedelta(hours=2)
         Path(usage_store.LIMITS_FILE).write_text(json.dumps(
-            {"updated_at": fresh, "five_hour": {"utilization": 91}}))
+            {"updated_at": now_dt.isoformat(),
+             "five_hour": {"utilization": 91,
+                           "resets_at": resets.isoformat()}}))
         st = usage_store.budget_state({"plan": "max20", "budget_percent": 90})
         self.assertEqual(st["source"], "account")
         self.assertTrue(st["blocked"])
+        self.assertEqual(st["resets_at"], int(resets.timestamp()))
+
+    def test_estimate_resets_when_oldest_run_ages_out(self):
+        now = time.time()
+        usage_store.record_run(10_000, "energy", now=now - 4000)
+        usage_store.record_run(10_000, "climate", now=now - 100)
+        st = usage_store.budget_state({"plan": "pro", "budget_percent": 50}, now=now)
+        self.assertEqual(st["source"], "estimate")
+        self.assertEqual(
+            st["resets_at"],
+            int((now - 4000) + usage_store.SESSION_HOURS * 3600))
+
+    def test_no_reset_time_without_runs_or_tracker(self):
+        st = usage_store.budget_state({"plan": "pro", "budget_percent": 50})
+        self.assertIsNone(st["resets_at"])
 
     def test_stale_or_error_limits_ignored(self):
         Path(usage_store.LIMITS_FILE).write_text(json.dumps(

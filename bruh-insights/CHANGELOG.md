@@ -16,6 +16,11 @@ All notable changes to **BRUH Insights**, newest first. This project adheres to 
   budget runs against your ACTUAL Anthropic 5-hour utilization (its usage-limits tracker);
   otherwise Insights counts its own tokens per run against a per-plan estimate. The ⚙
   dialog shows a live usage meter with the budget mark either way
+- **Usage in the header**: a topbar chip shows the current session's usage and when the
+  5-hour window resets (e.g. "34% used · resets 3:15 PM") — green until the budget is
+  reached, then warning-colored; tap it to open Settings. Reset time comes from your
+  Anthropic account when BRUH Terminal's tracker is present, otherwise from when the
+  oldest locally-counted run ages out of the window
 - **Per-card run schedules**: every card's ✎ dialog (and the New-insight form) can now set
   fixed daily run times — e.g. "07:00, 19:00" — instead of an every-N-hours interval.
   Scheduled cards regenerate right after each set time and spend nothing in between

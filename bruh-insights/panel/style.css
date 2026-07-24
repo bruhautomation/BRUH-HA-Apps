@@ -803,7 +803,8 @@ body.modal-open {
 .hidden { display: none !important; }
 
 @media (max-width: 640px) {
-  .topbar { padding: 10px 12px; gap: 8px; }
+  /* wrap: the usage/paused chips flow to a second row instead of clipping */
+  .topbar { padding: 10px 12px; gap: 8px; flex-wrap: wrap; }
   .brand span.txt { display: none; }
   .wrap { padding: 12px 12px 60px; }
   .grid { gap: 12px; }

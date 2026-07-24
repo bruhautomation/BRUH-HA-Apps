@@ -119,8 +119,20 @@ def window_tokens(hours: float = SESSION_HOURS, now: float | None = None) -> int
     return sum(r["tokens"] for r in _load_runs() if r["ts"] >= cutoff)
 
 
-def real_session_utilization() -> float | None:
-    """The account's ACTUAL five-hour utilization %, if fresh data exists."""
+def _parse_iso_epoch(value) -> int | None:
+    """ISO timestamp ("…+00:00" / "…Z") → epoch seconds, else None."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        import datetime
+        return int(datetime.datetime.fromisoformat(
+            value.replace("Z", "+00:00")).timestamp())
+    except ValueError:
+        return None
+
+
+def _fresh_limits() -> dict | None:
+    """The tracker file's five_hour block, only when the data is fresh."""
     try:
         with open(LIMITS_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -130,44 +142,56 @@ def real_session_utilization() -> float | None:
         return None
     updated = data.get("updated_at")
     if isinstance(updated, str):
-        try:
-            # tracker writes UTC ISO timestamps ("…+00:00" / "…Z")
-            import datetime
-            stamp = datetime.datetime.fromisoformat(updated.replace("Z", "+00:00"))
-            age = time.time() - stamp.timestamp()
-            if age > LIMITS_MAX_AGE_S:
-                return None
-        except ValueError:
+        stamp = _parse_iso_epoch(updated)
+        if stamp is None or time.time() - stamp > LIMITS_MAX_AGE_S:
             return None
-    util = (data.get("five_hour") or {}).get("utilization")
+    five = data.get("five_hour")
+    return five if isinstance(five, dict) else None
+
+
+def real_session_utilization() -> float | None:
+    """The account's ACTUAL five-hour utilization %, if fresh data exists."""
+    util = (_fresh_limits() or {}).get("utilization")
     if isinstance(util, (int, float)) and 0 <= util <= 100:
         return float(util)
     return None
 
 
 def budget_state(settings: dict, now: float | None = None) -> dict:
-    """Everything the scheduler and the ⚙ dialog need to know about budget.
+    """Everything the scheduler and the panel need to know about budget.
 
     blocked is True when the session's usage has reached the configured
     budget — the scheduler then skips auto-refresh until the window rolls.
+    resets_at (epoch seconds, or None) is when the session window resets:
+    the account's real reset time when the tracker provides it, otherwise
+    when the oldest run counted by the local estimate ages out.
     """
     budget_pct = int(settings.get("budget_percent") or DEFAULT_BUDGET)
     plan = settings.get("plan") if settings.get("plan") in PLAN_SESSION_TOKENS else "pro"
-    spent = window_tokens(now=now)
-    real = real_session_utilization()
-    if real is not None:
-        used_pct = real
+    now = time.time() if now is None else now
+    cutoff = now - SESSION_HOURS * 3600
+    runs = [r for r in _load_runs() if r["ts"] >= cutoff]
+    spent = sum(r["tokens"] for r in runs)
+    five = _fresh_limits() or {}
+    real = five.get("utilization")
+    resets_at: int | None = None
+    if isinstance(real, (int, float)) and 0 <= real <= 100:
+        used_pct = float(real)
         source = "account"
+        resets_at = _parse_iso_epoch(five.get("resets_at"))
     else:
         allowance = PLAN_SESSION_TOKENS[plan]
         used_pct = min(100.0, spent / allowance * 100.0)
         source = "estimate"
+        if runs:
+            resets_at = int(min(r["ts"] for r in runs) + SESSION_HOURS * 3600)
     return {
         "used_percent": round(used_pct, 1),
         "budget_percent": budget_pct,
         "blocked": used_pct >= budget_pct,
         "source": source,
         "window_tokens": spent,
+        "resets_at": resets_at,
         "plan": plan,
         "plan_label": PLAN_LABELS[plan],
         "plan_session_tokens": PLAN_SESSION_TOKENS[plan],
