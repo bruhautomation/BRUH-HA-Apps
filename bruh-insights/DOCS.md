@@ -42,6 +42,10 @@ it automatically.
 
 ## Options
 
+These Configuration-tab values are **fallbacks**: everything except `log_level` can be
+overridden live from the panel's **⚙ Settings** dialog (see below) without a restart —
+that dialog is the primary place to tune Insights.
+
 | Option | Default | Description |
 |---|---|---|
 | `auto_refresh_hours` | `24` | Fallback interval: regenerate each category every N hours when it has no schedule or interval of its own (see prompt editing and the ⚙ Settings dialog). `0` disables scheduled refresh (manual only). |
@@ -70,6 +74,15 @@ Insights may spend — no add-on restart needed:
   Claude subscriptions refill a usage window every 5 hours; once the window's usage
   reaches your budget, Insights pauses automatic runs until it rolls over (a topbar chip
   says so). Manual clicks are never blocked.
+
+Below the budget, a **Generation defaults** section overrides the add-on's
+Configuration-tab options live (empty field = use the Configuration value, shown grayed
+as the placeholder): the **default refresh interval** every card without its own
+schedule/interval uses (this is the "default" the ✎ editor refers to), **days of history
+analyzed** per run (fewer days = fewer tokens), a **Claude model override** (e.g. a
+cheaper model for routine runs), the **generation timeout**, and **run-history
+retention**. Only `log_level` remains add-on-config-only, since it takes effect at
+startup.
 
 The dialog shows a live usage meter, and a **topbar chip** keeps the current session's
 usage and reset time in view at all times (e.g. "34% used · resets 3:15 PM" — tap it to

@@ -4,6 +4,18 @@ All notable changes to **BRUH Insights**, newest first. This project adheres to 
 
 > 💡 Prefer a cleaner, categorized view? See the [formatted changelog at bruhautomation.com](https://bruhautomation.com/bruh-insights/changelog/).
 
+## 1.7.0
+
+- **All the knobs, in the app**: the ⚙ Settings dialog grows a "Generation defaults"
+  section covering nearly every add-on Configuration option — default refresh interval,
+  days of history analyzed, Claude model override, generation timeout, and run-history
+  retention (runs kept / days kept). Changes apply immediately, no restart; an empty
+  field falls back to the add-on's Configuration-tab value (shown grayed in the field).
+  Only `log_level` stays add-on-config-only
+- **"Default" now says what it is**: the ✎ prompt editor's refresh-interval field shows
+  the actual effective default as its placeholder (e.g. "default: 24h") and points to
+  ⚙ Settings, where that default now lives — no more hunting for where "default" is set
+
 ## 1.6.0
 
 - **⚙ Settings dialog**: a new Settings button in the panel puts the token controls one tap

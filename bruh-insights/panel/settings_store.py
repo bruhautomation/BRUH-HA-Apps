@@ -12,7 +12,19 @@ the panel's ⚙ dialog edits at runtime — no add-on restart needed:
   budget_percent  — how much of each 5-hour session window Insights may
                     consume before auto-refresh pauses (5-100).
 
-File shape: {"auto_enabled": true, "plan": "pro", "budget_percent": 25}.
+It also holds runtime overrides of the add-on's Configuration-tab options
+(so they are editable from the panel without a restart). Each is None when
+unset, meaning "use the add-on configuration value":
+
+  refresh_hours      — default interval for cards without their own (0-168)
+  history_days       — days of history/statistics per analysis (1-30)
+  history_keep_runs  — past runs kept per category (0-200)
+  history_keep_days  — days past runs are kept (0-365)
+  model              — Claude model override ("" is treated as unset)
+  timeout_minutes    — per-generation hard timeout (2-30)
+
+File shape: {"auto_enabled": true, "plan": "pro", "budget_percent": 25,
+"refresh_hours": 12, ...} — option keys may be absent or null (= unset).
 Missing or corrupt files fall back to defaults, and unknown keys are ignored.
 
 This module deliberately avoids aiohttp so the test suite can import it
@@ -29,10 +41,27 @@ SETTINGS_FILE = os.environ.get("BRUH_INSIGHTS_SETTINGS_FILE", "/data/settings.js
 
 PLANS = ("pro", "max5", "max20")
 
+# Runtime-overridable add-on options: name → allowed integer range.
+# None (or absent) = use the value from the add-on's Configuration tab.
+OPTION_RANGES = {
+    "refresh_hours": (0, 168),
+    "history_days": (1, 30),
+    "history_keep_runs": (0, 200),
+    "history_keep_days": (0, 365),
+    "timeout_minutes": (2, 30),
+}
+MAX_MODEL_CHARS = 100
+
 DEFAULTS = {
     "auto_enabled": True,
     "plan": "pro",
     "budget_percent": 25,
+    "refresh_hours": None,
+    "history_days": None,
+    "history_keep_runs": None,
+    "history_keep_days": None,
+    "model": None,
+    "timeout_minutes": None,
 }
 
 _TIME_RE = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
@@ -56,6 +85,13 @@ def load() -> dict:
     pct = data.get("budget_percent")
     if isinstance(pct, int) and not isinstance(pct, bool) and 5 <= pct <= 100:
         out["budget_percent"] = pct
+    for name, (lo, hi) in OPTION_RANGES.items():
+        val = data.get(name)
+        if isinstance(val, int) and not isinstance(val, bool) and lo <= val <= hi:
+            out[name] = val
+    model = data.get("model")
+    if isinstance(model, str) and model.strip():
+        out["model"] = model.strip()[:MAX_MODEL_CHARS]
     return out
 
 
@@ -80,6 +116,18 @@ def save(fields: dict) -> dict:
                     or not 5 <= value <= 100:
                 raise ValueError("budget_percent must be an integer 5-100")
             clean[key] = value
+        elif key in OPTION_RANGES:
+            lo, hi = OPTION_RANGES[key]
+            if value is not None and (
+                    not isinstance(value, int) or isinstance(value, bool)
+                    or not lo <= value <= hi):
+                raise ValueError(f"{key} must be an integer {lo}-{hi} or null")
+            clean[key] = value
+        elif key == "model":
+            if value is not None and not isinstance(value, str):
+                raise ValueError("model must be a string or null")
+            value = (value or "").strip()[:MAX_MODEL_CHARS]
+            clean[key] = value or None
         else:
             raise ValueError(f"unknown setting: {key}")
     merged = {**load(), **clean}

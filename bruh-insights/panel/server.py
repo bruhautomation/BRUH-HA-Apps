@@ -7,8 +7,12 @@ Routes
 GET  /                       — dashboard HTML
 GET  /style.css, /app.js     — static assets
 GET  /api/status             — auth state, categories, job states, settings, usage
-GET  /api/settings           — runtime settings + session-budget state + plans
-PUT  /api/settings           — update {auto_enabled, plan, budget_percent}
+GET  /api/settings           — runtime settings + budget state + plans + the
+                               add-on Configuration-tab defaults
+PUT  /api/settings           — update {auto_enabled, plan, budget_percent,
+                               refresh_hours, history_days, history_keep_runs,
+                               history_keep_days, model, timeout_minutes}
+                               (null = fall back to the add-on configuration)
 GET  /api/insights           — all stored insights (with rendered HTML)
 POST /api/generate           — queue generation {category} or {question}
 POST /api/generate_all       — queue every standard category
@@ -143,6 +147,54 @@ MEMORY_LOCK = asyncio.Lock()
 MEMORY_LAST_TASK: asyncio.Task | None = None
 MODEL = os.environ.get("BRUH_INSIGHTS_MODEL", "").strip()
 TIMEOUT_S = int(float(os.environ.get("BRUH_INSIGHTS_TIMEOUT_MIN", "8") or 8) * 60)
+
+# ---------------------------------------------------------------------------
+# Effective options
+# ---------------------------------------------------------------------------
+# The env-derived constants above come from the add-on's Configuration tab
+# and act as FALLBACKS: the panel's ⚙ Settings dialog stores runtime
+# overrides in settings_store, applied immediately without a restart.
+
+
+def _opt(name: str, fallback):
+    val = settings_store.load().get(name)
+    return fallback if val is None else val
+
+
+def eff_refresh_hours() -> float:
+    return float(_opt("refresh_hours", REFRESH_HOURS))
+
+
+def eff_history_days() -> int:
+    return int(_opt("history_days", HISTORY_DAYS))
+
+
+def eff_keep_runs() -> int:
+    return int(_opt("history_keep_runs", HISTORY_KEEP_RUNS))
+
+
+def eff_keep_days() -> int:
+    return int(_opt("history_keep_days", HISTORY_KEEP_DAYS))
+
+
+def eff_model() -> str:
+    return str(_opt("model", MODEL))
+
+
+def eff_timeout_s() -> int:
+    return int(_opt("timeout_minutes", TIMEOUT_S / 60) * 60)
+
+
+def addon_defaults() -> dict:
+    """The Configuration-tab values, shown as placeholders in ⚙ Settings."""
+    return {
+        "refresh_hours": int(REFRESH_HOURS),
+        "history_days": HISTORY_DAYS,
+        "history_keep_runs": HISTORY_KEEP_RUNS,
+        "history_keep_days": HISTORY_KEEP_DAYS,
+        "model": MODEL,
+        "timeout_minutes": TIMEOUT_S // 60,
+    }
 BIND_HOST = "0.0.0.0"
 BIND_PORT = 8099
 # Per-install secret embedded in /local card-mirror file names.
@@ -267,7 +319,7 @@ def _write_history_copy(insight: dict) -> None:
     """
     if insight["id"].startswith("custom-"):
         return
-    if HISTORY_KEEP_RUNS <= 0 or HISTORY_KEEP_DAYS <= 0:
+    if eff_keep_runs() <= 0 or eff_keep_days() <= 0:
         return
     stamp = str(insight.get("generated_at", "")).replace(":", "-")
     if not _STAMP_RE.match(stamp):
@@ -285,13 +337,14 @@ def _write_history_copy(insight: dict) -> None:
 
 
 def _prune_history(hdir: Path) -> None:
-    """Keep at most HISTORY_KEEP_RUNS files, none older than HISTORY_KEEP_DAYS
+    """Keep at most eff_keep_runs() files, none older than eff_keep_days()
     (age judged by the filename stamp — lexicographic order matches time)."""
+    keep_runs, keep_days = eff_keep_runs(), eff_keep_days()
     files = sorted(hdir.glob("*.json"), key=lambda p: p.name, reverse=True)
     cutoff = time.strftime(
-        "%Y-%m-%dT%H-%M-%S", time.localtime(time.time() - HISTORY_KEEP_DAYS * 86400))
+        "%Y-%m-%dT%H-%M-%S", time.localtime(time.time() - keep_days * 86400))
     for i, path in enumerate(files):
-        if i < HISTORY_KEEP_RUNS and path.stem >= cutoff:
+        if i < keep_runs and path.stem >= cutoff:
             continue
         try:
             path.unlink()
@@ -395,7 +448,7 @@ async def _generate(insight_id: str) -> None:
     try:
         _set_job(insight_id, state="collecting", error="")
         import ha_data  # deferred so the module loads without aiohttp in tests
-        bundle = await ha_data.collect_bundle(cat, HISTORY_DAYS, question=question)
+        bundle = await ha_data.collect_bundle(cat, eff_history_days(), question=question)
         n_entities = len(bundle.get("entities", []))
         log.info("bundle for %s: %d entities, %d chars", insight_id, n_entities,
                  len(json.dumps(bundle)))
@@ -417,7 +470,8 @@ async def _generate(insight_id: str) -> None:
         prompt = build_prompt(cat, bundle, question=question, feedback=feedback,
                               knowledge=knowledge, previous=previous)
         result = await asyncio.to_thread(
-            claude_client.run_claude, prompt, SYSTEM_PROMPT, MODEL, TIMEOUT_S,
+            claude_client.run_claude, prompt, SYSTEM_PROMPT, eff_model(),
+            eff_timeout_s(),
         )
         _record_usage(result, insight_id)
         if not result["ok"]:
@@ -541,7 +595,7 @@ def _refresh_due(eff: dict, generated_at: str, now: float) -> bool:
         return _schedule_due(schedule, generated_at, now)
     hours = eff.get("refresh_hours")
     if hours is None:
-        hours = REFRESH_HOURS
+        hours = eff_refresh_hours()
     if hours <= 0:
         return False
     if not generated_at:
@@ -665,9 +719,9 @@ async def h_status(request: web.Request) -> web.Response:
         "auth_type": auth["type"] if auth else None,
         "auth_source": auth.get("source") if auth else None,
         "auth_check": AUTH_CHECK,
-        "model": MODEL or "default",
-        "refresh_hours": REFRESH_HOURS,
-        "history_days": HISTORY_DAYS,
+        "model": eff_model() or "default",
+        "refresh_hours": eff_refresh_hours(),
+        "history_days": eff_history_days(),
         "settings": settings,
         "usage": usage_store.budget_state(settings),
         "categories": [_category_status(c, insights) for c in all_categories()],
@@ -1139,7 +1193,8 @@ async def _merge_memory_task(facts: list[str]) -> None:
                         + "\n".join(f"- {f}" for f in facts)
                     )
                     result = await asyncio.to_thread(
-                        claude_client.run_claude, prompt, MEMORY_MERGE_SYSTEM, MODEL, 180)
+                        claude_client.run_claude, prompt, MEMORY_MERGE_SYSTEM,
+                        eff_model(), 180)
                     _record_usage(result, "memory")
                     if result["ok"]:
                         merged = _strip_md_fences(result["text"])
@@ -1214,7 +1269,7 @@ async def _remove_memory_task(facts: list[str]) -> None:
                         )
                         result = await asyncio.to_thread(
                             claude_client.run_claude, prompt,
-                            MEMORY_REMOVE_SYSTEM, MODEL, 180)
+                            MEMORY_REMOVE_SYSTEM, eff_model(), 180)
                         _record_usage(result, "memory")
                         if result["ok"]:
                             merged = _strip_md_fences(result["text"])
@@ -1377,6 +1432,7 @@ async def h_settings_get(request: web.Request) -> web.Response:
     return web.json_response({
         "settings": settings,
         "usage": usage_store.budget_state(settings),
+        "addon_defaults": addon_defaults(),
         "plans": [
             {"id": p, "label": usage_store.PLAN_LABELS[p],
              "session_tokens": usage_store.PLAN_SESSION_TOKENS[p]}
@@ -1396,6 +1452,7 @@ async def h_settings_put(request: web.Request) -> web.Response:
     return web.json_response({
         "settings": settings,
         "usage": usage_store.budget_state(settings),
+        "addon_defaults": addon_defaults(),
     })
 
 
