@@ -53,6 +53,7 @@ BRUH-HA-Apps/
 │           ├── manifest.json    # HA integration metadata
 │           ├── config_flow.py   # UI config flow
 │           ├── conversation.py  # ConversationEntity for Assist
+│           ├── power_tools.py   # BRUH Power Tools: 41 registry admin services (from Spook, MIT)
 │           ├── sensor.py        # Anthropic usage-limit sensors
 │           ├── bridge.py        # File-based IPC with the add-on
 │           ├── repairs.py       # "Restart required" repair flow
@@ -71,7 +72,7 @@ BRUH-HA-Apps/
 ### MCP Server (`ha-mcp-server/ha_mcp_server.py`)
 - Stdio-based MCP server that Claude Code launches automatically
 - Uses `SUPERVISOR_TOKEN` for HA API authentication
-- Provides tools for entity states, device control, area listings (`get_areas`), camera snapshots (`get_camera_snapshot`, returned as MCP image blocks), history/long-term statistics (`get_history`, `get_statistics` via the WebSocket API), service calls, logs, template rendering, config reload
+- Provides tools for entity states, device control, area listings (`get_areas`), registry listings (`get_registry`: areas/floors/labels/devices/entities/integrations via the WebSocket API), camera snapshots (`get_camera_snapshot`, returned as MCP image blocks), history/long-term statistics (`get_history`, `get_statistics` via the WebSocket API), service calls (`call_service`, optional `return_response` over WebSocket for services with response data), logs, template rendering, config reload
 - Tools are registered via `TOOL_IMPLEMENTATIONS` (name → function name, late-bound) with argument contracts derived from each tool's inputSchema; add a tool = function + schema in `TOOLS` + one mapping line
 
 ### Startup Flow (`run.sh`)
@@ -94,6 +95,7 @@ BRUH-HA-Apps/
 - Deployed automatically to `/config/custom_components/` by the add-on at startup
 - Registers a `ConversationEntity` so "BRUH Claude" appears in Settings > Voice Assistants
 - Provides `bruh_claude.send_prompt`, `bruh_claude.run_task`, `bruh_claude.run_insight`, and `bruh_claude.clear_conversation` services
+- BRUH Power Tools (`power_tools.py`): 41 admin-gated registry-management services under `bruh_claude.*` (areas, floors, labels, entities, devices, integrations, zones, persons, blueprints, statistics, users, diagnostics, repair issues), adapted from [Spook](https://github.com/frenck/spook) (MIT) with validation-first handlers, response data on creation services, and dry-run-by-default orphan cleanup; catalog metadata generated in `services.yaml`/`strings.json`/`translations/en.json`/`icons.json`, consistency enforced by `tests/test_power_tools.py`
 - Insight jobs (config entries of type `insight`): scheduled Claude reports rendered to `sensor.<job>_insight` (markdown attribute + ready-to-paste `card_yaml`); prompts support HA templating
 - 3.0 transport: worker pool serves an internal HTTP API (:8099, token on the shared volume); integration streams deltas into the chat log (SSE) and falls back to file IPC; `binary_sensor` reports pool health
 - Usage-limit sensors reading from `/config/.bruh_claude/usage_limits.json` (real Anthropic account utilization; requires OAuth/subscription login)

@@ -17,11 +17,13 @@ from homeassistant.core import HomeAssistant
 _LOGGER = logging.getLogger(__name__)
 
 try:
-    from homeassistant.components.repairs import RepairsFlow
+    from homeassistant.components.repairs import ConfirmRepairFlow, RepairsFlow
 except ImportError:
     # HA versions before 2022.9 don't have the repairs module.
     # Provide a stub so the module can still be imported without errors.
     from homeassistant.data_entry_flow import FlowHandler as RepairsFlow  # type: ignore[assignment]
+
+    ConfirmRepairFlow = RepairsFlow  # type: ignore[assignment,misc]
 
 
 class RestartRequiredRepairFlow(RepairsFlow):
@@ -71,4 +73,8 @@ async def async_create_fix_flow(
     """Create the appropriate repair flow for a given issue."""
     if issue_id == "restart_required":
         return RestartRequiredRepairFlow()
+    if issue_id.startswith("user_"):
+        # Issues created via bruh_claude.create_repair_issue: confirming
+        # simply acknowledges and removes the issue.
+        return ConfirmRepairFlow()
     return RepairsFlow()

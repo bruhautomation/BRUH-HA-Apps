@@ -189,12 +189,17 @@ def get_all_states(domain=None, name_filter=None):
     return result
 
 
-def call_service(domain, service, data=None):
+def call_service(domain, service, data=None, return_response=False):
     """Call a Home Assistant service.
 
     Single chokepoint: every control_* tool, activate_scene, run_script,
     send_notification, and reload_config funnel through here, so the
     deny-list check covers all of them, not just direct call_service use.
+
+    With return_response the call goes over the WebSocket API, which is the
+    only transport that returns service response data (e.g. the area_id
+    from bruh_claude.create_area, or the orphan list from
+    bruh_claude.delete_orphaned_entities).
     """
     if _service_denied(domain, service):
         return {"error": (
@@ -202,6 +207,22 @@ def call_service(domain, service, data=None):
             "Tell the user this action is restricted; do not retry."
         )}
     payload = data or {}
+    if return_response:
+        try:
+            result = _ws_command({
+                "type": "call_service",
+                "domain": domain,
+                "service": service,
+                "service_data": payload,
+                "return_response": True,
+            })
+        except ImportError:
+            return {"error": "websockets package not available in this environment"}
+        except Exception as e:  # noqa: BLE001
+            return {"error": str(e)}
+        if isinstance(result, dict) and "error" in result:
+            return result
+        return {"response": (result or {}).get("response")}
     result = ha_api_request(f"/api/services/{domain}/{service}", method="POST", data=payload)
     return result
 
@@ -966,6 +987,110 @@ def get_areas():
 
 
 
+# Registry listing: which WS command serves each registry, and which fields
+# survive into the (context-friendly) trimmed result.
+_REGISTRY_COMMANDS = {
+    "areas": "config/area_registry/list",
+    "floors": "config/floor_registry/list",
+    "labels": "config/label_registry/list",
+    "devices": "config/device_registry/list",
+    "entities": "config/entity_registry/list",
+    "integrations": "config_entries/get",
+    "users": "config/auth/list",
+}
+
+MAX_REGISTRY_RESULTS = 300
+
+
+def _trim_registry_item(registry, item):
+    """Reduce a registry row to the fields useful for management calls."""
+    if registry == "areas":
+        keep = {"area_id", "name", "floor_id", "icon", "aliases", "labels"}
+    elif registry == "floors":
+        keep = {"floor_id", "name", "level", "icon", "aliases"}
+    elif registry == "labels":
+        keep = {"label_id", "name", "icon", "color", "description"}
+    elif registry == "devices":
+        trimmed = {
+            "device_id": item.get("id"),
+            "name": item.get("name_by_user") or item.get("name"),
+            "area_id": item.get("area_id"),
+            "manufacturer": item.get("manufacturer"),
+            "model": item.get("model"),
+            "disabled_by": item.get("disabled_by"),
+            "labels": item.get("labels"),
+        }
+        return {k: v for k, v in trimmed.items() if v not in (None, [], "")}
+    elif registry == "entities":
+        keep = {"entity_id", "name", "original_name", "device_id", "area_id",
+                "platform", "disabled_by", "hidden_by", "labels"}
+    elif registry == "users":
+        trimmed = {
+            "user_id": item.get("id"),
+            "name": item.get("name"),
+            "username": item.get("username"),
+            "is_owner": item.get("is_owner"),
+            "is_active": item.get("is_active"),
+            "system_generated": item.get("system_generated"),
+        }
+        # Keep False values here: is_active/is_owner False is the signal.
+        return {k: v for k, v in trimmed.items() if v is not None and v != ""}
+    else:  # integrations
+        trimmed = {
+            "config_entry_id": item.get("entry_id"),
+            "domain": item.get("domain"),
+            "title": item.get("title"),
+            "state": item.get("state"),
+            "disabled_by": item.get("disabled_by"),
+        }
+        return {k: v for k, v in trimmed.items() if v not in (None, [], "")}
+    return {k: v for k, v in item.items() if k in keep and v not in (None, [], "")}
+
+
+def get_registry(registry, name_filter=None):
+    """List a Home Assistant registry (areas, floors, labels, devices,
+    entities, integrations) with the ids needed by the bruh_claude.*
+    management services.
+
+    This is the safe, read-only counterpart to editing /config/.storage —
+    the registry files should never be modified by hand.
+    """
+    command = _REGISTRY_COMMANDS.get(registry)
+    if not command:
+        return {"error": (
+            f"Unknown registry '{registry}'. "
+            f"Choose one of: {', '.join(sorted(_REGISTRY_COMMANDS))}"
+        )}
+    try:
+        result = _ws_command({"type": command})
+    except ImportError:
+        return {"error": "websockets package not available in this environment"}
+    except Exception as e:  # noqa: BLE001
+        return {"error": str(e)}
+    if isinstance(result, dict) and "error" in result:
+        return result
+
+    items = [_trim_registry_item(registry, item) for item in (result or [])]
+    if name_filter:
+        needle = name_filter.lower()
+        items = [
+            item for item in items
+            if any(
+                isinstance(v, str) and needle in v.lower()
+                for v in item.values()
+            )
+        ]
+    if len(items) > MAX_REGISTRY_RESULTS:
+        return {
+            "registry": registry,
+            "count": len(items),
+            "note": (f"Result truncated to {MAX_REGISTRY_RESULTS} — "
+                     "narrow the search with name_filter."),
+            "items": items[:MAX_REGISTRY_RESULTS],
+        }
+    return {"registry": registry, "count": len(items), "items": items}
+
+
 def fire_event(event_type, event_data=None):
     """Fire a Home Assistant event."""
     result = ha_api_request(
@@ -1109,6 +1234,12 @@ TOOLS = [
             "- button/press: {\"entity_id\": \"button.restart\"}\n"
             "- select/select_option: {\"entity_id\": \"select.mode\", \"option\": \"eco\"}\n"
             "- automation/trigger: {\"entity_id\": \"automation.morning_routine\"}\n"
+            "\nThe bruh_claude domain also provides BRUH Power Tools — registry "
+            "management services (create_area, rename_entity, add_label, "
+            "disable_device, create_repair_issue, ...). Use get_registry to look "
+            "up the ids they need, and set return_response true for the ones "
+            "that return data (create_area/floor/label, "
+            "delete_orphaned_entities, create_repair_issue).\n"
             "\nUse get_service_details to look up all available fields for any service."
         ),
         "inputSchema": {
@@ -1125,9 +1256,39 @@ TOOLS = [
                 "data": {
                     "type": "object",
                     "description": "Service data payload including entity_id and service-specific fields"
+                },
+                "return_response": {
+                    "type": "boolean",
+                    "description": "Set true for services that return response data (routes the call over the WebSocket API and returns the service response)"
                 }
             },
             "required": ["domain", "service"]
+        }
+    },
+    {
+        "name": "get_registry",
+        "description": (
+            "List a Home Assistant registry: areas, floors, labels, devices, "
+            "entities, integrations (config entries), or users. Returns the "
+            "registry ids (area_id, floor_id, label_id, device_id, entity_id, "
+            "config_entry_id, user_id) needed by the bruh_claude.* management services "
+            "— the safe alternative to reading /config/.storage files. "
+            "Results are capped at 300; use name_filter on large installations."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "registry": {
+                    "type": "string",
+                    "enum": ["areas", "floors", "labels", "devices", "entities", "integrations", "users"],
+                    "description": "Which registry to list"
+                },
+                "name_filter": {
+                    "type": "string",
+                    "description": "Optional case-insensitive substring matched against any text field (name, id, manufacturer, ...)"
+                }
+            },
+            "required": ["registry"]
         }
     },
     {
@@ -1863,6 +2024,7 @@ TOOL_IMPLEMENTATIONS = {
     "get_all_states": "get_all_states",
     "call_service": "call_service",
     "get_service_details": "get_service_details",
+    "get_registry": "get_registry",
     # Domain-specific device control
     "control_light": "control_light",
     "control_climate": "control_climate",

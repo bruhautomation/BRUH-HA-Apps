@@ -18,6 +18,7 @@
 - [Insight jobs](#insight-jobs-scheduled-claude-reports)
 - [MCP server](#mcp-server)
 - [Voice & automation integration](#bruh-claude-integration)
+- [Power Tools (registry services)](#power-tools-registry-management-services)
 - [Transport & health](#transport--health)
 - [Using the terminal on mobile](#using-the-terminal-on-ios--android)
 - [Troubleshooting](#troubleshooting)
@@ -578,8 +579,9 @@ The built-in MCP server gives Claude Code these capabilities:
 | `get_history` | Recent state history for an entity (up to 7 days), with min/max for numeric sensors |
 | `get_statistics` | Long-term statistics (hourly/daily mean/min/max) — answers "how cold did it get last week" |
 | `get_weather_forecast` | Daily/hourly forecast via weather.get_forecasts — "what's the weather tomorrow?" |
-| `call_service` | Call any HA service (turn on lights, etc.) |
+| `call_service` | Call any HA service (turn on lights, etc.); `return_response: true` returns service response data |
 | `get_service_details` | Get the service schema for a domain |
+| `get_registry` | List a registry — areas, floors, labels, devices, entities, integrations — with the ids the [Power Tools services](#power-tools-registry-management-services) need |
 | `control_light` | Lights: on/off/toggle, brightness, color, color-temp |
 | `control_climate` | Thermostats: temperature, HVAC/preset/fan modes |
 | `control_media_player` | Media players: play/pause/volume/source |
@@ -635,6 +637,7 @@ The BRUH Claude integration is automatically discovered when the add-on starts. 
 - **Conversation Agent** - Select "BRUH Claude" as a conversation agent in Settings > Voice Assistants
 - **`bruh_claude.send_prompt`** service - Send a one-shot prompt to Claude and get a response
 - **`bruh_claude.run_task`** service - Run a Claude task with optional completion notification
+- **[Power Tools](#power-tools-registry-management-services)** - 41 registry-management admin services (areas, floors, labels, entities, devices, integrations, zones, persons, blueprints, statistics, users, diagnostics, repairs)
 
 ### Assist Integration
 
@@ -713,6 +716,95 @@ writing `/config/.bruh_claude/usage_limits.json`; the sensors poll it every
 > the terminal), **not** an `ANTHROPIC_API_KEY`. If you authenticate with an
 > API key, or before you've logged in, the sensors stay **unavailable** and
 > expose the reason in their `error` attribute. `ha-selftest` reports this.
+
+## Power Tools (registry management services)
+
+The BRUH Claude integration registers **41 admin services** that manage the
+parts of Home Assistant that normally require clicking through Settings:
+areas, floors, labels, entities, devices, integrations, zones, persons, and
+repair issues. They give Claude (and your automations and scripts) a
+**safe, supervised way** to reorganize your home — every call is validated,
+runs through Home Assistant's own registry APIs, and requires admin rights.
+No more hand-editing `/config/.storage` files.
+
+Adapted from the excellent [Spook](https://github.com/frenck/spook) custom
+integration by Franck Nijhof (MIT licensed), rebranded and reworked for
+BRUH Claude: all services live under the `bruh_claude.*` domain (so they
+never collide with Spook itself if you also run it), ids are validated
+before anything changes, creation services return the new id as response
+data, and destructive cleanup defaults to a dry run.
+
+Every service appears in **Developer Tools > Actions** with full field
+descriptions and pickers. The complete catalog:
+
+| Group | Services | What they do |
+|-------|----------|--------------|
+| **Areas** | `create_area`, `delete_area`, `rename_area`, `set_area_aliases`, `add_device_to_area`, `remove_device_from_area`, `add_entity_to_area`, `remove_entity_from_area` | Create and organize areas, including the voice-assistant aliases |
+| **Floors** | `create_floor`, `delete_floor`, `rename_floor`, `add_area_to_floor`, `remove_area_from_floor` | Group areas into floors |
+| **Labels** | `create_label`, `delete_label`, `add_label`, `remove_label` | Create labels and apply/remove them on entities, devices, and areas in one call |
+| **Entities** | `rename_entity`, `change_entity_id`, `enable_entity`, `disable_entity`, `hide_entity`, `unhide_entity`, `delete_orphaned_entities` | Rename, re-ID, enable/disable, hide/unhide entities; clean up registry entries whose integration is gone (dry-run by default) |
+| **Devices** | `rename_device`, `enable_device`, `disable_device` | Rename and enable/disable devices (disable cascades to a parent hub once no children remain enabled) |
+| **Integrations** | `enable_integration`, `disable_integration`, `reload_integration` | Enable, disable, or reload integration config entries |
+| **Zones** | `create_zone`, `delete_zone` | Create and delete location zones |
+| **Persons** | `add_device_tracker_to_person`, `remove_device_tracker_from_person` | Attach/detach device trackers for presence detection |
+| **Blueprints** | `import_blueprint` | Import an automation/script blueprint straight from a community forum, GitHub, or Gist URL |
+| **Statistics** | `import_statistics` | Import or backfill long-term statistics — repair broken energy history, migrate meters, feed external data |
+| **Users** | `enable_user`, `disable_user` | Enable/disable Home Assistant accounts (owner and system accounts are protected and can never be disabled) |
+| **Diagnostics** | `find_orphaned_references` | Scan automations, scripts, and scenes for references to entities that no longer exist; optionally raise a repair issue |
+| **Repairs** | `create_repair_issue`, `remove_repair_issue` | Surface custom issues in Settings > System > Repairs — Claude's way to flag something that needs your attention |
+
+Examples:
+
+```yaml
+# Create an area on a floor, with voice aliases
+service: bruh_claude.create_area
+data:
+  name: Guest Room
+  icon: mdi:bed
+  aliases: ["spare room"]
+  floor_id: upstairs
+
+# Label every battery-powered sensor in one call
+service: bruh_claude.add_label
+data:
+  label_id: [battery_powered]
+  entity_id: [sensor.door_battery, sensor.motion_battery]
+
+# See what a registry cleanup would remove (nothing is deleted)
+service: bruh_claude.delete_orphaned_entities
+data:
+  dry_run: true
+
+# Let an automation flag a problem persistently
+service: bruh_claude.create_repair_issue
+data:
+  title: "Low battery: front door lock"
+  description: "The front door lock reported 8% battery. Replace soon."
+  severity: warning
+```
+
+Safety notes:
+
+- **Admin only.** Calls made by a non-admin Home Assistant user are
+  rejected (calls from Claude, automations, and scripts run as admin).
+- **Validated.** Unknown area/floor/label/device/entity/config-entry ids
+  fail with a clear error before any change is applied.
+- **Dry-run first.** `delete_orphaned_entities` only reports unless you
+  explicitly pass `dry_run: false`, and `find_orphaned_references` never
+  changes anything — it only reports.
+- **Lockout-proof.** Unlike Spook, `disable_user` refuses to touch owner
+  accounts and system-generated users — you can never lock yourself out.
+- **Deliberately excluded:** a custom restart service — core
+  `homeassistant.restart` already exists and accepts `safe_mode: true` on
+  modern Home Assistant.
+
+In the terminal, Claude discovers the ids these services need through the
+MCP `get_registry` tool (areas, floors, labels, devices, entities,
+integrations) and calls the services via `call_service` — with
+`return_response` for the ones that answer back. The generated `CLAUDE.md`
+context tells Claude to prefer these services over editing `.storage`
+files, so "move the office lamp to the bedroom and label everything
+battery-powered" just works — safely.
 
 ## Changelog & releases
 

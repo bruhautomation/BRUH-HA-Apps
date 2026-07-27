@@ -34,6 +34,129 @@
     },
     "answer_question": {
       "service": "mdi:comment-question-outline"
+    },
+    "create_area": {
+      "service": "mdi:texture-box"
+    },
+    "delete_area": {
+      "service": "mdi:texture-box"
+    },
+    "rename_area": {
+      "service": "mdi:texture-box"
+    },
+    "set_area_aliases": {
+      "service": "mdi:texture-box"
+    },
+    "add_device_to_area": {
+      "service": "mdi:texture-box"
+    },
+    "remove_device_from_area": {
+      "service": "mdi:texture-box"
+    },
+    "add_entity_to_area": {
+      "service": "mdi:texture-box"
+    },
+    "remove_entity_from_area": {
+      "service": "mdi:texture-box"
+    },
+    "create_floor": {
+      "service": "mdi:home-floor-1"
+    },
+    "delete_floor": {
+      "service": "mdi:home-floor-1"
+    },
+    "rename_floor": {
+      "service": "mdi:home-floor-1"
+    },
+    "add_area_to_floor": {
+      "service": "mdi:home-floor-1"
+    },
+    "remove_area_from_floor": {
+      "service": "mdi:home-floor-1"
+    },
+    "create_label": {
+      "service": "mdi:label"
+    },
+    "delete_label": {
+      "service": "mdi:label"
+    },
+    "add_label": {
+      "service": "mdi:label-multiple"
+    },
+    "remove_label": {
+      "service": "mdi:label-off"
+    },
+    "rename_entity": {
+      "service": "mdi:rename"
+    },
+    "change_entity_id": {
+      "service": "mdi:rename"
+    },
+    "enable_entity": {
+      "service": "mdi:eye-check"
+    },
+    "disable_entity": {
+      "service": "mdi:eye-off"
+    },
+    "hide_entity": {
+      "service": "mdi:eye-off-outline"
+    },
+    "unhide_entity": {
+      "service": "mdi:eye-outline"
+    },
+    "delete_orphaned_entities": {
+      "service": "mdi:ghost-off"
+    },
+    "rename_device": {
+      "service": "mdi:rename"
+    },
+    "enable_device": {
+      "service": "mdi:devices"
+    },
+    "disable_device": {
+      "service": "mdi:devices"
+    },
+    "enable_integration": {
+      "service": "mdi:puzzle"
+    },
+    "disable_integration": {
+      "service": "mdi:puzzle-remove"
+    },
+    "reload_integration": {
+      "service": "mdi:puzzle-edit"
+    },
+    "create_zone": {
+      "service": "mdi:map-marker-plus"
+    },
+    "delete_zone": {
+      "service": "mdi:map-marker-remove"
+    },
+    "add_device_tracker_to_person": {
+      "service": "mdi:account-arrow-right"
+    },
+    "remove_device_tracker_from_person": {
+      "service": "mdi:account-arrow-left"
+    },
+    "create_repair_issue": {
+      "service": "mdi:wrench"
+    },
+    "remove_repair_issue": {
+      "service": "mdi:wrench-check"
+    },
+    "import_blueprint": {
+      "service": "mdi:package-down"
+    },
+    "import_statistics": {
+      "service": "mdi:chart-box-plus-outline"
+    },
+    "enable_user": {
+      "service": "mdi:account-check"
+    },
+    "disable_user": {
+      "service": "mdi:account-off"
+    },
+    "find_orphaned_references": {
+      "service": "mdi:magnify-scan"
     }
   }
 }
