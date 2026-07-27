@@ -182,21 +182,46 @@ class TestGitignoreCoversSecrets(unittest.TestCase):
                 entries.add(line.strip())
         return entries
 
+    # The only .storage files a gitignore may re-include: registries and
+    # dashboards carry no credentials. Everything else in .storage —
+    # notably core.config_entries, auth*, cloud — must stay excluded.
+    SAFE_STORAGE_REINCLUDES = {
+        "!.storage/core.area_registry",
+        "!.storage/core.floor_registry",
+        "!.storage/core.label_registry",
+        "!.storage/core.device_registry",
+        "!.storage/core.entity_registry",
+        "!.storage/core.category_registry",
+        "!.storage/lovelace*",
+    }
+
+    def _assert_storage_safely_excluded(self, entries, label):
+        self.assertTrue(
+            ".storage/" in entries or ".storage/*" in entries,
+            f"{label} gitignore missing .storage exclusion",
+        )
+        reincludes = {e for e in entries if e.startswith("!.storage/")}
+        self.assertLessEqual(
+            reincludes,
+            self.SAFE_STORAGE_REINCLUDES,
+            f"{label} gitignore re-includes a secrets-bearing .storage file",
+        )
+
     def test_run_sh_gitignore_covers_secrets(self):
         """run.sh gitignore should cover sensitive files."""
         content = read_file(os.path.join(ADDON_DIR, "run.sh"))
         entries = self._get_gitignore_entries(content)
-        required = ["secrets.yaml", ".storage/", ".mcp.json", ".bruh_claude/"]
-        for req in required:
+        for req in ["secrets.yaml", ".mcp.json", ".bruh_claude/"]:
             self.assertIn(req, entries, f"run.sh gitignore missing: {req}")
+        self._assert_storage_safely_excluded(entries, "run.sh")
 
     def test_backup_sh_gitignore_covers_secrets(self):
         """ha-backup.sh gitignore should cover sensitive files."""
         content = read_file(os.path.join(SCRIPTS_DIR, "ha-backup.sh"))
         entries = self._get_gitignore_entries(content)
-        required = ["secrets.yaml", ".storage/", ".mcp.json", ".bruh_claude/"]
-        for req in required:
+        for req in ["secrets.yaml", ".mcp.json", ".bruh_claude/"]:
             self.assertIn(req, entries, f"ha-backup.sh gitignore missing: {req}")
+        self._assert_storage_safely_excluded(entries, "ha-backup.sh")
 
     def test_gitignore_covers_databases(self):
         """Gitignore should exclude HA database files."""

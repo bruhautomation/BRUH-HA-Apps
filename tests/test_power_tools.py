@@ -237,6 +237,93 @@ class TestMcpGetRegistry(unittest.TestCase):
         self.assertIn("note", result)
 
 
+class TestMcpDashboardTools(unittest.TestCase):
+    """list_dashboards / get_dashboard: the read half of dashboard editing."""
+
+    def test_list_dashboards_trims_and_notes_default(self):
+        rows = [
+            {"url_path": "lights", "title": "Lights", "mode": "storage",
+             "id": "abc123", "require_admin": False},
+        ]
+        with patch.object(ha_mcp_server, "_ws_command", return_value=rows):
+            result = ha_mcp_server.list_dashboards()
+        self.assertEqual(result["count"], 1)
+        self.assertNotIn("id", result["dashboards"][0])
+        self.assertIn("default dashboard", result["note"])
+
+    def test_get_dashboard_returns_config(self):
+        config = {"views": [{"title": "Home", "cards": []}]}
+        with patch.object(ha_mcp_server, "_ws_command", return_value=config) as ws:
+            result = ha_mcp_server.get_dashboard("lights")
+        self.assertEqual(ws.call_args[0][0]["url_path"], "lights")
+        self.assertEqual(result["config"], config)
+
+    def test_get_dashboard_default_uses_null_url_path(self):
+        with patch.object(
+            ha_mcp_server, "_ws_command", return_value={"views": []}
+        ) as ws:
+            ha_mcp_server.get_dashboard()
+        self.assertIsNone(ws.call_args[0][0]["url_path"])
+
+    def test_get_dashboard_summarizes_when_too_large(self):
+        big = {"views": [
+            {"title": "Home", "cards": [{"x": "y" * 5000}] * 50},
+        ]}
+        with patch.object(ha_mcp_server, "_ws_command", return_value=big):
+            result = ha_mcp_server.get_dashboard("big")
+        self.assertNotIn("config", result)
+        self.assertEqual(result["views"][0]["cards"], 50)
+
+    def test_get_dashboard_unsaved_config_hint(self):
+        err = {"error": "{'code': 'config_not_found', 'message': '...'}"}
+        with patch.object(ha_mcp_server, "_ws_command", return_value=err):
+            result = ha_mcp_server.get_dashboard("fresh")
+        self.assertIn("auto-generated", result["note"])
+
+
+class TestDashboardServices(unittest.TestCase):
+    """Static checks on the dashboard power tools."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.source = open(
+            os.path.join(INTEGRATION_DIR, "power_tools.py")
+        ).read()
+        cls.run_sh = open(
+            os.path.join(BASE_DIR, "bruh-claude-terminal", "run.sh")
+        ).read()
+
+    def test_update_backs_up_before_saving(self):
+        """The backup write must appear before async_save in the update
+        handler, and restore must exist as its counterpart."""
+        handler = self.source.split("async def _update_dashboard")[1].split(
+            "async def _restore_dashboard"
+        )[0]
+        self.assertLess(
+            handler.index("_save_dashboard_backup"),
+            handler.index("dashboard.async_save"),
+        )
+        self.assertIn("async def _restore_dashboard", self.source)
+
+    def test_yaml_dashboards_refused(self):
+        self.assertIn('"storage"', self.source)
+        self.assertIn("YAML-mode", self.source)
+
+    def test_backup_restore_rejects_foreign_names(self):
+        self.assertIn('not name.startswith(f"{slug}-")', self.source)
+
+    def test_gitignore_covers_registries_and_dashboards(self):
+        """run.sh must back up the credential-free .storage files, keep the
+        blanket exclusion as a wildcard so negation works, and never
+        re-include the secrets-bearing config entries."""
+        self.assertIn(".storage/*", self.run_sh)
+        for keep in ("!.storage/core.area_registry",
+                     "!.storage/core.entity_registry",
+                     "!.storage/lovelace*"):
+            self.assertIn(keep, self.run_sh)
+        self.assertNotIn("!.storage/core.config_entries", self.run_sh)
+
+
 class TestMcpCallServiceResponse(unittest.TestCase):
     """call_service with return_response routes over the WebSocket API."""
 

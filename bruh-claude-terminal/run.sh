@@ -796,7 +796,17 @@ setup_auto_backup() {
 # BRUH Terminal auto-backup gitignore
 # Secrets and sensitive files
 secrets.yaml
-.storage/
+.storage/*
+# Registry and dashboard files carry no credentials and are exactly what
+# BRUH Power Tools modify — keep them in the backup so every rename,
+# area move, and dashboard edit is recoverable:
+!.storage/core.area_registry
+!.storage/core.floor_registry
+!.storage/core.label_registry
+!.storage/core.device_registry
+!.storage/core.entity_registry
+!.storage/core.category_registry
+!.storage/lovelace*
 .cloud/
 
 # Large/binary files
@@ -834,6 +844,17 @@ GITIGNORE
         git -C /config add -A
         git -C /config commit -m "Initial BRUH Terminal backup" --allow-empty || true
         bashio::log.info "Git repository initialized in /config"
+    fi
+
+    # Upgrade older BRUH-authored gitignores that blanket-excluded .storage/:
+    # registries and dashboards (what Power Tools modify) should be backed up.
+    # Only touches the file if it still carries our header AND the old rule,
+    # so user-customized gitignores are left alone.
+    if [ -f "/config/.gitignore" ] \
+        && grep -q "^# BRUH Terminal auto-backup gitignore" /config/.gitignore \
+        && grep -qx "\.storage/" /config/.gitignore; then
+        bashio::log.info "Backup: including registries + dashboards from .storage in git backup"
+        sed -i 's|^\.storage/$|.storage/*\n!.storage/core.area_registry\n!.storage/core.floor_registry\n!.storage/core.label_registry\n!.storage/core.device_registry\n!.storage/core.entity_registry\n!.storage/core.category_registry\n!.storage/lovelace*|' /config/.gitignore
     fi
 
     # Start the background backup watcher

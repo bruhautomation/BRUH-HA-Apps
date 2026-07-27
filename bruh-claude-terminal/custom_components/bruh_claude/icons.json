@@ -157,6 +157,12 @@
     },
     "find_orphaned_references": {
       "service": "mdi:magnify-scan"
+    },
+    "update_dashboard": {
+      "service": "mdi:view-dashboard-edit"
+    },
+    "restore_dashboard": {
+      "service": "mdi:view-dashboard-outline"
     }
   }
 }

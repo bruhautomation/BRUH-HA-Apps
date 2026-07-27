@@ -581,7 +581,8 @@ The built-in MCP server gives Claude Code these capabilities:
 | `get_weather_forecast` | Daily/hourly forecast via weather.get_forecasts — "what's the weather tomorrow?" |
 | `call_service` | Call any HA service (turn on lights, etc.); `return_response: true` returns service response data |
 | `get_service_details` | Get the service schema for a domain |
-| `get_registry` | List a registry — areas, floors, labels, devices, entities, integrations — with the ids the [Power Tools services](#power-tools-registry-management-services) need |
+| `get_registry` | List a registry — areas, floors, labels, devices, entities, integrations, users — with the ids the [Power Tools services](#power-tools-registry-management-services) need |
+| `list_dashboards` / `get_dashboard` | Enumerate Lovelace dashboards and fetch a dashboard's full config — the read half of the `update_dashboard` edit flow |
 | `control_light` | Lights: on/off/toggle, brightness, color, color-temp |
 | `control_climate` | Thermostats: temperature, HVAC/preset/fan modes |
 | `control_media_player` | Media players: play/pause/volume/source |
@@ -751,6 +752,7 @@ descriptions and pickers. The complete catalog:
 | **Statistics** | `import_statistics` | Import or backfill long-term statistics — repair broken energy history, migrate meters, feed external data |
 | **Users** | `enable_user`, `disable_user` | Enable/disable Home Assistant accounts (owner and system accounts are protected and can never be disabled) |
 | **Diagnostics** | `find_orphaned_references` | Scan automations, scripts, and scenes for references to entities that no longer exist; optionally raise a repair issue |
+| **Dashboards** | `update_dashboard`, `restore_dashboard` | Edit storage-mode Lovelace dashboards safely: every update automatically backs up the previous config (last 20 kept), and restore undoes a bad edit — pair with the MCP `get_dashboard` / `list_dashboards` tools to read them |
 | **Repairs** | `create_repair_issue`, `remove_repair_issue` | Surface custom issues in Settings > System > Repairs — Claude's way to flag something that needs your attention |
 
 Examples:

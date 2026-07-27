@@ -305,6 +305,11 @@ return response data — pass \`return_response: true\` for those.
   owner/system accounts are protected)
 - Diagnostics: \`find_orphaned_references\` (R) — automations/scripts/scenes
   that reference unknown entities; \`create_issue: true\` raises a repair
+- Dashboards: \`update_dashboard\` (R), \`restore_dashboard\` (R) — edit a
+  Lovelace dashboard by fetching its JSON with the \`get_dashboard\` MCP tool
+  (\`list_dashboards\` enumerates them), modifying it, and saving the FULL
+  config back; the old config is backed up automatically and
+  \`restore_dashboard\` undoes a bad edit. Never edit .storage/lovelace files.
 - Repairs: \`create_repair_issue\` (R), \`remove_repair_issue\` — surface issues that
   need the user's attention in Settings > System > Repairs
 

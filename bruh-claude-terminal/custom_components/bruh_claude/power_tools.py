@@ -18,6 +18,7 @@ instead of editing `/config/.storage` files by hand:
 - Statistics:   import/backfill long-term statistics (recorder)
 - Users:        enable/disable accounts (owner accounts are protected)
 - Diagnostics:  find automation/script/scene references to unknown entities
+- Dashboards:   update/restore storage dashboards with automatic backups
 - Repairs:      create/remove custom issues in Settings > System > Repairs
 
 Adapted from Spook (https://github.com/frenck/spook) by Franck Nijhof,
@@ -35,7 +36,9 @@ released under the MIT License. Changes from Spook:
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -839,6 +842,153 @@ async def _find_orphaned_references(
 
 
 # ---------------------------------------------------------------------------
+# Dashboards (Lovelace)
+# ---------------------------------------------------------------------------
+
+DASHBOARD_BACKUP_DIR = ".bruh_claude/dashboard_backups"
+DASHBOARD_BACKUP_KEEP = 20
+
+
+def _lovelace_dashboards(hass: HomeAssistant) -> dict:
+    data = hass.data.get("lovelace")
+    if data is None:
+        raise HomeAssistantError("Lovelace is not loaded")
+    dashboards = getattr(data, "dashboards", None)
+    if dashboards is None and isinstance(data, dict):
+        dashboards = data.get("dashboards")
+    if dashboards is None:
+        raise HomeAssistantError(
+            "Could not access Lovelace dashboards on this Home Assistant version"
+        )
+    return dashboards
+
+
+def _get_dashboard(hass: HomeAssistant, url_path: str | None):
+    dashboards = _lovelace_dashboards(hass)
+    key = url_path or None
+    if key not in dashboards:
+        available = ", ".join(sorted(str(k) for k in dashboards if k))
+        raise HomeAssistantError(
+            f"Dashboard not found: {url_path or 'default'}."
+            + (f" Storage dashboards: {available}" if available else "")
+        )
+    dashboard = dashboards[key]
+    if getattr(dashboard, "mode", "storage") != "storage":
+        raise HomeAssistantError(
+            f"Dashboard '{url_path or 'default'}' is YAML-mode — "
+            "edit its YAML file instead"
+        )
+    return dashboard
+
+
+def _dashboard_slug(url_path: str | None) -> str:
+    return url_path or "default"
+
+
+def _save_dashboard_backup(directory: str, slug: str, config: dict) -> str:
+    """Write a timestamped backup and prune old ones. Executor-safe."""
+    from datetime import datetime, timezone
+
+    os.makedirs(directory, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    path = os.path.join(directory, f"{slug}-{stamp}.json")
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(config, fh)
+    backups = sorted(
+        f for f in os.listdir(directory)
+        if f.startswith(f"{slug}-") and f.endswith(".json")
+    )
+    for stale in backups[:-DASHBOARD_BACKUP_KEEP]:
+        try:
+            os.remove(os.path.join(directory, stale))
+        except OSError:
+            pass
+    return path
+
+
+def _load_dashboard_backup(
+    directory: str, slug: str, name: str | None
+) -> tuple[str, dict]:
+    """Read a named backup, or the newest one for this dashboard."""
+    if name:
+        # Backup names are generated server-side; refuse path tricks.
+        if "/" in name or "\\" in name or not name.startswith(f"{slug}-"):
+            raise HomeAssistantError(f"Not a backup of this dashboard: {name}")
+        path = os.path.join(directory, name)
+        if not os.path.isfile(path):
+            raise HomeAssistantError(f"Backup not found: {name}")
+    else:
+        try:
+            backups = sorted(
+                f for f in os.listdir(directory)
+                if f.startswith(f"{slug}-") and f.endswith(".json")
+            )
+        except OSError:
+            backups = []
+        if not backups:
+            raise HomeAssistantError(
+                f"No backups exist for dashboard '{slug}' yet — "
+                "backups are created by bruh_claude.update_dashboard"
+            )
+        path = os.path.join(directory, backups[-1])
+    with open(path, encoding="utf-8") as fh:
+        return os.path.basename(path), json.load(fh)
+
+
+async def _update_dashboard(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    """Replace a storage dashboard's config, backing up the old one first."""
+    new_config = call.data["config"]
+    if not isinstance(new_config, dict) or not isinstance(
+        new_config.get("views"), list
+    ):
+        raise HomeAssistantError(
+            "config must be a full dashboard object with a 'views' list"
+        )
+    url_path = call.data.get("url_path")
+    dashboard = _get_dashboard(hass, url_path)
+
+    backup_name = None
+    try:
+        old_config = await dashboard.async_load(False)
+    except Exception:  # noqa: BLE001 — dashboard never saved (auto-generated)
+        old_config = None
+    if old_config:
+        backup_name = os.path.basename(
+            await hass.async_add_executor_job(
+                _save_dashboard_backup,
+                hass.config.path(DASHBOARD_BACKUP_DIR),
+                _dashboard_slug(url_path),
+                old_config,
+            )
+        )
+
+    await dashboard.async_save(new_config)
+    return {
+        "url_path": _dashboard_slug(url_path),
+        "views": len(new_config["views"]),
+        "backup": backup_name,
+    }
+
+
+async def _restore_dashboard(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    """Restore a storage dashboard from a backup (latest by default)."""
+    url_path = call.data.get("url_path")
+    dashboard = _get_dashboard(hass, url_path)
+    backup_name, config = await hass.async_add_executor_job(
+        _load_dashboard_backup,
+        hass.config.path(DASHBOARD_BACKUP_DIR),
+        _dashboard_slug(url_path),
+        call.data.get("backup"),
+    )
+    await dashboard.async_save(config)
+    return {
+        "url_path": _dashboard_slug(url_path),
+        "restored_from": backup_name,
+        "views": len(config.get("views") or []),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Repairs
 # ---------------------------------------------------------------------------
 
@@ -1067,6 +1217,15 @@ POWER_TOOLS: tuple[PowerTool, ...] = (
     # Diagnostics
     PowerTool("find_orphaned_references", _find_orphaned_references, {
         vol.Optional("create_issue", default=False): cv.boolean,
+    }, has_response=True),
+    # Dashboards
+    PowerTool("update_dashboard", _update_dashboard, {
+        vol.Required("config"): dict,
+        vol.Optional("url_path"): cv.string,
+    }, has_response=True),
+    PowerTool("restore_dashboard", _restore_dashboard, {
+        vol.Optional("url_path"): cv.string,
+        vol.Optional("backup"): cv.string,
     }, has_response=True),
     # Repairs
     PowerTool("create_repair_issue", _create_repair_issue, {

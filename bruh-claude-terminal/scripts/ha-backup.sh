@@ -28,7 +28,14 @@ do_backup() {
             cat > "$CONFIG_DIR/.gitignore" << 'GITIGNORE'
 # BRUH Terminal auto-backup gitignore
 secrets.yaml
-.storage/
+.storage/*
+!.storage/core.area_registry
+!.storage/core.floor_registry
+!.storage/core.label_registry
+!.storage/core.device_registry
+!.storage/core.entity_registry
+!.storage/core.category_registry
+!.storage/lovelace*
 .cloud/
 *.db
 *.db-shm

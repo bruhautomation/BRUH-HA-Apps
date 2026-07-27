@@ -19,6 +19,32 @@ that would have taken a WLED group with it).
   deleted. Without the filter, behavior is unchanged (all orphans,
   dry-run by default).
 
+**New: dashboard Power Tools.** Claude can now edit Lovelace dashboards
+through a supervised, undoable flow instead of touching `.storage`:
+
+- **`bruh_claude.update_dashboard`** replaces a storage-mode dashboard's
+  config — after automatically backing up the previous config to
+  `/config/.bruh_claude/dashboard_backups/` (last 20 per dashboard; the
+  backup name comes back as response data). YAML-mode dashboards are
+  refused with a clear error.
+- **`bruh_claude.restore_dashboard`** restores the latest (or a named)
+  backup — any bad edit is one service call from undone.
+- **New MCP tools `list_dashboards` and `get_dashboard`** provide the
+  read half: enumerate dashboards, fetch full config JSON (with a
+  per-view summary fallback for very large dashboards). The generated
+  context teaches Claude the fetch → modify → save-full-config flow.
+
+**Registry & dashboard changes are now in the git backup.** The
+auto-backup's `.gitignore` blanket-excluded `.storage/`, so Power Tools
+changes (renames, area moves, registry deletions) and dashboard edits
+had no backup coverage at all. The credential-free registry files
+(`core.area_registry`, `core.floor_registry`, `core.label_registry`,
+`core.device_registry`, `core.entity_registry`, `core.category_registry`)
+and `lovelace*` dashboards are now included — on new installs and, via a
+one-time safe migration, on existing installs whose gitignore is still
+the BRUH-authored original. Secrets-bearing files (`core.config_entries`,
+auth, cloud) stay excluded.
+
 ## 3.4.0
 
 **New: BRUH Power Tools — 41 registry-management admin services, adapted

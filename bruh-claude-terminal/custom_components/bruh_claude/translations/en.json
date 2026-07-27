@@ -728,6 +728,34 @@
           "description": "Also surface the findings in Settings > System > Repairs."
         }
       }
+    },
+    "update_dashboard": {
+      "name": "Update dashboard",
+      "description": "Replace a storage-mode dashboard's configuration. The previous configuration is automatically backed up first (last 20 kept per dashboard) and the backup name is returned as response data, so any edit can be undone with restore_dashboard. YAML-mode dashboards are refused.",
+      "fields": {
+        "config": {
+          "name": "Configuration",
+          "description": "The full dashboard configuration object, including the complete views list."
+        },
+        "url_path": {
+          "name": "Dashboard",
+          "description": "The dashboard's URL path (e.g. lovelace-lights). Omit for the default dashboard."
+        }
+      }
+    },
+    "restore_dashboard": {
+      "name": "Restore dashboard",
+      "description": "Restore a storage-mode dashboard from a backup made by update_dashboard. Restores the most recent backup unless a specific backup name is given.",
+      "fields": {
+        "url_path": {
+          "name": "Dashboard",
+          "description": "The dashboard's URL path. Omit for the default dashboard."
+        },
+        "backup": {
+          "name": "Backup",
+          "description": "A specific backup file name from a previous update_dashboard response. Omit for the most recent."
+        }
+      }
     }
   },
   "issues": {
