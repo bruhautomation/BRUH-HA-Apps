@@ -75,6 +75,31 @@ class TestSettingsStore(TempStoresMixin, unittest.TestCase):
         Path(settings_store.SETTINGS_FILE).write_text("{nope")
         self.assertEqual(settings_store.load(), settings_store.DEFAULTS)
 
+    def test_option_overrides_roundtrip(self):
+        settings_store.save({"refresh_hours": 12, "history_days": 3,
+                             "model": "  claude-haiku-4-5  ",
+                             "timeout_minutes": 10,
+                             "history_keep_runs": 5, "history_keep_days": 7})
+        s = settings_store.load()
+        self.assertEqual(s["refresh_hours"], 12)
+        self.assertEqual(s["history_days"], 3)
+        self.assertEqual(s["model"], "claude-haiku-4-5")
+        self.assertEqual(s["timeout_minutes"], 10)
+        # null clears back to "use the add-on configuration"
+        settings_store.save({"refresh_hours": None, "model": ""})
+        s = settings_store.load()
+        self.assertIsNone(s["refresh_hours"])
+        self.assertIsNone(s["model"])
+        self.assertEqual(s["history_days"], 3)  # untouched
+
+    def test_option_overrides_validated(self):
+        for bad in ({"refresh_hours": 169}, {"history_days": 0},
+                    {"timeout_minutes": 1}, {"history_keep_runs": -1},
+                    {"history_keep_days": 400}, {"refresh_hours": True},
+                    {"model": 5}):
+            with self.assertRaises(ValueError):
+                settings_store.save(bad)
+
     def test_clean_schedule(self):
         self.assertEqual(
             settings_store.clean_schedule(["19:00", "7:30", "07:30"]),
@@ -241,6 +266,31 @@ class TestServerScheduling(TempStoresMixin, unittest.TestCase):
                 self.assertEqual(data["settings"]["plan"], "max5")
 
                 resp = await client.put("/api/settings", json={"plan": "nope"})
+                self.assertEqual(resp.status, 400)
+
+                # option overrides: effective values change immediately and
+                # the add-on-config defaults are reported for placeholders
+                data = await (await client.get("/api/settings")).json()
+                self.assertIn("addon_defaults", data)
+                self.assertIn("refresh_hours", data["addon_defaults"])
+                resp = await client.put("/api/settings", json={
+                    "refresh_hours": 12, "model": "claude-haiku-4-5",
+                    "timeout_minutes": 10})
+                self.assertEqual(resp.status, 200)
+                self.assertEqual(self.server.eff_refresh_hours(), 12.0)
+                self.assertEqual(self.server.eff_model(), "claude-haiku-4-5")
+                self.assertEqual(self.server.eff_timeout_s(), 600)
+                resp = await client.get("/api/status")
+                data = await resp.json()
+                self.assertEqual(data["refresh_hours"], 12.0)
+                self.assertEqual(data["model"], "claude-haiku-4-5")
+                resp = await client.put("/api/settings", json={
+                    "refresh_hours": None, "model": None, "timeout_minutes": None})
+                self.assertEqual(resp.status, 200)
+                self.assertEqual(self.server.eff_refresh_hours(),
+                                 self.server.REFRESH_HOURS)
+                self.assertEqual(self.server.eff_model(), self.server.MODEL)
+                resp = await client.put("/api/settings", json={"history_days": 99})
                 self.assertEqual(resp.status, 400)
 
                 # status carries settings + usage for the panel chip

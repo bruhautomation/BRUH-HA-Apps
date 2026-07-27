@@ -141,7 +141,7 @@
       <textarea id="editFocus" maxlength="4000" rows="7" spellcheck="false"></textarea>
       <label class="check"><input id="editEnabled" type="checkbox">
         Enabled — include in auto-refresh and “Refresh all”</label>
-      <label for="editHours">Refresh every N hours (empty = add-on default, 0 = manual only)</label>
+      <label for="editHours">Refresh every N hours (empty = the default from ⚙ Settings, 0 = manual only)</label>
       <input id="editHours" type="number" min="0" max="168" step="1" placeholder="default">
       <label for="editTimes">…or run at fixed times daily (overrides the interval — saves tokens)</label>
       <input id="editTimes" type="text" maxlength="60" autocomplete="off"
@@ -181,7 +181,7 @@
       <label for="newFocus">What should Claude analyze?</label>
       <textarea id="newFocus" maxlength="4000" rows="6" spellcheck="false"
         placeholder="e.g. Track the garage fridge temperature and door sensor. Flag any period above 5°C and estimate how often the compressor runs."></textarea>
-      <label for="newHours">Refresh every N hours (empty = add-on default, 0 = manual only)</label>
+      <label for="newHours">Refresh every N hours (empty = the default from ⚙ Settings, 0 = manual only)</label>
       <input id="newHours" type="number" min="0" max="168" step="1" placeholder="default">
       <label for="newTimes">…or run at fixed times daily (overrides the interval — saves tokens)</label>
       <input id="newTimes" type="text" maxlength="60" autocomplete="off"
@@ -237,6 +237,45 @@
       <p class="hint">💡 Token-saving tips: each card's ✎ dialog can set fixed daily run times
         (e.g. “07:00, 19:00”), a longer every-N-hours interval, or disable that card entirely —
         scheduled times use far fewer tokens than short intervals.</p>
+
+      <h4 class="sethead">Generation defaults</h4>
+      <p class="hint">These apply immediately — no restart. Empty = use the add-on's
+        Configuration-tab value (shown grayed in each field).</p>
+
+      <div class="setgrid">
+        <div>
+          <label for="setRefresh">Default refresh interval (hours)</label>
+          <input id="setRefresh" type="number" min="0" max="168" step="1">
+          <p class="hint tight">Cards without their own interval or schedule regenerate this
+            often. 0 = no scheduled refresh.</p>
+        </div>
+        <div>
+          <label for="setHistoryDays">History analyzed (days)</label>
+          <input id="setHistoryDays" type="number" min="1" max="30" step="1">
+          <p class="hint tight">Days of sensor history each analysis sees — fewer days =
+            fewer tokens per run.</p>
+        </div>
+        <div>
+          <label for="setTimeout">Generation timeout (minutes)</label>
+          <input id="setTimeout" type="number" min="2" max="30" step="1">
+        </div>
+        <div>
+          <label for="setModel">Claude model override</label>
+          <input id="setModel" type="text" maxlength="100" autocomplete="off" spellcheck="false">
+          <p class="hint tight">e.g. <code>claude-haiku-4-5</code> for cheaper runs. Empty =
+            the CLI's default model.</p>
+        </div>
+        <div>
+          <label for="setKeepRuns">Past runs kept per card</label>
+          <input id="setKeepRuns" type="number" min="0" max="200" step="1">
+        </div>
+        <div>
+          <label for="setKeepDays">Keep past runs for (days)</label>
+          <input id="setKeepDays" type="number" min="0" max="365" step="1">
+        </div>
+      </div>
+      <p class="hint">Only <code>log_level</code> stays add-on-config-only (it takes effect at
+        startup).</p>
     </div>
   </div>
 </div>

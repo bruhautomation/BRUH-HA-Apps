@@ -900,6 +900,16 @@ function timesToText(schedule) {
   return Array.isArray(schedule) ? schedule.join(", ") : "";
 }
 
+// "default" placeholder on interval inputs shows the CURRENT effective
+// default (⚙ Settings override, else the add-on configuration).
+function defaultHoursPlaceholder(input) {
+  const s = state.status;
+  const hours = s && s.refresh_hours;
+  input.placeholder = hours != null
+    ? (hours > 0 ? `default: ${Math.round(hours)}h` : "default: off")
+    : "default";
+}
+
 let editCatId = null;
 
 function openEdit(cat) {
@@ -910,6 +920,7 @@ function openEdit(cat) {
   $("#editFocus").value = cat.focus || "";
   $("#editEnabled").checked = cat.enabled !== false;
   $("#editHours").value = cat.refresh_hours == null ? "" : cat.refresh_hours;
+  defaultHoursPlaceholder($("#editHours"));
   $("#editTimes").value = timesToText(cat.schedule);
   const overridden = cat.focus_overridden || cat.enabled === false
     || cat.refresh_hours != null || (cat.schedule && cat.schedule.length);
@@ -972,6 +983,7 @@ function openNewInsight(prefill) {
   $("#newIcon").value = (prefill && prefill.icon) || "";
   $("#newFocus").value = (prefill && prefill.focus) || "";
   $("#newHours").value = "";
+  defaultHoursPlaceholder($("#newHours"));
   $("#newTimes").value = "";
   $("#newEnabledRow").classList.add("hidden");
   $("#newDelete").classList.add("hidden");
@@ -986,6 +998,7 @@ function openUserEdit(cat) {
   $("#newIcon").value = cat.icon || "";
   $("#newFocus").value = cat.focus || "";
   $("#newHours").value = cat.refresh_hours == null ? "" : cat.refresh_hours;
+  defaultHoursPlaceholder($("#newHours"));
   $("#newTimes").value = timesToText(cat.schedule);
   $("#newEnabled").checked = cat.enabled !== false;
   $("#newEnabledRow").classList.remove("hidden");
@@ -1069,12 +1082,34 @@ function renderUsageMeter(usage, budgetPct) {
       + `usage). Budget mark at ${budgetPct}%.`) + reset;
 }
 
+// Generation-defaults fields: ⚙ input id → settings key. Empty input =
+// null = "use the add-on's Configuration-tab value" (shown as placeholder).
+const OPTION_FIELDS = {
+  setRefresh: "refresh_hours",
+  setHistoryDays: "history_days",
+  setTimeout: "timeout_minutes",
+  setModel: "model",
+  setKeepRuns: "history_keep_runs",
+  setKeepDays: "history_keep_days",
+};
+
 function renderSettingsForm(data) {
   $("#setEnabled").checked = data.settings.auto_enabled !== false;
   $("#setPlan").value = data.settings.plan || "pro";
   $("#setBudget").value = data.settings.budget_percent;
   $("#setBudgetVal").textContent = data.settings.budget_percent + "%";
   renderUsageMeter(data.usage, data.settings.budget_percent);
+  const defs = data.addon_defaults || {};
+  Object.entries(OPTION_FIELDS).forEach(([id, key]) => {
+    const input = $("#" + id);
+    const val = data.settings[key];
+    input.value = val == null ? "" : String(val);
+    if (key === "model") {
+      input.placeholder = defs.model ? `add-on config: ${defs.model}` : "CLI default";
+    } else if (defs[key] != null) {
+      input.placeholder = `add-on config: ${defs[key]}`;
+    }
+  });
 }
 
 async function openSettings() {
@@ -1116,6 +1151,21 @@ $("#setBudget").addEventListener("input", () => {
 });
 $("#setBudget").addEventListener("change", () =>
   saveSettings({ budget_percent: Math.round(Number($("#setBudget").value)) }));
+Object.entries(OPTION_FIELDS).forEach(([id, key]) => {
+  $("#" + id).addEventListener("change", () => {
+    const raw = $("#" + id).value.trim();
+    let value = null;
+    if (raw !== "") {
+      if (key === "model") {
+        value = raw;
+      } else {
+        value = Math.round(Number(raw));
+        if (!isFinite(value)) { toast("Enter a number"); return; }
+      }
+    }
+    saveSettings({ [key]: value });
+  });
+});
 $("#setClose").addEventListener("click", () => closeBox("#setModal"));
 $("#setModal").addEventListener("click", (ev) => {
   if (ev.target === $("#setModal")) closeBox("#setModal");
