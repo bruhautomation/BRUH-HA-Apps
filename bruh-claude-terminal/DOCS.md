@@ -638,7 +638,7 @@ The BRUH Claude integration is automatically discovered when the add-on starts. 
 - **Conversation Agent** - Select "BRUH Claude" as a conversation agent in Settings > Voice Assistants
 - **`bruh_claude.send_prompt`** service - Send a one-shot prompt to Claude and get a response
 - **`bruh_claude.run_task`** service - Run a Claude task with optional completion notification
-- **[Power Tools](#power-tools-registry-management-services)** - 41 registry-management admin services (areas, floors, labels, entities, devices, integrations, zones, persons, blueprints, statistics, users, diagnostics, repairs)
+- **[Power Tools](#power-tools-registry-management-services)** - 43 registry-management admin services (areas, floors, labels, entities, devices, integrations, zones, persons, blueprints, statistics, users, diagnostics, dashboards, repairs)
 
 ### Assist Integration
 
@@ -720,7 +720,7 @@ writing `/config/.bruh_claude/usage_limits.json`; the sensors poll it every
 
 ## Power Tools (registry management services)
 
-The BRUH Claude integration registers **41 admin services** that manage the
+The BRUH Claude integration registers **43 admin services** that manage the
 parts of Home Assistant that normally require clicking through Settings:
 areas, floors, labels, entities, devices, integrations, zones, persons, and
 repair issues. They give Claude (and your automations and scripts) a

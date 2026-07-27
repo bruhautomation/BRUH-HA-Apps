@@ -8,9 +8,9 @@ Provides:
 - bruh_claude.clear_conversation   — clear a persistent conversation session
 - bruh_claude.add_memory           — queue a fact for the home memory store
 - bruh_claude.answer_question      — answer an open memory question
-- BRUH Power Tools                 — 41 registry-management admin services
+- BRUH Power Tools                 — 43 registry-management admin services
   (areas, floors, labels, entities, devices, integrations, zones, persons,
-  blueprints, statistics, users, diagnostics, repairs) — see power_tools.py
+  blueprints, statistics, users, diagnostics, dashboards, repairs) — see power_tools.py
 
 Both conversation agent and sensors are independently toggleable per config entry.
 """
