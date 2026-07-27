@@ -138,3 +138,675 @@ answer_question:
       description: Where this answer came from (defaults to "service").
       selector:
         text:
+
+# ---------------------------------------------------------------------------
+# BRUH Power Tools — registry management services (see power_tools.py).
+# Adapted from Spook (https://github.com/frenck/spook, MIT) by Franck Nijhof.
+# ---------------------------------------------------------------------------
+
+create_area:
+  name: Create area
+  description: Create a new area. Returns the new area_id as response data.
+  fields:
+    name:
+      name: Name
+      description: Name of the new area.
+      selector:
+        text: {}
+      required: true
+      example: Guest Room
+    icon:
+      name: Icon
+      description: Icon for the area.
+      selector:
+        icon: {}
+      example: mdi:bed
+    aliases:
+      name: Aliases
+      description: Alternative names, used by voice assistants.
+      selector:
+        text:
+          multiple: true
+    floor_id:
+      name: Floor
+      description: Floor to place the area on.
+      selector:
+        floor: {}
+
+delete_area:
+  name: Delete area
+  description: Delete an area. Entities and devices in it are left unassigned.
+  fields:
+    area_id:
+      name: Area
+      description: The area to delete.
+      selector:
+        area: {}
+      required: true
+
+rename_area:
+  name: Rename area
+  description: Rename an existing area.
+  fields:
+    area_id:
+      name: Area
+      description: The area to rename.
+      selector:
+        area: {}
+      required: true
+    name:
+      name: Name
+      description: The new name.
+      selector:
+        text: {}
+      required: true
+
+set_area_aliases:
+  name: Set area aliases
+  description: Replace the aliases of an area (used by voice assistants).
+  fields:
+    area_id:
+      name: Area
+      description: The area to update.
+      selector:
+        area: {}
+      required: true
+    aliases:
+      name: Aliases
+      description: The full new list of aliases.
+      selector:
+        text:
+          multiple: true
+      required: true
+
+add_device_to_area:
+  name: Add device to area
+  description: Assign one or more devices to an area.
+  fields:
+    area_id:
+      name: Area
+      description: The target area.
+      selector:
+        area: {}
+      required: true
+    device_id:
+      name: Devices
+      description: Devices to assign.
+      selector:
+        device:
+          multiple: true
+      required: true
+
+remove_device_from_area:
+  name: Remove device from area
+  description: Remove one or more devices from whatever area they are in.
+  fields:
+    device_id:
+      name: Devices
+      description: Devices to unassign.
+      selector:
+        device:
+          multiple: true
+      required: true
+
+add_entity_to_area:
+  name: Add entity to area
+  description: Assign one or more entities to an area (overrides the device's area).
+  fields:
+    area_id:
+      name: Area
+      description: The target area.
+      selector:
+        area: {}
+      required: true
+    entity_id:
+      name: Entities
+      description: Entities to assign.
+      selector:
+        entity:
+          multiple: true
+      required: true
+
+remove_entity_from_area:
+  name: Remove entity from area
+  description: Remove one or more entities from whatever area they are in.
+  fields:
+    entity_id:
+      name: Entities
+      description: Entities to unassign.
+      selector:
+        entity:
+          multiple: true
+      required: true
+
+create_floor:
+  name: Create floor
+  description: Create a new floor. Returns the new floor_id as response data.
+  fields:
+    name:
+      name: Name
+      description: Name of the new floor.
+      selector:
+        text: {}
+      required: true
+      example: Upstairs
+    icon:
+      name: Icon
+      description: Icon for the floor.
+      selector:
+        icon: {}
+      example: mdi:home-floor-2
+    level:
+      name: Level
+      description: Level number (0 = ground floor).
+      selector:
+        number:
+          min: -10
+          max: 20
+          mode: box
+    aliases:
+      name: Aliases
+      description: Alternative names, used by voice assistants.
+      selector:
+        text:
+          multiple: true
+
+delete_floor:
+  name: Delete floor
+  description: Delete a floor. Areas on it are left without a floor.
+  fields:
+    floor_id:
+      name: Floor
+      description: The floor to delete.
+      selector:
+        floor: {}
+      required: true
+
+rename_floor:
+  name: Rename floor
+  description: Rename an existing floor.
+  fields:
+    floor_id:
+      name: Floor
+      description: The floor to rename.
+      selector:
+        floor: {}
+      required: true
+    name:
+      name: Name
+      description: The new name.
+      selector:
+        text: {}
+      required: true
+
+add_area_to_floor:
+  name: Add area to floor
+  description: Place one or more areas on a floor.
+  fields:
+    floor_id:
+      name: Floor
+      description: The target floor.
+      selector:
+        floor: {}
+      required: true
+    area_id:
+      name: Areas
+      description: Areas to place on the floor.
+      selector:
+        area:
+          multiple: true
+      required: true
+
+remove_area_from_floor:
+  name: Remove area from floor
+  description: Remove one or more areas from whatever floor they are on.
+  fields:
+    area_id:
+      name: Areas
+      description: Areas to remove from their floor.
+      selector:
+        area:
+          multiple: true
+      required: true
+
+create_label:
+  name: Create label
+  description: Create a new label. Returns the new label_id as response data.
+  fields:
+    name:
+      name: Name
+      description: Name of the new label.
+      selector:
+        text: {}
+      required: true
+      example: Battery powered
+    icon:
+      name: Icon
+      description: Icon for the label.
+      selector:
+        icon: {}
+      example: mdi:battery
+    color:
+      name: Color
+      description: 'Label color: a theme color name (e.g. red, blue, amber) or hex code.'
+      selector:
+        text: {}
+      example: amber
+    description:
+      name: Description
+      description: What this label is for.
+      selector:
+        text:
+          multiline: true
+
+delete_label:
+  name: Delete label
+  description: Delete a label. It is removed from everything it was applied to.
+  fields:
+    label_id:
+      name: Label
+      description: The label to delete.
+      selector:
+        label: {}
+      required: true
+
+add_label:
+  name: Add label
+  description: Apply one or more labels to entities, devices, and/or areas. At least one target
+    is required.
+  fields:
+    label_id:
+      name: Labels
+      description: Labels to apply.
+      selector:
+        label:
+          multiple: true
+      required: true
+    entity_id:
+      name: Entities
+      description: Entities to label.
+      selector:
+        entity:
+          multiple: true
+    device_id:
+      name: Devices
+      description: Devices to label.
+      selector:
+        device:
+          multiple: true
+    area_id:
+      name: Areas
+      description: Areas to label.
+      selector:
+        area:
+          multiple: true
+
+remove_label:
+  name: Remove label
+  description: Remove one or more labels from entities, devices, and/or areas. At least one
+    target is required.
+  fields:
+    label_id:
+      name: Labels
+      description: Labels to remove.
+      selector:
+        label:
+          multiple: true
+      required: true
+    entity_id:
+      name: Entities
+      description: Entities to unlabel.
+      selector:
+        entity:
+          multiple: true
+    device_id:
+      name: Devices
+      description: Devices to unlabel.
+      selector:
+        device:
+          multiple: true
+    area_id:
+      name: Areas
+      description: Areas to unlabel.
+      selector:
+        area:
+          multiple: true
+
+rename_entity:
+  name: Rename entity
+  description: Set the friendly name override of one or more entities.
+  fields:
+    entity_id:
+      name: Entities
+      description: Entities to rename.
+      selector:
+        entity:
+          multiple: true
+      required: true
+    name:
+      name: Name
+      description: The new friendly name.
+      selector:
+        text: {}
+      required: true
+
+change_entity_id:
+  name: Change entity ID
+  description: Change an entity's ID (e.g. light.shelly_abc123 to light.kitchen_ceiling).
+    Automations and dashboards referencing the old ID must be updated separately.
+  fields:
+    entity_id:
+      name: Entity
+      description: The current entity ID.
+      selector:
+        entity: {}
+      required: true
+    new_entity_id:
+      name: New entity ID
+      description: The new entity ID, same domain.
+      selector:
+        text: {}
+      required: true
+      example: light.kitchen_ceiling
+
+enable_entity:
+  name: Enable entity
+  description: Enable one or more disabled entities. Takes effect after the owning integration
+    reloads.
+  fields:
+    entity_id:
+      name: Entities
+      description: Entities to enable.
+      selector:
+        entity:
+          multiple: true
+      required: true
+
+disable_entity:
+  name: Disable entity
+  description: Disable one or more entities. They stop updating and are removed from the UI.
+  fields:
+    entity_id:
+      name: Entities
+      description: Entities to disable.
+      selector:
+        entity:
+          multiple: true
+      required: true
+
+hide_entity:
+  name: Hide entity
+  description: Hide one or more entities from auto-generated dashboards and voice assistants.
+    They keep working.
+  fields:
+    entity_id:
+      name: Entities
+      description: Entities to hide.
+      selector:
+        entity:
+          multiple: true
+      required: true
+
+unhide_entity:
+  name: Unhide entity
+  description: Unhide one or more hidden entities.
+  fields:
+    entity_id:
+      name: Entities
+      description: Entities to unhide.
+      selector:
+        entity:
+          multiple: true
+      required: true
+
+delete_orphaned_entities:
+  name: Delete orphaned entities
+  description: Remove registry entries for entities whose integration no longer provides them
+    (state shows as 'restored'). Runs as a dry run by default and returns the list of affected
+    entities as response data.
+  fields:
+    dry_run:
+      name: Dry run
+      description: When on (default), only report what would be removed.
+      selector:
+        boolean: {}
+      default: true
+
+rename_device:
+  name: Rename device
+  description: Set the user-facing name of a device.
+  fields:
+    device_id:
+      name: Device
+      description: The device to rename.
+      selector:
+        device: {}
+      required: true
+    name:
+      name: Name
+      description: The new name.
+      selector:
+        text: {}
+      required: true
+
+enable_device:
+  name: Enable device
+  description: Enable one or more disabled devices (including their parent hub devices if
+    those were disabled).
+  fields:
+    device_id:
+      name: Devices
+      description: Devices to enable.
+      selector:
+        device:
+          multiple: true
+      required: true
+
+disable_device:
+  name: Disable device
+  description: Disable one or more devices and all their entities. A parent hub device is
+    also disabled once none of its children remain enabled.
+  fields:
+    device_id:
+      name: Devices
+      description: Devices to disable.
+      selector:
+        device:
+          multiple: true
+      required: true
+
+enable_integration:
+  name: Enable integration
+  description: Enable one or more disabled integration config entries.
+  fields:
+    config_entry_id:
+      name: Integration
+      description: The config entry to enable.
+      selector:
+        config_entry: {}
+      required: true
+
+disable_integration:
+  name: Disable integration
+  description: Disable one or more integration config entries and everything they provide.
+  fields:
+    config_entry_id:
+      name: Integration
+      description: The config entry to disable.
+      selector:
+        config_entry: {}
+      required: true
+
+reload_integration:
+  name: Reload integration
+  description: "Reload one or more integration config entries \u2014 like pressing Reload\
+    \ on the integration page."
+  fields:
+    config_entry_id:
+      name: Integration
+      description: The config entry to reload.
+      selector:
+        config_entry: {}
+      required: true
+
+create_zone:
+  name: Create zone
+  description: Create a new zone for location tracking.
+  fields:
+    name:
+      name: Name
+      description: Name of the new zone.
+      selector:
+        text: {}
+      required: true
+      example: Gym
+    latitude:
+      name: Latitude
+      description: Latitude of the zone center.
+      selector:
+        number:
+          min: -90
+          max: 90
+          step: any
+          mode: box
+      required: true
+    longitude:
+      name: Longitude
+      description: Longitude of the zone center.
+      selector:
+        number:
+          min: -180
+          max: 180
+          step: any
+          mode: box
+      required: true
+    radius:
+      name: Radius
+      description: Radius of the zone in meters (default 100).
+      selector:
+        number:
+          min: 10
+          max: 10000
+          unit_of_measurement: m
+          mode: box
+    icon:
+      name: Icon
+      description: Icon for the zone.
+      selector:
+        icon: {}
+      example: mdi:dumbbell
+    passive:
+      name: Passive
+      description: Passive zones are only used for automations, not shown on the map.
+      selector:
+        boolean: {}
+
+delete_zone:
+  name: Delete zone
+  description: Delete one or more UI-created zones.
+  fields:
+    entity_id:
+      name: Zones
+      description: Zone entities to delete.
+      selector:
+        entity:
+          multiple: true
+          filter:
+            domain: zone
+      required: true
+
+add_device_tracker_to_person:
+  name: Add device tracker to person
+  description: Attach one or more device trackers to a person for presence detection.
+  fields:
+    entity_id:
+      name: Person
+      description: The person entity.
+      selector:
+        entity:
+          filter:
+            domain: person
+      required: true
+    device_tracker:
+      name: Device trackers
+      description: Device trackers to attach.
+      selector:
+        entity:
+          multiple: true
+          filter:
+            domain: device_tracker
+      required: true
+
+remove_device_tracker_from_person:
+  name: Remove device tracker from person
+  description: Detach one or more device trackers from a person.
+  fields:
+    entity_id:
+      name: Person
+      description: The person entity.
+      selector:
+        entity:
+          filter:
+            domain: person
+      required: true
+    device_tracker:
+      name: Device trackers
+      description: Device trackers to detach.
+      selector:
+        entity:
+          multiple: true
+          filter:
+            domain: device_tracker
+      required: true
+
+create_repair_issue:
+  name: Create repair issue
+  description: "Create a custom issue in Settings > System > Repairs \u2014 a persistent,\
+    \ dismissible way to surface something that needs the user's attention. Returns the issue_id\
+    \ as response data."
+  fields:
+    title:
+      name: Title
+      description: Short title of the issue.
+      selector:
+        text: {}
+      required: true
+      example: 'Low battery: front door lock'
+    description:
+      name: Description
+      description: Full description shown when the issue is opened.
+      selector:
+        text:
+          multiline: true
+      required: true
+    severity:
+      name: Severity
+      description: How serious the issue is (default warning).
+      selector:
+        select:
+          options:
+          - critical
+          - error
+          - warning
+    persistent:
+      name: Persistent
+      description: Keep the issue across Home Assistant restarts.
+      selector:
+        boolean: {}
+    issue_id:
+      name: Issue ID
+      description: Optional stable ID so the issue can be removed or replaced later. Auto-generated
+        when omitted.
+      selector:
+        text: {}
+
+remove_repair_issue:
+  name: Remove repair issue
+  description: Remove a previously created repair issue by its issue ID.
+  fields:
+    issue_id:
+      name: Issue ID
+      description: The issue_id used (or returned) when the issue was created.
+      selector:
+        text: {}
+      required: true

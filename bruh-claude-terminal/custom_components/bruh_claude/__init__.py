@@ -8,6 +8,9 @@ Provides:
 - bruh_claude.clear_conversation   — clear a persistent conversation session
 - bruh_claude.add_memory           — queue a fact for the home memory store
 - bruh_claude.answer_question      — answer an open memory question
+- BRUH Power Tools                 — 36 registry-management admin services
+  (areas, floors, labels, entities, devices, integrations, zones, persons,
+  repairs) — see power_tools.py
 
 Both conversation agent and sensors are independently toggleable per config entry.
 """
@@ -75,6 +78,7 @@ from .insight_format import (
     make_preview,
     truncate_markdown,
 )
+from .power_tools import POWER_TOOL_SERVICES, async_register_power_tools
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -273,6 +277,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 "run_insight",
                 "add_memory",
                 "answer_question",
+                *POWER_TOOL_SERVICES,
             ):
                 if hass.services.has_service(DOMAIN, service):
                     hass.services.async_remove(DOMAIN, service)
@@ -802,3 +807,6 @@ def _register_services(hass: HomeAssistant) -> None:
         handle_answer_question,
         schema=ANSWER_QUESTION_SCHEMA,
     )
+
+    # BRUH Power Tools: registry-management admin services (power_tools.py)
+    async_register_power_tools(hass)

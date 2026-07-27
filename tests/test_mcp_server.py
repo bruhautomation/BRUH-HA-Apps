@@ -483,7 +483,7 @@ class TestMCPProtocol(unittest.TestCase):
         expected_tools = {
             # Core tools
             "get_entity_state", "get_all_states", "call_service",
-            "get_service_details",
+            "get_service_details", "get_registry",
             # Domain-specific device control
             "control_light", "control_climate", "control_media_player",
             "control_cover", "control_fan", "control_switch",

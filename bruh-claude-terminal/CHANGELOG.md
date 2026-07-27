@@ -4,6 +4,53 @@ All notable changes to **BRUH Claude Terminal**, newest first. This project adhe
 
 > 💡 Prefer a cleaner, categorized view? See the [formatted changelog at bruhautomation.com](https://bruhautomation.com/bruh-claude/changelog/).
 
+## 3.4.0
+
+**New: BRUH Power Tools — 36 registry-management admin services, adapted
+from [Spook](https://github.com/frenck/spook) by Franck Nijhof (MIT).**
+Claude, automations, and scripts can now reorganize Home Assistant through
+safe, supervised service calls instead of hand-editing `/config/.storage`.
+
+- **New `bruh_claude.*` services** (all visible in Developer Tools >
+  Actions with field pickers):
+  - *Areas*: `create_area`, `delete_area`, `rename_area`,
+    `set_area_aliases`, `add_device_to_area`, `remove_device_from_area`,
+    `add_entity_to_area`, `remove_entity_from_area`
+  - *Floors*: `create_floor`, `delete_floor`, `rename_floor`,
+    `add_area_to_floor`, `remove_area_from_floor`
+  - *Labels*: `create_label`, `delete_label`, `add_label`, `remove_label`
+    (multi-target: entities, devices, and areas in one call)
+  - *Entities*: `rename_entity`, `change_entity_id`, `enable_entity`,
+    `disable_entity`, `hide_entity`, `unhide_entity`,
+    `delete_orphaned_entities` (dry-run by default)
+  - *Devices*: `rename_device`, `enable_device`, `disable_device`
+    (with Spook's parent-hub cascade)
+  - *Integrations*: `enable_integration`, `disable_integration`,
+    `reload_integration`
+  - *Zones*: `create_zone`, `delete_zone`
+  - *Persons*: `add_device_tracker_to_person`,
+    `remove_device_tracker_from_person`
+  - *Repairs*: `create_repair_issue`, `remove_repair_issue` — surface
+    custom, dismissible issues in Settings > System > Repairs
+- **Safer than Spook's originals for this use case**: everything is
+  admin-gated and namespaced under `bruh_claude.*` (no collision if you
+  also run Spook), every referenced id is validated before any change,
+  creation services return the new id as response data, and the orphaned
+  entity cleanup reports before it deletes. User enable/disable was
+  deliberately left out (lockout risk).
+- **New MCP tool `get_registry`**: read-only listings of areas, floors,
+  labels, devices, entities, and integrations (config entries) with
+  exactly the ids the services need — the safe replacement for reading
+  `.storage` files.
+- **MCP `call_service` gained `return_response`**: routes the call over
+  the WebSocket API and returns service response data (works for any HA
+  service with a response, e.g. todo lists or calendars, not just the
+  new ones).
+- The generated `CLAUDE.md` context now teaches Claude the full catalog,
+  the `get_registry` → `call_service` workflow, and the cautions
+  (dry-run first, `change_entity_id` doesn't rewrite automations,
+  confirm before destructive changes).
+
 ## 3.3.2
 
 **Fixed: "Failed to authenticate: OAuth session expired and could not be
