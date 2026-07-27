@@ -4,6 +4,39 @@ All notable changes to **BRUH Claude Terminal**, newest first. This project adhe
 
 > 💡 Prefer a cleaner, categorized view? See the [formatted changelog at bruhautomation.com](https://bruhautomation.com/bruh-claude/changelog/).
 
+## 3.6.0
+
+**Full HA administration without touching `.storage`: 13 new Power Tools
+(56 total).** The remaining Settings-only chores are now supervised,
+validated `bruh_claude.*` services:
+
+- **Helpers**: `create_helper` / `delete_helper` cover every
+  storage-backed type — `input_boolean`, `input_number`, `input_select`,
+  `input_text`, `input_datetime`, `counter`, `timer`, `schedule`.
+  Type-specific options pass through to the helper's own schema, so
+  validation errors match the UI's. Claude can now build an automation
+  *and* the helper it needs in one conversation.
+- **Zones**: `update_zone` completes the set — move, resize, rename, or
+  restyle an editable zone.
+- **Entities**: `set_entity_aliases` (the voice-assistant names Assist
+  listens for) and `set_entity_icon` (omit the icon to clear the
+  override).
+- **Dashboards**: `create_dashboard` / `delete_dashboard` (deletion
+  backs the config up first, so it's recoverable via create + restore)
+  and `add_dashboard_resource` / `remove_dashboard_resource` for
+  registering custom-card modules — Claude can install a custom card
+  end-to-end. `list_dashboards` (MCP) now includes registered resources.
+- **Persons**: `create_person` / `delete_person`, with optional user
+  linking and initial device trackers.
+- **Users**: `create_user` / `delete_user` — optional local
+  username/password login (must come together, password ≥ 8 chars;
+  if credential creation fails the half-created user is rolled back),
+  and the same lockout guard as disable: owner and system-generated
+  accounts can never be deleted.
+
+Deliberately still excluded: adding/removing integrations (config flows
+are interactive by design) and anything credential-bearing.
+
 ## 3.5.0
 
 **`delete_orphaned_entities` can now target specific entities.** The

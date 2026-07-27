@@ -638,7 +638,7 @@ The BRUH Claude integration is automatically discovered when the add-on starts. 
 - **Conversation Agent** - Select "BRUH Claude" as a conversation agent in Settings > Voice Assistants
 - **`bruh_claude.send_prompt`** service - Send a one-shot prompt to Claude and get a response
 - **`bruh_claude.run_task`** service - Run a Claude task with optional completion notification
-- **[Power Tools](#power-tools-registry-management-services)** - 43 registry-management admin services (areas, floors, labels, entities, devices, integrations, zones, persons, blueprints, statistics, users, diagnostics, dashboards, repairs)
+- **[Power Tools](#power-tools-registry-management-services)** - 56 registry-management admin services (areas, floors, labels, entities, devices, integrations, helpers, zones, persons, blueprints, statistics, users, diagnostics, dashboards, repairs)
 
 ### Assist Integration
 
@@ -720,7 +720,7 @@ writing `/config/.bruh_claude/usage_limits.json`; the sensors poll it every
 
 ## Power Tools (registry management services)
 
-The BRUH Claude integration registers **43 admin services** that manage the
+The BRUH Claude integration registers **56 admin services** that manage the
 parts of Home Assistant that normally require clicking through Settings:
 areas, floors, labels, entities, devices, integrations, zones, persons, and
 repair issues. They give Claude (and your automations and scripts) a
@@ -743,16 +743,17 @@ descriptions and pickers. The complete catalog:
 | **Areas** | `create_area`, `delete_area`, `rename_area`, `set_area_aliases`, `add_device_to_area`, `remove_device_from_area`, `add_entity_to_area`, `remove_entity_from_area` | Create and organize areas, including the voice-assistant aliases |
 | **Floors** | `create_floor`, `delete_floor`, `rename_floor`, `add_area_to_floor`, `remove_area_from_floor` | Group areas into floors |
 | **Labels** | `create_label`, `delete_label`, `add_label`, `remove_label` | Create labels and apply/remove them on entities, devices, and areas in one call |
-| **Entities** | `rename_entity`, `change_entity_id`, `enable_entity`, `disable_entity`, `hide_entity`, `unhide_entity`, `delete_orphaned_entities` | Rename, re-ID, enable/disable, hide/unhide entities; clean up registry entries whose integration is gone (dry-run by default, optionally scoped to an `entity_id` list with each entity re-verified as orphaned) |
+| **Entities** | `rename_entity`, `change_entity_id`, `enable_entity`, `disable_entity`, `hide_entity`, `unhide_entity`, `set_entity_aliases`, `set_entity_icon`, `delete_orphaned_entities` | Rename, re-ID, enable/disable, hide/unhide entities, set voice aliases and icon overrides; clean up registry entries whose integration is gone (dry-run by default, optionally scoped to an `entity_id` list with each entity re-verified as orphaned) |
 | **Devices** | `rename_device`, `enable_device`, `disable_device` | Rename and enable/disable devices (disable cascades to a parent hub once no children remain enabled) |
 | **Integrations** | `enable_integration`, `disable_integration`, `reload_integration` | Enable, disable, or reload integration config entries |
-| **Zones** | `create_zone`, `delete_zone` | Create and delete location zones |
-| **Persons** | `add_device_tracker_to_person`, `remove_device_tracker_from_person` | Attach/detach device trackers for presence detection |
+| **Helpers** | `create_helper`, `delete_helper` | Create and delete any storage-backed helper — `input_boolean`, `input_number`, `input_select`, `input_text`, `input_datetime`, `counter`, `timer`, `schedule` — with the type's own options validated by its own schema |
+| **Zones** | `create_zone`, `update_zone`, `delete_zone` | Create, move/resize, and delete location zones |
+| **Persons** | `create_person`, `delete_person`, `add_device_tracker_to_person`, `remove_device_tracker_from_person` | Create/delete persons and attach/detach device trackers for presence detection |
 | **Blueprints** | `import_blueprint` | Import an automation/script blueprint straight from a community forum, GitHub, or Gist URL |
 | **Statistics** | `import_statistics` | Import or backfill long-term statistics — repair broken energy history, migrate meters, feed external data |
-| **Users** | `enable_user`, `disable_user` | Enable/disable Home Assistant accounts (owner and system accounts are protected and can never be disabled) |
+| **Users** | `create_user`, `delete_user`, `enable_user`, `disable_user` | Full account lifecycle, including optional local username/password logins (owner and system accounts are protected and can never be deleted or disabled) |
 | **Diagnostics** | `find_orphaned_references` | Scan automations, scripts, and scenes for references to entities that no longer exist; optionally raise a repair issue |
-| **Dashboards** | `update_dashboard`, `restore_dashboard` | Edit storage-mode Lovelace dashboards safely: every update automatically backs up the previous config (last 20 kept), and restore undoes a bad edit — pair with the MCP `get_dashboard` / `list_dashboards` tools to read them |
+| **Dashboards** | `create_dashboard`, `delete_dashboard`, `update_dashboard`, `restore_dashboard`, `add_dashboard_resource`, `remove_dashboard_resource` | Full dashboard lifecycle: every update (and deletion) automatically backs up the previous config, restore undoes a bad edit, and resources register custom-card modules — pair with the MCP `get_dashboard` / `list_dashboards` tools to read them |
 | **Repairs** | `create_repair_issue`, `remove_repair_issue` | Surface custom issues in Settings > System > Repairs — Claude's way to flag something that needs your attention |
 
 Examples:

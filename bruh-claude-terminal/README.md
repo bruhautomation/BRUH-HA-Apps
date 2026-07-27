@@ -25,7 +25,7 @@ Claude watches your house and writes markdown reports to sensors — daily brief
 - **Camera vision** — Claude can look at a camera and describe what it sees
 - **History, statistics & forecasts** — "how cold did it get last night?", "what's the weather tomorrow?"
 - Areas/rooms, automation traces, logs, Jinja2 templates, config reloads
-- **Power Tools** — 43 registry-management services (`bruh_claude.*`): create/rename areas, floors, labels and zones, rename entities and devices, enable/disable/hide entities, reload integrations, import blueprints, backfill statistics, find orphaned references, edit dashboards with automatic backups, flag repair issues — all validated and admin-gated, no `.storage` hand-edits (adapted from [Spook](https://github.com/frenck/spook), MIT)
+- **Power Tools** — 56 registry-management services (`bruh_claude.*`): create/rename areas, floors, labels and zones, rename entities and devices, enable/disable/hide entities, create helpers, reload integrations, import blueprints, backfill statistics, find orphaned references, edit dashboards with automatic backups, flag repair issues — all validated and admin-gated, no `.storage` hand-edits (adapted from [Spook](https://github.com/frenck/spook), MIT)
 
 ### Terminal & Workflow
 - **Auto-generated context**: `CLAUDE.md` describing your install, regenerated each startup

@@ -290,26 +290,37 @@ return response data — pass \`return_response: true\` for those.
 - Labels: \`create_label\` (R), \`delete_label\`, \`add_label\`, \`remove_label\`
   (\`add_label\`/\`remove_label\` take entity_id, device_id, and/or area_id lists)
 - Entities: \`rename_entity\`, \`change_entity_id\`, \`enable_entity\`, \`disable_entity\`,
-  \`hide_entity\`, \`unhide_entity\`, \`delete_orphaned_entities\` (R, dry-run by
+  \`hide_entity\`, \`unhide_entity\`, \`set_entity_aliases\` (voice names),
+  \`set_entity_icon\` (omit icon to clear), \`delete_orphaned_entities\` (R, dry-run by
   default; optional entity_id list scopes the cleanup — always dry-run first,
   then delete with the reviewed entity_id list, never blind-delete all)
+- Helpers: \`create_helper\` (R; helper_type ∈ input_boolean/input_number/
+  input_select/input_text/input_datetime/counter/timer/schedule, plus an
+  \`options\` object with the type's own fields e.g. min/max, options list,
+  duration), \`delete_helper\` (UI-created helpers only)
 - Devices: \`rename_device\`, \`enable_device\`, \`disable_device\`
 - Integrations: \`enable_integration\`, \`disable_integration\`, \`reload_integration\` (config_entry_id)
-- Zones: \`create_zone\`, \`delete_zone\`
-- Persons: \`add_device_tracker_to_person\`, \`remove_device_tracker_from_person\`
+- Zones: \`create_zone\`, \`update_zone\`, \`delete_zone\`
+- Persons: \`create_person\` (R), \`delete_person\`,
+  \`add_device_tracker_to_person\`, \`remove_device_tracker_from_person\`
 - Blueprints: \`import_blueprint\` (R) — import from forum/GitHub/Gist URL
 - Statistics: \`import_statistics\` — backfill/repair long-term statistics
   (entity id → recorder stats; \`domain:object_id\` → external stats; hourly
   \`start\` timestamps; \`has_sum\` totals need \`sum\`, \`has_mean\` needs mean/min/max)
-- Users: \`enable_user\`, \`disable_user\` (user_id from \`get_registry\` users;
-  owner/system accounts are protected)
+- Users: \`create_user\` (R; optional username+password together, pw ≥ 8 chars),
+  \`delete_user\`, \`enable_user\`, \`disable_user\` (user_id from \`get_registry\`
+  users; owner/system accounts can never be deleted or disabled)
 - Diagnostics: \`find_orphaned_references\` (R) — automations/scripts/scenes
   that reference unknown entities; \`create_issue: true\` raises a repair
 - Dashboards: \`update_dashboard\` (R), \`restore_dashboard\` (R) — edit a
   Lovelace dashboard by fetching its JSON with the \`get_dashboard\` MCP tool
-  (\`list_dashboards\` enumerates them), modifying it, and saving the FULL
-  config back; the old config is backed up automatically and
-  \`restore_dashboard\` undoes a bad edit. Never edit .storage/lovelace files.
+  (\`list_dashboards\` enumerates them, including registered resources),
+  modifying it, and saving the FULL config back; the old config is backed up
+  automatically and \`restore_dashboard\` undoes a bad edit. Also
+  \`create_dashboard\` (R; url_path needs a hyphen), \`delete_dashboard\` (R,
+  backs config up first), and \`add_dashboard_resource\` (R) /
+  \`remove_dashboard_resource\` for custom-card modules.
+  Never edit .storage/lovelace files.
 - Repairs: \`create_repair_issue\` (R), \`remove_repair_issue\` — surface issues that
   need the user's attention in Settings > System > Repairs
 

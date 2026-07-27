@@ -1107,12 +1107,23 @@ def list_dashboards():
          if d.get(k) is not None}
         for d in (result or [])
     ]
-    return {
+    payload = {
         "count": len(dashboards),
         "dashboards": dashboards,
         "note": ("The default dashboard is not listed — fetch it with "
                  "get_dashboard and no url_path."),
     }
+    # Registered resources (custom card modules) ride along; best-effort.
+    try:
+        resources = _ws_command({"type": "lovelace/resources"})
+        if isinstance(resources, list):
+            payload["resources"] = [
+                {k: r.get(k) for k in ("url", "type") if r.get(k) is not None}
+                for r in resources
+            ]
+    except Exception:  # noqa: BLE001
+        pass
+    return payload
 
 
 MAX_DASHBOARD_BYTES = 200_000

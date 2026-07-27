@@ -80,6 +80,12 @@ class TestPowerToolCatalog(unittest.TestCase):
             "add_device_tracker_to_person", "create_repair_issue",
             "import_blueprint", "import_statistics",
             "enable_user", "disable_user", "find_orphaned_references",
+            "create_helper", "delete_helper", "update_zone",
+            "set_entity_aliases", "set_entity_icon",
+            "create_dashboard", "delete_dashboard",
+            "add_dashboard_resource", "remove_dashboard_resource",
+            "create_person", "delete_person",
+            "create_user", "delete_user",
         ):
             self.assertIn(expected, services)
 
@@ -311,6 +317,35 @@ class TestDashboardServices(unittest.TestCase):
 
     def test_backup_restore_rejects_foreign_names(self):
         self.assertIn('not name.startswith(f"{slug}-")', self.source)
+
+    def test_user_lifecycle_guards(self):
+        """delete_user must guard owners/system accounts, and create_user
+        must roll back the half-created user if login creation fails."""
+        delete_handler = self.source.split("async def _delete_user")[1].split(
+            "\n\n\n"
+        )[0]
+        self.assertIn("is_owner", delete_handler)
+        self.assertIn("system_generated", delete_handler)
+        create_handler = self.source.split("async def _create_user")[1].split(
+            "async def _delete_user"
+        )[0]
+        self.assertIn("await hass.auth.async_remove_user(user)", create_handler)
+        self.assertIn('bool(username) != bool(password)', create_handler)
+
+    def test_delete_dashboard_backs_up_first(self):
+        handler = self.source.split("async def _delete_dashboard")[1].split(
+            "RESOURCE_TYPES"
+        )[0]
+        self.assertLess(
+            handler.index("_save_dashboard_backup"),
+            handler.index("collection.async_delete_item"),
+        )
+
+    def test_helper_domains_complete(self):
+        for domain in ("input_boolean", "input_number", "input_select",
+                       "input_text", "input_datetime", "counter", "timer",
+                       "schedule"):
+            self.assertIn(f'"{domain}"', self.source)
 
     def test_gitignore_covers_registries_and_dashboards(self):
         """run.sh must back up the credential-free .storage files, keep the

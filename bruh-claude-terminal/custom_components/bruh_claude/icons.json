@@ -163,6 +163,45 @@
     },
     "restore_dashboard": {
       "service": "mdi:view-dashboard-outline"
+    },
+    "create_helper": {
+      "service": "mdi:tools"
+    },
+    "delete_helper": {
+      "service": "mdi:tools"
+    },
+    "update_zone": {
+      "service": "mdi:map-marker"
+    },
+    "set_entity_aliases": {
+      "service": "mdi:microphone-message"
+    },
+    "set_entity_icon": {
+      "service": "mdi:emoticon-outline"
+    },
+    "create_dashboard": {
+      "service": "mdi:view-dashboard-variant"
+    },
+    "delete_dashboard": {
+      "service": "mdi:view-dashboard-variant-outline"
+    },
+    "add_dashboard_resource": {
+      "service": "mdi:puzzle-plus"
+    },
+    "remove_dashboard_resource": {
+      "service": "mdi:puzzle-minus"
+    },
+    "create_person": {
+      "service": "mdi:account-plus"
+    },
+    "delete_person": {
+      "service": "mdi:account-remove"
+    },
+    "create_user": {
+      "service": "mdi:account-plus-outline"
+    },
+    "delete_user": {
+      "service": "mdi:account-remove-outline"
     }
   }
 }
