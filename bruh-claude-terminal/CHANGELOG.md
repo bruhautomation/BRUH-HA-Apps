@@ -4,6 +4,21 @@ All notable changes to **BRUH Claude Terminal**, newest first. This project adhe
 
 > 💡 Prefer a cleaner, categorized view? See the [formatted changelog at bruhautomation.com](https://bruhautomation.com/bruh-claude/changelog/).
 
+## 3.5.0
+
+**`delete_orphaned_entities` can now target specific entities.** The
+service was all-or-nothing: one dry run, then every orphaned entity in
+the registry went at once — no way to clean up three dead sensors while
+keeping an orphan you want to preserve (first field report: a cleanup
+that would have taken a WLED group with it).
+
+- New optional `entity_id` list scopes the cleanup to just those
+  entities. Every requested entity is **re-verified as orphaned** before
+  deletion; anything still provided by an integration is skipped and
+  reported in a new `skipped_not_orphaned` response field, never
+  deleted. Without the filter, behavior is unchanged (all orphans,
+  dry-run by default).
+
 ## 3.4.0
 
 **New: BRUH Power Tools — 41 registry-management admin services, adapted

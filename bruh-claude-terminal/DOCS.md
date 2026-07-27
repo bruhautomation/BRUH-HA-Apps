@@ -742,7 +742,7 @@ descriptions and pickers. The complete catalog:
 | **Areas** | `create_area`, `delete_area`, `rename_area`, `set_area_aliases`, `add_device_to_area`, `remove_device_from_area`, `add_entity_to_area`, `remove_entity_from_area` | Create and organize areas, including the voice-assistant aliases |
 | **Floors** | `create_floor`, `delete_floor`, `rename_floor`, `add_area_to_floor`, `remove_area_from_floor` | Group areas into floors |
 | **Labels** | `create_label`, `delete_label`, `add_label`, `remove_label` | Create labels and apply/remove them on entities, devices, and areas in one call |
-| **Entities** | `rename_entity`, `change_entity_id`, `enable_entity`, `disable_entity`, `hide_entity`, `unhide_entity`, `delete_orphaned_entities` | Rename, re-ID, enable/disable, hide/unhide entities; clean up registry entries whose integration is gone (dry-run by default) |
+| **Entities** | `rename_entity`, `change_entity_id`, `enable_entity`, `disable_entity`, `hide_entity`, `unhide_entity`, `delete_orphaned_entities` | Rename, re-ID, enable/disable, hide/unhide entities; clean up registry entries whose integration is gone (dry-run by default, optionally scoped to an `entity_id` list with each entity re-verified as orphaned) |
 | **Devices** | `rename_device`, `enable_device`, `disable_device` | Rename and enable/disable devices (disable cascades to a parent hub once no children remain enabled) |
 | **Integrations** | `enable_integration`, `disable_integration`, `reload_integration` | Enable, disable, or reload integration config entries |
 | **Zones** | `create_zone`, `delete_zone` | Create and delete location zones |
@@ -774,6 +774,15 @@ data:
 service: bruh_claude.delete_orphaned_entities
 data:
   dry_run: true
+
+# Then delete only the ones you reviewed — each is re-verified as
+# orphaned; anything still alive is skipped, never deleted
+service: bruh_claude.delete_orphaned_entities
+data:
+  dry_run: false
+  entity_id:
+    - sensor.old_hub_battery
+    - sensor.old_hub_signal
 
 # Let an automation flag a problem persistently
 service: bruh_claude.create_repair_issue

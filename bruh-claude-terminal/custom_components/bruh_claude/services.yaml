@@ -571,7 +571,12 @@ delete_orphaned_entities:
       selector:
         boolean: {}
       default: true
-
+    entity_id:
+      name: Entities
+      description: Restrict the cleanup to these entities. Each one is re-verified as orphaned; anything still provided by an integration is skipped and reported, never deleted. Omit to target every orphaned entity.
+      selector:
+        entity:
+          multiple: true
 rename_device:
   name: Rename device
   description: Set the user-facing name of a device.

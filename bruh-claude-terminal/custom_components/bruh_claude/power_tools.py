@@ -386,6 +386,10 @@ async def _delete_orphaned_entities(
 
     Defaults to a dry run: nothing is deleted unless dry_run is explicitly
     false, and the response always lists the affected entity ids.
+
+    An optional entity_id list scopes the cleanup. Every requested entity
+    is re-verified as orphaned; anything still provided by an integration
+    is skipped and reported under skipped_not_orphaned, never deleted.
     """
     dry_run = call.data.get("dry_run", True)
     orphaned = [
@@ -393,12 +397,23 @@ async def _delete_orphaned_entities(
         for state in hass.states.async_all()
         if state.attributes.get("restored")
     ]
+    requested = call.data.get("entity_id")
+    skipped: list[str] = []
+    if requested:
+        requested_set = set(requested)
+        skipped = sorted(requested_set - set(orphaned))
+        targets = [e for e in orphaned if e in requested_set]
+    else:
+        targets = orphaned
     if not dry_run:
         registry = er.async_get(hass)
-        for entity_id in orphaned:
+        for entity_id in targets:
             registry.async_remove(entity_id)
             hass.states.async_remove(entity_id, call.context)
-    return {"dry_run": dry_run, "count": len(orphaned), "entity_ids": orphaned}
+    result = {"dry_run": dry_run, "count": len(targets), "entity_ids": targets}
+    if requested:
+        result["skipped_not_orphaned"] = skipped
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -973,6 +988,7 @@ POWER_TOOLS: tuple[PowerTool, ...] = (
     }),
     PowerTool("delete_orphaned_entities", _delete_orphaned_entities, {
         vol.Optional("dry_run", default=True): cv.boolean,
+        vol.Optional("entity_id"): _ENTITY_LIST,
     }, has_response=True),
     # Devices
     PowerTool("rename_device", _rename_device, {

@@ -290,7 +290,9 @@ return response data — pass \`return_response: true\` for those.
 - Labels: \`create_label\` (R), \`delete_label\`, \`add_label\`, \`remove_label\`
   (\`add_label\`/\`remove_label\` take entity_id, device_id, and/or area_id lists)
 - Entities: \`rename_entity\`, \`change_entity_id\`, \`enable_entity\`, \`disable_entity\`,
-  \`hide_entity\`, \`unhide_entity\`, \`delete_orphaned_entities\` (R, dry-run by default)
+  \`hide_entity\`, \`unhide_entity\`, \`delete_orphaned_entities\` (R, dry-run by
+  default; optional entity_id list scopes the cleanup — always dry-run first,
+  then delete with the reviewed entity_id list, never blind-delete all)
 - Devices: \`rename_device\`, \`enable_device\`, \`disable_device\`
 - Integrations: \`enable_integration\`, \`disable_integration\`, \`reload_integration\` (config_entry_id)
 - Zones: \`create_zone\`, \`delete_zone\`

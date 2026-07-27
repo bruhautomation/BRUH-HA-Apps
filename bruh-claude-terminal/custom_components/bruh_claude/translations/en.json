@@ -484,6 +484,10 @@
         "dry_run": {
           "name": "Dry run",
           "description": "When on (default), only report what would be removed."
+        },
+        "entity_id": {
+          "name": "Entities",
+          "description": "Restrict the cleanup to these entities. Each one is re-verified as orphaned; anything still provided by an integration is skipped and reported, never deleted. Omit to target every orphaned entity."
         }
       }
     },

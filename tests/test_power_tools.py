@@ -156,6 +156,14 @@ class TestPowerToolsModuleShape(unittest.TestCase):
         self.assertIn('call.data.get("dry_run", True)', self.source)
         self.assertIn('vol.Optional("dry_run", default=True)', self.source)
 
+    def test_orphan_cleanup_supports_scoped_deletion(self):
+        """The entity_id filter must re-verify orphan status: requested
+        entities are intersected with the live orphan list, and live
+        entities are reported as skipped rather than deleted."""
+        self.assertIn('requested = call.data.get("entity_id")', self.source)
+        self.assertIn("skipped = sorted(requested_set - set(orphaned))", self.source)
+        self.assertIn('result["skipped_not_orphaned"] = skipped', self.source)
+
     def test_spook_attribution_present(self):
         """Vendored MIT code keeps its attribution."""
         self.assertIn("github.com/frenck/spook", self.source)
