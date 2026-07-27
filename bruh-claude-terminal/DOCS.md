@@ -637,7 +637,7 @@ The BRUH Claude integration is automatically discovered when the add-on starts. 
 - **Conversation Agent** - Select "BRUH Claude" as a conversation agent in Settings > Voice Assistants
 - **`bruh_claude.send_prompt`** service - Send a one-shot prompt to Claude and get a response
 - **`bruh_claude.run_task`** service - Run a Claude task with optional completion notification
-- **[Power Tools](#power-tools-registry-management-services)** - 36 registry-management admin services (areas, floors, labels, entities, devices, integrations, zones, persons, repairs)
+- **[Power Tools](#power-tools-registry-management-services)** - 41 registry-management admin services (areas, floors, labels, entities, devices, integrations, zones, persons, blueprints, statistics, users, diagnostics, repairs)
 
 ### Assist Integration
 
@@ -719,7 +719,7 @@ writing `/config/.bruh_claude/usage_limits.json`; the sensors poll it every
 
 ## Power Tools (registry management services)
 
-The BRUH Claude integration registers **36 admin services** that manage the
+The BRUH Claude integration registers **41 admin services** that manage the
 parts of Home Assistant that normally require clicking through Settings:
 areas, floors, labels, entities, devices, integrations, zones, persons, and
 repair issues. They give Claude (and your automations and scripts) a
@@ -747,6 +747,10 @@ descriptions and pickers. The complete catalog:
 | **Integrations** | `enable_integration`, `disable_integration`, `reload_integration` | Enable, disable, or reload integration config entries |
 | **Zones** | `create_zone`, `delete_zone` | Create and delete location zones |
 | **Persons** | `add_device_tracker_to_person`, `remove_device_tracker_from_person` | Attach/detach device trackers for presence detection |
+| **Blueprints** | `import_blueprint` | Import an automation/script blueprint straight from a community forum, GitHub, or Gist URL |
+| **Statistics** | `import_statistics` | Import or backfill long-term statistics — repair broken energy history, migrate meters, feed external data |
+| **Users** | `enable_user`, `disable_user` | Enable/disable Home Assistant accounts (owner and system accounts are protected and can never be disabled) |
+| **Diagnostics** | `find_orphaned_references` | Scan automations, scripts, and scenes for references to entities that no longer exist; optionally raise a repair issue |
 | **Repairs** | `create_repair_issue`, `remove_repair_issue` | Surface custom issues in Settings > System > Repairs — Claude's way to flag something that needs your attention |
 
 Examples:
@@ -786,9 +790,13 @@ Safety notes:
 - **Validated.** Unknown area/floor/label/device/entity/config-entry ids
   fail with a clear error before any change is applied.
 - **Dry-run first.** `delete_orphaned_entities` only reports unless you
-  explicitly pass `dry_run: false`.
-- **Deliberately excluded:** user account enable/disable (lockout risk)
-  and Home Assistant restart (already a core service).
+  explicitly pass `dry_run: false`, and `find_orphaned_references` never
+  changes anything — it only reports.
+- **Lockout-proof.** Unlike Spook, `disable_user` refuses to touch owner
+  accounts and system-generated users — you can never lock yourself out.
+- **Deliberately excluded:** a custom restart service — core
+  `homeassistant.restart` already exists and accepts `safe_mode: true` on
+  modern Home Assistant.
 
 In the terminal, Claude discovers the ids these services need through the
 MCP `get_registry` tool (areas, floors, labels, devices, entities,

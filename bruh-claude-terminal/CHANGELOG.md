@@ -6,7 +6,7 @@ All notable changes to **BRUH Claude Terminal**, newest first. This project adhe
 
 ## 3.4.0
 
-**New: BRUH Power Tools — 36 registry-management admin services, adapted
+**New: BRUH Power Tools — 41 registry-management admin services, adapted
 from [Spook](https://github.com/frenck/spook) by Franck Nijhof (MIT).**
 Claude, automations, and scripts can now reorganize Home Assistant through
 safe, supervised service calls instead of hand-editing `/config/.storage`.
@@ -30,6 +30,16 @@ safe, supervised service calls instead of hand-editing `/config/.storage`.
   - *Zones*: `create_zone`, `delete_zone`
   - *Persons*: `add_device_tracker_to_person`,
     `remove_device_tracker_from_person`
+  - *Blueprints*: `import_blueprint` — import automation/script blueprints
+    from a community-forum, GitHub, or Gist URL
+  - *Statistics*: `import_statistics` — import/backfill long-term
+    statistics (recorder or external), with the source derived from the
+    statistic id so rows can't be written in a form HA refuses to load
+  - *Users*: `enable_user`, `disable_user` — with a lockout guard Spook
+    doesn't have: owner and system-generated accounts can never be disabled
+  - *Diagnostics*: `find_orphaned_references` — scan every automation,
+    script, and scene for references to unknown entities; optionally
+    raises a repair issue with the findings
   - *Repairs*: `create_repair_issue`, `remove_repair_issue` — surface
     custom, dismissible issues in Settings > System > Repairs
 - **Safer than Spook's originals for this use case**: everything is

@@ -78,6 +78,8 @@ class TestPowerToolCatalog(unittest.TestCase):
             "delete_orphaned_entities", "disable_device", "rename_device",
             "reload_integration", "create_zone",
             "add_device_tracker_to_person", "create_repair_issue",
+            "import_blueprint", "import_statistics",
+            "enable_user", "disable_user", "find_orphaned_references",
         ):
             self.assertIn(expected, services)
 
@@ -204,6 +206,19 @@ class TestMcpGetRegistry(unittest.TestCase):
         ):
             result = ha_mcp_server.get_registry("integrations")
         self.assertEqual(result["items"][0]["config_entry_id"], "c1")
+
+    def test_users_registry_trimmed_and_protected_fields_kept(self):
+        rows = [
+            {"id": "u1", "name": "Ben", "username": "ben", "is_owner": True,
+             "is_active": True, "system_generated": False,
+             "credentials": [{"type": "homeassistant"}]},
+        ]
+        with patch.object(ha_mcp_server, "_ws_command", return_value=rows):
+            result = ha_mcp_server.get_registry("users")
+        item = result["items"][0]
+        self.assertEqual(item["user_id"], "u1")
+        self.assertTrue(item["is_owner"])
+        self.assertNotIn("credentials", item)
 
     def test_truncation_note_over_cap(self):
         rows = [{"area_id": f"a{i}", "name": f"Area {i}"} for i in range(350)]

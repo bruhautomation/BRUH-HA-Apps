@@ -996,6 +996,7 @@ _REGISTRY_COMMANDS = {
     "devices": "config/device_registry/list",
     "entities": "config/entity_registry/list",
     "integrations": "config_entries/get",
+    "users": "config/auth/list",
 }
 
 MAX_REGISTRY_RESULTS = 300
@@ -1023,6 +1024,17 @@ def _trim_registry_item(registry, item):
     elif registry == "entities":
         keep = {"entity_id", "name", "original_name", "device_id", "area_id",
                 "platform", "disabled_by", "hidden_by", "labels"}
+    elif registry == "users":
+        trimmed = {
+            "user_id": item.get("id"),
+            "name": item.get("name"),
+            "username": item.get("username"),
+            "is_owner": item.get("is_owner"),
+            "is_active": item.get("is_active"),
+            "system_generated": item.get("system_generated"),
+        }
+        # Keep False values here: is_active/is_owner False is the signal.
+        return {k: v for k, v in trimmed.items() if v is not None and v != ""}
     else:  # integrations
         trimmed = {
             "config_entry_id": item.get("entry_id"),
@@ -1257,9 +1269,9 @@ TOOLS = [
         "name": "get_registry",
         "description": (
             "List a Home Assistant registry: areas, floors, labels, devices, "
-            "entities, or integrations (config entries). Returns the registry "
-            "ids (area_id, floor_id, label_id, device_id, entity_id, "
-            "config_entry_id) needed by the bruh_claude.* management services "
+            "entities, integrations (config entries), or users. Returns the "
+            "registry ids (area_id, floor_id, label_id, device_id, entity_id, "
+            "config_entry_id, user_id) needed by the bruh_claude.* management services "
             "— the safe alternative to reading /config/.storage files. "
             "Results are capped at 300; use name_filter on large installations."
         ),
@@ -1268,7 +1280,7 @@ TOOLS = [
             "properties": {
                 "registry": {
                     "type": "string",
-                    "enum": ["areas", "floors", "labels", "devices", "entities", "integrations"],
+                    "enum": ["areas", "floors", "labels", "devices", "entities", "integrations", "users"],
                     "description": "Which registry to list"
                 },
                 "name_filter": {

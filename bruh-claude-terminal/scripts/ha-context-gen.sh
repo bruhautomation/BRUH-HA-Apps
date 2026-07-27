@@ -295,6 +295,14 @@ return response data — pass \`return_response: true\` for those.
 - Integrations: \`enable_integration\`, \`disable_integration\`, \`reload_integration\` (config_entry_id)
 - Zones: \`create_zone\`, \`delete_zone\`
 - Persons: \`add_device_tracker_to_person\`, \`remove_device_tracker_from_person\`
+- Blueprints: \`import_blueprint\` (R) — import from forum/GitHub/Gist URL
+- Statistics: \`import_statistics\` — backfill/repair long-term statistics
+  (entity id → recorder stats; \`domain:object_id\` → external stats; hourly
+  \`start\` timestamps; \`has_sum\` totals need \`sum\`, \`has_mean\` needs mean/min/max)
+- Users: \`enable_user\`, \`disable_user\` (user_id from \`get_registry\` users;
+  owner/system accounts are protected)
+- Diagnostics: \`find_orphaned_references\` (R) — automations/scripts/scenes
+  that reference unknown entities; \`create_issue: true\` raises a repair
 - Repairs: \`create_repair_issue\` (R), \`remove_repair_issue\` — surface issues that
   need the user's attention in Settings > System > Repairs
 
@@ -308,9 +316,10 @@ Examples:
 
 Cautions: \`delete_area\`/\`delete_floor\`/\`delete_label\` unassign, they don't
 delete members. \`change_entity_id\` does NOT rewrite automations/dashboards
-that reference the old id — search and update those yourself (and say so).
-Confirm with the user before disabling devices/integrations or deleting
-anything non-trivial.
+that reference the old id — run \`find_orphaned_references\` afterwards and
+update them. Confirm with the user before disabling devices/integrations/
+users or deleting anything non-trivial. For a safe-mode restart use core
+\`homeassistant.restart\` with \`safe_mode: true\`.
 
 ## Important Notes
 

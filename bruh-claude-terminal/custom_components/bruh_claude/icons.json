@@ -142,6 +142,21 @@
     },
     "remove_repair_issue": {
       "service": "mdi:wrench-check"
+    },
+    "import_blueprint": {
+      "service": "mdi:package-down"
+    },
+    "import_statistics": {
+      "service": "mdi:chart-box-plus-outline"
+    },
+    "enable_user": {
+      "service": "mdi:account-check"
+    },
+    "disable_user": {
+      "service": "mdi:account-off"
+    },
+    "find_orphaned_references": {
+      "service": "mdi:magnify-scan"
     }
   }
 }

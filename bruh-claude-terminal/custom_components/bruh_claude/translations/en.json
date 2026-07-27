@@ -654,6 +654,76 @@
           "description": "The issue_id used (or returned) when the issue was created."
         }
       }
+    },
+    "import_blueprint": {
+      "name": "Import blueprint",
+      "description": "Import an automation or script blueprint from a URL (Home Assistant community forum, GitHub, or GitHub Gist). Returns the blueprint domain, name, and file path as response data.",
+      "fields": {
+        "url": {
+          "name": "URL",
+          "description": "The URL to import the blueprint from."
+        }
+      }
+    },
+    "import_statistics": {
+      "name": "Import statistics",
+      "description": "Import or backfill long-term statistics rows. Use an entity ID (sensor.gas_meter) for recorder statistics, or an external ID (bruh:solar_forecast) for external statistics; the source is derived automatically.",
+      "fields": {
+        "statistic_id": {
+          "name": "Statistic ID",
+          "description": "Entity ID (sensor.gas_meter) or external ID (domain:object_id)."
+        },
+        "has_mean": {
+          "name": "Has mean",
+          "description": "Whether the rows carry mean/min/max values (measurements)."
+        },
+        "has_sum": {
+          "name": "Has sum",
+          "description": "Whether the rows carry sum values (metered totals like energy)."
+        },
+        "name": {
+          "name": "Name",
+          "description": "Display name for the statistic."
+        },
+        "unit_of_measurement": {
+          "name": "Unit",
+          "description": "Unit of measurement of the values."
+        },
+        "stats": {
+          "name": "Rows",
+          "description": "List of statistics rows. Each row needs a start timestamp (top of an hour) plus mean/min/max and/or state/sum values."
+        }
+      }
+    },
+    "enable_user": {
+      "name": "Enable user",
+      "description": "Re-enable one or more disabled Home Assistant user accounts.",
+      "fields": {
+        "user_id": {
+          "name": "User IDs",
+          "description": "IDs of the users to enable."
+        }
+      }
+    },
+    "disable_user": {
+      "name": "Disable user",
+      "description": "Disable one or more Home Assistant user accounts. Owner accounts and system-generated users are protected and cannot be disabled.",
+      "fields": {
+        "user_id": {
+          "name": "User IDs",
+          "description": "IDs of the users to disable."
+        }
+      }
+    },
+    "find_orphaned_references": {
+      "name": "Find orphaned references",
+      "description": "Scan every automation, script, and scene for references to entities Home Assistant doesn't know (renamed, deleted, or typo'd). Returns the findings as response data; optionally raises a repair issue listing them.",
+      "fields": {
+        "create_issue": {
+          "name": "Create repair issue",
+          "description": "Also surface the findings in Settings > System > Repairs."
+        }
+      }
     }
   },
   "issues": {

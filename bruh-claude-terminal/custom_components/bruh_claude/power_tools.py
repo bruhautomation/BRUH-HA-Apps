@@ -14,6 +14,10 @@ instead of editing `/config/.storage` files by hand:
 - Integrations: enable/disable/reload config entries
 - Zones:        create, delete
 - Persons:      attach/detach device trackers
+- Blueprints:   import automation/script blueprints from a URL
+- Statistics:   import/backfill long-term statistics (recorder)
+- Users:        enable/disable accounts (owner accounts are protected)
+- Diagnostics:  find automation/script/scene references to unknown entities
 - Repairs:      create/remove custom issues in Settings > System > Repairs
 
 Adapted from Spook (https://github.com/frenck/spook) by Franck Nijhof,
@@ -588,6 +592,238 @@ async def _remove_device_tracker_from_person(
 
 
 # ---------------------------------------------------------------------------
+# Blueprints
+# ---------------------------------------------------------------------------
+
+
+async def _import_blueprint(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    """Import a blueprint from a URL (community forum, GitHub, gists...)."""
+    import asyncio
+
+    import aiohttp
+
+    try:
+        from homeassistant.components.blueprint import DOMAIN as BLUEPRINT_DOMAIN
+        from homeassistant.components.blueprint.errors import FileAlreadyExists
+        from homeassistant.components.blueprint.importer import (
+            fetch_blueprint_from_url,
+        )
+    except ImportError as err:
+        raise HomeAssistantError(
+            "The blueprint integration is not loaded"
+        ) from err
+
+    url = call.data["url"]
+    try:
+        async with asyncio.timeout(15):
+            imported = await fetch_blueprint_from_url(hass, url)
+    except (TimeoutError, aiohttp.ClientError) as err:
+        raise HomeAssistantError(
+            f"Error fetching blueprint from {url}"
+        ) from err
+    if imported is None:
+        raise HomeAssistantError(f"Unsupported blueprint URL: {url}")
+
+    domain_blueprints = hass.data.get(BLUEPRINT_DOMAIN, {})
+    if imported.blueprint.domain not in domain_blueprints:
+        raise HomeAssistantError(
+            f"Unsupported blueprint domain: {imported.blueprint.domain}"
+        )
+
+    imported.blueprint.update_metadata(source_url=url)
+    try:
+        await domain_blueprints[imported.blueprint.domain].async_add_blueprint(
+            imported.blueprint, imported.suggested_filename
+        )
+    except FileAlreadyExists as err:
+        raise HomeAssistantError(
+            f"A blueprint file named {imported.suggested_filename} already exists"
+        ) from err
+    except OSError as err:
+        raise HomeAssistantError("Error writing blueprint file") from err
+    return {
+        "domain": imported.blueprint.domain,
+        "path": imported.suggested_filename,
+        "name": imported.blueprint.name,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Statistics (recorder)
+# ---------------------------------------------------------------------------
+
+
+async def _import_statistics(hass: HomeAssistant, call: ServiceCall) -> None:
+    """Import/backfill long-term statistics rows for a statistic id.
+
+    The source is derived from the statistic_id (Spook makes callers pass
+    it, which is an easy way to create rows HA refuses to load):
+    entity-style ids ("sensor.gas_meter") import as recorder statistics,
+    external ids ("bruh:solar_forecast") as external statistics.
+    """
+    try:
+        from homeassistant.components.recorder.statistics import (
+            async_add_external_statistics,
+            async_import_statistics,
+        )
+    except ImportError as err:
+        raise HomeAssistantError("The recorder integration is not loaded") from err
+
+    from homeassistant.core import valid_entity_id
+
+    statistic_id = call.data["statistic_id"]
+    is_internal = valid_entity_id(statistic_id)
+    if not is_internal and ":" not in statistic_id:
+        raise HomeAssistantError(
+            f"Invalid statistic_id '{statistic_id}': use an entity id "
+            "(sensor.gas_meter) or an external id (domain:object_id)"
+        )
+
+    metadata: dict[str, Any] = {
+        "has_sum": call.data["has_sum"],
+        "name": call.data.get("name"),
+        "source": "recorder" if is_internal else statistic_id.split(":", 1)[0],
+        "statistic_id": statistic_id,
+        "unit_of_measurement": call.data.get("unit_of_measurement"),
+    }
+    try:  # 2025.x recorder metadata shape
+        from homeassistant.components.recorder.models import StatisticMeanType
+
+        metadata["mean_type"] = (
+            StatisticMeanType.ARITHMETIC
+            if call.data["has_mean"]
+            else StatisticMeanType.NONE
+        )
+        try:
+            from homeassistant.components.recorder.statistics import (
+                STATISTIC_UNIT_TO_UNIT_CONVERTER,
+            )
+
+            converter = STATISTIC_UNIT_TO_UNIT_CONVERTER.get(
+                call.data.get("unit_of_measurement")
+            )
+            metadata["unit_class"] = converter.UNIT_CLASS if converter else None
+        except ImportError:
+            pass
+    except ImportError:  # older recorder
+        metadata["has_mean"] = call.data["has_mean"]
+
+    if is_internal:
+        async_import_statistics(hass, metadata, call.data["stats"])
+    else:
+        async_add_external_statistics(hass, metadata, call.data["stats"])
+
+
+# ---------------------------------------------------------------------------
+# Users
+# ---------------------------------------------------------------------------
+
+
+async def _set_user_active(
+    hass: HomeAssistant, call: ServiceCall, *, active: bool
+) -> None:
+    users = []
+    for user_id in call.data["user_id"]:
+        user = await hass.auth.async_get_user(user_id)
+        if user is None:
+            raise HomeAssistantError(f"User not found: {user_id}")
+        if user.system_generated:
+            raise HomeAssistantError(
+                f"Cannot modify a system-generated user: {user_id}"
+            )
+        # Guard Spook doesn't have: an owner can never be locked out.
+        if not active and user.is_owner:
+            raise HomeAssistantError(
+                f"Refusing to disable owner account: {user.name or user_id}"
+            )
+        users.append(user)
+    for user in users:
+        await hass.auth.async_update_user(user, is_active=active)
+
+
+async def _enable_user(hass: HomeAssistant, call: ServiceCall) -> None:
+    await _set_user_active(hass, call, active=True)
+
+
+async def _disable_user(hass: HomeAssistant, call: ServiceCall) -> None:
+    await _set_user_active(hass, call, active=False)
+
+
+# ---------------------------------------------------------------------------
+# Diagnostics
+# ---------------------------------------------------------------------------
+
+
+def _reference_sources(hass: HomeAssistant):
+    """Yield (config_entity_id, referenced_entity_ids) for every automation,
+    script, and scene. Each source is optional — skip what isn't loaded."""
+    try:
+        from homeassistant.components.automation import entities_in_automation
+
+        for state in hass.states.async_all("automation"):
+            yield state.entity_id, entities_in_automation(hass, state.entity_id)
+    except ImportError:
+        pass
+    try:
+        from homeassistant.components.script import entities_in_script
+
+        for state in hass.states.async_all("script"):
+            yield state.entity_id, entities_in_script(hass, state.entity_id)
+    except ImportError:
+        pass
+    try:
+        from homeassistant.components.homeassistant.scene import entities_in_scene
+
+        for state in hass.states.async_all("scene"):
+            yield state.entity_id, entities_in_scene(hass, state.entity_id)
+    except ImportError:
+        pass
+
+
+async def _find_orphaned_references(
+    hass: HomeAssistant, call: ServiceCall
+) -> dict | None:
+    """Report entity references in automations/scripts/scenes that point at
+    entities Home Assistant doesn't know (renamed, deleted, or typo'd)."""
+    known = {state.entity_id for state in hass.states.async_all()}
+    known |= set(er.async_get(hass).entities)
+
+    orphaned: dict[str, list[str]] = {}
+    checked = 0
+    for source_id, referenced in _reference_sources(hass):
+        checked += 1
+        unknown = sorted(
+            ref for ref in referenced
+            if ref not in known and "." in ref
+        )
+        if unknown:
+            orphaned[source_id] = unknown
+
+    if orphaned and call.data.get("create_issue"):
+        lines = [
+            f"- {source}: {', '.join(refs)}" for source, refs in orphaned.items()
+        ]
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            "user_orphaned_references",
+            is_fixable=True,
+            is_persistent=True,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key="user_issue",
+            translation_placeholders={
+                "title": f"{len(orphaned)} config items reference unknown entities",
+                "description": "\n".join(lines)[:2000],
+            },
+        )
+    return {
+        "checked": checked,
+        "sources_with_orphans": len(orphaned),
+        "orphaned": orphaned,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Repairs
 # ---------------------------------------------------------------------------
 
@@ -782,6 +1018,40 @@ POWER_TOOLS: tuple[PowerTool, ...] = (
             vol.Required("device_tracker"): _ENTITY_LIST,
         },
     ),
+    # Blueprints
+    PowerTool("import_blueprint", _import_blueprint, {
+        vol.Required("url"): cv.url,
+    }, has_response=True),
+    # Statistics
+    PowerTool("import_statistics", _import_statistics, {
+        vol.Required("statistic_id"): cv.string,
+        vol.Required("has_mean"): cv.boolean,
+        vol.Required("has_sum"): cv.boolean,
+        vol.Optional("name"): cv.string,
+        vol.Optional("unit_of_measurement"): cv.string,
+        vol.Required("stats"): [
+            {
+                vol.Required("start"): cv.datetime,
+                vol.Optional("mean"): vol.Coerce(float),
+                vol.Optional("min"): vol.Coerce(float),
+                vol.Optional("max"): vol.Coerce(float),
+                vol.Optional("last_reset"): vol.Any(None, cv.datetime),
+                vol.Optional("state"): vol.Coerce(float),
+                vol.Optional("sum"): vol.Coerce(float),
+            },
+        ],
+    }),
+    # Users
+    PowerTool("enable_user", _enable_user, {
+        vol.Required("user_id"): _STR_LIST,
+    }),
+    PowerTool("disable_user", _disable_user, {
+        vol.Required("user_id"): _STR_LIST,
+    }),
+    # Diagnostics
+    PowerTool("find_orphaned_references", _find_orphaned_references, {
+        vol.Optional("create_issue", default=False): cv.boolean,
+    }, has_response=True),
     # Repairs
     PowerTool("create_repair_issue", _create_repair_issue, {
         vol.Required("title"): cv.string,

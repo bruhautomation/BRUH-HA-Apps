@@ -53,7 +53,7 @@ BRUH-HA-Apps/
 │           ├── manifest.json    # HA integration metadata
 │           ├── config_flow.py   # UI config flow
 │           ├── conversation.py  # ConversationEntity for Assist
-│           ├── power_tools.py   # BRUH Power Tools: 36 registry admin services (from Spook, MIT)
+│           ├── power_tools.py   # BRUH Power Tools: 41 registry admin services (from Spook, MIT)
 │           ├── sensor.py        # Anthropic usage-limit sensors
 │           ├── bridge.py        # File-based IPC with the add-on
 │           ├── repairs.py       # "Restart required" repair flow
@@ -95,7 +95,7 @@ BRUH-HA-Apps/
 - Deployed automatically to `/config/custom_components/` by the add-on at startup
 - Registers a `ConversationEntity` so "BRUH Claude" appears in Settings > Voice Assistants
 - Provides `bruh_claude.send_prompt`, `bruh_claude.run_task`, `bruh_claude.run_insight`, and `bruh_claude.clear_conversation` services
-- BRUH Power Tools (`power_tools.py`): 36 admin-gated registry-management services under `bruh_claude.*` (areas, floors, labels, entities, devices, integrations, zones, persons, repair issues), adapted from [Spook](https://github.com/frenck/spook) (MIT) with validation-first handlers, response data on creation services, and dry-run-by-default orphan cleanup; catalog metadata generated in `services.yaml`/`strings.json`/`translations/en.json`/`icons.json`, consistency enforced by `tests/test_power_tools.py`
+- BRUH Power Tools (`power_tools.py`): 41 admin-gated registry-management services under `bruh_claude.*` (areas, floors, labels, entities, devices, integrations, zones, persons, blueprints, statistics, users, diagnostics, repair issues), adapted from [Spook](https://github.com/frenck/spook) (MIT) with validation-first handlers, response data on creation services, and dry-run-by-default orphan cleanup; catalog metadata generated in `services.yaml`/`strings.json`/`translations/en.json`/`icons.json`, consistency enforced by `tests/test_power_tools.py`
 - Insight jobs (config entries of type `insight`): scheduled Claude reports rendered to `sensor.<job>_insight` (markdown attribute + ready-to-paste `card_yaml`); prompts support HA templating
 - 3.0 transport: worker pool serves an internal HTTP API (:8099, token on the shared volume); integration streams deltas into the chat log (SSE) and falls back to file IPC; `binary_sensor` reports pool health
 - Usage-limit sensors reading from `/config/.bruh_claude/usage_limits.json` (real Anthropic account utilization; requires OAuth/subscription login)
