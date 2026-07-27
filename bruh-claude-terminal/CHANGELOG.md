@@ -4,6 +4,80 @@ All notable changes to **BRUH Claude Terminal**, newest first. This project adhe
 
 > 💡 Prefer a cleaner, categorized view? See the [formatted changelog at bruhautomation.com](https://bruhautomation.com/bruh-claude/changelog/).
 
+## 3.6.0
+
+**Full HA administration without touching `.storage`: 13 new Power Tools
+(56 total).** The remaining Settings-only chores are now supervised,
+validated `bruh_claude.*` services:
+
+- **Helpers**: `create_helper` / `delete_helper` cover every
+  storage-backed type — `input_boolean`, `input_number`, `input_select`,
+  `input_text`, `input_datetime`, `counter`, `timer`, `schedule`.
+  Type-specific options pass through to the helper's own schema, so
+  validation errors match the UI's. Claude can now build an automation
+  *and* the helper it needs in one conversation.
+- **Zones**: `update_zone` completes the set — move, resize, rename, or
+  restyle an editable zone.
+- **Entities**: `set_entity_aliases` (the voice-assistant names Assist
+  listens for) and `set_entity_icon` (omit the icon to clear the
+  override).
+- **Dashboards**: `create_dashboard` / `delete_dashboard` (deletion
+  backs the config up first, so it's recoverable via create + restore)
+  and `add_dashboard_resource` / `remove_dashboard_resource` for
+  registering custom-card modules — Claude can install a custom card
+  end-to-end. `list_dashboards` (MCP) now includes registered resources.
+- **Persons**: `create_person` / `delete_person`, with optional user
+  linking and initial device trackers.
+- **Users**: `create_user` / `delete_user` — optional local
+  username/password login (must come together, password ≥ 8 chars;
+  if credential creation fails the half-created user is rolled back),
+  and the same lockout guard as disable: owner and system-generated
+  accounts can never be deleted.
+
+Deliberately still excluded: adding/removing integrations (config flows
+are interactive by design) and anything credential-bearing.
+
+## 3.5.0
+
+**`delete_orphaned_entities` can now target specific entities.** The
+service was all-or-nothing: one dry run, then every orphaned entity in
+the registry went at once — no way to clean up three dead sensors while
+keeping an orphan you want to preserve (first field report: a cleanup
+that would have taken a WLED group with it).
+
+- New optional `entity_id` list scopes the cleanup to just those
+  entities. Every requested entity is **re-verified as orphaned** before
+  deletion; anything still provided by an integration is skipped and
+  reported in a new `skipped_not_orphaned` response field, never
+  deleted. Without the filter, behavior is unchanged (all orphans,
+  dry-run by default).
+
+**New: dashboard Power Tools.** Claude can now edit Lovelace dashboards
+through a supervised, undoable flow instead of touching `.storage`:
+
+- **`bruh_claude.update_dashboard`** replaces a storage-mode dashboard's
+  config — after automatically backing up the previous config to
+  `/config/.bruh_claude/dashboard_backups/` (last 20 per dashboard; the
+  backup name comes back as response data). YAML-mode dashboards are
+  refused with a clear error.
+- **`bruh_claude.restore_dashboard`** restores the latest (or a named)
+  backup — any bad edit is one service call from undone.
+- **New MCP tools `list_dashboards` and `get_dashboard`** provide the
+  read half: enumerate dashboards, fetch full config JSON (with a
+  per-view summary fallback for very large dashboards). The generated
+  context teaches Claude the fetch → modify → save-full-config flow.
+
+**Registry & dashboard changes are now in the git backup.** The
+auto-backup's `.gitignore` blanket-excluded `.storage/`, so Power Tools
+changes (renames, area moves, registry deletions) and dashboard edits
+had no backup coverage at all. The credential-free registry files
+(`core.area_registry`, `core.floor_registry`, `core.label_registry`,
+`core.device_registry`, `core.entity_registry`, `core.category_registry`)
+and `lovelace*` dashboards are now included — on new installs and, via a
+one-time safe migration, on existing installs whose gitignore is still
+the BRUH-authored original. Secrets-bearing files (`core.config_entries`,
+auth, cloud) stay excluded.
+
 ## 3.4.0
 
 **New: BRUH Power Tools — 41 registry-management admin services, adapted

@@ -571,7 +571,12 @@ delete_orphaned_entities:
       selector:
         boolean: {}
       default: true
-
+    entity_id:
+      name: Entities
+      description: Restrict the cleanup to these entities. Each one is re-verified as orphaned; anything still provided by an integration is skipped and reported, never deleted. Omit to target every orphaned entity.
+      selector:
+        entity:
+          multiple: true
 rename_device:
   name: Rename device
   description: Set the user-facing name of a device.
@@ -905,3 +910,356 @@ find_orphaned_references:
       selector:
         boolean: {}
       default: false
+
+update_dashboard:
+  name: Update dashboard
+  description: Replace a storage-mode dashboard's configuration. The previous configuration
+    is automatically backed up first (last 20 kept per dashboard) and the backup name is returned
+    as response data, so any edit can be undone with restore_dashboard. YAML-mode dashboards
+    are refused.
+  fields:
+    config:
+      name: Configuration
+      description: The full dashboard configuration object, including the complete views list.
+      selector:
+        object: {}
+      required: true
+    url_path:
+      name: Dashboard
+      description: The dashboard's URL path (e.g. lovelace-lights). Omit for the default dashboard.
+      selector:
+        text: {}
+      example: lovelace-lights
+
+restore_dashboard:
+  name: Restore dashboard
+  description: Restore a storage-mode dashboard from a backup made by update_dashboard. Restores
+    the most recent backup unless a specific backup name is given.
+  fields:
+    url_path:
+      name: Dashboard
+      description: The dashboard's URL path. Omit for the default dashboard.
+      selector:
+        text: {}
+      example: lovelace-lights
+    backup:
+      name: Backup
+      description: A specific backup file name from a previous update_dashboard response.
+        Omit for the most recent.
+      selector:
+        text: {}
+
+create_helper:
+  name: Create helper
+  description: 'Create a helper of any storage-backed type: input_boolean, input_number, input_select,
+    input_text, input_datetime, counter, timer, or schedule. Type-specific options pass through
+    and are validated by the helper''s own schema. Returns the new helper''s id and entity_id
+    as response data.'
+  fields:
+    helper_type:
+      name: Type
+      description: Which kind of helper to create.
+      selector:
+        select:
+          options:
+          - input_boolean
+          - input_number
+          - input_select
+          - input_text
+          - input_datetime
+          - counter
+          - timer
+          - schedule
+      required: true
+    name:
+      name: Name
+      description: Name of the new helper.
+      selector:
+        text: {}
+      required: true
+      example: Guest Mode
+    options:
+      name: Options
+      description: Type-specific options, e.g. min/max/step for input_number, options list
+        for input_select, duration for timer, has_date/has_time for input_datetime.
+      selector:
+        object: {}
+
+delete_helper:
+  name: Delete helper
+  description: Delete one or more UI-created helpers of any storage-backed type. Helpers defined
+    in YAML are refused with a clear error.
+  fields:
+    entity_id:
+      name: Helpers
+      description: Helper entities to delete.
+      selector:
+        entity:
+          multiple: true
+      required: true
+
+update_zone:
+  name: Update zone
+  description: Move, resize, rename, or restyle an editable zone. Only the fields you pass
+    are changed.
+  fields:
+    entity_id:
+      name: Zone
+      description: The zone to update.
+      selector:
+        entity:
+          filter:
+            domain: zone
+      required: true
+    name:
+      name: Name
+      description: New name.
+      selector:
+        text: {}
+    latitude:
+      name: Latitude
+      description: New latitude of the zone center.
+      selector:
+        number:
+          min: -90
+          max: 90
+          step: any
+          mode: box
+    longitude:
+      name: Longitude
+      description: New longitude of the zone center.
+      selector:
+        number:
+          min: -180
+          max: 180
+          step: any
+          mode: box
+    radius:
+      name: Radius
+      description: New radius in meters.
+      selector:
+        number:
+          min: 10
+          max: 10000
+          unit_of_measurement: m
+          mode: box
+    icon:
+      name: Icon
+      description: New icon.
+      selector:
+        icon: {}
+    passive:
+      name: Passive
+      description: Passive zones are only used for automations.
+      selector:
+        boolean: {}
+
+set_entity_aliases:
+  name: Set entity aliases
+  description: "Replace an entity's voice-assistant aliases \u2014 the alternative names Assist\
+    \ listens for."
+  fields:
+    entity_id:
+      name: Entity
+      description: The entity to update.
+      selector:
+        entity: {}
+      required: true
+    aliases:
+      name: Aliases
+      description: The full new list of aliases.
+      selector:
+        text:
+          multiple: true
+      required: true
+      example: the beacon
+
+set_entity_icon:
+  name: Set entity icon
+  description: Set an icon override on one or more entities. Omit the icon to clear the override
+    and return to the default.
+  fields:
+    entity_id:
+      name: Entities
+      description: Entities to update.
+      selector:
+        entity:
+          multiple: true
+      required: true
+    icon:
+      name: Icon
+      description: The icon to set. Omit to clear the override.
+      selector:
+        icon: {}
+      example: mdi:ceiling-fan
+
+create_dashboard:
+  name: Create dashboard
+  description: Create a new storage-mode dashboard. The URL path must contain a hyphen (e.g.
+    lovelace-lights). Returns the new dashboard's url_path and id as response data.
+  fields:
+    url_path:
+      name: URL path
+      description: URL path for the dashboard; must contain a hyphen.
+      selector:
+        text: {}
+      required: true
+      example: lovelace-lights
+    title:
+      name: Title
+      description: Sidebar title.
+      selector:
+        text: {}
+      required: true
+      example: Lights
+    icon:
+      name: Icon
+      description: Sidebar icon.
+      selector:
+        icon: {}
+      example: mdi:lightbulb-group
+    show_in_sidebar:
+      name: Show in sidebar
+      description: Show the dashboard in the sidebar (default on).
+      selector:
+        boolean: {}
+      default: true
+    require_admin:
+      name: Admin only
+      description: Only admins can see this dashboard.
+      selector:
+        boolean: {}
+      default: false
+
+delete_dashboard:
+  name: Delete dashboard
+  description: Delete a storage-mode dashboard. Its configuration is backed up first (same
+    backup store as update_dashboard) and the backup name is returned as response data, so
+    a deletion can be recovered by recreating the dashboard and restoring.
+  fields:
+    url_path:
+      name: Dashboard
+      description: The dashboard's URL path.
+      selector:
+        text: {}
+      required: true
+      example: lovelace-lights
+
+add_dashboard_resource:
+  name: Add dashboard resource
+  description: "Register a dashboard resource \u2014 the JavaScript module or stylesheet of\
+    \ a custom card (e.g. /hacsfiles/... or /local/...). Returns the resource id as response\
+    \ data. Duplicate URLs are refused."
+  fields:
+    url:
+      name: URL
+      description: Resource URL.
+      selector:
+        text: {}
+      required: true
+      example: /local/mushroom.js
+    res_type:
+      name: Type
+      description: Resource type (default module).
+      selector:
+        select:
+          options:
+          - module
+          - css
+          - js
+          - html
+      default: module
+
+remove_dashboard_resource:
+  name: Remove dashboard resource
+  description: Remove a registered dashboard resource by its URL.
+  fields:
+    url:
+      name: URL
+      description: The URL of the resource to remove.
+      selector:
+        text: {}
+      required: true
+      example: /local/mushroom.js
+
+create_person:
+  name: Create person
+  description: Create a person, optionally linked to a Home Assistant user and with initial
+    device trackers. Returns the person's id as response data.
+  fields:
+    name:
+      name: Name
+      description: The person's name.
+      selector:
+        text: {}
+      required: true
+      example: Alex
+    user_id:
+      name: User
+      description: Home Assistant user to link (from get_registry users).
+      selector:
+        text: {}
+    device_tracker:
+      name: Device trackers
+      description: Initial device trackers for presence.
+      selector:
+        entity:
+          multiple: true
+          filter:
+            domain: device_tracker
+
+delete_person:
+  name: Delete person
+  description: Delete a UI-created person. YAML-defined persons are refused.
+  fields:
+    entity_id:
+      name: Person
+      description: The person entity to delete.
+      selector:
+        entity:
+          filter:
+            domain: person
+      required: true
+
+create_user:
+  name: Create user
+  description: Create a Home Assistant user account, optionally with a local username/password
+    login (they must be provided together; password minimum 8 characters). Returns the new
+    user_id as response data.
+  fields:
+    name:
+      name: Name
+      description: Display name of the new user.
+      selector:
+        text: {}
+      required: true
+      example: Babysitter
+    username:
+      name: Username
+      description: Login username. Requires password.
+      selector:
+        text: {}
+    password:
+      name: Password
+      description: Login password (min 8 characters). Requires username.
+      selector:
+        text: {}
+    admin:
+      name: Administrator
+      description: Give the user admin rights (default off).
+      selector:
+        boolean: {}
+      default: false
+
+delete_user:
+  name: Delete user
+  description: Delete one or more Home Assistant user accounts and their credentials. Owner
+    accounts and system-generated users are protected and cannot be deleted.
+  fields:
+    user_id:
+      name: User IDs
+      description: IDs of the users to delete.
+      selector:
+        text:
+          multiple: true
+      required: true

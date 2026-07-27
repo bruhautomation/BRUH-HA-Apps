@@ -9,15 +9,19 @@ instead of editing `/config/.storage` files by hand:
 - Floors:       create, delete, rename, assign areas
 - Labels:       create, delete, apply/remove on entities, devices, areas
 - Entities:     rename, change entity_id, enable/disable, hide/unhide,
-                clean up orphaned registry entries (dry-run by default)
+                voice aliases, icon overrides, orphan cleanup (dry-run default)
 - Devices:      rename, enable/disable (cascades to lonely parent devices)
 - Integrations: enable/disable/reload config entries
-- Zones:        create, delete
-- Persons:      attach/detach device trackers
+- Helpers:      create/delete any storage-backed helper (input_*, counter,
+                timer, schedule)
+- Zones:        create, update, delete
+- Persons:      create/delete, attach/detach device trackers
 - Blueprints:   import automation/script blueprints from a URL
 - Statistics:   import/backfill long-term statistics (recorder)
-- Users:        enable/disable accounts (owner accounts are protected)
+- Users:        create/delete/enable/disable (owner accounts are protected)
 - Diagnostics:  find automation/script/scene references to unknown entities
+- Dashboards:   create/delete/update/restore storage dashboards with
+                automatic backups, register/remove custom-card resources
 - Repairs:      create/remove custom issues in Settings > System > Repairs
 
 Adapted from Spook (https://github.com/frenck/spook) by Franck Nijhof,
@@ -35,7 +39,9 @@ released under the MIT License. Changes from Spook:
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -379,6 +385,23 @@ async def _unhide_entity(hass: HomeAssistant, call: ServiceCall) -> None:
         registry.async_update_entity(entity_id, hidden_by=None)
 
 
+async def _set_entity_aliases(hass: HomeAssistant, call: ServiceCall) -> None:
+    """Replace an entity's voice-assistant aliases."""
+    _ensure_entity(hass, call.data["entity_id"])
+    er.async_get(hass).async_update_entity(
+        call.data["entity_id"], aliases=set(call.data["aliases"])
+    )
+
+
+async def _set_entity_icon(hass: HomeAssistant, call: ServiceCall) -> None:
+    """Set (or, when icon is omitted, clear) entity icon overrides."""
+    for entity_id in call.data["entity_id"]:
+        _ensure_entity(hass, entity_id)
+    registry = er.async_get(hass)
+    for entity_id in call.data["entity_id"]:
+        registry.async_update_entity(entity_id, icon=call.data.get("icon"))
+
+
 async def _delete_orphaned_entities(
     hass: HomeAssistant, call: ServiceCall
 ) -> dict | None:
@@ -386,6 +409,10 @@ async def _delete_orphaned_entities(
 
     Defaults to a dry run: nothing is deleted unless dry_run is explicitly
     false, and the response always lists the affected entity ids.
+
+    An optional entity_id list scopes the cleanup. Every requested entity
+    is re-verified as orphaned; anything still provided by an integration
+    is skipped and reported under skipped_not_orphaned, never deleted.
     """
     dry_run = call.data.get("dry_run", True)
     orphaned = [
@@ -393,12 +420,23 @@ async def _delete_orphaned_entities(
         for state in hass.states.async_all()
         if state.attributes.get("restored")
     ]
+    requested = call.data.get("entity_id")
+    skipped: list[str] = []
+    if requested:
+        requested_set = set(requested)
+        skipped = sorted(requested_set - set(orphaned))
+        targets = [e for e in orphaned if e in requested_set]
+    else:
+        targets = orphaned
     if not dry_run:
         registry = er.async_get(hass)
-        for entity_id in orphaned:
+        for entity_id in targets:
             registry.async_remove(entity_id)
             hass.states.async_remove(entity_id, call.context)
-    return {"dry_run": dry_run, "count": len(orphaned), "entity_ids": orphaned}
+    result = {"dry_run": dry_run, "count": len(targets), "entity_ids": targets}
+    if requested:
+        result["skipped_not_orphaned"] = skipped
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -494,22 +532,98 @@ async def _reload_integration(hass: HomeAssistant, call: ServiceCall) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Storage collections (zones, helpers, dashboards, resources, persons)
+# ---------------------------------------------------------------------------
+
+
+def _storage_collection(hass: HomeAssistant, domain: str, list_command=None):
+    """Return a domain's storage collection.
+
+    Most helper domains never put their collection in hass.data; the only
+    stable way in is through the websocket handlers they register (Spook's
+    zone workaround, generalized)."""
+    data = hass.data.get(domain)
+    if data is not None and hasattr(data, "async_create_item"):
+        return data
+    try:
+        handler = hass.data["websocket_api"][list_command or f"{domain}/list"][0]
+        return handler.__self__.storage_collection
+    except (KeyError, IndexError, AttributeError) as err:
+        raise HomeAssistantError(
+            f"{domain} storage is not available on this Home Assistant version"
+        ) from err
+
+
+async def _collection_create(collection, data: dict, what: str) -> dict:
+    """Create an item, translating the collection's schema errors."""
+    try:
+        return await collection.async_create_item(data)
+    except vol.Invalid as err:
+        raise HomeAssistantError(f"Invalid {what}: {err}") from err
+    except ValueError as err:
+        raise HomeAssistantError(f"Could not create {what}: {err}") from err
+
+
+# ---------------------------------------------------------------------------
+# Helpers (input_*, counter, timer, schedule)
+# ---------------------------------------------------------------------------
+
+HELPER_DOMAINS = (
+    "input_boolean", "input_number", "input_select", "input_text",
+    "input_datetime", "counter", "timer", "schedule",
+)
+
+
+async def _create_helper(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    """Create a helper of any storage-backed type.
+
+    Type-specific options (min/max for input_number, options for
+    input_select, duration for timer, weekday blocks for schedule, ...)
+    pass through and are validated by the helper's own schema, so error
+    messages match what the UI would say."""
+    helper_type = call.data["helper_type"]
+    collection = _storage_collection(hass, helper_type)
+    payload = {"name": call.data["name"], **(call.data.get("options") or {})}
+    item = await _collection_create(collection, payload, f"{helper_type} helper")
+    entity_id = er.async_get(hass).async_get_entity_id(
+        helper_type, helper_type, item["id"]
+    )
+    return {"helper_type": helper_type, "id": item["id"], "entity_id": entity_id}
+
+
+async def _delete_helper(hass: HomeAssistant, call: ServiceCall) -> None:
+    registry = er.async_get(hass)
+    targets: list[tuple[str, str, str]] = []
+    for entity_id in call.data["entity_id"]:
+        domain = entity_id.split(".")[0]
+        if domain not in HELPER_DOMAINS:
+            raise HomeAssistantError(
+                f"Not a managed helper domain: {entity_id} "
+                f"(supported: {', '.join(HELPER_DOMAINS)})"
+            )
+        entry = registry.async_get(entity_id)
+        if entry is None:
+            raise HomeAssistantError(f"Entity not found in registry: {entity_id}")
+        targets.append((domain, entity_id, entry.unique_id))
+    for domain, entity_id, unique_id in targets:
+        collection = _storage_collection(hass, domain)
+        try:
+            await collection.async_delete_item(unique_id)
+        except Exception as err:  # noqa: BLE001 — ItemNotFound => YAML helper
+            raise HomeAssistantError(
+                f"Could not delete {entity_id} — helpers defined in YAML "
+                "must be removed from the YAML file"
+            ) from err
+
+
+# ---------------------------------------------------------------------------
 # Zones
 # ---------------------------------------------------------------------------
 
 
 def _zone_collection(hass: HomeAssistant):
-    """Return zone storage collection; handles the YAML-home-zone case
-    where HA doesn't put the collection in hass.data (from Spook)."""
-    zone_data = hass.data.get("zone")
-    if zone_data is not None:
-        return zone_data
-    try:
-        return hass.data["websocket_api"]["zone/list"][0].__self__.storage_collection
-    except (KeyError, IndexError, AttributeError) as err:
-        raise HomeAssistantError(
-            "Zone storage is not available on this Home Assistant version"
-        ) from err
+    """Zone storage collection (YAML home zone keeps it out of hass.data)."""
+    return _storage_collection(hass, "zone")
 
 
 async def _create_zone(hass: HomeAssistant, call: ServiceCall) -> None:
@@ -542,6 +656,36 @@ async def _delete_zone(hass: HomeAssistant, call: ServiceCall) -> None:
         if not entity.editable or "id" not in entity._config:  # noqa: SLF001
             raise HomeAssistantError(f"This zone is not editable: {entity_id}")
         await collection.async_delete_item(entity._config["id"])  # noqa: SLF001
+
+
+async def _update_zone(hass: HomeAssistant, call: ServiceCall) -> None:
+    """Move, resize, or restyle an editable zone."""
+    changes = {
+        key: call.data[key]
+        for key in ("name", "latitude", "longitude", "radius", "icon", "passive")
+        if key in call.data
+    }
+    if not changes:
+        raise HomeAssistantError(
+            "Nothing to update — pass at least one of name, latitude, "
+            "longitude, radius, icon, passive"
+        )
+    try:
+        from homeassistant.helpers.entity_component import DATA_INSTANCES
+
+        entity_component = hass.data[DATA_INSTANCES]["zone"]
+    except KeyError as err:
+        raise HomeAssistantError("Zone component is not loaded") from err
+
+    entity_id = call.data["entity_id"]
+    entity = entity_component.get_entity(entity_id)
+    if entity is None:
+        raise HomeAssistantError(f"Zone not found: {entity_id}")
+    if not entity.editable or "id" not in entity._config:  # noqa: SLF001
+        raise HomeAssistantError(f"This zone is not editable: {entity_id}")
+    await _zone_collection(hass).async_update_item(
+        entity._config["id"], changes  # noqa: SLF001
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -589,6 +733,102 @@ async def _remove_device_tracker_from_person(
     hass: HomeAssistant, call: ServiceCall
 ) -> None:
     await _person_trackers(hass, call, add=False)
+
+
+async def _create_person(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    collection, _ = _person_parts(hass)
+    payload: dict[str, Any] = {
+        "name": call.data["name"],
+        "device_trackers": call.data.get("device_tracker") or [],
+    }
+    if call.data.get("user_id"):
+        payload["user_id"] = call.data["user_id"]
+    item = await _collection_create(collection, payload, "person")
+    return {"person_id": item["id"]}
+
+
+async def _delete_person(hass: HomeAssistant, call: ServiceCall) -> None:
+    collection, entity_component = _person_parts(hass)
+    entity = entity_component.get_entity(call.data["entity_id"])
+    if entity is None:
+        raise HomeAssistantError(f"Person not found: {call.data['entity_id']}")
+    if not entity.editable or "id" not in entity._config:  # noqa: SLF001
+        raise HomeAssistantError(
+            f"This person is not editable (YAML-defined): {call.data['entity_id']}"
+        )
+    await collection.async_delete_item(entity._config["id"])  # noqa: SLF001
+
+
+# ---------------------------------------------------------------------------
+# User lifecycle
+# ---------------------------------------------------------------------------
+
+
+async def _create_user(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    """Create a Home Assistant user, optionally with a local login.
+
+    username and password must be given together; without them the user
+    exists but cannot log in until credentials are added in the UI."""
+    from homeassistant.auth.const import GROUP_ID_ADMIN, GROUP_ID_USER
+
+    username = call.data.get("username")
+    password = call.data.get("password")
+    if bool(username) != bool(password):
+        raise HomeAssistantError(
+            "username and password must be provided together"
+        )
+    provider = None
+    if username:
+        provider = next(
+            (p for p in hass.auth.auth_providers if p.type == "homeassistant"),
+            None,
+        )
+        if provider is None:
+            raise HomeAssistantError(
+                "No Home Assistant (local) auth provider is configured — "
+                "cannot create a login"
+            )
+
+    user = await hass.auth.async_create_user(
+        call.data["name"],
+        group_ids=[GROUP_ID_ADMIN if call.data.get("admin") else GROUP_ID_USER],
+    )
+    if provider:
+        try:
+            await provider.async_add_auth(username, password)
+            credentials = await provider.async_get_or_create_credentials(
+                {"username": username}
+            )
+            await hass.auth.async_link_user(user, credentials)
+        except HomeAssistantError:
+            await hass.auth.async_remove_user(user)
+            raise
+        except Exception as err:  # noqa: BLE001 — e.g. username taken
+            await hass.auth.async_remove_user(user)
+            raise HomeAssistantError(
+                f"Could not create login for '{username}': {err}"
+            ) from err
+    return {"user_id": user.id, "name": user.name}
+
+
+async def _delete_user(hass: HomeAssistant, call: ServiceCall) -> None:
+    users = []
+    for user_id in call.data["user_id"]:
+        user = await hass.auth.async_get_user(user_id)
+        if user is None:
+            raise HomeAssistantError(f"User not found: {user_id}")
+        if user.system_generated:
+            raise HomeAssistantError(
+                f"Cannot delete a system-generated user: {user_id}"
+            )
+        # Same lockout guard as disable_user: owners are untouchable.
+        if user.is_owner:
+            raise HomeAssistantError(
+                f"Refusing to delete owner account: {user.name or user_id}"
+            )
+        users.append(user)
+    for user in users:
+        await hass.auth.async_remove_user(user)
 
 
 # ---------------------------------------------------------------------------
@@ -824,6 +1064,261 @@ async def _find_orphaned_references(
 
 
 # ---------------------------------------------------------------------------
+# Dashboards (Lovelace)
+# ---------------------------------------------------------------------------
+
+DASHBOARD_BACKUP_DIR = ".bruh_claude/dashboard_backups"
+DASHBOARD_BACKUP_KEEP = 20
+
+
+def _lovelace_dashboards(hass: HomeAssistant) -> dict:
+    data = hass.data.get("lovelace")
+    if data is None:
+        raise HomeAssistantError("Lovelace is not loaded")
+    dashboards = getattr(data, "dashboards", None)
+    if dashboards is None and isinstance(data, dict):
+        dashboards = data.get("dashboards")
+    if dashboards is None:
+        raise HomeAssistantError(
+            "Could not access Lovelace dashboards on this Home Assistant version"
+        )
+    return dashboards
+
+
+def _get_dashboard(hass: HomeAssistant, url_path: str | None):
+    dashboards = _lovelace_dashboards(hass)
+    key = url_path or None
+    if key not in dashboards:
+        available = ", ".join(sorted(str(k) for k in dashboards if k))
+        raise HomeAssistantError(
+            f"Dashboard not found: {url_path or 'default'}."
+            + (f" Storage dashboards: {available}" if available else "")
+        )
+    dashboard = dashboards[key]
+    if getattr(dashboard, "mode", "storage") != "storage":
+        raise HomeAssistantError(
+            f"Dashboard '{url_path or 'default'}' is YAML-mode — "
+            "edit its YAML file instead"
+        )
+    return dashboard
+
+
+def _dashboard_slug(url_path: str | None) -> str:
+    return url_path or "default"
+
+
+def _save_dashboard_backup(directory: str, slug: str, config: dict) -> str:
+    """Write a timestamped backup and prune old ones. Executor-safe."""
+    from datetime import datetime, timezone
+
+    os.makedirs(directory, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    path = os.path.join(directory, f"{slug}-{stamp}.json")
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(config, fh)
+    backups = sorted(
+        f for f in os.listdir(directory)
+        if f.startswith(f"{slug}-") and f.endswith(".json")
+    )
+    for stale in backups[:-DASHBOARD_BACKUP_KEEP]:
+        try:
+            os.remove(os.path.join(directory, stale))
+        except OSError:
+            pass
+    return path
+
+
+def _load_dashboard_backup(
+    directory: str, slug: str, name: str | None
+) -> tuple[str, dict]:
+    """Read a named backup, or the newest one for this dashboard."""
+    if name:
+        # Backup names are generated server-side; refuse path tricks.
+        if "/" in name or "\\" in name or not name.startswith(f"{slug}-"):
+            raise HomeAssistantError(f"Not a backup of this dashboard: {name}")
+        path = os.path.join(directory, name)
+        if not os.path.isfile(path):
+            raise HomeAssistantError(f"Backup not found: {name}")
+    else:
+        try:
+            backups = sorted(
+                f for f in os.listdir(directory)
+                if f.startswith(f"{slug}-") and f.endswith(".json")
+            )
+        except OSError:
+            backups = []
+        if not backups:
+            raise HomeAssistantError(
+                f"No backups exist for dashboard '{slug}' yet — "
+                "backups are created by bruh_claude.update_dashboard"
+            )
+        path = os.path.join(directory, backups[-1])
+    with open(path, encoding="utf-8") as fh:
+        return os.path.basename(path), json.load(fh)
+
+
+async def _update_dashboard(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    """Replace a storage dashboard's config, backing up the old one first."""
+    new_config = call.data["config"]
+    if not isinstance(new_config, dict) or not isinstance(
+        new_config.get("views"), list
+    ):
+        raise HomeAssistantError(
+            "config must be a full dashboard object with a 'views' list"
+        )
+    url_path = call.data.get("url_path")
+    dashboard = _get_dashboard(hass, url_path)
+
+    backup_name = None
+    try:
+        old_config = await dashboard.async_load(False)
+    except Exception:  # noqa: BLE001 — dashboard never saved (auto-generated)
+        old_config = None
+    if old_config:
+        backup_name = os.path.basename(
+            await hass.async_add_executor_job(
+                _save_dashboard_backup,
+                hass.config.path(DASHBOARD_BACKUP_DIR),
+                _dashboard_slug(url_path),
+                old_config,
+            )
+        )
+
+    await dashboard.async_save(new_config)
+    return {
+        "url_path": _dashboard_slug(url_path),
+        "views": len(new_config["views"]),
+        "backup": backup_name,
+    }
+
+
+async def _restore_dashboard(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    """Restore a storage dashboard from a backup (latest by default)."""
+    url_path = call.data.get("url_path")
+    dashboard = _get_dashboard(hass, url_path)
+    backup_name, config = await hass.async_add_executor_job(
+        _load_dashboard_backup,
+        hass.config.path(DASHBOARD_BACKUP_DIR),
+        _dashboard_slug(url_path),
+        call.data.get("backup"),
+    )
+    await dashboard.async_save(config)
+    return {
+        "url_path": _dashboard_slug(url_path),
+        "restored_from": backup_name,
+        "views": len(config.get("views") or []),
+    }
+
+
+def _dashboards_collection(hass: HomeAssistant):
+    return _storage_collection(
+        hass, "lovelace_dashboards", list_command="lovelace/dashboards/list"
+    )
+
+
+async def _create_dashboard(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    payload: dict[str, Any] = {
+        "url_path": call.data["url_path"],
+        "title": call.data["title"],
+        "show_in_sidebar": call.data.get("show_in_sidebar", True),
+        "require_admin": call.data.get("require_admin", False),
+    }
+    if call.data.get("icon"):
+        payload["icon"] = call.data["icon"]
+    item = await _collection_create(
+        _dashboards_collection(hass), payload, "dashboard"
+    )
+    return {"url_path": item["url_path"], "id": item["id"]}
+
+
+async def _delete_dashboard(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    """Delete a storage dashboard, backing up its config first."""
+    url_path = call.data["url_path"]
+    collection = _dashboards_collection(hass)
+    item = next(
+        (i for i in collection.async_items() if i.get("url_path") == url_path),
+        None,
+    )
+    if item is None:
+        available = ", ".join(
+            sorted(str(i.get("url_path")) for i in collection.async_items())
+        )
+        raise HomeAssistantError(
+            f"Dashboard not found: {url_path}."
+            + (f" Existing: {available}" if available else "")
+        )
+
+    backup_name = None
+    dashboards = _lovelace_dashboards(hass)
+    dashboard = dashboards.get(url_path)
+    if dashboard is not None and getattr(dashboard, "mode", "storage") == "storage":
+        try:
+            old_config = await dashboard.async_load(False)
+        except Exception:  # noqa: BLE001 — never saved
+            old_config = None
+        if old_config:
+            backup_name = os.path.basename(
+                await hass.async_add_executor_job(
+                    _save_dashboard_backup,
+                    hass.config.path(DASHBOARD_BACKUP_DIR),
+                    _dashboard_slug(url_path),
+                    old_config,
+                )
+            )
+    await collection.async_delete_item(item["id"])
+    return {"url_path": url_path, "backup": backup_name}
+
+
+RESOURCE_TYPES = ("module", "css", "js", "html")
+
+
+def _resources_collection(hass: HomeAssistant):
+    data = hass.data.get("lovelace")
+    resources = getattr(data, "resources", None)
+    if resources is None and isinstance(data, dict):
+        resources = data.get("resources")
+    if resources is None:
+        raise HomeAssistantError("Lovelace resources are not available")
+    if not hasattr(resources, "async_create_item"):
+        raise HomeAssistantError(
+            "Dashboard resources are managed in YAML on this system — "
+            "edit them in configuration.yaml"
+        )
+    return resources
+
+
+async def _add_dashboard_resource(
+    hass: HomeAssistant, call: ServiceCall
+) -> dict | None:
+    """Register a dashboard resource (custom card module, css, ...)."""
+    collection = _resources_collection(hass)
+    url = call.data["url"]
+    if any(i.get("url") == url for i in collection.async_items()):
+        raise HomeAssistantError(f"A resource with this URL already exists: {url}")
+    item = await _collection_create(
+        collection,
+        {"res_type": call.data.get("res_type", "module"), "url": url},
+        "dashboard resource",
+    )
+    return {"id": item["id"], "url": url}
+
+
+async def _remove_dashboard_resource(
+    hass: HomeAssistant, call: ServiceCall
+) -> None:
+    collection = _resources_collection(hass)
+    url = call.data["url"]
+    matches = [i for i in collection.async_items() if i.get("url") == url]
+    if not matches:
+        urls = ", ".join(sorted(str(i.get("url")) for i in collection.async_items())[:20])
+        raise HomeAssistantError(
+            f"No resource with URL: {url}." + (f" Registered: {urls}" if urls else "")
+        )
+    for item in matches:
+        await collection.async_delete_item(item["id"])
+
+
+# ---------------------------------------------------------------------------
 # Repairs
 # ---------------------------------------------------------------------------
 
@@ -971,8 +1466,17 @@ POWER_TOOLS: tuple[PowerTool, ...] = (
     PowerTool("unhide_entity", _unhide_entity, {
         vol.Required("entity_id"): _ENTITY_LIST,
     }),
+    PowerTool("set_entity_aliases", _set_entity_aliases, {
+        vol.Required("entity_id"): cv.entity_id,
+        vol.Required("aliases"): _STR_LIST,
+    }),
+    PowerTool("set_entity_icon", _set_entity_icon, {
+        vol.Required("entity_id"): _ENTITY_LIST,
+        vol.Optional("icon"): cv.icon,
+    }),
     PowerTool("delete_orphaned_entities", _delete_orphaned_entities, {
         vol.Optional("dry_run", default=True): cv.boolean,
+        vol.Optional("entity_id"): _ENTITY_LIST,
     }, has_response=True),
     # Devices
     PowerTool("rename_device", _rename_device, {
@@ -995,6 +1499,15 @@ POWER_TOOLS: tuple[PowerTool, ...] = (
     PowerTool("reload_integration", _reload_integration, {
         vol.Required("config_entry_id"): _STR_LIST,
     }),
+    # Helpers
+    PowerTool("create_helper", _create_helper, {
+        vol.Required("helper_type"): vol.In(HELPER_DOMAINS),
+        vol.Required("name"): cv.string,
+        vol.Optional("options"): dict,
+    }, has_response=True),
+    PowerTool("delete_helper", _delete_helper, {
+        vol.Required("entity_id"): _ENTITY_LIST,
+    }),
     # Zones
     PowerTool("create_zone", _create_zone, {
         vol.Required("name"): cv.string,
@@ -1004,10 +1517,27 @@ POWER_TOOLS: tuple[PowerTool, ...] = (
         vol.Optional("icon"): cv.icon,
         vol.Optional("passive"): cv.boolean,
     }),
+    PowerTool("update_zone", _update_zone, {
+        vol.Required("entity_id"): cv.entity_id,
+        vol.Optional("name"): cv.string,
+        vol.Optional("latitude"): cv.latitude,
+        vol.Optional("longitude"): cv.longitude,
+        vol.Optional("radius"): vol.Coerce(float),
+        vol.Optional("icon"): cv.icon,
+        vol.Optional("passive"): cv.boolean,
+    }),
     PowerTool("delete_zone", _delete_zone, {
         vol.Required("entity_id"): _ENTITY_LIST,
     }),
     # Persons
+    PowerTool("create_person", _create_person, {
+        vol.Required("name"): cv.string,
+        vol.Optional("user_id"): cv.string,
+        vol.Optional("device_tracker"): _ENTITY_LIST,
+    }, has_response=True),
+    PowerTool("delete_person", _delete_person, {
+        vol.Required("entity_id"): cv.entity_id,
+    }),
     PowerTool("add_device_tracker_to_person", _add_device_tracker_to_person, {
         vol.Required("entity_id"): cv.entity_id,
         vol.Required("device_tracker"): _ENTITY_LIST,
@@ -1042,6 +1572,15 @@ POWER_TOOLS: tuple[PowerTool, ...] = (
         ],
     }),
     # Users
+    PowerTool("create_user", _create_user, {
+        vol.Required("name"): cv.string,
+        vol.Optional("username"): cv.string,
+        vol.Optional("password"): vol.All(cv.string, vol.Length(min=8)),
+        vol.Optional("admin", default=False): cv.boolean,
+    }, has_response=True),
+    PowerTool("delete_user", _delete_user, {
+        vol.Required("user_id"): _STR_LIST,
+    }),
     PowerTool("enable_user", _enable_user, {
         vol.Required("user_id"): _STR_LIST,
     }),
@@ -1052,6 +1591,32 @@ POWER_TOOLS: tuple[PowerTool, ...] = (
     PowerTool("find_orphaned_references", _find_orphaned_references, {
         vol.Optional("create_issue", default=False): cv.boolean,
     }, has_response=True),
+    # Dashboards
+    PowerTool("update_dashboard", _update_dashboard, {
+        vol.Required("config"): dict,
+        vol.Optional("url_path"): cv.string,
+    }, has_response=True),
+    PowerTool("restore_dashboard", _restore_dashboard, {
+        vol.Optional("url_path"): cv.string,
+        vol.Optional("backup"): cv.string,
+    }, has_response=True),
+    PowerTool("create_dashboard", _create_dashboard, {
+        vol.Required("url_path"): cv.string,
+        vol.Required("title"): cv.string,
+        vol.Optional("icon"): cv.icon,
+        vol.Optional("show_in_sidebar", default=True): cv.boolean,
+        vol.Optional("require_admin", default=False): cv.boolean,
+    }, has_response=True),
+    PowerTool("delete_dashboard", _delete_dashboard, {
+        vol.Required("url_path"): cv.string,
+    }, has_response=True),
+    PowerTool("add_dashboard_resource", _add_dashboard_resource, {
+        vol.Required("url"): cv.string,
+        vol.Optional("res_type", default="module"): vol.In(RESOURCE_TYPES),
+    }, has_response=True),
+    PowerTool("remove_dashboard_resource", _remove_dashboard_resource, {
+        vol.Required("url"): cv.string,
+    }),
     # Repairs
     PowerTool("create_repair_issue", _create_repair_issue, {
         vol.Required("title"): cv.string,

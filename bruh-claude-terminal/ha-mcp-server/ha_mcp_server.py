@@ -1091,6 +1091,87 @@ def get_registry(registry, name_filter=None):
     return {"registry": registry, "count": len(items), "items": items}
 
 
+def list_dashboards():
+    """List Lovelace dashboards (the default dashboard is not in the
+    collection — reach it by omitting url_path in get_dashboard)."""
+    try:
+        result = _ws_command({"type": "lovelace/dashboards/list"})
+    except ImportError:
+        return {"error": "websockets package not available in this environment"}
+    except Exception as e:  # noqa: BLE001
+        return {"error": str(e)}
+    if isinstance(result, dict) and "error" in result:
+        return result
+    dashboards = [
+        {k: d.get(k) for k in ("url_path", "title", "mode", "icon", "show_in_sidebar")
+         if d.get(k) is not None}
+        for d in (result or [])
+    ]
+    payload = {
+        "count": len(dashboards),
+        "dashboards": dashboards,
+        "note": ("The default dashboard is not listed — fetch it with "
+                 "get_dashboard and no url_path."),
+    }
+    # Registered resources (custom card modules) ride along; best-effort.
+    try:
+        resources = _ws_command({"type": "lovelace/resources"})
+        if isinstance(resources, list):
+            payload["resources"] = [
+                {k: r.get(k) for k in ("url", "type") if r.get(k) is not None}
+                for r in resources
+            ]
+    except Exception:  # noqa: BLE001
+        pass
+    return payload
+
+
+MAX_DASHBOARD_BYTES = 200_000
+
+
+def get_dashboard(url_path=None):
+    """Fetch a dashboard's full configuration (default dashboard when
+    url_path is omitted). Pair with bruh_claude.update_dashboard to edit:
+    fetch, modify the JSON, save — the service backs up the old config
+    automatically."""
+    try:
+        result = _ws_command({"type": "lovelace/config", "url_path": url_path or None})
+    except ImportError:
+        return {"error": "websockets package not available in this environment"}
+    except Exception as e:  # noqa: BLE001
+        return {"error": str(e)}
+    if isinstance(result, dict) and "error" in result:
+        if "config_not_found" in str(result.get("error", "")):
+            return {
+                "url_path": url_path or "default",
+                "note": ("This dashboard has no stored config yet (it is "
+                         "auto-generated). Saving with "
+                         "bruh_claude.update_dashboard will take manual "
+                         "control of it."),
+            }
+        return result
+
+    payload = {"url_path": url_path or "default", "config": result}
+    if len(json.dumps(payload)) > MAX_DASHBOARD_BYTES:
+        views = (result or {}).get("views") or []
+        return {
+            "url_path": url_path or "default",
+            "note": (f"Config too large to return whole (> {MAX_DASHBOARD_BYTES} "
+                     "bytes) — summary below. Edit via smaller dashboards or "
+                     "the /config/.storage file read path."),
+            "views": [
+                {
+                    "index": i,
+                    "title": v.get("title"),
+                    "path": v.get("path"),
+                    "cards": len(v.get("cards") or []),
+                }
+                for i, v in enumerate(views)
+            ],
+        }
+    return payload
+
+
 def fire_event(event_type, event_data=None):
     """Fire a Home Assistant event."""
     result = ha_api_request(
@@ -1289,6 +1370,31 @@ TOOLS = [
                 }
             },
             "required": ["registry"]
+        }
+    },
+    {
+        "name": "list_dashboards",
+        "description": "List Lovelace dashboards (url_path, title, mode). The default dashboard is not in the list — fetch it with get_dashboard and no url_path.",
+        "inputSchema": {"type": "object", "properties": {}}
+    },
+    {
+        "name": "get_dashboard",
+        "description": (
+            "Fetch a dashboard's full configuration as JSON (the default "
+            "dashboard when url_path is omitted). To edit a dashboard: fetch "
+            "with this tool, modify the JSON, then save the complete object "
+            "with the bruh_claude.update_dashboard service — it backs up the "
+            "previous config automatically, and bruh_claude.restore_dashboard "
+            "undoes a bad edit. Never edit .storage/lovelace files directly."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "url_path": {
+                    "type": "string",
+                    "description": "Dashboard url_path from list_dashboards; omit for the default dashboard"
+                }
+            }
         }
     },
     {
@@ -2025,6 +2131,8 @@ TOOL_IMPLEMENTATIONS = {
     "call_service": "call_service",
     "get_service_details": "get_service_details",
     "get_registry": "get_registry",
+    "list_dashboards": "list_dashboards",
+    "get_dashboard": "get_dashboard",
     # Domain-specific device control
     "control_light": "control_light",
     "control_climate": "control_climate",
