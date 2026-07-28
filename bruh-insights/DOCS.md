@@ -112,14 +112,21 @@ regeneration is disabled) until you return to the latest. Highlight stats show a
 is governed by `history_keep_runs` / `history_keep_days`; individual runs can be deleted
 via `DELETE /api/insight/{id}/history/{timestamp}`.
 
-## Editing category prompts
+## Editing and removing cards
 
-The ✎ button on every category card opens the prompt editor:
+Every card — shipped, custom, or an ad-hoc Ask answer — has a ✎ and a ✕.
 
+**✎ opens the editor.** For a shipped or custom card that's the full editor below; for an
+Ask answer, which has no recurring prompt behind it, it's just the name and icon.
+
+- **Name and icon** — what the card calls itself on the dashboard. Renaming a shipped card
+  is purely cosmetic: its analysis, id, and stored history are unchanged, and the new name
+  is what the analyst is told the card is about on the next run. Empty the field to get the
+  shipped name back (the placeholder shows what that is).
 - **Analysis focus** — the instruction the analyst gets for that category. Cards using a
-  custom focus show a "custom prompt" badge; **Restore default** brings the shipped prompt
-  back. Note: the analyst only sees the collected data snapshot — prompts can steer the
-  analysis, not fetch new data.
+  custom focus show a "custom prompt" badge; **Restore default** brings the shipped name,
+  icon and prompt back. Note: the analyst only sees the collected data snapshot — prompts
+  can steer the analysis, not fetch new data.
 - **Enabled** — disabled categories are dimmed, drop out of auto-refresh and "Refresh all",
   and can be re-enabled from the card.
 - **Refresh every N hours** — a per-category interval overriding `auto_refresh_hours`
@@ -131,6 +138,17 @@ The ✎ button on every category card opens the prompt editor:
 
 Each stored insight records the focus it was generated with (`focus_used`).
 
+**✕ deletes the card**, whichever kind it is. A custom insight or an Ask answer is gone for
+good — definition, stored run, past runs and feedback. A shipped card can't be deleted
+outright (its definition ships inside the add-on), so ✕ *removes* it instead: it disappears
+from the dashboard, auto-refresh and "Refresh all", and its stored data is erased just the
+same, but the card itself is listed under **Removed cards** in ⚙ Settings and one click
+brings it back (empty — the deleted runs don't come back with it). An Ask card that failed
+before producing anything can be cleared away with ✕ too.
+
+If you'd rather keep a shipped card's history and just stop it running, uncheck **Enabled**
+in its ✎ editor instead of removing it.
+
 ## Your own insights
 
 **＋ New insight** (top bar) creates a fully custom recurring insight: give it a name, an
@@ -138,7 +156,7 @@ icon, an analysis prompt, and an optional refresh interval (empty = the add-on's
 `auto_refresh_hours` default, `0` = manual only) or fixed daily run times (e.g.
 `07:00, 19:00`). Custom insights behave exactly like the
 shipped categories — auto-refreshed on their own clock, included in "Refresh all", with
-run history and feedback — and the ✎ button edits or deletes them.
+run history and feedback — and the ✎ button edits them (✕ deletes).
 
 Ad-hoc Ask cards can be promoted too: **＋ Make recurring** in an answer card's footer
 prefills a new insight from that question, so a one-off "which rooms are coldest at

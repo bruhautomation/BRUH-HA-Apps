@@ -137,6 +137,16 @@
     </header>
     <div class="edit-body">
       <p id="editDesc" class="hint"></p>
+      <div class="row nowrap">
+        <div class="grow">
+          <label for="editName">Name</label>
+          <input id="editName" type="text" maxlength="60" placeholder="Card name">
+        </div>
+        <div>
+          <label for="editIconIn">Icon</label>
+          <input id="editIconIn" type="text" maxlength="4" class="iconin" placeholder="✨">
+        </div>
+      </div>
       <label for="editFocus">Analysis focus (the prompt for this category)</label>
       <textarea id="editFocus" maxlength="4000" rows="7" spellcheck="false"></textarea>
       <label class="check"><input id="editEnabled" type="checkbox">
@@ -152,6 +162,7 @@
         <button id="editSave" class="btn primary">Save</button>
         <button id="editSaveRegen" class="btn">Save &amp; regenerate</button>
         <button id="editReset" class="btn ghost hidden">Restore default</button>
+        <button id="editDelete" class="btn ghost danger">Remove card</button>
       </div>
     </div>
   </div>
@@ -196,6 +207,37 @@
   </div>
 </div>
 
+<div id="nameModal" class="modal" role="dialog" aria-modal="true">
+  <div class="box edit">
+    <header>
+      <span id="nameIcon">✎</span>
+      <span id="nameTitleBar">Rename card</span>
+      <div class="spacer"></div>
+      <button id="nameClose" class="btn icon" data-tip="Close" aria-label="Close">✕</button>
+    </header>
+    <div class="edit-body">
+      <p class="hint">This card came from a question you asked, so it has no recurring prompt to
+        edit — just the label and icon it shows on the dashboard.</p>
+      <div class="row nowrap">
+        <div class="grow">
+          <label for="nameName">Name</label>
+          <input id="nameName" type="text" maxlength="60" placeholder="Card name">
+        </div>
+        <div>
+          <label for="nameIconIn">Icon</label>
+          <input id="nameIconIn" type="text" maxlength="4" class="iconin" placeholder="✨">
+        </div>
+      </div>
+      <p class="hint">Want it to keep updating on a schedule? Use <b>＋ New insight</b> to turn the
+        question into a recurring card.</p>
+      <div class="row">
+        <button id="nameSave" class="btn primary">Save</button>
+        <button id="nameDelete" class="btn ghost danger">Delete card</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div id="setModal" class="modal" role="dialog" aria-modal="true">
   <div class="box edit">
     <header>
@@ -232,6 +274,14 @@
           <div id="usageMark"></div>
         </div>
         <div id="usageText" class="hint"></div>
+      </div>
+
+      <div id="setRemovedWrap" class="hidden">
+        <h4 class="sethead">Removed cards</h4>
+        <p class="hint">Built-in cards you removed with ✕. Their definitions ship with the add-on,
+          so they can come back any time — restoring one brings back an empty card you can
+          generate again (its past runs and feedback are gone for good).</p>
+        <div id="setRemoved" class="removedlist"></div>
       </div>
 
       <p class="hint">💡 Token-saving tips: each card's ✎ dialog can set fixed daily run times

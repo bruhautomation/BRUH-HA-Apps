@@ -692,6 +692,59 @@ class TestPromptStore(unittest.TestCase):
         self.assertEqual(eff["overridden"], [])
         self.assertTrue(eff["enabled"])
 
+    def test_title_and_icon_override(self):
+        prompt_store.save_override("energy", {"title": "Power bill", "icon": "🔌"})
+        eff = prompt_store.effective_category("energy")
+        self.assertEqual(eff["title"], "Power bill")
+        self.assertEqual(eff["icon"], "🔌")
+        self.assertIn("title", eff["overridden"])
+        self.assertIn("icon", eff["overridden"])
+        # clearing goes back to the shipped name
+        prompt_store.save_override("energy", {"title": None, "icon": None})
+        eff = prompt_store.effective_category("energy")
+        self.assertEqual(eff["title"], categories.get_category("energy")["title"])
+        self.assertEqual(eff["icon"], categories.get_category("energy")["icon"])
+
+    def test_title_and_icon_are_trimmed(self):
+        prompt_store.save_override(
+            "energy", {"title": "  " + "x" * 200, "icon": "🔌🔌🔌🔌🔌"})
+        eff = prompt_store.effective_category("energy")
+        self.assertEqual(len(eff["title"]), prompt_store.MAX_TITLE)
+        self.assertEqual(len(eff["icon"]), prompt_store.MAX_ICON)
+
+    def test_hidden_removes_from_visible_list(self):
+        self.assertFalse(prompt_store.is_hidden("energy"))
+        self.assertEqual(prompt_store.hidden_categories(), [])
+        prompt_store.save_override("energy", {"hidden": True})
+        self.assertTrue(prompt_store.is_hidden("energy"))
+        self.assertTrue(prompt_store.effective_category("energy")["hidden"])
+        ids = [c["id"] for c in prompt_store.visible_categories()]
+        self.assertNotIn("energy", ids)
+        # every other shipped card is untouched, in shipped order
+        self.assertEqual(
+            ids, [c["id"] for c in categories.CATEGORIES if c["id"] != "energy"])
+        self.assertEqual([c["id"] for c in prompt_store.hidden_categories()], ["energy"])
+
+    def test_hidden_list_uses_the_users_name(self):
+        prompt_store.save_override("energy", {"title": "Power bill", "hidden": True})
+        entry = prompt_store.hidden_categories()[0]
+        self.assertEqual(entry["title"], "Power bill")
+        self.assertEqual(entry["default_title"],
+                         categories.get_category("energy")["title"])
+
+    def test_restore_makes_it_visible_again(self):
+        prompt_store.save_override("energy", {"hidden": True})
+        prompt_store.save_override("energy", {"hidden": None})
+        self.assertFalse(prompt_store.is_hidden("energy"))
+        self.assertIn("energy", [c["id"] for c in prompt_store.visible_categories()])
+
+    def test_reset_override_unhides(self):
+        prompt_store.save_override("energy", {"hidden": True, "title": "X"})
+        prompt_store.reset_override("energy")
+        self.assertFalse(prompt_store.is_hidden("energy"))
+        self.assertEqual(prompt_store.effective_category("energy")["title"],
+                         categories.get_category("energy")["title"])
+
     def test_unknown_category(self):
         self.assertIsNone(prompt_store.effective_category("nope"))
 
@@ -1380,6 +1433,173 @@ class TestUserCategoryEndpoints(InsightsServerCase):
     def test_orphaned_user_insight_hidden(self):
         self._save("user-123", "2026-07-18T10:00:00")
         self.assertEqual(self.server.load_insights(), [])
+
+
+class TestCardDeletionAndRenaming(InsightsServerCase):
+    """Every card can be deleted and renamed — /api/card/{id} is the one ✕."""
+
+    def test_builtin_card_is_removed_and_restorable(self):
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                self._save("energy", "2026-07-18T10:00:00")
+                feedback_store.add_feedback("energy", "note")
+
+                resp = await client.delete("/api/card/energy")
+                self.assertEqual(resp.status, 200)
+                body = await resp.json()
+                self.assertTrue(body["restorable"])
+
+                # gone from the dashboard, the scheduler, and manual generation
+                resp = await client.get("/api/status")
+                status = await resp.json()
+                self.assertNotIn("energy", [c["id"] for c in status["categories"]])
+                self.assertEqual([c["id"] for c in status["removed_categories"]],
+                                 ["energy"])
+                resp = await client.post("/api/generate", json={"category": "energy"})
+                self.assertEqual(resp.status, 400)
+                resp = await client.post("/api/generate_all")
+                self.assertNotIn("energy", (await resp.json())["queued"])
+
+                # and its stored data really is gone — no ghost card either
+                self.assertFalse((Path(self.tmp.name) / "energy.json").exists())
+                self.assertFalse((Path(self.tmp.name) / "history" / "energy").exists())
+                self.assertEqual(feedback_store.list_feedback("energy"), [])
+                self.assertEqual(self.server.load_insights(), [])
+
+                # restore puts the card back
+                resp = await client.put("/api/prompt/energy", json={"hidden": False})
+                self.assertEqual(resp.status, 200)
+                self.assertFalse((await resp.json())["hidden"])
+                resp = await client.get("/api/status")
+                status = await resp.json()
+                self.assertIn("energy", [c["id"] for c in status["categories"]])
+                self.assertEqual(status["removed_categories"], [])
+            finally:
+                await client.close()
+
+        asyncio.run(run())
+
+    def test_removed_builtin_insight_file_is_not_a_ghost_card(self):
+        """A leftover file for a removed card must not resurface as an Ask."""
+        self._save("energy", "2026-07-18T10:00:00")
+        prompt_store.save_override("energy", {"hidden": True})
+        self.assertEqual(self.server.load_insights(), [])
+
+    def test_user_and_adhoc_cards_are_deleted_outright(self):
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                cat = user_categories.create({"title": "Fridge", "focus": "watch"})
+                self._save(cat["id"], "2026-07-18T10:00:00")
+                self._save("custom-1", "2026-07-18T11:00:00", category="custom")
+
+                resp = await client.delete(f"/api/card/{cat['id']}")
+                self.assertEqual(resp.status, 200)
+                self.assertFalse((await resp.json())["restorable"])
+                self.assertIsNone(user_categories.get(cat["id"]))
+                self.assertFalse((Path(self.tmp.name) / f"{cat['id']}.json").exists())
+
+                resp = await client.delete("/api/card/custom-1")
+                self.assertEqual(resp.status, 200)
+                self.assertFalse((Path(self.tmp.name) / "custom-1.json").exists())
+
+                resp = await client.delete("/api/card/custom-1")
+                self.assertEqual(resp.status, 404)
+            finally:
+                await client.close()
+
+        asyncio.run(run())
+
+    def test_failed_ask_with_no_insight_can_be_cleared(self):
+        """A card that only exists as a failed job was undeletable before."""
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                self.server._set_job("custom-42", state="error", error="boom")
+                resp = await client.delete("/api/card/custom-42")
+                self.assertEqual(resp.status, 200)
+                self.assertNotIn("custom-42", self.server.JOBS)
+            finally:
+                await client.close()
+
+        asyncio.run(run())
+
+    def test_builtin_card_can_be_renamed(self):
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                resp = await client.put("/api/prompt/energy",
+                                        json={"title": "Power bill", "icon": "🔌"})
+                self.assertEqual(resp.status, 200)
+                rec = await resp.json()
+                self.assertEqual(rec["title"], "Power bill")
+                self.assertEqual(rec["icon"], "🔌")
+                self.assertEqual(rec["default_title"],
+                                 categories.get_category("energy")["title"])
+
+                resp = await client.get("/api/status")
+                cat = {c["id"]: c for c in (await resp.json())["categories"]}["energy"]
+                self.assertEqual(cat["title"], "Power bill")
+                self.assertEqual(cat["icon"], "🔌")
+                self.assertTrue(cat["renamed"])
+
+                # the name reaches generation, so new insights carry it
+                eff = self.server.resolve_category("energy")
+                self.assertEqual(eff["title"], "Power bill")
+
+                # blanking restores the shipped name
+                resp = await client.put("/api/prompt/energy",
+                                        json={"title": "", "icon": ""})
+                rec = await resp.json()
+                self.assertEqual(rec["title"],
+                                 categories.get_category("energy")["title"])
+                self.assertEqual(rec["overridden"], [])
+
+                resp = await client.put("/api/prompt/energy", json={"title": 5})
+                self.assertEqual(resp.status, 400)
+                resp = await client.put("/api/prompt/energy", json={"hidden": "yes"})
+                self.assertEqual(resp.status, 400)
+            finally:
+                await client.close()
+
+        asyncio.run(run())
+
+    def test_adhoc_card_can_be_renamed(self):
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                self._save("custom-7", "2026-07-18T10:00:00", category="custom",
+                           category_title="Custom", icon="✨")
+                resp = await client.put("/api/insight/custom-7",
+                                        json={"name": "Fridge answer", "icon": "🧊"})
+                self.assertEqual(resp.status, 200)
+                self.assertEqual((await resp.json())["name"], "Fridge answer")
+
+                stored = json.loads(
+                    (Path(self.tmp.name) / "custom-7.json").read_text())
+                self.assertEqual(stored["category_title"], "Fridge answer")
+                self.assertEqual(stored["icon"], "🧊")
+                # the rest of the card survives the patch untouched
+                self.assertEqual(stored["html"], "<p>x</p>")
+
+                # an empty icon falls back rather than blanking the card
+                resp = await client.put("/api/insight/custom-7", json={"icon": ""})
+                self.assertEqual((await resp.json())["icon"], "✨")
+
+                resp = await client.put("/api/insight/custom-7", json={"name": " "})
+                self.assertEqual(resp.status, 400)
+                resp = await client.put("/api/insight/custom-nope", json={"name": "X"})
+                self.assertEqual(resp.status, 404)
+            finally:
+                await client.close()
+
+        asyncio.run(run())
 
 
 class TestFeedbackEndpoints(InsightsServerCase):
