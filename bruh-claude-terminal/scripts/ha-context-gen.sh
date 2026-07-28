@@ -35,19 +35,19 @@ generate_context() {
     ha_config=$(api_get "/api/config" 2>/dev/null || echo '{}')
 
     local ha_version
-    ha_version=$(echo "$ha_config" | jq -r '.version // "unknown"')
+    ha_version=$(echo "$ha_config" | jq -r '.version // "(lookup failed)"')
 
     local ha_name
-    ha_name=$(echo "$ha_config" | jq -r '.location_name // "Home"')
+    ha_name=$(echo "$ha_config" | jq -r '.location_name // "(lookup failed)"')
 
     local ha_timezone
-    ha_timezone=$(echo "$ha_config" | jq -r '.time_zone // "UTC"')
+    ha_timezone=$(echo "$ha_config" | jq -r '.time_zone // "(lookup failed)"')
 
     local ha_unit_system
-    ha_unit_system=$(echo "$ha_config" | jq -r '.unit_system.temperature // "unknown"')
+    ha_unit_system=$(echo "$ha_config" | jq -r '.unit_system.temperature // "(lookup failed)"')
 
     local ha_elevation
-    ha_elevation=$(echo "$ha_config" | jq -r '.elevation // "unknown"')
+    ha_elevation=$(echo "$ha_config" | jq -r '.elevation // "(lookup failed)"')
 
     # Get components/integrations
     local components
@@ -113,15 +113,24 @@ generate_context() {
     local input_select_count
     input_select_count=$(echo "$all_states" | jq '[.[] | select(.entity_id | startswith("input_select."))] | length' 2>/dev/null || echo "0")
 
-    # Get supervisor info
+    # Get supervisor info.
+    # NOTE on fallbacks: every jq `// "..."` default below uses a visible
+    # "(lookup failed)" marker, never a plausible-looking value. A context
+    # generator that silently degrades produces permanently wrong context,
+    # because wrong context is indistinguishable from true context.
     local supervisor_info
     supervisor_info=$(api_get "/core/info" 2>/dev/null || echo '{}')
 
+    # operating_system lives on /host/info, NOT /core/info — reading it
+    # from the wrong endpoint is why CLAUDE.md said "OS: unknown" forever.
+    local host_info
+    host_info=$(api_get "/host/info" 2>/dev/null || echo '{}')
+
     local ha_os
-    ha_os=$(echo "$supervisor_info" | jq -r '.data.operating_system // "unknown"')
+    ha_os=$(echo "$host_info" | jq -r '.data.operating_system // "(lookup failed)"')
 
     local ha_machine
-    ha_machine=$(echo "$supervisor_info" | jq -r '.data.machine // "unknown"')
+    ha_machine=$(echo "$supervisor_info" | jq -r '.data.machine // "(lookup failed)"')
 
     # Get installed add-ons
     local addons_info
@@ -139,6 +148,29 @@ generate_context() {
     integration_list=$(echo "$components" | head -50 | while read -r comp; do
         echo "  - $comp"
     done)
+
+    # Dashboard inventory (url_path/title/mode) via the MCP server module —
+    # makes the correct update target obvious without a discovery
+    # round-trip. Best-effort: emits a visible marker on failure.
+    local dashboard_list
+    dashboard_list=$(python3 - 2>/dev/null <<'PYEOF'
+import sys
+sys.path.insert(0, "/opt/ha-mcp-server")
+try:
+    from ha_mcp_server import list_dashboards
+    result = list_dashboards()
+    if not isinstance(result, dict) or "error" in result:
+        raise RuntimeError(result)
+    rows = ["  - url_path: (omit) — the default dashboard (auto-generated "
+            "until first saved; saving takes manual control of it)"]
+    for d in result.get("dashboards", []):
+        rows.append("  - url_path: {} — {} (mode: {})".format(
+            d.get("url_path"), d.get("title", "?"), d.get("mode", "?")))
+    print("\n".join(rows))
+except Exception:
+    sys.exit(1)
+PYEOF
+) || dashboard_list="  - (lookup failed — use the list_dashboards MCP tool)"
 
     # Preserve user-authored notes between the marker comments across
     # regenerations — everything else in this file is overwritten.
@@ -214,6 +246,23 @@ ${addon_list}
 
 ${integration_list}
 
+## Dashboards
+
+${dashboard_list}
+
+Dashboard rules:
+- **Always pass \`url_path\`** (from \`list_dashboards\` or the inventory
+  above) when reading or updating a dashboard. Only omit it when you truly
+  mean the default dashboard, and confirm with the user first — saving to a
+  never-saved default takes manual control of it permanently.
+- **Never use raw Lovelace transport**: do not call \`lovelace/config\`,
+  \`lovelace/config/save\`, or \`lovelace/config/delete\` over WebSocket or
+  REST. Use \`get_dashboard\` (MCP) to read and \`bruh_claude.update_dashboard\`
+  / \`bruh_claude.restore_dashboard\` to write — they validate and back up.
+- **Never verify via \`.storage\`**: HA's delayed saves make
+  \`/config/.storage\` stale for ~10s after a write. Verify a dashboard edit
+  with \`get_dashboard\`, never by reading \`.storage\` content or mtimes.
+
 ${memory_section}
 
 ## Available Directories
@@ -259,6 +308,7 @@ You have access to these CLI tools:
 - \`ha-share <action>\` - Cross-addon file sync via /share (push, pull, ls)
 - \`ha-memory <action>\` - Long-term home memory (add, list, inbox, questions, answer, consolidate, edit, clear)
 - \`ha-share-login\` - Share your Claude login with other BRUH add-ons (--status, --revoke)
+- \`ha-selftest\` - End-to-end diagnostic (MCP, auth, listeners, CLI smoke tests)
 - \`persist-install apk|pip <packages>\` - Install persistent packages
 
 ## MCP Server
@@ -304,9 +354,12 @@ return response data — pass \`return_response: true\` for those.
 - Persons: \`create_person\` (R), \`delete_person\`,
   \`add_device_tracker_to_person\`, \`remove_device_tracker_from_person\`
 - Blueprints: \`import_blueprint\` (R) — import from forum/GitHub/Gist URL
-- Statistics: \`import_statistics\` — backfill/repair long-term statistics
+- Statistics: \`import_statistics\` (R) — backfill/repair long-term statistics
   (entity id → recorder stats; \`domain:object_id\` → external stats; hourly
-  \`start\` timestamps; \`has_sum\` totals need \`sum\`, \`has_mean\` needs mean/min/max)
+  \`start\` timestamps; \`has_sum\` totals need \`sum\`, \`has_mean\` needs mean/min/max).
+  DRY RUN BY DEFAULT — it reports the affected window and existing rows;
+  only pass \`dry_run: false\` after reviewing, since imports overwrite
+  history irreversibly
 - Users: \`create_user\` (R; optional username+password together, pw ≥ 8 chars),
   \`delete_user\`, \`enable_user\`, \`disable_user\` (user_id from \`get_registry\`
   users; owner/system accounts can never be deleted or disabled)
@@ -314,9 +367,14 @@ return response data — pass \`return_response: true\` for those.
   that reference unknown entities; \`create_issue: true\` raises a repair
 - Dashboards: \`update_dashboard\` (R), \`restore_dashboard\` (R) — edit a
   Lovelace dashboard by fetching its JSON with the \`get_dashboard\` MCP tool
-  (\`list_dashboards\` enumerates them, including registered resources),
-  modifying it, and saving the FULL config back; the old config is backed up
-  automatically and \`restore_dashboard\` undoes a bad edit. Also
+  (\`list_dashboards\` enumerates them), modifying it, and saving back.
+  \`url_path\` is REQUIRED (use the literal \`"default"\` for the default
+  dashboard); pass \`view_index\` to replace one view instead of the whole
+  config; \`dry_run: true\` previews the resolved target first; saving onto
+  a never-saved dashboard needs \`take_control: true\`. The old config is
+  backed up automatically, \`restore_dashboard\` undoes a bad edit, and
+  \`reset_dashboard_config\` (R) reverts a dashboard to auto-generated —
+  never use raw \`lovelace/config\` websocket commands for any of this. Also
   \`create_dashboard\` (R; url_path needs a hyphen), \`delete_dashboard\` (R,
   backs config up first), and \`add_dashboard_resource\` (R) /
   \`remove_dashboard_resource\` for custom-card modules.
@@ -333,11 +391,14 @@ Examples:
   data=\`{}\` with \`return_response: true\` (only deletes with \`{"dry_run": false}\`)
 
 Cautions: \`delete_area\`/\`delete_floor\`/\`delete_label\` unassign, they don't
-delete members. \`change_entity_id\` does NOT rewrite automations/dashboards
-that reference the old id — run \`find_orphaned_references\` afterwards and
-update them. Confirm with the user before disabling devices/integrations/
-users or deleting anything non-trivial. For a safe-mode restart use core
-\`homeassistant.restart\` with \`safe_mode: true\`.
+delete members. All destructive services accept \`dry_run: true\` (with
+\`return_response\`) to preview the blast radius first — use it before any
+non-trivial delete/disable. \`change_entity_id\` does NOT rewrite
+automations/dashboards that reference the old id — its response lists the
+affected automations/scripts/scenes; update them, then run
+\`find_orphaned_references\`. Confirm with the user before disabling
+devices/integrations/users or deleting anything non-trivial. For a
+safe-mode restart use core \`homeassistant.restart\` with \`safe_mode: true\`.
 
 ## Important Notes
 

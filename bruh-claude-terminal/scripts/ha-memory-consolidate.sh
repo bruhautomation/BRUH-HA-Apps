@@ -130,6 +130,8 @@ build_prompt() {
     cat << PROMPT
 You maintain a small long-term memory file about one household for a smart-home assistant.
 
+Today's date is $(date -u +%Y-%m-%d).
+
 CURRENT memory.md:
 <<<MEMORY
 ${current_memory}
@@ -141,6 +143,11 @@ ${inbox_lines}
 FACTS
 
 Output the FULL updated memory.md: merge the new facts into the existing sections (## Preferences, ## Entity nicknames, ## Household patterns, ## Device notes), dedupe, resolve contradictions with newest-wins, and keep the file under ${MEMORY_MAX_KB} KB by dropping the lowest-value and oldest facts first. NEVER include secrets, credentials, transient device states, or one-off commands. Keep the header comment lines.
+
+Dating rules — facts must never masquerade as timeless truths:
+- End EVERY fact line with an observed-at marker: (observed YYYY-MM-DD). Carry existing markers forward unchanged; date new facts from their ts field; give undated existing facts today's date.
+- Device-health observations (dead battery, offline/unavailable, frozen sensor, unreachable device) are snapshots, not permanent facts: phrase them "as of <date>" and append "— re-verify before asserting". A battery replaced weeks ago must not still be reported dead.
+- DROP device-health observations whose observed date is older than 30 days — stale health claims are worse than none.
 
 Then print exactly this separator on its own line:
 ${VOICE_SEPARATOR}

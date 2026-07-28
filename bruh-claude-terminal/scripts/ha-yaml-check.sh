@@ -14,16 +14,35 @@ NC='\033[0m'
 
 CONFIG_DIR="/config"
 
+# Holds the parser diagnostic for the last failed file so callers can show it.
+LAST_YAML_ERROR=""
+
 validate_yaml_syntax() {
     local file="$1"
 
-    # Use Python for reliable YAML parsing
-    # Pass filename via sys.argv to avoid shell injection through filenames
-    if python3 -c "
-import yaml, sys
+    # Use Python for reliable YAML parsing.
+    # Pass filename via sys.argv to avoid shell injection through filenames.
+    # Home Assistant YAML uses custom tags (!secret, !include, !env_var,
+    # !input, !include_dir_*) that plain safe_load rejects — register stub
+    # constructors so idiomatic HA config files validate instead of
+    # false-failing on every tagged line.
+    LAST_YAML_ERROR=$(python3 -c "
+import sys, yaml
+
+class HALoader(yaml.SafeLoader):
+    pass
+
+def _stub(loader, node):
+    return None
+
+for tag in ('!secret', '!env_var', '!input', '!include',
+            '!include_dir_list', '!include_dir_named',
+            '!include_dir_merge_list', '!include_dir_merge_named'):
+    HALoader.add_constructor(tag, _stub)
+
 try:
     with open(sys.argv[1], 'r') as f:
-        yaml.safe_load(f)
+        yaml.load(f, Loader=HALoader)
     sys.exit(0)
 except yaml.YAMLError as e:
     print(f'YAML error: {e}', file=sys.stderr)
@@ -31,11 +50,7 @@ except yaml.YAMLError as e:
 except Exception as e:
     print(f'Error: {e}', file=sys.stderr)
     sys.exit(1)
-" "$file" 2>/dev/null; then
-        return 0
-    else
-        return 1
-    fi
+" "$file" 2>&1 >/dev/null) && return 0 || return 1
 }
 
 validate_file() {
@@ -60,6 +75,10 @@ validate_file() {
         return 0
     else
         echo -e "  ${RED}FAIL${NC} $file"
+        # Show the parser diagnostic — a bare FAIL is not actionable.
+        if [ -n "$LAST_YAML_ERROR" ]; then
+            echo "$LAST_YAML_ERROR" | sed 's/^/         /'
+        fi
         return 1
     fi
 }
@@ -72,11 +91,14 @@ validate_directory() {
     echo -e "${BLUE}Validating YAML files in ${dir}...${NC}"
     echo ""
 
-    # Find all YAML files (non-recursive in hidden dirs)
+    # Find all YAML files (non-recursive in hidden dirs).
+    # NOTE: increments must use var=$((var+1)); ((var++)) returns exit
+    # status 1 when the pre-increment value is 0, which kills the whole
+    # script under `set -e` after the very first file.
     while IFS= read -r -d '' file; do
-        validate_file "$file" || ((errors++))
-        ((checked++))
-    done < <(find "$dir" -maxdepth 2 -name "*.yaml" -o -name "*.yml" | sort | tr '\n' '\0')
+        validate_file "$file" || errors=$((errors+1))
+        checked=$((checked+1))
+    done < <(find "$dir" -maxdepth 2 \( -name "*.yaml" -o -name "*.yml" \) | sort | tr '\n' '\0')
 
     echo ""
     echo -e "${BLUE}Checked ${checked} files, ${errors} error(s)${NC}"

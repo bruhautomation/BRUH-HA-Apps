@@ -296,6 +296,13 @@ cleanup_stale_files() {
     # Session mappings older than 7 days — Claude Code's own session cleanup
     # will have removed the underlying session by then anyway.
     find "$SESSIONS_DIR" -type f -mmin +10080 -delete 2>/dev/null || true
+    # Debug logs hold full voice transcripts: age them out (default 7 days,
+    # BRUH_LOG_RETENTION_DAYS overrides) and keep them owner-only — they
+    # live under /config and would otherwise ride into every HA full backup.
+    local retention_days="${BRUH_LOG_RETENTION_DAYS:-7}"
+    find "$LOG_DIR" -name '*.log' -mtime "+${retention_days}" -delete 2>/dev/null || true
+    chmod 700 "$LOG_DIR" 2>/dev/null || true
+    chmod 600 "$LOG_DIR"/*.log 2>/dev/null || true
 }
 
 # ---------------------------------------------------------------------------

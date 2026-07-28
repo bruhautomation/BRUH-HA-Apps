@@ -179,11 +179,15 @@
     },
     "delete_area": {
       "name": "Delete area",
-      "description": "Delete an area. Entities and devices in it are left unassigned.",
+      "description": "Delete an area. Entities and devices in it are left unassigned. Set dry_run to preview the devices/entities that would lose their assignment.",
       "fields": {
         "area_id": {
           "name": "Area",
           "description": "The area to delete."
+        },
+        "dry_run": {
+          "name": "Dry run",
+          "description": "When on, only report what would change — nothing is modified."
         }
       }
     },
@@ -287,11 +291,15 @@
     },
     "delete_floor": {
       "name": "Delete floor",
-      "description": "Delete a floor. Areas on it are left without a floor.",
+      "description": "Delete a floor. Areas on it are left without a floor. Set dry_run to preview the areas that would lose the floor.",
       "fields": {
         "floor_id": {
           "name": "Floor",
           "description": "The floor to delete."
+        },
+        "dry_run": {
+          "name": "Dry run",
+          "description": "When on, only report what would change — nothing is modified."
         }
       }
     },
@@ -357,11 +365,15 @@
     },
     "delete_label": {
       "name": "Delete label",
-      "description": "Delete a label. It is removed from everything it was applied to.",
+      "description": "Delete a label. It is removed from everything it was applied to. Set dry_run to preview everything currently carrying the label.",
       "fields": {
         "label_id": {
           "name": "Label",
           "description": "The label to delete."
+        },
+        "dry_run": {
+          "name": "Dry run",
+          "description": "When on, only report what would change — nothing is modified."
         }
       }
     },
@@ -425,7 +437,7 @@
     },
     "change_entity_id": {
       "name": "Change entity ID",
-      "description": "Change an entity's ID (e.g. light.shelly_abc123 to light.kitchen_ceiling). Automations and dashboards referencing the old ID must be updated separately.",
+      "description": "Change an entity's ID (e.g. light.shelly_abc123 to light.kitchen_ceiling). Automations and dashboards referencing the old ID must be updated separately. The response lists automations/scripts/scenes that reference the old id; set dry_run to preview without renaming.",
       "fields": {
         "entity_id": {
           "name": "Entity",
@@ -434,6 +446,10 @@
         "new_entity_id": {
           "name": "New entity ID",
           "description": "The new entity ID, same domain."
+        },
+        "dry_run": {
+          "name": "Dry run",
+          "description": "When on, only report what would change — nothing is modified."
         }
       }
     },
@@ -537,11 +553,15 @@
     },
     "disable_integration": {
       "name": "Disable integration",
-      "description": "Disable one or more integration config entries and everything they provide.",
+      "description": "Disable one or more integration config entries and everything they provide. Set dry_run to preview the affected entries and entity counts.",
       "fields": {
         "config_entry_id": {
           "name": "Integration",
           "description": "The config entry to disable."
+        },
+        "dry_run": {
+          "name": "Dry run",
+          "description": "When on, only report what would change — nothing is modified."
         }
       }
     },
@@ -587,11 +607,15 @@
     },
     "delete_zone": {
       "name": "Delete zone",
-      "description": "Delete one or more UI-created zones.",
+      "description": "Delete one or more UI-created zones. Set dry_run to preview the zones that would be deleted.",
       "fields": {
         "entity_id": {
           "name": "Zones",
           "description": "Zone entities to delete."
+        },
+        "dry_run": {
+          "name": "Dry run",
+          "description": "When on, only report what would change — nothing is modified."
         }
       }
     },
@@ -671,7 +695,7 @@
     },
     "import_statistics": {
       "name": "Import statistics",
-      "description": "Import or backfill long-term statistics rows. Use an entity ID (sensor.gas_meter) for recorder statistics, or an external ID (bruh:solar_forecast) for external statistics; the source is derived automatically.",
+      "description": "Import or backfill long-term statistics rows. Use an entity ID (sensor.gas_meter) for recorder statistics, or an external ID (bruh:solar_forecast) for external statistics; the source is derived automatically. Runs as a dry run by default: the response reports the affected time range and existing rows that would be overwritten. Pass dry_run: false to actually import — existing rows in the window are overwritten and cannot be restored without a recorder DB backup.",
       "fields": {
         "statistic_id": {
           "name": "Statistic ID",
@@ -696,6 +720,10 @@
         "stats": {
           "name": "Rows",
           "description": "List of statistics rows. Each row needs a start timestamp (top of an hour) plus mean/min/max and/or state/sum values."
+        },
+        "dry_run": {
+          "name": "Dry run",
+          "description": "When on (default), only report the affected window and existing rows — nothing is written."
         }
       }
     },
@@ -731,15 +759,27 @@
     },
     "update_dashboard": {
       "name": "Update dashboard",
-      "description": "Replace a storage-mode dashboard's configuration. The previous configuration is automatically backed up first (last 20 kept per dashboard) and the backup name is returned as response data, so any edit can be undone with restore_dashboard. YAML-mode dashboards are refused.",
+      "description": "Replace a storage-mode dashboard's configuration. The previous configuration is automatically backed up first (last 20 kept per dashboard) and the backup name is returned as response data, so any edit can be undone with restore_dashboard. YAML-mode dashboards are refused. url_path is required — pass the literal \"default\" to target the default dashboard. Saving onto a never-saved (auto-generated) dashboard requires take_control: true. Set view_index to replace a single view instead of the whole config, and dry_run to preview the resolved target and change summary without writing.",
       "fields": {
         "config": {
           "name": "Configuration",
-          "description": "The full dashboard configuration object, including the complete views list."
+          "description": "The full dashboard configuration object including the complete views list — or, when view_index is set, a single view object."
         },
         "url_path": {
           "name": "Dashboard",
-          "description": "The dashboard's URL path (e.g. lovelace-lights). Omit for the default dashboard."
+          "description": "The dashboard's URL path (e.g. lovelace-lights), or the literal \"default\" for the default dashboard."
+        },
+        "take_control": {
+          "name": "Take control",
+          "description": "Confirm saving onto a never-saved (auto-generated) dashboard, taking permanent manual control of it."
+        },
+        "view_index": {
+          "name": "View index",
+          "description": "Replace only this view (0-based); config must then be a single view object."
+        },
+        "dry_run": {
+          "name": "Dry run",
+          "description": "When on, only report what would change — nothing is modified."
         }
       }
     },
@@ -754,6 +794,20 @@
         "backup": {
           "name": "Backup",
           "description": "A specific backup file name from a previous update_dashboard response. Omit for the most recent."
+        }
+      }
+    },
+    "reset_dashboard_config": {
+      "name": "Reset dashboard config",
+      "description": "Delete a dashboard's STORED configuration (after backing it up), reverting it to auto-generated. The sanctioned way to clear a dashboard config — never use raw lovelace/config websocket commands. The dashboard itself stays registered; restore_dashboard brings the config back from the backup.",
+      "fields": {
+        "url_path": {
+          "name": "Dashboard",
+          "description": "The dashboard's URL path, or the literal \"default\" for the default dashboard."
+        },
+        "dry_run": {
+          "name": "Dry run",
+          "description": "When on, only report what would change — nothing is modified."
         }
       }
     },
@@ -777,11 +831,15 @@
     },
     "delete_helper": {
       "name": "Delete helper",
-      "description": "Delete one or more UI-created helpers of any storage-backed type. Helpers defined in YAML are refused with a clear error.",
+      "description": "Delete one or more UI-created helpers of any storage-backed type. Helpers defined in YAML are refused with a clear error. Set dry_run to preview the helpers that would be deleted.",
       "fields": {
         "entity_id": {
           "name": "Helpers",
           "description": "Helper entities to delete."
+        },
+        "dry_run": {
+          "name": "Dry run",
+          "description": "When on, only report what would change — nothing is modified."
         }
       }
     },
@@ -875,11 +933,15 @@
     },
     "delete_dashboard": {
       "name": "Delete dashboard",
-      "description": "Delete a storage-mode dashboard. Its configuration is backed up first (same backup store as update_dashboard) and the backup name is returned as response data, so a deletion can be recovered by recreating the dashboard and restoring.",
+      "description": "Delete a storage-mode dashboard. Its configuration is backed up first (same backup store as update_dashboard) and the backup name is returned as response data, so a deletion can be recovered by recreating the dashboard and restoring. Set dry_run to preview the dashboard and whether a backup would be created.",
       "fields": {
         "url_path": {
           "name": "Dashboard",
           "description": "The dashboard's URL path."
+        },
+        "dry_run": {
+          "name": "Dry run",
+          "description": "When on, only report what would change — nothing is modified."
         }
       }
     },
@@ -927,11 +989,15 @@
     },
     "delete_person": {
       "name": "Delete person",
-      "description": "Delete a UI-created person. YAML-defined persons are refused.",
+      "description": "Delete a UI-created person. YAML-defined persons are refused. Set dry_run to preview the person and their device trackers.",
       "fields": {
         "entity_id": {
           "name": "Person",
           "description": "The person entity to delete."
+        },
+        "dry_run": {
+          "name": "Dry run",
+          "description": "When on, only report what would change — nothing is modified."
         }
       }
     },
@@ -959,11 +1025,15 @@
     },
     "delete_user": {
       "name": "Delete user",
-      "description": "Delete one or more Home Assistant user accounts and their credentials. Owner accounts and system-generated users are protected and cannot be deleted.",
+      "description": "Delete one or more Home Assistant user accounts and their credentials. Owner accounts and system-generated users are protected and cannot be deleted. Set dry_run to preview the accounts that would be deleted.",
       "fields": {
         "user_id": {
           "name": "User IDs",
           "description": "IDs of the users to delete."
+        },
+        "dry_run": {
+          "name": "Dry run",
+          "description": "When on, only report what would change — nothing is modified."
         }
       }
     }

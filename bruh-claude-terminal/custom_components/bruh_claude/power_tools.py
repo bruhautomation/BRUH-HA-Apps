@@ -33,6 +33,15 @@ released under the MIT License. Changes from Spook:
 - creation services return the new registry id as response data
 - `delete_orphaned_entities` defaults to a dry run that reports what it
   would remove
+- every destructive service supports `dry_run` previews with blast-radius
+  response data; `import_statistics` (irreversible without a recorder DB
+  restore) defaults to dry run
+- every call is audit-logged (service, args, outcome) through the admin
+  gate, so mutations leave a forensic trail
+- dashboard writes are guarded: `url_path` is required (the default
+  dashboard needs the explicit literal "default"), taking over a
+  never-saved dashboard requires `take_control: true`, and
+  `reset_dashboard_config` is the sanctioned undo
 - label application is consolidated into two multi-target services
   (`add_label` / `remove_label`) instead of six single-target ones
 """
@@ -159,9 +168,34 @@ async def _create_area(hass: HomeAssistant, call: ServiceCall) -> dict | None:
     return {"area_id": entry.id}
 
 
-async def _delete_area(hass: HomeAssistant, call: ServiceCall) -> None:
-    _ensure_area(hass, call.data["area_id"])
-    ar.async_get(hass).async_delete(call.data["area_id"])
+def _dry_run(call: ServiceCall) -> bool:
+    return bool(call.data.get("dry_run", False))
+
+
+async def _delete_area(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    """Delete an area. dry_run previews the blast radius (members are
+    unassigned, not deleted — but the assignment loss is irreversible)."""
+    area_id = call.data["area_id"]
+    _ensure_area(hass, area_id)
+    area = ar.async_get(hass).async_get_area(area_id)
+    devices = sorted(
+        d.id for d in dr.async_get(hass).devices.values() if d.area_id == area_id
+    )
+    entities = sorted(
+        e.entity_id for e in er.async_get(hass).entities.values()
+        if e.area_id == area_id
+    )
+    result = {
+        "dry_run": _dry_run(call),
+        "area_id": area_id,
+        "name": area.name if area else None,
+        "devices_assigned": devices,
+        "entities_assigned": entities,
+    }
+    if _dry_run(call):
+        return result
+    ar.async_get(hass).async_delete(area_id)
+    return result
 
 
 async def _rename_area(hass: HomeAssistant, call: ServiceCall) -> None:
@@ -226,9 +260,24 @@ async def _create_floor(hass: HomeAssistant, call: ServiceCall) -> dict | None:
     return {"floor_id": entry.floor_id}
 
 
-async def _delete_floor(hass: HomeAssistant, call: ServiceCall) -> None:
-    _ensure_floor(hass, call.data["floor_id"])
-    fr.async_get(hass).async_delete(call.data["floor_id"])
+async def _delete_floor(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    """Delete a floor. dry_run previews the areas that would lose it."""
+    floor_id = call.data["floor_id"]
+    _ensure_floor(hass, floor_id)
+    floor = fr.async_get(hass).async_get_floor(floor_id)
+    areas = sorted(
+        a.id for a in ar.async_get(hass).areas.values() if a.floor_id == floor_id
+    )
+    result = {
+        "dry_run": _dry_run(call),
+        "floor_id": floor_id,
+        "name": floor.name if floor else None,
+        "areas_assigned": areas,
+    }
+    if _dry_run(call):
+        return result
+    fr.async_get(hass).async_delete(floor_id)
+    return result
 
 
 async def _rename_floor(hass: HomeAssistant, call: ServiceCall) -> None:
@@ -269,9 +318,32 @@ async def _create_label(hass: HomeAssistant, call: ServiceCall) -> dict | None:
     return {"label_id": entry.label_id}
 
 
-async def _delete_label(hass: HomeAssistant, call: ServiceCall) -> None:
-    _ensure_label(hass, call.data["label_id"])
-    lr.async_get(hass).async_delete(call.data["label_id"])
+async def _delete_label(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    """Delete a label. dry_run previews what currently carries it."""
+    label_id = call.data["label_id"]
+    _ensure_label(hass, label_id)
+    label = lr.async_get(hass).async_get_label(label_id)
+    result = {
+        "dry_run": _dry_run(call),
+        "label_id": label_id,
+        "name": label.name if label else None,
+        "entities_labeled": sorted(
+            e.entity_id for e in er.async_get(hass).entities.values()
+            if label_id in e.labels
+        ),
+        "devices_labeled": sorted(
+            d.id for d in dr.async_get(hass).devices.values()
+            if label_id in d.labels
+        ),
+        "areas_labeled": sorted(
+            a.id for a in ar.async_get(hass).areas.values()
+            if label_id in a.labels
+        ),
+    }
+    if _dry_run(call):
+        return result
+    lr.async_get(hass).async_delete(label_id)
+    return result
 
 
 def _label_targets(call: ServiceCall) -> tuple[list[str], list[str], list[str]]:
@@ -342,11 +414,40 @@ async def _rename_entity(hass: HomeAssistant, call: ServiceCall) -> None:
         registry.async_update_entity(entity_id, name=call.data["name"])
 
 
-async def _change_entity_id(hass: HomeAssistant, call: ServiceCall) -> None:
-    _ensure_entity(hass, call.data["entity_id"])
-    er.async_get(hass).async_update_entity(
-        call.data["entity_id"], new_entity_id=call.data["new_entity_id"]
+async def _change_entity_id(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    """Rename an entity id, reporting everything that references the old id.
+
+    The rename does NOT rewrite automations/scripts/scenes/dashboards that
+    reference the old id — the response lists the affected sources so the
+    breakage is visible the moment it's created, not discovered later by a
+    broken automation. dry_run previews without renaming."""
+    entity_id = call.data["entity_id"]
+    new_entity_id = call.data["new_entity_id"]
+    _ensure_entity(hass, entity_id)
+
+    references = sorted(
+        source_id
+        for source_id, referenced in _reference_sources(hass)
+        if entity_id in referenced
     )
+    result = {
+        "dry_run": _dry_run(call),
+        "entity_id": entity_id,
+        "new_entity_id": new_entity_id,
+        "references_to_old_id": references,
+    }
+    if references:
+        result["note"] = (
+            "These automations/scripts/scenes reference the old id and must "
+            "be updated by hand (dashboards may too — run "
+            "find_orphaned_references after fixing them)."
+        )
+    if _dry_run(call):
+        return result
+    er.async_get(hass).async_update_entity(
+        entity_id, new_entity_id=new_entity_id
+    )
+    return result
 
 
 async def _enable_entity(hass: HomeAssistant, call: ServiceCall) -> None:
@@ -515,13 +616,33 @@ async def _enable_integration(hass: HomeAssistant, call: ServiceCall) -> None:
         await hass.config_entries.async_set_disabled_by(entry_id, None)
 
 
-async def _disable_integration(hass: HomeAssistant, call: ServiceCall) -> None:
+async def _disable_integration(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    entries = []
     for entry_id in call.data["config_entry_id"]:
         _ensure_config_entry(hass, entry_id)
+        entries.append(hass.config_entries.async_get_entry(entry_id))
+    registry = er.async_get(hass)
+    result = {
+        "dry_run": _dry_run(call),
+        "integrations": [
+            {
+                "config_entry_id": e.entry_id,
+                "domain": e.domain,
+                "title": e.title,
+                "entities_affected": len(
+                    er.async_entries_for_config_entry(registry, e.entry_id)
+                ),
+            }
+            for e in entries
+        ],
+    }
+    if _dry_run(call):
+        return result
     for entry_id in call.data["config_entry_id"]:
         await hass.config_entries.async_set_disabled_by(
             entry_id, ConfigEntryDisabler.USER
         )
+    return result
 
 
 async def _reload_integration(hass: HomeAssistant, call: ServiceCall) -> None:
@@ -591,7 +712,7 @@ async def _create_helper(hass: HomeAssistant, call: ServiceCall) -> dict | None:
     return {"helper_type": helper_type, "id": item["id"], "entity_id": entity_id}
 
 
-async def _delete_helper(hass: HomeAssistant, call: ServiceCall) -> None:
+async def _delete_helper(hass: HomeAssistant, call: ServiceCall) -> dict | None:
     registry = er.async_get(hass)
     targets: list[tuple[str, str, str]] = []
     for entity_id in call.data["entity_id"]:
@@ -605,6 +726,11 @@ async def _delete_helper(hass: HomeAssistant, call: ServiceCall) -> None:
         if entry is None:
             raise HomeAssistantError(f"Entity not found in registry: {entity_id}")
         targets.append((domain, entity_id, entry.unique_id))
+    if _dry_run(call):
+        return {
+            "dry_run": True,
+            "would_delete": [entity_id for _, entity_id, _ in targets],
+        }
     for domain, entity_id, unique_id in targets:
         collection = _storage_collection(hass, domain)
         try:
@@ -614,6 +740,10 @@ async def _delete_helper(hass: HomeAssistant, call: ServiceCall) -> None:
                 f"Could not delete {entity_id} — helpers defined in YAML "
                 "must be removed from the YAML file"
             ) from err
+    return {
+        "dry_run": False,
+        "deleted": [entity_id for _, entity_id, _ in targets],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -640,7 +770,7 @@ async def _create_zone(hass: HomeAssistant, call: ServiceCall) -> None:
     await collection.async_create_item(data)
 
 
-async def _delete_zone(hass: HomeAssistant, call: ServiceCall) -> None:
+async def _delete_zone(hass: HomeAssistant, call: ServiceCall) -> dict | None:
     try:
         from homeassistant.helpers.entity_component import DATA_INSTANCES
 
@@ -649,13 +779,25 @@ async def _delete_zone(hass: HomeAssistant, call: ServiceCall) -> None:
         raise HomeAssistantError("Zone component is not loaded") from err
 
     collection = _zone_collection(hass)
+    targets: list[tuple[str, str]] = []
     for entity_id in call.data["entity_id"]:
         entity = entity_component.get_entity(entity_id)
         if entity is None:
             raise HomeAssistantError(f"Zone not found: {entity_id}")
         if not entity.editable or "id" not in entity._config:  # noqa: SLF001
             raise HomeAssistantError(f"This zone is not editable: {entity_id}")
-        await collection.async_delete_item(entity._config["id"])  # noqa: SLF001
+        targets.append((entity_id, entity._config["id"]))  # noqa: SLF001
+    if _dry_run(call):
+        return {
+            "dry_run": True,
+            "would_delete": [entity_id for entity_id, _ in targets],
+        }
+    for _, item_id in targets:
+        await collection.async_delete_item(item_id)
+    return {
+        "dry_run": False,
+        "deleted": [entity_id for entity_id, _ in targets],
+    }
 
 
 async def _update_zone(hass: HomeAssistant, call: ServiceCall) -> None:
@@ -747,7 +889,7 @@ async def _create_person(hass: HomeAssistant, call: ServiceCall) -> dict | None:
     return {"person_id": item["id"]}
 
 
-async def _delete_person(hass: HomeAssistant, call: ServiceCall) -> None:
+async def _delete_person(hass: HomeAssistant, call: ServiceCall) -> dict | None:
     collection, entity_component = _person_parts(hass)
     entity = entity_component.get_entity(call.data["entity_id"])
     if entity is None:
@@ -756,7 +898,16 @@ async def _delete_person(hass: HomeAssistant, call: ServiceCall) -> None:
         raise HomeAssistantError(
             f"This person is not editable (YAML-defined): {call.data['entity_id']}"
         )
+    result = {
+        "dry_run": _dry_run(call),
+        "entity_id": call.data["entity_id"],
+        "name": getattr(entity, "name", None),
+        "device_trackers": sorted(entity.device_trackers or []),
+    }
+    if _dry_run(call):
+        return result
     await collection.async_delete_item(entity._config["id"])  # noqa: SLF001
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -811,7 +962,7 @@ async def _create_user(hass: HomeAssistant, call: ServiceCall) -> dict | None:
     return {"user_id": user.id, "name": user.name}
 
 
-async def _delete_user(hass: HomeAssistant, call: ServiceCall) -> None:
+async def _delete_user(hass: HomeAssistant, call: ServiceCall) -> dict | None:
     users = []
     for user_id in call.data["user_id"]:
         user = await hass.auth.async_get_user(user_id)
@@ -827,8 +978,15 @@ async def _delete_user(hass: HomeAssistant, call: ServiceCall) -> None:
                 f"Refusing to delete owner account: {user.name or user_id}"
             )
         users.append(user)
+    result = {
+        "dry_run": _dry_run(call),
+        "users": [{"user_id": u.id, "name": u.name} for u in users],
+    }
+    if _dry_run(call):
+        return result
     for user in users:
         await hass.auth.async_remove_user(user)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -893,13 +1051,20 @@ async def _import_blueprint(hass: HomeAssistant, call: ServiceCall) -> dict | No
 # ---------------------------------------------------------------------------
 
 
-async def _import_statistics(hass: HomeAssistant, call: ServiceCall) -> None:
+async def _import_statistics(hass: HomeAssistant, call: ServiceCall) -> dict | None:
     """Import/backfill long-term statistics rows for a statistic id.
 
     The source is derived from the statistic_id (Spook makes callers pass
     it, which is an easy way to create rows HA refuses to load):
     entity-style ids ("sensor.gas_meter") import as recorder statistics,
     external ids ("bruh:solar_forecast") as external statistics.
+
+    This is the most dangerous service in the file: corrupted history is
+    nearly undetectable at write time, surfaces months later as a wrong
+    energy chart, and can't be undone without a recorder DB restore. It
+    therefore DEFAULTS TO A DRY RUN that reports the affected time range
+    and how many existing rows the import would overwrite; pass
+    dry_run: false to actually write.
     """
     try:
         from homeassistant.components.recorder.statistics import (
@@ -918,6 +1083,50 @@ async def _import_statistics(hass: HomeAssistant, call: ServiceCall) -> None:
             f"Invalid statistic_id '{statistic_id}': use an entity id "
             "(sensor.gas_meter) or an external id (domain:object_id)"
         )
+
+    stats = call.data["stats"]
+    if not stats:
+        raise HomeAssistantError("stats must contain at least one row")
+    starts = sorted(row["start"] for row in stats)
+    dry_run = call.data.get("dry_run", True)
+    if dry_run:
+        # Best-effort count of existing rows in the affected window — the
+        # values the import would overwrite.
+        existing_rows: Any = "unknown"
+        try:
+            from datetime import timedelta
+
+            from homeassistant.components.recorder import get_instance
+            from homeassistant.components.recorder.statistics import (
+                statistics_during_period,
+            )
+
+            existing = await get_instance(hass).async_add_executor_job(
+                statistics_during_period,
+                hass,
+                starts[0],
+                starts[-1] + timedelta(hours=1),
+                {statistic_id},
+                "hour",
+                None,
+                {"state", "sum", "mean", "min", "max"},
+            )
+            existing_rows = len(existing.get(statistic_id, []))
+        except Exception:  # noqa: BLE001 — recorder API shape varies
+            pass
+        return {
+            "dry_run": True,
+            "statistic_id": statistic_id,
+            "source": "recorder" if is_internal else "external",
+            "rows_to_import": len(stats),
+            "window_start": str(starts[0]),
+            "window_end": str(starts[-1]),
+            "existing_rows_in_window": existing_rows,
+            "note": ("Nothing was written. Existing rows in this window "
+                     "will be OVERWRITTEN on import and cannot be restored "
+                     "without a recorder DB backup. Re-run with "
+                     "dry_run: false to import."),
+        }
 
     metadata: dict[str, Any] = {
         "has_sum": call.data["has_sum"],
@@ -949,9 +1158,16 @@ async def _import_statistics(hass: HomeAssistant, call: ServiceCall) -> None:
         metadata["has_mean"] = call.data["has_mean"]
 
     if is_internal:
-        async_import_statistics(hass, metadata, call.data["stats"])
+        async_import_statistics(hass, metadata, stats)
     else:
-        async_add_external_statistics(hass, metadata, call.data["stats"])
+        async_add_external_statistics(hass, metadata, stats)
+    return {
+        "dry_run": False,
+        "statistic_id": statistic_id,
+        "rows_imported": len(stats),
+        "window_start": str(starts[0]),
+        "window_end": str(starts[-1]),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1107,6 +1323,16 @@ def _dashboard_slug(url_path: str | None) -> str:
     return url_path or "default"
 
 
+def _dashboard_key(url_path: str | None) -> str | None:
+    """Map the explicit literal "default" (and None) to the storage key of
+    the default dashboard. update_dashboard requires url_path so the
+    default dashboard can never be targeted by accidental omission — only
+    by passing "default" on purpose."""
+    if url_path in (None, "default"):
+        return None
+    return url_path
+
+
 def _save_dashboard_backup(directory: str, slug: str, config: dict) -> str:
     """Write a timestamped backup and prune old ones. Executor-safe."""
     from datetime import datetime, timezone
@@ -1158,22 +1384,80 @@ def _load_dashboard_backup(
 
 
 async def _update_dashboard(hass: HomeAssistant, call: ServiceCall) -> dict | None:
-    """Replace a storage dashboard's config, backing up the old one first."""
+    """Replace a storage dashboard's config, backing up the old one first.
+
+    Safety rails, each of which has prevented (or would have prevented) a
+    real incident:
+    - url_path is required; the default dashboard is only reachable via
+      the explicit literal "default", never by omission.
+    - saving onto a never-saved (auto-generated) dashboard permanently
+      takes manual control of it, so that case requires take_control: true.
+    - dry_run returns the resolved target and a change summary without
+      writing anything.
+    - view_index replaces a single view instead of the whole config,
+      shrinking the blast radius of small edits.
+    """
+    url_path = _dashboard_key(call.data["url_path"])
+    view_index = call.data.get("view_index")
     new_config = call.data["config"]
-    if not isinstance(new_config, dict) or not isinstance(
+    dashboard = _get_dashboard(hass, url_path)
+
+    try:
+        old_config = await dashboard.async_load(False)
+    except Exception:  # noqa: BLE001 — dashboard never saved (auto-generated)
+        old_config = None
+
+    if view_index is not None:
+        # config is ONE view object, spliced into the stored config.
+        if old_config is None:
+            raise HomeAssistantError(
+                "view_index edits need a stored config, and this dashboard "
+                "has none (it is auto-generated) — save a full config with "
+                "take_control: true first"
+            )
+        views = old_config.get("views") or []
+        if not isinstance(new_config, dict) or "views" in new_config:
+            raise HomeAssistantError(
+                "With view_index, config must be a single view object "
+                "(not a full dashboard config)"
+            )
+        if not 0 <= view_index < len(views):
+            raise HomeAssistantError(
+                f"view_index {view_index} out of range — this dashboard "
+                f"has {len(views)} views"
+            )
+        merged = dict(old_config)
+        merged["views"] = list(views)
+        merged["views"][view_index] = new_config
+        new_config = merged
+    elif not isinstance(new_config, dict) or not isinstance(
         new_config.get("views"), list
     ):
         raise HomeAssistantError(
             "config must be a full dashboard object with a 'views' list"
         )
-    url_path = call.data.get("url_path")
-    dashboard = _get_dashboard(hass, url_path)
+
+    taking_control = old_config is None
+    if taking_control and not call.data.get("take_control"):
+        raise HomeAssistantError(
+            f"Dashboard '{_dashboard_slug(url_path)}' has never been saved "
+            "(it is auto-generated). Saving will take permanent manual "
+            "control of it — pass take_control: true to confirm, and undo "
+            "later with bruh_claude.reset_dashboard_config if needed."
+        )
+
+    if _dry_run(call):
+        return {
+            "dry_run": True,
+            "url_path": _dashboard_slug(url_path),
+            "would_take_control": taking_control,
+            "old_views": len((old_config or {}).get("views") or []),
+            "new_views": len(new_config["views"]),
+            "edited_view_index": view_index,
+            "backup_would_be_created": bool(old_config),
+        }
 
     backup_name = None
-    try:
-        old_config = await dashboard.async_load(False)
-    except Exception:  # noqa: BLE001 — dashboard never saved (auto-generated)
-        old_config = None
     if old_config:
         backup_name = os.path.basename(
             await hass.async_add_executor_job(
@@ -1185,16 +1469,23 @@ async def _update_dashboard(hass: HomeAssistant, call: ServiceCall) -> dict | No
         )
 
     await dashboard.async_save(new_config)
-    return {
+    result = {
         "url_path": _dashboard_slug(url_path),
         "views": len(new_config["views"]),
         "backup": backup_name,
     }
+    if taking_control:
+        result["took_control"] = True
+        result["note"] = (
+            "This dashboard was auto-generated; it is now manually "
+            "controlled. bruh_claude.reset_dashboard_config reverts it."
+        )
+    return result
 
 
 async def _restore_dashboard(hass: HomeAssistant, call: ServiceCall) -> dict | None:
     """Restore a storage dashboard from a backup (latest by default)."""
-    url_path = call.data.get("url_path")
+    url_path = _dashboard_key(call.data.get("url_path"))
     dashboard = _get_dashboard(hass, url_path)
     backup_name, config = await hass.async_add_executor_job(
         _load_dashboard_backup,
@@ -1207,6 +1498,54 @@ async def _restore_dashboard(hass: HomeAssistant, call: ServiceCall) -> dict | N
         "url_path": _dashboard_slug(url_path),
         "restored_from": backup_name,
         "views": len(config.get("views") or []),
+    }
+
+
+async def _reset_dashboard_config(
+    hass: HomeAssistant, call: ServiceCall
+) -> dict | None:
+    """Delete a dashboard's STORED config (after backing it up), reverting
+    it to auto-generated. The sanctioned way to clear a config — the gap
+    that previously pushed callers to raw `lovelace/config/delete` over
+    websocket, which is prohibited. The dashboard itself stays registered;
+    delete_dashboard removes the registration."""
+    url_path = _dashboard_key(call.data["url_path"])
+    dashboard = _get_dashboard(hass, url_path)
+    try:
+        old_config = await dashboard.async_load(False)
+    except Exception:  # noqa: BLE001 — never saved
+        old_config = None
+    if not old_config:
+        raise HomeAssistantError(
+            f"Dashboard '{_dashboard_slug(url_path)}' has no stored config "
+            "to reset — it is already auto-generated"
+        )
+    if _dry_run(call):
+        return {
+            "dry_run": True,
+            "url_path": _dashboard_slug(url_path),
+            "views_in_stored_config": len(old_config.get("views") or []),
+        }
+    backup_name = os.path.basename(
+        await hass.async_add_executor_job(
+            _save_dashboard_backup,
+            hass.config.path(DASHBOARD_BACKUP_DIR),
+            _dashboard_slug(url_path),
+            old_config,
+        )
+    )
+    if not hasattr(dashboard, "async_delete"):
+        raise HomeAssistantError(
+            "Resetting a dashboard config is not supported on this "
+            "Home Assistant version"
+        )
+    await dashboard.async_delete()
+    return {
+        "url_path": _dashboard_slug(url_path),
+        "backup": backup_name,
+        "note": ("Stored config removed — the dashboard is auto-generated "
+                 "again. bruh_claude.restore_dashboard brings the config "
+                 "back from the backup."),
     }
 
 
@@ -1251,20 +1590,29 @@ async def _delete_dashboard(hass: HomeAssistant, call: ServiceCall) -> dict | No
     backup_name = None
     dashboards = _lovelace_dashboards(hass)
     dashboard = dashboards.get(url_path)
+    old_config = None
     if dashboard is not None and getattr(dashboard, "mode", "storage") == "storage":
         try:
             old_config = await dashboard.async_load(False)
         except Exception:  # noqa: BLE001 — never saved
             old_config = None
-        if old_config:
-            backup_name = os.path.basename(
-                await hass.async_add_executor_job(
-                    _save_dashboard_backup,
-                    hass.config.path(DASHBOARD_BACKUP_DIR),
-                    _dashboard_slug(url_path),
-                    old_config,
-                )
+    if _dry_run(call):
+        return {
+            "dry_run": True,
+            "url_path": url_path,
+            "title": item.get("title"),
+            "views_in_stored_config": len((old_config or {}).get("views") or []),
+            "backup_would_be_created": bool(old_config),
+        }
+    if old_config:
+        backup_name = os.path.basename(
+            await hass.async_add_executor_job(
+                _save_dashboard_backup,
+                hass.config.path(DASHBOARD_BACKUP_DIR),
+                _dashboard_slug(url_path),
+                old_config,
             )
+        )
     await collection.async_delete_item(item["id"])
     return {"url_path": url_path, "backup": backup_name}
 
@@ -1379,7 +1727,8 @@ POWER_TOOLS: tuple[PowerTool, ...] = (
     }, has_response=True),
     PowerTool("delete_area", _delete_area, {
         vol.Required("area_id"): cv.string,
-    }),
+        vol.Optional("dry_run", default=False): cv.boolean,
+    }, has_response=True),
     PowerTool("rename_area", _rename_area, {
         vol.Required("area_id"): cv.string,
         vol.Required("name"): cv.string,
@@ -1411,7 +1760,8 @@ POWER_TOOLS: tuple[PowerTool, ...] = (
     }, has_response=True),
     PowerTool("delete_floor", _delete_floor, {
         vol.Required("floor_id"): cv.string,
-    }),
+        vol.Optional("dry_run", default=False): cv.boolean,
+    }, has_response=True),
     PowerTool("rename_floor", _rename_floor, {
         vol.Required("floor_id"): cv.string,
         vol.Required("name"): cv.string,
@@ -1432,7 +1782,8 @@ POWER_TOOLS: tuple[PowerTool, ...] = (
     }, has_response=True),
     PowerTool("delete_label", _delete_label, {
         vol.Required("label_id"): cv.string,
-    }),
+        vol.Optional("dry_run", default=False): cv.boolean,
+    }, has_response=True),
     PowerTool("add_label", _add_label, {
         vol.Required("label_id"): _STR_LIST,
         vol.Optional("entity_id"): _ENTITY_LIST,
@@ -1453,7 +1804,8 @@ POWER_TOOLS: tuple[PowerTool, ...] = (
     PowerTool("change_entity_id", _change_entity_id, {
         vol.Required("entity_id"): cv.entity_id,
         vol.Required("new_entity_id"): cv.entity_id,
-    }),
+        vol.Optional("dry_run", default=False): cv.boolean,
+    }, has_response=True),
     PowerTool("enable_entity", _enable_entity, {
         vol.Required("entity_id"): _ENTITY_LIST,
     }),
@@ -1495,7 +1847,8 @@ POWER_TOOLS: tuple[PowerTool, ...] = (
     }),
     PowerTool("disable_integration", _disable_integration, {
         vol.Required("config_entry_id"): _STR_LIST,
-    }),
+        vol.Optional("dry_run", default=False): cv.boolean,
+    }, has_response=True),
     PowerTool("reload_integration", _reload_integration, {
         vol.Required("config_entry_id"): _STR_LIST,
     }),
@@ -1507,7 +1860,8 @@ POWER_TOOLS: tuple[PowerTool, ...] = (
     }, has_response=True),
     PowerTool("delete_helper", _delete_helper, {
         vol.Required("entity_id"): _ENTITY_LIST,
-    }),
+        vol.Optional("dry_run", default=False): cv.boolean,
+    }, has_response=True),
     # Zones
     PowerTool("create_zone", _create_zone, {
         vol.Required("name"): cv.string,
@@ -1528,7 +1882,8 @@ POWER_TOOLS: tuple[PowerTool, ...] = (
     }),
     PowerTool("delete_zone", _delete_zone, {
         vol.Required("entity_id"): _ENTITY_LIST,
-    }),
+        vol.Optional("dry_run", default=False): cv.boolean,
+    }, has_response=True),
     # Persons
     PowerTool("create_person", _create_person, {
         vol.Required("name"): cv.string,
@@ -1537,7 +1892,8 @@ POWER_TOOLS: tuple[PowerTool, ...] = (
     }, has_response=True),
     PowerTool("delete_person", _delete_person, {
         vol.Required("entity_id"): cv.entity_id,
-    }),
+        vol.Optional("dry_run", default=False): cv.boolean,
+    }, has_response=True),
     PowerTool("add_device_tracker_to_person", _add_device_tracker_to_person, {
         vol.Required("entity_id"): cv.entity_id,
         vol.Required("device_tracker"): _ENTITY_LIST,
@@ -1559,6 +1915,7 @@ POWER_TOOLS: tuple[PowerTool, ...] = (
         vol.Required("has_sum"): cv.boolean,
         vol.Optional("name"): cv.string,
         vol.Optional("unit_of_measurement"): cv.string,
+        vol.Optional("dry_run", default=True): cv.boolean,
         vol.Required("stats"): [
             {
                 vol.Required("start"): cv.datetime,
@@ -1570,7 +1927,7 @@ POWER_TOOLS: tuple[PowerTool, ...] = (
                 vol.Optional("sum"): vol.Coerce(float),
             },
         ],
-    }),
+    }, has_response=True),
     # Users
     PowerTool("create_user", _create_user, {
         vol.Required("name"): cv.string,
@@ -1580,7 +1937,8 @@ POWER_TOOLS: tuple[PowerTool, ...] = (
     }, has_response=True),
     PowerTool("delete_user", _delete_user, {
         vol.Required("user_id"): _STR_LIST,
-    }),
+        vol.Optional("dry_run", default=False): cv.boolean,
+    }, has_response=True),
     PowerTool("enable_user", _enable_user, {
         vol.Required("user_id"): _STR_LIST,
     }),
@@ -1594,11 +1952,20 @@ POWER_TOOLS: tuple[PowerTool, ...] = (
     # Dashboards
     PowerTool("update_dashboard", _update_dashboard, {
         vol.Required("config"): dict,
-        vol.Optional("url_path"): cv.string,
+        # Required on purpose: "omit for the default dashboard" was a trap —
+        # the default is only reachable via the explicit literal "default".
+        vol.Required("url_path"): cv.string,
+        vol.Optional("take_control", default=False): cv.boolean,
+        vol.Optional("view_index"): vol.Coerce(int),
+        vol.Optional("dry_run", default=False): cv.boolean,
     }, has_response=True),
     PowerTool("restore_dashboard", _restore_dashboard, {
         vol.Optional("url_path"): cv.string,
         vol.Optional("backup"): cv.string,
+    }, has_response=True),
+    PowerTool("reset_dashboard_config", _reset_dashboard_config, {
+        vol.Required("url_path"): cv.string,
+        vol.Optional("dry_run", default=False): cv.boolean,
     }, has_response=True),
     PowerTool("create_dashboard", _create_dashboard, {
         vol.Required("url_path"): cv.string,
@@ -1609,6 +1976,7 @@ POWER_TOOLS: tuple[PowerTool, ...] = (
     }, has_response=True),
     PowerTool("delete_dashboard", _delete_dashboard, {
         vol.Required("url_path"): cv.string,
+        vol.Optional("dry_run", default=False): cv.boolean,
     }, has_response=True),
     PowerTool("add_dashboard_resource", _add_dashboard_resource, {
         vol.Required("url"): cv.string,
@@ -1633,10 +2001,37 @@ POWER_TOOLS: tuple[PowerTool, ...] = (
 POWER_TOOL_SERVICES: tuple[str, ...] = tuple(t.service for t in POWER_TOOLS)
 
 
+# Fields that must never reach the audit log verbatim.
+_AUDIT_REDACTED_FIELDS = {"password"}
+# Cap per-call audit payloads (dashboard configs run to hundreds of KB).
+_AUDIT_MAX_CHARS = 2000
+
+
+def _audit_payload(data: Any) -> str:
+    """Serialize service-call data for the audit log, redacted and capped."""
+    try:
+        redacted = {
+            k: ("**redacted**" if k in _AUDIT_REDACTED_FIELDS else v)
+            for k, v in dict(data).items()
+        }
+        text = json.dumps(redacted, default=str)
+    except (TypeError, ValueError):
+        text = repr(data)
+    if len(text) > _AUDIT_MAX_CHARS:
+        text = text[:_AUDIT_MAX_CHARS] + f"... [{len(text)} chars total]"
+    return text
+
+
 def _admin_gated(hass: HomeAssistant, tool: PowerTool):
     """Wrap a handler with the same admin check HA applies to admin
     services (async_register_admin_service doesn't support response data,
-    so the gate is replicated here)."""
+    so the gate is replicated here).
+
+    Also the audit chokepoint: every power-tool call — these services
+    rename entities, delete areas, disable integrations, delete users —
+    leaves one structured log line with the service, its arguments, and
+    the outcome, so there is a forensic trail when something needs to be
+    traced or undone."""
 
     async def wrapped(call: ServiceCall):
         if call.context.user_id:
@@ -1645,7 +2040,24 @@ def _admin_gated(hass: HomeAssistant, tool: PowerTool):
                 raise UnknownUser(context=call.context)
             if not user.is_admin:
                 raise Unauthorized(context=call.context)
-        return await tool.handler(hass, call)
+        _LOGGER.info(
+            "BRUH audit: %s.%s called (user_id=%s) data=%s",
+            DOMAIN, tool.service, call.context.user_id or "-",
+            _audit_payload(call.data),
+        )
+        try:
+            result = await tool.handler(hass, call)
+        except Exception as err:
+            _LOGGER.warning(
+                "BRUH audit: %s.%s FAILED: %s", DOMAIN, tool.service, err
+            )
+            raise
+        _LOGGER.info(
+            "BRUH audit: %s.%s ok%s",
+            DOMAIN, tool.service,
+            f" result={_audit_payload(result)}" if isinstance(result, dict) else "",
+        )
+        return result
 
     return wrapped
 

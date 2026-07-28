@@ -213,11 +213,16 @@ def log(msg: str) -> None:
 
 
 def debug_log(lines: list[str]) -> None:
-    """Append to the same daily debug log the classic listener uses."""
+    """Append to the same daily debug log the classic listener uses.
+
+    These logs contain full voice/request transcripts, so they are created
+    0600 — under /config they otherwise ride along into every HA full
+    backup readable by anything that can open the archive."""
     path = os.path.join(LOG_DIR, f"assist-{time.strftime('%Y%m%d')}.log")
     stamp = time.strftime("%Y-%m-%d %H:%M:%S")
     try:
-        with open(path, "a") as fh:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        with os.fdopen(fd, "a") as fh:
             for line in lines:
                 fh.write(line.replace("{ts}", stamp) + "\n")
     except OSError:
@@ -1002,7 +1007,8 @@ class Pool:
 
 
 # ---------------------------------------------------------------------------
-# HTTP frontend: /health (open) + /conversation (token-auth, SSE streaming)
+# HTTP frontend: /health (liveness open; telemetry token-auth) +
+# /conversation (token-auth, SSE streaming)
 # ---------------------------------------------------------------------------
 
 
@@ -1078,9 +1084,20 @@ class ApiHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _token_ok(self) -> bool:
+        # Constant-time compare: this token gates an endpoint whose prompt
+        # grants full device control, so no timing side channels.
+        supplied = self.headers.get("X-BRUH-Token", "")
+        return bool(self.token) and secrets.compare_digest(supplied, self.token)
+
     def do_GET(self):  # noqa: N802
         if self.path != "/health":
             self._json(404, {"error": "not found"})
+            return
+        # Unauthenticated callers get liveness only; operational telemetry
+        # (worker counts, request timing, tool access) needs the token.
+        if not self._token_ok():
+            self._json(200, {"status": "ok"})
             return
         pool = self.pool
         self._json(200, {
@@ -1096,14 +1113,18 @@ class ApiHandler(BaseHTTPRequestHandler):
         if self.path != "/conversation":
             self._json(404, {"error": "not found"})
             return
-        if self.headers.get("X-BRUH-Token", "") != self.token:
+        if not self._token_ok():
             self._json(401, {"error": "bad token"})
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
             req = json.loads(self.rfile.read(length))
-            assert isinstance(req, dict) and req.get("id") and req.get("text")
         except Exception:  # noqa: BLE001
+            self._json(400, {"error": "invalid request body"})
+            return
+        # Explicit validation, NOT assert: asserts vanish under `python -O`,
+        # which would turn malformed input into an unhandled error path.
+        if not isinstance(req, dict) or not req.get("id") or not req.get("text"):
             self._json(400, {"error": "invalid request body"})
             return
 
@@ -1144,7 +1165,12 @@ def start_http_server(pool) -> None:
         token = load_or_create_token()
         ApiHandler.pool = pool
         ApiHandler.token = token
-        server = ThreadingHTTPServer(("0.0.0.0", API_PORT), ApiHandler)
+        # The API must be reachable by HA Core over the hassio network, so
+        # loopback-only is not an option by default — but the bind address
+        # is overridable for setups that can scope it tighter. Every
+        # endpoint is token-gated (or telemetry-free) regardless.
+        bind_addr = os.environ.get("BRUH_POOL_BIND", "0.0.0.0")
+        server = ThreadingHTTPServer((bind_addr, API_PORT), ApiHandler)
         server.daemon_threads = True
         threading.Thread(target=server.serve_forever, daemon=True).start()
         publish_endpoint(API_PORT)
@@ -1202,6 +1228,27 @@ def claim_request(path: str) -> dict | None:
     return req
 
 
+# Retention: sessions/ otherwise grows one uuid-mapping file per
+# conversation forever (slow-motion inode exhaustion on flash-backed HA
+# hardware), and logs/ holds plaintext voice transcripts that should not
+# accumulate indefinitely — they're captured by HA full backups.
+SESSION_RETENTION_S = 7 * 86400   # matches assist-listener.sh's prune
+LOG_RETENTION_S = int(os.environ.get("BRUH_LOG_RETENTION_DAYS", "7")) * 86400
+
+
+def _prune_older_than(directory: str, cutoff: float) -> None:
+    try:
+        for name in os.listdir(directory):
+            path = os.path.join(directory, name)
+            try:
+                if os.path.isfile(path) and os.path.getmtime(path) < cutoff:
+                    os.remove(path)
+            except OSError:
+                pass
+    except OSError:
+        pass
+
+
 def cleanup_stale_files() -> None:
     cutoff = time.time() - 1800
     for directory, suffix in ((RESPONSES_DIR, ".json"), (RESPONSES_DIR, ".tmp")):
@@ -1216,11 +1263,18 @@ def cleanup_stale_files() -> None:
                         pass
         except OSError:
             pass
+    now = time.time()
+    _prune_older_than(SESSIONS_DIR, now - SESSION_RETENTION_S)
+    _prune_older_than(LOG_DIR, now - LOG_RETENTION_S)
 
 
 def main() -> None:
     for d in (REQUESTS_DIR, RESPONSES_DIR, SESSIONS_DIR, CACHE_DIR, LOG_DIR):
         os.makedirs(d, exist_ok=True)
+    try:
+        os.chmod(LOG_DIR, 0o700)  # transcripts inside are 0600
+    except OSError:
+        pass
 
     log(
         f"starting (poll={POLL_INTERVAL}s, max_workers={MAX_WORKERS}, "
