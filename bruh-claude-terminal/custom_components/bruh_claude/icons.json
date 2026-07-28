@@ -202,6 +202,9 @@
     },
     "delete_user": {
       "service": "mdi:account-remove-outline"
+    },
+    "reset_dashboard_config": {
+      "service": "mdi:view-dashboard-outline"
     }
   }
 }

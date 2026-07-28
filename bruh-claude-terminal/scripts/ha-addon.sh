@@ -50,6 +50,25 @@ check_token() {
     fi
 }
 
+# Align tab-separated columns. column(1) is not in the add-on image, so a
+# pipeline ending in `| column` dies with exit 127 after all the data work
+# succeeded — format with awk instead (busybox-compatible, no %-*s).
+format_table() {
+    awk -F'\t' '
+        {
+            lines[NR] = $0
+            for (i = 1; i <= NF; i++) if (length($i) > w[i]) w[i] = length($i)
+        }
+        END {
+            for (r = 1; r <= NR; r++) {
+                n = split(lines[r], f, "\t")
+                out = ""
+                for (i = 1; i < n; i++) out = out sprintf("%-" w[i] "s  ", f[i])
+                print out f[n]
+            }
+        }'
+}
+
 api_get() {
     local endpoint="$1"
     curl -s -X GET \
@@ -69,17 +88,28 @@ api_post() {
 cmd_list() {
     echo -e "${CYAN}Installed add-ons:${NC}"
     local response
-    response=$(api_get "/addons")
-    if [ $? -ne 0 ] || [ -z "$response" ]; then
-        echo -e "${RED}Failed to fetch add-on list${NC}" >&2
+    response=$(api_get "/addons") || true
+    if [ -z "$response" ]; then
+        echo -e "${RED}Failed to fetch add-on list (Supervisor API unreachable)${NC}" >&2
         exit 1
     fi
 
-    echo "$response" | jq -r '
+    # Parse and format as separate steps so a failure is attributed to the
+    # stage that actually broke, not blamed on "parsing" wholesale.
+    local rows
+    if ! rows=$(echo "$response" | jq -r '
         .data.addons[]? |
         select(.installed == true or .state == "started" or .state == "stopped") |
         "\(.slug)\t\(.name)\tv\(.version)\t[\(.state)]"
-    ' 2>/dev/null | column -t -s $'\t' || echo -e "${RED}Failed to parse add-on list${NC}" >&2
+    '); then
+        echo -e "${RED}Failed to parse add-on list: $(echo "$response" | head -c 200)${NC}" >&2
+        exit 1
+    fi
+    if [ -z "$rows" ]; then
+        echo -e "${YELLOW}No add-ons installed${NC}"
+    else
+        echo "$rows" | format_table
+    fi
 }
 
 cmd_info() {

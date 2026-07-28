@@ -162,6 +162,48 @@ PY
     )
 fi
 
+# --- 3a. CLI tools ----------------------------------------------------------
+# The MCP path above is validated end-to-end; without this section the CLI
+# path shipped completely untested — which is how `column`-dependent commands
+# reached production dead. One dependency sweep + one cheap smoke invocation
+# per verb, asserting exit 0 AND non-empty output.
+hdr "CLI tools (dependencies + smoke tests)"
+missing_bins=""
+for bin in curl jq awk sed find grep python3 git; do
+    command -v "$bin" >/dev/null 2>&1 || missing_bins="$missing_bins $bin"
+done
+if [ -z "$missing_bins" ]; then
+    pass "external binaries present (curl jq awk sed find grep python3 git)"
+else
+    fail "missing binaries:${missing_bins} — ha-* commands will break mid-pipeline"
+fi
+
+smoke() {
+    local desc="$1"; shift
+    if ! command -v "$1" >/dev/null 2>&1; then
+        warn "smoke: $desc skipped ($1 not installed)"
+        return
+    fi
+    local out rc
+    out=$("$@" 2>&1); rc=$?
+    if [ "$rc" -eq 0 ] && [ -n "$out" ]; then
+        pass "smoke: $desc"
+    else
+        fail "smoke: $desc (exit ${rc})"
+        info "   ↳ $(echo "$out" | tail -1 | head -c 160)"
+    fi
+}
+smoke "ha-entity list"          ha-entity list
+smoke "ha-entity search sun"    ha-entity search sun
+smoke "ha-addon list"           ha-addon list
+smoke "ha-service list"         ha-service list
+# Validate a file that uses HA's custom tags — this is the exact shape that
+# used to false-fail (yaml.safe_load doesn't know !secret/!include).
+smoke_yaml=$(mktemp /tmp/selftest-XXXXXX.yaml)
+printf 'homeassistant:\n  name: !secret home_name\nautomation: !include automations.yaml\n' > "$smoke_yaml"
+smoke "ha-yaml-check (HA tags)" ha-yaml-check "$smoke_yaml"
+rm -f "$smoke_yaml"
+
 # --- 4. custom integration --------------------------------------------------
 hdr "Home Assistant custom integration"
 if [ -f "$INTEGRATION_DIR/manifest.json" ]; then
@@ -198,7 +240,11 @@ fi
 
 # --- 5a. assist API (fast mode) ----------------------------------------------
 hdr "Assist API (worker pool)"
-api_health=$(curl -s -m 5 "http://127.0.0.1:8099/health" 2>/dev/null)
+# Send the pool token when readable: unauthenticated /health only returns
+# liveness, the full telemetry (worker counts etc.) is token-gated.
+pool_token=""
+[ -r /config/.bruh_claude/api_token ] && pool_token=$(cat /config/.bruh_claude/api_token 2>/dev/null)
+api_health=$(curl -s -m 5 -H "X-BRUH-Token: ${pool_token}" "http://127.0.0.1:8099/health" 2>/dev/null)
 case "$api_health" in
     *'"status": "ok"'*|*'"status":"ok"'*)
         pass "Worker pool API healthy (:8099/health)"

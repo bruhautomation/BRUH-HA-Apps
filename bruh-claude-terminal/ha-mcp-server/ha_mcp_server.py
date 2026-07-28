@@ -113,12 +113,17 @@ def _ws_command(payload, timeout=15):
     Some data (long-term statistics) is WebSocket-only. The `websockets`
     package ships in the add-on image; import lazily so environments
     without it (tests) degrade to a clear error instead of failing import.
+
+    max_size=None is load-bearing: the websockets default (1 MiB) is
+    smaller than a real install's entity-registry response, so without it
+    the connection dies on receive and no post-hoc filtering can ever run.
+    Responses are trimmed/capped by the callers instead.
     """
     from websockets.sync.client import connect  # lazy: optional dependency
 
     url = HA_BASE_URL.replace("http://", "ws://").replace("https://", "wss://")
     url = url.rsplit("/api", 1)[0] + "/websocket"
-    with connect(url, open_timeout=timeout, close_timeout=5) as ws:
+    with connect(url, open_timeout=timeout, close_timeout=5, max_size=None) as ws:
         json.loads(ws.recv(timeout=timeout))  # auth_required
         ws.send(json.dumps({"type": "auth", "access_token": SUPERVISOR_TOKEN}))
         auth = json.loads(ws.recv(timeout=timeout))
@@ -227,12 +232,25 @@ def call_service(domain, service, data=None, return_response=False):
     return result
 
 
-def get_service_details(domain):
-    """Get detailed service schemas for a domain."""
+def get_service_details(domain, service=None):
+    """Get detailed service schemas for a domain, or one service of it.
+
+    Some domains (e.g. bruh_claude) expose dozens of services whose
+    combined schemas run to tens of KB — the optional service filter
+    returns just the one schema instead of the whole domain dump.
+    """
     result = ha_api_request("/api/services")
     if isinstance(result, list):
         for svc in result:
             if svc.get("domain") == domain:
+                if service:
+                    services = svc.get("services", {})
+                    if service in services:
+                        return {"domain": domain, "service": service,
+                                "details": services[service]}
+                    return {"error": (f"Service '{service}' not found in "
+                                      f"domain '{domain}'. Available: "
+                                      f"{', '.join(sorted(services))}")}
                 return svc
         return {"error": f"Domain '{domain}' not found"}
     return result
@@ -641,6 +659,11 @@ def get_automations():
     return states
 
 
+# Cap on the stored-trace payload: one trace of a complex automation can
+# carry every step's changed variables and dwarf the rest of the response.
+MAX_TRACE_BYTES = 60_000
+
+
 def get_automation_trace(automation_id):
     """Get recent traces for an automation.
 
@@ -672,6 +695,24 @@ def get_automation_trace(automation_id):
     # 2. Try reading stored traces from disk (HA saves them in .storage)
     traces = _read_stored_traces(automation_id, entity_id)
     if traces:
+        # Stored traces can be arbitrarily large (every step's changed
+        # variables) — cap the payload like the other listing tools do.
+        while (len(traces) > 1
+               and len(json.dumps(traces, default=str)) > MAX_TRACE_BYTES):
+            traces = traces[1:]  # drop oldest first
+        if len(json.dumps(traces, default=str)) > MAX_TRACE_BYTES:
+            newest = traces[-1]
+            traces = [{
+                k: newest.get(k)
+                for k in ("run_id", "state", "script_execution", "timestamp",
+                          "error", "last_step")
+                if isinstance(newest, dict) and newest.get(k) is not None
+            }]
+            output["traces_note"] = (
+                "Trace detail truncated (payload too large) — summary of the "
+                "most recent run only. Full traces: Settings > Automations > "
+                "(automation) > Traces in the HA UI."
+            )
         output["traces"] = traces
     else:
         output["traces_note"] = (
@@ -831,12 +872,14 @@ def get_statistics(entity_id, period="hour", days=7):
         days = 7
     start = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     try:
+        # Statistics queries are among the slowest recorder operations —
+        # give them more headroom than the default WS timeout.
         result = _ws_command({
             "type": "recorder/statistics_during_period",
             "start_time": start,
             "statistic_ids": [entity_id],
             "period": period,
-        })
+        }, timeout=30)
     except ImportError:
         return {"error": "websockets package not available in this environment"}
     except Exception as e:  # noqa: BLE001
@@ -906,6 +949,11 @@ def get_weather_forecast(entity_id, forecast_type="daily"):
     return {"entity_id": entity_id, "type": forecast_type, "forecast": trimmed}
 
 
+# Line count alone doesn't bound the payload — tracebacks with huge single
+# lines (template errors embedding full configs) still need a byte cap.
+MAX_ERROR_LOG_BYTES = 50_000
+
+
 def get_error_log():
     """Get the Home Assistant error log.
 
@@ -919,14 +967,14 @@ def get_error_log():
     result = ha_api_request("/core/logs", accept="text/plain")
     if isinstance(result, str) and result.strip():
         lines = result.strip().split("\n")
-        return "\n".join(lines[-100:])  # Last 100 lines
+        return "\n".join(lines[-100:])[-MAX_ERROR_LOG_BYTES:]
 
     # Fallback: legacy HA Core REST endpoint (works if log file exists)
     if isinstance(result, dict) and "error" in result:
         result = ha_api_request("/api/error_log")
         if isinstance(result, str) and result.strip():
             lines = result.strip().split("\n")
-            return "\n".join(lines[-100:])
+            return "\n".join(lines[-100:])[-MAX_ERROR_LOG_BYTES:]
 
     if isinstance(result, dict) and "error" in result:
         return {
@@ -1062,7 +1110,9 @@ def get_registry(registry, name_filter=None):
             f"Choose one of: {', '.join(sorted(_REGISTRY_COMMANDS))}"
         )}
     try:
-        result = _ws_command({"type": command})
+        # Registry dumps on large installs are big and slow; the transport
+        # accepts unbounded frames (max_size=None) and gets extra time.
+        result = _ws_command({"type": command}, timeout=30)
     except ImportError:
         return {"error": "websockets package not available in this environment"}
     except Exception as e:  # noqa: BLE001
@@ -1091,7 +1141,7 @@ def get_registry(registry, name_filter=None):
     return {"registry": registry, "count": len(items), "items": items}
 
 
-def list_dashboards():
+def list_dashboards(include_resources=False):
     """List Lovelace dashboards (the default dashboard is not in the
     collection — reach it by omitting url_path in get_dashboard)."""
     try:
@@ -1113,29 +1163,39 @@ def list_dashboards():
         "note": ("The default dashboard is not listed — fetch it with "
                  "get_dashboard and no url_path."),
     }
-    # Registered resources (custom card modules) ride along; best-effort.
-    try:
-        resources = _ws_command({"type": "lovelace/resources"})
-        if isinstance(resources, list):
-            payload["resources"] = [
-                {k: r.get(k) for k in ("url", "type") if r.get(k) is not None}
-                for r in resources
-            ]
-    except Exception:  # noqa: BLE001
-        pass
+    # Registered resources (custom card modules) only on request — they're
+    # noise for the common "which dashboards exist" call.
+    if include_resources:
+        try:
+            resources = _ws_command({"type": "lovelace/resources"})
+            if isinstance(resources, list):
+                payload["resources"] = [
+                    {k: r.get(k) for k in ("url", "type") if r.get(k) is not None}
+                    for r in resources
+                ]
+        except Exception:  # noqa: BLE001
+            pass
     return payload
 
 
 MAX_DASHBOARD_BYTES = 200_000
 
 
-def get_dashboard(url_path=None):
-    """Fetch a dashboard's full configuration (default dashboard when
-    url_path is omitted). Pair with bruh_claude.update_dashboard to edit:
-    fetch, modify the JSON, save — the service backs up the old config
-    automatically."""
+def get_dashboard(url_path=None, view_index=None):
+    """Fetch a dashboard's configuration (default dashboard when url_path
+    is omitted). Pair with bruh_claude.update_dashboard to edit: fetch,
+    modify the JSON, save — the service backs up the old config
+    automatically.
+
+    Large dashboards are retrievable in full through view_index: when the
+    whole config exceeds MAX_DASHBOARD_BYTES the response is a view
+    summary, and each view can then be fetched individually. Never read
+    /config/.storage instead — it lags actual state for ~10s after a save
+    (HA's delayed writes) and must never be treated as a source of truth.
+    """
     try:
-        result = _ws_command({"type": "lovelace/config", "url_path": url_path or None})
+        result = _ws_command({"type": "lovelace/config", "url_path": url_path or None},
+                             timeout=30)
     except ImportError:
         return {"error": "websockets package not available in this environment"}
     except Exception as e:  # noqa: BLE001
@@ -1151,14 +1211,33 @@ def get_dashboard(url_path=None):
             }
         return result
 
+    views = (result or {}).get("views") or []
+
+    if view_index is not None:
+        try:
+            view_index = int(view_index)
+        except (TypeError, ValueError):
+            return {"error": f"view_index must be an integer, got {view_index!r}"}
+        if not 0 <= view_index < len(views):
+            return {"error": (f"view_index {view_index} out of range — this "
+                              f"dashboard has {len(views)} views (0-"
+                              f"{max(len(views) - 1, 0)})")}
+        return {
+            "url_path": url_path or "default",
+            "view_index": view_index,
+            "view_count": len(views),
+            "view": views[view_index],
+        }
+
     payload = {"url_path": url_path or "default", "config": result}
     if len(json.dumps(payload)) > MAX_DASHBOARD_BYTES:
-        views = (result or {}).get("views") or []
         return {
             "url_path": url_path or "default",
             "note": (f"Config too large to return whole (> {MAX_DASHBOARD_BYTES} "
-                     "bytes) — summary below. Edit via smaller dashboards or "
-                     "the /config/.storage file read path."),
+                     "bytes) — view summary below. Fetch each view with "
+                     "get_dashboard(url_path, view_index=N). Do NOT read "
+                     "/config/.storage as a workaround: it lags real state "
+                     "for ~10s after saves and is not a reliable channel."),
             "views": [
                 {
                     "index": i,
@@ -1354,7 +1433,8 @@ TOOLS = [
             "registry ids (area_id, floor_id, label_id, device_id, entity_id, "
             "config_entry_id, user_id) needed by the bruh_claude.* management services "
             "— the safe alternative to reading /config/.storage files. "
-            "Results are capped at 300; use name_filter on large installations."
+            "The full registry is retrieved and filtered server-side, then "
+            "capped at 300 rows; use name_filter to narrow large results."
         ),
         "inputSchema": {
             "type": "object",
@@ -1375,7 +1455,15 @@ TOOLS = [
     {
         "name": "list_dashboards",
         "description": "List Lovelace dashboards (url_path, title, mode). The default dashboard is not in the list — fetch it with get_dashboard and no url_path.",
-        "inputSchema": {"type": "object", "properties": {}}
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "include_resources": {
+                    "type": "boolean",
+                    "description": "Also list registered Lovelace resources (custom card modules). Default false."
+                }
+            }
+        }
     },
     {
         "name": "get_dashboard",
@@ -1385,7 +1473,10 @@ TOOLS = [
             "with this tool, modify the JSON, then save the complete object "
             "with the bruh_claude.update_dashboard service — it backs up the "
             "previous config automatically, and bruh_claude.restore_dashboard "
-            "undoes a bad edit. Never edit .storage/lovelace files directly."
+            "undoes a bad edit. If the config is too large to return whole, "
+            "the response lists the views — fetch each with view_index. "
+            "Never read or edit .storage/lovelace files directly: they lag "
+            "the real config for ~10s after saves."
         ),
         "inputSchema": {
             "type": "object",
@@ -1393,19 +1484,27 @@ TOOLS = [
                 "url_path": {
                     "type": "string",
                     "description": "Dashboard url_path from list_dashboards; omit for the default dashboard"
+                },
+                "view_index": {
+                    "type": "integer",
+                    "description": "Return only this view (0-based) — for dashboards too large to return whole"
                 }
             }
         }
     },
     {
         "name": "get_service_details",
-        "description": "Get the full service schema for a domain, showing all available services and their fields/parameters. Use this to discover what parameters a service accepts before calling it.",
+        "description": "Get the full service schema for a domain, showing all available services and their fields/parameters. Use this to discover what parameters a service accepts before calling it. Pass service to get just one schema (recommended for large domains like bruh_claude).",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "domain": {
                     "type": "string",
                     "description": "The service domain to look up (e.g., 'light', 'climate', 'media_player', 'vacuum', 'notify')"
+                },
+                "service": {
+                    "type": "string",
+                    "description": "Optional: return only this service's schema instead of the whole domain"
                 }
             },
             "required": ["domain"]

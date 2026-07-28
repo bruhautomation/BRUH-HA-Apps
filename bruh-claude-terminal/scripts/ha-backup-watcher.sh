@@ -31,6 +31,10 @@ while true; do
             git -C "$CONFIG_DIR" commit -m "Auto-backup: ${change_count} file(s) changed (${timestamp})" \
                 -m "Files: ${changed_files}" 2>/dev/null || true
 
+            # Plain commits never garbage-collect; without this the repo
+            # accumulates loose objects forever (observed: 3000+, never packed).
+            git -C "$CONFIG_DIR" gc --auto --quiet 2>/dev/null || true
+
             bashio::log.info "Auto-backup: ${change_count} file(s) committed"
         fi
     fi

@@ -4,6 +4,125 @@ All notable changes to **BRUH Claude Terminal**, newest first. This project adhe
 
 > 💡 Prefer a cleaner, categorized view? See the [formatted changelog at bruhautomation.com](https://bruhautomation.com/bruh-claude/changelog/).
 
+## 3.7.0
+
+**Field-audit release: 40+ fixes from a session-grounded audit of a real
+install** — broken CLI commands, silent failure modes, dashboard safety
+rails, audit logging, credential handling, and data retention.
+
+### Fixed — shipped broken or silently wrong
+
+- **`ha-entity list/search` and `ha-addon list` work again**: they piped
+  through `column`, which is not in the image, so each died with exit 127
+  at the last pipeline stage. Formatting is now done with busybox-safe
+  `awk`. All three commands also distinguish "no matches" from "command
+  failed" instead of printing a clean empty header for both.
+- **`ha-yaml-check` was triple-broken**: `((checked++))` under `set -e`
+  killed the run after the first file; `yaml.safe_load` false-failed every
+  idiomatic HA file using `!secret`/`!include`/`!env_var` tags; and
+  `2>/dev/null` discarded the parser message so every FAIL was
+  unexplainable. All three fixed — HA tags are registered, diagnostics
+  print under each FAIL, and the summary counts are correct.
+- **`get_registry` works on real installs**: the WebSocket transport never
+  set `max_size`, so HA's entity-registry response blew the 1 MiB
+  `websockets` default and the connection died on receive — the documented
+  `name_filter` mitigation could never run. `max_size=None` fixes it; slow
+  registry/statistics reads also get a 30s timeout instead of 15s.
+- **`ha-context-gen` read the OS from the wrong endpoint**
+  (`/core/info` instead of `/host/info`), so every generated CLAUDE.md
+  said `OS: unknown`. All silent `// "unknown"` fallbacks now emit a
+  visible `(lookup failed)` marker instead of plausible-looking values.
+- **`ha-addon list` no longer blames JSON parsing** when a later pipeline
+  stage failed.
+
+### Added — dashboard safety rails (Power Tools)
+
+- `update_dashboard` now **requires `url_path`** — the default dashboard is
+  only reachable via the explicit literal `"default"`, never by accidental
+  omission. Saving onto a never-saved (auto-generated) dashboard requires
+  `take_control: true`; `dry_run: true` previews the resolved target and
+  change summary; and `view_index` replaces a single view instead of
+  rewriting the whole config.
+- New **`reset_dashboard_config`** service: backs up, then deletes a
+  dashboard's stored config, reverting it to auto-generated — the
+  sanctioned undo for a take-over, closing the gap that pushed raw
+  `lovelace/config/delete` websocket calls.
+- `get_dashboard` (MCP) returns oversized dashboards **by view**
+  (`view_index`) instead of telling you to read `/config/.storage` — that
+  suggestion is gone, and the docs now warn that `.storage` lags real
+  state for ~10s after saves.
+
+### Added — recoverability and audit
+
+- **Audit logging on all 56 Power Tools**: every call leaves a structured
+  log line (service, redacted args, outcome) through the admin gate, so
+  mutations are traceable after the fact.
+- **Dry-run previews with blast-radius data** on every destructive
+  service: `delete_area`/`delete_floor`/`delete_label` (what loses its
+  assignment), `delete_helper`, `delete_zone`, `delete_person`,
+  `delete_user`, `delete_dashboard`, `disable_integration` (affected
+  entities), and `change_entity_id` — which now also returns the
+  automations/scripts/scenes still referencing the old id, at the moment
+  the rename happens.
+- **`import_statistics` defaults to dry run**: it reports the affected
+  time window and how many existing rows would be overwritten (corrupted
+  statistics are unrecoverable without a recorder DB restore); pass
+  `dry_run: false` to import.
+- **The git safety net now verifies itself**: `run.sh` and `ha-backup`
+  check the protective `.gitignore` rules on every run and warn loudly
+  when drift has disabled registry/dashboard versioning (previously the
+  design's protection could silently not exist). The dashboard backup
+  directory (`.bruh_claude/dashboard_backups`) is now versioned in the
+  config git repo instead of living only in one prunable directory, and
+  `git gc --auto` runs after backups so the repo actually gets packed.
+- **`ha-service call --response`**: service response data (backup names,
+  created ids, dry-run previews) is silently dropped over plain REST —
+  the new flag requests it, and calls to `bruh_claude.*` without it print
+  a hint.
+
+### Security
+
+- **`/share` path containment**: `ha-share` resolves every path with
+  `realpath` and refuses anything escaping `/share` (`ha-share ls ..`
+  previously listed the container root; `push`/`pull` could read/write
+  outside the volume). Credential-looking sources (secrets.yaml,
+  `.storage`, keys, tokens) are refused without `--force`, since /share is
+  readable by every add-on that maps it.
+- **`ha-share-login` cleans up its token capture file on interrupt**
+  (`trap` on EXIT/INT/TERM) — a Ctrl-C mid-OAuth no longer leaves a
+  plaintext long-lived credential in /tmp.
+- **Worker pool hardening**: the API token is compared with
+  `secrets.compare_digest` (constant-time); `/health` returns liveness
+  only without the token (operational telemetry is token-gated; the
+  integration and `ha-selftest` send it); request validation no longer
+  uses `assert` (stripped under `python -O`); and the bind address is
+  overridable via `BRUH_POOL_BIND`.
+- **Voice transcript hygiene**: assist/automation debug logs are written
+  0600 in a 0700 directory and aged out after 7 days
+  (`BRUH_LOG_RETENTION_DAYS` overrides) — they were 0644 forever, riding
+  into every HA full backup. The worker pool now also prunes
+  `sessions/` mappings after 7 days (previously unbounded growth).
+
+### Changed
+
+- **`ha-selftest` now tests the CLI layer it ships**: a dependency sweep
+  for every external binary the scripts call, plus one smoke invocation
+  per verb (`ha-entity list/search`, `ha-addon list`, `ha-service list`,
+  `ha-yaml-check` on a tagged HA file) asserting exit 0 and non-empty
+  output — the gap that let three dead commands reach production while
+  the selftest reported all green.
+- MCP payload caps extended: automation traces and the error log are
+  byte-capped like the other listing tools; `get_service_details` takes a
+  `service` filter (no more 58 KB domain dumps); `list_dashboards` only
+  includes Lovelace resources with `include_resources: true`.
+- Generated CLAUDE.md now includes a **dashboard inventory**
+  (url_path/title/mode per dashboard) plus explicit dashboard rules
+  (always pass `url_path`; never use raw Lovelace transport; never verify
+  via `.storage`), documents `ha-selftest`, and the memory consolidator
+  stamps every learned fact with an observed-at date — device-health
+  claims decay after 30 days instead of being asserted as present-tense
+  truth forever.
+
 ## 3.6.0
 
 **Full HA administration without touching `.storage`: 13 new Power Tools

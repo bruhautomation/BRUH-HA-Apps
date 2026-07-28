@@ -24,13 +24,19 @@ usage() {
 ha-service — Call Home Assistant services
 
 Usage:
-  ha-service call <domain>.<service> [--data '{"key":"val"}']
+  ha-service call <domain>.<service> [--data '{"key":"val"}'] [--response]
   ha-service list [domain]
+
+--response requests the service's response data (services like
+bruh_claude.update_dashboard return their result — backup name, ids,
+dry-run previews — ONLY when it is requested; without it the API silently
+returns [] and the payload is lost).
 
 Examples:
   ha-service call light.turn_on --data '{"entity_id":"light.kitchen"}'
   ha-service call script.bedtime
   ha-service call notify.mobile_app_phone --data '{"message":"Hello"}'
+  ha-service call bruh_claude.delete_orphaned_entities --response
   ha-service list light
   ha-service list
 EOF
@@ -48,13 +54,17 @@ cmd_call() {
     local service_path="$1"
     shift
     local data="{}"
+    local want_response=false
 
-    # Parse --data argument
+    # Parse arguments
     while [ $# -gt 0 ]; do
         case "$1" in
             --data)
                 shift
                 data="${1:-{}}"
+                ;;
+            --response)
+                want_response=true
                 ;;
             *)
                 echo -e "${RED}Unknown argument: $1${NC}" >&2
@@ -80,21 +90,33 @@ cmd_call() {
         exit 1
     fi
 
+    # Over REST, service response data is SILENTLY DROPPED unless
+    # ?return_response is on the URL — a bare [] comes back and the
+    # payload (backup names, created ids, dry-run previews) is lost.
+    local url="${HA_API}/services/${domain}/${service}"
+    if [ "$want_response" = "true" ]; then
+        url="${url}?return_response"
+    fi
+
     echo -e "${CYAN}Calling ${domain}.${service}...${NC}"
-    local response http_code
-    http_code=$(curl -s -o /tmp/ha-service-response -w "%{http_code}" \
+    local response http_code body_file
+    body_file=$(mktemp)
+    http_code=$(curl -s -o "$body_file" -w "%{http_code}" \
         -X POST \
         -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
         -H "Content-Type: application/json" \
         -d "$data" \
-        "${HA_API}/services/${domain}/${service}" 2>/dev/null)
-    response=$(cat /tmp/ha-service-response 2>/dev/null)
-    rm -f /tmp/ha-service-response
+        "$url" 2>/dev/null)
+    response=$(cat "$body_file" 2>/dev/null)
+    rm -f "$body_file"
 
     if [ "$http_code" = "200" ] || [ "$http_code" = "201" ]; then
         echo -e "${GREEN}Service ${domain}.${service} called successfully${NC}"
         if [ -n "$response" ] && [ "$response" != "[]" ]; then
             echo "$response" | jq '.' 2>/dev/null || true
+        fi
+        if [ "$want_response" != "true" ] && [ "$domain" = "bruh_claude" ]; then
+            echo -e "${CYAN}Hint: many bruh_claude services return response data (ids, backups, dry-run previews) — add --response to see it.${NC}"
         fi
     else
         echo -e "${RED}Failed (HTTP ${http_code}): $(echo "$response" | jq -r '.message // .' 2>/dev/null)${NC}" >&2

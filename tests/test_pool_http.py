@@ -110,19 +110,30 @@ def test_health_and_auth(tmp_path, monkeypatch):
     pool = mod.Pool()
     try:
         start_server(mod, pool, 18741)
+        # Unauthenticated /health: liveness only, no operational telemetry.
         conn = http.client.HTTPConnection("127.0.0.1", 18741, timeout=5)
         conn.request("GET", "/health")
         resp = conn.getresponse()
         assert resp.status == 200
         health = json.loads(resp.read())
-        assert health["status"] == "ok"
-        assert "workers" in health and "tool_access" in health
+        assert health == {"status": "ok"}
         conn.close()
 
         # token + endpoint published for the integration
         assert os.path.isfile(mod.API_TOKEN_FILE)
         endpoint = json.load(open(mod.API_ENDPOINT_FILE))
         assert endpoint["port"] == 18741
+
+        # With the token, /health returns the full telemetry.
+        token = open(mod.API_TOKEN_FILE).read().strip()
+        conn = http.client.HTTPConnection("127.0.0.1", 18741, timeout=5)
+        conn.request("GET", "/health", headers={"X-BRUH-Token": token})
+        resp = conn.getresponse()
+        assert resp.status == 200
+        health = json.loads(resp.read())
+        assert health["status"] == "ok"
+        assert "workers" in health and "tool_access" in health
+        conn.close()
 
         # conversation without/with-bad token -> 401
         conn = http.client.HTTPConnection("127.0.0.1", 18741, timeout=5)

@@ -44,6 +44,41 @@ check_token() {
     fi
 }
 
+# Align tab-separated columns. column(1) is not in the add-on image, so a
+# pipeline ending in `| column` dies with exit 127 after all the data work
+# succeeded — format with awk instead (busybox-compatible, no %-*s).
+format_table() {
+    awk -F'\t' '
+        {
+            lines[NR] = $0
+            for (i = 1; i <= NF; i++) if (length($i) > w[i]) w[i] = length($i)
+        }
+        END {
+            for (r = 1; r <= NR; r++) {
+                n = split(lines[r], f, "\t")
+                out = ""
+                for (i = 1; i < n; i++) out = out sprintf("%-" w[i] "s  ", f[i])
+                print out f[n]
+            }
+        }'
+}
+
+# Fetch /states and fail loudly if the API is unreachable or returns junk,
+# instead of letting downstream jq produce an empty (and misleading) result.
+fetch_states() {
+    local response
+    response=$(api_get "/states") || true
+    if [ -z "$response" ]; then
+        echo -e "${RED}Error: could not reach the Home Assistant API${NC}" >&2
+        exit 1
+    fi
+    if ! echo "$response" | jq -e 'type == "array"' >/dev/null 2>&1; then
+        echo -e "${RED}Error: unexpected API response: $(echo "$response" | head -c 200)${NC}" >&2
+        exit 1
+    fi
+    printf '%s' "$response"
+}
+
 api_get() {
     local endpoint="$1"
     curl -s -X GET \
@@ -107,16 +142,22 @@ cmd_set() {
 cmd_list() {
     local domain="${1:-}"
     local response
-    response=$(api_get "/states")
+    response=$(fetch_states)
 
     if [ -n "$domain" ]; then
         echo -e "${CYAN}Entities in domain '${domain}':${NC}"
-        echo "$response" | jq -r --arg d "${domain}." '
+        local rows
+        rows=$(echo "$response" | jq -r --arg d "${domain}." '
             [.[] | select(.entity_id | startswith($d))] |
             sort_by(.entity_id) |
             .[] |
             "\(.entity_id)\t\(.state)\t\(.attributes.friendly_name // "")"
-        ' 2>/dev/null | column -t -s $'\t'
+        ')
+        if [ -z "$rows" ]; then
+            echo -e "${YELLOW}No entities in domain '${domain}'${NC}"
+        else
+            echo "$rows" | format_table
+        fi
     else
         echo -e "${CYAN}All entities by domain:${NC}"
         echo "$response" | jq -r '
@@ -127,7 +168,7 @@ cmd_list() {
             sort_by(-.count) |
             .[] |
             "  \(.domain): \(.count) entities"
-        ' 2>/dev/null
+        '
     fi
 }
 
@@ -135,8 +176,9 @@ cmd_search() {
     local pattern="$1"
     echo -e "${CYAN}Searching for '${pattern}':${NC}"
     local response
-    response=$(api_get "/states")
-    echo "$response" | jq -r --arg p "$pattern" '
+    response=$(fetch_states)
+    local rows
+    rows=$(echo "$response" | jq -r --arg p "$pattern" '
         [.[] | select(
             (.entity_id | ascii_downcase | contains($p | ascii_downcase)) or
             ((.attributes.friendly_name // "") | ascii_downcase | contains($p | ascii_downcase))
@@ -144,7 +186,12 @@ cmd_search() {
         sort_by(.entity_id) |
         .[] |
         "\(.entity_id)\t\(.state)\t\(.attributes.friendly_name // "")"
-    ' 2>/dev/null | column -t -s $'\t'
+    ')
+    if [ -z "$rows" ]; then
+        echo -e "${YELLOW}No entities matched '${pattern}'${NC}"
+    else
+        echo "$rows" | format_table
+    fi
 }
 
 # Main

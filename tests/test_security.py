@@ -207,20 +207,37 @@ class TestGitignoreCoversSecrets(unittest.TestCase):
             f"{label} gitignore re-includes a secrets-bearing .storage file",
         )
 
+    def _assert_bruh_claude_safely_excluded(self, entries, label):
+        """.bruh_claude must stay excluded (it holds secrets/ and logs/);
+        the wildcard form allows re-including ONLY the dashboard backup
+        history, which carries no credentials."""
+        self.assertTrue(
+            ".bruh_claude/" in entries or ".bruh_claude/*" in entries,
+            f"{label} gitignore missing .bruh_claude exclusion",
+        )
+        reincludes = {e for e in entries if e.startswith("!.bruh_claude/")}
+        self.assertLessEqual(
+            reincludes,
+            {"!.bruh_claude/dashboard_backups"},
+            f"{label} gitignore re-includes a sensitive .bruh_claude path",
+        )
+
     def test_run_sh_gitignore_covers_secrets(self):
         """run.sh gitignore should cover sensitive files."""
         content = read_file(os.path.join(ADDON_DIR, "run.sh"))
         entries = self._get_gitignore_entries(content)
-        for req in ["secrets.yaml", ".mcp.json", ".bruh_claude/"]:
+        for req in ["secrets.yaml", ".mcp.json"]:
             self.assertIn(req, entries, f"run.sh gitignore missing: {req}")
+        self._assert_bruh_claude_safely_excluded(entries, "run.sh")
         self._assert_storage_safely_excluded(entries, "run.sh")
 
     def test_backup_sh_gitignore_covers_secrets(self):
         """ha-backup.sh gitignore should cover sensitive files."""
         content = read_file(os.path.join(SCRIPTS_DIR, "ha-backup.sh"))
         entries = self._get_gitignore_entries(content)
-        for req in ["secrets.yaml", ".mcp.json", ".bruh_claude/"]:
+        for req in ["secrets.yaml", ".mcp.json"]:
             self.assertIn(req, entries, f"ha-backup.sh gitignore missing: {req}")
+        self._assert_bruh_claude_safely_excluded(entries, "ha-backup.sh")
         self._assert_storage_safely_excluded(entries, "ha-backup.sh")
 
     def test_gitignore_covers_databases(self):

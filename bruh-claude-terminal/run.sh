@@ -830,8 +830,11 @@ claude-config/
 .claude.json
 .mcp.json
 
-# BRUH Claude integration communication (transient files)
-.bruh_claude/
+# BRUH Claude integration communication (transient files) — but keep the
+# dashboard backup history versioned: it is the only undo for dashboard
+# edits and must not live solely in one prunable directory
+.bruh_claude/*
+!.bruh_claude/dashboard_backups
 
 # Media and large directories
 www/
@@ -840,6 +843,10 @@ custom_components/__pycache__/
 deps/
 GITIGNORE
         fi
+
+        # Lower the loose-object threshold so the repo actually gets packed
+        # (plain `git commit` never runs gc; --auto below does, when needed).
+        git -C /config config gc.auto 1024
 
         git -C /config add -A
         git -C /config commit -m "Initial BRUH Terminal backup" --allow-empty || true
@@ -855,6 +862,34 @@ GITIGNORE
         && grep -qx "\.storage/" /config/.gitignore; then
         bashio::log.info "Backup: including registries + dashboards from .storage in git backup"
         sed -i 's|^\.storage/$|.storage/*\n!.storage/core.area_registry\n!.storage/core.floor_registry\n!.storage/core.label_registry\n!.storage/core.device_registry\n!.storage/core.entity_registry\n!.storage/core.category_registry\n!.storage/lovelace*|' /config/.gitignore
+    fi
+
+    # Same upgrade for the dashboard-backup history: a blanket .bruh_claude/
+    # rule keeps the only dashboard undo trail out of git entirely.
+    if [ -f "/config/.gitignore" ] \
+        && grep -q "^# BRUH Terminal auto-backup gitignore" /config/.gitignore \
+        && grep -qx "\.bruh_claude/" /config/.gitignore; then
+        bashio::log.info "Backup: including .bruh_claude/dashboard_backups in git backup"
+        sed -i 's|^\.bruh_claude/$|.bruh_claude/*\n!.bruh_claude/dashboard_backups|' /config/.gitignore
+    fi
+
+    # Verify the safety net is actually in effect — EVERY startup, not just
+    # when we authored the file. A drifted .gitignore silently disables
+    # registry/dashboard history, and nothing else ever detects it: the
+    # design's protection then doesn't exist while everything looks fine.
+    if [ -f "/config/.gitignore" ]; then
+        local missing_rules=""
+        local rule
+        for rule in '.storage/*' '!.storage/core.entity_registry' '!.storage/lovelace*'; do
+            grep -qxF "$rule" /config/.gitignore || missing_rules="$missing_rules '$rule'"
+        done
+        if grep -qx "\.storage/" /config/.gitignore; then
+            missing_rules="$missing_rules (blanket '.storage/' present — it blocks ALL negations)"
+        fi
+        if [ -n "$missing_rules" ]; then
+            bashio::log.warning "Backup: /config/.gitignore is missing protective rules:${missing_rules}"
+            bashio::log.warning "Backup: registry/dashboard history is NOT being versioned in git. Restore the rules (see the add-on docs) or delete /config/.gitignore and restart to regenerate it."
+        fi
     fi
 
     # Start the background backup watcher

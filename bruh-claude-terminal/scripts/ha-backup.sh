@@ -52,7 +52,8 @@ claude-config/
 .claude/
 .claude.json
 .mcp.json
-.bruh_claude/
+.bruh_claude/*
+!.bruh_claude/dashboard_backups
 www/
 media/
 custom_components/__pycache__/
@@ -60,10 +61,16 @@ deps/
 GITIGNORE
         fi
 
+        # Lower the loose-object threshold so `git gc --auto` (run after
+        # each backup below) actually packs the repo now and then.
+        git -C "$CONFIG_DIR" config gc.auto 1024
+
         git -C "$CONFIG_DIR" add -A
         git -C "$CONFIG_DIR" commit -m "Initial backup" --allow-empty || true
         echo -e "${GREEN}Git repository initialized${NC}"
     fi
+
+    check_gitignore_safety_net
 
     # Check for changes
     local changes
@@ -95,10 +102,34 @@ GITIGNORE
 
     echo -e "${GREEN}Backup committed successfully${NC}"
 
+    # Keep the repo packed — plain commits never garbage-collect, and
+    # thousands of loose objects slowly degrade every git operation.
+    git -C "$CONFIG_DIR" gc --auto --quiet 2>/dev/null || true
+
     # Show recent backups
     echo ""
     echo -e "${BLUE}Recent backups:${NC}"
     git -C "$CONFIG_DIR" log --oneline -5
+}
+
+# The design intends registries and dashboards (.storage) plus the dashboard
+# backup history (.bruh_claude/dashboard_backups) to be versioned. A drifted
+# .gitignore disables that silently — warn on every run so the drift is
+# visible instead of discovered during an incident.
+check_gitignore_safety_net() {
+    [ -f "$CONFIG_DIR/.gitignore" ] || return 0
+    local missing=""
+    local rule
+    for rule in '.storage/*' '!.storage/core.entity_registry' '!.storage/lovelace*'; do
+        grep -qxF "$rule" "$CONFIG_DIR/.gitignore" || missing="$missing '$rule'"
+    done
+    if grep -qx "\.storage/" "$CONFIG_DIR/.gitignore"; then
+        missing="$missing (blanket '.storage/' present — it blocks ALL negations)"
+    fi
+    if [ -n "$missing" ]; then
+        echo -e "${YELLOW}WARNING: /config/.gitignore is missing protective rules:${missing}${NC}"
+        echo -e "${YELLOW}Registry/dashboard history is NOT being versioned. Restore the rules or delete .gitignore and re-run to regenerate it.${NC}"
+    fi
 }
 
 show_history() {

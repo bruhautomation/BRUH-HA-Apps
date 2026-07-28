@@ -183,14 +183,16 @@ class ClaudeBridge:
         api = await self.async_api_config()
         if not api:
             return None
-        base_url, _token = api
+        base_url, token = api
         try:
             import aiohttp
             from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
             session = async_get_clientsession(self._hass)
             async with session.get(
-                f"{base_url}/health", timeout=aiohttp.ClientTimeout(total=5)
+                f"{base_url}/health",
+                headers={"X-BRUH-Token": token},
+                timeout=aiohttp.ClientTimeout(total=5),
             ) as resp:
                 if resp.status != 200:
                     return None

@@ -123,6 +123,11 @@ interactive_login() {
 
     local capture
     capture=$(mktemp)
+    # The capture file holds the terminal session INCLUDING the OAuth token.
+    # Ctrl-C is the most likely way an interactive flow ends early — without
+    # this trap, any interrupt would leave a plaintext long-lived credential
+    # sitting in /tmp with nothing scheduled to clean it up.
+    trap 'rm -f "$capture"' EXIT INT TERM
     # `script` keeps the session fully interactive (the OAuth URL/code
     # prompts need a real tty) while teeing everything to the capture file.
     # A plain pipe/tee would break the interactive prompt.
@@ -138,6 +143,7 @@ interactive_login() {
         token=$(grep -oE "$TOKEN_RE" "$capture" | tail -1 || true)
     fi
     rm -f "$capture"
+    trap - EXIT INT TERM
 
     if [ -z "$token" ]; then
         echo ""
