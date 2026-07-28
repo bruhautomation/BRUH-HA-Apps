@@ -42,9 +42,10 @@ it automatically.
 
 ## Options
 
-These Configuration-tab values are **fallbacks**: everything except `log_level` can be
-overridden live from the panel's **⚙ Settings** dialog (see below) without a restart —
-that dialog is the primary place to tune Insights.
+Everything except `log_level` is **also editable from the panel's ⚙ Settings dialog**
+(see below), and the two screens are the same setting: the panel reads these values live
+and writes changes back to the add-on's own options, so whichever one you edit, both show
+the new value and it takes effect immediately — no restart.
 
 | Option | Default | Description |
 |---|---|---|
@@ -52,7 +53,7 @@ that dialog is the primary place to tune Insights.
 | `history_days` | `7` | How many days of history/statistics to analyze. |
 | `history_keep_runs` | `40` | Past runs kept per category for the date selector. `0` disables insight history. |
 | `history_keep_days` | `30` | Past runs older than this are pruned. `0` disables insight history. |
-| `model` | *(empty)* | Claude model override (e.g. `claude-sonnet-4-5`). Empty = the CLI default. |
+| `model` | *(empty)* | Claude model to generate with (e.g. `claude-sonnet-5`, or a tier alias like `haiku`). Empty = the CLI default. The ⚙ dialog offers this as a dropdown. |
 | `generation_timeout_minutes` | `8` | Hard per-insight generation timeout. |
 | `log_level` | `info` | Add-on log verbosity. |
 
@@ -75,14 +76,21 @@ Insights may spend — no add-on restart needed:
   reaches your budget, Insights pauses automatic runs until it rolls over (a topbar chip
   says so). Manual clicks are never blocked.
 
-Below the budget, a **Generation defaults** section overrides the add-on's
-Configuration-tab options live (empty field = use the Configuration value, shown grayed
-as the placeholder): the **default refresh interval** every card without its own
+Below the budget, a **Generation defaults** section edits the add-on's own
+Configuration-tab options — the same values, from either screen, in sync both ways and
+applied immediately: the **default refresh interval** every card without its own
 schedule/interval uses (this is the "default" the ✎ editor refers to), **days of history
-analyzed** per run (fewer days = fewer tokens), a **Claude model override** (e.g. a
-cheaper model for routine runs), the **generation timeout**, and **run-history
-retention**. Only `log_level` remains add-on-config-only, since it takes effect at
-startup.
+analyzed** per run (fewer days = fewer tokens), the **Claude model** (a dropdown of the
+current models and tier aliases, plus *Custom model id…* for anything newer than the
+add-on), the **generation timeout**, and **run-history retention**. Only `log_level`
+remains Configuration-tab-only, since it takes effect at startup.
+
+Sync works through the Supervisor (`/addons/self/options`), so a value changed in the
+panel appears on the Configuration tab and vice versa — no restart either way. Panel edits
+land instantly; a Configuration-tab edit is picked up on the next poll (~15 s for
+generation, up to about half a minute for an open ⚙ dialog to redraw). In the unusual case
+that the Supervisor API isn't reachable, the dialog says so and falls back to storing the
+values in the panel alone.
 
 The dialog shows a live usage meter, and a **topbar chip** keeps the current session's
 usage and reset time in view at all times (e.g. "34% used · resets 3:15 PM" — tap it to

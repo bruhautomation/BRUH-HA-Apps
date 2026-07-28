@@ -239,8 +239,7 @@
         scheduled times use far fewer tokens than short intervals.</p>
 
       <h4 class="sethead">Generation defaults</h4>
-      <p class="hint">These apply immediately — no restart. Empty = use the add-on's
-        Configuration-tab value (shown grayed in each field).</p>
+      <p class="hint" id="setSyncNote"></p>
 
       <div class="setgrid">
         <div>
@@ -260,10 +259,13 @@
           <input id="setTimeout" type="number" min="2" max="30" step="1">
         </div>
         <div>
-          <label for="setModel">Claude model override</label>
-          <input id="setModel" type="text" maxlength="100" autocomplete="off" spellcheck="false">
-          <p class="hint tight">e.g. <code>claude-haiku-4-5</code> for cheaper runs. Empty =
-            the CLI's default model.</p>
+          <label for="setModel">Claude model</label>
+          <select id="setModel" class="selin"></select>
+          <input id="setModelCustom" class="hidden" type="text" maxlength="100"
+                 autocomplete="off" spellcheck="false" placeholder="e.g. claude-opus-5">
+          <p class="hint tight">Smaller models cost far fewer tokens per run; the
+            biggest ones dig deeper. Pick <b>Custom model id…</b> for anything newer
+            than this add-on.</p>
         </div>
         <div>
           <label for="setKeepRuns">Past runs kept per card</label>
@@ -274,8 +276,8 @@
           <input id="setKeepDays" type="number" min="0" max="365" step="1">
         </div>
       </div>
-      <p class="hint">Only <code>log_level</code> stays add-on-config-only (it takes effect at
-        startup).</p>
+      <p class="hint">Only <code>log_level</code> stays Configuration-tab-only (it takes
+        effect at startup, so there is nothing to sync).</p>
     </div>
   </div>
 </div>

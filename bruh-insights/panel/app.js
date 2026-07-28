@@ -542,8 +542,11 @@ function makeHistoryControls(id, insight, view) {
   return wrap;
 }
 
-function makeCard(catInfo, insight) {
-  const id = insight ? insight.id : catInfo.id;
+// catInfo is null for ad-hoc "Ask" cards and insight is null until the
+// answer lands, so an in-flight question has neither — `fallbackId` carries
+// the job id for that case.
+function makeCard(catInfo, insight, fallbackId) {
+  const id = (insight && insight.id) || (catInfo && catInfo.id) || fallbackId;
   const job = jobFor(id);
   const view = insight ? state.viewing[id] : null;
   const shown = view && view.data ? view.data : insight;
@@ -556,7 +559,8 @@ function makeCard(catInfo, insight) {
   const head = el("div", "card-head");
   head.appendChild(el("span", "cicon", (shown && shown.icon) || (catInfo && catInfo.icon) || "✨"));
   const titles = el("div", "ctitles");
-  const catName = insight ? (shown.category_title || "Custom") : catInfo.title;
+  const catName = insight ? (shown.category_title || "Custom")
+    : (catInfo ? catInfo.title : "Custom");
   const catRow = el("div", "cat", catName);
   if (catInfo && catInfo.focus_overridden) {
     catRow.appendChild(el("span", "badge", "custom prompt"));
@@ -582,7 +586,8 @@ function makeCard(catInfo, insight) {
   if (!active && !view) {
     const regen = el("button", "btn icon", "↻");
     tip(regen, "Regenerate");
-    regen.addEventListener("click", () => generate(id, insight && insight.question));
+    regen.addEventListener("click", () =>
+      generate(id, (insight && insight.question) || job.question));
     actions.appendChild(regen);
   }
   if (catInfo) {
@@ -628,9 +633,10 @@ function makeCard(catInfo, insight) {
     card.appendChild(pill);
   }
 
-  if (shown && shown.question) {
-    card.appendChild(el("div", "summary", `“${shown.question}”`));
-  }
+  // the question shows while the answer is still generating too, so an
+  // in-flight "Ask" card says what it's working on
+  const question = (shown && shown.question) || job.question;
+  if (question) card.appendChild(el("div", "summary", `“${question}”`));
 
   // body
   if (active) {
@@ -692,7 +698,7 @@ function makeCard(catInfo, insight) {
     box.appendChild(code);
     const retry = el("button", "btn small", "Try again");
     retry.style.marginTop = "10px";
-    retry.addEventListener("click", () => generate(id));
+    retry.addEventListener("click", () => generate(id, question));
     box.appendChild(retry);
     card.appendChild(box);
   } else {
@@ -760,8 +766,8 @@ function render() {
   });
   customs.forEach((i) => {
     if (i.virtual ? (state.filter !== "all" && state.filter !== "asked") : !matches(i)) return;
-    grid.appendChild(makeCard(null, i.virtual ? null : i));
-    if (i.virtual) grid.lastChild.dataset.id = i.id;
+    // a virtual card has no insight yet — makeCard works off the job id
+    grid.appendChild(makeCard(null, i.virtual ? null : i, i.id));
   });
   s.categories.forEach((c) => {
     const ins = insightFor(c.id);
@@ -848,6 +854,7 @@ function fastPoll() {
       await refreshInsights().catch(() => {});
     }
     renderIfChanged();
+    refreshOpenSettings();
     state.pollTimer = setTimeout(tick, anyActive() ? 2500 : 20000);
   };
   state.pollTimer = setTimeout(tick, 2500);
@@ -1082,16 +1089,58 @@ function renderUsageMeter(usage, budgetPct) {
       + `usage). Budget mark at ${budgetPct}%.`) + reset;
 }
 
-// Generation-defaults fields: ⚙ input id → settings key. Empty input =
-// null = "use the add-on's Configuration-tab value" (shown as placeholder).
+// Generation-defaults fields: ⚙ number input id → settings key. These are
+// the add-on's own Configuration options — the panel shows their live value
+// and writes back to them, so both screens always agree.
 const OPTION_FIELDS = {
   setRefresh: "refresh_hours",
   setHistoryDays: "history_days",
   setTimeout: "timeout_minutes",
-  setModel: "model",
   setKeepRuns: "history_keep_runs",
   setKeepDays: "history_keep_days",
 };
+
+// sentinel option value; no real model id can collide with it
+const CUSTOM_MODEL = "__custom__";
+
+// Model dropdown: the served catalog, grouped, plus whatever is configured
+// now (so a hand-typed id survives a round trip) and a Custom… escape hatch
+// for models newer than this build.
+function renderModelField(data) {
+  const sel = $("#setModel");
+  const custom = $("#setModelCustom");
+  const models = data.models || [];
+  const current = data.settings.model || "";
+  sel.textContent = "";
+  let group = null;
+  let parent = sel;
+  models.forEach((m) => {
+    if (m.group !== group) {
+      group = m.group;
+      parent = document.createElement("optgroup");
+      parent.label = group;
+      sel.appendChild(parent);
+    }
+    const opt = document.createElement("option");
+    opt.value = m.id;
+    opt.textContent = m.hint ? `${m.label} — ${m.hint}` : m.label;
+    parent.appendChild(opt);
+  });
+  const known = models.some((m) => m.id === current);
+  if (!known) {
+    const opt = document.createElement("option");
+    opt.value = current;
+    opt.textContent = `Custom: ${current}`;
+    sel.appendChild(opt);
+  }
+  const other = document.createElement("option");
+  other.value = CUSTOM_MODEL;
+  other.textContent = "Custom model id…";
+  sel.appendChild(other);
+  sel.value = current;
+  custom.value = known ? "" : current;
+  custom.classList.add("hidden");
+}
 
 function renderSettingsForm(data) {
   $("#setEnabled").checked = data.settings.auto_enabled !== false;
@@ -1099,17 +1148,17 @@ function renderSettingsForm(data) {
   $("#setBudget").value = data.settings.budget_percent;
   $("#setBudgetVal").textContent = data.settings.budget_percent + "%";
   renderUsageMeter(data.usage, data.settings.budget_percent);
-  const defs = data.addon_defaults || {};
   Object.entries(OPTION_FIELDS).forEach(([id, key]) => {
-    const input = $("#" + id);
     const val = data.settings[key];
-    input.value = val == null ? "" : String(val);
-    if (key === "model") {
-      input.placeholder = defs.model ? `add-on config: ${defs.model}` : "CLI default";
-    } else if (defs[key] != null) {
-      input.placeholder = `add-on config: ${defs[key]}`;
-    }
+    $("#" + id).value = val == null ? "" : String(val);
   });
+  renderModelField(data);
+  $("#setSyncNote").textContent = data.options_synced
+    ? "These are the add-on's own Configuration options — edit them here or on "
+      + "the Configuration tab, it's the same setting either way. Changes apply "
+      + "immediately, no restart."
+    : "The Supervisor isn't reachable, so these are stored in the panel only "
+      + "and override the add-on's Configuration tab until it is.";
 }
 
 async function openSettings() {
@@ -1119,6 +1168,17 @@ async function openSettings() {
   } catch (e) {
     toast("Could not load settings: " + e.message);
   }
+}
+
+// Someone editing the add-on's Configuration tab while this dialog is open
+// should see it here too. Skipped while a field has focus so a poll can't
+// overwrite what's being typed.
+async function refreshOpenSettings() {
+  const modal = $("#setModal");
+  if (!modal.classList.contains("open") || modal.contains(document.activeElement)) return;
+  try {
+    renderSettingsForm(await api("api/settings"));
+  } catch (e) { /* transient — the next tick tries again */ }
 }
 
 async function saveSettings(fields) {
@@ -1156,16 +1216,26 @@ Object.entries(OPTION_FIELDS).forEach(([id, key]) => {
     const raw = $("#" + id).value.trim();
     let value = null;
     if (raw !== "") {
-      if (key === "model") {
-        value = raw;
-      } else {
-        value = Math.round(Number(raw));
-        if (!isFinite(value)) { toast("Enter a number"); return; }
-      }
+      value = Math.round(Number(raw));
+      if (!isFinite(value)) { toast("Enter a number"); return; }
     }
     saveSettings({ [key]: value });
   });
 });
+$("#setModel").addEventListener("change", () => {
+  const sel = $("#setModel");
+  const custom = $("#setModelCustom");
+  if (sel.value === CUSTOM_MODEL) {
+    // reveal the free-text box; nothing is saved until it's filled in
+    custom.classList.remove("hidden");
+    custom.focus();
+    return;
+  }
+  custom.classList.add("hidden");
+  saveSettings({ model: sel.value });
+});
+$("#setModelCustom").addEventListener("change", () =>
+  saveSettings({ model: $("#setModelCustom").value.trim() }));
 $("#setClose").addEventListener("click", () => closeBox("#setModal"));
 $("#setModal").addEventListener("click", (ev) => {
   if (ev.target === $("#setModal")) closeBox("#setModal");

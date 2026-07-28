@@ -880,6 +880,9 @@ body.modal-open {
   gap: 4px 16px;
 }
 .setgrid input[type="number"] { max-width: 110px; }
+/* model picker: dropdown of known models + the "Custom model id…" box it
+   reveals, which sits directly under it */
+#setModelCustom { margin-top: 6px; }
 .edit-body .hint.tight { margin-top: 4px; font-size: 11.5px; }
 @media (max-width: 520px) {
   .setgrid { grid-template-columns: 1fr; }

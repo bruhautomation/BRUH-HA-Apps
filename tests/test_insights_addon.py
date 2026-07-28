@@ -108,6 +108,7 @@ class TestInsightsBuildFiles(unittest.TestCase):
                      "panel/app.js", "panel/style.css", "panel/favicon.svg",
                      "panel/categories.py", "panel/ha_data.py",
                      "panel/claude_client.py", "panel/prompt_store.py",
+                     "panel/settings_store.py", "panel/addon_options.py",
                      "panel/user_categories.py", "panel/feedback_store.py",
                      "panel/knowledge_store.py",
                      "icon.png", "logo.png",
@@ -122,6 +123,41 @@ class TestInsightsBuildFiles(unittest.TestCase):
         with open(ADDON_DIR / "config.yaml") as f:
             version = yaml.safe_load(f)["version"]
         self.assertIn(version, (ADDON_DIR / "CHANGELOG.md").read_text())
+
+
+class TestModelChoices(unittest.TestCase):
+    """The ⚙ dialog's model dropdown (1.8.0)."""
+
+    def test_shape_and_uniqueness(self):
+        ids = [m["id"] for m in claude_client.MODEL_CHOICES]
+        self.assertEqual(len(ids), len(set(ids)), "duplicate model id")
+        for choice in claude_client.MODEL_CHOICES:
+            for key in ("id", "group", "label", "hint"):
+                self.assertIn(key, choice, f"{choice.get('id')} missing {key}")
+            self.assertTrue(choice["label"].strip())
+            # ids go straight onto `claude --model`, and into an add-on
+            # option capped at MAX_MODEL_CHARS
+            self.assertLessEqual(len(choice["id"]), 100)
+            self.assertEqual(choice["id"], choice["id"].strip())
+
+    def test_default_choice_is_first_and_empty(self):
+        """"" is what the dropdown lands on when no model is configured."""
+        self.assertEqual(claude_client.MODEL_CHOICES[0]["id"], "")
+
+    def test_groups_are_contiguous(self):
+        """The panel opens a new <optgroup> whenever the group changes, so a
+        group that reappears later would render twice."""
+        seen = []
+        for choice in claude_client.MODEL_CHOICES:
+            if not seen or seen[-1] != choice["group"]:
+                self.assertNotIn(choice["group"], seen, "group is split up")
+                seen.append(choice["group"])
+
+    def test_offers_a_current_model_per_tier(self):
+        ids = {m["id"] for m in claude_client.MODEL_CHOICES}
+        for expected in ("opus", "sonnet", "haiku", "claude-opus-5",
+                         "claude-sonnet-5", "claude-haiku-4-5"):
+            self.assertIn(expected, ids)
 
 
 class TestCategories(unittest.TestCase):
