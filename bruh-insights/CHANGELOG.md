@@ -4,6 +4,25 @@ All notable changes to **BRUH Insights**, newest first. This project adheres to 
 
 > 💡 Prefer a cleaner, categorized view? See the [formatted changelog at bruhautomation.com](https://bruhautomation.com/bruh-insights/changelog/).
 
+## 1.9.0
+
+- **Every card can be deleted now.** ✕ used to appear only on ad-hoc Ask answers, so the
+  nine built-in cards had no delete at all and custom insights hid theirs inside the ✎
+  dialog. All three kinds now carry the same ✕. Custom insights and Ask answers are
+  deleted outright; a built-in card can't be (its definition ships inside the add-on), so
+  ✕ **removes** it — off the dashboard, out of auto-refresh and "Refresh all", stored runs
+  and feedback erased — and lists it under **Removed cards** in ⚙ Settings, where one click
+  brings it back
+- **Every card can be renamed.** The ✎ dialog gains **Name** and **Icon** for the built-in
+  cards, which previously could only have their prompt edited; emptying either field
+  restores the shipped one. Ad-hoc Ask answers have no recurring prompt to edit, so their
+  ✎ opens a name-and-icon dialog instead of nothing at all. A rename shows up on the card
+  immediately — including on past runs — and the new name is what the analyst is told the
+  card is about on its next run
+- **Fixed: a failed Ask card couldn't be dismissed.** When a question errored before
+  producing anything, the card had no stored insight behind it and therefore no ✕ — it sat
+  on the dashboard until a restart. It can be cleared away now
+
 ## 1.8.0
 
 - **One setting, two screens**: the ⚙ Settings dialog and the add-on's Configuration tab

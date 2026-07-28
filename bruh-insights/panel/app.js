@@ -555,12 +555,15 @@ function makeCard(catInfo, insight, fallbackId) {
   const card = el("article", "card" + (active ? " pending" : "") + (disabled ? " off" : ""));
   card.dataset.id = id;
 
-  // head
+  // head — name and icon come from the live definition (or, for an ad-hoc
+  // Ask card, the live insight), never from the run being viewed: a rename
+  // has to show up immediately, including on past runs
   const head = el("div", "card-head");
-  head.appendChild(el("span", "cicon", (shown && shown.icon) || (catInfo && catInfo.icon) || "✨"));
+  head.appendChild(el("span", "cicon",
+    (catInfo && catInfo.icon) || (insight && insight.icon) || (shown && shown.icon) || "✨"));
   const titles = el("div", "ctitles");
-  const catName = insight ? (shown.category_title || "Custom")
-    : (catInfo ? catInfo.title : "Custom");
+  const catName = catInfo ? catInfo.title
+    : ((insight && insight.category_title) || "Custom");
   const catRow = el("div", "cat", catName);
   if (catInfo && catInfo.focus_overridden) {
     catRow.appendChild(el("span", "badge", "custom prompt"));
@@ -590,12 +593,22 @@ function makeCard(catInfo, insight, fallbackId) {
       generate(id, (insight && insight.question) || job.question));
     actions.appendChild(regen);
   }
-  if (catInfo) {
+  // ✎ edits every card: a category card opens its full editor, an ad-hoc
+  // Ask card (no definition behind it) gets the name/icon dialog
+  if (catInfo || insight) {
     const edit = el("button", "btn icon", "✎");
-    tip(edit, catInfo.user ? "Edit insight" : "Edit prompt");
-    edit.addEventListener("click", () =>
-      catInfo.user ? openUserEdit(catInfo) : openEdit(catInfo));
+    tip(edit, catInfo
+      ? (catInfo.user ? "Edit insight — name, icon, prompt, schedule"
+        : "Edit card — name, icon, prompt, schedule")
+      : "Rename this card — name and icon");
+    edit.addEventListener("click", () => {
+      if (!catInfo) openNameEdit(insight);
+      else if (catInfo.user) openUserEdit(catInfo);
+      else openEdit(catInfo);
+    });
     actions.appendChild(edit);
+  }
+  if (catInfo) {
     const fb = el("button", "btn icon", "💬");
     tip(fb, "Give feedback — remembered for every future run");
     fb.addEventListener("click", () => openFeedback(catInfo));
@@ -610,16 +623,19 @@ function makeCard(catInfo, insight, fallbackId) {
     tip(dash, "Add to dashboard");
     dash.addEventListener("click", () => openCardModal(shown));
     actions.appendChild(dash);
-    if (insight && insight.category === "custom") {
-      const del = el("button", "btn icon", "✕");
-      tip(del, "Delete this card");
-      del.addEventListener("click", async () => {
-        await api(`api/insight/${id}`, { method: "DELETE" }).catch(() => {});
-        await refreshInsights();
-        render();
-      });
-      actions.appendChild(del);
-    }
+  }
+  // ✕ deletes every card — including one whose only trace is a job, so a
+  // failed Ask can be cleared away instead of sitting there forever.
+  // Built-in cards ship with the add-on, so theirs is a removal that ⚙
+  // Settings can undo — the tooltip says which you get.
+  // A still-running job is left alone: the worker would just re-register it.
+  if (catInfo || insight || (fallbackId && !active)) {
+    const del = el("button", "btn icon", "✕");
+    tip(del, catInfo && !catInfo.user
+      ? "Remove this card — restorable from ⚙ Settings"
+      : "Delete this card and its history");
+    del.addEventListener("click", () => deleteCard(id, catInfo, catName));
+    actions.appendChild(del);
   }
   head.appendChild(actions);
   card.appendChild(head);
@@ -792,6 +808,7 @@ function renderIfChanged() {
     view: Object.keys(state.viewing).map((k) => k + state.viewing[k].ts),
     cats: s && s.categories.map((c) =>
       [c.id, c.title, c.icon, c.enabled, c.focus_overridden, c.refresh_hours, c.schedule]),
+    removed: s && (s.removed_categories || []).map((c) => c.id),
     paused: s && [s.settings && s.settings.auto_enabled, s.usage && s.usage.blocked],
     usage: s && s.usage && [s.usage.used_percent, s.usage.resets_at],
     filter: state.filter,
@@ -815,6 +832,30 @@ async function generate(categoryOrId, question) {
     await api("api/generate", { method: "POST", body: JSON.stringify(body) });
     await refreshStatus();
     fastPoll();
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+// One ✕ for every kind of card — the server decides whether that means
+// "delete outright" (user insight, ad-hoc ask) or "remove, restorable"
+// (built-in card, whose definition ships with the add-on).
+async function deleteCard(id, catInfo, name) {
+  const builtin = !!(catInfo && !catInfo.user);
+  const label = name || (catInfo && catInfo.title) || "this card";
+  const question = builtin
+    ? `Remove the “${label}” card? Its past runs and feedback are deleted, but you `
+      + "can bring the card back from ⚙ Settings."
+    : `Delete “${label}” and its history? This can't be undone.`;
+  if (!window.confirm(question)) return;
+  try {
+    await api(`api/card/${id}`, { method: "DELETE" });
+    delete state.viewing[id];
+    delete state.history[id];
+    delete state.prevLatest[id];
+    await Promise.all([refreshStatus(), refreshInsights()]);
+    render();
+    toast(builtin ? "Card removed — restore it from ⚙ Settings" : "Card deleted");
   } catch (e) {
     toast(e.message);
   }
@@ -922,14 +963,18 @@ let editCatId = null;
 function openEdit(cat) {
   editCatId = cat.id;
   $("#editIcon").textContent = cat.icon || "✨";
-  $("#editTitle").textContent = `${cat.title} — prompt`;
+  $("#editTitle").textContent = `${cat.title} — edit card`;
   $("#editDesc").textContent = cat.description || "";
+  $("#editName").value = cat.title || "";
+  $("#editName").placeholder = cat.default_title || "Card name";
+  $("#editIconIn").value = cat.icon || "";
+  $("#editIconIn").placeholder = cat.default_icon || "✨";
   $("#editFocus").value = cat.focus || "";
   $("#editEnabled").checked = cat.enabled !== false;
   $("#editHours").value = cat.refresh_hours == null ? "" : cat.refresh_hours;
   defaultHoursPlaceholder($("#editHours"));
   $("#editTimes").value = timesToText(cat.schedule);
-  const overridden = cat.focus_overridden || cat.enabled === false
+  const overridden = cat.focus_overridden || cat.renamed || cat.enabled === false
     || cat.refresh_hours != null || (cat.schedule && cat.schedule.length);
   $("#editReset").classList.toggle("hidden", !overridden);
   openBox("#editModal");
@@ -940,6 +985,10 @@ async function saveEdit(regen) {
   const schedule = parseTimes($("#editTimes").value);
   if (schedule === undefined) return;
   const body = {
+    // blank name/icon fall back to the shipped ones rather than erroring —
+    // the placeholder already shows what emptying the field gives you
+    title: $("#editName").value.trim(),
+    icon: $("#editIconIn").value.trim(),
     focus: $("#editFocus").value,
     enabled: $("#editEnabled").checked,
     refresh_hours: hours === "" ? null : Math.round(Number(hours)),
@@ -966,16 +1015,63 @@ $("#editReset").addEventListener("click", async () => {
   try {
     await api(`api/prompt/${editCatId}`, { method: "DELETE" });
     closeBox("#editModal");
-    toast("Restored the default prompt");
+    toast("Restored this card's shipped name, icon and prompt");
     await refreshStatus();
     render();
   } catch (e) {
     toast(e.message);
   }
 });
+$("#editDelete").addEventListener("click", async () => {
+  const cat = (state.status.categories || []).find((c) => c.id === editCatId);
+  closeBox("#editModal");
+  await deleteCard(editCatId, cat || { id: editCatId },
+    cat ? cat.title : editCatId);
+});
 $("#editClose").addEventListener("click", () => closeBox("#editModal"));
 $("#editModal").addEventListener("click", (ev) => {
   if (ev.target === $("#editModal")) closeBox("#editModal");
+});
+
+// ------------------------------------------------- ad-hoc card name modal
+// Cards born from an Ask question have no recurring definition to edit —
+// only the label and icon they carry on the dashboard.
+
+let nameInsightId = null;
+
+function openNameEdit(insight) {
+  nameInsightId = insight.id;
+  $("#nameIcon").textContent = insight.icon || "✨";
+  $("#nameTitleBar").textContent = `${insight.category_title || "Custom"} — rename card`;
+  $("#nameName").value = insight.category_title || "";
+  $("#nameIconIn").value = insight.icon || "";
+  openBox("#nameModal");
+}
+
+$("#nameSave").addEventListener("click", async () => {
+  const name = $("#nameName").value.trim();
+  if (!name) { toast("Give the card a name"); return; }
+  try {
+    await api(`api/insight/${nameInsightId}`, {
+      method: "PUT",
+      body: JSON.stringify({ name, icon: $("#nameIconIn").value.trim() }),
+    });
+    closeBox("#nameModal");
+    await refreshInsights();
+    render();
+    toast("Card renamed");
+  } catch (e) {
+    toast(e.message);
+  }
+});
+$("#nameDelete").addEventListener("click", async () => {
+  const id = nameInsightId;
+  closeBox("#nameModal");
+  await deleteCard(id, null, $("#nameName").value.trim());
+});
+$("#nameClose").addEventListener("click", () => closeBox("#nameModal"));
+$("#nameModal").addEventListener("click", (ev) => {
+  if (ev.target === $("#nameModal")) closeBox("#nameModal");
 });
 
 // ------------------------------------------------ user-defined insights UI
@@ -1049,16 +1145,10 @@ async function saveUserInsight() {
 $("#newSave").addEventListener("click", saveUserInsight);
 $("#newDelete").addEventListener("click", async () => {
   if (!userEditId) return;
-  if (!window.confirm("Delete this insight and its history?")) return;
-  try {
-    await api(`api/user_category/${userEditId}`, { method: "DELETE" });
-    closeBox("#newModal");
-    toast("Insight deleted");
-    await Promise.all([refreshStatus(), refreshInsights()]);
-    render();
-  } catch (e) {
-    toast(e.message);
-  }
+  const id = userEditId;
+  const name = $("#newName").value.trim();
+  closeBox("#newModal");
+  await deleteCard(id, { id, user: true, title: name }, name);
 });
 $("#newClose").addEventListener("click", () => closeBox("#newModal"));
 $("#newModal").addEventListener("click", (ev) => {
@@ -1142,7 +1232,43 @@ function renderModelField(data) {
   custom.classList.add("hidden");
 }
 
+// Built-in cards can't be deleted for good — their definitions ship in the
+// add-on — so ✕ hides them and this list hands them back.
+function renderRemovedCards() {
+  const removed = (state.status && state.status.removed_categories) || [];
+  $("#setRemovedWrap").classList.toggle("hidden", !removed.length);
+  const list = $("#setRemoved");
+  list.textContent = "";
+  removed.forEach((c) => {
+    const row = el("div", "removedrow");
+    row.appendChild(el("span", "cicon", c.icon || "✨"));
+    const label = el("span", "grow", c.title || c.id);
+    if (c.default_title && c.default_title !== c.title) {
+      label.appendChild(el("span", "badge", c.default_title));
+    }
+    row.appendChild(label);
+    const restore = el("button", "btn small", "Restore");
+    restore.addEventListener("click", async () => {
+      restore.disabled = true;
+      try {
+        await api(`api/prompt/${c.id}`, {
+          method: "PUT", body: JSON.stringify({ hidden: false }) });
+        await refreshStatus();
+        renderRemovedCards();
+        render();
+        toast(`“${c.title || c.id}” is back — generate it whenever you like`);
+      } catch (e) {
+        toast(e.message);
+        restore.disabled = false;
+      }
+    });
+    row.appendChild(restore);
+    list.appendChild(row);
+  });
+}
+
 function renderSettingsForm(data) {
+  renderRemovedCards();
   $("#setEnabled").checked = data.settings.auto_enabled !== false;
   $("#setPlan").value = data.settings.plan || "pro";
   $("#setBudget").value = data.settings.budget_percent;
@@ -1164,6 +1290,8 @@ function renderSettingsForm(data) {
 async function openSettings() {
   openBox("#setModal");
   try {
+    // status carries the removed-cards list, and it may be up to a poll old
+    await refreshStatus().catch(() => {});
     renderSettingsForm(await api("api/settings"));
   } catch (e) {
     toast("Could not load settings: " + e.message);

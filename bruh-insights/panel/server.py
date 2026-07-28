@@ -23,12 +23,17 @@ POST /api/auth/setup/code    — submit the pasted one-time code
 GET  /api/auth/setup/status  — poll the guided flow
 POST /api/auth/setup/cancel  — abort the guided flow
 DELETE /api/insight/{id}     — delete a stored insight (custom cards)
+PUT  /api/insight/{id}       — rename an ad-hoc Ask card {name, icon}
+DELETE /api/card/{id}        — delete ANY card (shipped / user / ad-hoc): the
+                               one the ✕ button calls. Shipped cards are
+                               hidden (restorable) since their definition ships
 GET  /api/insight/{id}/history       — past runs of a category (no html)
 GET  /api/insight/{id}/history/{ts}  — one stored past run in full
 DELETE /api/insight/{id}/history/{ts} — remove one past run
 GET  /api/prompts            — per-category prompt/override listing
-PUT  /api/prompt/{id}        — set focus/enabled/refresh_hours override
-DELETE /api/prompt/{id}      — reset a category to shipped defaults
+PUT  /api/prompt/{id}        — set title/icon/focus/enabled/hidden/refresh_hours
+DELETE /api/prompt/{id}      — reset a category to shipped defaults (also
+                               un-hides it)
 POST /api/user_category      — create a user-defined recurring insight
 PUT  /api/user_category/{id} — edit a user-defined insight
 DELETE /api/user_category/{id} — delete one (definition + insight + history)
@@ -302,8 +307,14 @@ def _history_dir(insight_id: str) -> Path:
 
 
 def all_categories() -> list[dict]:
-    """Shipped categories followed by user-defined ones (creation order)."""
-    return CATEGORIES + user_categories.load()
+    """Shipped categories followed by user-defined ones (creation order).
+
+    Shipped cards the user removed are left out everywhere this feeds —
+    the dashboard, "Refresh all", and the scheduler — so a removed card is
+    as gone as a deleted one, minus the part where its definition ships in
+    the code and can be restored.
+    """
+    return prompt_store.visible_categories() + user_categories.load()
 
 
 def resolve_category(cat_id: str) -> dict | None:
@@ -332,8 +343,10 @@ def load_insights() -> list[dict]:
         except (OSError, ValueError):
             continue
         # leftovers are ad-hoc Ask cards; orphaned user-* files (definition
-        # deleted mid-write) are skipped rather than shown as ghost cards
-        if isinstance(obj, dict) and obj.get("id") and not stem.startswith("user-"):
+        # deleted mid-write) and files belonging to a removed shipped card
+        # are skipped rather than shown as ghost cards
+        if (isinstance(obj, dict) and obj.get("id")
+                and not stem.startswith("user-") and not get_category(stem)):
             custom.append(obj)
     custom.sort(key=lambda i: i.get("generated_at", ""), reverse=True)
     return out + custom
@@ -789,13 +802,16 @@ def _category_status(c: dict, insights: dict) -> dict:
     eff = prompt_store.effective_category(c["id"]) or c
     return {
         "id": c["id"],
-        "title": c["title"],
-        "icon": c["icon"],
+        "title": eff.get("title", c["title"]),
+        "icon": eff.get("icon", c["icon"]),
+        "default_title": c["title"],
+        "default_icon": c["icon"],
         "description": c["description"],
         "generated_at": insights.get(c["id"]),
         "focus": eff.get("focus", c["focus"]),
         "default_focus": c["focus"],
         "focus_overridden": "focus" in eff.get("overridden", []),
+        "renamed": bool({"title", "icon"} & set(eff.get("overridden", []))),
         "enabled": eff.get("enabled", True),
         "refresh_hours": eff.get("refresh_hours"),
         "schedule": eff.get("schedule"),
@@ -819,6 +835,8 @@ async def h_status(request: web.Request) -> web.Response:
         "settings": settings,
         "usage": usage_store.budget_state(settings),
         "categories": [_category_status(c, insights) for c in all_categories()],
+        # shipped cards the user removed — ⚙ Settings offers them back
+        "removed_categories": prompt_store.hidden_categories(),
         # `question` lets the panel label an ad-hoc "Ask" card (and retry it)
         # while it's still generating, before any insight exists to read.
         "jobs": {jid: {k: j.get(k) for k in ("state", "error", "question")}
@@ -846,7 +864,7 @@ async def h_generate(request: web.Request) -> web.Response:
         _enqueue(insight_id, question=question)
         return web.json_response({"queued": [insight_id]})
     cat_id = body.get("category", "")
-    if not resolve_category(cat_id):
+    if not resolve_category(cat_id) or prompt_store.is_hidden(cat_id):
         raise web.HTTPBadRequest(text="unknown category")
     started = _enqueue(cat_id)
     return web.json_response({"queued": [cat_id] if started else []})
@@ -873,6 +891,77 @@ async def h_delete_insight(request: web.Request) -> web.Response:
     _unmirror_card(insight_id)
     JOBS.pop(insight_id, None)
     return web.json_response({"deleted": insight_id})
+
+
+async def h_rename_insight(request: web.Request) -> web.Response:
+    """Rename a stored insight's card label / icon (ad-hoc Ask cards).
+
+    Category cards take their name from the category, so those are renamed
+    through /api/prompt/{id} or /api/user_category/{id} instead — this is
+    the one path for cards that have no definition behind them.
+    """
+    insight_id = request.match_info["id"]
+    path = _insight_path(insight_id)
+    try:
+        insight = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raise web.HTTPNotFound(text="no such insight")
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise web.HTTPBadRequest(text="expected an object")
+    if "name" in body:
+        name = str(body.get("name") or "").strip()[:prompt_store.MAX_TITLE]
+        if not name:
+            raise web.HTTPBadRequest(text="name required")
+        insight["category_title"] = name
+    if "icon" in body:
+        insight["icon"] = (str(body.get("icon") or "").strip()[:prompt_store.MAX_ICON]
+                           or "✨")
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(insight, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(path)
+    return web.json_response({
+        "id": insight_id,
+        "name": insight.get("category_title", ""),
+        "icon": insight.get("icon", "✨"),
+    })
+
+
+def _purge_card_data(card_id: str) -> None:
+    """Erase everything stored for one card: insight, past runs, feedback."""
+    try:
+        _insight_path(card_id).unlink()
+    except OSError:
+        pass
+    _unmirror_card(card_id)
+    shutil.rmtree(_history_dir(card_id), ignore_errors=True)
+    feedback_store.clear(card_id)
+    JOBS.pop(card_id, None)
+
+
+async def h_delete_card(request: web.Request) -> web.Response:
+    """Delete any card, whatever kind it is — one endpoint for one ✕ button.
+
+    A user-created insight and an ad-hoc Ask card are deleted outright. A
+    shipped card can't be (its definition lives in the code), so it is
+    marked hidden instead: gone from the dashboard and the scheduler, its
+    stored data erased all the same, and restorable from ⚙ Settings.
+    """
+    card_id = request.match_info["id"]
+    if get_category(card_id):
+        prompt_store.save_override(card_id, {"hidden": True})
+        await asyncio.to_thread(_purge_card_data, card_id)
+        return web.json_response({"deleted": card_id, "restorable": True})
+    if user_categories.get(card_id):
+        user_categories.delete(card_id)
+        await asyncio.to_thread(_purge_card_data, card_id)
+        return web.json_response({"deleted": card_id, "restorable": False})
+    # an ad-hoc Ask that failed (or is still running) has no stored insight
+    # yet — its card is the job, so clearing the job clears the card
+    if not _insight_path(card_id).exists() and card_id not in JOBS:
+        raise web.HTTPNotFound(text="no such card")
+    await asyncio.to_thread(_purge_card_data, card_id)
+    return web.json_response({"deleted": card_id, "restorable": False})
 
 
 # -- insight history --------------------------------------------------------
@@ -927,11 +1016,15 @@ def _prompt_record(cat_id: str) -> dict:
     eff = prompt_store.effective_category(cat_id)
     return {
         "id": cat_id,
-        "title": c["title"],
+        "title": eff["title"],
+        "icon": eff["icon"],
+        "default_title": c["title"],
+        "default_icon": c["icon"],
         "default_focus": c["focus"],
         "focus": eff["focus"],
         "overridden": eff["overridden"],
         "enabled": eff["enabled"],
+        "hidden": eff["hidden"],
         "refresh_hours": eff["refresh_hours"],
         "schedule": eff["schedule"],
     }
@@ -948,6 +1041,25 @@ async def h_prompt_put(request: web.Request) -> web.Response:
         raise web.HTTPBadRequest(text="unknown category")
     body = await request.json()
     fields: dict = {}
+    # title/icon: a shipped card can be renamed like any other; blanking the
+    # field (or typing the shipped name back) drops the override
+    if "title" in body:
+        title = body["title"]
+        if not isinstance(title, str):
+            raise web.HTTPBadRequest(text="title must be a string")
+        title = title.strip()[:prompt_store.MAX_TITLE]
+        fields["title"] = title if title and title != cat["title"] else None
+    if "icon" in body:
+        icon = body["icon"]
+        if not isinstance(icon, str):
+            raise web.HTTPBadRequest(text="icon must be a string")
+        icon = icon.strip()[:prompt_store.MAX_ICON]
+        fields["icon"] = icon if icon and icon != cat["icon"] else None
+    if "hidden" in body:
+        if not isinstance(body["hidden"], bool):
+            raise web.HTTPBadRequest(text="hidden must be a boolean")
+        # visible is the default — only a removal is worth storing
+        fields["hidden"] = True if body["hidden"] else None
     if "focus" in body:
         focus = body["focus"]
         if not isinstance(focus, str):
@@ -1014,13 +1126,7 @@ async def h_user_category_delete(request: web.Request) -> web.Response:
     if not user_categories.delete(cat_id):
         raise web.HTTPNotFound(text="no such insight")
     # drop everything that belonged to it: insight, history runs, feedback
-    try:
-        _insight_path(cat_id).unlink()
-    except OSError:
-        pass
-    shutil.rmtree(_history_dir(cat_id), ignore_errors=True)
-    feedback_store.clear(cat_id)
-    JOBS.pop(cat_id, None)
+    await asyncio.to_thread(_purge_card_data, cat_id)
     return web.json_response({"deleted": cat_id})
 
 
@@ -1670,6 +1776,8 @@ def make_app() -> web.Application:
     app.router.add_post("/api/generate", h_generate)
     app.router.add_post("/api/generate_all", h_generate_all)
     app.router.add_delete("/api/insight/{id}", h_delete_insight)
+    app.router.add_put("/api/insight/{id}", h_rename_insight)
+    app.router.add_delete("/api/card/{id}", h_delete_card)
     app.router.add_get("/api/insight/{id}/history", h_history_list)
     app.router.add_get("/api/insight/{id}/history/{ts}", h_history_get)
     app.router.add_delete("/api/insight/{id}/history/{ts}", h_history_delete)
