@@ -39,6 +39,63 @@ def _load_stats_module():
 stats = _load_stats_module()
 
 
+class _FakeRcon:
+    """Records every command sent; replies from a canned map."""
+    sent: list[str] = []
+    replies: dict[str, str] = {}
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def command(self, cmd: str) -> str:
+        _FakeRcon.sent.append(cmd)
+        return _FakeRcon.replies.get(cmd, "")
+
+
+class TestProbeRcon(unittest.TestCase):
+    """1.14.4: the poll must use `minecraft:list` (bypasses Essentials'
+    per-command RCON logging — a third of console.log at 15s cadence) and
+    only fetch /version when asked (every /version makes Paper re-run its
+    update check, which stack-traces on MC versions the retired v2 API no
+    longer serves)."""
+
+    def _probe(self, want_version: bool):
+        _FakeRcon.sent = []
+        _FakeRcon.replies = {
+            "minecraft:list": "There are 1 of a max of 20 players online: Steve",
+            "tps": "TPS from last 1m, 5m, 15m: 20.0, 20.0, 20.0",
+            "version": "This server is running Paper version git-Paper-196",
+        }
+        orig = stats.Rcon
+        stats.Rcon = _FakeRcon
+        try:
+            return stats._probe_rcon("hunter2", want_version=want_version)
+        finally:
+            stats.Rcon = orig
+
+    def test_uses_namespaced_list(self):
+        out = self._probe(want_version=True)
+        self.assertIn("minecraft:list", _FakeRcon.sent)
+        self.assertNotIn("list", _FakeRcon.sent)
+        self.assertEqual(out["online"], 1)
+        self.assertEqual(out["players"], ["Steve"])
+
+    def test_version_fetched_only_when_wanted(self):
+        out = self._probe(want_version=True)
+        self.assertIn("version", _FakeRcon.sent)
+        self.assertIn("Paper", out["version_brand"])
+
+        out = self._probe(want_version=False)
+        self.assertNotIn("version", _FakeRcon.sent)
+        self.assertNotIn("version_brand", out)
+
+
 class TestParseList(unittest.TestCase):
     def test_empty_server(self):
         reply = "There are 0 of a max of 20 players online: "

@@ -5,6 +5,38 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.14.4
+
+### Fixed
+
+- **Plugin auto-install is now version-aware.** The Modrinth resolver
+  picked the newest Paper-family build regardless of the server's
+  Minecraft version, so e.g. a 1.20.1 server got WorldEdit built for
+  1.21.4 — which Paper refuses to load ("Unsupported API version") on
+  every boot. Resolution now filters by the installed server version
+  (from `.server-meta.json`), prefers release-channel builds over
+  alpha/beta, and skips with a clear warning when a plugin has no build
+  for your server version instead of installing a jar that can't load.
+- **`install_essentialsx_chat` works again.** The resolver looked up the
+  Modrinth slug `essentialsxchat`, which does not exist (HTTP 404 on
+  every boot). The correct slug is `essentialsx-chat-module`.
+- **Plugins built for a newer Minecraft are quarantined.** The boot-time
+  plugin cleanup now also moves jars whose `api-version` targets a newer
+  MC than the server runs into `plugins/.quarantine/` — they can never
+  load, and the quarantine manifest tells you to install a build for
+  your server version (or upgrade the server) instead of Paper printing
+  a stack trace every start. Restore by moving the jar back, as with
+  duplicate quarantines. Disabled together with
+  `auto_quarantine_duplicates: false`.
+- **Console log noise cut sharply.** The stats collector now polls with
+  `minecraft:list` instead of `/list`, so Essentials no longer logs
+  "Rcon issued server command" every 15 seconds into console.log; and
+  the server brand (`/version`) is fetched once per server run instead
+  of every poll — each `/version` made Paper re-run its update check,
+  which now dumps a `FileNotFoundException` stack trace every few
+  minutes for MC versions the retired `api.papermc.io` v2 API no longer
+  serves.
+
 ## 1.14.3
 
 - **Sidebar naming**: the ingress panel is now titled "BRUH Minecraft"

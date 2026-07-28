@@ -76,12 +76,17 @@ def _atomic_write(path: Path, data: dict) -> None:
     tmp.replace(path)
 
 
-def _probe_rcon(password: str) -> dict[str, Any]:
+def _probe_rcon(password: str, want_version: bool = True) -> dict[str, Any]:
     out: dict[str, Any] = {}
     try:
         with Rcon(RCON_HOST, password, port=RCON_PORT, timeout=5) as r:
             try:
-                parsed = _parse_list(r.command("list"))
+                # `minecraft:list`, not `list`: Essentials overrides /list
+                # and logs "Rcon issued server command" for every command it
+                # handles — at our 15s cadence that's a third of console.log.
+                # The namespaced form bypasses plugin overrides entirely and
+                # always yields the vanilla format our regex parses.
+                parsed = _parse_list(r.command("minecraft:list"))
                 # Only adopt the parsed result if the regex actually matched
                 # something useful. A zeros-only payload means the regex
                 # missed the server's `/list` format and would otherwise
@@ -97,10 +102,15 @@ def _probe_rcon(password: str) -> dict[str, Any]:
                     out["tps_1m"], out["tps_5m"], out["tps_15m"] = tps
             except Exception:  # noqa: BLE001
                 pass
-            try:
-                out["version_brand"] = r.command("version").strip()[:200]
-            except Exception:  # noqa: BLE001
-                pass
+            # The brand string never changes while the JVM lives, and every
+            # /version invocation makes Paper re-run its update check — which
+            # now stack-traces into the server log for older MC versions
+            # (api.papermc.io v2 is gone). Fetch it once and cache upstream.
+            if want_version:
+                try:
+                    out["version_brand"] = r.command("version").strip()[:200]
+                except Exception:  # noqa: BLE001
+                    pass
     except Exception:  # noqa: BLE001 — server may simply be offline
         pass
     return out
@@ -172,14 +182,27 @@ def main() -> int:
 
     PANEL.mkdir(parents=True, exist_ok=True)
     started_at = time.time()
+    version_brand: str | None = None
 
     while True:
         password = _pw()
-        rcon_payload = _probe_rcon(password) if password else {}
+        rcon_payload = (
+            _probe_rcon(password, want_version=version_brand is None)
+            if password else {}
+        )
+        rcon_ok = bool(rcon_payload)
+        if rcon_payload.get("version_brand"):
+            version_brand = rcon_payload["version_brand"]
+        elif rcon_ok and version_brand is not None:
+            rcon_payload["version_brand"] = version_brand
+        elif not rcon_ok:
+            # Server down (or restarting, possibly onto a new build) — drop
+            # the cache so the next successful poll re-reads the brand.
+            version_brand = None
         status_payload = _probe_mcstatus()
         merged = {**status_payload, **rcon_payload}
         reachable = bool(status_payload)
-        write_stats(started_at, reachable, bool(rcon_payload), merged)
+        write_stats(started_at, reachable, rcon_ok, merged)
         time.sleep(POLL_INTERVAL)
 
 

@@ -35,7 +35,9 @@ warn() { printf '[popular-plugins] WARN: %s\n' "$*" >&2; }
 # ----------------------------------------------------------------------------
 declare -A PLUGIN_SLUGS=(
     [essentialsx]="essentialsx"
-    [essentialsx_chat]="essentialsxchat"
+    # NOTE: the chat module's Modrinth slug is essentialsx-chat-module —
+    # "essentialsxchat" does not exist and 404s on every resolution.
+    [essentialsx_chat]="essentialsx-chat-module"
     [luckperms]="luckperms"
     [worldedit]="worldedit"
     [coreprotect]="coreprotect"
@@ -115,6 +117,22 @@ user_supplied_already() {
 # resilient to Modrinth schema tweaks.
 PAPER_LOADERS_REGEX='^(paper|spigot|purpur|folia)$'
 
+# The Minecraft version the installed server.jar actually runs, written by
+# download-server.sh (which runs before us). Resolution MUST filter on it:
+# Modrinth lists versions newest-first, so the unfiltered pick on e.g. a
+# 1.20.1 server is a jar built for the current MC release, which Paper then
+# refuses to load ("Unsupported API version 1.21.4").
+SERVER_META="${SERVER_META:-${MC_SERVER_DIR:-/config/minecraft}/.server-meta.json}"
+MC_GAME_VERSION=""
+if [ -f "${SERVER_META}" ]; then
+    MC_GAME_VERSION=$(jq -r '.version // empty' < "${SERVER_META}" 2>/dev/null) || MC_GAME_VERSION=""
+fi
+if [ -n "${MC_GAME_VERSION}" ]; then
+    log "Filtering plugin builds for Minecraft ${MC_GAME_VERSION}"
+else
+    warn "Server version unknown (no ${SERVER_META}); installing latest plugin builds unfiltered"
+fi
+
 resolve_url() {
     local slug="$1"
     local versions
@@ -122,13 +140,27 @@ resolve_url() {
         "https://api.modrinth.com/v2/project/${slug}/version" 2>/dev/null) \
         || { warn "Modrinth lookup failed for ${slug}"; return 1; }
 
-    # Pick the first version that lists at least one Paper-family loader
-    # AND has a primary file with a URL. .files[] is sorted by Modrinth
-    # with the primary jar first, so .files[0] is the right pick.
-    printf '%s' "${versions}" | jq -r --arg loaders "${PAPER_LOADERS_REGEX}" '
-        [ .[] | select(any(.loaders[]; test($loaders))) ][0]
-        | .files[0].url // empty
-    '
+    # Pick the first version that lists at least one Paper-family loader,
+    # supports the server's MC version (when known), AND has a primary file
+    # with a URL. Prefer release-channel builds over alpha/beta when any
+    # release matches. .files[] is sorted by Modrinth with the primary jar
+    # first, so .files[0] is the right pick.
+    local url
+    url=$(printf '%s' "${versions}" | jq -r \
+        --arg loaders "${PAPER_LOADERS_REGEX}" --arg mc "${MC_GAME_VERSION}" '
+        [ .[] | select(any(.loaders[]; test($loaders)))
+              | select($mc == "" or (.game_versions | index($mc))) ]
+        | (map(select(.version_type == "release"))) as $releases
+        | (if ($releases | length) > 0 then $releases else . end)
+        | .[0].files[0].url // empty
+    ')
+    if [ -z "${url}" ] && [ -n "${MC_GAME_VERSION}" ]; then
+        # Distinguish "no compatible build" from a lookup failure so the
+        # operator knows the plugin exists but doesn't support this server.
+        warn "No build of ${slug} supports Minecraft ${MC_GAME_VERSION}; not installing an incompatible jar"
+        return 1
+    fi
+    printf '%s' "${url}"
 }
 
 # ----------------------------------------------------------------------------
