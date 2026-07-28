@@ -22,23 +22,38 @@ ADDON_DIR = Path(__file__).parent.parent / "bruh-minecraft-server"
 SCRIPT = ADDON_DIR / "scripts" / "cleanup-plugins.py"
 
 
-def _make_jar(path: Path, name: str, version: str, *, descriptor: str = "plugin.yml") -> None:
+def _make_jar(path: Path, name: str, version: str, *, descriptor: str = "plugin.yml",
+              api_version: str | None = "1.21") -> None:
     """Create a fake plugin jar containing just the required descriptor."""
     path.parent.mkdir(parents=True, exist_ok=True)
     content = textwrap.dedent(f"""\
         name: {name}
         version: {version}
         main: com.example.{name}
-        api-version: '1.21'
     """)
+    if api_version is not None:
+        content += f"api-version: '{api_version}'\n"
     with zipfile.ZipFile(path, "w") as zf:
         zf.writestr(descriptor, content)
 
 
-def _run_cleanup(plugins_dir: Path) -> subprocess.CompletedProcess:
+def _run_cleanup(plugins_dir: Path,
+                 server_version: str | None = None) -> subprocess.CompletedProcess:
+    env = {**os.environ, "PLUGINS_DIR": str(plugins_dir)}
+    if server_version is not None:
+        meta = plugins_dir.parent / ".server-meta.json"
+        meta.write_text(
+            '{"server_type": "paper", "version": "%s", "build": "1"}'
+            % server_version
+        )
+        env["SERVER_META"] = str(meta)
+    else:
+        # Point at a nonexistent file so a real /config on the test host
+        # can never leak into the run.
+        env["SERVER_META"] = str(plugins_dir.parent / "no-such-meta.json")
     return subprocess.run(
         [sys.executable, str(SCRIPT)],
-        env={**os.environ, "PLUGINS_DIR": str(plugins_dir)},
+        env=env,
         capture_output=True,
         text=True,
         check=False,
@@ -250,6 +265,89 @@ class TestMtimeTiebreaker(unittest.TestCase):
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertTrue(new.is_file())
             self.assertFalse(old.is_file())
+
+
+class TestApiVersionQuarantine(unittest.TestCase):
+    """Jars whose api-version targets a newer MC than the server runs can
+    never load (Paper: "Unsupported API version") — quarantine them with a
+    manifest note instead of letting Paper stack-trace on every boot."""
+
+    def test_newer_api_version_quarantined(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            plugins = Path(tmp) / "plugins"
+            bad = plugins / "worldedit-bukkit-7.4.4-beta-01.jar"
+            _make_jar(bad, "WorldEdit", "7.4.4-beta-01", api_version="1.21.4")
+
+            proc = _run_cleanup(plugins, server_version="1.20.1")
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertFalse(bad.is_file())
+            self.assertTrue((plugins / ".quarantine" / bad.name).is_file())
+            self.assertIn("api-version 1.21.4", proc.stderr)
+            manifest = (plugins / ".quarantine" / "QUARANTINE.md").read_text()
+            self.assertIn("targets Minecraft 1.21.4", manifest)
+            self.assertIn("server runs 1.20.1", manifest)
+
+    def test_old_api_version_left_alone(self):
+        # EssentialsX declares api-version 1.8 — loads fine on any modern
+        # server (just logs a warning); must NOT be quarantined.
+        with tempfile.TemporaryDirectory() as tmp:
+            plugins = Path(tmp) / "plugins"
+            jar = plugins / "EssentialsX-2.22.0.jar"
+            _make_jar(jar, "Essentials", "2.22.0", api_version="1.8")
+
+            proc = _run_cleanup(plugins, server_version="1.20.1")
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertTrue(jar.is_file())
+
+    def test_equal_and_two_part_api_versions_ok(self):
+        # api-version "1.20" on a 1.20.1 server is compatible (Paper pads).
+        with tempfile.TemporaryDirectory() as tmp:
+            plugins = Path(tmp) / "plugins"
+            jar = plugins / "Plugin.jar"
+            _make_jar(jar, "SomePlugin", "1.0.0", api_version="1.20")
+
+            proc = _run_cleanup(plugins, server_version="1.20.1")
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertTrue(jar.is_file())
+
+    def test_no_server_meta_skips_compat_pass(self):
+        # Without .server-meta.json we can't judge compatibility — leave
+        # everything alone rather than guessing.
+        with tempfile.TemporaryDirectory() as tmp:
+            plugins = Path(tmp) / "plugins"
+            jar = plugins / "Future.jar"
+            _make_jar(jar, "Future", "1.0.0", api_version="1.99")
+
+            proc = _run_cleanup(plugins)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertTrue(jar.is_file())
+
+    def test_missing_api_version_left_alone(self):
+        # Legacy Bukkit plugins declare no api-version; they load.
+        with tempfile.TemporaryDirectory() as tmp:
+            plugins = Path(tmp) / "plugins"
+            jar = plugins / "Legacy.jar"
+            _make_jar(jar, "Legacy", "1.0.0", api_version=None)
+
+            proc = _run_cleanup(plugins, server_version="1.20.1")
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertTrue(jar.is_file())
+
+    def test_incompatible_dup_does_not_beat_compatible_copy(self):
+        # The incompatible jar has HIGHER semver — without the compat pass
+        # running first, duplicate grouping would keep it and quarantine
+        # the working copy. Assert the compatible jar survives.
+        with tempfile.TemporaryDirectory() as tmp:
+            plugins = Path(tmp) / "plugins"
+            good = plugins / "worldedit-bukkit-7.3.1.jar"
+            bad = plugins / "worldedit-bukkit-7.4.4.jar"
+            _make_jar(good, "WorldEdit", "7.3.1", api_version="1.20")
+            _make_jar(bad, "WorldEdit", "7.4.4", api_version="1.21.4")
+
+            proc = _run_cleanup(plugins, server_version="1.20.1")
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertTrue(good.is_file())
+            self.assertFalse(bad.is_file())
 
 
 if __name__ == "__main__":

@@ -129,7 +129,8 @@ class TestPopularPluginsScript(unittest.TestCase):
     without touching the network."""
 
     def _run_with_stubs(self, env_overrides: dict[str, str], modrinth_responses: dict[str, str],
-                        existing_jars: list[str] | None = None):
+                        existing_jars: list[str] | None = None,
+                        server_version: str | None = None):
         """Run popular-plugins.sh with:
         - INSTALL_<NAME> env vars from `env_overrides` (rest default to false).
         - A fake `curl` on PATH that returns canned JSON for each project URL,
@@ -178,11 +179,21 @@ class TestPopularPluginsScript(unittest.TestCase):
             (curl_dir / "curl").write_text("\n".join(curl_script) + "\n")
             (curl_dir / "curl").chmod(0o755)
 
+            # Optional server meta so the game-version filter has a version
+            # to filter on (as download-server.sh would have written).
+            server_meta = tmp_path / ".server-meta.json"
+            if server_version is not None:
+                server_meta.write_text(
+                    '{"server_type": "paper", "version": "%s", "build": "1"}'
+                    % server_version
+                )
+
             env = {
                 **os.environ,
                 "PATH": f"{curl_dir}:{os.environ.get('PATH', '')}",
                 "SCRIPTS_DIR": str(scripts_dir),
                 "PLUGINS_DIR": str(plugins_dir),
+                "SERVER_META": str(server_meta),
                 **env_overrides,
             }
             proc = subprocess.run(
@@ -262,7 +273,12 @@ class TestPopularPluginsScript(unittest.TestCase):
                 '"files":[{"url":"https://cdn.modrinth.com/data/EssentialsXChat.jar"}]}]')
         proc, urls = self._run_with_stubs(
             env_overrides={"INSTALL_ESSENTIALSX_CHAT": "true"},
-            modrinth_responses={"essentialsx": ess, "essentialsxchat": chat},
+            modrinth_responses={
+                "essentialsx": ess,
+                # The chat module's real Modrinth slug (1.14.4 fix —
+                # "essentialsxchat" does not exist and 404'd every install).
+                "essentialsx-chat-module": chat,
+            },
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("Auto-enabling essentialsx", proc.stderr)
@@ -298,6 +314,75 @@ class TestPopularPluginsScript(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(urls, [], "should not re-download a user-supplied plugin")
         self.assertIn("already supplied via plugins: URL list", proc.stderr)
+
+    def test_game_version_filter_skips_newer_builds(self):
+        """A 1.20.1 server must NOT get the newest jar when that jar targets
+        a newer MC (the WorldEdit 'Unsupported API version 1.21.4' failure) —
+        the resolver picks the newest build that supports the server."""
+        response = (
+            '[{"loaders":["paper"],"version_type":"release",'
+            '"game_versions":["1.21.4"],'
+            '"files":[{"url":"https://cdn.modrinth.com/data/WorldEdit-7.4.4.jar"}]},'
+            '{"loaders":["paper"],"version_type":"release",'
+            '"game_versions":["1.20","1.20.1"],'
+            '"files":[{"url":"https://cdn.modrinth.com/data/WorldEdit-7.3.1.jar"}]}]'
+        )
+        proc, urls = self._run_with_stubs(
+            env_overrides={"INSTALL_WORLDEDIT": "true"},
+            modrinth_responses={"worldedit": response},
+            server_version="1.20.1",
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(urls, ["https://cdn.modrinth.com/data/WorldEdit-7.3.1.jar"])
+
+    def test_no_compatible_build_warns_and_skips(self):
+        """When nothing on Modrinth supports the server version, install
+        nothing (an incompatible jar can never load) and say why."""
+        response = (
+            '[{"loaders":["paper"],"version_type":"release",'
+            '"game_versions":["1.21.4"],'
+            '"files":[{"url":"https://cdn.modrinth.com/data/OnlyNew.jar"}]}]'
+        )
+        proc, urls = self._run_with_stubs(
+            env_overrides={"INSTALL_WORLDEDIT": "true"},
+            modrinth_responses={"worldedit": response},
+            server_version="1.20.1",
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(urls, [])
+        self.assertIn("supports Minecraft 1.20.1", proc.stderr)
+
+    def test_release_preferred_over_beta(self):
+        """A beta listed first (Modrinth is newest-first) must lose to a
+        release build that also supports the server version."""
+        response = (
+            '[{"loaders":["paper"],"version_type":"beta",'
+            '"game_versions":["1.20.1"],'
+            '"files":[{"url":"https://cdn.modrinth.com/data/Beta.jar"}]},'
+            '{"loaders":["paper"],"version_type":"release",'
+            '"game_versions":["1.20.1"],'
+            '"files":[{"url":"https://cdn.modrinth.com/data/Release.jar"}]}]'
+        )
+        proc, urls = self._run_with_stubs(
+            env_overrides={"INSTALL_SPARK": "true"},
+            modrinth_responses={"spark": response},
+            server_version="1.20.1",
+        )
+        self.assertEqual(urls, ["https://cdn.modrinth.com/data/Release.jar"])
+
+    def test_unknown_server_version_falls_back_to_latest(self):
+        """No .server-meta.json (first boot ordering issues, vanilla type):
+        keep the old newest-Paper-build behaviour rather than failing."""
+        response = (
+            '[{"loaders":["paper"],'
+            '"files":[{"url":"https://cdn.modrinth.com/data/Latest.jar"}]}]'
+        )
+        proc, urls = self._run_with_stubs(
+            env_overrides={"INSTALL_SPARK": "true"},
+            modrinth_responses={"spark": response},
+        )
+        self.assertEqual(urls, ["https://cdn.modrinth.com/data/Latest.jar"])
+        self.assertIn("unfiltered", proc.stderr)
 
     def test_match_is_case_insensitive_and_prefix(self):
         # The on-disk file uses a different case + extra suffix; matcher

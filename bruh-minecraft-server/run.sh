@@ -511,6 +511,7 @@ cleanup_duplicate_plugins() {
         return 0
     fi
     PLUGINS_DIR="${MC_SERVER_DIR}/plugins" \
+        SERVER_META="${MC_SERVER_DIR}/.server-meta.json" \
         python3 "${SCRIPTS_DIR}/cleanup-plugins.py" \
         || bashio::log.warning "cleanup-plugins.py returned non-zero (continuing)"
     return 0
