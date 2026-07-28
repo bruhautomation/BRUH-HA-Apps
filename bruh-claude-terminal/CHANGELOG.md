@@ -4,6 +4,81 @@ All notable changes to **BRUH Claude Terminal**, newest first. This project adhe
 
 > 💡 Prefer a cleaner, categorized view? See the [formatted changelog at bruhautomation.com](https://bruhautomation.com/bruh-claude/changelog/).
 
+## 3.7.1
+
+**Bug-fix release: 20 findings from a follow-up field audit** — broken
+`--data` payloads, dead config checks, dashboard backup collisions, and a
+batch of smaller correctness fixes.
+
+### Fixed — broken functionality
+
+- **`ha-service call --data` works again**: the `${1:-{}}` default
+  expansion appended a literal `}` to every supplied JSON payload, so every
+  `--data` call failed validation. `ha-entity set` was broken by the same
+  construct in `api_post` (HA returned 400 on the mangled body).
+- **`ha-yaml-check --ha` and `ha-reload check` no longer die silently**:
+  both POSTed to `/api/config/core/check` (a 404 — the real endpoint is
+  `check_config`); the HTML error body then broke `jq` and `set -e` killed
+  the script with no message. Both now hit the right endpoint, check the
+  HTTP status before parsing, and print the API's actual verdict.
+  `ha-yaml-check --all` also runs the API stage even when syntax errors
+  were found, instead of aborting after the directory walk.
+- **`ha-yaml-check` no longer false-fails on ESPHome files**: the syntax
+  checker only stubbed HA's own tags, so `!lambda` (and any other
+  ecosystem tag) inside `/config` failed a valid setup. Unknown tags are
+  now accepted wholesale — this is a syntax check, not a schema check.
+- **`ha-selftest` passes on healthy systems**: its YAML smoke test used a
+  `mktemp` template busybox rejects (`Xs` must be trailing), so the check
+  always false-failed and the selftest exited non-zero on clean installs.
+- **Dashboard backups no longer collide across shared name prefixes**:
+  backups were matched with a bare `startswith(slug-)`, so `docs-shots`
+  could restore (and prune!) `docs-shots-v2`'s backups. Matching now
+  requires the exact `slug-YYYYMMDD-HHMMSS.json` shape.
+
+### Fixed — silent failure modes
+
+- **The `.gitignore` self-repair actually runs now**: the upgrade was
+  gated on the current header text, but older deployments carry the
+  previous product name ("BRUH Claude Terminal"), so registry and
+  dashboard-backup history silently stayed unversioned. Both header
+  spellings are accepted, and the startup verification now also warns
+  when the `.bruh_claude/dashboard_backups` rules are missing.
+- **Startup session cleanup matched nothing**: it looked for `*.session`
+  files, but session mappings are stored as bare conversation-id files —
+  stale mappings survived every restart. It now clears all mapping files.
+- **Power-tool validation errors are readable over REST**: bad-input
+  failures (unknown area, missing dashboard, out-of-range view index, …)
+  now raise `ServiceValidationError`, so REST callers get the actual
+  message instead of an opaque HTTP 500.
+- **Usage sensors go unavailable on stale data**: if
+  `usage_limits.json` disappears or becomes unreadable, the sensors now
+  clear their state (like the pool health sensor already did) instead of
+  reporting the last value as live forever.
+
+### Fixed — smaller correctness issues
+
+- `get_statistics` returns ISO 8601 `start` times (was epoch-ms), so rows
+  can be fed straight back into `bruh_claude.import_statistics`.
+- `get_dashboard` distinguishes "registered but never saved" from
+  "does not exist" instead of pointing callers at an update that can't
+  succeed.
+- `get_weather_forecast` falls back across forecast types instead of
+  hard-erroring on entities that don't support the daily default.
+- `get_logbook` accepts a string `hours`; `get_all_states`/`get_registry`
+  accept non-string `name_filter` without crashing.
+- `ha-notify --target all` no longer crashes on systems with no mobile
+  devices (undefined `YELLOW` under `set -u`).
+- Unknown actions (`ha-entity frobnicate`, `ha-service bogus`, …) exit 1
+  instead of 0, so wrapping scripts can detect the mistake. `ha-addon
+  info/options/logs` also detect Supervisor error responses instead of
+  printing them as data / exiting 0.
+- `usage-limits-tracker` logs utilization only when it changes (was an
+  unconditional heartbeat every 120 s — a third of the add-on log).
+- Sensor-ownership migration on entry unload now skips insight entries,
+  which can't host the account-wide usage sensors.
+- `find_orphaned_references` no longer flags scenes created at runtime by
+  `scene.create` in an automation or script.
+
 ## 3.7.0
 
 **Field-audit release: 40+ fixes from a session-grounded audit of a real

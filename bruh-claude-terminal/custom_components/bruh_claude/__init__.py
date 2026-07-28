@@ -262,11 +262,18 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             hass.data[DOMAIN].pop("_sensors_entry", None)
             hass.data[DOMAIN].pop("_sensors_added", None)
 
-            # Auto-migrate: reload another entry so it picks up sensor duties.
-            if remaining:
+            # Auto-migrate: reload another AGENT entry so it picks up sensor
+            # duties. Insight entries return early from sensor setup without
+            # claiming _sensors_added, so reloading one of those would leave
+            # the usage sensors gone until HA restarts.
+            for eid in remaining:
+                candidate = hass.config_entries.async_get_entry(eid)
+                if candidate is None or entry_type(candidate) == ENTRY_TYPE_INSIGHT:
+                    continue
                 hass.async_create_task(
-                    hass.config_entries.async_reload(remaining[0])
+                    hass.config_entries.async_reload(eid)
                 )
+                break
 
         # Last entry removed — tear down the domain services so they don't
         # linger and raise "not configured" if called with no bridge.

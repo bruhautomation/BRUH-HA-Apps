@@ -40,7 +40,7 @@ Examples:
   ha-addon restart core_mosquitto
   ha-addon logs core_mosquitto
 EOF
-    exit 0
+    exit "${1:-0}"
 }
 
 check_token() {
@@ -112,11 +112,27 @@ cmd_list() {
     fi
 }
 
+# The Supervisor answers unknown slugs with HTTP 404 and a JSON error body —
+# curl -s still exits 0, so detect {"result":"error"} explicitly instead of
+# printing the error envelope as if it were data.
+check_supervisor_error() {
+    local response="$1"
+    if [ -z "$response" ]; then
+        echo -e "${RED}Failed: Supervisor API unreachable${NC}" >&2
+        exit 1
+    fi
+    if [ "$(echo "$response" | jq -r '.result // empty' 2>/dev/null)" = "error" ]; then
+        echo -e "${RED}Error: $(echo "$response" | jq -r '.message // "unknown error"' 2>/dev/null)${NC}" >&2
+        exit 1
+    fi
+}
+
 cmd_info() {
     local slug="$1"
     echo -e "${CYAN}Add-on info: ${slug}${NC}"
     local response
     response=$(api_get "/addons/${slug}/info")
+    check_supervisor_error "$response"
     echo "$response" | jq -r '.data // .' 2>/dev/null || echo "$response"
 }
 
@@ -180,10 +196,21 @@ cmd_start() {
 cmd_logs() {
     local slug="$1"
     echo -e "${CYAN}Logs for ${slug}:${NC}"
-    curl -s -X GET \
+    # curl -s exits 0 even on HTTP 404, so the old `|| echo Failed` never
+    # fired — check the status code instead.
+    local body_file http_code
+    body_file=$(mktemp)
+    http_code=$(curl -s -o "$body_file" -w "%{http_code}" -X GET \
         -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
-        "${SUPERVISOR_API}/addons/${slug}/logs" 2>/dev/null || \
-        echo -e "${RED}Failed to fetch logs for '${slug}'${NC}" >&2
+        "${SUPERVISOR_API}/addons/${slug}/logs" 2>/dev/null) || http_code="000"
+    if [ "$http_code" = "200" ]; then
+        cat "$body_file"
+        rm -f "$body_file"
+    else
+        rm -f "$body_file"
+        echo -e "${RED}Failed to fetch logs for '${slug}' (HTTP ${http_code})${NC}" >&2
+        exit 1
+    fi
 }
 
 cmd_options() {
@@ -191,6 +218,7 @@ cmd_options() {
     echo -e "${CYAN}Options for ${slug}:${NC}"
     local response
     response=$(api_get "/addons/${slug}/info")
+    check_supervisor_error "$response"
     echo "$response" | jq -r '.data.options // {}' 2>/dev/null || echo "$response"
 }
 
@@ -220,6 +248,6 @@ case "$action" in
         ;;
     *)
         echo -e "${RED}Unknown action: ${action}${NC}" >&2
-        usage
+        usage 1
         ;;
 esac

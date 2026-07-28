@@ -217,6 +217,11 @@ class BruhClaudeUsageLimitSensor(SensorEntity):
         """Read the usage limits file and update the sensor value."""
         data = await self.hass.async_add_executor_job(self._read_usage)
         if data is None:
+            # File deleted or unreadable: go unavailable (like the pool
+            # binary_sensor does) instead of reporting the last value as
+            # live data forever.
+            self._usage_data = {}
+            self._attr_native_value = None
             return
         self._usage_data = data
         period_data = data.get(self._period_key, {})

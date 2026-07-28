@@ -856,9 +856,13 @@ GITIGNORE
     # Upgrade older BRUH-authored gitignores that blanket-excluded .storage/:
     # registries and dashboards (what Power Tools modify) should be backed up.
     # Only touches the file if it still carries our header AND the old rule,
-    # so user-customized gitignores are left alone.
+    # so user-customized gitignores are left alone. Older deployments wrote
+    # the header as "# BRUH Claude Terminal ..." (previous product name), so
+    # accept both spellings — gating on only the new one means the upgrade
+    # never runs on exactly the installs that need it.
+    local bruh_gitignore_header="^# BRUH \(Claude \)\?Terminal auto-backup gitignore"
     if [ -f "/config/.gitignore" ] \
-        && grep -q "^# BRUH Terminal auto-backup gitignore" /config/.gitignore \
+        && grep -q "$bruh_gitignore_header" /config/.gitignore \
         && grep -qx "\.storage/" /config/.gitignore; then
         bashio::log.info "Backup: including registries + dashboards from .storage in git backup"
         sed -i 's|^\.storage/$|.storage/*\n!.storage/core.area_registry\n!.storage/core.floor_registry\n!.storage/core.label_registry\n!.storage/core.device_registry\n!.storage/core.entity_registry\n!.storage/core.category_registry\n!.storage/lovelace*|' /config/.gitignore
@@ -867,7 +871,7 @@ GITIGNORE
     # Same upgrade for the dashboard-backup history: a blanket .bruh_claude/
     # rule keeps the only dashboard undo trail out of git entirely.
     if [ -f "/config/.gitignore" ] \
-        && grep -q "^# BRUH Terminal auto-backup gitignore" /config/.gitignore \
+        && grep -q "$bruh_gitignore_header" /config/.gitignore \
         && grep -qx "\.bruh_claude/" /config/.gitignore; then
         bashio::log.info "Backup: including .bruh_claude/dashboard_backups in git backup"
         sed -i 's|^\.bruh_claude/$|.bruh_claude/*\n!.bruh_claude/dashboard_backups|' /config/.gitignore
@@ -880,11 +884,15 @@ GITIGNORE
     if [ -f "/config/.gitignore" ]; then
         local missing_rules=""
         local rule
-        for rule in '.storage/*' '!.storage/core.entity_registry' '!.storage/lovelace*'; do
+        for rule in '.storage/*' '!.storage/core.entity_registry' '!.storage/lovelace*' \
+                    '.bruh_claude/*' '!.bruh_claude/dashboard_backups'; do
             grep -qxF "$rule" /config/.gitignore || missing_rules="$missing_rules '$rule'"
         done
         if grep -qx "\.storage/" /config/.gitignore; then
             missing_rules="$missing_rules (blanket '.storage/' present — it blocks ALL negations)"
+        fi
+        if grep -qx "\.bruh_claude/" /config/.gitignore; then
+            missing_rules="$missing_rules (blanket '.bruh_claude/' present — it excludes the dashboard-backup undo trail)"
         fi
         if [ -n "$missing_rules" ]; then
             bashio::log.warning "Backup: /config/.gitignore is missing protective rules:${missing_rules}"
@@ -929,12 +937,15 @@ cleanup_all_mcp_references() {
     #    This is the critical fix for the v1.8.0 regression: resumed sessions
     #    cache stale MCP server connection state that survives .mcp.json cleanup.
     # -------------------------------------------------------------------------
+    # Session mappings are stored as bare <conversation_id> files (no
+    # extension) by both the worker pool and the classic listener — a
+    # "*.session" glob matches nothing and leaves every stale mapping alive.
     local sessions_dir="/config/.bruh_claude/sessions"
     if [ -d "$sessions_dir" ]; then
         local session_count
-        session_count=$(find "$sessions_dir" -name "*.session" -type f 2>/dev/null | wc -l)
+        session_count=$(find "$sessions_dir" -type f 2>/dev/null | wc -l)
         if [ "$session_count" -gt 0 ]; then
-            rm -f "$sessions_dir"/*.session
+            find "$sessions_dir" -type f -delete 2>/dev/null || true
             bashio::log.info "  Cleared $session_count persistent conversation sessions"
         fi
     fi

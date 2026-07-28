@@ -316,7 +316,14 @@ class TestDashboardServices(unittest.TestCase):
         self.assertIn("YAML-mode", self.source)
 
     def test_backup_restore_rejects_foreign_names(self):
-        self.assertIn('not name.startswith(f"{slug}-")', self.source)
+        self.assertIn("not _is_backup_of(slug, name)", self.source)
+
+    def test_backup_matcher_is_slug_exact(self):
+        """A bare slug- prefix match lets dashboards with a shared name
+        prefix (docs-shots vs docs-shots-v2) restore/prune each other's
+        backups — the matcher must require the exact timestamp shape."""
+        matcher = self.source.split("def _is_backup_of")[1].split("\n\n\n")[0]
+        self.assertIn(r"\d{8}-\d{6}", matcher)
 
     def test_user_lifecycle_guards(self):
         """delete_user must guard owners/system accounts, and create_user

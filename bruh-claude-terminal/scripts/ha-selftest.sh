@@ -199,10 +199,13 @@ smoke "ha-addon list"           ha-addon list
 smoke "ha-service list"         ha-service list
 # Validate a file that uses HA's custom tags — this is the exact shape that
 # used to false-fail (yaml.safe_load doesn't know !secret/!include).
-smoke_yaml=$(mktemp /tmp/selftest-XXXXXX.yaml)
+# busybox mktemp requires the template to END in Xs, and ha-yaml-check only
+# looks at *.yaml/*.yml files — so make a temp dir and name the file inside.
+smoke_dir=$(mktemp -d /tmp/selftest-XXXXXX)
+smoke_yaml="$smoke_dir/smoke.yaml"
 printf 'homeassistant:\n  name: !secret home_name\nautomation: !include automations.yaml\n' > "$smoke_yaml"
 smoke "ha-yaml-check (HA tags)" ha-yaml-check "$smoke_yaml"
-rm -f "$smoke_yaml"
+rm -rf "$smoke_dir"
 
 # --- 4. custom integration --------------------------------------------------
 hdr "Home Assistant custom integration"

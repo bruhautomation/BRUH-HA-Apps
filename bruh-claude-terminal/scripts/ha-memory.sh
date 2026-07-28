@@ -53,7 +53,7 @@ Usage:
 Memory lives in /config/.bruh_claude/memory/ and is injected into voice
 conversations, insight jobs, and the generated CLAUDE.md context.
 EOF
-    exit 0
+    exit "${1:-0}"
 }
 
 emit_template() {
@@ -213,6 +213,6 @@ case "$action" in
     --help|-h|help) usage ;;
     *)
         echo -e "${RED}Unknown action: ${action}${NC}" >&2
-        usage
+        usage 1
         ;;
 esac

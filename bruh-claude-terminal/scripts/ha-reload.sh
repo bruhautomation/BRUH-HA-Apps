@@ -63,18 +63,40 @@ reload_target() {
             ;;
         check|validate)
             echo -e "${BLUE}Checking configuration...${NC}"
-            local result
-            result=$(curl -s -X POST \
+            # The endpoint is check_config (POST .../config/core/check is a
+            # 404 whose HTML body breaks jq, and set -e then kills the script
+            # with no message). Check the HTTP status before parsing.
+            local http_code body_file result
+            body_file=$(mktemp)
+            http_code=$(curl -s -o "$body_file" -w "%{http_code}" -X POST \
                 -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
                 -H "Content-Type: application/json" \
-                "http://supervisor/core/api/config/core/check")
-            local errors
-            errors=$(echo "$result" | jq -r '.errors // empty' 2>/dev/null)
-            if [ -z "$errors" ] || [ "$errors" = "null" ]; then
+                "http://supervisor/core/api/config/core/check_config" 2>/dev/null) || http_code="000"
+            result=$(cat "$body_file" 2>/dev/null)
+            rm -f "$body_file"
+
+            if [ "$http_code" != "200" ]; then
+                echo -e "${RED}Config check API call failed (HTTP ${http_code})${NC}"
+                if [ -n "$result" ]; then
+                    echo "$result" | head -c 300
+                    echo ""
+                fi
+                exit 1
+            fi
+
+            local valid errors
+            valid=$(echo "$result" | jq -r '.result // "unknown"' 2>/dev/null) || valid="unknown"
+            errors=$(echo "$result" | jq -r '.errors // empty' 2>/dev/null) || errors=""
+            if [ "$valid" = "valid" ]; then
                 echo -e "${GREEN}Configuration valid${NC}"
             else
                 echo -e "${RED}Configuration errors:${NC}"
-                echo "$errors"
+                if [ -n "$errors" ] && [ "$errors" != "null" ]; then
+                    echo "$errors"
+                else
+                    echo "$result"
+                fi
+                exit 1
             fi
             return
             ;;

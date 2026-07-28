@@ -40,7 +40,7 @@ Examples:
   ha-service list light
   ha-service list
 EOF
-    exit 0
+    exit "${1:-0}"
 }
 
 check_token() {
@@ -61,7 +61,9 @@ cmd_call() {
         case "$1" in
             --data)
                 shift
-                data="${1:-{}}"
+                # NOTE: not ${1:-{}} — bash closes the expansion at the first
+                # `}`, appending a literal `}` to every supplied payload.
+                data="${1:-"{}"}"
                 ;;
             --response)
                 want_response=true
@@ -170,6 +172,6 @@ case "$action" in
         ;;
     *)
         echo -e "${RED}Unknown action: ${action}${NC}" >&2
-        usage
+        usage 1
         ;;
 esac
