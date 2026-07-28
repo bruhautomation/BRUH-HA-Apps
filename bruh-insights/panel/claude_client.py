@@ -79,6 +79,37 @@ NUDGE_TIMES = (10, 30, 75)
 PTY_COLS = 4000
 PTY_ROWS = 50
 
+# ---------------------------------------------------------------------------
+# Model picker
+# ---------------------------------------------------------------------------
+# What the ⚙ dialog offers in its model dropdown. Values are passed verbatim
+# to `claude --model`, which takes both the tier aliases and full model ids.
+# "" means "no --model flag at all" — whatever the CLI picks for the account.
+#
+# This list is a convenience, not a gate: the dialog keeps a "Custom…" escape
+# hatch and the field stays a free-text add-on option, so a model released
+# after this build still works by typing its id.
+MODEL_CHOICES = [
+    {"id": "", "group": "Automatic",
+     "label": "CLI default", "hint": "whatever Claude Code picks for your plan"},
+    {"id": "opus", "group": "Always the latest",
+     "label": "Opus", "hint": "most capable tier"},
+    {"id": "sonnet", "group": "Always the latest",
+     "label": "Sonnet", "hint": "balanced speed and smarts"},
+    {"id": "haiku", "group": "Always the latest",
+     "label": "Haiku", "hint": "fastest, cheapest"},
+    {"id": "claude-opus-5", "group": "Pinned versions",
+     "label": "Claude Opus 5", "hint": "deepest analysis, most tokens"},
+    {"id": "claude-sonnet-5", "group": "Pinned versions",
+     "label": "Claude Sonnet 5", "hint": "great default for insights"},
+    {"id": "claude-haiku-4-5", "group": "Pinned versions",
+     "label": "Claude Haiku 4.5", "hint": "cheapest runs"},
+    {"id": "claude-opus-4-8", "group": "Previous generation",
+     "label": "Claude Opus 4.8", "hint": ""},
+    {"id": "claude-sonnet-4-6", "group": "Previous generation",
+     "label": "Claude Sonnet 4.6", "hint": ""},
+]
+
 
 def extract_oauth_url(buf: str) -> str:
     """Find the complete OAuth authorize URL in (possibly wrapped) pty output.

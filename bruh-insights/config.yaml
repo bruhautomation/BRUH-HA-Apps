@@ -1,7 +1,7 @@
 ---
 name: "BRUH Insights"
 description: "AI-powered insights dashboard — Claude analyzes your Home Assistant data and generates beautiful interactive visualizations in the sidebar"
-version: "1.7.0"
+version: "1.8.0"
 slug: "bruh_insights"
 init: false
 
@@ -25,10 +25,11 @@ panel_admin: true
 # itself at /local/…, which works on HTTP, HTTPS, and Nabu Casa dashboards
 # alike.
 
-# App configuration options. These are FALLBACK values: everything except
-# log_level can be overridden live from the panel's ⚙ Settings dialog
-# (stored in /data/settings.json, applied without a restart) — the primary
-# place to tune Insights.
+# App configuration options. Everything except log_level is also editable
+# from the panel's ⚙ Settings dialog, and the two stay in sync: the panel
+# reads these values live and writes changes back here through the
+# Supervisor (/addons/self/options), so whichever screen you use shows the
+# same value and takes effect immediately — no restart.
 options:
   auto_refresh_hours: 24
   history_days: 7

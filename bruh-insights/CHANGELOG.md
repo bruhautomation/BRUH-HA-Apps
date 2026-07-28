@@ -4,6 +4,27 @@ All notable changes to **BRUH Insights**, newest first. This project adheres to 
 
 > 💡 Prefer a cleaner, categorized view? See the [formatted changelog at bruhautomation.com](https://bruhautomation.com/bruh-insights/changelog/).
 
+## 1.8.0
+
+- **One setting, two screens**: the ⚙ Settings dialog and the add-on's Configuration tab
+  now edit the *same* values. The panel reads the add-on's options live from the
+  Supervisor and writes changes back to them, so a number you set in the sidebar shows up
+  on the Configuration tab and vice versa (within ~15 s, no restart either way). No more
+  fields showing "config default" while the Configuration tab says something else — and
+  no more silently-shadowing local copy. Any override the panel had stored before is
+  migrated into the add-on's options on first start
+- **Model picker**: the Claude model field is a dropdown of the current models
+  (Opus 5, Sonnet 5, Haiku 4.5, previous generation) and the always-latest tier aliases,
+  each with a note on what it's good for — plus **Custom model id…** for anything newer
+  than this build
+- **Fixed: "Cannot read properties of null (reading 'id')"** when asking a question in
+  the Ask bar. The in-flight card for an ad-hoc question had neither a category nor a
+  stored insight to take its id from, and rendering it threw — the panel stopped updating
+  until a reload. The pending card now shows the question it's working on, and its
+  **Try again** actually re-asks it
+- **Fixed**: two questions asked in the same second collided on one id, so the second was
+  silently dropped
+
 ## 1.7.0
 
 - **All the knobs, in the app**: the ⚙ Settings dialog grows a "Generation defaults"

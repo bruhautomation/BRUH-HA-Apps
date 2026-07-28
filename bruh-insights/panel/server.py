@@ -75,6 +75,7 @@ from pathlib import Path
 
 from aiohttp import web
 
+import addon_options
 import categories as cat_mod
 import claude_client
 import feedback_store
@@ -151,13 +152,24 @@ TIMEOUT_S = int(float(os.environ.get("BRUH_INSIGHTS_TIMEOUT_MIN", "8") or 8) * 6
 # ---------------------------------------------------------------------------
 # Effective options
 # ---------------------------------------------------------------------------
-# The env-derived constants above come from the add-on's Configuration tab
-# and act as FALLBACKS: the panel's ⚙ Settings dialog stores runtime
-# overrides in settings_store, applied immediately without a restart.
+# ONE value per option, wherever you edit it. The add-on's own options (the
+# Configuration tab) are the source of truth: the panel reads them live from
+# the Supervisor and writes back to them, so a change in the ⚙ dialog shows
+# up on the Configuration tab and vice versa — no restart, no drift.
+#
+# Precedence, highest first:
+#   1. a local override in settings_store — which now only exists when the
+#      panel could NOT reach the Supervisor, since a successful write clears
+#      it. It wins so a save always takes effect; the next startup promotes
+#      it into the add-on's options (see _options_sync)
+#   2. the add-on's options, read live from the Supervisor (the normal case)
+#   3. the env-derived constants above, captured from the options at startup
 
 
 def _opt(name: str, fallback):
     val = settings_store.load().get(name)
+    if val is None:
+        val = addon_options.get(name)
     return fallback if val is None else val
 
 
@@ -185,8 +197,11 @@ def eff_timeout_s() -> int:
     return int(_opt("timeout_minutes", TIMEOUT_S / 60) * 60)
 
 
-def addon_defaults() -> dict:
-    """The Configuration-tab values, shown as placeholders in ⚙ Settings."""
+def startup_options() -> dict:
+    """The option values this process started with (from the environment).
+
+    Also what an emptied ⚙ field reverts to.
+    """
     return {
         "refresh_hours": int(REFRESH_HOURS),
         "history_days": HISTORY_DAYS,
@@ -195,6 +210,41 @@ def addon_defaults() -> dict:
         "model": MODEL,
         "timeout_minutes": TIMEOUT_S // 60,
     }
+
+
+def addon_defaults() -> dict:
+    """The add-on's Configuration-tab values, live from the Supervisor.
+
+    Falls back to the startup values when the Supervisor can't be reached.
+    """
+    startup = startup_options()
+    opts = addon_options.snapshot()
+    if opts is None:
+        return startup
+    live = {}
+    for name, value in startup.items():
+        current = opts.get(addon_options.OPTION_KEYS[name])
+        live[name] = value if current is None else current
+    return live
+
+
+def effective_options() -> dict:
+    """What generation actually uses right now — never None, never blank.
+
+    This is what the ⚙ dialog renders in its fields: with add-on options in
+    play every field has a real value, so nothing shows as an empty box
+    whose meaning you have to guess.
+    """
+    return {
+        "refresh_hours": int(eff_refresh_hours()),
+        "history_days": eff_history_days(),
+        "history_keep_runs": eff_keep_runs(),
+        "history_keep_days": eff_keep_days(),
+        "model": eff_model(),
+        "timeout_minutes": eff_timeout_s() // 60,
+    }
+
+
 BIND_HOST = "0.0.0.0"
 BIND_PORT = 8099
 # Per-install secret embedded in /local card-mirror file names.
@@ -646,6 +696,50 @@ def _enqueue(insight_id: str, question: str | None = None) -> bool:
     return True
 
 
+OPTIONS_POLL_SECONDS = 15
+
+
+async def _options_sync() -> None:
+    """Adopt the add-on's own options as the single source of truth.
+
+    One-time migration: any override the ⚙ dialog stored back when the panel
+    kept its own copy is promoted into the add-on's options (it was the
+    winning value, so behaviour doesn't change) and then dropped locally.
+    After that there is exactly one place each option lives, and editing it
+    on the Configuration tab or in the panel is the same edit.
+    """
+    if not addon_options.available():
+        log.info("no Supervisor API — generation options stay panel-local")
+        return
+    if await addon_options.refresh(force=True) is None:
+        log.warning("could not read add-on options — using panel-local values")
+        return
+    overrides = settings_store.option_overrides()
+    if overrides:
+        try:
+            await addon_options.write(
+                {k: ("" if k == "model" and v is None else v)
+                 for k, v in overrides.items()})
+        except addon_options.OptionsError as exc:
+            log.warning("could not migrate panel settings into add-on "
+                        "options (%s) — keeping them panel-local", exc)
+            return
+        settings_store.clear_option_overrides()
+        log.info("migrated %d panel setting(s) into the add-on's options: %s",
+                 len(overrides), ", ".join(sorted(overrides)))
+    log.info("generation options synced with the add-on Configuration tab")
+
+
+async def _options_poller() -> None:
+    """Pick up Configuration-tab edits without waiting for a restart."""
+    while True:
+        await asyncio.sleep(OPTIONS_POLL_SECONDS)
+        try:
+            await addon_options.refresh(force=True)
+        except Exception as exc:  # never let a transient blip kill the loop
+            log.debug("add-on options poll failed: %s", exc)
+
+
 async def _check_auth_bg() -> None:
     AUTH_CHECK.update(state="checking", error="")
     result = await asyncio.to_thread(claude_client.validate_auth)
@@ -725,7 +819,9 @@ async def h_status(request: web.Request) -> web.Response:
         "settings": settings,
         "usage": usage_store.budget_state(settings),
         "categories": [_category_status(c, insights) for c in all_categories()],
-        "jobs": {jid: {"state": j.get("state"), "error": j.get("error")}
+        # `question` lets the panel label an ad-hoc "Ask" card (and retry it)
+        # while it's still generating, before any insight exists to read.
+        "jobs": {jid: {k: j.get(k) for k in ("state", "error", "question")}
                  for jid, j in JOBS.items()},
         "queue_size": QUEUE.qsize(),
     })
@@ -741,7 +837,12 @@ async def h_generate(request: web.Request) -> web.Response:
     if question:
         if len(question) > 500:
             raise web.HTTPBadRequest(text="question too long")
-        insight_id = f"custom-{int(time.time())}"
+        # Second-resolution ids collide when two questions are asked in the
+        # same second — step past any live job so neither ask is swallowed.
+        stamp = int(time.time())
+        while _job_active(f"custom-{stamp}"):
+            stamp += 1
+        insight_id = f"custom-{stamp}"
         _enqueue(insight_id, question=question)
         return web.json_response({"queued": [insight_id]})
     cat_id = body.get("category", "")
@@ -1427,33 +1528,77 @@ async def h_knowledge_question_delete(request: web.Request) -> web.Response:
 
 # -- runtime settings (⚙ dialog) --------------------------------------------
 
-async def h_settings_get(request: web.Request) -> web.Response:
-    settings = settings_store.load()
-    return web.json_response({
-        "settings": settings,
+def _settings_payload(settings: dict) -> dict:
+    """The ⚙ dialog's view: panel settings + the live effective options."""
+    return {
+        "settings": {**settings, **effective_options()},
         "usage": usage_store.budget_state(settings),
         "addon_defaults": addon_defaults(),
-        "plans": [
-            {"id": p, "label": usage_store.PLAN_LABELS[p],
-             "session_tokens": usage_store.PLAN_SESSION_TOKENS[p]}
-            for p in settings_store.PLANS
-        ],
-    })
+        "options_synced": addon_options.snapshot() is not None,
+        "models": claude_client.MODEL_CHOICES,
+    }
+
+
+async def h_settings_get(request: web.Request) -> web.Response:
+    await addon_options.refresh()
+    payload = _settings_payload(settings_store.load())
+    payload["plans"] = [
+        {"id": p, "label": usage_store.PLAN_LABELS[p],
+         "session_tokens": usage_store.PLAN_SESSION_TOKENS[p]}
+        for p in settings_store.PLANS
+    ]
+    return web.json_response(payload)
 
 
 async def h_settings_put(request: web.Request) -> web.Response:
+    """Save panel settings and/or add-on options.
+
+    Option fields are written to the add-on's own options through the
+    Supervisor, so the Configuration tab shows the same value the panel
+    does. Without a Supervisor (or if it refuses the write) they fall back
+    to the local override store and the panel keeps working.
+    """
     body = await request.json()
     if not isinstance(body, dict):
         raise web.HTTPBadRequest(text="settings must be an object")
+    options = {k: v for k, v in body.items() if settings_store.is_option(k)}
+    panel = {k: v for k, v in body.items() if k not in options}
     try:
-        settings = settings_store.save(body)
+        clean_options = {k: settings_store.clean_option(k, v)
+                         for k, v in options.items()}
+        settings = settings_store.save(panel) if panel else settings_store.load()
     except ValueError as exc:
         raise web.HTTPBadRequest(text=str(exc))
-    return web.json_response({
-        "settings": settings,
-        "usage": usage_store.budget_state(settings),
-        "addon_defaults": addon_defaults(),
-    })
+
+    if clean_options:
+        wrote_addon = False
+        if addon_options.available():
+            # An option has no "unset" state on the Configuration tab, so an
+            # emptied number field means "back to the value the add-on
+            # started with" rather than leaving a null behind. An emptied
+            # model is different: "" is its real value (= let the CLI pick).
+            startup = startup_options()
+            resolved = {}
+            for key, value in clean_options.items():
+                if key == "model":
+                    resolved[key] = value or ""
+                else:
+                    resolved[key] = startup[key] if value is None else value
+            try:
+                await addon_options.write(resolved)
+                wrote_addon = True
+            except addon_options.OptionsError as exc:
+                log.warning("could not write add-on options (%s) — "
+                            "storing locally instead", exc)
+        try:
+            # Local store: authoritative only without a Supervisor. After a
+            # successful add-on write we clear these so one value can't be
+            # shadowed by a stale override.
+            settings = settings_store.save(
+                dict.fromkeys(clean_options) if wrote_addon else clean_options)
+        except ValueError as exc:
+            raise web.HTTPBadRequest(text=str(exc))
+    return web.json_response(_settings_payload(settings))
 
 
 # -- auth -------------------------------------------------------------------
@@ -1557,8 +1702,11 @@ def make_app() -> web.Application:
     app.router.add_get("/api/health", h_health)
 
     async def on_startup(app: web.Application) -> None:
+        await _options_sync()
         app["worker"] = asyncio.create_task(_worker())
         app["scheduler"] = asyncio.create_task(_scheduler())
+        if addon_options.available():
+            app["options"] = asyncio.create_task(_options_poller())
         if claude_client.get_auth():
             asyncio.create_task(_check_auth_bg())
 

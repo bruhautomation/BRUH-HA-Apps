@@ -12,9 +12,11 @@ the panel's ⚙ dialog edits at runtime — no add-on restart needed:
   budget_percent  — how much of each 5-hour session window Insights may
                     consume before auto-refresh pauses (5-100).
 
-It also holds runtime overrides of the add-on's Configuration-tab options
-(so they are editable from the panel without a restart). Each is None when
-unset, meaning "use the add-on configuration value":
+It can also hold the add-on's Configuration-tab options, but only as a
+FALLBACK: those six settings normally live in the add-on's own options via
+the Supervisor (see addon_options.py), so the panel and the Configuration
+tab always agree. When the Supervisor isn't reachable the panel stores them
+here instead; each is None when unset, meaning "use the startup value":
 
   refresh_hours      — default interval for cards without their own (0-168)
   history_days       — days of history/statistics per analysis (1-30)
@@ -95,6 +97,50 @@ def load() -> dict:
     return out
 
 
+def clean_option(key: str, value):
+    """Validate one Configuration-tab option; returns the stored form.
+
+    None means "unset" for every option, and an empty/blank model string
+    normalizes to None. Raises ValueError on anything else out of range.
+    Shared with the add-on-options path so both surfaces enforce exactly
+    the ranges declared in config.yaml's schema.
+    """
+    if key in OPTION_RANGES:
+        lo, hi = OPTION_RANGES[key]
+        if value is not None and (
+                not isinstance(value, int) or isinstance(value, bool)
+                or not lo <= value <= hi):
+            raise ValueError(f"{key} must be an integer {lo}-{hi} or null")
+        return value
+    if key == "model":
+        if value is not None and not isinstance(value, str):
+            raise ValueError("model must be a string or null")
+        return (value or "").strip()[:MAX_MODEL_CHARS] or None
+    raise ValueError(f"unknown option: {key}")
+
+
+def is_option(key: str) -> bool:
+    """True for the settings that mirror an add-on Configuration option."""
+    return key in OPTION_RANGES or key == "model"
+
+
+def option_overrides() -> dict:
+    """Stored option overrides that are actually set (for migration)."""
+    stored = load()
+    return {k: stored[k] for k in DEFAULTS
+            if is_option(k) and stored.get(k) is not None}
+
+
+def clear_option_overrides() -> None:
+    """Drop every stored option override, keeping the panel-only settings.
+
+    Called once the values have been promoted into the add-on's own
+    options, so there is exactly one place they can come from.
+    """
+    merged = {k: v for k, v in load().items() if not is_option(k)}
+    _write(merged)
+
+
 def save(fields: dict) -> dict:
     """Merge validated fields into the stored settings; returns the result.
 
@@ -116,27 +162,22 @@ def save(fields: dict) -> dict:
                     or not 5 <= value <= 100:
                 raise ValueError("budget_percent must be an integer 5-100")
             clean[key] = value
-        elif key in OPTION_RANGES:
-            lo, hi = OPTION_RANGES[key]
-            if value is not None and (
-                    not isinstance(value, int) or isinstance(value, bool)
-                    or not lo <= value <= hi):
-                raise ValueError(f"{key} must be an integer {lo}-{hi} or null")
-            clean[key] = value
-        elif key == "model":
-            if value is not None and not isinstance(value, str):
-                raise ValueError("model must be a string or null")
-            value = (value or "").strip()[:MAX_MODEL_CHARS]
-            clean[key] = value or None
+        elif is_option(key):
+            clean[key] = clean_option(key, value)
         else:
             raise ValueError(f"unknown setting: {key}")
     merged = {**load(), **clean}
+    _write(merged)
+    return merged
+
+
+def _write(merged: dict) -> None:
+    """Persist the settings file atomically (tmp + replace)."""
     path = Path(SETTINGS_FILE)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(merged, ensure_ascii=False), encoding="utf-8")
     tmp.replace(path)
-    return merged
 
 
 def clean_schedule(value) -> list[str] | None:
