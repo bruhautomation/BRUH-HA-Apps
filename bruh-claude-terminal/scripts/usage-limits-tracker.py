@@ -203,23 +203,31 @@ def main():
     time.sleep(initial_delay)
 
     consecutive_failures = 0
+    last_logged = None
 
     while True:
         try:
             success = run_once()
             if success:
                 consecutive_failures = 0
-                # Read back for logging
+                # Log only when the numbers change — an unconditional
+                # heartbeat every poll floods the add-on log (a third of
+                # its lines at the default interval).
                 try:
                     with open(USAGE_FILE) as fh:
                         stats = json.load(fh)
                     five_hour = stats.get("five_hour", {})
                     seven_day = stats.get("seven_day", {})
-                    sys.stderr.write(
-                        f"usage-limits-tracker: "
-                        f"session={five_hour.get('utilization', '?')}%, "
-                        f"weekly={seven_day.get('utilization', '?')}%\n"
+                    current = (
+                        five_hour.get("utilization", "?"),
+                        seven_day.get("utilization", "?"),
                     )
+                    if current != last_logged:
+                        sys.stderr.write(
+                            f"usage-limits-tracker: "
+                            f"session={current[0]}%, weekly={current[1]}%\n"
+                        )
+                        last_logged = current
                 except Exception:
                     pass
             else:

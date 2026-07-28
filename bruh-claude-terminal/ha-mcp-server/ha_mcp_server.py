@@ -177,7 +177,7 @@ def get_all_states(domain=None, name_filter=None):
             for e in result
         ]
         if name_filter:
-            needle = name_filter.lower()
+            needle = str(name_filter).lower()
             entities = [
                 e for e in entities
                 if needle in (e["entity_id"] or "").lower()
@@ -798,7 +798,10 @@ def get_device_registry():
 def get_logbook(hours=1, entity_id=None):
     """Get logbook entries."""
     from datetime import datetime, timedelta, timezone
-    hours = max(0.1, min(hours or 1, 24))  # Clamp between 0.1 and 24
+    try:
+        hours = max(0.1, min(float(hours or 1), 24))  # Clamp between 0.1 and 24
+    except (TypeError, ValueError):
+        hours = 1
     start = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
     endpoint = f"/api/logbook/{start}"
     if entity_id:
@@ -894,8 +897,20 @@ def get_statistics(entity_id, period="hour", days=7):
             "note": ("No long-term statistics for this entity. Statistics exist "
                      "only for numeric sensors with state_class set."),
         }
+    # The WebSocket API returns start/end as epoch-milliseconds; every other
+    # tool speaks ISO 8601, and bruh_claude.import_statistics requires ISO
+    # for start — convert so rows can round-trip without manual conversion.
+    def _iso(value):
+        if isinstance(value, (int, float)):
+            try:
+                return datetime.fromtimestamp(value / 1000, timezone.utc).isoformat()
+            except (OverflowError, OSError, ValueError):
+                return value
+        return value
+
     stats = [
-        {k: r.get(k) for k in ("start", "mean", "min", "max", "sum") if r.get(k) is not None}
+        {k: (_iso(r.get(k)) if k == "start" else r.get(k))
+         for k in ("start", "mean", "min", "max", "sum") if r.get(k) is not None}
         for r in rows
     ]
     if len(stats) > 200:
@@ -912,41 +927,76 @@ def get_weather_forecast(entity_id, forecast_type="daily"):
     """
     if not entity_id.startswith("weather."):
         return {"error": f"Not a weather entity: {entity_id}"}
-    if forecast_type not in ("daily", "hourly", "twice_daily"):
-        forecast_type = "daily"
-    try:
-        result = _ws_command({
-            "type": "call_service",
-            "domain": "weather",
-            "service": "get_forecasts",
-            "target": {"entity_id": entity_id},
-            "service_data": {"type": forecast_type},
-            "return_response": True,
-        })
-    except ImportError:
-        return {"error": "websockets package not available in this environment"}
-    except Exception as e:  # noqa: BLE001
-        return {"error": str(e)}
-    if isinstance(result, dict) and "error" in result:
-        return result
 
-    response = (result or {}).get("response") or {}
-    forecast = (response.get(entity_id) or {}).get("forecast") or []
-    if not forecast:
+    # Entities support only a subset of forecast types, and HA hard-errors
+    # on an unsupported one (e.g. an hourly-only entity asked for daily —
+    # the default). Try the requested type first, then fall back to the
+    # others so a bare get_weather_forecast(entity) always returns whatever
+    # the entity CAN provide.
+    if forecast_type in ("daily", "hourly", "twice_daily"):
+        types_to_try = [forecast_type]
+    else:
+        types_to_try = []
+    for candidate in ("daily", "hourly", "twice_daily"):
+        if candidate not in types_to_try:
+            types_to_try.append(candidate)
+
+    failures = {}
+    for ftype in types_to_try:
+        try:
+            result = _ws_command({
+                "type": "call_service",
+                "domain": "weather",
+                "service": "get_forecasts",
+                "target": {"entity_id": entity_id},
+                "service_data": {"type": ftype},
+                "return_response": True,
+            })
+        except ImportError:
+            return {"error": "websockets package not available in this environment"}
+        except Exception as e:  # noqa: BLE001
+            failures[ftype] = str(e)
+            continue
+        if isinstance(result, dict) and "error" in result:
+            failures[ftype] = str(result.get("error"))
+            continue
+
+        response = (result or {}).get("response") or {}
+        forecast = (response.get(entity_id) or {}).get("forecast") or []
+        if not forecast:
+            failures[ftype] = "no forecast returned"
+            continue
+
+        keep = ("datetime", "condition", "temperature", "templow",
+                "precipitation", "precipitation_probability", "humidity",
+                "wind_speed")
+        trimmed = [
+            {k: item.get(k) for k in keep if item.get(k) is not None}
+            for item in forecast[:24]
+        ]
+        payload = {"entity_id": entity_id, "type": ftype, "forecast": trimmed}
+        if ftype != types_to_try[0]:
+            payload["note"] = (
+                f"The entity does not support a {types_to_try[0]} forecast — "
+                f"returning its {ftype} forecast instead."
+            )
+        return payload
+
+    # Nothing worked. If a real error occurred (auth/transport/service),
+    # surface it as an error; only report "no forecast" when every type
+    # genuinely came back empty.
+    ws_errors = {t: msg for t, msg in failures.items() if msg != "no forecast returned"}
+    if ws_errors:
         return {
-            "entity_id": entity_id, "type": forecast_type, "forecast": [],
-            "note": (f"No {forecast_type} forecast returned — the entity may "
-                     "not support this forecast type."),
+            "entity_id": entity_id,
+            "error": next(iter(ws_errors.values())),
+            "tried": failures,
         }
-
-    keep = ("datetime", "condition", "temperature", "templow",
-            "precipitation", "precipitation_probability", "humidity",
-            "wind_speed")
-    trimmed = [
-        {k: item.get(k) for k in keep if item.get(k) is not None}
-        for item in forecast[:24]
-    ]
-    return {"entity_id": entity_id, "type": forecast_type, "forecast": trimmed}
+    return {
+        "entity_id": entity_id, "forecast": [],
+        "note": "No forecast available from this entity for any forecast type.",
+        "tried": failures,
+    }
 
 
 # Line count alone doesn't bound the payload — tracebacks with huge single
@@ -1122,7 +1172,7 @@ def get_registry(registry, name_filter=None):
 
     items = [_trim_registry_item(registry, item) for item in (result or [])]
     if name_filter:
-        needle = name_filter.lower()
+        needle = str(name_filter).lower()
         items = [
             item for item in items
             if any(
@@ -1202,12 +1252,30 @@ def get_dashboard(url_path=None, view_index=None):
         return {"error": str(e)}
     if isinstance(result, dict) and "error" in result:
         if "config_not_found" in str(result.get("error", "")):
+            # config_not_found covers two very different cases: a registered
+            # dashboard that has never been saved (auto-generated), and a
+            # url_path that doesn't exist at all. Distinguish them — the old
+            # blanket "save it to take control" note pointed callers at an
+            # update_dashboard call that cannot succeed for the latter.
+            if url_path:
+                try:
+                    registered = _ws_command({"type": "lovelace/dashboards/list"})
+                except Exception:  # noqa: BLE001
+                    registered = None
+                if isinstance(registered, list):
+                    known = {d.get("url_path") for d in registered}
+                    if url_path not in known:
+                        available = ", ".join(sorted(k for k in known if k))
+                        return {"error": (
+                            f"Dashboard not found: {url_path}."
+                            + (f" Existing: {available}" if available else "")
+                        )}
             return {
                 "url_path": url_path or "default",
-                "note": ("This dashboard has no stored config yet (it is "
-                         "auto-generated). Saving with "
-                         "bruh_claude.update_dashboard will take manual "
-                         "control of it."),
+                "note": ("This dashboard is registered but has no stored "
+                         "config yet (it is auto-generated). Saving with "
+                         "bruh_claude.update_dashboard (take_control: true) "
+                         "will take manual control of it."),
             }
         return result
 

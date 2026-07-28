@@ -22,23 +22,21 @@ validate_yaml_syntax() {
 
     # Use Python for reliable YAML parsing.
     # Pass filename via sys.argv to avoid shell injection through filenames.
-    # Home Assistant YAML uses custom tags (!secret, !include, !env_var,
-    # !input, !include_dir_*) that plain safe_load rejects — register stub
-    # constructors so idiomatic HA config files validate instead of
-    # false-failing on every tagged line.
+    # HA and its ecosystem use custom tags (!secret, !include, !input,
+    # ESPHome's !lambda, ...) that plain safe_load rejects — accept ANY
+    # unknown tag via a catch-all multi-constructor, since /config sweeps
+    # also walk ESPHome/other tools' files and this is a syntax check,
+    # not a schema check.
     LAST_YAML_ERROR=$(python3 -c "
 import sys, yaml
 
 class HALoader(yaml.SafeLoader):
     pass
 
-def _stub(loader, node):
+def _stub(loader, tag_suffix, node):
     return None
 
-for tag in ('!secret', '!env_var', '!input', '!include',
-            '!include_dir_list', '!include_dir_named',
-            '!include_dir_merge_list', '!include_dir_merge_named'):
-    HALoader.add_constructor(tag, _stub)
+HALoader.add_multi_constructor('', _stub)
 
 try:
     with open(sys.argv[1], 'r') as f:
@@ -115,23 +113,41 @@ validate_directory() {
 # Also check HA config via API
 validate_ha_config() {
     echo -e "${BLUE}Checking Home Assistant configuration via API...${NC}"
-    local result
-    result=$(curl -s -X POST \
+    # The endpoint is check_config (POST /api/config/core/check is a 404,
+    # whose HTML body then breaks jq — which set -e turns into a silent
+    # mid-function death). Check the HTTP status before parsing.
+    local http_code body_file result
+    body_file=$(mktemp)
+    http_code=$(curl -s -o "$body_file" -w "%{http_code}" -X POST \
         -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
         -H "Content-Type: application/json" \
-        "http://supervisor/core/api/config/core/check" 2>/dev/null)
+        "http://supervisor/core/api/config/core/check_config" 2>/dev/null) || http_code="000"
+    result=$(cat "$body_file" 2>/dev/null)
+    rm -f "$body_file"
 
-    local valid
-    valid=$(echo "$result" | jq -r '.result // "unknown"' 2>/dev/null)
-    local errors
-    errors=$(echo "$result" | jq -r '.errors // empty' 2>/dev/null)
+    if [ "$http_code" != "200" ]; then
+        echo -e "${RED}Config check API call failed (HTTP ${http_code})${NC}"
+        if [ -n "$result" ]; then
+            echo "$result" | head -c 300
+            echo ""
+        fi
+        return 1
+    fi
 
-    if [ "$valid" = "valid" ] || [ -z "$errors" ] || [ "$errors" = "null" ]; then
+    local valid errors
+    valid=$(echo "$result" | jq -r '.result // "unknown"' 2>/dev/null) || valid="unknown"
+    errors=$(echo "$result" | jq -r '.errors // empty' 2>/dev/null) || errors=""
+
+    if [ "$valid" = "valid" ]; then
         echo -e "${GREEN}Home Assistant configuration is valid${NC}"
         return 0
     else
         echo -e "${RED}Home Assistant configuration has errors:${NC}"
-        echo "$errors"
+        if [ -n "$errors" ] && [ "$errors" != "null" ]; then
+            echo "$errors"
+        else
+            echo "$result"
+        fi
         return 1
     fi
 }
@@ -158,9 +174,13 @@ case "${1:-}" in
         validate_ha_config
         ;;
     --all)
-        validate_directory "$CONFIG_DIR"
+        # Don't let a syntax failure (return 1 + set -e) abort before the
+        # API check runs — collect both results, then exit.
+        rc=0
+        validate_directory "$CONFIG_DIR" || rc=1
         echo ""
-        validate_ha_config
+        validate_ha_config || rc=1
+        exit $rc
         ;;
     help|--help|-h)
         show_help

@@ -34,7 +34,7 @@ Examples:
   ha-entity list light
   ha-entity search kitchen
 EOF
-    exit 0
+    exit "${1:-0}"
 }
 
 check_token() {
@@ -89,7 +89,9 @@ api_get() {
 
 api_post() {
     local endpoint="$1"
-    local data="${2:-{}}"
+    # NOTE: not ${2:-{}} — bash closes the expansion at the first `}`,
+    # appending a literal `}` to every supplied payload.
+    local data="${2:-"{}"}"
     curl -s -X POST \
         -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
         -H "Content-Type: application/json" \
@@ -224,6 +226,6 @@ case "$action" in
         ;;
     *)
         echo -e "${RED}Unknown action: ${action}${NC}" >&2
-        usage
+        usage 1
         ;;
 esac

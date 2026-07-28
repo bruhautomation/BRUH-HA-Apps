@@ -51,6 +51,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -59,6 +60,15 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigEntryDisabler
 from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.exceptions import HomeAssistantError, Unauthorized, UnknownUser
+
+# Bad-input failures raise ServiceValidationError so callers on EVERY
+# transport see the message: HomeAssistantError becomes an opaque
+# "500 Server got itself in trouble" over REST, which defeats the module's
+# validation-first design. Environment/runtime failures stay HomeAssistantError.
+try:
+    from homeassistant.exceptions import ServiceValidationError
+except ImportError:  # pre-2023.12
+    ServiceValidationError = HomeAssistantError  # type: ignore[assignment,misc]
 from homeassistant.helpers import (
     area_registry as ar,
     config_validation as cv,
@@ -105,34 +115,34 @@ ISSUE_SEVERITIES = ("critical", "error", "warning")
 
 def _ensure_area(hass: HomeAssistant, area_id: str) -> None:
     if not ar.async_get(hass).async_get_area(area_id):
-        raise HomeAssistantError(f"Area not found: {area_id}")
+        raise ServiceValidationError(f"Area not found: {area_id}")
 
 
 def _ensure_floor(hass: HomeAssistant, floor_id: str) -> None:
     _require_floors()
     if not fr.async_get(hass).async_get_floor(floor_id):
-        raise HomeAssistantError(f"Floor not found: {floor_id}")
+        raise ServiceValidationError(f"Floor not found: {floor_id}")
 
 
 def _ensure_label(hass: HomeAssistant, label_id: str) -> None:
     _require_labels()
     if not lr.async_get(hass).async_get_label(label_id):
-        raise HomeAssistantError(f"Label not found: {label_id}")
+        raise ServiceValidationError(f"Label not found: {label_id}")
 
 
 def _ensure_device(hass: HomeAssistant, device_id: str) -> None:
     if not dr.async_get(hass).async_get(device_id):
-        raise HomeAssistantError(f"Device not found: {device_id}")
+        raise ServiceValidationError(f"Device not found: {device_id}")
 
 
 def _ensure_entity(hass: HomeAssistant, entity_id: str) -> None:
     if not er.async_get(hass).async_get(entity_id):
-        raise HomeAssistantError(f"Entity not found in registry: {entity_id}")
+        raise ServiceValidationError(f"Entity not found in registry: {entity_id}")
 
 
 def _ensure_config_entry(hass: HomeAssistant, entry_id: str) -> None:
     if not hass.config_entries.async_get_entry(entry_id):
-        raise HomeAssistantError(f"Config entry not found: {entry_id}")
+        raise ServiceValidationError(f"Config entry not found: {entry_id}")
 
 
 def _require_floors() -> None:
@@ -351,7 +361,7 @@ def _label_targets(call: ServiceCall) -> tuple[list[str], list[str], list[str]]:
     devices = call.data.get("device_id") or []
     areas = call.data.get("area_id") or []
     if not (entities or devices or areas):
-        raise HomeAssistantError(
+        raise ServiceValidationError(
             "Provide at least one target: entity_id, device_id, or area_id"
         )
     return entities, devices, areas
@@ -680,7 +690,7 @@ async def _collection_create(collection, data: dict, what: str) -> dict:
     try:
         return await collection.async_create_item(data)
     except vol.Invalid as err:
-        raise HomeAssistantError(f"Invalid {what}: {err}") from err
+        raise ServiceValidationError(f"Invalid {what}: {err}") from err
     except ValueError as err:
         raise HomeAssistantError(f"Could not create {what}: {err}") from err
 
@@ -718,13 +728,13 @@ async def _delete_helper(hass: HomeAssistant, call: ServiceCall) -> dict | None:
     for entity_id in call.data["entity_id"]:
         domain = entity_id.split(".")[0]
         if domain not in HELPER_DOMAINS:
-            raise HomeAssistantError(
+            raise ServiceValidationError(
                 f"Not a managed helper domain: {entity_id} "
                 f"(supported: {', '.join(HELPER_DOMAINS)})"
             )
         entry = registry.async_get(entity_id)
         if entry is None:
-            raise HomeAssistantError(f"Entity not found in registry: {entity_id}")
+            raise ServiceValidationError(f"Entity not found in registry: {entity_id}")
         targets.append((domain, entity_id, entry.unique_id))
     if _dry_run(call):
         return {
@@ -736,7 +746,7 @@ async def _delete_helper(hass: HomeAssistant, call: ServiceCall) -> dict | None:
         try:
             await collection.async_delete_item(unique_id)
         except Exception as err:  # noqa: BLE001 — ItemNotFound => YAML helper
-            raise HomeAssistantError(
+            raise ServiceValidationError(
                 f"Could not delete {entity_id} — helpers defined in YAML "
                 "must be removed from the YAML file"
             ) from err
@@ -783,9 +793,9 @@ async def _delete_zone(hass: HomeAssistant, call: ServiceCall) -> dict | None:
     for entity_id in call.data["entity_id"]:
         entity = entity_component.get_entity(entity_id)
         if entity is None:
-            raise HomeAssistantError(f"Zone not found: {entity_id}")
+            raise ServiceValidationError(f"Zone not found: {entity_id}")
         if not entity.editable or "id" not in entity._config:  # noqa: SLF001
-            raise HomeAssistantError(f"This zone is not editable: {entity_id}")
+            raise ServiceValidationError(f"This zone is not editable: {entity_id}")
         targets.append((entity_id, entity._config["id"]))  # noqa: SLF001
     if _dry_run(call):
         return {
@@ -808,7 +818,7 @@ async def _update_zone(hass: HomeAssistant, call: ServiceCall) -> None:
         if key in call.data
     }
     if not changes:
-        raise HomeAssistantError(
+        raise ServiceValidationError(
             "Nothing to update — pass at least one of name, latitude, "
             "longitude, radius, icon, passive"
         )
@@ -822,9 +832,9 @@ async def _update_zone(hass: HomeAssistant, call: ServiceCall) -> None:
     entity_id = call.data["entity_id"]
     entity = entity_component.get_entity(entity_id)
     if entity is None:
-        raise HomeAssistantError(f"Zone not found: {entity_id}")
+        raise ServiceValidationError(f"Zone not found: {entity_id}")
     if not entity.editable or "id" not in entity._config:  # noqa: SLF001
-        raise HomeAssistantError(f"This zone is not editable: {entity_id}")
+        raise ServiceValidationError(f"This zone is not editable: {entity_id}")
     await _zone_collection(hass).async_update_item(
         entity._config["id"], changes  # noqa: SLF001
     )
@@ -851,9 +861,9 @@ async def _person_trackers(
     collection, entity_component = _person_parts(hass)
     entity = entity_component.get_entity(call.data["entity_id"])
     if entity is None:
-        raise HomeAssistantError(f"Person not found: {call.data['entity_id']}")
+        raise ServiceValidationError(f"Person not found: {call.data['entity_id']}")
     if not entity.editable or "id" not in entity._config:  # noqa: SLF001
-        raise HomeAssistantError(
+        raise ServiceValidationError(
             f"This person is not editable: {call.data['entity_id']}"
         )
     trackers = set(entity.device_trackers)
@@ -893,9 +903,9 @@ async def _delete_person(hass: HomeAssistant, call: ServiceCall) -> dict | None:
     collection, entity_component = _person_parts(hass)
     entity = entity_component.get_entity(call.data["entity_id"])
     if entity is None:
-        raise HomeAssistantError(f"Person not found: {call.data['entity_id']}")
+        raise ServiceValidationError(f"Person not found: {call.data['entity_id']}")
     if not entity.editable or "id" not in entity._config:  # noqa: SLF001
-        raise HomeAssistantError(
+        raise ServiceValidationError(
             f"This person is not editable (YAML-defined): {call.data['entity_id']}"
         )
     result = {
@@ -925,7 +935,7 @@ async def _create_user(hass: HomeAssistant, call: ServiceCall) -> dict | None:
     username = call.data.get("username")
     password = call.data.get("password")
     if bool(username) != bool(password):
-        raise HomeAssistantError(
+        raise ServiceValidationError(
             "username and password must be provided together"
         )
     provider = None
@@ -967,14 +977,14 @@ async def _delete_user(hass: HomeAssistant, call: ServiceCall) -> dict | None:
     for user_id in call.data["user_id"]:
         user = await hass.auth.async_get_user(user_id)
         if user is None:
-            raise HomeAssistantError(f"User not found: {user_id}")
+            raise ServiceValidationError(f"User not found: {user_id}")
         if user.system_generated:
-            raise HomeAssistantError(
+            raise ServiceValidationError(
                 f"Cannot delete a system-generated user: {user_id}"
             )
         # Same lockout guard as disable_user: owners are untouchable.
         if user.is_owner:
-            raise HomeAssistantError(
+            raise ServiceValidationError(
                 f"Refusing to delete owner account: {user.name or user_id}"
             )
         users.append(user)
@@ -1020,11 +1030,11 @@ async def _import_blueprint(hass: HomeAssistant, call: ServiceCall) -> dict | No
             f"Error fetching blueprint from {url}"
         ) from err
     if imported is None:
-        raise HomeAssistantError(f"Unsupported blueprint URL: {url}")
+        raise ServiceValidationError(f"Unsupported blueprint URL: {url}")
 
     domain_blueprints = hass.data.get(BLUEPRINT_DOMAIN, {})
     if imported.blueprint.domain not in domain_blueprints:
-        raise HomeAssistantError(
+        raise ServiceValidationError(
             f"Unsupported blueprint domain: {imported.blueprint.domain}"
         )
 
@@ -1034,7 +1044,7 @@ async def _import_blueprint(hass: HomeAssistant, call: ServiceCall) -> dict | No
             imported.blueprint, imported.suggested_filename
         )
     except FileAlreadyExists as err:
-        raise HomeAssistantError(
+        raise ServiceValidationError(
             f"A blueprint file named {imported.suggested_filename} already exists"
         ) from err
     except OSError as err:
@@ -1079,14 +1089,14 @@ async def _import_statistics(hass: HomeAssistant, call: ServiceCall) -> dict | N
     statistic_id = call.data["statistic_id"]
     is_internal = valid_entity_id(statistic_id)
     if not is_internal and ":" not in statistic_id:
-        raise HomeAssistantError(
+        raise ServiceValidationError(
             f"Invalid statistic_id '{statistic_id}': use an entity id "
             "(sensor.gas_meter) or an external id (domain:object_id)"
         )
 
     stats = call.data["stats"]
     if not stats:
-        raise HomeAssistantError("stats must contain at least one row")
+        raise ServiceValidationError("stats must contain at least one row")
     starts = sorted(row["start"] for row in stats)
     dry_run = call.data.get("dry_run", True)
     if dry_run:
@@ -1182,14 +1192,14 @@ async def _set_user_active(
     for user_id in call.data["user_id"]:
         user = await hass.auth.async_get_user(user_id)
         if user is None:
-            raise HomeAssistantError(f"User not found: {user_id}")
+            raise ServiceValidationError(f"User not found: {user_id}")
         if user.system_generated:
-            raise HomeAssistantError(
+            raise ServiceValidationError(
                 f"Cannot modify a system-generated user: {user_id}"
             )
         # Guard Spook doesn't have: an owner can never be locked out.
         if not active and user.is_owner:
-            raise HomeAssistantError(
+            raise ServiceValidationError(
                 f"Refusing to disable owner account: {user.name or user_id}"
             )
         users.append(user)
@@ -1236,6 +1246,36 @@ def _reference_sources(hass: HomeAssistant):
         pass
 
 
+def _runtime_created_entities(hass: HomeAssistant) -> set[str]:
+    """Entity ids the config itself creates on demand (scene.create).
+
+    A snapshot scene made by scene.create only exists after the automation
+    has run, so "unknown right now" does not make references to it orphans.
+    Scan automation/script raw configs for scene.create calls and treat the
+    resulting scene ids as known.
+    """
+    created: set[str] = set()
+
+    def scan(node: Any) -> None:
+        if isinstance(node, dict):
+            if node.get("service") == "scene.create" or node.get("action") == "scene.create":
+                data = node.get("data") or {}
+                scene_id = data.get("scene_id") or node.get("scene_id")
+                if isinstance(scene_id, str) and scene_id:
+                    created.add(f"scene.{scene_id}")
+            for value in node.values():
+                scan(value)
+        elif isinstance(node, list):
+            for item in node:
+                scan(item)
+
+    for domain in ("automation", "script"):
+        component = hass.data.get(domain)
+        for entity in getattr(component, "entities", None) or []:
+            scan(getattr(entity, "raw_config", None))
+    return created
+
+
 async def _find_orphaned_references(
     hass: HomeAssistant, call: ServiceCall
 ) -> dict | None:
@@ -1243,6 +1283,7 @@ async def _find_orphaned_references(
     entities Home Assistant doesn't know (renamed, deleted, or typo'd)."""
     known = {state.entity_id for state in hass.states.async_all()}
     known |= set(er.async_get(hass).entities)
+    known |= _runtime_created_entities(hass)
 
     orphaned: dict[str, list[str]] = {}
     checked = 0
@@ -1306,13 +1347,13 @@ def _get_dashboard(hass: HomeAssistant, url_path: str | None):
     key = url_path or None
     if key not in dashboards:
         available = ", ".join(sorted(str(k) for k in dashboards if k))
-        raise HomeAssistantError(
+        raise ServiceValidationError(
             f"Dashboard not found: {url_path or 'default'}."
             + (f" Storage dashboards: {available}" if available else "")
         )
     dashboard = dashboards[key]
     if getattr(dashboard, "mode", "storage") != "storage":
-        raise HomeAssistantError(
+        raise ServiceValidationError(
             f"Dashboard '{url_path or 'default'}' is YAML-mode — "
             "edit its YAML file instead"
         )
@@ -1333,6 +1374,21 @@ def _dashboard_key(url_path: str | None) -> str | None:
     return url_path
 
 
+def _is_backup_of(slug: str, name: str) -> bool:
+    """True only for this dashboard's own backups ({slug}-{stamp}.json).
+
+    A bare startswith(f"{slug}-") also matches OTHER dashboards whose slug
+    shares the prefix (docs-shots vs docs-shots-v2): restore then picks the
+    foreign file as "newest", pruning deletes the other dashboard's history,
+    and the path guard accepts it. Require the exact timestamp shape after
+    the slug so slugs can never shadow each other.
+    """
+    prefix = f"{slug}-"
+    if not name.startswith(prefix):
+        return False
+    return re.fullmatch(r"\d{8}-\d{6}\.json", name[len(prefix):]) is not None
+
+
 def _save_dashboard_backup(directory: str, slug: str, config: dict) -> str:
     """Write a timestamped backup and prune old ones. Executor-safe."""
     from datetime import datetime, timezone
@@ -1343,8 +1399,7 @@ def _save_dashboard_backup(directory: str, slug: str, config: dict) -> str:
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(config, fh)
     backups = sorted(
-        f for f in os.listdir(directory)
-        if f.startswith(f"{slug}-") and f.endswith(".json")
+        f for f in os.listdir(directory) if _is_backup_of(slug, f)
     )
     for stale in backups[:-DASHBOARD_BACKUP_KEEP]:
         try:
@@ -1359,22 +1414,22 @@ def _load_dashboard_backup(
 ) -> tuple[str, dict]:
     """Read a named backup, or the newest one for this dashboard."""
     if name:
-        # Backup names are generated server-side; refuse path tricks.
-        if "/" in name or "\\" in name or not name.startswith(f"{slug}-"):
-            raise HomeAssistantError(f"Not a backup of this dashboard: {name}")
+        # Backup names are generated server-side; refuse path tricks and
+        # other dashboards' backups alike.
+        if "/" in name or "\\" in name or not _is_backup_of(slug, name):
+            raise ServiceValidationError(f"Not a backup of this dashboard: {name}")
         path = os.path.join(directory, name)
         if not os.path.isfile(path):
-            raise HomeAssistantError(f"Backup not found: {name}")
+            raise ServiceValidationError(f"Backup not found: {name}")
     else:
         try:
             backups = sorted(
-                f for f in os.listdir(directory)
-                if f.startswith(f"{slug}-") and f.endswith(".json")
+                f for f in os.listdir(directory) if _is_backup_of(slug, f)
             )
         except OSError:
             backups = []
         if not backups:
-            raise HomeAssistantError(
+            raise ServiceValidationError(
                 f"No backups exist for dashboard '{slug}' yet — "
                 "backups are created by bruh_claude.update_dashboard"
             )
@@ -1410,19 +1465,19 @@ async def _update_dashboard(hass: HomeAssistant, call: ServiceCall) -> dict | No
     if view_index is not None:
         # config is ONE view object, spliced into the stored config.
         if old_config is None:
-            raise HomeAssistantError(
+            raise ServiceValidationError(
                 "view_index edits need a stored config, and this dashboard "
                 "has none (it is auto-generated) — save a full config with "
                 "take_control: true first"
             )
         views = old_config.get("views") or []
         if not isinstance(new_config, dict) or "views" in new_config:
-            raise HomeAssistantError(
+            raise ServiceValidationError(
                 "With view_index, config must be a single view object "
                 "(not a full dashboard config)"
             )
         if not 0 <= view_index < len(views):
-            raise HomeAssistantError(
+            raise ServiceValidationError(
                 f"view_index {view_index} out of range — this dashboard "
                 f"has {len(views)} views"
             )
@@ -1433,13 +1488,13 @@ async def _update_dashboard(hass: HomeAssistant, call: ServiceCall) -> dict | No
     elif not isinstance(new_config, dict) or not isinstance(
         new_config.get("views"), list
     ):
-        raise HomeAssistantError(
+        raise ServiceValidationError(
             "config must be a full dashboard object with a 'views' list"
         )
 
     taking_control = old_config is None
     if taking_control and not call.data.get("take_control"):
-        raise HomeAssistantError(
+        raise ServiceValidationError(
             f"Dashboard '{_dashboard_slug(url_path)}' has never been saved "
             "(it is auto-generated). Saving will take permanent manual "
             "control of it — pass take_control: true to confirm, and undo "
@@ -1516,7 +1571,7 @@ async def _reset_dashboard_config(
     except Exception:  # noqa: BLE001 — never saved
         old_config = None
     if not old_config:
-        raise HomeAssistantError(
+        raise ServiceValidationError(
             f"Dashboard '{_dashboard_slug(url_path)}' has no stored config "
             "to reset — it is already auto-generated"
         )
@@ -1582,7 +1637,7 @@ async def _delete_dashboard(hass: HomeAssistant, call: ServiceCall) -> dict | No
         available = ", ".join(
             sorted(str(i.get("url_path")) for i in collection.async_items())
         )
-        raise HomeAssistantError(
+        raise ServiceValidationError(
             f"Dashboard not found: {url_path}."
             + (f" Existing: {available}" if available else "")
         )
@@ -1642,7 +1697,7 @@ async def _add_dashboard_resource(
     collection = _resources_collection(hass)
     url = call.data["url"]
     if any(i.get("url") == url for i in collection.async_items()):
-        raise HomeAssistantError(f"A resource with this URL already exists: {url}")
+        raise ServiceValidationError(f"A resource with this URL already exists: {url}")
     item = await _collection_create(
         collection,
         {"res_type": call.data.get("res_type", "module"), "url": url},
@@ -1659,7 +1714,7 @@ async def _remove_dashboard_resource(
     matches = [i for i in collection.async_items() if i.get("url") == url]
     if not matches:
         urls = ", ".join(sorted(str(i.get("url")) for i in collection.async_items())[:20])
-        raise HomeAssistantError(
+        raise ServiceValidationError(
             f"No resource with URL: {url}." + (f" Registered: {urls}" if urls else "")
         )
     for item in matches:

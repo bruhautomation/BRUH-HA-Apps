@@ -260,10 +260,30 @@ class TestGetWeatherForecast(unittest.TestCase):
 
     @patch("ha_mcp_server._ws_command")
     def test_invalid_type_defaults_to_daily(self, mock_ws):
-        mock_ws.return_value = {"response": {"weather.home": {"forecast": []}}}
+        mock_ws.return_value = {"response": {"weather.home": {"forecast": [
+            {"datetime": "t0", "temperature": 20}
+        ]}}}
         result = ha_mcp_server.get_weather_forecast("weather.home", "fortnightly")
         self.assertEqual(result["type"], "daily")
+        first_call = mock_ws.call_args_list[0][0][0]
+        self.assertEqual(first_call["service_data"]["type"], "daily")
+
+    @patch("ha_mcp_server._ws_command")
+    def test_falls_back_to_supported_type(self, mock_ws):
+        """An hourly-only entity (e.g. weather.krdu) must not hard-error on
+        the daily default — the tool falls back to what the entity supports."""
+        def per_type(cmd, **kwargs):
+            if cmd["service_data"]["type"] == "hourly":
+                return {"response": {"weather.krdu": {"forecast": [
+                    {"datetime": "t0", "temperature": 20}
+                ]}}}
+            return {"error": "Weather entity does not support daily forecast"}
+
+        mock_ws.side_effect = per_type
+        result = ha_mcp_server.get_weather_forecast("weather.krdu")
+        self.assertEqual(result["type"], "hourly")
         self.assertIn("note", result)
+        self.assertNotIn("error", result)
 
     @patch("ha_mcp_server._ws_command")
     def test_hourly_capped_at_24(self, mock_ws):

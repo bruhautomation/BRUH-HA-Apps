@@ -42,7 +42,7 @@ Examples:
   ha-share ls
   ha-share ls ha-docs
 EOF
-    exit 0
+    exit "${1:-0}"
 }
 
 check_share() {
@@ -226,6 +226,6 @@ case "$action" in
         ;;
     *)
         echo -e "${RED}Unknown action: ${action}${NC}" >&2
-        usage
+        usage 1
         ;;
 esac
