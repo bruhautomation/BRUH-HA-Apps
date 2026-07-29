@@ -165,6 +165,45 @@ class TestPanelBranding(unittest.TestCase):
         self.assertEqual(self.html.count('id="kAddForm"'), 1)
 
 
+class TestHypothesisIdentity(unittest.TestCase):
+    """ts doubles as the id the panel settles by."""
+
+    def setUp(self):
+        import tempfile
+        sys.path.insert(0, str(PANEL))
+        import hypotheses
+        self.mod = hypotheses
+        self.tmp = tempfile.TemporaryDirectory()
+        self._old = hypotheses.HYPOTHESES_FILE
+        hypotheses.HYPOTHESES_FILE = Path(self.tmp.name) / "h.jsonl"
+
+    def tearDown(self):
+        self.mod.HYPOTHESES_FILE = self._old
+        self.tmp.cleanup()
+
+    def test_claims_proposed_in_the_same_second_get_distinct_ids(self):
+        """A study session proposes several at once. Colliding ids made the
+        panel settle the FIRST match — so clicking ✓ on the second row
+        confirmed the first one instead."""
+        made = [self.mod.propose(f"claim {i}") for i in range(3)]
+        self.assertEqual(len({m["ts"] for m in made}), 3)
+
+    def test_settling_acts_on_the_row_you_picked(self):
+        a, b, c = (self.mod.propose(f"claim {i}") for i in range(3))
+        self.mod.confirm(b["ts"])
+        by_text = {e["text"]: e["status"] for e in self.mod.list_all()}
+        self.assertEqual(by_text["claim 1"], "confirmed")
+        self.assertEqual(by_text["claim 0"], "open")
+        self.assertEqual(by_text["claim 2"], "open")
+
+    def test_rejecting_acts_on_the_row_you_picked(self):
+        a, b, c = (self.mod.propose(f"claim {i}") for i in range(3))
+        self.mod.reject(c["ts"])
+        by_text = {e["text"]: e["status"] for e in self.mod.list_all()}
+        self.assertEqual(by_text["claim 2"], "rejected")
+        self.assertEqual(by_text["claim 0"], "open")
+
+
 class TestDocsTab(unittest.TestCase):
     """The guide's nav, search index and body all come from one source, so
     the thing worth testing is that the source is well-formed and that the
@@ -220,6 +259,27 @@ class TestDocsTab(unittest.TestCase):
         for current in ("brain memory", "brain learn", "brain undo",
                         "brain doctor", "ha reload", "ha check"):
             self.assertIn(current, self.docs, f"guide never mentions {current}")
+
+    def test_core_panel_functions_all_survive(self):
+        """A blunt edit to app.js can silently delete whole subsystems — the
+        file still parses, and nothing fails until you open the tab. Pin the
+        entry points so a truncation is a test failure, not a discovery."""
+        required = [
+            "function esc(", "function inlineMd(", "function renderMarkdown(",
+            "function docsSearch(", "function renderDocsNav(", "function selectDocs(",
+            "function renderDocs(", "function renderMemory(", "function mdInline(",
+            "function mdToHtml(", "function setMemEditing(", "function makeQuestions(",
+            "function switchView(", "async function refreshMemoryBadge(",
+        ]
+        missing = [fn for fn in required if fn not in self.app]
+        self.assertEqual(missing, [], f"app.js lost: {missing}")
+
+    def test_cards_settle_guesses_with_two_taps(self):
+        """The card renderer kept a free-text answer box after hypotheses
+        replaced questions — so it asked for an essay where the answer is
+        yes or no, and never settled the queue."""
+        self.assertNotIn("Answer to help future insights", self.app)
+        self.assertIn('"api/questions/answer", { answer: q }', self.app)
 
     def test_renderer_escapes_before_formatting(self):
         """The content is ours, but a docs renderer is exactly where a lazy

@@ -2,6 +2,67 @@
 
 All notable changes to **BRain**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.5.0
+
+### No default cards — it learns your home first
+
+BRain used to ship nine cards (Overview, Energy, Climate, Lighting, Security, Presence,
+Media, Device Health, Automations), all enabled from the moment you installed it. They
+generated before BRain knew anything about the house, so they said generic things about a
+home it had never looked at — and cost tokens doing it, on every schedule, forever.
+
+**A fresh install now has no cards at all.** The first run studies the home — naming,
+occupancy, energy, climate, device reliability — and only then proposes cards grounded in
+what it actually found, each with a one-line reason citing the evidence. You pick which to
+keep. Nothing generates, and the scheduler stays idle, until you do.
+
+**There is no canned fallback.** If the home is too sparse to learn from, BRain says what's
+missing and stops. Generic cards about a house it can't read would be noise on every run,
+and would teach you to ignore the dashboard.
+
+The flow is resumable — close the panel mid-study and come back — and re-running it never
+re-studies a topic it already covered, because a study session is expensive.
+
+## 1.4.1
+
+### Fixed
+
+- **Answering a guess from an insight card never settled it.** When hypotheses replaced
+  open questions in 1.3.0, the Memory tab was updated but the card renderer and its
+  endpoints were not. Cards still showed a free-text "Answer" box — asking for an essay
+  where the answer is yes or no — and the handler wrote to the old question ledger instead
+  of the queue. The card looked answered while the guess stayed **open in Memory until it
+  expired a fortnight later**. Cards now show the same two-tap ✓/✗, and settle the queue
+  by resolving the claim's text (a card carries the text, not the id).
+- **Removed the "Answered questions" section from Memory.** It belonged to the model this
+  release replaced, rendered `Q: … A: …` — exactly the format removed from memory — and
+  nothing populated it any more.
+
+## 1.4.0
+
+### Fixed: confirming a guess settled the wrong one
+
+Clicking ✓ on the second or third pending guess settled the **first** one. Hypotheses used
+the current epoch second as their id, and a study session proposes several claims inside
+the same second — so they collided, and settling matched whichever came first in the file.
+Ids are now unique per entry. (`knowledge_store` had guarded against exactly this; the
+hypothesis queue didn't inherit it.)
+
+### A single, compact bar
+
+The chrome was two stacked bars plus a row of labelled buttons — roughly 110px of fixed
+furniture above every view, which on the **terminal**, where each pixel is a line of
+output, cost real content. It is now **one 48px bar** carrying the mark, the tabs, status
+and actions.
+
+- **Monochrome line icons**, inline SVG inheriting `currentColor`, so they follow tab state
+  rather than competing with it. Azure is the only colour in the chrome and it marks only
+  what is active.
+- Toolbar actions are **icon-only** — the labels were noise beside four tabs.
+- On narrow screens the tab labels drop and the icons stay, so all four still fit.
+- **The Memory tab shows a count** when guesses are waiting. A guess nobody sees is a guess
+  that expires unanswered.
+
 ## 1.3.0
 
 ### Guesses instead of questions

@@ -55,6 +55,10 @@ OPTION_RANGES = {
 MAX_MODEL_CHARS = 100
 
 DEFAULTS = {
+    # A fresh install has no cards and no schedule. BRain studies the home
+    # first, then proposes cards grounded in what it actually found — a
+    # generic "Climate" card on an unknown house says nothing useful.
+    "onboarded": False,
     "auto_enabled": True,
     "plan": "pro",
     "budget_percent": 25,
@@ -80,6 +84,8 @@ def load() -> dict:
         return out
     if not isinstance(data, dict):
         return out
+    if isinstance(data.get("onboarded"), bool):
+        out["onboarded"] = data["onboarded"]
     if isinstance(data.get("auto_enabled"), bool):
         out["auto_enabled"] = data["auto_enabled"]
     if data.get("plan") in PLANS:
@@ -149,7 +155,13 @@ def save(fields: dict) -> dict:
     """
     clean: dict = {}
     for key, value in fields.items():
-        if key == "auto_enabled":
+        if key == "onboarded":
+            # Set by the first-run flow, not by the Settings dialog. It
+            # gates whether this home has any cards at all.
+            if not isinstance(value, bool):
+                raise ValueError("onboarded must be a boolean")
+            clean[key] = value
+        elif key == "auto_enabled":
             if not isinstance(value, bool):
                 raise ValueError("auto_enabled must be a boolean")
             clean[key] = value

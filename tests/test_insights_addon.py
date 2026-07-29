@@ -33,8 +33,10 @@ import categories  # noqa: E402
 import engine  # noqa: E402
 import feedback_store  # noqa: E402
 import hypotheses  # noqa: E402
+import onboarding  # noqa: E402
 import knowledge_store  # noqa: E402
 import prompt_store  # noqa: E402
+import settings_store  # noqa: E402
 import user_categories  # noqa: E402
 
 
@@ -457,10 +459,16 @@ class TestPanelServer(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self._old_dir = self.server.INSIGHTS_DIR
+        self._old_settings = settings_store.SETTINGS_FILE
         self.server.INSIGHTS_DIR = Path(self.tmp.name)
+        # A fresh install has no cards by design, so these tests describe a
+        # home that has been through onboarding.
+        settings_store.SETTINGS_FILE = os.path.join(self.tmp.name, "settings.json")
+        settings_store.save({"onboarded": True})
 
     def tearDown(self):
         self.server.INSIGHTS_DIR = self._old_dir
+        settings_store.SETTINGS_FILE = self._old_settings
         self.tmp.cleanup()
 
     def test_insight_path_rejects_traversal(self):
@@ -891,6 +899,12 @@ class InsightsServerCase(unittest.TestCase):
         self._old_shared_mem = self.server.SHARED_MEMORY_FILE
         knowledge_store.KNOWLEDGE_FILE = os.path.join(self.tmp.name, "knowledge.json")
         hypotheses.HYPOTHESES_FILE = Path(self.tmp.name) / "hypotheses.jsonl"
+        # These exercise a home that has finished onboarding. A fresh
+        # install deliberately has NO cards, so without this every
+        # category-facing test would see an empty dashboard.
+        settings_store.SETTINGS_FILE = os.path.join(self.tmp.name, "settings.json")
+        onboarding.STATE_FILE = Path(self.tmp.name) / "onboarding.json"
+        settings_store.save({"onboarded": True})
         self.server.SHARED_MEMORY_FILE = Path(self.tmp.name) / "memory.md"
         self.server.INSIGHTS_DIR = Path(self.tmp.name)
         # NOT inside INSIGHTS_DIR — mirrors production (/data vs /data/insights)
