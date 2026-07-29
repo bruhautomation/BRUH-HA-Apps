@@ -40,10 +40,13 @@ inventing generic cards. Add more entities, let history accumulate, and run it a
 
 ## The panel
 
-One ingress panel with three faces:
+One ingress panel with four faces:
 
 - **Insights** — generated cards about your home. Ask a question and get an answer card;
-  keep the ones you like as recurring cards, or drop any of them on a dashboard.
+  keep the ones you like as recurring cards, or drop any of them on a dashboard. Say
+  "learn about…" in the same bar and it runs a study session instead.
+- **Findings** — what BRain thinks is broken, and what it did about it. Each one is
+  either fixed (BRain makes the change and reports back) or dismissed for good.
 - **Terminal** — full Claude Code, reverse-proxied through the panel at `/terminal/`.
 - **Memory** — what BRain knows about your house, editable.
 
@@ -171,10 +174,30 @@ BRain keeps a small, durable document about your home under `/config/.brain/memo
 Facts arrive from voice conversations (Claude calls a `remember_fact` tool when you
 state a preference or correction), from insight runs, from study sessions, from
 `brain memory add`, and from the `brain.add_memory` service. A background consolidator
-folds the inbox into the document.
+folds the inbox into the document daily — or early once more than 20 facts are waiting,
+or immediately when you press **⇪ File into memory now** on the Memory tab.
 
 The document is plain markdown. Edit it freely — your edits are the source of truth, and
 the consolidator preserves them.
+
+## Findings
+
+A finding is something **broken**: a dead battery, a sensor that stopped reporting, a
+device stuck unavailable, an automation that can never fire. Insight runs and study
+sessions file them into `/data/findings.json`; study sessions hand theirs over through
+`/config/.brain/findings/inbox/`, the same way facts reach the memory inbox.
+
+Pressing **Fix it** is the only place the add-on runs Claude *with tools* on its own
+initiative — everywhere else insight generation is pure analysis over a data snapshot
+with `--disallowedTools "*"`. A fix run is bounded to one finding, capped by
+`BRAIN_FIX_MAX_TURNS` (30) and `BRAIN_FIX_TIMEOUT` (900s), runs under the same
+`/config/.claude/settings.local.json` permissions as the Assist and Automation
+listeners, and is snapshotted by the same `PreToolUse` hook — so `brain undo` restores a
+file a fix got wrong. It never deletes anything it didn't create, never restarts Home
+Assistant, and never runs on a schedule.
+
+**Dismissing** a finding is durable: dismissed findings are injected into every future
+analysis so the same non-problem is never raised twice.
 
 ## Undo and backups
 

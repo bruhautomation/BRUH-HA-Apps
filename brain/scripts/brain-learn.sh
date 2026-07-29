@@ -6,6 +6,7 @@
 # Claude mines the registry, live state, history, and long-term statistics
 # for one topic and emits:
 #   - durable facts        -> the memory inbox, for the consolidator
+#   - anything broken      -> the findings inbox, for the panel's Findings tab
 #   - up to 3 hypotheses   -> pending guesses awaiting a yes/no
 #   - a short field report -> printed, and kept as the topic's last report
 #
@@ -34,6 +35,7 @@ MEMORY_DIR="${BRAIN_MEMORY_DIR:-/config/.brain/memory}"
 INBOX_DIR="$MEMORY_DIR/inbox"
 HYPOTHESES_FILE="$MEMORY_DIR/hypotheses.jsonl"
 CURRICULUM_FILE="$MEMORY_DIR/curriculum.json"
+FINDINGS_INBOX="${BRAIN_FINDINGS_INBOX:-/config/.brain/findings/inbox}"
 REPORTS_DIR="$MEMORY_DIR/reports"
 MEMORY_FILE="$MEMORY_DIR/memory.md"
 
@@ -83,9 +85,10 @@ Usage:
 Topics: naming, presence, energy, climate, devices, automations, lighting
 
 A session reads live state, history, and long-term statistics, then files
-durable facts into the memory inbox and leaves at most a few hypotheses
-for you to confirm. Nothing it finds reaches the memory document without
-going through the usual consolidation checks.
+durable facts into the memory inbox, anything broken onto the Findings
+tab, and at most a few hypotheses for you to confirm. Nothing it finds
+reaches the memory document without going through the usual consolidation
+checks.
 EOF
     exit "${1:-0}"
 }
@@ -234,6 +237,7 @@ Then output ONE JSON object and nothing else — no prose, no code fences:
 {
   "report": "2-4 sentences a person would actually want to read",
   "facts": ["durable, specific, one sentence each"],
+  "findings": [{"text": "what is broken", "detail": "the entity, the number, when it started", "fix": "the specific change that would resolve it", "severity": "info|warning|serious|critical", "fixable": true, "entity_id": "sensor.example"}],
   "hypotheses": ["a guess you are fairly confident of, phrased so it can be answered yes or no"]
 }
 
@@ -243,6 +247,17 @@ Rules for "facts":
 - Specific and checkable. No advice, no recommendations, no hedging.
 - Never restate something already in the memory above.
 - Omit rather than pad. Zero facts is a valid, honest result.
+
+Rules for "findings":
+- Things that are BROKEN and have an owner: a dead or dying battery, a sensor
+  that stopped reporting, a device stuck unavailable, an automation that can
+  never fire, two automations fighting. Not observations — a work list.
+- Specific and checkable: name the entity, the number, and since when. "Some
+  batteries are low" is not a finding.
+- "fixable" is true only when software could make the change (editing config,
+  renaming an entity, calling a service). Anything needing hands in the
+  physical world — batteries, re-pairing, power-cycling — is false.
+- Omit rather than pad. Most study sessions find nothing broken.
 
 Rules for "hypotheses":
 - ${hypothesis_rule}
@@ -303,6 +318,10 @@ fi
 report=$(printf '%s' "$json" | jq -r '.report // ""')
 mapfile -t facts < <(printf '%s' "$json" | jq -r '(.facts // [])[]' 2>/dev/null)
 mapfile -t hypotheses < <(printf '%s' "$json" | jq -r '(.hypotheses // [])[]' 2>/dev/null)
+# Findings stay JSON per line: unlike a fact, a finding is a record with a
+# severity and a proposed fix, and flattening it to a sentence loses both.
+mapfile -t findings < <(printf '%s' "$json" \
+    | jq -c '(.findings // [])[] | select((.text // "") != "")' 2>/dev/null)
 
 # ---------------------------------------------------------------------------
 # File the results. Facts go to the inbox — never straight to memory.md.
@@ -319,6 +338,27 @@ if [ "${#facts[@]}" -gt 0 ]; then
             '{"ts": $ts, "source": $source, "fact": $fact, "confidence": "medium"}' \
             >> "$inbox_file"
         written=$((written + 1))
+    done
+fi
+
+# Findings go to their own inbox on the shared volume, swept by the panel's
+# Findings tab. Same hand-off shape as the memory inbox, and for the same
+# reason: a study session is on the CLI side and must not need the panel to
+# be running to file what it found.
+found=0
+if [ "${#findings[@]}" -gt 0 ]; then
+    mkdir -p "$FINDINGS_INBOX"
+    findings_file="$FINDINGS_INBOX/${now}-study-${topic_id:-adhoc}.jsonl"
+    for f in "${findings[@]}"; do
+        [ -n "${f//[[:space:]]/}" ] || continue
+        printf '%s' "$f" | jq -c --arg source "study:${topic_id:-adhoc}" \
+            --arg title "Study: ${topic_label}" --argjson ts "$now" \
+            '{ts: $ts, source: $source, source_title: $title,
+              text: (.text // ""), detail: (.detail // ""), fix: (.fix // ""),
+              severity: (.severity // "warning"),
+              fixable: (if .fixable == false then false else true end),
+              entity_id: (.entity_id // "")}' \
+            >> "$findings_file" 2>/dev/null && found=$((found + 1))
     done
 fi
 
@@ -362,6 +402,14 @@ if [ "$written" -gt 0 ]; then
     done
 else
     echo -e "${DIM}Nothing new learned this run.${NC}"
+fi
+
+if [ "$found" -gt 0 ]; then
+    echo ""
+    echo -e "${YELLOW}${found} problem(s) found${NC} ${DIM}— on the Findings tab of the panel${NC}"
+    for f in "${findings[@]}"; do
+        printf '  ! %s\n' "$(printf '%s' "$f" | jq -r '.text // ""')"
+    done
 fi
 
 if [ "$queued" -gt 0 ]; then

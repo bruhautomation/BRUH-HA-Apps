@@ -12,9 +12,10 @@ clean install, not an upgrade.
 | --- | --- |
 | **Terminal** | Full Claude Code in your browser, with native Home Assistant access through an MCP server — read states, call services, check history, reload config, edit YAML. |
 | **Insights** | Claude analyses your home's data and writes interactive cards you can drop on a dashboard. Ask it anything about your house and get an answer card back. |
+| **Findings** | The things BRain thinks are broken — a dead battery, a sensor that stopped reporting, an automation that can never fire. Send it to fix one, or tell it that isn't a problem here and it never raises it again. |
 | **Memory** | One document of durable facts about your home, learned from voice conversations, insight runs, and anything you tell it directly. Every part of BRain reads and writes the same memory. |
 
-All three live behind one sidebar panel, and share one Claude login.
+All of it lives behind one sidebar panel, and shares one Claude login.
 
 ## Why one add-on
 

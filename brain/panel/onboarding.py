@@ -141,6 +141,25 @@ def start_learning() -> dict:
     return {"queued": queued, "already_known": sorted(already)}
 
 
+def request_study(topic: str = "") -> str:
+    """Queue ONE study session for the watcher and say what it will study.
+
+    The same hand-off ``start_learning`` uses, exposed for the panel's ask
+    bar: "learn about the boiler" is a study session, not a card. An empty
+    topic means "whatever has gone stalest", which is what ``brain learn``
+    with no argument does — so the two faces of learning behave alike.
+    """
+    topic = str(topic or "").strip()[:200]
+    STUDY_REQUESTS_DIR.mkdir(parents=True, exist_ok=True)
+    slug = re.sub(r"[^a-z0-9]+", "-", topic.lower()).strip("-")[:40] or "stalest"
+    path = STUDY_REQUESTS_DIR / f"{int(time.time())}-ask-{slug}.json"
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"ts": int(time.time()), "topic": topic}),
+                   encoding="utf-8")
+    tmp.replace(path)
+    return topic
+
+
 def learning_progress() -> dict:
     studied = _studied_topics()
     done = [t for t in FIRST_TOPICS if t in studied]

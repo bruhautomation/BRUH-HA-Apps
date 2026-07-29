@@ -2,6 +2,109 @@
 
 All notable changes to **BRain**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.7.0
+
+### Findings — memory you can act on
+
+Memory tells you what is *true* of your home. A guess asks whether BRain has
+something *wrong*. Neither has anywhere to put the third thing: something that
+is **broken**.
+
+**Findings** is a new tab, and it is a work list. A battery that died. A sensor
+that has read the same value for six days. A device stuck unavailable. An
+automation whose trigger entity was renamed, so it can never fire again.
+Insight runs and study sessions both file them, and BRain reports a given
+problem exactly **once** — the same problem in different words is recognised
+and dropped.
+
+Every finding has two ways out and no third:
+
+- **✦ Fix it** sends Claude to make the change in your actual Home Assistant.
+  It confirms the problem is still real, finds the cause rather than the
+  symptom, makes the smallest change that resolves it, verifies the change
+  took, and reports back with a list of exactly what it touched. It is bounded
+  hard: one finding per run, never deletes anything it didn't create, never
+  restarts Home Assistant, never touches secrets, and **nothing runs until you
+  press it**. Anything it notices along the way becomes its own finding rather
+  than an edit you didn't ask for.
+- **Not a problem** dismisses it permanently, and the dismissal is fed back
+  into every future analysis. If the garage freezer is *supposed* to sit at
+  -30°C, one press ends that conversation for good instead of dismissing the
+  same alert every week.
+
+Anything needing hands — a battery, a re-pairing — is marked **needs you**
+rather than offered a fix, because inventing a software substitute for a dead
+battery is worse than saying so. **✓ I did it** closes those.
+
+Fixed and dismissed findings don't vanish; the filter at the top of the tab is
+how you check what BRain changed in your house last week. Successful fixes are
+written into memory too, so a later analysis doesn't rediscover a problem BRain
+resolved itself.
+
+Under the hood the generation contract split in two: what a run *learned* about
+the home (durable facts → memory) is now separate from what it *found* wrong
+(→ this tab). They were one field, which is why nothing was ever actionable.
+
+### The ask bar does both jobs, so the ＋ button is gone
+
+Asking a question already made a card, and any card can become a recurring
+insight with **＋ Make recurring**. A separate "New insight" dialog was a
+second, harder path to somewhere you had already been taken — so it's gone from
+the header.
+
+The bar now has a second verb. Start a line with **"learn about…"** or
+**"study…"** and BRain runs a study session instead of drawing a card: it digs
+through the registry, history and long-term statistics for that corner of the
+house, and what it finds lands in Memory and Findings. That was previously
+reachable only from the terminal, which meant nobody ran one. The placeholder
+and the line under the bar teach both, because the bar is the only place either
+is discoverable.
+
+### Tags are yours to edit
+
+Every card carries a few `#tags`, and the chips at the top of the dashboard
+filter by them — `#batteries` surfaces every card that found a battery problem,
+whatever category it came from. Which was useful right up until a run invented
+a bad one, at which point your only option was to hope the next run didn't
+repeat it.
+
+Press ✎ on a card's tag row to drop a tag or add your own. What's stored is a
+**diff, not a list**: your removals stick across regeneration, but a genuinely
+new tag a later run discovers still appears. Storing the final list would have
+frozen the card's tags forever.
+
+### File into memory now
+
+The consolidator runs daily, and early once more than 20 things are waiting.
+That's the right cadence for a background job and the wrong one for someone who
+has just taught BRain something and wants to see it land. The Memory tab now
+has a **⇪ File into memory now** button that runs the same pass immediately —
+same script, same safety checks, and it says how much is waiting before you
+press it.
+
+### Removed: the removed-cards graveyard
+
+⚙ Settings kept a list of built-in cards you had deleted, offering them back.
+That belongs to a version of BRain that shipped nine cards to every house. This
+one studies your home and proposes cards *for that home*, so the way to get a
+card back is to ask for it again and have BRain build it for the house it now
+knows — not to resurrect a generic one. ✕ now means the same thing for every
+card: gone.
+
+### The header carries the real wordmark
+
+The bar drew the gable alone beside the word "BRain" set as live text, because
+the full lockup has a 132px minimum width and the bar has room for about 52px.
+It now draws the actual wordmark — `BR`, the gable that *is* the `A`, `IN` —
+as one piece of art, in three brand roles so a single file works in both
+themes: the `B`, `R` and `N` follow the theme's ink, the roof stays azure, and
+the `AI` and the signal motif always match each other.
+
+A fifth tab and a second tab badge cost real width, so every breakpoint in the
+bar moved outward and a fourth was added. The bar still holds one 48px row with
+no overflow at every width from 320 to 1440 — verified by rendering it, not by
+guessing.
+
 ## 1.6.0
 
 ### A new mark

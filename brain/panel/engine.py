@@ -353,7 +353,58 @@ def run_claude(
         return {"ok": False, "error": f"Claude timed out after {timeout}s", "text": "", "meta": {}}
     except FileNotFoundError:
         return {"ok": False, "error": "claude CLI not found", "text": "", "meta": {}}
+    return _envelope(proc)
 
+
+def run_agent(
+    prompt: str,
+    system_prompt: str,
+    model: str = "",
+    timeout: int = 900,
+    max_turns: int = 30,
+) -> dict:
+    """Run `claude -p` WITH its tools. Same envelope as ``run_claude``.
+
+    The one place the panel lets Claude touch the house (the Findings "Fix
+    it" button). Two differences from ``run_claude``, both deliberate:
+
+    * no ``--disallowedTools``, so the Home Assistant MCP tools and file
+      access are available. Which of them may run without a prompt is
+      governed by /config/.claude/settings.local.json, written at startup —
+      the same permissions the Assist and Automation listeners run under, so
+      there is one answer to "what may Claude do here" rather than two.
+    * ``--append-system-prompt`` rather than ``--system-prompt``: replacing
+      the CLI's own system prompt strips everything it knows about using its
+      tools, which is precisely what this run needs.
+    """
+    argv = _claude_argv() + [
+        "-p",
+        "--output-format", "json",
+        "--max-turns", str(max_turns),
+        "--append-system-prompt", system_prompt,
+    ]
+    if model:
+        argv += ["--model", model]
+    try:
+        proc = subprocess.run(
+            argv,
+            input=prompt,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=_claude_env(),
+            cwd=CLAUDE_HOME if os.path.isdir(CLAUDE_HOME) else None,
+        )
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "text": "", "meta": {},
+                "error": f"the fix run passed its {timeout}s limit and was stopped"}
+    except FileNotFoundError:
+        return {"ok": False, "error": "claude CLI not found", "text": "", "meta": {}}
+    return _envelope(proc)
+
+
+def _envelope(proc: subprocess.CompletedProcess) -> dict:
+    """Parse the `claude -p --output-format json` envelope into our result."""
     stdout = (proc.stdout or "").strip()
     stderr = (proc.stderr or "").strip()
     if not stdout:

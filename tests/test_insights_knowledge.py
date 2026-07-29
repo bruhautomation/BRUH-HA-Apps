@@ -29,6 +29,8 @@ import engine  # noqa: E402
 import hypotheses  # noqa: E402
 import onboarding  # noqa: E402
 import feedback_store  # noqa: E402
+import card_tags  # noqa: E402
+import findings_store  # noqa: E402
 import knowledge_store  # noqa: E402
 import prompt_store  # noqa: E402
 import settings_store  # noqa: E402
@@ -191,12 +193,12 @@ class TestPromptInjection(unittest.TestCase):
                 "title": "Quiet morning",
                 "summary": "All quiet.",
                 "highlights": [{"label": "Lights on", "value": "3"}],
-                "findings": ["Old finding"],
+                "learned": ["Old discovery"],
             })
         self.assertIn("YOUR PREVIOUS ANALYSIS", prompt)
         self.assertIn("Quiet morning", prompt)
         self.assertIn("Lights on: 3", prompt)
-        self.assertIn("Old finding", prompt)
+        self.assertIn("Old discovery", prompt)
 
     def test_no_blocks_when_absent(self):
         prompt = categories.build_prompt(categories.CATEGORIES[0], {"entities": []})
@@ -351,6 +353,11 @@ class InsightsServerCase(unittest.TestCase):
         settings_store.save({"onboarded": True})
         self.server.SHARED_MEMORY_FILE = Path(self.tmp.name) / "memory.md"
         self._old_www = self.server.WWW_CARD_DIR
+        self._old_findings = (findings_store.FINDINGS_FILE, findings_store.INBOX_DIR)
+        self._old_tags = card_tags.TAGS_FILE
+        findings_store.FINDINGS_FILE = Path(self.tmp.name) / "findings.json"
+        findings_store.INBOX_DIR = Path(self.tmp.name) / "findings-inbox"
+        card_tags.TAGS_FILE = Path(self.tmp.name) / "card_tags.json"
         self.server.WWW_CARD_DIR = Path(self.tmp.name) / "www" / "bruh_insights"
         self.server.MEMORY_STATE.update(merging=False, error="")
         self.server.MEMORY_LAST_TASK = None
@@ -363,6 +370,8 @@ class InsightsServerCase(unittest.TestCase):
          user_categories.USER_CATS_FILE, self.server.CARD_TOKEN_FILE,
          knowledge_store.KNOWLEDGE_FILE, self.server.SHARED_MEMORY_FILE) = self._olds
         self.server.WWW_CARD_DIR = self._old_www
+        (findings_store.FINDINGS_FILE, findings_store.INBOX_DIR) = self._old_findings
+        card_tags.TAGS_FILE = self._old_tags
         self.server.JOBS.clear()
         self.tmp.cleanup()
 
@@ -379,7 +388,7 @@ class TestGenerateLearns(InsightsServerCase):
             "summary": "Stuff happened.",
             "highlights": [{"label": "Total", "value": "12 kWh"}],
             "hypotheses": ["The garage fridge is meant to run 24/7 — right?"],
-            "findings": ["Hall sensor drops offline at 2 AM"],
+            "learned": ["Hall sensor drops offline at 2 AM"],
             "tags": ["energy"],
             "html": "<!DOCTYPE html><html><body>ok</body></html>",
         }
@@ -413,7 +422,7 @@ class TestGenerateLearns(InsightsServerCase):
         with open(Path(self.tmp.name) / f"{insight_id}.json") as f:
             return json.load(f)
 
-    def test_findings_land_in_knowledge_store(self):
+    def test_learned_discoveries_land_in_knowledge_store(self):
         asyncio.run(self.server._generate("energy"))
         facts = knowledge_store.list_facts()
         self.assertEqual([f["text"] for f in facts],
@@ -471,7 +480,7 @@ class TestGenerateLearns(InsightsServerCase):
         self.assertNotIn("KNOWN FACTS", self.prompts[0])
         self.assertNotIn("YOUR PREVIOUS ANALYSIS", self.prompts[0])
 
-    def test_duplicate_finding_not_relearned(self):
+    def test_duplicate_discovery_not_relearned(self):
         knowledge_store.add_fact("Hall sensor drops offline at 2 AM")
         inbox_before = list(self.server.MEMORY_INBOX_DIR.glob("*")) \
             if self.server.MEMORY_INBOX_DIR.exists() else []

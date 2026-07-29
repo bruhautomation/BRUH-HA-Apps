@@ -21,7 +21,10 @@ const tip = (node, text) => {
 const state = {
   status: null,
   insights: [],
+  findings: [],
+  findFilter: "live",
   filter: "all",
+  editingTags: null, // card id whose tag row is in edit mode
   pollTimer: null,
   setupTimer: null,
   frameSeq: 0,
@@ -136,7 +139,6 @@ function renderAuth() {
   $("#onboard").classList.toggle("hidden", !s.authenticated || obState.onboarded);
   $("#dash").classList.toggle("hidden", !ready);
   $("#refreshAll").classList.toggle("hidden", !ready);
-  $("#newInsight").classList.toggle("hidden", !ready);
   $("#settingsBtn").classList.toggle("hidden", !s.authenticated);
   renderUsageChip();
   renderPausedChip();
@@ -351,12 +353,15 @@ function insightFor(id) {
   return state.insights.find((i) => i.id === id);
 }
 
+const ACTIVE_STATES = ["queued", "collecting", "generating", "parsing", "fixing"];
+
 function phaseLabel(jobState) {
   return {
     queued: "Queued…",
     collecting: "Gathering your home's data…",
     generating: "Claude is analyzing & designing…",
     parsing: "Rendering visualization…",
+    fixing: "Working on the fix…",
   }[jobState] || "Working…";
 }
 
@@ -550,7 +555,7 @@ function makeCard(catInfo, insight, fallbackId) {
   const job = jobFor(id);
   const view = insight ? state.viewing[id] : null;
   const shown = view && view.data ? view.data : insight;
-  const active = !view && ["queued", "collecting", "generating", "parsing"].includes(job.state);
+  const active = !view && ACTIVE_STATES.includes(job.state);
   const disabled = !!(catInfo && catInfo.enabled === false);
   const card = el("article", "card" + (active ? " pending" : "") + (disabled ? " off" : ""));
   card.dataset.id = id;
@@ -626,14 +631,10 @@ function makeCard(catInfo, insight, fallbackId) {
   }
   // ✕ deletes every card — including one whose only trace is a job, so a
   // failed Ask can be cleared away instead of sitting there forever.
-  // Built-in cards ship with the add-on, so theirs is a removal that ⚙
-  // Settings can undo — the tooltip says which you get.
   // A still-running job is left alone: the worker would just re-register it.
   if (catInfo || insight || (fallbackId && !active)) {
     const del = el("button", "btn icon", "✕");
-    tip(del, catInfo && !catInfo.user
-      ? "Remove this card — restorable from ⚙ Settings"
-      : "Delete this card and its history");
+    tip(del, "Delete this card and its history");
     del.addEventListener("click", () => deleteCard(id, catInfo, catName));
     actions.appendChild(del);
   }
@@ -685,6 +686,12 @@ function makeCard(catInfo, insight, fallbackId) {
       card.appendChild(makeQuestions(insight));
     }
     card.appendChild(makeFrame(shown));
+    // Tags belong to the card, not to the run being viewed — editing them
+    // while pinned to March's run must still change the card's tags.
+    if (insight) {
+      const tagRow = makeTagRow(insight);
+      if (tagRow) card.appendChild(tagRow);
+    }
     const foot = el("div", "foot");
     foot.appendChild(el("span", null,
       view ? `Generated ${timeAgo(shown.generated_at)}` : `Updated ${timeAgo(shown.generated_at)}`));
@@ -730,17 +737,76 @@ function makeCard(catInfo, insight, fallbackId) {
   return card;
 }
 
-// Tags a card can be found under: the model's content tags plus its own
-// category id ("asked" for ad-hoc questions). One tag chip can therefore
-// match many cards — e.g. #batteries surfaces every card that found a
-// battery problem, whatever category it belongs to.
+// Tags a card can be found under: the model's content tags, the card's own
+// category, and any hand edits — all resolved server-side (card_tags.py), so
+// there is one answer to "what tags does this card have". One chip can match
+// many cards: #batteries surfaces every card that found a battery problem,
+// whatever category it belongs to.
 function effectiveTags(i) {
-  const tags = (Array.isArray(i.tags) ? i.tags : [])
-    .filter((t) => typeof t === "string" && t.trim())
-    .map((t) => t.trim().toLowerCase());
-  if (i.category === "custom") tags.push("asked");
-  else if (i.category) tags.unshift(i.category);
-  return [...new Set(tags)];
+  return (Array.isArray(i.tags) ? i.tags : [])
+    .filter((t) => typeof t === "string" && t.trim());
+}
+
+// The tag row on a card. Read-only chips until you press ✎ — then each grows
+// an ✕ and an input appears, because a tag you can delete by mis-tapping is
+// worse than one you have to press twice to lose.
+function makeTagRow(insight) {
+  const id = insight.id;
+  const editing = state.editingTags === id;
+  const tags = effectiveTags(insight);
+  if (!tags.length && !editing) return null;
+
+  const row = el("div", "tagrow" + (editing ? " editing" : ""));
+
+  const save = async (next) => {
+    try {
+      const res = await api(`api/card/${id}/tags`, {
+        method: "PUT", body: JSON.stringify({ tags: next }) });
+      insight.tags = res.tags;
+      render();
+    } catch (e) { toast(e.message); }
+  };
+
+  tags.forEach((t) => {
+    const chip = el("span", "tagchip", `#${t}`);
+    if (editing) {
+      const x = el("button", "tagx", "✕");
+      x.type = "button";
+      tip(x, `Remove #${t} from this card`);
+      x.addEventListener("click", () => save(tags.filter((o) => o !== t)));
+      chip.appendChild(x);
+    } else {
+      chip.classList.add("clickable");
+      chip.addEventListener("click", () => { state.filter = t; render(); });
+    }
+    row.appendChild(chip);
+  });
+
+  if (editing) {
+    const form = el("form", "tagadd");
+    const input = el("input", "taginput");
+    input.type = "text";
+    input.maxLength = 24;
+    input.placeholder = "add a tag…";
+    input.autocomplete = "off";
+    form.appendChild(input);
+    form.addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      const tag = input.value.trim().replace(/^#/, "").toLowerCase();
+      if (!tag || tags.includes(tag)) { input.value = ""; return; }
+      save(tags.concat(tag));
+    });
+    row.appendChild(form);
+    const done = el("button", "btn small", "Done");
+    done.addEventListener("click", () => { state.editingTags = null; render(); });
+    row.appendChild(done);
+  } else {
+    const edit = el("button", "btn icon tagedit", "✎");
+    tip(edit, "Edit this card's tags");
+    edit.addEventListener("click", () => { state.editingTags = id; render(); });
+    row.appendChild(edit);
+  }
+  return row;
 }
 
 function render() {
@@ -776,7 +842,7 @@ function render() {
   // custom in-flight jobs that have no stored insight yet
   Object.keys(s.jobs || {}).forEach((jid) => {
     if (jid.startsWith("custom-") && !insightFor(jid) &&
-        ["queued", "collecting", "generating", "parsing", "error"].includes(s.jobs[jid].state)) {
+        ACTIVE_STATES.concat("error").includes(s.jobs[jid].state)) {
       customs.unshift({ id: jid, category: "custom", category_title: "Custom", icon: "✨", virtual: true });
     }
   });
@@ -804,11 +870,12 @@ function renderIfChanged() {
     // poll loop must not clobber it when the latest regenerates elsewhere
     gen: state.insights.map((i) => i.id
       + (state.viewing[i.id] ? "@" + state.viewing[i.id].ts : i.generated_at)
-      + ":q" + ((i.questions || []).length)),
+      + ":q" + ((i.questions || []).length)
+      + ":t" + effectiveTags(i).join(",")),
     view: Object.keys(state.viewing).map((k) => k + state.viewing[k].ts),
     cats: s && s.categories.map((c) =>
       [c.id, c.title, c.icon, c.enabled, c.focus_overridden, c.refresh_hours, c.schedule]),
-    removed: s && (s.removed_categories || []).map((c) => c.id),
+    tagEdit: state.editingTags,
     paused: s && [s.settings && s.settings.auto_enabled, s.usage && s.usage.blocked],
     usage: s && s.usage && [s.usage.used_percent, s.usage.resets_at],
     filter: state.filter,
@@ -829,7 +896,16 @@ async function generate(categoryOrId, question) {
         ? null // regenerating a custom card without its question isn't possible
         : { category: categoryOrId });
     if (!body) return;
-    await api("api/generate", { method: "POST", body: JSON.stringify(body) });
+    const res = await api("api/generate", { method: "POST", body: JSON.stringify(body) });
+    // "learn about the boiler" isn't a card — the server routed it to a study
+    // session instead, and there is nothing on the dashboard to wait for.
+    if (res && "learning" in res) {
+      toast(res.learning
+        ? `Studying ${res.learning} — it runs in the background; what it finds `
+          + "lands in Memory and Findings"
+        : "Studying whatever BRain knows least about — check Memory shortly");
+      return;
+    }
     await refreshStatus();
     fastPoll();
   } catch (e) {
@@ -837,17 +913,14 @@ async function generate(categoryOrId, question) {
   }
 }
 
-// One ✕ for every kind of card — the server decides whether that means
-// "delete outright" (user insight, ad-hoc ask) or "remove, restorable"
-// (built-in card, whose definition ships with the add-on).
+// One ✕ for every kind of card, and it means the same thing for all of them:
+// gone. BRain proposes the cards a given home should have, so the way to get
+// one back is to ask for it again — not to fish it out of a graveyard.
 async function deleteCard(id, catInfo, name) {
-  const builtin = !!(catInfo && !catInfo.user);
   const label = name || (catInfo && catInfo.title) || "this card";
-  const question = builtin
-    ? `Remove the “${label}” card? Its past runs and feedback are deleted, but you `
-      + "can bring the card back from ⚙ Settings."
-    : `Delete “${label}” and its history? This can't be undone.`;
-  if (!window.confirm(question)) return;
+  if (!window.confirm(
+    `Delete “${label}” and its history? This can't be undone — ask for it `
+    + "again any time and BRain will build it fresh.")) return;
   try {
     await api(`api/card/${id}`, { method: "DELETE" });
     delete state.viewing[id];
@@ -855,7 +928,7 @@ async function deleteCard(id, catInfo, name) {
     delete state.prevLatest[id];
     await Promise.all([refreshStatus(), refreshInsights()]);
     render();
-    toast(builtin ? "Card removed — restore it from ⚙ Settings" : "Card deleted");
+    toast("Card deleted");
   } catch (e) {
     toast(e.message);
   }
@@ -883,7 +956,7 @@ async function refreshInsights() {
 function anyActive() {
   const jobs = (state.status && state.status.jobs) || {};
   return Object.values(jobs).some((j) =>
-    ["queued", "collecting", "generating", "parsing"].includes(j.state));
+    ACTIVE_STATES.includes(j.state));
 }
 
 function fastPoll() {
@@ -896,6 +969,14 @@ function fastPoll() {
     }
     renderIfChanged();
     refreshOpenSettings();
+    // A fix run and an insight run both change the findings list — the first
+    // by finishing, the second by turning up something new.
+    if (hadActive && !anyActive()) {
+      await refreshFindings();
+      if (currentView === "findings") renderFindings();
+    } else if (state.status) {
+      updateFindBadge(state.status.findings_open);
+    }
     state.pollTimer = setTimeout(tick, anyActive() ? 2500 : 20000);
   };
   state.pollTimer = setTimeout(tick, 2500);
@@ -1154,7 +1235,10 @@ $("#newClose").addEventListener("click", () => closeBox("#newModal"));
 $("#newModal").addEventListener("click", (ev) => {
   if (ev.target === $("#newModal")) closeBox("#newModal");
 });
-$("#newInsight").addEventListener("click", () => openNewInsight(null));
+// There is no "＋ New insight" button any more. Asking a question is how you
+// make a card, and "＋ Make recurring" on the answer is how it becomes a
+// scheduled one — so a blank prompt-writing dialog was a second, harder path
+// to somewhere you had already been taken.
 
 // -------------------------------------------------------- settings modal
 // Auto-saves on change (no Save button) — the point is setting a budget in
@@ -1232,43 +1316,7 @@ function renderModelField(data) {
   custom.classList.add("hidden");
 }
 
-// Built-in cards can't be deleted for good — their definitions ship in the
-// add-on — so ✕ hides them and this list hands them back.
-function renderRemovedCards() {
-  const removed = (state.status && state.status.removed_categories) || [];
-  $("#setRemovedWrap").classList.toggle("hidden", !removed.length);
-  const list = $("#setRemoved");
-  list.textContent = "";
-  removed.forEach((c) => {
-    const row = el("div", "removedrow");
-    row.appendChild(el("span", "cicon", c.icon || "✨"));
-    const label = el("span", "grow", c.title || c.id);
-    if (c.default_title && c.default_title !== c.title) {
-      label.appendChild(el("span", "badge", c.default_title));
-    }
-    row.appendChild(label);
-    const restore = el("button", "btn small", "Restore");
-    restore.addEventListener("click", async () => {
-      restore.disabled = true;
-      try {
-        await api(`api/prompt/${c.id}`, {
-          method: "PUT", body: JSON.stringify({ hidden: false }) });
-        await refreshStatus();
-        renderRemovedCards();
-        render();
-        toast(`“${c.title || c.id}” is back — generate it whenever you like`);
-      } catch (e) {
-        toast(e.message);
-        restore.disabled = false;
-      }
-    });
-    row.appendChild(restore);
-    list.appendChild(row);
-  });
-}
-
 function renderSettingsForm(data) {
-  renderRemovedCards();
   $("#setEnabled").checked = data.settings.auto_enabled !== false;
   $("#setPlan").value = data.settings.plan || "pro";
   $("#setBudget").value = data.settings.budget_percent;
@@ -1290,8 +1338,6 @@ function renderSettingsForm(data) {
 async function openSettings() {
   openBox("#setModal");
   try {
-    // status carries the removed-cards list, and it may be up to a poll old
-    await refreshStatus().catch(() => {});
     renderSettingsForm(await api("api/settings"));
   } catch (e) {
     toast("Could not load settings: " + e.message);
@@ -1446,6 +1492,187 @@ $("#fbModal").addEventListener("click", (ev) => {
   if (ev.target === $("#fbModal")) closeBox("#fbModal");
 });
 
+// ---------------------------------------------------------------- findings
+// The work list. Memory is what is TRUE of this home, a hypothesis is what
+// BRain might have wrong about it, and a finding is what is BROKEN in it.
+// Two ways out and no third: fix it, or say it isn't a problem here.
+
+const FIND_STATUS = {
+  open:      { label: "Needs a decision", cls: "open" },
+  fixing:    { label: "BRain is fixing it…", cls: "fixing" },
+  fixed:     { label: "Fixed", cls: "fixed" },
+  failed:    { label: "Couldn't fix it", cls: "failed" },
+  needs_you: { label: "Needs you", cls: "needsyou" },
+  ignored:   { label: "Dismissed", cls: "ignored" },
+};
+
+const FIND_SEVERITY = {
+  info: "Tidy-up", warning: "Degraded", serious: "Broken", critical: "Urgent",
+};
+
+// "live" is the default view on purpose: a work list that opens on its own
+// archive is a list nobody works.
+const FIND_FILTERS = [
+  { id: "live", label: "Needs you", match: (f) =>
+    ["open", "fixing", "failed", "needs_you"].includes(f.status) },
+  { id: "fixed", label: "Fixed", match: (f) => f.status === "fixed" },
+  { id: "ignored", label: "Dismissed", match: (f) => f.status === "ignored" },
+  { id: "all", label: "Everything", match: () => true },
+];
+
+async function refreshFindings() {
+  try {
+    const data = await api("api/findings");
+    state.findings = data.findings || [];
+    updateFindBadge(data.open);
+  } catch (e) {
+    // transient — the tab keeps whatever it last showed rather than blanking
+  }
+}
+
+function updateFindBadge(n) {
+  const badge = $("#findBadge");
+  if (!badge) return;
+  const count = n == null
+    ? state.findings.filter((f) =>
+      ["open", "failed", "needs_you"].includes(f.status)).length
+    : n;
+  badge.textContent = count ? String(count) : "";
+  badge.classList.toggle("hidden", !count);
+}
+
+async function findAction(finding, verb, done, btns) {
+  btns.forEach((b) => { b.disabled = true; });
+  try {
+    const data = await api(`api/finding/${finding.ts}/${verb}`,
+      { method: "POST" });
+    state.findings = data.findings || [];
+    updateFindBadge(data.open);
+    renderFindings();
+    toast(done);
+    if (verb === "fix") { refreshStatus().catch(() => {}); fastPoll(); }
+  } catch (e) {
+    toast(e.message);
+    btns.forEach((b) => { b.disabled = false; });
+  }
+}
+
+function makeFinding(f) {
+  const meta = FIND_STATUS[f.status] || FIND_STATUS.open;
+  const card = el("article", `finding sev-${f.severity} st-${meta.cls}`);
+
+  const head = el("div", "findhead-row");
+  const titles = el("div", "findtitles");
+  const line = el("div", "findmeta");
+  line.appendChild(el("span", "findsev", FIND_SEVERITY[f.severity] || "Degraded"));
+  line.appendChild(el("span", "findstate", meta.label));
+  if (f.source_title) line.appendChild(el("span", "findsrc", f.source_title));
+  titles.appendChild(line);
+  titles.appendChild(el("h3", null, f.text));
+  head.appendChild(titles);
+  card.appendChild(head);
+
+  if (f.detail) card.appendChild(el("p", "finddetail", f.detail));
+  if (f.entity_id) card.appendChild(el("code", "findentity", f.entity_id));
+
+  // The proposed fix is shown before anything is done, and replaced by what
+  // actually happened afterwards — a stale "here's what I'd do" sitting
+  // under a finished run is how you lose track of what the house looks like.
+  if (f.result) {
+    const box = el("div", "findresult");
+    f.result.split("\n\n").forEach((para) => box.appendChild(el("p", null, para)));
+    if (f.changed && f.changed.length) {
+      const list = el("ul", "findchanged");
+      f.changed.forEach((c) => list.appendChild(el("li", null, c)));
+      box.appendChild(list);
+    }
+    card.appendChild(box);
+  } else if (f.fix) {
+    const box = el("div", "findfix");
+    box.appendChild(el("span", "findfixlabel", f.fixable
+      ? "BRain would" : "You'd need to"));
+    box.appendChild(el("span", null, f.fix));
+    card.appendChild(box);
+  }
+
+  const actions = el("div", "findactions");
+  const btns = [];
+  const add = (node) => { btns.push(node); actions.appendChild(node); return node; };
+
+  if (f.status === "fixing") {
+    const busy = el("div", "phase");
+    busy.appendChild(el("span", "orbit"));
+    busy.appendChild(el("span", null, "Fixing it now — this can take a few minutes"));
+    actions.appendChild(busy);
+  } else if (f.status === "fixed" || f.status === "ignored") {
+    const back = add(el("button", "btn small ghost", "Put it back on the list"));
+    back.addEventListener("click", () =>
+      findAction(f, "reopen", "Back on the list", btns));
+    const forget = add(el("button", "btn icon", "✕"));
+    tip(forget, "Forget this finding entirely — it can be reported again");
+    forget.addEventListener("click", async () => {
+      if (!window.confirm(
+        `Forget “${f.text}”? Unlike dismissing it, BRain may report it again.`)) return;
+      btns.forEach((b) => { b.disabled = true; });
+      try {
+        const data = await api(`api/finding/${f.ts}`, { method: "DELETE" });
+        state.findings = data.findings || [];
+        updateFindBadge(data.open);
+        renderFindings();
+      } catch (e) { toast(e.message); btns.forEach((b) => { b.disabled = false; }); }
+    });
+  } else {
+    if (f.fixable) {
+      const fix = add(el("button", "btn small primary",
+        f.status === "failed" ? "✦  Try again" : "✦  Fix it"));
+      tip(fix, "Let BRain make the change in Home Assistant, then report back");
+      fix.addEventListener("click", () => findAction(
+        f, "fix", "On it — BRain is making the change", btns));
+    }
+    const done = add(el("button", "btn small", "✓  I did it"));
+    tip(done, "You handled it yourself — mark it resolved");
+    done.addEventListener("click", () =>
+      findAction(f, "done", "Marked done", btns));
+    const ignore = add(el("button", "btn small ghost", "Not a problem"));
+    tip(ignore, "Dismiss it — BRain will never raise this again");
+    ignore.addEventListener("click", () => findAction(
+      f, "ignore", "Dismissed — BRain won't raise it again", btns));
+  }
+  card.appendChild(actions);
+  return card;
+}
+
+function renderFindings() {
+  const chips = $("#findFilters");
+  chips.textContent = "";
+  const counts = {};
+  FIND_FILTERS.forEach((f) => {
+    counts[f.id] = state.findings.filter(f.match).length;
+  });
+  FIND_FILTERS.forEach((f) => {
+    // "Everything" always shows; the others only once they hold something,
+    // so a home with nothing wrong isn't handed three empty filters.
+    if (f.id !== "all" && f.id !== "live" && !counts[f.id]) return;
+    const chip = el("button", "fchip" + (state.findFilter === f.id ? " active" : ""),
+      counts[f.id] ? `${f.label} · ${counts[f.id]}` : f.label);
+    chip.addEventListener("click", () => { state.findFilter = f.id; renderFindings(); });
+    chips.appendChild(chip);
+  });
+
+  const list = $("#findList");
+  list.textContent = "";
+  const active = FIND_FILTERS.find((f) => f.id === state.findFilter) || FIND_FILTERS[0];
+  const shown = state.findings.filter(active.match);
+  if (!shown.length) {
+    list.appendChild(el("div", "findempty", state.findFilter === "live"
+      ? "Nothing's broken that BRain can see. Findings appear here as insight "
+        + "runs and study sessions turn them up."
+      : "Nothing here yet."));
+    return;
+  }
+  shown.forEach((f) => list.appendChild(makeFinding(f)));
+}
+
 // ------------------------------------------------------- knowledge modal
 // The viewer for everything the analyst has learned: open questions (answer
 // or dismiss), learned facts (add/remove), answered Q&A, and the shared
@@ -1550,12 +1777,30 @@ async function renderKnowledge() {
   // confirmed guess becomes a plain memory line and its record is
   // settled, so there is no Q/A pair left to show.
 
+  renderPending(data.inbox_pending);
   renderMemory(data);
+}
+
+// The consolidate button says how much is waiting, so pressing it is an
+// informed choice rather than a hopeful one.
+function renderPending(n) {
+  const label = $("#kPending");
+  const btn = $("#kConsolidate");
+  if (!label || !btn) return;
+  const count = Number(n) || 0;
+  label.textContent = count
+    ? `${count} thing${count === 1 ? "" : "s"} waiting`
+    : "nothing waiting";
+  label.classList.remove("hidden");
+  btn.disabled = memState.consolidating || !count;
+  btn.textContent = memState.consolidating
+    ? "Filing…" : "⇪ File into memory now";
 }
 
 // ---- home memory file: formatted view, raw-markdown edit, Claude merge ----
 
-const memState = { editing: false, dirty: false, text: "", pollTimer: null };
+const memState = { editing: false, dirty: false, text: "", pollTimer: null,
+                   consolidating: false };
 
 const MEM_TEMPLATE = "# Home Memory\n\n## Preferences\n\n## Entity nicknames\n\n"
   + "## Household patterns\n\n## Device notes\n";
@@ -1652,6 +1897,34 @@ $("#kMemCancel").addEventListener("click", () => {
   setMemEditing(false);
   renderKnowledge();
 });
+// Run a consolidation pass now instead of waiting for the daily one. The
+// document below is rewritten by it, so unsaved manual edits have to be
+// settled first — same rule as teaching it a fact.
+$("#kConsolidate").addEventListener("click", async () => {
+  if (memState.editing && memState.dirty) {
+    if (!window.confirm(
+      "You have unsaved manual edits to the memory document.\n\n"
+      + "Filing rewrites that document and your unsaved edits would be lost. "
+      + "Press Cancel to go save them first, or OK to discard them.")) return;
+    setMemEditing(false);
+  }
+  memState.consolidating = true;
+  renderPending(0);
+  $("#kMemMerging").classList.remove("hidden");
+  try {
+    const res = await api("api/memory/consolidate", { method: "POST" });
+    toast(res.consolidated
+      ? `Filed ${res.consolidated} thing(s) into memory`
+      : "Nothing was waiting — memory is up to date");
+  } catch (e) {
+    toast("Could not file it: " + e.message);
+  } finally {
+    memState.consolidating = false;
+    $("#kMemMerging").classList.add("hidden");
+    renderKnowledge();
+  }
+});
+
 $("#kMemSave").addEventListener("click", async () => {
   const text = $("#kMemTa").value;
   try {
@@ -2063,12 +2336,13 @@ function switchView(name) {
 
   // Insights actions have no meaning on the other tabs. Settings stays —
   // it is add-on-wide, not per-view.
-  const insightsOnly = ["#newInsight", "#refreshAll"];
-  insightsOnly.forEach((sel) => {
-    const el = $(sel);
-    if (el) el.style.display = name === "insights" ? "" : "none";
-  });
+  const refresh = $("#refreshAll");
+  if (refresh) refresh.style.display = name === "insights" ? "" : "none";
 
+  if (name === "findings") {
+    renderFindings();
+    refreshFindings().then(renderFindings);
+  }
   if (name === "terminal") {
     const frame = $("#termFrame");
     // Lazy: don't start a shell session for someone who never opens the tab.
@@ -2216,7 +2490,9 @@ $("#askForm").addEventListener("submit", async (ev) => {
   const q = $("#askInput").value.trim();
   if (!q) return;
   $("#askInput").value = "";
-  toast("Asking Claude about your home…");
+  if (!/^\s*(?:go\s+|please\s+)?(?:learn|study|research|figure\s+out)\b/i.test(q)) {
+    toast("Asking Claude about your home…");
+  }
   await generate(null, q);
 });
 
@@ -2245,6 +2521,7 @@ document.addEventListener("visibilitychange", () => {
   render();
   fastPoll();
   refreshMemoryBadge();
+  refreshFindings();
   // resume a guided sign-in if one is mid-flight (page reload)
   try {
     const st = await api("api/auth/setup/status");

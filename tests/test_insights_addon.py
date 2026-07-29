@@ -34,6 +34,8 @@ import engine  # noqa: E402
 import feedback_store  # noqa: E402
 import hypotheses  # noqa: E402
 import onboarding  # noqa: E402
+import card_tags  # noqa: E402
+import findings_store  # noqa: E402
 import knowledge_store  # noqa: E402
 import prompt_store  # noqa: E402
 import settings_store  # noqa: E402
@@ -723,7 +725,6 @@ class TestPromptStore(unittest.TestCase):
 
     def test_hidden_removes_from_visible_list(self):
         self.assertFalse(prompt_store.is_hidden("energy"))
-        self.assertEqual(prompt_store.hidden_categories(), [])
         prompt_store.save_override("energy", {"hidden": True})
         self.assertTrue(prompt_store.is_hidden("energy"))
         self.assertTrue(prompt_store.effective_category("energy")["hidden"])
@@ -732,14 +733,13 @@ class TestPromptStore(unittest.TestCase):
         # every other shipped card is untouched, in shipped order
         self.assertEqual(
             ids, [c["id"] for c in categories.CATEGORIES if c["id"] != "energy"])
-        self.assertEqual([c["id"] for c in prompt_store.hidden_categories()], ["energy"])
 
-    def test_hidden_list_uses_the_users_name(self):
-        prompt_store.save_override("energy", {"title": "Power bill", "hidden": True})
-        entry = prompt_store.hidden_categories()[0]
-        self.assertEqual(entry["title"], "Power bill")
-        self.assertEqual(entry["default_title"],
-                         categories.get_category("energy")["title"])
+    def test_there_is_no_restore_list(self):
+        """Hiding is the mechanism, not an offer. BRain proposes the cards a
+        given home should have; keeping a graveyard of shipped ones to
+        resurrect is the opposite of that idea, so the listing that fed the
+        ⚙ dialog's restore list is gone rather than merely unused."""
+        self.assertFalse(hasattr(prompt_store, "hidden_categories"))
 
     def test_restore_makes_it_visible_again(self):
         prompt_store.save_override("energy", {"hidden": True})
@@ -915,6 +915,11 @@ class InsightsServerCase(unittest.TestCase):
         user_categories.USER_CATS_FILE = os.path.join(
             self.tmp.name, "user_categories.json")
         self.server.CARD_TOKEN_FILE = Path(self.tmp.name) / "secrets" / "card_token"
+        self._old_findings = (findings_store.FINDINGS_FILE, findings_store.INBOX_DIR)
+        self._old_tags = card_tags.TAGS_FILE
+        findings_store.FINDINGS_FILE = Path(self.tmp.name) / "findings.json"
+        findings_store.INBOX_DIR = Path(self.tmp.name) / "findings-inbox"
+        card_tags.TAGS_FILE = Path(self.tmp.name) / "card_tags.json"
         self._old_www = self.server.WWW_CARD_DIR
         self.server.WWW_CARD_DIR = Path(self.tmp.name) / "www" / "bruh_insights"
         self.server.JOBS.clear()
@@ -924,6 +929,8 @@ class InsightsServerCase(unittest.TestCase):
         self.server.INSIGHTS_DIR = self._old_dir
         prompt_store.OVERRIDES_FILE = self._old_overrides
         self.server.MEMORY_INBOX_DIR = self._old_inbox
+        (findings_store.FINDINGS_FILE, findings_store.INBOX_DIR) = self._old_findings
+        card_tags.TAGS_FILE = self._old_tags
         feedback_store.FEEDBACK_FILE = self._old_feedback
         user_categories.USER_CATS_FILE = self._old_user_cats
         self.server.CARD_TOKEN_FILE = self._old_card_token
@@ -1150,7 +1157,11 @@ class TestGenerateFlow(InsightsServerCase):
             "title": "Dryer watch", "summary": "S.",
             "highlights": [{"label": "Loads", "value": "3"}],
             "hypotheses": ["The garage fridge is meant to run 24/7 — right?", "  ", 42],
-            "findings": ["Hall sensor drops offline at 2 AM", ""],
+            "learned": ["Hall sensor drops offline at 2 AM", ""],
+            "findings": [{"text": "Back Door battery is dead",
+                          "detail": "sensor.back_door_battery has read 0% since Jul 12",
+                          "fix": "Replace the CR2032", "severity": "serious",
+                          "fixable": False, "entity_id": "sensor.back_door_battery"}],
             "html": "<!DOCTYPE html><p>ok</p>",
         }
         engine.run_claude = lambda *a, **k: {
@@ -1183,13 +1194,44 @@ class TestGenerateFlow(InsightsServerCase):
         self.assertEqual(stored["focus_used"], "Watch the dryer")
         self.assertEqual(stored["questions"],
                          ["The garage fridge is meant to run 24/7 — right?"])
-        self.assertEqual(stored["findings"], ["Hall sensor drops offline at 2 AM"])
-        # findings are QUEUED for the consolidator, not handed to a service:
-        # the consolidator lives in this container now.
+        self.assertEqual(stored["learned"], ["Hall sensor drops offline at 2 AM"])
+        # A finding is a work-list item, not a memory fact: it lands in the
+        # findings store, and the card keeps only a reference to it.
+        self.assertEqual([f["text"] for f in stored["findings"]],
+                         ["Back Door battery is dead"])
+        listed = findings_store.list_all()
+        self.assertEqual(len(listed), 1)
+        self.assertEqual(listed[0]["text"], "Back Door battery is dead")
+        self.assertEqual(listed[0]["status"], "open")
+        self.assertEqual(listed[0]["severity"], "serious")
+        self.assertFalse(listed[0]["fixable"], "a dead battery needs hands")
+        self.assertEqual(listed[0]["source"], "energy")
+        # Only what was LEARNED is queued for the consolidator, and it goes
+        # through a file rather than a service: the consolidator lives in
+        # this container now.
         self.assertEqual(calls, [])
         queued = self._queued_facts()
         self.assertEqual(len(queued), 1)
         self.assertEqual(queued[0]["fact"], "Hall sensor drops offline at 2 AM")
+
+    def test_a_finding_is_never_reported_twice(self):
+        """The same problem in different words must not pile up — and the
+        card must only show what the store actually accepted, or it displays
+        a finding the Findings tab doesn't hold."""
+        asyncio.run(self.server._generate("energy"))
+        self.server.JOBS.clear()
+        asyncio.run(self.server._generate("climate"))
+        self.assertEqual(len(findings_store.list_all()), 1)
+        self.assertEqual(self._stored("climate")["findings"], [])
+
+    def test_a_dismissed_finding_goes_back_into_the_prompt(self):
+        """Dismissing is only worth a button if it sticks across runs."""
+        asyncio.run(self.server._generate("energy"))
+        ts = findings_store.list_all()[0]["ts"]
+        findings_store.set_status(ts, "ignored")
+        block = findings_store.prompt_block()
+        self.assertIn("DISMISSED", block)
+        self.assertIn("Back Door battery is dead", block)
 
     def _queued_facts(self):
         facts = []
@@ -1219,9 +1261,11 @@ class TestGenerateFlow(InsightsServerCase):
     def test_missing_optional_fields_default_empty(self):
         self.reply.pop("hypotheses")
         self.reply.pop("findings")
+        self.reply.pop("learned")
         asyncio.run(self.server._generate("energy"))
         stored = self._stored()
         self.assertEqual(stored["questions"], [])
+        self.assertEqual(stored["learned"], [])
         self.assertEqual(stored["findings"], [])
         self.assertEqual(stored["tags"], [])
 
@@ -1466,44 +1510,43 @@ class TestUserCategoryEndpoints(InsightsServerCase):
 class TestCardDeletionAndRenaming(InsightsServerCase):
     """Every card can be deleted and renamed — /api/card/{id} is the one ✕."""
 
-    def test_builtin_card_is_removed_and_restorable(self):
+    def test_deleting_a_builtin_card_leaves_nothing_behind(self):
+        """Deleted means deleted, for every kind of card. A shipped card's
+        definition lives in the code so it can only be hidden — but that is
+        the mechanism, not an offer, and the panel no longer keeps a
+        graveyard to restore from."""
         async def run():
             client = self._client()
             await client.start_server()
             try:
                 self._save("energy", "2026-07-18T10:00:00")
                 feedback_store.add_feedback("energy", "note")
+                card_tags.set_tags("energy", {"id": "energy", "category": "energy",
+                                              "tags": ["dryer"]}, ["dryer"])
 
                 resp = await client.delete("/api/card/energy")
                 self.assertEqual(resp.status, 200)
-                body = await resp.json()
-                self.assertTrue(body["restorable"])
 
                 # gone from the dashboard, the scheduler, and manual generation
                 resp = await client.get("/api/status")
                 status = await resp.json()
                 self.assertNotIn("energy", [c["id"] for c in status["categories"]])
-                self.assertEqual([c["id"] for c in status["removed_categories"]],
-                                 ["energy"])
+                self.assertNotIn("removed_categories", status)
                 resp = await client.post("/api/generate", json={"category": "energy"})
                 self.assertEqual(resp.status, 400)
                 resp = await client.post("/api/generate_all")
                 self.assertNotIn("energy", (await resp.json())["queued"])
 
-                # and its stored data really is gone — no ghost card either
+                # and its stored data really is gone — no ghost card either,
+                # and no tag edits waiting to be inherited by a later card
                 self.assertFalse((Path(self.tmp.name) / "energy.json").exists())
                 self.assertFalse((Path(self.tmp.name) / "history" / "energy").exists())
                 self.assertEqual(feedback_store.list_feedback("energy"), [])
                 self.assertEqual(self.server.load_insights(), [])
-
-                # restore puts the card back
-                resp = await client.put("/api/prompt/energy", json={"hidden": False})
-                self.assertEqual(resp.status, 200)
-                self.assertFalse((await resp.json())["hidden"])
-                resp = await client.get("/api/status")
-                status = await resp.json()
-                self.assertIn("energy", [c["id"] for c in status["categories"]])
-                self.assertEqual(status["removed_categories"], [])
+                self.assertEqual(
+                    card_tags.effective_tags(
+                        {"id": "energy", "category": "energy", "tags": ["dryer"]}),
+                    ["energy", "dryer"])
             finally:
                 await client.close()
 
@@ -1526,7 +1569,6 @@ class TestCardDeletionAndRenaming(InsightsServerCase):
 
                 resp = await client.delete(f"/api/card/{cat['id']}")
                 self.assertEqual(resp.status, 200)
-                self.assertFalse((await resp.json())["restorable"])
                 self.assertIsNone(user_categories.get(cat["id"]))
                 self.assertFalse((Path(self.tmp.name) / f"{cat['id']}.json").exists())
 

@@ -17,11 +17,17 @@ BRUH Terminal (`bruh-claude-terminal/`) and BRUH Insights (`bruh-insights/`) wer
 - `enable_terminal` / `enable_insights` switch either face off; the panel always runs because it is the ingress target.
 - **No git auto-backup.** It was removed along with `auto_backup` / `backup_interval_minutes`. In its place, a `PreToolUse` hook (`scripts/brain-edit-snapshot.py`) snapshots files before Claude edits them, and `brain undo` restores them. Never touch a user's existing `/config/.git`.
 - **Two CLI dispatchers**, not fourteen scripts: `brain` (memory, learn, ask, undo, doctor) and `ha` (log, reload, entity, service, addon, notify, share, check, context). Both delegate to `/opt/scripts`. Adding a command = a script plus one dispatcher line.
-- **Memory**: `memory.md` is the only thing that is "memory". The inbox, the hypothesis queue, and the change log are queues and audit trails, and are never injected into prompts. Every writer goes through the inbox — nothing writes `memory.md` except the consolidator.
+- **Memory**: `memory.md` is the only thing that is "memory". The inbox, the hypothesis queue, and the change log are queues and audit trails, and are never injected into prompts. Every writer goes through the inbox — nothing writes `memory.md` except the consolidator. The Memory tab's "File into memory now" runs the same consolidator with `--once`; it does not become a second writer.
 - **Hypotheses replace open-ended questions**: capped at 3 open, 14-day expiry, answered ones become plain memory lines and the record is settled. Rejected ones become a capped dead-ends block.
+- **Three kinds of knowledge, and they don't mix.** Memory = what is *true* of the home. A hypothesis = what BRain might have *wrong*. A **finding** (`panel/findings_store.py`) = what is *broken*, with a lifecycle that ends in fixed or ignored. The generation contract keeps them apart too: `learned` feeds memory, `findings` feeds the work list. Ignored findings are injected into every future analysis so a dismissal sticks.
+- **One tool-enabled Claude path.** Insight generation is pure analysis over a data bundle with `--disallowedTools "*"`. `engine.run_agent` (used only by the Findings "Fix it" button, via `panel/fixer.py`) is the single exception, and it only ever runs because someone pressed the button — never on a schedule. Fixes share the generation queue, so one Claude invocation is in flight at a time.
+- **The ask bar has two verbs.** A question becomes a card; a line starting "learn/study/research/figure out" is routed server-side (`LEARN_RE`) to a study request the CLI-side watcher picks up. There is no separate "new insight" dialog — asking makes the card, and "＋ Make recurring" turns it into a scheduled one.
+- **Deleted cards do not come back.** There is no restore list: BRain proposes the cards a given home should have, so the answer to "I want that card again" is to ask for it and let BRain build it for the house it now knows. Shipped categories are still `hidden` under the hood because their definitions live in the code, but that is a mechanism, not an offer.
 - **Naming**: prefer `brain`/`ha` over `claude` in anything we own. `CLAUDE.md`, `CLAUDE_CONFIG_DIR`, the `claude` user, and the `claude-run` wrapper keep the name because they *are* Claude Code's file, env var, user, and binary. Everything else (`panel/engine.py`, `scripts/brain-*.sh`) is BRain-named.
 
-Shared brand sources live in `branding/` (SVGs plus `render.mjs`, which regenerates every PNG in the repo) and `brands/` (home-assistant/brands submission assets); cross-add-on tests live in `tests/`. The BRain mark is a gable that doubles as the `A` in the wordmark, lifted from the parent BRUH logo — never redraw it, and never recolour the roof away from azure.
+Shared brand sources live in `branding/` (SVGs plus `render.mjs`, which regenerates every PNG in the repo) and `brands/` (home-assistant/brands submission assets); cross-add-on tests live in `tests/`. The BRain mark is a gable that doubles as the `A` in the wordmark, lifted from the parent BRUH logo — never redraw it, and never recolour the roof away from azure. The panel's top bar carries the full wordmark inline, split into `.wm-ink` / `.wm-roof` / `.wm-ai` / `.wm-signal` so one file serves a light and a dark bar.
+
+**The top bar is a fixed 48px single row at every width.** Nothing in it may shrink (`.topbar > * { flex: none }`), so a fit is binary and an overflow is something a test can see. Adding anything to it — a tab, a badge, a button — changes the measured widths behind its four breakpoints: re-run `node tests/manual/measure-topbar.mjs` (Playwright; `CHROMIUM_PATH` if the browser isn't where it expects) and move the breakpoints to what it reports, rather than guessing.
 
 ## Repository Structure
 
@@ -43,6 +49,7 @@ BRUH-HA-Apps/
 │   │   ├── ha-backup-watcher.sh # Background auto-backup daemon
 │   │   ├── ha-addon.sh / ha-entity.sh / ha-service.sh / ha-notify.sh / ha-share.sh  # HA helper CLIs
 │   │   ├── ha-yaml-check.sh     # YAML validation CLI
+│   │   ├── brain-learn.sh       # Study session: facts → memory inbox, problems → findings inbox
 │   │   ├── ha-selftest.sh       # In-situ end-to-end diagnostic (MCP, auth, listeners)
 │   │   ├── usage-limits-tracker.py   # Background Anthropic usage-limits daemon
 │   │   ├── build-mobile-index.py     # Splices mobile UI into ttyd's HTML at startup

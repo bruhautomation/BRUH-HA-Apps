@@ -142,6 +142,10 @@ init_environment() {
 
     # Long-term home memory store (brain memory / the memory consolidator).
     mkdir -p /config/.brain/memory/inbox
+    # Findings hand-off: study sessions run on the CLI side and drop anything
+    # they found broken here, where the panel's Findings tab sweeps it up.
+    # Same shape and same reason as the memory inbox.
+    mkdir -p /config/.brain/findings/inbox
     if [ ! -f /config/.brain/memory/memory.md ]; then
         cat > /config/.brain/memory/memory.md << 'MEMORYMD'
 # Home Memory

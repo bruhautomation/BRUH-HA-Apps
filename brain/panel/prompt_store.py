@@ -14,7 +14,9 @@ daily run times) takes precedence over refresh_hours for that category.
 
 ``hidden`` is how a shipped card gets "deleted": the definition can't go
 away (it ships in the code), so the card is dropped from the dashboard and
-the scheduler, and stays restorable from ⚙ Settings.
+the scheduler and everything it stored is erased. That is the whole of it —
+there is no restore list. BRain proposes the cards a given home should have;
+a graveyard of shipped ones to resurrect is the opposite of that idea.
 
 This module deliberately avoids aiohttp so the test suite can import it
 without the add-on runtime.
@@ -161,23 +163,3 @@ def visible_categories() -> list[dict]:
         if isinstance(entry, dict) and entry.get("hidden") is True
     }
     return [c for c in CATEGORIES if c["id"] not in hidden]
-
-
-def hidden_categories() -> list[dict]:
-    """Removed shipped cards, in shipped order — the ⚙ Settings restore list.
-
-    Names/icons come from the override so a card the user renamed before
-    removing it is listed under the name they gave it.
-    """
-    out = []
-    for c in CATEGORIES:
-        if not is_hidden(c["id"]):
-            continue
-        eff = effective_category(c["id"]) or c
-        out.append({
-            "id": c["id"],
-            "title": eff.get("title", c["title"]),
-            "icon": eff.get("icon", c["icon"]),
-            "default_title": c["title"],
-        })
-    return out

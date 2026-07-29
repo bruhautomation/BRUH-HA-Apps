@@ -16,8 +16,8 @@ const PANEL = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../
 const OUT = process.env.TOPBAR_SHOT_DIR || '';
 
 const WIDTHS = [
-  320, 360, 390, 400, 401, 414, 428, 480, 540, 600, 700, 760, 780,
-  781, 800, 840, 880, 900, 1000, 1023, 1024, 1100, 1200, 1440,
+  320, 360, 390, 400, 401, 414, 428, 469, 470, 480, 540, 600, 700, 760, 780,
+  800, 804, 805, 840, 880, 900, 1000, 1023, 1099, 1100, 1200, 1440,
 ];
 const KEEP_SHOTS = new Set([320, 390, 480, 780, 1200]);
 
@@ -30,8 +30,12 @@ function seed() {
   $('#usageChip').classList.add('ok');
   $('#usageChipPct').textContent = '19%';
   $('#usageChipText').textContent = 'used · resets 12:00 PM';
-  ['#newInsight', '#refreshAll', '#settingsBtn'].forEach((s) =>
-    $(s).classList.remove('hidden'));
+  ['#refreshAll', '#settingsBtn'].forEach((s) => $(s).classList.remove('hidden'));
+  // Both tab badges present: the busiest the bar ever gets.
+  ['#memBadge', '#findBadge'].forEach((s) => {
+    $(s).textContent = '3';
+    $(s).classList.remove('hidden');
+  });
 }
 
 function probe() {
