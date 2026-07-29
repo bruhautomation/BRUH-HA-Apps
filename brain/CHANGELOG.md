@@ -2,6 +2,43 @@
 
 All notable changes to **BRain**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.5.1
+
+### Fixed: the header wrapped onto a second row on a phone
+
+The bar is meant to be one 48px row. On a phone it was two: the auth and usage
+chips fell below it, outside the bar's own box, with the settings button
+stranded next to them.
+
+Two causes, both invisible on a desktop.
+
+- **A rule left over from the old two-bar chrome still said `flex-wrap: wrap`.**
+  It was written when wrapping was the intended behaviour ("the usage chips flow
+  to a second row instead of clipping") and survived the 1.4.0 redesign that made
+  the bar a fixed height. A fixed-height flex container doesn't grow to fit a
+  second line — it just spills. The same dead rule also referenced `.brand`, a
+  class the 1.4.0 markup no longer has.
+- **One breakpoint could never have worked.** The full bar needs **995px**; the
+  cut to icon-only tabs was at 780px, which left the 781–1023px band — tablets,
+  and any half-width desktop window — overflowing by up to 212px, and still left
+  775px of chip text on a 390px phone.
+
+**The bar now sheds text in three measured steps**, each starting before the
+previous layout runs out of room: the chip sentences go below 1024px (they cost
+287px, more than all four tab labels), tab labels and the wordmark below 780px,
+and a little more padding below 400px. Verified by rendering the bar at 24
+widths from 320px to 1440px: one row, 48px, no overflow at every one.
+
+What survives to the narrowest screen is what changes: all four tabs, the
+coloured status dot, and the usage percentage. What goes is what doesn't —
+"Claude · subscription", "used · resets 8:00 AM", and a wordmark that duplicates
+the panel title Home Assistant already draws directly above it. Every collapsed
+chip keeps its full sentence in `title` and `aria-label`.
+
+Nothing in the bar may shrink any more, either. A shrinking chip compresses its
+own text and reads as a rendering glitch rather than as "too narrow" — it fails
+silently, and invisibly to a test.
+
 ## 1.5.0
 
 ### No default cards — it learns your home first
