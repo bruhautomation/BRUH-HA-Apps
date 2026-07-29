@@ -178,6 +178,16 @@ html, body {
 }
 .askbar input::placeholder { color: var(--ink-3); }
 
+/* The bar has two verbs and no buttons for either, so the sentence under it
+   is the only place both are discoverable. */
+.askhint {
+  margin: -8px 0 16px;
+  font-size: 12.5px;
+  color: var(--ink-3);
+  line-height: 1.6;
+}
+.askhint b { color: var(--ink-2); font-weight: 650; }
+
 /* ---------------------------------------------------------------- chips */
 .filters {
   display: flex;
@@ -872,33 +882,6 @@ body.modal-open {
   .setgrid { grid-template-columns: 1fr; }
 }
 
-/* removed built-in cards, offered back in the ⚙ dialog */
-.removedlist {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-top: 8px;
-}
-.removedrow {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 7px 10px;
-  border: 1px solid var(--hairline);
-  border-radius: 10px;
-  background: var(--surface-2);
-  font-size: 13px;
-}
-.removedrow .cicon { font-size: 17px; line-height: 1; }
-.removedrow .grow {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.removedrow .badge { flex: none; }
-
 
 /* ----------------------------------------------------------------- docs
    A two-column guide: sticky section list plus the rendered page. The
@@ -1079,18 +1062,38 @@ body.modal-open {
   border-bottom: 1px solid var(--hairline);
 }
 
-.mark { display: flex; color: var(--accent); flex: none; }
-.marksvg { width: 22px; height: 22px; display: block; }
+/* The wordmark, not a mark plus a word. The gable is the "A", so the lockup
+   is one piece of art — it can't be assembled from an icon and a font, and
+   it can't be letterspaced.
 
-.topbar .txt {
-  font-weight: 700;
-  font-size: 0.95rem;
-  letter-spacing: -0.01em;
-  color: var(--ink);
+   Three brand roles, and the split is what lets one file work in both
+   themes: ink (B, R, N) follows the theme, the roof is azure and stays
+   azure, and the "AI" and the signal motif are always the same colour as
+   each other — Sky on dark grounds, Azure on light, per the kit.
+
+   It sits at 34px in a 48px bar, which is 49px wide — below the kit's 132px
+   minimum for the wordmark. That minimum is written for print and for
+   grounds where the mark is the only thing present; here it sits beside its
+   own product name in Home Assistant's panel header, so recognition doesn't
+   rest on it alone. */
+.wordmark {
+  height: 34px;
+  width: auto;
+  display: block;
   flex: none;
+  --wm-ink: var(--ink);
+  --wm-roof: #1e9fe0;
+  --wm-ai: #5ac4f2;
 }
 
-.topbar .txt .grad { color: var(--accent-2); }
+@media (prefers-color-scheme: light) {
+  .wordmark { --wm-ai: #1e9fe0; }
+}
+
+.wm-ink { fill: var(--wm-ink); }
+.wm-roof { fill: var(--wm-roof); }
+.wm-ai { fill: var(--wm-ai); }
+.wm-signal { stroke: var(--wm-ai); }
 
 .ico {
   width: 17px;
@@ -1211,20 +1214,25 @@ body.modal-open {
 .topbar > * { flex: none; }
 .topbar .spacer { flex: 1; min-width: 0; }
 
-/* The bar sheds text in three measured steps. The widths below are what the
-   content actually needs (measured, not guessed), so each step starts before
-   the previous layout runs out of room:
+/* The bar sheds text in four measured steps. The widths below are what the
+   content actually needs — measured by tests/manual/measure-topbar.mjs at the
+   busiest the bar ever gets (subscription chip, usage chip with a reset time,
+   and a count on both tab badges) — so each step starts before the previous
+   layout runs out of room:
 
-     everything                          995px  →  shown at ≥1024
-     minus the chip sentences            708px  →  shown at ≥781
-     minus tab labels and the wordmark   378px  →  shown at ≥401
-     minus a bit more padding            310px  →  the floor
+     everything                        1099px  →  shown at ≥1100
+     minus the chip sentences           804px  →  shown at  ≥805
+     minus tab labels, smaller mark     462px  →  shown at  ≥470
+     minus the healthy auth chip,
+       badges collapsed to dots         345px  →  shown at  ≥401
+     minus the wordmark                 304px  →  the floor
 
-   The previous single breakpoint at 780px was the bug: the full 995px layout
-   was still being asked to fit an 800px window, and the phone layout was
-   still carrying 775px of chip text. */
+   Every band moved outward in 1.7.0: a fifth tab costs ~104px with its label
+   and ~31px without, and the two tab badges cost 23px each when they carry a
+   number. Both are worth their space — a badge you can't see is a decision
+   nobody makes — but they have to be paid for somewhere. */
 
-@media (max-width: 1023px) {
+@media (max-width: 1099px) {
   /* "Claude · subscription" and "used · resets 8:00 AM" cost 287px between
      them — more than the four tabs. The coloured dot already carries the auth
      state and the usage chip keeps its number, which is the part anyone
@@ -1233,17 +1241,18 @@ body.modal-open {
   .topbar .chip { padding: 0 8px; gap: 5px; }
 }
 
-@media (max-width: 780px) {
-  /* Labels go, icons stay — four tabs still fit on a phone. */
+@media (max-width: 804px) {
+  /* Labels go, icons stay — five tabs still fit on a phone. */
   .viewtab span:not(.badge) { display: none; }
   .viewtab { padding: 0 9px; }
   .topbar { padding: 0 8px; gap: 4px; }
   #viewTerminal.active { height: calc(100vh - 48px); margin: -12px -12px -14px; }
   .docsnav { position: static; }
 
-  /* Home Assistant's own panel header says "BRain" directly above this bar,
-     so the wordmark here is duplication a phone can't afford. */
-  .topbar .txt { display: none; }
+  /* The wordmark shrinks rather than going: Home Assistant's own panel header
+     says "BRain" above this bar, but a header with no mark at all reads as a
+     stray toolbar rather than as this add-on. At 26px it costs 37px. */
+  .wordmark { height: 26px; }
 
   .topbar .chip { padding: 0 7px; }
   .topbar .chip:not(#usageChip) { padding: 0 6px; }
@@ -1251,16 +1260,208 @@ body.modal-open {
   .viewtabs { margin-left: 2px; }
 }
 
-@media (max-width: 400px) {
-  /* A 320–400px window is the last band where anything still fits. The
-     healthy auth chip goes: a green dot means "nothing to tell you", and on
-     the smallest screen that is the one thing worth trading for the tabs.
+@media (max-width: 469px) {
+  /* The healthy auth chip goes: a green dot means "nothing to tell you", and
+     on a small screen that is the one thing worth trading for the tabs.
      Trouble — checking, failed, not connected — still shows. */
   #authChip.ok { display: none; }
-  .viewtab { padding: 0 6px; }
+
+  /* Badges collapse to a dot. The count is a nicety; that there is anything
+     at all is the whole signal, and two numbered badges cost 46px here. The
+     tab's aria-label still carries the number to a screen reader. */
+  .viewtab .badge {
+    min-width: 7px;
+    width: 7px;
+    height: 7px;
+    padding: 0;
+    border-radius: 50%;
+    font-size: 0;
+    overflow: hidden;
+  }
+  .viewtab { padding: 0 6px; gap: 4px; }
   .btn.icon { width: 28px; height: 28px; }
   .topbar { padding: 0 6px; gap: 3px; }
 }
+
+@media (max-width: 400px) {
+  /* The floor. Home Assistant's own panel header says "BRain" directly above
+     this bar, so at 320–400px the wordmark is duplication that costs a tab
+     icon. It is the last thing to go, and the only thing below it is nothing. */
+  .wordmark { display: none; }
+  .viewtab { padding: 0 5px; }
+  .topbar { gap: 2px; }
+}
+
+/* ------------------------------------------------------------- findings
+   The work list. Severity is carried by a left edge rather than by a
+   coloured card: the status colours are reserved, and four of them tiled
+   down a page stops meaning anything. The edge is a bar you can scan;
+   every one is also labelled in words, never colour alone. */
+
+.findwrap { max-width: 900px; }
+
+.findhead {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+.findhead > div:first-child { flex: 1 1 420px; min-width: 0; }
+.findhead h2 { margin: 0 0 4px; font-size: 21px; }
+.findhead .sub { color: var(--ink-2); margin: 0; font-size: 14px; max-width: 68ch; }
+.findfilters { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.findlist { display: grid; gap: 14px; }
+
+.findempty {
+  color: var(--ink-3);
+  font-size: 14px;
+  padding: 28px 4px;
+  max-width: 60ch;
+}
+
+.finding {
+  border: 1px solid var(--hairline);
+  border-left: 4px solid var(--ink-3);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 15px 18px;
+}
+.finding.sev-info { border-left-color: var(--ink-3); }
+.finding.sev-warning { border-left-color: var(--warning); }
+.finding.sev-serious { border-left-color: var(--serious); }
+.finding.sev-critical { border-left-color: var(--critical); }
+/* Settled findings step back without disappearing — the archive is how you
+   check what BRain changed in your house last week. */
+.finding.st-fixed, .finding.st-ignored { opacity: 0.72; border-left-color: var(--hairline); }
+
+.findtitle { margin: 3px 0 0; font-size: 15.5px; line-height: 1.35; }
+
+.findmeta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.sev-warning .findsev { color: var(--warning); }
+.sev-serious .findsev { color: var(--serious); }
+.sev-critical .findsev { color: var(--critical); }
+.st-fixed .findstate { color: var(--good); }
+.st-fixing .findstate { color: var(--accent-2); }
+.st-failed .findstate, .st-needsyou .findstate { color: var(--serious); }
+/* Where it came from is context, not status — the quietest thing in the row. */
+.findsrc { color: var(--ink-3); font-weight: 600; opacity: 0.75; }
+
+.finddetail { margin: 9px 0 0; font-size: 13.5px; color: var(--ink-2); }
+
+.findentity {
+  display: inline-block;
+  margin-top: 8px;
+  font-size: 12px;
+  background: var(--surface-2);
+  padding: 2px 8px;
+  border-radius: 6px;
+  color: var(--ink-2);
+}
+
+.findfix, .findresult {
+  margin-top: 11px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.findfix { display: flex; gap: 9px; align-items: baseline; }
+.findfixlabel {
+  flex: none;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.findresult p { margin: 0 0 7px; }
+.findresult p:last-child { margin-bottom: 0; }
+.findchanged { margin: 8px 0 0; padding-left: 18px; }
+.findchanged li { margin: 3px 0; }
+
+.findactions {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+.findactions .phase { margin: 0; padding: 0; border: 0; background: none; }
+
+/* -------------------------------------------------------------- card tags
+   Read-only chips until ✎ — a tag you can lose to a mis-tap on a phone is
+   worse than one that takes two presses to remove. */
+
+.tagrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 10px 16px 0;
+}
+
+.tagchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ink-3);
+  background: var(--surface-2);
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 2px 9px;
+}
+.tagchip.clickable { cursor: pointer; }
+.tagchip.clickable:hover { color: var(--ink); border-color: var(--hairline); }
+
+.tagx {
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 0 0 0 1px;
+  margin: 0;
+  font: inherit;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+.tagx:hover { color: var(--critical); }
+
+.tagedit { width: 24px; height: 24px; font-size: 12px; opacity: 0.6; }
+.tagrow:hover .tagedit, .tagedit:focus { opacity: 1; }
+
+.tagadd { display: inline-flex; }
+.taginput {
+  font: inherit;
+  font-size: 11.5px;
+  width: 96px;
+  padding: 2px 9px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px dashed var(--hairline);
+  border-radius: 999px;
+  outline: none;
+}
+.taginput:focus { border-color: var(--accent); border-style: solid; }
+
+/* --------------------------------------------------------- memory: inbox */
+.kpending { font-size: 12px; color: var(--ink-3); }
 
 /* ----------------------------------------------------------- onboarding
    The first-run flow. A fresh install has no cards: BRain studies the home

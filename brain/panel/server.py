@@ -25,8 +25,15 @@ POST /api/auth/setup/cancel  — abort the guided flow
 DELETE /api/insight/{id}     — delete a stored insight (custom cards)
 PUT  /api/insight/{id}       — rename an ad-hoc Ask card {name, icon}
 DELETE /api/card/{id}        — delete ANY card (shipped / user / ad-hoc): the
-                               one the ✕ button calls. Shipped cards are
-                               hidden (restorable) since their definition ships
+                               one the ✕ button calls
+PUT  /api/card/{id}/tags     — replace a card's visible tags {tags: [...]}
+GET  /api/findings           — the work list: what BRain thinks is broken
+POST /api/finding/{ts}/fix   — go fix it (the one tool-enabled Claude run)
+POST /api/finding/{ts}/ignore — not a problem here; never raise it again
+POST /api/finding/{ts}/done  — you fixed it yourself
+POST /api/finding/{ts}/reopen — back onto the list
+DELETE /api/finding/{ts}     — forget it (unlike ignore, it can return)
+POST /api/memory/consolidate — file the inbox into memory.md now
 GET  /api/insight/{id}/history       — past runs of a category (no html)
 GET  /api/insight/{id}/history/{ts}  — one stored past run in full
 DELETE /api/insight/{id}/history/{ts} — remove one past run
@@ -75,15 +82,19 @@ import os
 import re
 import secrets
 import shutil
+import subprocess
 import time
 from pathlib import Path
 
 from aiohttp import web
 
 import addon_options
+import card_tags
 import categories as cat_mod
 import engine
 import feedback_store
+import findings_store
+import fixer
 import hypotheses
 import knowledge_store
 import onboarding
@@ -136,6 +147,19 @@ MEMORY_STATE: dict = {"merging": False, "error": ""}
 
 MODEL = os.environ.get("BRAIN_MODEL", "").strip()
 TIMEOUT_S = int(float(os.environ.get("BRAIN_TIMEOUT_MIN", "8") or 8) * 60)
+
+# The memory consolidator, run on demand from the Memory tab's "File into
+# memory now". Normally a daemon on its own cadence (daily, or early once the
+# inbox passes 20 pending facts) — this is the same pass, triggered by hand.
+CONSOLIDATE_SCRIPT = os.environ.get(
+    "BRAIN_CONSOLIDATE_SCRIPT", "/opt/scripts/brain-memory-consolidate.sh")
+CONSOLIDATE_TIMEOUT_S = int(os.environ.get("BRAIN_CONSOLIDATE_TIMEOUT", "300"))
+
+# One "Fix it" run. Wall-clock is the real guard, not turns: an agentic run
+# that gets truncated mid-edit leaves the house half-changed.
+FIX_MAX_TURNS = int(os.environ.get("BRAIN_FIX_MAX_TURNS", str(fixer.DEFAULT_MAX_TURNS)))
+FIX_TIMEOUT_S = int(os.environ.get("BRAIN_FIX_TIMEOUT", "900"))
+FIX_JOB_PREFIX = "fix-"
 
 # ---------------------------------------------------------------------------
 # Effective options
@@ -256,8 +280,11 @@ QUEUE: asyncio.Queue[str] = asyncio.Queue()
 AUTH_CHECK: dict = {"state": "unchecked", "error": "", "checked_at": 0}
 
 
-def _job_active(insight_id: str) -> bool:
-    return JOBS.get(insight_id, {}).get("state") in ("queued", "collecting", "generating", "parsing")
+ACTIVE_STATES = ("queued", "collecting", "generating", "parsing", "fixing")
+
+
+def _job_active(job_id: str) -> bool:
+    return JOBS.get(job_id, {}).get("state") in ACTIVE_STATES
 
 
 def _set_job(insight_id: str, **fields) -> None:
@@ -466,6 +493,26 @@ def _clean_strings(value, max_items: int, max_chars: int) -> list[str]:
     return out
 
 
+def _model_findings(value, max_items: int = 3) -> list[dict]:
+    """The model's ``findings`` array, ready for ``findings_store.add_many``.
+
+    Only the shape the store can't be expected to know about is handled
+    here — a list, capped, tolerating a bare string per finding (a model
+    that drops to the simpler form should still get its problem onto the
+    work list). Every field's validation belongs to the store, which owns
+    the constants and applies them to the study-session path too.
+    """
+    if not isinstance(value, list):
+        return []
+    out: list[dict] = []
+    for item in value[:max_items]:
+        if isinstance(item, str):
+            item = {"text": item}
+        if isinstance(item, dict):
+            out.append(item)
+    return out
+
+
 async def _generate(insight_id: str) -> None:
     job = JOBS.get(insight_id, {})
     question = job.get("question")
@@ -497,12 +544,13 @@ async def _generate(insight_id: str) -> None:
             try:
                 prev = json.loads(_insight_path(insight_id).read_text(encoding="utf-8"))
                 previous = {k: prev.get(k) for k in
-                            ("generated_at", "title", "summary", "highlights", "findings")}
+                            ("generated_at", "title", "summary", "highlights", "learned")}
             except (OSError, ValueError):
                 pass
         prompt = build_prompt(cat, bundle, question=question, feedback=feedback,
                               hypothesis_budget=hypotheses.budget(),
-                              knowledge=knowledge, previous=previous)
+                              knowledge=knowledge, previous=previous,
+                              findings=findings_store.prompt_block())
         result = await asyncio.to_thread(
             engine.run_claude, prompt, SYSTEM_PROMPT, eff_model(),
             eff_timeout_s(),
@@ -532,12 +580,15 @@ async def _generate(insight_id: str) -> None:
                 log.info("dropping hypothesis (known, or queue full): %s", claim)
                 continue
             questions.append(claim)
-        findings = _clean_strings(obj.get("findings"), 3, 500)
-        tags: list[str] = []
-        for tag in _clean_strings(obj.get("tags"), 4, 24):
-            tag = tag.lower().strip("#- ")
-            if tag and tag not in tags:
-                tags.append(tag)
+        learned = _clean_strings(obj.get("learned"), 3, 500)
+        # Findings are a work list, not part of the card: what this run
+        # reported lives in the store, which is the one place that knows
+        # whether it has since been fixed or dismissed. Storing a copy on
+        # the card would be a snapshot guaranteed to go stale.
+        filed = findings_store.add_many([
+            {**f, "source": cat["id"], "source_title": cat.get("title", "Insight")}
+            for f in _model_findings(obj.get("findings"))])
+        tags = card_tags.clean_tags(_clean_strings(obj.get("tags"), 4, 24))
         insight = {
             "id": insight_id,
             "category": cat["id"] if question is None else "custom",
@@ -550,7 +601,7 @@ async def _generate(insight_id: str) -> None:
             "summary": str(obj.get("summary", ""))[:600],
             "highlights": highlights[:6],
             "questions": questions,
-            "findings": findings,
+            "learned": learned,
             "tags": tags,
             "focus_used": cat.get("focus", "") if question is None else "",
             "html": html,
@@ -558,27 +609,92 @@ async def _generate(insight_id: str) -> None:
             "meta": result.get("meta", {}),
         }
         save_insight(insight)
-        # Learn the durable findings: store NEW ones in our own knowledge
+        # Learn the durable discoveries: store NEW ones in our own knowledge
         # base (dedup by content) and hand those on to the home's shared
-        # memory. Already-known "findings" are silently swallowed — the
-        # model was told not to repeat them, this enforces it.
-        for fact in findings:
+        # memory. Already-known ones are silently swallowed — the model was
+        # told not to repeat them, this enforces it.
+        for fact in learned:
             _, created = knowledge_store.add_fact(
                 fact, source="insights", category=cat["id"])
             if created:
                 await _submit_memory(fact)
         _set_job(insight_id, state="done", error="")
-        log.info("insight %s generated (%s)", insight_id, insight["title"])
+        log.info("insight %s generated (%s)%s", insight_id, insight["title"],
+                 f", {len(filed)} new finding(s)" if filed else "")
     except Exception as exc:  # noqa: BLE001 — job errors surface in the UI
         log.warning("insight %s failed: %s", insight_id, exc)
         _set_job(insight_id, state="error", error=str(exc)[:500])
 
 
+# ---------------------------------------------------------------------------
+# Fix worker — the one path that lets Claude change the house
+# ---------------------------------------------------------------------------
+
+async def _run_fix(job_id: str) -> None:
+    """Fix one finding, agentically, because somebody pressed Fix on it.
+
+    Shares the generation queue on purpose: one Claude invocation at a time
+    across the whole add-on is what keeps a subscription's rate limit
+    intact, and a fix run is far too expensive to let race a card refresh.
+    """
+    job = JOBS.get(job_id, {})
+    ts = int(job.get("finding_ts") or 0)
+    finding = findings_store.get(ts)
+    if finding is None:
+        _set_job(job_id, state="error", error="that finding is gone")
+        return
+    try:
+        # the route already claimed it on disk — this is the in-memory half
+        _set_job(job_id, state="fixing", error="")
+        memory = await asyncio.to_thread(_read_shared_memory)
+        prompt = fixer.build_prompt(finding, memory=memory)
+        result = await asyncio.to_thread(
+            engine.run_agent, prompt, fixer.FIX_SYSTEM, eff_model(),
+            FIX_TIMEOUT_S, FIX_MAX_TURNS)
+        _record_usage(result, job_id)
+        if not result["ok"]:
+            raise RuntimeError(result["error"] or "the fix run failed")
+
+        parsed = fixer.parse_result(result["text"])
+        if parsed["needs_you"]:
+            status = "needs_you"
+        elif parsed["ok"]:
+            status = "fixed"
+        else:
+            status = "failed"
+        findings_store.set_status(ts, status, result=fixer.result_text(parsed),
+                                  changed=parsed["changed"])
+        # A change to the house is durable knowledge about it — the next
+        # analysis must not rediscover a problem BRain itself resolved.
+        if status == "fixed" and parsed["changed"]:
+            await _submit_memory(
+                f"BRain fixed this on {time.strftime('%Y-%m-%d')}: "
+                f"{finding['text']} — {'; '.join(parsed['changed'])}",
+                source="fix")
+        # Anything it noticed on the way in becomes its own finding rather
+        # than an edit it was not asked to make.
+        findings_store.add_many([
+            {"text": extra, "source": "fix",
+             "source_title": f"Noticed while fixing “{finding['text']}”"}
+            for extra in parsed["also_found"]])
+        _set_job(job_id, state="done", error="")
+        log.info("finding %s → %s", ts, status)
+    except Exception as exc:  # noqa: BLE001 — job errors surface in the UI
+        log.warning("fix for finding %s failed: %s", ts, exc)
+        findings_store.set_status(
+            ts, "failed",
+            result=f"The fix run did not complete: {str(exc)[:400]}")
+        _set_job(job_id, state="error", error=str(exc)[:500])
+
+
 async def _worker() -> None:
     while True:
-        insight_id = await QUEUE.get()
+        job_id = await QUEUE.get()
         try:
-            await _generate(insight_id)
+            if JOBS.get(job_id, {}).get("kind") == "fix":
+                await _run_fix(job_id)
+            else:
+                await _generate(job_id)
         finally:
             QUEUE.task_done()
 
@@ -648,6 +764,17 @@ async def _scheduler() -> None:
     budget_logged = False
     while True:
         await asyncio.sleep(60)
+        # Fold in what the CLI side found. This belongs on the tick rather
+        # than on the Findings tab's own request: study sessions are the
+        # other producer, and the badge that tells you to go look is served
+        # by /api/status. Sweeping only on tab open made that circular — the
+        # badge couldn't count a finding until you'd already visited.
+        try:
+            swept = await asyncio.to_thread(findings_store.sweep_inbox)
+            if swept:
+                log.info("swept %d finding(s) from study sessions", swept)
+        except Exception as exc:  # never let this kill the loop
+            log.debug("findings sweep failed: %s", exc)
         if not engine.get_auth():
             continue
         settings = settings_store.load()
@@ -676,12 +803,14 @@ async def _scheduler() -> None:
                 log.info("auto-refresh: queued %s", cat["id"])
 
 
-def _enqueue(insight_id: str, question: str | None = None) -> bool:
-    if _job_active(insight_id):
+def _enqueue(job_id: str, question: str | None = None, **fields) -> bool:
+    """Queue one unit of Claude work. ``fields`` carries per-kind state
+    (``kind="fix"`` plus its ``finding_ts``); everything else is a card."""
+    if _job_active(job_id):
         return False
-    _set_job(insight_id, state="queued", error="", question=question,
-             started_at=time.time())
-    QUEUE.put_nowait(insight_id)
+    _set_job(job_id, state="queued", error="", question=question,
+             started_at=time.time(), kind=fields.pop("kind", "insight"), **fields)
+    QUEUE.put_nowait(job_id)
     return True
 
 
@@ -811,8 +940,8 @@ async def h_status(request: web.Request) -> web.Response:
         "settings": settings,
         "usage": usage_store.budget_state(settings),
         "categories": [_category_status(c, insights) for c in all_categories()],
-        # shipped cards the user removed — ⚙ Settings offers them back
-        "removed_categories": prompt_store.hidden_categories(),
+        # the Findings tab's badge: problems still waiting on a decision
+        "findings_open": findings_store.open_count(),
         # `question` lets the panel label an ad-hoc "Ask" card (and retry it)
         # while it's still generating, before any insight exists to read.
         "jobs": {jid: {k: j.get(k) for k in ("state", "error", "question")}
@@ -822,7 +951,28 @@ async def h_status(request: web.Request) -> web.Response:
 
 
 async def h_insights(request: web.Request) -> web.Response:
-    return web.json_response({"insights": load_insights()})
+    # Tags are resolved at read time, not stored: a hand-edited tag is a diff
+    # against whatever the latest run wrote, so a new run's new tag still
+    # appears while the one you threw away stays gone.
+    def listing() -> list[dict]:
+        insights = load_insights()
+        # one read of the edits file for the whole list, not one per card
+        edits = card_tags.load_edits()
+        for ins in insights:
+            ins["tags"] = card_tags.effective_tags(ins, edits)
+        return insights
+
+    return web.json_response({"insights": await asyncio.to_thread(listing)})
+
+
+# "learn about the boiler", "study my energy use" — the ask bar's second verb.
+# A study session is a different thing from a question (minutes not seconds,
+# tools not a snapshot, memory not a card), but making people find a second
+# input for it just meant nobody ever ran one.
+LEARN_RE = re.compile(
+    r"^\s*(?:go\s+|please\s+)?(?:learn|study|research|figure\s+out)\b"
+    r"(?:\s+(?:about|more\s+about|up\s+on|on))?\s*",
+    re.IGNORECASE)
 
 
 async def h_generate(request: web.Request) -> web.Response:
@@ -831,6 +981,11 @@ async def h_generate(request: web.Request) -> web.Response:
     if question:
         if len(question) > 500:
             raise web.HTTPBadRequest(text="question too long")
+        match = LEARN_RE.match(question)
+        if match:
+            topic = question[match.end():].strip().rstrip("?.!")
+            queued = await asyncio.to_thread(onboarding.request_study, topic)
+            return web.json_response({"queued": [], "learning": queued})
         # Second-resolution ids collide when two questions are asked in the
         # same second — step past any live job so neither ask is swallowed.
         stamp = int(time.time())
@@ -912,32 +1067,34 @@ def _purge_card_data(card_id: str) -> None:
     _unmirror_card(card_id)
     shutil.rmtree(_history_dir(card_id), ignore_errors=True)
     feedback_store.clear(card_id)
+    card_tags.forget(card_id)
     JOBS.pop(card_id, None)
 
 
 async def h_delete_card(request: web.Request) -> web.Response:
     """Delete any card, whatever kind it is — one endpoint for one ✕ button.
 
-    A user-created insight and an ad-hoc Ask card are deleted outright. A
-    shipped card can't be (its definition lives in the code), so it is
-    marked hidden instead: gone from the dashboard and the scheduler, its
-    stored data erased all the same, and restorable from ⚙ Settings.
+    Deleted means deleted. A shipped card's definition lives in the code and
+    can't be erased, so it is marked hidden — but that is an implementation
+    detail, not an offer: the panel no longer keeps a graveyard of removed
+    cards to restore from. Every home gets the cards BRain proposed for
+    *that* home, and the way to get one back is to ask for it again.
     """
     card_id = request.match_info["id"]
     if get_category(card_id):
         prompt_store.save_override(card_id, {"hidden": True})
         await asyncio.to_thread(_purge_card_data, card_id)
-        return web.json_response({"deleted": card_id, "restorable": True})
+        return web.json_response({"deleted": card_id})
     if user_categories.get(card_id):
         user_categories.delete(card_id)
         await asyncio.to_thread(_purge_card_data, card_id)
-        return web.json_response({"deleted": card_id, "restorable": False})
+        return web.json_response({"deleted": card_id})
     # an ad-hoc Ask that failed (or is still running) has no stored insight
     # yet — its card is the job, so clearing the job clears the card
     if not _insight_path(card_id).exists() and card_id not in JOBS:
         raise web.HTTPNotFound(text="no such card")
     await asyncio.to_thread(_purge_card_data, card_id)
-    return web.json_response({"deleted": card_id, "restorable": False})
+    return web.json_response({"deleted": card_id})
 
 
 # -- insight history --------------------------------------------------------
@@ -1251,6 +1408,114 @@ async def h_card_info(request: web.Request) -> web.Response:
     })
 
 
+# -- findings: what's broken, and what BRain did about it -------------------
+
+def _finding_ts(request: web.Request) -> int:
+    try:
+        return int(request.match_info["ts"])
+    except ValueError:
+        raise web.HTTPBadRequest(text="bad finding id")
+
+
+def _finding_or_404(request: web.Request) -> dict:
+    finding = findings_store.get(_finding_ts(request))
+    if finding is None:
+        raise web.HTTPNotFound(text="no such finding")
+    return finding
+
+
+async def h_findings(request: web.Request) -> web.Response:
+    # The scheduler owns ingestion; sweeping here too is only about latency,
+    # so opening the tab right after a study session finishes doesn't wait
+    # out the tick. Both are idempotent, and an empty inbox costs one glob.
+    def listing() -> dict:
+        findings_store.sweep_inbox()
+        return findings_store.listing()
+
+    return web.json_response(await asyncio.to_thread(listing))
+
+
+# The lifecycle buttons: each is one status transition and the same reply.
+# Keeping them as one handler means adding a verb is a line here rather than
+# a handler, a route, and two docstrings that can disagree with each other.
+FINDING_VERBS = {
+    # "Not a problem here." Sticky: dismissed findings are fed back into
+    # every future analysis, so it is never raised again rather than
+    # re-dismissed weekly.
+    "ignore": ("ignored", ""),
+    # "I handled it myself" — the ending for anything needing hands.
+    "done": ("fixed", "Marked done by you."),
+    "reopen": ("open", ""),
+}
+
+
+async def h_finding_verb(request: web.Request) -> web.Response:
+    verb = request.match_info["verb"]
+    if verb not in FINDING_VERBS:
+        raise web.HTTPNotFound(text="no such action")
+    finding = _finding_or_404(request)
+    status, result = FINDING_VERBS[verb]
+
+    def settle() -> dict:
+        findings_store.set_status(finding["ts"], status, result=result)
+        return findings_store.listing()
+
+    payload = await asyncio.to_thread(settle)
+    if verb == "done":
+        # resolving it yourself is durable knowledge about this home
+        await _submit_memory(
+            f"Resolved on {time.strftime('%Y-%m-%d')}: {finding['text']}",
+            source="homeowner")
+    return web.json_response(payload)
+
+
+async def h_finding_fix(request: web.Request) -> web.Response:
+    """"Yes, go fix this." Queues the one tool-enabled run in the panel."""
+    finding = _finding_or_404(request)
+    if not engine.get_auth():
+        raise web.HTTPBadRequest(text="connect your Claude account first")
+    job_id = f"{FIX_JOB_PREFIX}{finding['ts']}"
+    # The in-memory job is the authority on "a fix is running" — it is what
+    # actually knows. The stored status is the copy the browser renders, and
+    # any left behind by a dead process is reconciled at startup.
+    if finding["status"] == "fixing" or not _enqueue(
+            job_id, kind="fix", finding_ts=finding["ts"]):
+        raise web.HTTPConflict(text="already being fixed")
+
+    def claim() -> dict:
+        findings_store.set_status(finding["ts"], "fixing", result="")
+        return findings_store.listing()
+
+    return web.json_response(await asyncio.to_thread(claim))
+
+
+async def h_finding_delete(request: web.Request) -> web.Response:
+    """Forget it entirely — unlike Ignore, it can be reported again."""
+    finding = _finding_or_404(request)
+
+    def forget() -> dict:
+        findings_store.remove(finding["ts"])
+        return findings_store.listing()
+
+    return web.json_response(await asyncio.to_thread(forget))
+
+
+# -- card tags --------------------------------------------------------------
+
+async def h_card_tags_put(request: web.Request) -> web.Response:
+    """Replace one card's visible tags. Stored as a diff — see card_tags."""
+    card_id = request.match_info["id"]
+    try:
+        insight = json.loads(_insight_path(card_id).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raise web.HTTPNotFound(text="no such card")
+    body = await request.json()
+    if not isinstance(body, dict) or not isinstance(body.get("tags"), list):
+        raise web.HTTPBadRequest(text="tags must be a list of strings")
+    tags = await asyncio.to_thread(card_tags.set_tags, card_id, insight, body["tags"])
+    return web.json_response({"id": card_id, "tags": tags})
+
+
 # -- analyst questions ------------------------------------------------------
 
 async def h_questions(request: web.Request) -> web.Response:
@@ -1453,6 +1718,23 @@ async def h_onboarding_reset(request: web.Request) -> web.Response:
     return web.json_response({"onboarded": False})
 
 
+def _inbox_pending() -> int:
+    """Facts waiting for the consolidator — the count the Memory tab's
+    "File into memory now" button puts on itself, so pressing it is an
+    informed choice rather than a hopeful one."""
+    total = 0
+    try:
+        for path in MEMORY_INBOX_DIR.glob("*.jsonl"):
+            try:
+                total += sum(1 for line in path.read_text(
+                    encoding="utf-8", errors="replace").splitlines() if line.strip())
+            except OSError:
+                continue
+    except OSError:
+        return 0
+    return total
+
+
 async def h_knowledge(request: web.Request) -> web.Response:
     """Everything the analyst has learned, in one payload for the panel."""
     return web.json_response({
@@ -1462,6 +1744,52 @@ async def h_knowledge(request: web.Request) -> web.Response:
         "hypothesis_budget": hypotheses.budget(),
         "shared_memory": _read_shared_memory(),
         "memory_state": dict(MEMORY_STATE),
+        "inbox_pending": await asyncio.to_thread(_inbox_pending),
+    })
+
+
+def _consolidate_now() -> tuple[bool, str]:
+    """Run one consolidation pass, synchronously, in a thread.
+
+    The daemon does this daily (or early past 20 pending facts). The button
+    exists because "I just taught it something, put it in the document"
+    should not mean waiting until tomorrow. Same script, same checks — the
+    consolidator stays the only writer of memory.md either way.
+    """
+    if not os.path.isfile(CONSOLIDATE_SCRIPT):
+        return False, "the consolidator isn't installed in this image"
+    try:
+        proc = subprocess.run(
+            ["bash", CONSOLIDATE_SCRIPT, "--once"],
+            capture_output=True, text=True, timeout=CONSOLIDATE_TIMEOUT_S,
+            env={**os.environ, "HOME": engine.CLAUDE_HOME},
+        )
+    except subprocess.TimeoutExpired:
+        return False, f"consolidation passed its {CONSOLIDATE_TIMEOUT_S}s limit"
+    except OSError as exc:
+        return False, f"could not run the consolidator: {exc}"
+    if proc.returncode != 0:
+        tail = (proc.stdout or proc.stderr or "").strip().splitlines()
+        return False, (tail[-1][:300] if tail else
+                       f"the consolidator exited {proc.returncode}")
+    return True, ""
+
+
+async def h_memory_consolidate(request: web.Request) -> web.Response:
+    """Fold the inbox into memory.md now, rather than at the next pass."""
+    pending = await asyncio.to_thread(_inbox_pending)
+    MEMORY_STATE.update(merging=True, error="")
+    try:
+        ok, error = await asyncio.to_thread(_consolidate_now)
+    finally:
+        MEMORY_STATE.update(merging=False)
+    MEMORY_STATE.update(error="" if ok else error)
+    if not ok:
+        raise web.HTTPBadGateway(text=error or "consolidation failed")
+    return web.json_response({
+        "consolidated": pending,
+        "shared_memory": await asyncio.to_thread(_read_shared_memory),
+        "inbox_pending": await asyncio.to_thread(_inbox_pending),
     })
 
 
@@ -1746,6 +2074,11 @@ def make_app() -> web.Application:
     app.router.add_delete("/api/insight/{id}", h_delete_insight)
     app.router.add_put("/api/insight/{id}", h_rename_insight)
     app.router.add_delete("/api/card/{id}", h_delete_card)
+    app.router.add_put("/api/card/{id}/tags", h_card_tags_put)
+    app.router.add_get("/api/findings", h_findings)
+    app.router.add_post("/api/finding/{ts}/fix", h_finding_fix)
+    app.router.add_post("/api/finding/{ts}/{verb}", h_finding_verb)
+    app.router.add_delete("/api/finding/{ts}", h_finding_delete)
     app.router.add_get("/api/insight/{id}/history", h_history_list)
     app.router.add_get("/api/insight/{id}/history/{ts}", h_history_get)
     app.router.add_delete("/api/insight/{id}/history/{ts}", h_history_delete)
@@ -1772,6 +2105,7 @@ def make_app() -> web.Application:
     app.router.add_post("/api/hypothesis/{ts}/confirm", h_hypothesis_confirm)
     app.router.add_post("/api/hypothesis/{ts}/reject", h_hypothesis_reject)
     app.router.add_put("/api/memory", h_memory_put)
+    app.router.add_post("/api/memory/consolidate", h_memory_consolidate)
     app.router.add_post("/api/knowledge/fact", h_knowledge_fact_add)
     app.router.add_delete("/api/knowledge/fact/{ts}", h_knowledge_fact_delete)
     app.router.add_post("/api/knowledge/question/{ts}/answer", h_knowledge_answer)
@@ -1790,6 +2124,15 @@ def make_app() -> web.Application:
     terminal_proxy.setup(app)
 
     async def on_startup(app: web.Application) -> None:
+        # Startup is the one moment we know nothing is in flight, so it is
+        # the only place a fix orphaned by a restart can be told apart from
+        # one that is genuinely still running.
+        orphaned = await asyncio.to_thread(
+            findings_store.reconcile_running,
+            "BRain restarted while this fix was running, so it could not "
+            "report what it did. Check the entity before trying again.")
+        if orphaned:
+            log.warning("%d fix run(s) were interrupted by a restart", orphaned)
         await _options_sync()
         app["worker"] = asyncio.create_task(_worker())
         app["scheduler"] = asyncio.create_task(_scheduler())

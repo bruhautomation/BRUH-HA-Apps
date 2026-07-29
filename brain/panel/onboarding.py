@@ -125,20 +125,35 @@ def start_learning() -> dict:
     exists for `brain.study`, so this reuses it rather than inventing a
     second path that could disagree with it.
     """
-    STUDY_REQUESTS_DIR.mkdir(parents=True, exist_ok=True)
     already = _studied_topics()
     queued = []
     for i, topic in enumerate(FIRST_TOPICS):
         if topic in already:
             continue  # resumable: don't re-study on a second click
-        path = STUDY_REQUESTS_DIR / f"{int(time.time())}-{i}-onboarding-{topic}.json"
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"ts": int(time.time()), "topic": topic}),
-                       encoding="utf-8")
-        tmp.replace(path)
+        request_study(topic, tag=f"{i}-onboarding")
         queued.append(topic)
     _patch_state(phase="learning", started_at=int(time.time()))
     return {"queued": queued, "already_known": sorted(already)}
+
+
+def request_study(topic: str = "", tag: str = "ask") -> str:
+    """Queue ONE study session for the watcher and say what it will study.
+
+    The single writer of the study-request format — the opening syllabus and
+    the panel's ask bar both go through here, so the CLI watcher's contract
+    has one author. An empty topic means "whatever has gone stalest", which
+    is what ``brain learn`` with no argument does, so the two faces of
+    learning behave alike.
+    """
+    topic = str(topic or "").strip()[:200]
+    STUDY_REQUESTS_DIR.mkdir(parents=True, exist_ok=True)
+    slug = re.sub(r"[^a-z0-9]+", "-", topic.lower()).strip("-")[:40] or "stalest"
+    now = int(time.time())
+    path = STUDY_REQUESTS_DIR / f"{now}-{tag}-{slug}.json"
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"ts": now, "topic": topic}), encoding="utf-8")
+    tmp.replace(path)
+    return topic
 
 
 def learning_progress() -> dict:

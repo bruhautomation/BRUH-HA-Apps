@@ -127,7 +127,18 @@ class TestPanelBranding(unittest.TestCase):
         cls.js = (PANEL / "app.js").read_text()
 
     def test_wordmark_reads_brain(self):
-        self.assertIn('BR<span class="grad">ain</span>', self.html)
+        """The bar carries the real wordmark, not a mark plus a word. The
+        gable IS the "A", so the lockup can't be assembled from an icon and
+        live text — and it can't be checked by reading the text either, so
+        this pins the pieces the lockup is made of."""
+        self.assertIn('class="wordmark"', self.html)
+        self.assertIn('aria-label="BRain"', self.html)
+        # BR ligature, gable-A, and the N's diagonal: if any goes, the mark
+        # silently degrades into something that isn't the logo.
+        for part in ("M159.55,176c0-23.95",          # BR ligature
+                     "M186,333 L239,198",            # A
+                     "M362,198 L377,198 L486,333"):  # N diagonal
+            self.assertIn(part, self.html, "the wordmark lost a glyph")
 
     def test_the_mark_is_the_gable(self):
         """The brand mark is a gable lifted from the parent BRUH logo, and it
@@ -142,10 +153,19 @@ class TestPanelBranding(unittest.TestCase):
                           f"{name} does not carry the shared gable path")
 
     def test_the_inline_mark_follows_the_theme(self):
-        """It has to inherit `currentColor` — the bar tints the mark with the
-        accent, and the window in the roof is a knockout, so a filled shape
-        would blot it out."""
-        self.assertIn('fill="currentColor" fill-rule="evenodd"', self.html)
+        """One SVG serves a light and a dark bar, so its three brand roles
+        have to be separable: the B/R/N follow the theme's ink, the roof is
+        azure and stays azure, and the "AI" plus the signal motif are always
+        the same colour as each other. And the window in the roof is a
+        knockout — a filled shape would blot it out."""
+        css = (PANEL / "style.css").read_text()
+        for role in ("wm-ink", "wm-roof", "wm-ai", "wm-signal"):
+            self.assertIn(f'class="{role}"', self.html,
+                          f"the wordmark has no {role} shapes")
+            self.assertIn(f".{role} {{", css, f"{role} is unstyled")
+        self.assertIn("--wm-ink: var(--ink)", css, "the ink doesn't follow the theme")
+        self.assertIn("--wm-roof: #1e9fe0", css, "the roof was recoloured")
+        self.assertIn('fill-rule="evenodd"', self.html)
 
     def test_retired_marks_are_gone(self):
         """The neural mesh and the solid-brain variant were two directions
@@ -177,8 +197,8 @@ class TestPanelBranding(unittest.TestCase):
         for stale in ("ha-share-login", "ha-memory", "ha-backup"):
             self.assertNotIn(stale, self.html, f"panel references {stale}")
 
-    def test_three_view_tabs_exist(self):
-        for view in ("insights", "terminal", "memory"):
+    def test_every_view_tab_has_a_pane(self):
+        for view in ("insights", "findings", "terminal", "memory", "docs"):
             self.assertIn(f'data-view="{view}"', self.html)
             self.assertIn(f'id="view{view.capitalize()}"', self.html)
 
@@ -257,16 +277,32 @@ class TestTopbarFitsOneRow(unittest.TestCase):
         self.assertIn('chip.setAttribute("aria-label"', self.js)
 
     def test_the_bar_sheds_text_in_stages(self):
-        """One breakpoint could not work: the full bar needs 995px and the
-        phone bar 310px, so a single cut leaves one band badly overflowing."""
-        for width in ("max-width: 1023px", "max-width: 780px", "max-width: 400px"):
+        """One breakpoint could not work: the full bar needs 1099px and the
+        phone bar 304px, so a single cut leaves one band badly overflowing.
+
+        The exact widths are measured by tests/manual/measure-topbar.mjs,
+        which renders the bar and fails on any overflow. This pins that the
+        staging exists at all — the widths moved outward in 1.7.0 when a
+        fifth tab and a second badge arrived."""
+        for width in ("max-width: 1099px", "max-width: 804px",
+                      "max-width: 469px", "max-width: 400px"):
             self.assertIn(f"@media ({width})", self.css)
 
     def test_tab_labels_go_before_the_tabs_do(self):
-        """All four tabs survive to the narrowest band; only their labels go."""
+        """All five tabs survive to the narrowest band; only their labels go."""
         self.assertIn(".viewtab span:not(.badge) { display: none; }", self.css)
-        for view in ("insights", "terminal", "memory", "docs"):
+        for view in ("insights", "findings", "terminal", "memory", "docs"):
             self.assertIn(f'data-view="{view}"', self.html)
+
+    def test_badges_survive_to_the_floor_as_dots(self):
+        """A badge you can't see is a decision nobody makes. Two numbered
+        badges cost 46px, which is what pushed the 320px floor over — so at
+        the narrowest they collapse to a dot rather than disappearing."""
+        narrow = self.css[self.css.index("@media (max-width: 469px)"):]
+        narrow = narrow[:narrow.index("@media (max-width: 400px)")]
+        self.assertIn(".viewtab .badge {", narrow)
+        self.assertIn("border-radius: 50%", narrow)
+        self.assertNotIn("display: none", narrow.split(".viewtab .badge {")[1][:300])
 
 
 class TestHypothesisIdentity(unittest.TestCase):

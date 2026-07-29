@@ -203,7 +203,8 @@ OUTPUT CONTRACT (strict JSON; title, summary, highlights, and html are required)
   "summary": "1-2 short sentences, max ~220 chars. The ONE thing worth knowing, with its number. No scene-setting, no restating the highlights, no fluff.",
   "highlights": [ {"label": "Metric name", "value": "42 kWh", "delta": "+12% vs avg (optional)", "status": "good|warning|serious|critical (optional)"} ],
   "hypotheses": [ "Optional: something you believe about this home, phrased so it can be answered yes or no" ],
-  "findings": [ "Optional: durable facts about this home worth remembering" ],
+  "learned": [ "Optional: durable facts about this home worth remembering" ],
+  "findings": [ {"text": "Short statement of what is broken", "detail": "Evidence: the entity, the number, when it started", "fix": "The specific change that would resolve it", "severity": "info|warning|serious|critical", "fixable": true, "entity_id": "sensor.example (optional)"} ],
   "tags": [ "2-4 short lowercase topic tags" ],
   "html": "<!DOCTYPE html>... one complete self-contained HTML document ..."
 }
@@ -214,7 +215,14 @@ Provide 3-6 highlights — they are the main content. Each is one specific, chec
 The bar is high. Propose one only when (a) you genuinely believe it, (b) the data cannot settle it on its own, and (c) knowing would change how you read this home in future. If you would not change your analysis either way, say nothing. Never propose one to seem thorough, never one whose answer is already in the memory document, and never a vague catch-all ("anything else I should know?").
 
 A guess the homeowner confirms becomes a plain remembered fact; one they reject is recorded as a dead end and never revisited. Omitting the field entirely is the normal, expected case.
-"findings" (optional, max 3): durable NEW discoveries about this home worth remembering for future analyses — sensor reliability issues, recurring patterns, quirks (e.g. "The hallway motion sensor drops offline most nights around 2 AM"). One plain factual sentence each, no advice. A finding must be genuinely new: never restate a KNOWN FACT from the prompt, and never restate the current snapshot ("3 lights are on" is a state, not a finding). Omit when nothing new was learned.
+"learned" (optional, max 3): durable NEW discoveries about this home worth remembering for future analyses — recurring patterns, quirks, how something behaves (e.g. "The dryer draws about 3 kWh per cycle"). One plain factual sentence each, no advice, nothing broken (that is a finding, below). It must be genuinely new: never restate a KNOWN FACT from the prompt, and never restate the current snapshot ("3 lights are on" is a state, not a discovery). Omit when nothing new was learned.
+"findings" (optional, max 3): things that are BROKEN and have an owner — a dead battery, a sensor that stopped reporting, a device that is unavailable, an automation that can never fire, a setting that contradicts itself. This is a work list the homeowner acts on, not an observation. The bar:
+- Something is actually WRONG. A high reading is not a finding; a sensor that has read exactly the same value for six days is.
+- It is specific and checkable: name the entity, the number, and when it started. "Some batteries are low" is not a finding.
+- "fix" says what would resolve it, concretely enough to act on ("Replace the CR2032 in the Back Door sensor", "Remove the duplicate 7 AM trigger from automation.morning_lights").
+- "fixable" is true ONLY when the fix is a change to Home Assistant that software could make — editing a config or automation, renaming an entity, calling a service. Anything needing hands in the physical world (batteries, unplugging, re-pairing) is false.
+- "severity": critical = safety or data loss; serious = something is not working; warning = degraded or will break soon; info = worth tidying.
+Do not pad. Most runs find nothing wrong, and an empty list is the honest, expected answer. Never repeat a finding the prompt already lists as reported or dismissed.
 
 THE HTML DOCUMENT:
 - ONE focused visual that carries the story — a single chart, timeline, or state map. Not a dashboard: no stat-tile rows duplicating the highlights, no second or third chart unless the story truly needs a side-by-side pair, no prose paragraphs inside the HTML.
@@ -272,9 +280,9 @@ def _previous_block(previous: dict) -> str:
     ]
     if hls:
         lines.append(f"- Highlights: {'; '.join(hls)}")
-    for f in previous.get("findings") or []:
+    for f in previous.get("learned") or []:
         if isinstance(f, str) and f.strip():
-            lines.append(f"- Finding already reported: {f.strip()}")
+            lines.append(f"- Already learned: {f.strip()}")
     return "\n".join(lines)
 
 
@@ -286,6 +294,7 @@ def build_prompt(
     knowledge: str | None = None,
     previous: dict | None = None,
     hypothesis_budget: int = 0,
+    findings: str | None = None,
 ) -> str:
     """Assemble the user prompt: analysis focus + the data bundle.
 
@@ -298,6 +307,8 @@ def build_prompt(
     queue from growing into the wall of open questions this replaced.
     ``previous`` is the last stored run of this card, injected so the
     analyst advances the story instead of regenerating it.
+    ``findings`` is the rendered findings block: what is already on the work
+    list, and what the homeowner dismissed as not a problem here.
     """
     parts: list[str] = []
     if question:
@@ -325,6 +336,9 @@ def build_prompt(
 
     if knowledge and knowledge.strip():
         parts.append("\n" + knowledge.strip())
+
+    if findings and findings.strip():
+        parts.append("\n" + findings.strip())
 
     # The budget is stated explicitly rather than left implicit: a model told
     # only "usually zero" still proposes one most runs, and three cards each

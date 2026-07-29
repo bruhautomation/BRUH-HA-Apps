@@ -311,16 +311,38 @@ daemon_loop() {
         age=$((now - last_run))
 
         if [ "$pending" -gt "$INBOX_TRIGGER_LINES" ] || [ "$age" -ge "$DAILY_INTERVAL" ]; then
-            consolidate_once || true
+            with_lock consolidate_once || true
         fi
 
         sleep "$CHECK_INTERVAL"
     done
 }
 
+# One consolidation at a time, whoever asked for it. Three callers can want
+# a pass at once — the daemon's 5-minute poll, `brain memory consolidate`,
+# and the panel's "File into memory now" — and two of them running together
+# means two processes rewriting memory.md and archiving each other's inbox
+# files. "Only the consolidator writes memory.md" is the rule; this is what
+# makes it mean "only one consolidator".
+LOCK_FILE="$MEMORY_DIR/.consolidate.lock"
+
+with_lock() {
+    mkdir -p "$MEMORY_DIR"
+    if ! command -v flock > /dev/null 2>&1; then
+        "$@"          # no flock in this image: better to run than to refuse
+        return $?
+    fi
+    exec 9> "$LOCK_FILE"
+    if ! flock -w "${BRAIN_MEMORY_LOCK_WAIT:-600}" 9; then
+        log "another consolidation is already running — skipping this pass"
+        return 0
+    fi
+    "$@"
+}
+
 case "${1:-}" in
     --once)
-        consolidate_once
+        with_lock consolidate_once
         ;;
     --help|-h)
         sed -n '3,22p' "$0" | sed 's/^# \{0,1\}//'

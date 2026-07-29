@@ -75,8 +75,20 @@ Claude analyses your Home Assistant data and writes interactive cards.
 
 - **Cards chosen for your home.** A fresh install ships **none**. BRain studies the house
   first, then proposes cards grounded in what it actually found — you pick which to keep.
-- **Ask anything** — a free-form question becomes a one-off card. Turn it into a
-  recurring one with **＋ New insight**.
+  Delete one you don't want with ✕; ask for it again whenever you like and BRain builds it
+  fresh, for the house it now knows.
+- **The ask bar makes cards.** Every question you ask becomes a card. If the answer is
+  worth having every week, press **＋ Make recurring** on it and the question becomes a
+  scheduled insight. There is no separate "new insight" dialog — asking *is* the way in.
+- **The ask bar also learns.** Start a line with **"learn about…"** or **"study…"** and
+  BRain runs a study session instead of drawing a card: it digs through the registry,
+  history and long-term statistics for that corner of the house, and what it finds lands
+  in **Memory** and **Findings**. It runs for minutes in the background.
+- **Tags are yours.** Each card carries a few \`#tags\` — the chips at the top of the
+  dashboard filter by them, so \`#batteries\` surfaces every card that found a battery
+  problem, whatever category it came from. Press ✎ on a card's tag row to drop a bad tag
+  or add your own. Your edits survive regeneration; new tags a later run discovers still
+  appear.
 - **Feedback** — 💬 on any card tells Claude what to do differently next time
   ("ignore the guest room sensor", "show costs in dollars"). It sticks.
 - **Dashboard cards** — ▦ gives you YAML for a Webpage card so an insight lives on your
@@ -84,6 +96,11 @@ Claude analyses your Home Assistant data and writes interactive cards.
 
 Each card's ✎ dialog sets its own schedule. Fixed daily times ("07:00, 19:00") use far
 fewer tokens than a short interval.
+
+## Findings
+
+Things BRain thinks are **broken**, and what it did about them. See **Findings** in this
+guide. A number on the tab means something is waiting on your decision.
 
 ## Terminal
 
@@ -101,6 +118,70 @@ A number on the tab means BRain has a guess waiting on a yes/no.
 ## Docs
 
 This guide.
+`,
+  },
+
+  {
+    id: "findings",
+    icon: "⚠️",
+    title: "Findings",
+    body: `
+# Findings
+
+Three things sound similar and are not:
+
+| | Question it answers | How it ends |
+| --- | --- | --- |
+| **Memory** | What is *true* of this home? | It's a document; it just gets better |
+| **Guesses** | What might BRain have *wrong*? | Yes or No, once |
+| **Findings** | What is *broken* in this home? | Fixed, or dismissed |
+
+A finding is a work list item. A dead battery. A sensor that hasn't changed value in six
+days. A device stuck unavailable. An automation whose trigger entity was renamed, so it
+can never fire again. Something is wrong and somebody has to do something about it.
+
+Findings come from insight runs and from study sessions — the same passes that fill
+memory. BRain only reports a problem **once**: the same finding in different words is
+recognised and dropped.
+
+## The two ways out
+
+**✦ Fix it** sends Claude to make the change, in your actual Home Assistant. It confirms
+the problem is still real, finds the cause rather than the symptom, makes the smallest
+change that resolves it, verifies the change took, and reports back with a list of exactly
+what it touched.
+
+It is bounded on purpose:
+
+- **One finding per run.** Anything else it notices along the way becomes its own finding
+  rather than an edit you didn't ask for.
+- **It never deletes** an entity, automation, dashboard or file it didn't create — it
+  disables or corrects instead.
+- **It never restarts Home Assistant.** Reloading one config domain is fine; a restart is
+  your call.
+- **It never touches secrets** or credentials.
+- **Nothing runs until you press it.** BRain will not change your house on a schedule.
+
+Every change it makes is snapshotted first by the same hook the terminal uses, so
+\`brain undo\` puts a file back if a fix goes wrong.
+
+**Not a problem** dismisses it, permanently. This is the important one: the dismissal is
+fed back into every future analysis, so BRain stops raising it rather than raising it
+again next week for you to dismiss again. If the garage freezer is *supposed* to sit at
+-30°C, one press ends that conversation for good.
+
+**✓ I did it** is for anything with hands in it — replacing a battery, re-pairing a
+device. BRain marks findings like these **needs you** rather than offering to fix them,
+because inventing a software substitute for a dead battery is worse than saying so.
+
+## After a fix
+
+Fixed and dismissed findings don't vanish — switch the filter at the top of the tab to see
+them. That archive is how you check what BRain changed in your house last week, and
+**Put it back on the list** reopens anything that turned out not to be fixed.
+
+Successful fixes are also written into memory, so a later analysis doesn't rediscover a
+problem BRain resolved itself.
 `,
   },
 
@@ -142,6 +223,20 @@ Nothing writes the document directly except the consolidator. Everything else qu
 One writer means the terminal, the panel, and voice can all feed the same memory without
 fighting over the file.
 
+## Filing the queue now
+
+The consolidator runs **daily**, and early once more than 20 things are waiting. That's
+the right cadence for a background job and the wrong one for someone who has just taught
+BRain something and wants to see it land.
+
+**⇪ File into memory now** runs the same pass immediately: it merges everything queued
+into the document, dedupes, and resolves contradictions newest-wins. It says how much is
+waiting before you press it, and costs one small Claude call. Same script, same safety
+checks — the consolidator stays the only writer either way.
+
+Manual edits are rewritten by a consolidation, so if you have unsaved edits in the
+markdown editor below it asks before filing.
+
 ## Guesses, not questionnaires
 
 BRain proposes things it believes and asks you to confirm:
@@ -174,10 +269,15 @@ brain learn --list      # the curriculum
 \`\`\`
 
 A study session investigates a topic — registry, live state, history, long-term
-statistics — and files what it finds. Its output is **knowledge, not a dashboard card**.
+statistics — and files what it finds. Its output is **knowledge, not a dashboard card**:
+durable facts go to this queue, anything broken goes to **Findings**, and at most a few
+guesses come back for you to settle.
 
 Topics: naming, presence, energy, climate, devices, automations, lighting. You can also
 pass free text.
+
+You don't need the terminal for this. Type **"learn about my heating"** into the ask bar
+on the Insights tab and it runs the same session.
 `,
   },
 

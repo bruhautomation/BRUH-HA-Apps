@@ -10,25 +10,40 @@
 <body>
 
 <header class="topbar">
-  <!-- The gable, used alone. The brand's full wordmark builds its "A" out of
-       this same roof, but it has a 132px minimum width and the bar has room
-       for about 52px — so below that the kit says to use the gable by itself,
-       which is exactly this case. The window is a knockout (fill-rule
-       evenodd), so the mark works in one colour and follows currentColor. -->
-  <span class="mark" aria-hidden="true" title="BRain">
-    <svg viewBox="0 0 100 100" class="marksvg">
-      <g transform="translate(6 26) scale(0.3446) translate(-188.83 -21.6)">
-        <path fill="currentColor" fill-rule="evenodd"
-              d="M293.5,21.6V70.83S189.86,174.05,188.83,175.5H450.09Zm-1,110.9h-10v-10h10Zm0-12h-10v-10h10Zm12,12h-10v-10h10Zm-10-12v-10h10v10Z"/>
+  <!-- The full wordmark, drawn inline rather than set as icon-plus-text: the
+       gable IS the "A", so the lockup can't be assembled from a mark and a
+       font. Three colours, all from the brand: the B, R and N follow the
+       theme's ink, the roof is always azure (never recoloured), and the "AI"
+       and the signal motif always match each other. The window in the roof
+       is a knockout (fill-rule evenodd), so it shows the bar through. -->
+  <svg class="wordmark" viewBox="0 0 496 342" role="img" aria-label="BRain">
+    <path class="wm-ink" fill-rule="evenodd" d="M159.55,176c0-23.95-12.76-43.53-32.59-55,19.83-11.43,32.59-31.09,32.59-55,0-38.69-33.29-66-75.87-66H4A4,4,0,0,0,0,4V331a4,4,0,0,0,4,4H19a4,4,0,0,0,4-4V245.83A3.84,3.84,0,0,1,26.83,242H92.4a3.93,3.93,0,0,1,3.22,1.69l41,89.62a3.9,3.9,0,0,0,3.21,1.69h19.27a4,4,0,0,0,3.28-6.29L121.81,242.6c-1.57-2.24-.18-4.71,2.17-6.13C141.54,225.88,159.55,206.48,159.55,176ZM23,26a4,4,0,0,1,4-4H79.36C113.11,22,136,38.27,136,66s-22.9,44-56.65,44H27a4,4,0,0,1-4-4ZM79.36,220H23V136a4,4,0,0,1,4-4H79.36c33.75,0,56.65,16.27,56.65,44S113.11,220,79.36,220Z"/>
+    <g transform="translate(186 184) scale(1.1306) translate(-188.83 -175.5)">
+      <path class="wm-roof" fill-rule="evenodd" d="M293.5,21.6V70.83S189.86,174.05,188.83,175.5H450.09Zm-1,110.9h-10v-10h10Zm0-12h-10v-10h10Zm12,12h-10v-10h10Zm-10-12v-10h10v10Z"/>
+      <g class="wm-signal" fill="none" stroke-width="5">
+        <line x1="293.83" y1="21.59" x2="203.6" y2="113.8"/>
+        <line x1="288.19" y1="43.3" x2="197.96" y2="135.5"/>
+        <line x1="282.27" y1="64.67" x2="192.03" y2="156.87"/>
       </g>
-    </svg>
-  </span>
-  <span class="txt">BR<span class="grad">ain</span></span>
+      <g class="wm-ai"><circle cx="193.18" cy="140.39" r="7"/><circle cx="198.89" cy="118.61" r="7"/><circle cx="187.68" cy="160.61" r="7"/></g>
+    </g>
+    <path class="wm-ai" d="M186,333 L239,198 L254,198 L307,333 L292,333 L246.5,217.1 L201,333 Z"/>
+    <rect class="wm-ai" x="216" y="275.5" width="61" height="15"/>
+    <rect class="wm-ai" x="327" y="198" width="15" height="135"/>
+    <rect class="wm-ink" x="362" y="198" width="15" height="135"/>
+    <rect class="wm-ink" x="471" y="198" width="15" height="135"/>
+    <path class="wm-ink" d="M362,198 L377,198 L486,333 L471,333 Z"/>
+  </svg>
 
   <nav class="viewtabs" role="tablist">
     <button class="viewtab active" data-view="insights" role="tab" data-tip="Insights">
       <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M4 19V11M9.5 19V5M15 19v-6M20.5 19v-9"/></svg>
       <span>Insights</span>
+    </button>
+    <button class="viewtab" data-view="findings" role="tab" data-tip="Findings">
+      <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 3.5 21 19H3zM12 10v4M12 16.6v.1"/></svg>
+      <span>Findings</span>
+      <span id="findBadge" class="badge hidden"></span>
     </button>
     <button class="viewtab" data-view="terminal" role="tab" data-tip="Terminal">
       <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="m5 8 4 4-4 4M13 16h6"/></svg>
@@ -54,9 +69,6 @@
   <button id="usageChip" class="chip clickable hidden"><span class="dot"></span><span id="usageChipPct"></span><span id="usageChipText" class="chipwords"></span></button>
   <button id="pausedChip" class="chip clickable warn hidden"><span class="dot"></span><span id="pausedChipText" class="chipwords"></span></button>
 
-  <button id="newInsight" class="btn icon hidden" data-tip="New insight">
-    <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-  </button>
   <button id="refreshAll" class="btn icon hidden" data-tip="Refresh all">
     <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M20 11a8 8 0 1 0-.6 4M20 5v6h-6"/></svg>
   </button>
@@ -178,14 +190,41 @@
 
   <!-- Dashboard -->
   <section id="dash" class="hidden">
+    <!-- One bar, two verbs. Asking makes a card; saying "learn…" runs a study
+         session instead, because a second input for learning meant nobody
+         ever ran one. The placeholder has to teach both — it is the only
+         place either is discoverable. -->
     <form id="askForm" class="askbar">
       <input id="askInput" type="text" maxlength="500" autocomplete="off"
-             placeholder="Ask Claude anything about your home — “How’s my energy use trending?” “Which rooms are coldest at night?”">
+             placeholder="Ask a question — “Which rooms are coldest at night?” — or say “learn about my energy use” to send BRain off studying">
       <button class="btn primary" type="submit">Ask&nbsp;✨</button>
     </form>
+    <p class="askhint">Every answer becomes a card. If it's worth having every
+      week, press <b>＋ Make recurring</b> on it and it becomes a scheduled
+      insight. Say <b>“learn about…”</b> and BRain studies that corner of the
+      house instead — what it finds lands in <b>Memory</b> and <b>Findings</b>.</p>
 
     <div id="filters" class="filters"></div>
     <div id="grid" class="grid"></div>
+  </section>
+</div>
+
+<!-- Findings: the work list. Memory says what is true of this home and a
+     hypothesis asks whether a belief is right; a finding is the third thing
+     — something that is WRONG, with two ways out and no third. -->
+<div id="viewFindings" class="view">
+  <section class="findwrap">
+    <div class="findhead">
+      <div>
+        <h2>What BRain thinks is broken</h2>
+        <p class="sub">Problems found while analysing your home — a dead battery, a
+          sensor that stopped reporting, an automation that can never fire. Send
+          BRain to fix it, or tell it this isn't a problem here and it will never
+          raise it again.</p>
+      </div>
+      <div class="findfilters" id="findFilters"></div>
+    </div>
+    <div id="findList" class="findlist"></div>
   </section>
 </div>
 
@@ -329,8 +368,8 @@
           <input id="nameIconIn" type="text" maxlength="4" class="iconin" placeholder="✨">
         </div>
       </div>
-      <p class="hint">Want it to keep updating on a schedule? Use <b>＋ New insight</b> to turn the
-        question into a recurring card.</p>
+      <p class="hint">Want it to keep updating on a schedule? Press <b>＋ Make recurring</b> at
+        the bottom of the card and this question becomes a scheduled insight.</p>
       <div class="row">
         <button id="nameSave" class="btn primary">Save</button>
         <button id="nameDelete" class="btn ghost danger">Delete card</button>
@@ -375,14 +414,6 @@
           <div id="usageMark"></div>
         </div>
         <div id="usageText" class="hint"></div>
-      </div>
-
-      <div id="setRemovedWrap" class="hidden">
-        <h4 class="sethead">Removed cards</h4>
-        <p class="hint">Built-in cards you removed with ✕. Their definitions ship with the add-on,
-          so they can come back any time — restoring one brings back an empty card you can
-          generate again (its past runs and feedback are gone for good).</p>
-        <div id="setRemoved" class="removedlist"></div>
       </div>
 
       <p class="hint">💡 Token-saving tips: each card's ✎ dialog can set fixed daily run times
@@ -509,6 +540,16 @@
         <p class="hint">Found during insight runs and study sessions. Each one is queued into
           the document at the next consolidation. Delete anything wrong and BRain is asked to
           drop it from the document too.</p>
+        <!-- Consolidation is normally daily (or early past 20 pending facts).
+             That is the right cadence for a background daemon and the wrong
+             one for someone who has just taught it something and wants to see
+             it land. Same pass, same checks — pressed by hand. -->
+        <div class="row kmemrow">
+          <button id="kConsolidate" class="btn small">⇪ File into memory now</button>
+          <span id="kPending" class="kpending"></span>
+        </div>
+        <p class="hint tight">Merges everything queued into the document below, deduping
+          and resolving contradictions. Takes a few seconds and costs a small Claude call.</p>
         <div id="kFacts" class="klist"></div>
 
       </div>
