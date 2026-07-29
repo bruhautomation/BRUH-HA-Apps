@@ -4,8 +4,7 @@
 
 ## Add-on affected
 
-- [ ] BRUH Terminal
-- [ ] BRUH Insights
+- [ ] BRain
 - [ ] BRUH Minecraft
 - [ ] Repo-wide (CI, docs, etc.)
 

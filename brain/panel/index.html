@@ -49,9 +49,12 @@
 
   <div class="spacer"></div>
 
-  <span id="authChip" class="chip"><span class="dot"></span><span id="authChipText">Checking…</span></span>
-  <button id="usageChip" class="chip clickable hidden"><span class="dot"></span><span id="usageChipText"></span></button>
-  <button id="pausedChip" class="chip clickable warn hidden"><span class="dot"></span><span id="pausedChipText"></span></button>
+  <!-- Status chips collapse to their dot (and, for usage, the number) on a
+       phone. The dot already carries the state; the words are what make the
+       bar wrap, and every chip keeps its full text in title/aria-label. -->
+  <span id="authChip" class="chip"><span class="dot"></span><span id="authChipText" class="chipwords">Checking…</span></span>
+  <button id="usageChip" class="chip clickable hidden"><span class="dot"></span><span id="usageChipPct"></span><span id="usageChipText" class="chipwords"></span></button>
+  <button id="pausedChip" class="chip clickable warn hidden"><span class="dot"></span><span id="pausedChipText" class="chipwords"></span></button>
 
   <button id="newInsight" class="btn icon hidden" data-tip="New insight">
     <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>

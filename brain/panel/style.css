@@ -790,9 +790,6 @@ body.modal-open {
 .hidden { display: none !important; }
 
 @media (max-width: 640px) {
-  /* wrap: the usage/paused chips flow to a second row instead of clipping */
-  .topbar { padding: 10px 12px; gap: 8px; flex-wrap: wrap; }
-  .brand span.txt { display: none; }
   .wrap { padding: 12px 12px 60px; }
   .grid { gap: 12px; }
 }
@@ -1172,6 +1169,14 @@ body.modal-open {
 
 .topbar .chip { height: 26px; font-size: 0.8rem; padding: 0 9px; }
 
+/* The usage chip is three parts — dot, number, sentence — so a phone can keep
+   the number and drop the sentence. Space them as if they were two, or the
+   flex gap lands between "19%" and "used" and detaches the number from the
+   words it belongs to. */
+#usageChip { gap: 0; }
+#usageChip .dot { margin-right: 7px; }
+#usageChipText { margin-left: 0.32em; }
+
 .view { display: none; }
 .view.active { display: block; }
 
@@ -1192,13 +1197,69 @@ body.modal-open {
 
 .docsnav { top: 60px; }
 
+/* The bar is one row at every width, deliberately: it never wraps, and
+   nothing in it is allowed to grow. What gives way as the screen narrows is
+   text, in the order we'd miss it least — tab labels, then the wordmark,
+   then the words inside the status chips. The dots and the usage number
+   survive to the end because they are the only parts that change. */
+.topbar { flex-wrap: nowrap; }
+
+/* Nothing in the bar may shrink; only the spacer flexes. A shrinking chip
+   compresses its own nowrap text and reads as a rendering glitch rather than
+   as "too narrow", so it fails silently and invisibly. Refusing to shrink
+   makes the fit binary — and makes overflow something a test can see. */
+.topbar > * { flex: none; }
+.topbar .spacer { flex: 1; min-width: 0; }
+
+/* The bar sheds text in three measured steps. The widths below are what the
+   content actually needs (measured, not guessed), so each step starts before
+   the previous layout runs out of room:
+
+     everything                          995px  →  shown at ≥1024
+     minus the chip sentences            708px  →  shown at ≥781
+     minus tab labels and the wordmark   378px  →  shown at ≥401
+     minus a bit more padding            310px  →  the floor
+
+   The previous single breakpoint at 780px was the bug: the full 995px layout
+   was still being asked to fit an 800px window, and the phone layout was
+   still carrying 775px of chip text. */
+
+@media (max-width: 1023px) {
+  /* "Claude · subscription" and "used · resets 8:00 AM" cost 287px between
+     them — more than the four tabs. The coloured dot already carries the auth
+     state and the usage chip keeps its number, which is the part anyone
+     actually reads; both keep the full sentence in title/aria-label. */
+  .topbar .chipwords { display: none; }
+  .topbar .chip { padding: 0 8px; gap: 5px; }
+}
+
 @media (max-width: 780px) {
   /* Labels go, icons stay — four tabs still fit on a phone. */
   .viewtab span:not(.badge) { display: none; }
-  .viewtab { padding: 0 10px; }
+  .viewtab { padding: 0 9px; }
   .topbar { padding: 0 8px; gap: 4px; }
   #viewTerminal.active { height: calc(100vh - 48px); margin: -12px -12px -14px; }
   .docsnav { position: static; }
+
+  /* Home Assistant's own panel header says "BRain" directly above this bar,
+     so the wordmark here is duplication a phone can't afford. */
+  .topbar .txt { display: none; }
+
+  .topbar .chip { padding: 0 7px; }
+  .topbar .chip:not(#usageChip) { padding: 0 6px; }
+  .btn.icon { width: 30px; height: 30px; }
+  .viewtabs { margin-left: 2px; }
+}
+
+@media (max-width: 400px) {
+  /* A 320–400px window is the last band where anything still fits. The
+     healthy auth chip goes: a green dot means "nothing to tell you", and on
+     the smallest screen that is the one thing worth trading for the tabs.
+     Trouble — checking, failed, not connected — still shows. */
+  #authChip.ok { display: none; }
+  .viewtab { padding: 0 6px; }
+  .btn.icon { width: 28px; height: 28px; }
+  .topbar { padding: 0 6px; gap: 3px; }
 }
 
 /* ----------------------------------------------------------- onboarding

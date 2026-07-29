@@ -109,13 +109,15 @@ function renderAuth() {
   if (!s.authenticated) {
     text.textContent = "Not connected";
     chip.classList.add("warn");
+    chip.title = "No Claude credential stored";
   } else if (s.auth_check.state === "checking") {
     text.textContent = "Verifying Claude…";
     chip.classList.add("busy");
+    chip.title = "Checking the stored credential";
   } else if (s.auth_check.state === "failed") {
     text.textContent = "Claude auth failed";
     chip.classList.add("bad");
-    chip.title = s.auth_check.error || "";
+    chip.title = s.auth_check.error || "Claude auth failed";
   } else if (s.auth_source === "shared") {
     text.textContent = "Claude · shared login";
     chip.classList.add("ok");
@@ -123,7 +125,10 @@ function renderAuth() {
   } else {
     text.textContent = s.auth_type === "api_key" ? "Claude · API key" : "Claude · subscription";
     chip.classList.add("ok");
+    chip.title = text.textContent;
   }
+  // The words are hidden on a phone, so the state has to survive without them.
+  chip.setAttribute("aria-label", text.textContent);
   // Three states, not two: not connected → connect; connected but never
   // onboarded → the first-run flow; onboarded → the dashboard.
   const ready = s.authenticated && obState.onboarded;
@@ -153,10 +158,10 @@ function renderUsageChip() {
     chip.classList.add("hidden");
     return;
   }
-  let label = `${Math.round(u.used_percent)}% used`;
+  // Split so a phone can keep the number and drop the sentence around it.
   const reset = u.resets_at ? fmtClock(u.resets_at) : "";
-  if (reset) label += ` · resets ${reset}`;
-  $("#usageChipText").textContent = label;
+  $("#usageChipPct").textContent = `${Math.round(u.used_percent)}%`;
+  $("#usageChipText").textContent = reset ? `used · resets ${reset}` : "used";
   chip.classList.toggle("ok", !u.blocked);
   chip.classList.toggle("warn", !!u.blocked);
   chip.title = (u.source === "account"
@@ -185,6 +190,7 @@ function renderPausedChip() {
     }
   }
   text.textContent = label;
+  if (label) chip.setAttribute("aria-label", label);
   chip.classList.toggle("hidden", !label);
 }
 

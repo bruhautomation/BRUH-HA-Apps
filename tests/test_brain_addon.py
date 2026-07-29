@@ -165,6 +165,82 @@ class TestPanelBranding(unittest.TestCase):
         self.assertEqual(self.html.count('id="kAddForm"'), 1)
 
 
+class TestTopbarFitsOneRow(unittest.TestCase):
+    """The bar is one 48px row at every width, and the way it stays one row
+    is by shedding text — never by wrapping.
+
+    It wrapped in 1.5.0 because a rule left over from the old two-bar chrome
+    still said `flex-wrap: wrap`, and because the single breakpoint at 780px
+    asked a 995px-wide layout to fit an 800px window. Both are cheap to
+    assert and expensive to notice by eye: the wrap only shows up on a phone,
+    which is not where anyone develops.
+
+    Pixel fitting itself is verified by rendering the bar in a browser; this
+    pins the structure that fitting depends on."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.html = (PANEL / "index.html").read_text()
+        cls.css = (PANEL / "style.css").read_text()
+        cls.js = (PANEL / "app.js").read_text()
+
+    def test_topbar_never_wraps(self):
+        """The regression itself. A wrapped bar pushes its second row outside
+        its own 48px box, which is what the screenshot showed."""
+        import re
+        for block in re.findall(r"\.topbar\s*\{[^}]*\}", self.css):
+            self.assertNotIn(
+                "flex-wrap: wrap", block,
+                "the topbar is fixed-height; wrapping overflows it",
+            )
+        self.assertIn("flex-wrap: nowrap", self.css)
+
+    def test_nothing_in_the_bar_may_shrink(self):
+        """A shrinking chip compresses its own nowrap text and reads as a
+        rendering glitch rather than as 'too narrow' — it fails invisibly."""
+        self.assertIn(".topbar > * { flex: none; }", self.css)
+
+    def test_chip_words_are_separable_from_their_dots(self):
+        """Collapsing a chip to its dot needs the words in their own element;
+        otherwise the only lever is rewriting the string in JS per width."""
+        self.assertIn('id="authChipText" class="chipwords"', self.html)
+        self.assertIn('id="pausedChipText" class="chipwords"', self.html)
+        self.assertIn(".topbar .chipwords { display: none; }", self.css)
+
+    def test_usage_chip_keeps_its_number_when_the_words_go(self):
+        """The percentage is the part that changes and the part anyone reads,
+        so it lives outside the collapsible span."""
+        self.assertIn('id="usageChipPct"', self.html)
+        self.assertIn('id="usageChipText" class="chipwords"', self.html)
+        self.assertIn(
+            '$("#usageChipPct").textContent = `${Math.round(u.used_percent)}%`',
+            self.js,
+        )
+        # The sentence must not carry the number, or hiding it hides the
+        # number too — which is the whole point of the split.
+        import re
+        words = re.search(r'\$\("#usageChipText"\)\.textContent = (.+);', self.js)
+        self.assertIsNotNone(words, "usage chip words are never set")
+        self.assertNotIn("used_percent", words.group(1))
+
+    def test_collapsed_chips_keep_their_meaning(self):
+        """With the words hidden, title/aria-label are the only thing left
+        carrying the state to a screen reader or a hover."""
+        self.assertIn('chip.setAttribute("aria-label"', self.js)
+
+    def test_the_bar_sheds_text_in_stages(self):
+        """One breakpoint could not work: the full bar needs 995px and the
+        phone bar 310px, so a single cut leaves one band badly overflowing."""
+        for width in ("max-width: 1023px", "max-width: 780px", "max-width: 400px"):
+            self.assertIn(f"@media ({width})", self.css)
+
+    def test_tab_labels_go_before_the_tabs_do(self):
+        """All four tabs survive to the narrowest band; only their labels go."""
+        self.assertIn(".viewtab span:not(.badge) { display: none; }", self.css)
+        for view in ("insights", "terminal", "memory", "docs"):
+            self.assertIn(f'data-view="{view}"', self.html)
+
+
 class TestHypothesisIdentity(unittest.TestCase):
     """ts doubles as the id the panel settles by."""
 
