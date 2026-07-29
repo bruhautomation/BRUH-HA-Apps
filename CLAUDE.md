@@ -4,11 +4,24 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 ## Project Overview
 
-This repository contains three Home Assistant add-ons by BRUH Automation:
+This repository contains Home Assistant add-ons by BRUH Automation:
 
-- **BRUH Terminal** (`bruh-claude-terminal/`) - an enhanced Claude Code terminal for Home Assistant with native HA API access, auto-backup, context generation, and deep HA integration. The primary add-on; its architecture is documented in detail below.
-- **BRUH Insights** (`bruh-insights/`) - an AI insights dashboard: Claude analyzes HA data (states, history, statistics) and generates interactive visualizations served through an Ingress panel (`bruh-insights/panel/`).
+- **BRain** (`brain/`) - **the primary add-on.** A Claude Code terminal, an AI insights dashboard, and one shared memory that learns the house over time, merged into a single add-on behind one ingress panel and one Claude login. Supersedes BRUH Terminal and BRUH Insights. Integration domain: `brain`.
 - **BRUH Minecraft** (`bruh-minecraft-server/`) - a Minecraft Java Edition server with an ingress management panel, git-based world version control, RCON, and a companion `bruh_minecraft` custom integration.
+
+Deprecated, retained until BRain replaces them outright:
+
+- **BRUH Terminal** (`bruh-claude-terminal/`) - the terminal half of BRain, as a standalone add-on. Its architecture is documented in detail below and still describes BRain's inherited internals.
+- **BRUH Insights** (`bruh-insights/`) - the dashboard half, as a standalone add-on (`bruh-insights/panel/`).
+
+### BRain specifics
+
+- One ingress port (8099, the panel). The panel reverse-proxies `/terminal/` through to ttyd on 7681 (`brain/panel/terminal_proxy.py`), so the terminal is a tab. The assist worker pool's internal API moved to **8098** to free 8099.
+- `enable_terminal` / `enable_insights` switch either face off; the panel always runs because it is the ingress target.
+- **No git auto-backup.** It was removed along with `auto_backup` / `backup_interval_minutes`. In its place, a `PreToolUse` hook (`scripts/brain-edit-snapshot.py`) snapshots files before Claude edits them, and `brain undo` restores them. Never touch a user's existing `/config/.git`.
+- **Two CLI dispatchers**, not fourteen scripts: `brain` (memory, learn, ask, undo, doctor) and `ha` (log, reload, entity, service, addon, notify, share, check, context). Both delegate to `/opt/scripts`. Adding a command = a script plus one dispatcher line.
+- **Memory**: `memory.md` is the only thing that is "memory". The inbox, the hypothesis queue, and the change log are queues and audit trails, and are never injected into prompts. Every writer goes through the inbox — nothing writes `memory.md` except the consolidator.
+- **Hypotheses replace open-ended questions**: capped at 3 open, 14-day expiry, answered ones become plain memory lines and the record is settled. Rejected ones become a capped dead-ends block.
 
 Shared brand sources live in `branding/` (Solid Blocks icon SVGs) and `brands/` (home-assistant/brands submission assets); cross-add-on tests live in `tests/`.
 

@@ -1,0 +1,253 @@
+#!/usr/bin/env bash
+
+# ha-addon — Manage Home Assistant add-ons via the Supervisor API
+# Usage:
+#   ha-addon list                    — List all installed add-ons
+#   ha-addon info <slug>             — Get add-on details
+#   ha-addon restart <slug>          — Restart an add-on
+#   ha-addon stop <slug>             — Stop an add-on
+#   ha-addon start <slug>            — Start an add-on
+#   ha-addon logs <slug>             — View add-on logs
+#   ha-addon options <slug>          — View add-on config options
+
+set -euo pipefail
+
+SUPERVISOR_TOKEN="${SUPERVISOR_TOKEN:-}"
+SUPERVISOR_API="http://supervisor"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+usage() {
+    cat << 'EOF'
+ha-addon — Manage Home Assistant add-ons
+
+Usage:
+  ha-addon list                    List all installed add-ons
+  ha-addon info <slug>             Get add-on details
+  ha-addon restart <slug>          Restart an add-on
+  ha-addon stop <slug>             Stop an add-on
+  ha-addon start <slug>            Start an add-on
+  ha-addon logs <slug>             View add-on logs
+  ha-addon options <slug>          View add-on config options
+
+Examples:
+  ha-addon list
+  ha-addon info core_mosquitto
+  ha-addon restart core_mosquitto
+  ha-addon logs core_mosquitto
+EOF
+    exit "${1:-0}"
+}
+
+check_token() {
+    if [ -z "$SUPERVISOR_TOKEN" ]; then
+        echo -e "${RED}Error: SUPERVISOR_TOKEN not set. Are you running inside the add-on?${NC}" >&2
+        exit 1
+    fi
+}
+
+# Align tab-separated columns. column(1) is not in the add-on image, so a
+# pipeline ending in `| column` dies with exit 127 after all the data work
+# succeeded — format with awk instead (busybox-compatible, no %-*s).
+format_table() {
+    awk -F'\t' '
+        {
+            lines[NR] = $0
+            for (i = 1; i <= NF; i++) if (length($i) > w[i]) w[i] = length($i)
+        }
+        END {
+            for (r = 1; r <= NR; r++) {
+                n = split(lines[r], f, "\t")
+                out = ""
+                for (i = 1; i < n; i++) out = out sprintf("%-" w[i] "s  ", f[i])
+                print out f[n]
+            }
+        }'
+}
+
+api_get() {
+    local endpoint="$1"
+    curl -s -X GET \
+        -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
+        -H "Content-Type: application/json" \
+        "${SUPERVISOR_API}${endpoint}" 2>/dev/null
+}
+
+api_post() {
+    local endpoint="$1"
+    curl -s -X POST \
+        -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
+        -H "Content-Type: application/json" \
+        "${SUPERVISOR_API}${endpoint}" 2>/dev/null
+}
+
+cmd_list() {
+    echo -e "${CYAN}Installed add-ons:${NC}"
+    local response
+    response=$(api_get "/addons") || true
+    if [ -z "$response" ]; then
+        echo -e "${RED}Failed to fetch add-on list (Supervisor API unreachable)${NC}" >&2
+        exit 1
+    fi
+
+    # Parse and format as separate steps so a failure is attributed to the
+    # stage that actually broke, not blamed on "parsing" wholesale.
+    local rows
+    if ! rows=$(echo "$response" | jq -r '
+        .data.addons[]? |
+        select(.installed == true or .state == "started" or .state == "stopped") |
+        "\(.slug)\t\(.name)\tv\(.version)\t[\(.state)]"
+    '); then
+        echo -e "${RED}Failed to parse add-on list: $(echo "$response" | head -c 200)${NC}" >&2
+        exit 1
+    fi
+    if [ -z "$rows" ]; then
+        echo -e "${YELLOW}No add-ons installed${NC}"
+    else
+        echo "$rows" | format_table
+    fi
+}
+
+# The Supervisor answers unknown slugs with HTTP 404 and a JSON error body —
+# curl -s still exits 0, so detect {"result":"error"} explicitly instead of
+# printing the error envelope as if it were data.
+check_supervisor_error() {
+    local response="$1"
+    if [ -z "$response" ]; then
+        echo -e "${RED}Failed: Supervisor API unreachable${NC}" >&2
+        exit 1
+    fi
+    if [ "$(echo "$response" | jq -r '.result // empty' 2>/dev/null)" = "error" ]; then
+        echo -e "${RED}Error: $(echo "$response" | jq -r '.message // "unknown error"' 2>/dev/null)${NC}" >&2
+        exit 1
+    fi
+}
+
+cmd_info() {
+    local slug="$1"
+    echo -e "${CYAN}Add-on info: ${slug}${NC}"
+    local response
+    response=$(api_get "/addons/${slug}/info")
+    check_supervisor_error "$response"
+    echo "$response" | jq -r '.data // .' 2>/dev/null || echo "$response"
+}
+
+cmd_restart() {
+    local slug="$1"
+    echo -e "${YELLOW}Are you sure you want to restart '${slug}'? [y/N]${NC}"
+    read -r confirm
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        echo "Cancelled."
+        return
+    fi
+    echo -e "${CYAN}Restarting ${slug}...${NC}"
+    local response
+    response=$(api_post "/addons/${slug}/restart")
+    local result
+    result=$(echo "$response" | jq -r '.result // "unknown"' 2>/dev/null)
+    if [ "$result" = "ok" ]; then
+        echo -e "${GREEN}Add-on '${slug}' restarted successfully${NC}"
+    else
+        echo -e "${RED}Failed to restart '${slug}': $(echo "$response" | jq -r '.message // "unknown error"' 2>/dev/null)${NC}" >&2
+        exit 1
+    fi
+}
+
+cmd_stop() {
+    local slug="$1"
+    echo -e "${YELLOW}Are you sure you want to stop '${slug}'? [y/N]${NC}"
+    read -r confirm
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        echo "Cancelled."
+        return
+    fi
+    echo -e "${CYAN}Stopping ${slug}...${NC}"
+    local response
+    response=$(api_post "/addons/${slug}/stop")
+    local result
+    result=$(echo "$response" | jq -r '.result // "unknown"' 2>/dev/null)
+    if [ "$result" = "ok" ]; then
+        echo -e "${GREEN}Add-on '${slug}' stopped${NC}"
+    else
+        echo -e "${RED}Failed to stop '${slug}': $(echo "$response" | jq -r '.message // "unknown error"' 2>/dev/null)${NC}" >&2
+        exit 1
+    fi
+}
+
+cmd_start() {
+    local slug="$1"
+    echo -e "${CYAN}Starting ${slug}...${NC}"
+    local response
+    response=$(api_post "/addons/${slug}/start")
+    local result
+    result=$(echo "$response" | jq -r '.result // "unknown"' 2>/dev/null)
+    if [ "$result" = "ok" ]; then
+        echo -e "${GREEN}Add-on '${slug}' started${NC}"
+    else
+        echo -e "${RED}Failed to start '${slug}': $(echo "$response" | jq -r '.message // "unknown error"' 2>/dev/null)${NC}" >&2
+        exit 1
+    fi
+}
+
+cmd_logs() {
+    local slug="$1"
+    echo -e "${CYAN}Logs for ${slug}:${NC}"
+    # curl -s exits 0 even on HTTP 404, so the old `|| echo Failed` never
+    # fired — check the status code instead.
+    local body_file http_code
+    body_file=$(mktemp)
+    http_code=$(curl -s -o "$body_file" -w "%{http_code}" -X GET \
+        -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
+        "${SUPERVISOR_API}/addons/${slug}/logs" 2>/dev/null) || http_code="000"
+    if [ "$http_code" = "200" ]; then
+        cat "$body_file"
+        rm -f "$body_file"
+    else
+        rm -f "$body_file"
+        echo -e "${RED}Failed to fetch logs for '${slug}' (HTTP ${http_code})${NC}" >&2
+        exit 1
+    fi
+}
+
+cmd_options() {
+    local slug="$1"
+    echo -e "${CYAN}Options for ${slug}:${NC}"
+    local response
+    response=$(api_get "/addons/${slug}/info")
+    check_supervisor_error "$response"
+    echo "$response" | jq -r '.data.options // {}' 2>/dev/null || echo "$response"
+}
+
+# Main
+[ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ] && usage
+[ $# -lt 1 ] && usage
+
+check_token
+
+action="${1}"
+shift
+
+case "$action" in
+    list)
+        cmd_list
+        ;;
+    info|restart|stop|start|logs|options)
+        if [ $# -lt 1 ]; then
+            echo -e "${RED}Error: '${action}' requires a <slug> argument${NC}" >&2
+            echo "Run 'ha-addon list' to see available slugs." >&2
+            exit 1
+        fi
+        "cmd_${action}" "$1"
+        ;;
+    --help|-h)
+        usage
+        ;;
+    *)
+        echo -e "${RED}Unknown action: ${action}${NC}" >&2
+        usage 1
+        ;;
+esac
