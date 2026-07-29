@@ -1,0 +1,138 @@
+---
+name: "BRain"
+description: "Your home's brain — a Claude Code terminal, an AI insights dashboard, and one shared memory that learns your house over time"
+version: "1.0.0"
+slug: "brain"
+init: false
+
+# Supported architectures
+arch:
+  - aarch64
+  - amd64
+
+# External resources
+url: "https://github.com/bruhautomation/BRUH-HA-Apps/tree/main/brain"
+
+# Web interface configuration.
+#
+# ONE ingress panel serves everything: the aiohttp panel on 8099 is the
+# ingress target, and it reverse-proxies /terminal/ through to ttyd on
+# 7681 (HTTP + WebSocket) so the terminal is a tab rather than a second
+# add-on. 7681 stays published for direct access when ingress is
+# inconvenient (a tablet kiosk, a bookmarked full-screen terminal).
+ingress: true
+ingress_port: 8099
+panel_icon: mdi:head-snowflake
+panel_title: "BRain"
+panel_admin: true
+
+ports:
+  7681/tcp: 7681
+ports_description:
+  7681/tcp: "Web terminal, direct access (not required for ingress)"
+
+# App configuration options.
+#
+# The insight options (refresh, history, model, timeout) are also editable
+# from the panel's Settings dialog; the panel writes changes back here
+# through the Supervisor, so both screens show the same value.
+options:
+  enable_terminal: true
+  enable_insights: true
+  auto_launch_claude: true
+  auto_generate_context: true
+  enable_ha_mcp_server: true
+  enable_assist_integration: true
+  enable_automation_integration: true
+  enable_mobile_ui: true
+  dangerously_skip_permissions: false
+  assist_fast_mode: true
+  assist_tool_access: mcp_only
+  assist_max_turns: 5
+  automation_max_turns: 10
+  learning: true
+  memory_injection: true
+  memory_max_kb: 8
+  edit_journal_days: 14
+  auto_refresh_hours: 24
+  history_days: 7
+  history_keep_runs: 40
+  history_keep_days: 30
+  model: ""
+  generation_timeout_minutes: 8
+  access_share: true
+  access_media: true
+  access_backup: true
+  access_addon_configs: true
+  access_addons: true
+  additional_directories: []
+  persistent_apk_packages: []
+  persistent_pip_packages: []
+  log_level: info
+schema:
+  enable_terminal: bool?
+  enable_insights: bool?
+  auto_launch_claude: bool?
+  auto_generate_context: bool?
+  enable_ha_mcp_server: bool?
+  enable_assist_integration: bool?
+  enable_automation_integration: bool?
+  enable_mobile_ui: bool?
+  dangerously_skip_permissions: bool?
+  assist_fast_mode: bool?
+  assist_tool_access: "list(mcp_only|full)?"
+  assist_max_turns: "int(1,20)?"
+  automation_max_turns: "int(1,50)?"
+  learning: bool?
+  memory_injection: bool?
+  memory_max_kb: "int(1,64)?"
+  edit_journal_days: "int(0,365)?"
+  auto_refresh_hours: "int(0,168)?"
+  history_days: "int(1,30)?"
+  history_keep_runs: "int(0,200)?"
+  history_keep_days: "int(0,365)?"
+  model: "str?"
+  generation_timeout_minutes: "int(2,30)?"
+  access_share: bool?
+  access_media: bool?
+  access_backup: bool?
+  access_addon_configs: bool?
+  access_addons: bool?
+  additional_directories:
+    - str
+  persistent_pip_packages:
+    - str
+  persistent_apk_packages:
+    - str
+  log_level: "list(trace|debug|info|notice|warning|error|fatal)?"
+
+# Volume mappings for file access. The Home Assistant config directory uses
+# the current `homeassistant_config` type (the legacy `config` alias is no
+# longer documented) with an explicit /config path so every script keeps its
+# long-standing mount point.
+map:
+  - type: homeassistant_config
+    read_only: false
+    path: /config
+  - share:rw
+  - media:rw
+  - backup:ro
+  - all_addon_configs:rw
+  - addons:rw
+
+# API access for Home Assistant integration
+hassio_api: true
+hassio_role: admin
+homeassistant_api: true
+auth_api: true
+
+# Auto-discovery: registers "brain" with the Supervisor so HA Core can
+# auto-discover and offer to set up the companion integration
+discovery:
+  - brain
+
+# Service startup configuration
+startup: services
+
+# Web UI access URL
+webui: http://[HOST]:[PORT:7681]/

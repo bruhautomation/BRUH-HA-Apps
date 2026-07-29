@@ -48,7 +48,9 @@ jobs:
             bruh-minecraft-server/config.yaml \
             bruh-minecraft-server/build.yaml \
             bruh-insights/config.yaml \
-            bruh-insights/build.yaml
+            bruh-insights/build.yaml \
+            brain/config.yaml \
+            brain/build.yaml
 
   shellcheck:
     name: Shellcheck
@@ -91,6 +93,18 @@ jobs:
           ignore_paths: >-
             bruh-insights/panel
 
+      - name: Run shellcheck (brain)
+        uses: ludeeus/action-shellcheck@master
+        env:
+          SHELLCHECK_OPTS: -s bash -e SC1091
+        with:
+          scandir: ./brain
+          severity: error
+          ignore_paths: >-
+            brain/ha-mcp-server
+            brain/custom_components
+            brain/panel
+
   hadolint:
     name: Dockerfile lint
     runs-on: ubuntu-latest
@@ -115,6 +129,12 @@ jobs:
           dockerfile: bruh-insights/Dockerfile
           failure-threshold: error
 
+      - name: Lint BRain Dockerfile
+        uses: hadolint/hadolint-action@v3.3.0
+        with:
+          dockerfile: brain/Dockerfile
+          failure-threshold: error
+
   manifest-versions:
     name: Manifest version consistency
     runs-on: ubuntu-latest
@@ -129,6 +149,17 @@ jobs:
           echo "HA integration: $manifest_version"
           if [ "$addon_version" != "$manifest_version" ]; then
             echo "::error::Claude Terminal add-on ($addon_version) and integration manifest ($manifest_version) versions disagree"
+            exit 1
+          fi
+
+      - name: Check BRain version parity
+        run: |
+          addon_version=$(grep -E '^version:' brain/config.yaml | head -1 | sed 's/.*"\([^"]*\)".*/\1/')
+          manifest_version=$(python3 -c 'import json; print(json.load(open("brain/custom_components/brain/manifest.json"))["version"])')
+          echo "add-on:         $addon_version"
+          echo "HA integration: $manifest_version"
+          if [ "$addon_version" != "$manifest_version" ]; then
+            echo "::error::BRain add-on ($addon_version) and integration manifest ($manifest_version) versions disagree"
             exit 1
           fi
 
@@ -157,6 +188,9 @@ jobs:
       - name: Check Insights changelog matches shipped version
         run: .github/scripts/check-changelog-version.sh bruh-insights
 
+      - name: Check BRain changelog matches shipped version
+        run: .github/scripts/check-changelog-version.sh brain
+
   version-bump:
     # On every PR that touches addon files, verify the version in
     # config.yaml has bumped vs. the base branch. HA only picks up new
@@ -180,3 +214,6 @@ jobs:
 
       - name: Verify Insights version bumped if files changed
         run: .github/scripts/check-version-bump.sh "origin/${{ github.base_ref }}" bruh-insights
+
+      - name: Verify BRain version bumped if files changed
+        run: .github/scripts/check-version-bump.sh "origin/${{ github.base_ref }}" brain

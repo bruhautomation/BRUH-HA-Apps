@@ -1,0 +1,1315 @@
+send_prompt:
+  name: Send prompt
+  description: Send a one-shot prompt to Claude and get a response.
+  fields:
+    prompt:
+      name: Prompt
+      description: The prompt text to send to Claude.
+      required: true
+      selector:
+        text:
+          multiline: true
+    model:
+      name: Model
+      description: Claude model override (default, sonnet, opus, haiku).
+      selector:
+        select:
+          options:
+          - default
+          - sonnet
+          - opus
+          - haiku
+    timeout:
+      name: Timeout
+      description: Maximum seconds to wait for a response (default 120).
+      selector:
+        number:
+          min: 10
+          max: 600
+          unit_of_measurement: seconds
+run_task:
+  name: Run task
+  description: Run a Claude task with optional completion notification.
+  fields:
+    prompt:
+      name: Prompt
+      description: The task prompt for Claude.
+      required: true
+      selector:
+        text:
+          multiline: true
+    model:
+      name: Model
+      description: Claude model override (default, sonnet, opus, haiku).
+      selector:
+        select:
+          options:
+          - default
+          - sonnet
+          - opus
+          - haiku
+    notify:
+      name: Notify on completion
+      description: Send a persistent notification when the task completes.
+      default: false
+      selector:
+        boolean: null
+    notify_entity:
+      name: Notification entity
+      description: The notify entity to use (e.g. notify.mobile_app_phone).
+      selector:
+        text: null
+    timeout:
+      name: Timeout
+      description: Maximum seconds to wait for the task to complete (default 120).
+      selector:
+        number:
+          min: 10
+          max: 600
+          unit_of_measurement: seconds
+clear_conversation:
+  name: Clear conversation
+  description: Clear a persistent Claude conversation session. This resets the conversation history
+    so the next message starts fresh. If no conversation_id is provided, ALL sessions are cleared.
+  fields:
+    conversation_id:
+      name: Conversation ID
+      description: The conversation ID to clear. Leave empty to clear all sessions.
+      selector:
+        text: null
+run_insight:
+  name: Run insight job
+  description: Run a configured insight job now (refreshes its sensor and markdown). Leave name empty
+    to run all insight jobs.
+  fields:
+    name:
+      name: Job name
+      description: The insight job's name (the config entry title). Empty runs every job.
+      selector:
+        text: null
+add_memory:
+  name: Add memory fact
+  description: Queue a durable fact about your home for Claude's long-term memory (merged into /config/.brain/memory/memory.md
+    by the consolidator).
+  fields:
+    fact:
+      name: Fact
+      description: The fact to remember, e.g. "We call the office lamp 'the beacon'".
+      required: true
+      selector:
+        text:
+          multiline: true
+    source:
+      name: Source
+      description: Where this fact came from (defaults to "service").
+      selector:
+        text: null
+    confidence:
+      name: Confidence
+      description: How certain the fact is (defaults to medium).
+      selector:
+        select:
+          options:
+          - high
+          - medium
+          - low
+answer_question:
+  name: Answer memory question
+  description: Answer an open question from Claude's memory system. The answer is recorded and also
+    queued as a memory fact.
+  fields:
+    question:
+      name: Question
+      description: The open question being answered (as shown by brain memory hypotheses).
+      required: true
+      selector:
+        text:
+          multiline: true
+    answer:
+      name: Answer
+      description: Your answer.
+      required: true
+      selector:
+        text:
+          multiline: true
+    source:
+      name: Source
+      description: Where this answer came from (defaults to "service").
+      selector:
+        text: null
+create_area:
+  name: Create area
+  description: Create a new area. Returns the new area_id as response data.
+  fields:
+    name:
+      name: Name
+      description: Name of the new area.
+      selector:
+        text: {}
+      required: true
+      example: Guest Room
+    icon:
+      name: Icon
+      description: Icon for the area.
+      selector:
+        icon: {}
+      example: mdi:bed
+    aliases:
+      name: Aliases
+      description: Alternative names, used by voice assistants.
+      selector:
+        text:
+          multiple: true
+    floor_id:
+      name: Floor
+      description: Floor to place the area on.
+      selector:
+        floor: {}
+delete_area:
+  name: Delete area
+  description: Delete an area. Entities and devices in it are left unassigned. Set dry_run to preview
+    the devices/entities that would lose their assignment.
+  fields:
+    area_id:
+      name: Area
+      description: The area to delete.
+      selector:
+        area: {}
+      required: true
+    dry_run:
+      name: Dry run
+      description: When on, only report what would change — nothing is modified.
+      selector: &id001
+        boolean: {}
+      default: false
+rename_area:
+  name: Rename area
+  description: Rename an existing area.
+  fields:
+    area_id:
+      name: Area
+      description: The area to rename.
+      selector:
+        area: {}
+      required: true
+    name:
+      name: Name
+      description: The new name.
+      selector:
+        text: {}
+      required: true
+set_area_aliases:
+  name: Set area aliases
+  description: Replace the aliases of an area (used by voice assistants).
+  fields:
+    area_id:
+      name: Area
+      description: The area to update.
+      selector:
+        area: {}
+      required: true
+    aliases:
+      name: Aliases
+      description: The full new list of aliases.
+      selector:
+        text:
+          multiple: true
+      required: true
+add_device_to_area:
+  name: Add device to area
+  description: Assign one or more devices to an area.
+  fields:
+    area_id:
+      name: Area
+      description: The target area.
+      selector:
+        area: {}
+      required: true
+    device_id:
+      name: Devices
+      description: Devices to assign.
+      selector:
+        device:
+          multiple: true
+      required: true
+remove_device_from_area:
+  name: Remove device from area
+  description: Remove one or more devices from whatever area they are in.
+  fields:
+    device_id:
+      name: Devices
+      description: Devices to unassign.
+      selector:
+        device:
+          multiple: true
+      required: true
+add_entity_to_area:
+  name: Add entity to area
+  description: Assign one or more entities to an area (overrides the device's area).
+  fields:
+    area_id:
+      name: Area
+      description: The target area.
+      selector:
+        area: {}
+      required: true
+    entity_id:
+      name: Entities
+      description: Entities to assign.
+      selector:
+        entity:
+          multiple: true
+      required: true
+remove_entity_from_area:
+  name: Remove entity from area
+  description: Remove one or more entities from whatever area they are in.
+  fields:
+    entity_id:
+      name: Entities
+      description: Entities to unassign.
+      selector:
+        entity:
+          multiple: true
+      required: true
+create_floor:
+  name: Create floor
+  description: Create a new floor. Returns the new floor_id as response data.
+  fields:
+    name:
+      name: Name
+      description: Name of the new floor.
+      selector:
+        text: {}
+      required: true
+      example: Upstairs
+    icon:
+      name: Icon
+      description: Icon for the floor.
+      selector:
+        icon: {}
+      example: mdi:home-floor-2
+    level:
+      name: Level
+      description: Level number (0 = ground floor).
+      selector:
+        number:
+          min: -10
+          max: 20
+          mode: box
+    aliases:
+      name: Aliases
+      description: Alternative names, used by voice assistants.
+      selector:
+        text:
+          multiple: true
+delete_floor:
+  name: Delete floor
+  description: Delete a floor. Areas on it are left without a floor. Set dry_run to preview the areas
+    that would lose the floor.
+  fields:
+    floor_id:
+      name: Floor
+      description: The floor to delete.
+      selector:
+        floor: {}
+      required: true
+    dry_run:
+      name: Dry run
+      description: When on, only report what would change — nothing is modified.
+      selector: *id001
+      default: false
+rename_floor:
+  name: Rename floor
+  description: Rename an existing floor.
+  fields:
+    floor_id:
+      name: Floor
+      description: The floor to rename.
+      selector:
+        floor: {}
+      required: true
+    name:
+      name: Name
+      description: The new name.
+      selector:
+        text: {}
+      required: true
+add_area_to_floor:
+  name: Add area to floor
+  description: Place one or more areas on a floor.
+  fields:
+    floor_id:
+      name: Floor
+      description: The target floor.
+      selector:
+        floor: {}
+      required: true
+    area_id:
+      name: Areas
+      description: Areas to place on the floor.
+      selector:
+        area:
+          multiple: true
+      required: true
+remove_area_from_floor:
+  name: Remove area from floor
+  description: Remove one or more areas from whatever floor they are on.
+  fields:
+    area_id:
+      name: Areas
+      description: Areas to remove from their floor.
+      selector:
+        area:
+          multiple: true
+      required: true
+create_label:
+  name: Create label
+  description: Create a new label. Returns the new label_id as response data.
+  fields:
+    name:
+      name: Name
+      description: Name of the new label.
+      selector:
+        text: {}
+      required: true
+      example: Battery powered
+    icon:
+      name: Icon
+      description: Icon for the label.
+      selector:
+        icon: {}
+      example: mdi:battery
+    color:
+      name: Color
+      description: 'Label color: a theme color name (e.g. red, blue, amber) or hex code.'
+      selector:
+        text: {}
+      example: amber
+    description:
+      name: Description
+      description: What this label is for.
+      selector:
+        text:
+          multiline: true
+delete_label:
+  name: Delete label
+  description: Delete a label. It is removed from everything it was applied to. Set dry_run to preview
+    everything currently carrying the label.
+  fields:
+    label_id:
+      name: Label
+      description: The label to delete.
+      selector:
+        label: {}
+      required: true
+    dry_run:
+      name: Dry run
+      description: When on, only report what would change — nothing is modified.
+      selector: *id001
+      default: false
+add_label:
+  name: Add label
+  description: Apply one or more labels to entities, devices, and/or areas. At least one target is
+    required.
+  fields:
+    label_id:
+      name: Labels
+      description: Labels to apply.
+      selector:
+        label:
+          multiple: true
+      required: true
+    entity_id:
+      name: Entities
+      description: Entities to label.
+      selector:
+        entity:
+          multiple: true
+    device_id:
+      name: Devices
+      description: Devices to label.
+      selector:
+        device:
+          multiple: true
+    area_id:
+      name: Areas
+      description: Areas to label.
+      selector:
+        area:
+          multiple: true
+remove_label:
+  name: Remove label
+  description: Remove one or more labels from entities, devices, and/or areas. At least one target
+    is required.
+  fields:
+    label_id:
+      name: Labels
+      description: Labels to remove.
+      selector:
+        label:
+          multiple: true
+      required: true
+    entity_id:
+      name: Entities
+      description: Entities to unlabel.
+      selector:
+        entity:
+          multiple: true
+    device_id:
+      name: Devices
+      description: Devices to unlabel.
+      selector:
+        device:
+          multiple: true
+    area_id:
+      name: Areas
+      description: Areas to unlabel.
+      selector:
+        area:
+          multiple: true
+rename_entity:
+  name: Rename entity
+  description: Set the friendly name override of one or more entities.
+  fields:
+    entity_id:
+      name: Entities
+      description: Entities to rename.
+      selector:
+        entity:
+          multiple: true
+      required: true
+    name:
+      name: Name
+      description: The new friendly name.
+      selector:
+        text: {}
+      required: true
+change_entity_id:
+  name: Change entity ID
+  description: Change an entity's ID (e.g. light.shelly_abc123 to light.kitchen_ceiling). Automations
+    and dashboards referencing the old ID must be updated separately. The response lists automations/scripts/scenes
+    that reference the old id; set dry_run to preview without renaming.
+  fields:
+    entity_id:
+      name: Entity
+      description: The current entity ID.
+      selector:
+        entity: {}
+      required: true
+    new_entity_id:
+      name: New entity ID
+      description: The new entity ID, same domain.
+      selector:
+        text: {}
+      required: true
+      example: light.kitchen_ceiling
+    dry_run:
+      name: Dry run
+      description: When on, only report what would change — nothing is modified.
+      selector: *id001
+      default: false
+enable_entity:
+  name: Enable entity
+  description: Enable one or more disabled entities. Takes effect after the owning integration reloads.
+  fields:
+    entity_id:
+      name: Entities
+      description: Entities to enable.
+      selector:
+        entity:
+          multiple: true
+      required: true
+disable_entity:
+  name: Disable entity
+  description: Disable one or more entities. They stop updating and are removed from the UI.
+  fields:
+    entity_id:
+      name: Entities
+      description: Entities to disable.
+      selector:
+        entity:
+          multiple: true
+      required: true
+hide_entity:
+  name: Hide entity
+  description: Hide one or more entities from auto-generated dashboards and voice assistants. They
+    keep working.
+  fields:
+    entity_id:
+      name: Entities
+      description: Entities to hide.
+      selector:
+        entity:
+          multiple: true
+      required: true
+unhide_entity:
+  name: Unhide entity
+  description: Unhide one or more hidden entities.
+  fields:
+    entity_id:
+      name: Entities
+      description: Entities to unhide.
+      selector:
+        entity:
+          multiple: true
+      required: true
+delete_orphaned_entities:
+  name: Delete orphaned entities
+  description: Remove registry entries for entities whose integration no longer provides them (state
+    shows as 'restored'). Runs as a dry run by default and returns the list of affected entities
+    as response data.
+  fields:
+    dry_run:
+      name: Dry run
+      description: When on (default), only report what would be removed.
+      selector:
+        boolean: {}
+      default: true
+    entity_id:
+      name: Entities
+      description: Restrict the cleanup to these entities. Each one is re-verified as orphaned; anything
+        still provided by an integration is skipped and reported, never deleted. Omit to target every
+        orphaned entity.
+      selector:
+        entity:
+          multiple: true
+rename_device:
+  name: Rename device
+  description: Set the user-facing name of a device.
+  fields:
+    device_id:
+      name: Device
+      description: The device to rename.
+      selector:
+        device: {}
+      required: true
+    name:
+      name: Name
+      description: The new name.
+      selector:
+        text: {}
+      required: true
+enable_device:
+  name: Enable device
+  description: Enable one or more disabled devices (including their parent hub devices if those were
+    disabled).
+  fields:
+    device_id:
+      name: Devices
+      description: Devices to enable.
+      selector:
+        device:
+          multiple: true
+      required: true
+disable_device:
+  name: Disable device
+  description: Disable one or more devices and all their entities. A parent hub device is also disabled
+    once none of its children remain enabled.
+  fields:
+    device_id:
+      name: Devices
+      description: Devices to disable.
+      selector:
+        device:
+          multiple: true
+      required: true
+enable_integration:
+  name: Enable integration
+  description: Enable one or more disabled integration config entries.
+  fields:
+    config_entry_id:
+      name: Integration
+      description: The config entry to enable.
+      selector:
+        config_entry: {}
+      required: true
+disable_integration:
+  name: Disable integration
+  description: Disable one or more integration config entries and everything they provide. Set dry_run
+    to preview the affected entries and entity counts.
+  fields:
+    config_entry_id:
+      name: Integration
+      description: The config entry to disable.
+      selector:
+        config_entry: {}
+      required: true
+    dry_run:
+      name: Dry run
+      description: When on, only report what would change — nothing is modified.
+      selector: *id001
+      default: false
+reload_integration:
+  name: Reload integration
+  description: Reload one or more integration config entries — like pressing Reload on the integration
+    page.
+  fields:
+    config_entry_id:
+      name: Integration
+      description: The config entry to reload.
+      selector:
+        config_entry: {}
+      required: true
+create_zone:
+  name: Create zone
+  description: Create a new zone for location tracking.
+  fields:
+    name:
+      name: Name
+      description: Name of the new zone.
+      selector:
+        text: {}
+      required: true
+      example: Gym
+    latitude:
+      name: Latitude
+      description: Latitude of the zone center.
+      selector:
+        number:
+          min: -90
+          max: 90
+          step: any
+          mode: box
+      required: true
+    longitude:
+      name: Longitude
+      description: Longitude of the zone center.
+      selector:
+        number:
+          min: -180
+          max: 180
+          step: any
+          mode: box
+      required: true
+    radius:
+      name: Radius
+      description: Radius of the zone in meters (default 100).
+      selector:
+        number:
+          min: 10
+          max: 10000
+          unit_of_measurement: m
+          mode: box
+    icon:
+      name: Icon
+      description: Icon for the zone.
+      selector:
+        icon: {}
+      example: mdi:dumbbell
+    passive:
+      name: Passive
+      description: Passive zones are only used for automations, not shown on the map.
+      selector:
+        boolean: {}
+delete_zone:
+  name: Delete zone
+  description: Delete one or more UI-created zones. Set dry_run to preview the zones that would be
+    deleted.
+  fields:
+    entity_id:
+      name: Zones
+      description: Zone entities to delete.
+      selector:
+        entity:
+          multiple: true
+          filter:
+            domain: zone
+      required: true
+    dry_run:
+      name: Dry run
+      description: When on, only report what would change — nothing is modified.
+      selector: *id001
+      default: false
+add_device_tracker_to_person:
+  name: Add device tracker to person
+  description: Attach one or more device trackers to a person for presence detection.
+  fields:
+    entity_id:
+      name: Person
+      description: The person entity.
+      selector:
+        entity:
+          filter:
+            domain: person
+      required: true
+    device_tracker:
+      name: Device trackers
+      description: Device trackers to attach.
+      selector:
+        entity:
+          multiple: true
+          filter:
+            domain: device_tracker
+      required: true
+remove_device_tracker_from_person:
+  name: Remove device tracker from person
+  description: Detach one or more device trackers from a person.
+  fields:
+    entity_id:
+      name: Person
+      description: The person entity.
+      selector:
+        entity:
+          filter:
+            domain: person
+      required: true
+    device_tracker:
+      name: Device trackers
+      description: Device trackers to detach.
+      selector:
+        entity:
+          multiple: true
+          filter:
+            domain: device_tracker
+      required: true
+create_repair_issue:
+  name: Create repair issue
+  description: Create a custom issue in Settings > System > Repairs — a persistent, dismissible way
+    to surface something that needs the user's attention. Returns the issue_id as response data.
+  fields:
+    title:
+      name: Title
+      description: Short title of the issue.
+      selector:
+        text: {}
+      required: true
+      example: 'Low battery: front door lock'
+    description:
+      name: Description
+      description: Full description shown when the issue is opened.
+      selector:
+        text:
+          multiline: true
+      required: true
+    severity:
+      name: Severity
+      description: How serious the issue is (default warning).
+      selector:
+        select:
+          options:
+          - critical
+          - error
+          - warning
+    persistent:
+      name: Persistent
+      description: Keep the issue across Home Assistant restarts.
+      selector:
+        boolean: {}
+    issue_id:
+      name: Issue ID
+      description: Optional stable ID so the issue can be removed or replaced later. Auto-generated
+        when omitted.
+      selector:
+        text: {}
+remove_repair_issue:
+  name: Remove repair issue
+  description: Remove a previously created repair issue by its issue ID.
+  fields:
+    issue_id:
+      name: Issue ID
+      description: The issue_id used (or returned) when the issue was created.
+      selector:
+        text: {}
+      required: true
+import_blueprint:
+  name: Import blueprint
+  description: Import an automation or script blueprint from a URL (Home Assistant community forum,
+    GitHub, or GitHub Gist). Returns the blueprint domain, name, and file path as response data.
+  fields:
+    url:
+      name: URL
+      description: The URL to import the blueprint from.
+      selector:
+        text: {}
+      required: true
+      example: https://community.home-assistant.io/t/motion-activated-light/123456
+import_statistics:
+  name: Import statistics
+  description: 'Import or backfill long-term statistics rows. Use an entity ID (sensor.gas_meter)
+    for recorder statistics, or an external ID (bruh:solar_forecast) for external statistics; the
+    source is derived automatically. Runs as a dry run by default: the response reports the affected
+    time range and existing rows that would be overwritten. Pass dry_run: false to actually import
+    — existing rows in the window are overwritten and cannot be restored without a recorder DB backup.'
+  fields:
+    statistic_id:
+      name: Statistic ID
+      description: Entity ID (sensor.gas_meter) or external ID (domain:object_id).
+      selector:
+        text: {}
+      required: true
+      example: sensor.gas_meter
+    has_mean:
+      name: Has mean
+      description: Whether the rows carry mean/min/max values (measurements).
+      selector: &id002
+        boolean: {}
+      required: true
+    has_sum:
+      name: Has sum
+      description: Whether the rows carry sum values (metered totals like energy).
+      selector: *id002
+      required: true
+    name:
+      name: Name
+      description: Display name for the statistic.
+      selector:
+        text: {}
+    unit_of_measurement:
+      name: Unit
+      description: Unit of measurement of the values.
+      selector:
+        text: {}
+      example: kWh
+    stats:
+      name: Rows
+      description: List of statistics rows. Each row needs a start timestamp (top of an hour) plus
+        mean/min/max and/or state/sum values.
+      selector:
+        object: {}
+      required: true
+    dry_run:
+      name: Dry run
+      description: When on (default), only report the affected window and existing rows — nothing
+        is written.
+      selector:
+        boolean: {}
+      default: true
+enable_user:
+  name: Enable user
+  description: Re-enable one or more disabled Home Assistant user accounts.
+  fields:
+    user_id:
+      name: User IDs
+      description: IDs of the users to enable.
+      selector:
+        text:
+          multiple: true
+      required: true
+disable_user:
+  name: Disable user
+  description: Disable one or more Home Assistant user accounts. Owner accounts and system-generated
+    users are protected and cannot be disabled.
+  fields:
+    user_id:
+      name: User IDs
+      description: IDs of the users to disable.
+      selector:
+        text:
+          multiple: true
+      required: true
+find_orphaned_references:
+  name: Find orphaned references
+  description: Scan every automation, script, and scene for references to entities Home Assistant
+    doesn't know (renamed, deleted, or typo'd). Returns the findings as response data; optionally
+    raises a repair issue listing them.
+  fields:
+    create_issue:
+      name: Create repair issue
+      description: Also surface the findings in Settings > System > Repairs.
+      selector:
+        boolean: {}
+      default: false
+update_dashboard:
+  name: Update dashboard
+  description: 'Replace a storage-mode dashboard''s configuration. The previous configuration is
+    automatically backed up first (last 20 kept per dashboard) and the backup name is returned as
+    response data, so any edit can be undone with restore_dashboard. YAML-mode dashboards are refused.
+    url_path is required — pass the literal "default" to target the default dashboard. Saving onto
+    a never-saved (auto-generated) dashboard requires take_control: true. Set view_index to replace
+    a single view instead of the whole config, and dry_run to preview the resolved target and change
+    summary without writing.'
+  fields:
+    config:
+      name: Configuration
+      description: The full dashboard configuration object including the complete views list — or,
+        when view_index is set, a single view object.
+      selector:
+        object: {}
+      required: true
+    url_path:
+      name: Dashboard
+      description: The dashboard's URL path (e.g. lovelace-lights), or the literal "default" for
+        the default dashboard.
+      selector:
+        text: {}
+      required: true
+      example: lovelace-lights
+    take_control:
+      name: Take control
+      description: Confirm saving onto a never-saved (auto-generated) dashboard, taking permanent
+        manual control of it.
+      selector:
+        boolean: {}
+      default: false
+    view_index:
+      name: View index
+      description: Replace only this view (0-based); config must then be a single view object.
+      selector:
+        number:
+          min: 0
+          max: 100
+          mode: box
+    dry_run:
+      name: Dry run
+      description: When on, only report what would change — nothing is modified.
+      selector: *id001
+      default: false
+restore_dashboard:
+  name: Restore dashboard
+  description: Restore a storage-mode dashboard from a backup made by update_dashboard. Restores
+    the most recent backup unless a specific backup name is given.
+  fields:
+    url_path:
+      name: Dashboard
+      description: The dashboard's URL path. Omit for the default dashboard.
+      selector:
+        text: {}
+      example: lovelace-lights
+    backup:
+      name: Backup
+      description: A specific backup file name from a previous update_dashboard response. Omit for
+        the most recent.
+      selector:
+        text: {}
+reset_dashboard_config:
+  name: Reset dashboard config
+  description: Delete a dashboard's STORED configuration (after backing it up), reverting it to auto-generated.
+    The sanctioned way to clear a dashboard config — never use raw lovelace/config websocket commands.
+    The dashboard itself stays registered; restore_dashboard brings the config back from the backup.
+  fields:
+    url_path:
+      name: Dashboard
+      description: The dashboard's URL path, or the literal "default" for the default dashboard.
+      selector:
+        text: {}
+      required: true
+      example: lovelace-lights
+    dry_run:
+      name: Dry run
+      description: When on, only report what would change — nothing is modified.
+      selector: *id001
+      default: false
+create_helper:
+  name: Create helper
+  description: 'Create a helper of any storage-backed type: input_boolean, input_number, input_select,
+    input_text, input_datetime, counter, timer, or schedule. Type-specific options pass through and
+    are validated by the helper''s own schema. Returns the new helper''s id and entity_id as response
+    data.'
+  fields:
+    helper_type:
+      name: Type
+      description: Which kind of helper to create.
+      selector:
+        select:
+          options:
+          - input_boolean
+          - input_number
+          - input_select
+          - input_text
+          - input_datetime
+          - counter
+          - timer
+          - schedule
+      required: true
+    name:
+      name: Name
+      description: Name of the new helper.
+      selector:
+        text: {}
+      required: true
+      example: Guest Mode
+    options:
+      name: Options
+      description: Type-specific options, e.g. min/max/step for input_number, options list for input_select,
+        duration for timer, has_date/has_time for input_datetime.
+      selector:
+        object: {}
+delete_helper:
+  name: Delete helper
+  description: Delete one or more UI-created helpers of any storage-backed type. Helpers defined
+    in YAML are refused with a clear error. Set dry_run to preview the helpers that would be deleted.
+  fields:
+    entity_id:
+      name: Helpers
+      description: Helper entities to delete.
+      selector:
+        entity:
+          multiple: true
+      required: true
+    dry_run:
+      name: Dry run
+      description: When on, only report what would change — nothing is modified.
+      selector: *id001
+      default: false
+update_zone:
+  name: Update zone
+  description: Move, resize, rename, or restyle an editable zone. Only the fields you pass are changed.
+  fields:
+    entity_id:
+      name: Zone
+      description: The zone to update.
+      selector:
+        entity:
+          filter:
+            domain: zone
+      required: true
+    name:
+      name: Name
+      description: New name.
+      selector:
+        text: {}
+    latitude:
+      name: Latitude
+      description: New latitude of the zone center.
+      selector:
+        number:
+          min: -90
+          max: 90
+          step: any
+          mode: box
+    longitude:
+      name: Longitude
+      description: New longitude of the zone center.
+      selector:
+        number:
+          min: -180
+          max: 180
+          step: any
+          mode: box
+    radius:
+      name: Radius
+      description: New radius in meters.
+      selector:
+        number:
+          min: 10
+          max: 10000
+          unit_of_measurement: m
+          mode: box
+    icon:
+      name: Icon
+      description: New icon.
+      selector:
+        icon: {}
+    passive:
+      name: Passive
+      description: Passive zones are only used for automations.
+      selector:
+        boolean: {}
+set_entity_aliases:
+  name: Set entity aliases
+  description: Replace an entity's voice-assistant aliases — the alternative names Assist listens
+    for.
+  fields:
+    entity_id:
+      name: Entity
+      description: The entity to update.
+      selector:
+        entity: {}
+      required: true
+    aliases:
+      name: Aliases
+      description: The full new list of aliases.
+      selector:
+        text:
+          multiple: true
+      required: true
+      example: the beacon
+set_entity_icon:
+  name: Set entity icon
+  description: Set an icon override on one or more entities. Omit the icon to clear the override
+    and return to the default.
+  fields:
+    entity_id:
+      name: Entities
+      description: Entities to update.
+      selector:
+        entity:
+          multiple: true
+      required: true
+    icon:
+      name: Icon
+      description: The icon to set. Omit to clear the override.
+      selector:
+        icon: {}
+      example: mdi:ceiling-fan
+create_dashboard:
+  name: Create dashboard
+  description: Create a new storage-mode dashboard. The URL path must contain a hyphen (e.g. lovelace-lights).
+    Returns the new dashboard's url_path and id as response data.
+  fields:
+    url_path:
+      name: URL path
+      description: URL path for the dashboard; must contain a hyphen.
+      selector:
+        text: {}
+      required: true
+      example: lovelace-lights
+    title:
+      name: Title
+      description: Sidebar title.
+      selector:
+        text: {}
+      required: true
+      example: Lights
+    icon:
+      name: Icon
+      description: Sidebar icon.
+      selector:
+        icon: {}
+      example: mdi:lightbulb-group
+    show_in_sidebar:
+      name: Show in sidebar
+      description: Show the dashboard in the sidebar (default on).
+      selector:
+        boolean: {}
+      default: true
+    require_admin:
+      name: Admin only
+      description: Only admins can see this dashboard.
+      selector:
+        boolean: {}
+      default: false
+delete_dashboard:
+  name: Delete dashboard
+  description: Delete a storage-mode dashboard. Its configuration is backed up first (same backup
+    store as update_dashboard) and the backup name is returned as response data, so a deletion can
+    be recovered by recreating the dashboard and restoring. Set dry_run to preview the dashboard
+    and whether a backup would be created.
+  fields:
+    url_path:
+      name: Dashboard
+      description: The dashboard's URL path.
+      selector:
+        text: {}
+      required: true
+      example: lovelace-lights
+    dry_run:
+      name: Dry run
+      description: When on, only report what would change — nothing is modified.
+      selector: *id001
+      default: false
+add_dashboard_resource:
+  name: Add dashboard resource
+  description: Register a dashboard resource — the JavaScript module or stylesheet of a custom card
+    (e.g. /hacsfiles/... or /local/...). Returns the resource id as response data. Duplicate URLs
+    are refused.
+  fields:
+    url:
+      name: URL
+      description: Resource URL.
+      selector:
+        text: {}
+      required: true
+      example: /local/mushroom.js
+    res_type:
+      name: Type
+      description: Resource type (default module).
+      selector:
+        select:
+          options:
+          - module
+          - css
+          - js
+          - html
+      default: module
+remove_dashboard_resource:
+  name: Remove dashboard resource
+  description: Remove a registered dashboard resource by its URL.
+  fields:
+    url:
+      name: URL
+      description: The URL of the resource to remove.
+      selector:
+        text: {}
+      required: true
+      example: /local/mushroom.js
+create_person:
+  name: Create person
+  description: Create a person, optionally linked to a Home Assistant user and with initial device
+    trackers. Returns the person's id as response data.
+  fields:
+    name:
+      name: Name
+      description: The person's name.
+      selector:
+        text: {}
+      required: true
+      example: Alex
+    user_id:
+      name: User
+      description: Home Assistant user to link (from get_registry users).
+      selector:
+        text: {}
+    device_tracker:
+      name: Device trackers
+      description: Initial device trackers for presence.
+      selector:
+        entity:
+          multiple: true
+          filter:
+            domain: device_tracker
+delete_person:
+  name: Delete person
+  description: Delete a UI-created person. YAML-defined persons are refused. Set dry_run to preview
+    the person and their device trackers.
+  fields:
+    entity_id:
+      name: Person
+      description: The person entity to delete.
+      selector:
+        entity:
+          filter:
+            domain: person
+      required: true
+    dry_run:
+      name: Dry run
+      description: When on, only report what would change — nothing is modified.
+      selector: *id001
+      default: false
+create_user:
+  name: Create user
+  description: Create a Home Assistant user account, optionally with a local username/password login
+    (they must be provided together; password minimum 8 characters). Returns the new user_id as response
+    data.
+  fields:
+    name:
+      name: Name
+      description: Display name of the new user.
+      selector:
+        text: {}
+      required: true
+      example: Babysitter
+    username:
+      name: Username
+      description: Login username. Requires password.
+      selector:
+        text: {}
+    password:
+      name: Password
+      description: Login password (min 8 characters). Requires username.
+      selector:
+        text: {}
+    admin:
+      name: Administrator
+      description: Give the user admin rights (default off).
+      selector:
+        boolean: {}
+      default: false
+delete_user:
+  name: Delete user
+  description: Delete one or more Home Assistant user accounts and their credentials. Owner accounts
+    and system-generated users are protected and cannot be deleted. Set dry_run to preview the accounts
+    that would be deleted.
+  fields:
+    user_id:
+      name: User IDs
+      description: IDs of the users to delete.
+      selector:
+        text:
+          multiple: true
+      required: true
+    dry_run:
+      name: Dry run
+      description: When on, only report what would change — nothing is modified.
+      selector: *id001
+      default: false
