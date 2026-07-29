@@ -33,12 +33,18 @@ Three ways in, in order of least effort:
 
 Whichever you use, one sign-in covers the terminal, insights, voice, and memory.
 
-## 2. Let it look around
+## 2. Let it learn your home
 
-Insight cards generate on their own schedule, but you don't have to wait:
+There are no cards yet, and that's deliberate. BRain studies your house first — how it's
+named, when it's occupied, what it uses, how its devices behave — and only then proposes
+cards. A generic "Energy" card about a home it has never looked at says nothing useful.
 
-- Press **↻ Refresh all** to generate everything now, or **Generate** on a single card.
-- Ask a question in the ask bar — you get a card back, and can make it recurring.
+Press **Start learning**. It takes a few minutes and runs in the background, so you can
+close the tab. When it's done you get a handful of suggestions specific to your home, and
+you pick which to keep.
+
+If your home is too new or too sparse to learn much from, BRain says so rather than
+inventing generic cards. Add more entities, let some history build up, and try again.
 
 ## 3. Teach it something
 
@@ -67,8 +73,8 @@ about your home and controls it, using the same memory.
 
 Claude analyses your Home Assistant data and writes interactive cards.
 
-- **Nine built-in categories** — Overview, Energy, Climate, Lighting, Security, Presence,
-  Media, Device Health, Automations.
+- **Cards chosen for your home.** A fresh install ships **none**. BRain studies the house
+  first, then proposes cards grounded in what it actually found — you pick which to keep.
 - **Ask anything** — a free-form question becomes a one-off card. Turn it into a
   recurring one with **＋ New insight**.
 - **Feedback** — 💬 on any card tells Claude what to do differently next time

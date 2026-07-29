@@ -2,6 +2,27 @@
 
 All notable changes to **BRain**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.5.0
+
+### No default cards — it learns your home first
+
+BRain used to ship nine cards (Overview, Energy, Climate, Lighting, Security, Presence,
+Media, Device Health, Automations), all enabled from the moment you installed it. They
+generated before BRain knew anything about the house, so they said generic things about a
+home it had never looked at — and cost tokens doing it, on every schedule, forever.
+
+**A fresh install now has no cards at all.** The first run studies the home — naming,
+occupancy, energy, climate, device reliability — and only then proposes cards grounded in
+what it actually found, each with a one-line reason citing the evidence. You pick which to
+keep. Nothing generates, and the scheduler stays idle, until you do.
+
+**There is no canned fallback.** If the home is too sparse to learn from, BRain says what's
+missing and stops. Generic cards about a house it can't read would be noise on every run,
+and would teach you to ignore the dashboard.
+
+The flow is resumable — close the panel mid-study and come back — and re-running it never
+re-studies a topic it already covered, because a study session is expensive.
+
 ## 1.4.1
 
 ### Fixed

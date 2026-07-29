@@ -27,9 +27,11 @@ sys.path.insert(0, str(PANEL_DIR))
 import categories  # noqa: E402
 import engine  # noqa: E402
 import hypotheses  # noqa: E402
+import onboarding  # noqa: E402
 import feedback_store  # noqa: E402
 import knowledge_store  # noqa: E402
 import prompt_store  # noqa: E402
+import settings_store  # noqa: E402
 import user_categories  # noqa: E402
 
 
@@ -39,6 +41,12 @@ class KnowledgeStoreCase(unittest.TestCase):
         self._old = knowledge_store.KNOWLEDGE_FILE
         knowledge_store.KNOWLEDGE_FILE = os.path.join(self.tmp.name, "knowledge.json")
         hypotheses.HYPOTHESES_FILE = Path(self.tmp.name) / "hypotheses.jsonl"
+        # These exercise a home that has finished onboarding. A fresh
+        # install deliberately has NO cards, so without this every
+        # category-facing test would see an empty dashboard.
+        settings_store.SETTINGS_FILE = os.path.join(self.tmp.name, "settings.json")
+        onboarding.STATE_FILE = Path(self.tmp.name) / "onboarding.json"
+        settings_store.save({"onboarded": True})
 
     def tearDown(self):
         knowledge_store.KNOWLEDGE_FILE = self._old
@@ -335,6 +343,12 @@ class InsightsServerCase(unittest.TestCase):
         self.server.CARD_TOKEN_FILE = Path(self.tmp.name) / "secrets" / "card_token"
         knowledge_store.KNOWLEDGE_FILE = os.path.join(self.tmp.name, "knowledge.json")
         hypotheses.HYPOTHESES_FILE = Path(self.tmp.name) / "hypotheses.jsonl"
+        # These exercise a home that has finished onboarding. A fresh
+        # install deliberately has NO cards, so without this every
+        # category-facing test would see an empty dashboard.
+        settings_store.SETTINGS_FILE = os.path.join(self.tmp.name, "settings.json")
+        onboarding.STATE_FILE = Path(self.tmp.name) / "onboarding.json"
+        settings_store.save({"onboarded": True})
         self.server.SHARED_MEMORY_FILE = Path(self.tmp.name) / "memory.md"
         self._old_www = self.server.WWW_CARD_DIR
         self.server.WWW_CARD_DIR = Path(self.tmp.name) / "www" / "bruh_insights"

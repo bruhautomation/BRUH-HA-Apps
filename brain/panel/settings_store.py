@@ -84,6 +84,8 @@ def load() -> dict:
         return out
     if not isinstance(data, dict):
         return out
+    if isinstance(data.get("onboarded"), bool):
+        out["onboarded"] = data["onboarded"]
     if isinstance(data.get("auto_enabled"), bool):
         out["auto_enabled"] = data["auto_enabled"]
     if data.get("plan") in PLANS:
@@ -153,7 +155,13 @@ def save(fields: dict) -> dict:
     """
     clean: dict = {}
     for key, value in fields.items():
-        if key == "auto_enabled":
+        if key == "onboarded":
+            # Set by the first-run flow, not by the Settings dialog. It
+            # gates whether this home has any cards at all.
+            if not isinstance(value, bool):
+                raise ValueError("onboarded must be a boolean")
+            clean[key] = value
+        elif key == "auto_enabled":
             if not isinstance(value, bool):
                 raise ValueError("auto_enabled must be a boolean")
             clean[key] = value

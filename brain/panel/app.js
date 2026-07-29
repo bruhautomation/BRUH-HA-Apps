@@ -124,10 +124,14 @@ function renderAuth() {
     text.textContent = s.auth_type === "api_key" ? "Claude · API key" : "Claude · subscription";
     chip.classList.add("ok");
   }
+  // Three states, not two: not connected → connect; connected but never
+  // onboarded → the first-run flow; onboarded → the dashboard.
+  const ready = s.authenticated && obState.onboarded;
   $("#setup").classList.toggle("hidden", s.authenticated);
-  $("#dash").classList.toggle("hidden", !s.authenticated);
-  $("#refreshAll").classList.toggle("hidden", !s.authenticated);
-  $("#newInsight").classList.toggle("hidden", !s.authenticated);
+  $("#onboard").classList.toggle("hidden", !s.authenticated || obState.onboarded);
+  $("#dash").classList.toggle("hidden", !ready);
+  $("#refreshAll").classList.toggle("hidden", !ready);
+  $("#newInsight").classList.toggle("hidden", !ready);
   $("#settingsBtn").classList.toggle("hidden", !s.authenticated);
   renderUsageChip();
   renderPausedChip();
@@ -1885,6 +1889,153 @@ $("#docsSearch").addEventListener("input", (ev) => {
   else renderDocsNav();
 });
 
+// ----------------------------------------------------------- onboarding
+// A fresh install has no cards. BRain studies the home first, then
+// proposes cards grounded in what it found — a generic card about a house
+// it has never looked at is noise on every run, so there is deliberately
+// no canned fallback.
+
+const obState = { onboarded: true, phase: "learning", learning: null,
+                  recommendations: [], sparse: false, missing: "",
+                  poll: null, busy: false };
+
+async function refreshOnboarding() {
+  try {
+    const data = await api("api/onboarding");
+    Object.assign(obState, data);
+  } catch (e) {
+    // Older panel against a newer add-on, or a transient error — treat as
+    // onboarded so the dashboard is never held hostage by this call.
+    obState.onboarded = true;
+  }
+  renderOnboarding();
+}
+
+function renderOnboarding() {
+  if (obState.onboarded) {
+    clearInterval(obState.poll);
+    obState.poll = null;
+    return;
+  }
+
+  const learning = obState.learning || { topics: [], done: [], complete: false };
+  const box = $("#obTopics");
+  box.textContent = "";
+  learning.topics.forEach((topic) => {
+    const done = learning.done.includes(topic);
+    const row = el("div", "obstep" + (done ? " done" : ""));
+    row.appendChild(el("span", "obtick", done ? "\u2713" : "\u00b7"));
+    row.appendChild(el("span", null, topic));
+    box.appendChild(row);
+  });
+
+  const ready = learning.complete && learning.memory_ready;
+  const chose = obState.phase === "choosing" && (obState.recommendations.length || obState.sparse);
+
+  $("#obLearn").classList.toggle("hidden", ready || chose);
+  $("#obRecommend").classList.toggle("hidden", !ready || chose);
+  $("#obChoose").classList.toggle("hidden", !chose || obState.sparse);
+  $("#obSparse").classList.toggle("hidden", !chose || !obState.sparse);
+
+  if (learning.complete && !learning.memory_ready) {
+    $("#obLearnHint").textContent =
+      "Studied everything — waiting for what it found to be filed into memory.";
+  }
+
+  if (obState.sparse) {
+    $("#obSparseText").textContent = obState.missing
+      || "There isn't enough here yet for BRain to suggest anything useful.";
+  }
+
+  const list = $("#obList");
+  list.textContent = "";
+  obState.recommendations.forEach((rec, i) => {
+    const row = el("label", "obcard");
+    const cb = el("input");
+    cb.type = "checkbox";
+    cb.checked = true;
+    cb.dataset.index = String(i);
+    row.appendChild(cb);
+    const body = el("div", "obcardbody");
+    body.appendChild(el("div", "obcardtitle", `${rec.icon || "\u2728"}  ${rec.title}`));
+    if (rec.why) body.appendChild(el("div", "obcardwhy", rec.why));
+    body.appendChild(el("div", "obcardfocus", rec.focus));
+    row.appendChild(body);
+    list.appendChild(row);
+  });
+}
+
+function obPoll() {
+  clearInterval(obState.poll);
+  // Studying takes minutes; a slow poll is plenty and keeps this cheap.
+  obState.poll = setInterval(refreshOnboarding, 15000);
+}
+
+async function obCall(route, body, btn) {
+  if (obState.busy) return null;
+  obState.busy = true;
+  if (btn) btn.disabled = true;
+  try {
+    return await api(route, body === undefined
+      ? { method: "POST" }
+      : { method: "POST", body: JSON.stringify(body) });
+  } catch (e) {
+    toast(e.message);
+    return null;
+  } finally {
+    obState.busy = false;
+    if (btn) btn.disabled = false;
+  }
+}
+
+$("#obStart").addEventListener("click", async (ev) => {
+  const res = await obCall("api/onboarding/learn", undefined, ev.target);
+  if (!res) return;
+  toast(res.queued.length
+    ? `Studying ${res.queued.length} topic(s) — this runs in the background`
+    : "Already studied — checking what it found");
+  await refreshOnboarding();
+  obPoll();
+});
+
+$("#obGo").addEventListener("click", async (ev) => {
+  ev.target.textContent = "Thinking\u2026";
+  const res = await obCall("api/onboarding/recommend", undefined, ev.target);
+  ev.target.textContent = "See what it suggests";
+  if (!res) return;
+  Object.assign(obState, res, { phase: "choosing" });
+  renderOnboarding();
+});
+
+$("#obAccept").addEventListener("click", async (ev) => {
+  const picked = Array.from($("#obList").querySelectorAll("input:checked"))
+    .map((cb) => Number(cb.dataset.index));
+  const res = await obCall("api/onboarding/accept", { accept: picked }, ev.target);
+  if (!res) return;
+  obState.onboarded = true;
+  toast(picked.length ? `Created ${picked.length} card(s)` : "Done — no cards created");
+  await Promise.all([refreshStatus(), refreshInsights()]);
+  render();
+});
+
+const obFinish = async (ev) => {
+  const res = await obCall("api/onboarding/skip", undefined, ev.target);
+  if (!res) return;
+  obState.onboarded = true;
+  await Promise.all([refreshStatus(), refreshInsights()]);
+  render();
+};
+$("#obSkip").addEventListener("click", obFinish);
+$("#obSkip2").addEventListener("click", obFinish);
+$("#obNone").addEventListener("click", obFinish);
+
+$("#obRetry").addEventListener("click", async (ev) => {
+  obState.sparse = false;
+  obState.phase = "learning";
+  renderOnboarding();
+  await refreshOnboarding();
+});
+
 // ---------------------------------------------------------------- views
 // Insights / Terminal / Memory. The Memory pane reuses the knowledge
 // dialog's markup verbatim — it is relocated out of the modal at startup
@@ -2084,6 +2235,7 @@ document.addEventListener("visibilitychange", () => {
   } catch (e) {
     toast("Could not reach the add-on: " + e.message);
   }
+  await refreshOnboarding();
   render();
   fastPoll();
   refreshMemoryBadge();

@@ -1200,3 +1200,63 @@ body.modal-open {
   #viewTerminal.active { height: calc(100vh - 48px); margin: -12px -12px -14px; }
   .docsnav { position: static; }
 }
+
+/* ----------------------------------------------------------- onboarding
+   The first-run flow. A fresh install has no cards: BRain studies the home
+   and then proposes cards grounded in what it found. */
+
+.obsteps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 18px 0;
+}
+
+.obstep {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--hairline);
+  background: var(--surface);
+  color: var(--ink-3);
+  font-size: 0.86rem;
+  text-transform: capitalize;
+}
+
+.obstep.done {
+  color: var(--ink);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.obtick { color: var(--accent-2); font-weight: 700; }
+.obstep:not(.done) .obtick { color: var(--ink-3); }
+
+.oblist { display: grid; gap: 10px; margin: 16px 0; }
+
+.obcard {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 14px 16px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--surface);
+  cursor: pointer;
+  transition: border-color .14s ease;
+}
+
+.obcard:hover { border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+.obcard input { margin-top: 3px; flex: none; accent-color: var(--accent); }
+
+.obcardbody { min-width: 0; }
+.obcardtitle { font-weight: 600; color: var(--ink); margin-bottom: 3px; }
+.obcardwhy { color: var(--ink-2); font-size: 0.9rem; margin-bottom: 5px; }
+
+.obcardfocus {
+  color: var(--ink-3);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}

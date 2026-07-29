@@ -86,6 +86,7 @@ import engine
 import feedback_store
 import hypotheses
 import knowledge_store
+import onboarding
 import prompt_store
 import settings_store
 import terminal_proxy
@@ -289,13 +290,20 @@ def _history_dir(insight_id: str) -> Path:
 
 
 def all_categories() -> list[dict]:
-    """Shipped categories followed by user-defined ones (creation order).
+    """The cards this home actually has, in creation order.
+
+    Empty until onboarding finishes. A fresh install ships NO cards: BRain
+    studies the home first and then proposes cards grounded in what it
+    found, because a generic card about a house it has never looked at is
+    noise on every run.
 
     Shipped cards the user removed are left out everywhere this feeds —
     the dashboard, "Refresh all", and the scheduler — so a removed card is
     as gone as a deleted one, minus the part where its definition ships in
     the code and can be restored.
     """
+    if not onboarding.is_onboarded():
+        return []
     return prompt_store.visible_categories() + user_categories.load()
 
 
@@ -644,6 +652,11 @@ async def _scheduler() -> None:
             continue
         settings = settings_store.load()
         if not settings["auto_enabled"]:
+            continue
+        # Nothing is scheduled before onboarding: there are no cards, and
+        # generating one would be the canned-defaults behaviour this
+        # replaced.
+        if not settings.get("onboarded"):
             continue
         budget = usage_store.budget_state(settings)
         if budget["blocked"]:
@@ -1374,6 +1387,72 @@ def _retire_question_everywhere(text: str) -> None:
             save_insight(ins)
 
 
+# -- onboarding: learn the home, then propose cards worth having ------------
+
+async def h_onboarding(request: web.Request) -> web.Response:
+    return web.json_response(await asyncio.to_thread(onboarding.state))
+
+
+async def h_onboarding_learn(request: web.Request) -> web.Response:
+    """Queue the opening syllabus. Returns immediately — study sessions run
+    for minutes on the CLI side, and the panel polls progress."""
+    if not engine.get_auth():
+        raise web.HTTPBadRequest(text="connect your Claude account first")
+    result = await asyncio.to_thread(onboarding.start_learning)
+    return web.json_response(result)
+
+
+async def h_onboarding_recommend(request: web.Request) -> web.Response:
+    """One tool-free pass over the memory document plus a home snapshot."""
+    if not engine.get_auth():
+        raise web.HTTPBadRequest(text="connect your Claude account first")
+
+    import ha_data  # deferred so the module loads without aiohttp in tests
+
+    memory = await asyncio.to_thread(_read_shared_memory)
+    # Any category works as a bundle shape here — we want the home, not a
+    # topic — so borrow the broadest one available.
+    shape = {"id": "onboarding", "title": "Home overview",
+             "focus": "A broad survey of this home."}
+    try:
+        bundle = await ha_data.collect_bundle(shape, eff_history_days())
+    except Exception as exc:  # noqa: BLE001 — report, don't 500
+        raise web.HTTPBadGateway(text=f"could not read Home Assistant: {exc}")
+
+    prompt = onboarding.build_prompt(memory, bundle)
+    result = await asyncio.to_thread(
+        engine.run_claude, prompt, onboarding.RECOMMEND_SYSTEM, eff_model(),
+        TIMEOUT_S, 4)
+    _record_usage(result, "onboarding")
+    if not result["ok"]:
+        raise web.HTTPBadGateway(text=result.get("error") or "recommendation failed")
+    try:
+        parsed = onboarding.parse_recommendations(result["text"])
+    except ValueError as exc:
+        raise web.HTTPBadGateway(text=str(exc))
+    return web.json_response(await asyncio.to_thread(
+        onboarding.save_recommendations, parsed))
+
+
+async def h_onboarding_accept(request: web.Request) -> web.Response:
+    body = await request.json()
+    picked = body.get("accept")
+    if not isinstance(picked, list):
+        raise web.HTTPBadRequest(text="accept must be a list of indexes")
+    created = await asyncio.to_thread(onboarding.accept, picked)
+    return web.json_response({"created": created, "onboarded": True})
+
+
+async def h_onboarding_skip(request: web.Request) -> web.Response:
+    await asyncio.to_thread(onboarding.skip)
+    return web.json_response({"onboarded": True})
+
+
+async def h_onboarding_reset(request: web.Request) -> web.Response:
+    await asyncio.to_thread(onboarding.reset)
+    return web.json_response({"onboarded": False})
+
+
 async def h_knowledge(request: web.Request) -> web.Response:
     """Everything the analyst has learned, in one payload for the panel."""
     return web.json_response({
@@ -1683,6 +1762,12 @@ def make_app() -> web.Application:
     app.router.add_get("/api/questions", h_questions)
     app.router.add_post("/api/questions/answer", h_answer_question)
     app.router.add_post("/api/questions/dismiss", h_dismiss_question_card)
+    app.router.add_get("/api/onboarding", h_onboarding)
+    app.router.add_post("/api/onboarding/learn", h_onboarding_learn)
+    app.router.add_post("/api/onboarding/recommend", h_onboarding_recommend)
+    app.router.add_post("/api/onboarding/accept", h_onboarding_accept)
+    app.router.add_post("/api/onboarding/skip", h_onboarding_skip)
+    app.router.add_post("/api/onboarding/reset", h_onboarding_reset)
     app.router.add_get("/api/knowledge", h_knowledge)
     app.router.add_post("/api/hypothesis/{ts}/confirm", h_hypothesis_confirm)
     app.router.add_post("/api/hypothesis/{ts}/reject", h_hypothesis_reject)

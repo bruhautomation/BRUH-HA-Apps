@@ -129,6 +129,52 @@
     </div>
   </section>
 
+  <!-- First run: learn the home, then propose cards worth having. A fresh
+       install ships no cards at all — see onboarding.py. -->
+  <section id="onboard" class="setup hidden">
+    <h2 id="obTitle">Let BRain get to know your home</h2>
+    <p class="sub" id="obLead">Before it suggests anything, it studies your house —
+      how it's named, when it's occupied, what it uses, how it behaves. Then it proposes
+      cards that are actually about <i>your</i> home rather than a generic one.</p>
+
+    <div id="obLearn">
+      <div class="obsteps" id="obTopics"></div>
+      <div class="row">
+        <button id="obStart" class="btn primary">Start learning</button>
+        <button id="obSkip" class="btn ghost">Skip for now</button>
+      </div>
+      <p class="hint" id="obLearnHint">This takes a few minutes and runs in the background —
+        you can close this tab and come back.</p>
+    </div>
+
+    <div id="obRecommend" class="hidden">
+      <div class="row">
+        <button id="obGo" class="btn primary">See what it suggests</button>
+      </div>
+      <p class="hint">It'll read what it learned and propose a handful of cards.</p>
+    </div>
+
+    <div id="obChoose" class="hidden">
+      <p class="hint">Pick the ones you want. You can add, edit or remove cards any time.</p>
+      <div id="obList" class="oblist"></div>
+      <div class="row">
+        <button id="obAccept" class="btn primary">Create selected</button>
+        <button id="obNone" class="btn ghost">None of these</button>
+      </div>
+    </div>
+
+    <div id="obSparse" class="hidden">
+      <div class="flowerr" id="obSparseText"></div>
+      <p class="hint">Generic cards about a home BRain hasn't been able to read would just be
+        noise on every run, so it won't invent any. Add more entities or let history build up,
+        then try again.</p>
+      <div class="row">
+        <button id="obRetry" class="btn">Try again</button>
+        <button id="obSkip2" class="btn ghost">Continue without cards</button>
+      </div>
+    </div>
+  </section>
+
   <!-- Dashboard -->
   <section id="dash" class="hidden">
     <form id="askForm" class="askbar">

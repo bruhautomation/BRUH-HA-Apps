@@ -20,6 +20,23 @@ memory — in one add-on, behind one sidebar panel, on one Claude login.
    insight generation, voice, and memory consolidation all share it.
 3. Home Assistant will offer to set up the **BRain** integration via discovery. Accept
    it — that's what provides the services, sensors, and the voice assistant.
+4. Press **Start learning**. A fresh install has **no cards**: BRain studies your home
+   first, then proposes cards grounded in what it found. See below.
+
+### First run
+
+There are no default cards, deliberately. A generic "Energy" or "Climate" card about a
+home BRain has never looked at says nothing useful and costs tokens on every run.
+
+Instead the first run studies the house — naming and areas, occupancy rhythms, energy,
+climate, device reliability — and then proposes a handful of cards specific to it, each
+with a one-line reason citing what it found. You choose which to keep, and can add, edit
+or remove cards at any time afterwards.
+
+It takes a few minutes and runs in the background; the panel can be closed and reopened.
+
+**If your home is too sparse to learn from**, BRain says what's missing rather than
+inventing generic cards. Add more entities, let history accumulate, and run it again.
 
 ## The panel
 
