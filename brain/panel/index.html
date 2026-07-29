@@ -49,7 +49,6 @@
   <button id="usageChip" class="chip clickable hidden"><span class="dot"></span><span id="usageChipText"></span></button>
   <button id="pausedChip" class="chip clickable warn hidden"><span class="dot"></span><span id="pausedChipText"></span></button>
   <button id="settingsBtn" class="btn hidden" data-tip="Settings — auto-refresh, plan &amp; usage budget">⚙&nbsp; Settings</button>
-  <button id="knowledgeBtn" class="btn hidden" data-tip="What Insights has learned about your home">🧠&nbsp; Memory</button>
   <button id="newInsight" class="btn hidden">＋&nbsp; New insight</button>
   <button id="refreshAll" class="btn primary hidden">↻&nbsp; Refresh all</button>
 </header>
@@ -58,6 +57,7 @@
   <button class="viewtab active" data-view="insights" role="tab">📊&nbsp; Insights</button>
   <button class="viewtab" data-view="terminal" role="tab">▸_&nbsp; Terminal</button>
   <button class="viewtab" data-view="memory" role="tab">🧠&nbsp; Memory</button>
+  <button class="viewtab" data-view="docs" role="tab">📖&nbsp; Docs</button>
 </nav>
 
 <main class="wrap">
@@ -148,6 +148,19 @@
 
 <div id="viewMemory" class="view">
   <div id="memoryHost"></div>
+</div>
+
+<div id="viewDocs" class="view">
+  <div class="docs">
+    <aside class="docsnav">
+      <div class="docssearch">
+        <input id="docsSearch" type="search" autocomplete="off" spellcheck="false"
+               placeholder="Search the guide…" aria-label="Search documentation">
+      </div>
+      <nav id="docsNav" aria-label="Documentation sections"></nav>
+    </aside>
+    <article id="docsBody" class="docsbody"></article>
+  </div>
 </div>
 
 </main>
@@ -483,6 +496,7 @@
 
 <div id="toast" class="toast"></div>
 
+<script src="docs.js?v={{VERSION}}"></script>
 <script src="app.js?v={{VERSION}}"></script>
 </body>
 </html>

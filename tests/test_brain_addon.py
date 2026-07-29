@@ -165,6 +165,59 @@ class TestPanelBranding(unittest.TestCase):
         self.assertEqual(self.html.count('id="kAddForm"'), 1)
 
 
+class TestDocsTab(unittest.TestCase):
+    """The guide's nav, search index and body all come from one source, so
+    the thing worth testing is that the source is well-formed and that the
+    renderer turns every section into balanced HTML."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.docs = (PANEL / "docs.js").read_text()
+        cls.html = (PANEL / "index.html").read_text()
+        cls.app = (PANEL / "app.js").read_text()
+        cls.server = (PANEL / "server.py").read_text()
+
+    def test_tab_is_registered(self):
+        self.assertIn('data-view="docs"', self.html)
+        self.assertIn('id="viewDocs"', self.html)
+        self.assertIn('if (name === "docs") renderDocs();', self.app)
+
+    def test_docs_script_is_loaded_and_served(self):
+        """A script tag with no route behind it is a blank tab."""
+        self.assertIn('src="docs.js', self.html)
+        self.assertIn('add_get("/docs.js"', self.server)
+
+    def test_search_box_exists(self):
+        self.assertIn('id="docsSearch"', self.html)
+        self.assertIn('id="docsNav"', self.html)
+
+    def test_every_section_has_the_fields_the_nav_needs(self):
+        import re
+        ids = re.findall(r'^\s*id: "([^"]+)"', self.docs, re.M)
+        icons = re.findall(r'^\s*icon: "([^"]+)"', self.docs, re.M)
+        titles = re.findall(r'^\s*title: "([^"]+)"', self.docs, re.M)
+        self.assertGreaterEqual(len(ids), 6, "guide is suspiciously short")
+        self.assertEqual(len(ids), len(icons), "a section is missing an icon")
+        self.assertEqual(len(ids), len(titles), "a section is missing a title")
+        self.assertEqual(len(ids), len(set(ids)), "duplicate section id")
+
+    def test_guide_documents_the_current_cli_not_the_retired_one(self):
+        for retired in ("ha-memory", "ha-backup", "ha-share-login", "ha-reload",
+                        "ha-yaml-check", "ha-selftest"):
+            self.assertNotIn(retired, self.docs, f"guide teaches retired {retired}")
+        for current in ("brain memory", "brain learn", "brain undo",
+                        "brain doctor", "ha reload", "ha check"):
+            self.assertIn(current, self.docs, f"guide never mentions {current}")
+
+    def test_renderer_escapes_before_formatting(self):
+        """The content is ours, but a docs renderer is exactly where a lazy
+        innerHTML becomes an injection vector later."""
+        esc_at = self.app.index("function esc(s)")
+        inline_at = self.app.index("function inlineMd(s)")
+        self.assertLess(esc_at, inline_at)
+        self.assertIn("return esc(s)", self.app)
+
+
 # ---------------------------------------------------------------------------
 # CLI dispatchers
 # ---------------------------------------------------------------------------

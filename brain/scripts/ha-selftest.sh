@@ -193,18 +193,18 @@ smoke() {
         info "   ↳ $(echo "$out" | tail -1 | head -c 160)"
     fi
 }
-smoke "ha-entity list"          ha-entity list
-smoke "ha-entity search sun"    ha-entity search sun
-smoke "ha-addon list"           ha-addon list
-smoke "ha-service list"         ha-service list
+smoke "ha entity list"          ha entity list
+smoke "ha entity search sun"    ha entity search sun
+smoke "ha addon list"           ha addon list
+smoke "ha service list"         ha service list
 # Validate a file that uses HA's custom tags — this is the exact shape that
 # used to false-fail (yaml.safe_load doesn't know !secret/!include).
-# busybox mktemp requires the template to END in Xs, and ha-yaml-check only
+# busybox mktemp requires the template to END in Xs, and `ha check` only
 # looks at *.yaml/*.yml files — so make a temp dir and name the file inside.
 smoke_dir=$(mktemp -d /tmp/selftest-XXXXXX)
 smoke_yaml="$smoke_dir/smoke.yaml"
 printf 'homeassistant:\n  name: !secret home_name\nautomation: !include automations.yaml\n' > "$smoke_yaml"
-smoke "ha-yaml-check (HA tags)" ha-yaml-check "$smoke_yaml"
+smoke "ha check (HA tags)"      ha check "$smoke_yaml"
 rm -rf "$smoke_dir"
 
 # --- 4. custom integration --------------------------------------------------
@@ -247,10 +247,18 @@ hdr "Assist API (worker pool)"
 # liveness, the full telemetry (worker counts etc.) is token-gated.
 pool_token=""
 [ -r /config/.brain/api_token ] && pool_token=$(cat /config/.brain/api_token 2>/dev/null)
-api_health=$(curl -s -m 5 -H "X-BRUH-Token: ${pool_token}" "http://127.0.0.1:8099/health" 2>/dev/null)
+# Read the port the pool published rather than assuming one. It moved from
+# 8099 to 8098 when the panel took the ingress port, and a probe pinned to
+# the old number reaches the PANEL — which answers, with a 404, so the
+# check fails while the pool is perfectly healthy.
+pool_port=8098
+if [ -r /config/.brain/api_endpoint.json ]; then
+    pool_port=$(jq -r '.port // 8098' /config/.brain/api_endpoint.json 2>/dev/null || echo 8098)
+fi
+api_health=$(curl -s -m 5 -H "X-BRUH-Token: ${pool_token}" "http://127.0.0.1:${pool_port}/health" 2>/dev/null)
 case "$api_health" in
     *'"status": "ok"'*|*'"status":"ok"'*)
-        pass "Worker pool API healthy (:8099/health)"
+        pass "Worker pool API healthy (:${pool_port}/health)"
         info "$(echo "$api_health" | head -c 160)"
         ;;
     "")
