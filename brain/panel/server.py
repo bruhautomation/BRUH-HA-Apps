@@ -1270,18 +1270,19 @@ async def h_answer_question(request: web.Request) -> web.Response:
     questions = [q for q in (insight.get("questions") or []) if isinstance(q, str)]
     if question not in questions:
         raise web.HTTPNotFound(text="no such open question")
-    # the answer is durable knowledge: retire the question locally and keep
-    # the Q→A as a fact every future run sees
-    knowledge_store.answer_question(question, answer)
-    # Stored as a statement, not a Q/A pair — "Q: ... → A: ..." strings are
-    # what made the old memory unreadable to a human.
+
+    # Cards carry the claim's text, not its id, so resolve it in the queue
+    # and settle it there too. Without this the card looked answered while
+    # the guess stayed open in Memory until it expired a fortnight later.
+    pending = hypotheses.find_open(question)
+    if pending:
+        hypotheses.confirm(pending["ts"])
+
     knowledge_store.add_fact(f"{question.rstrip('?')}: {answer}",
                              source="homeowner", category=insight.get("category", ""))
     await _submit_answer(question, answer)
-    # answered — stop surfacing it
-    insight["questions"] = [q for q in questions if q != question]
-    save_insight(insight)
-    return web.json_response({"answered": True, "remaining": len(insight["questions"])})
+    _retire_question_everywhere(question)
+    return web.json_response({"answered": True})
 
 
 async def h_dismiss_question_card(request: web.Request) -> web.Response:
@@ -1301,6 +1302,12 @@ async def h_dismiss_question_card(request: web.Request) -> web.Response:
     questions = [q for q in (insight.get("questions") or []) if isinstance(q, str)]
     if question not in questions:
         raise web.HTTPNotFound(text="no such open question")
+    # Same as the confirm path: the card only knows the text, so look the
+    # claim up in the queue and reject it there.
+    pending = hypotheses.find_open(question)
+    if pending:
+        hypotheses.reject(pending["ts"])
+
     entry = knowledge_store.record_question(question, insight.get("category", ""))
     if entry and entry.get("status") != "answered":
         knowledge_store.dismiss_question(entry["ts"])

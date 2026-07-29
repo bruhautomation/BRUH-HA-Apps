@@ -55,6 +55,10 @@ OPTION_RANGES = {
 MAX_MODEL_CHARS = 100
 
 DEFAULTS = {
+    # A fresh install has no cards and no schedule. BRain studies the home
+    # first, then proposes cards grounded in what it actually found — a
+    # generic "Climate" card on an unknown house says nothing useful.
+    "onboarded": False,
     "auto_enabled": True,
     "plan": "pro",
     "budget_percent": 25,

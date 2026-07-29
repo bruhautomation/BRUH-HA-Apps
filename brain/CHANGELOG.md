@@ -2,6 +2,21 @@
 
 All notable changes to **BRain**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.4.1
+
+### Fixed
+
+- **Answering a guess from an insight card never settled it.** When hypotheses replaced
+  open questions in 1.3.0, the Memory tab was updated but the card renderer and its
+  endpoints were not. Cards still showed a free-text "Answer" box — asking for an essay
+  where the answer is yes or no — and the handler wrote to the old question ledger instead
+  of the queue. The card looked answered while the guess stayed **open in Memory until it
+  expired a fortnight later**. Cards now show the same two-tap ✓/✗, and settle the queue
+  by resolving the claim's text (a card carries the text, not the id).
+- **Removed the "Answered questions" section from Memory.** It belonged to the model this
+  release replaced, rendered `Q: … A: …` — exactly the format removed from memory — and
+  nothing populated it any more.
+
 ## 1.4.0
 
 ### Fixed: confirming a guess settled the wrong one

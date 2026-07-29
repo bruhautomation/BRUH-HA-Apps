@@ -260,6 +260,27 @@ class TestDocsTab(unittest.TestCase):
                         "brain doctor", "ha reload", "ha check"):
             self.assertIn(current, self.docs, f"guide never mentions {current}")
 
+    def test_core_panel_functions_all_survive(self):
+        """A blunt edit to app.js can silently delete whole subsystems — the
+        file still parses, and nothing fails until you open the tab. Pin the
+        entry points so a truncation is a test failure, not a discovery."""
+        required = [
+            "function esc(", "function inlineMd(", "function renderMarkdown(",
+            "function docsSearch(", "function renderDocsNav(", "function selectDocs(",
+            "function renderDocs(", "function renderMemory(", "function mdInline(",
+            "function mdToHtml(", "function setMemEditing(", "function makeQuestions(",
+            "function switchView(", "async function refreshMemoryBadge(",
+        ]
+        missing = [fn for fn in required if fn not in self.app]
+        self.assertEqual(missing, [], f"app.js lost: {missing}")
+
+    def test_cards_settle_guesses_with_two_taps(self):
+        """The card renderer kept a free-text answer box after hypotheses
+        replaced questions — so it asked for an essay where the answer is
+        yes or no, and never settled the queue."""
+        self.assertNotIn("Answer to help future insights", self.app)
+        self.assertIn('"api/questions/answer", { answer: q }', self.app)
+
     def test_renderer_escapes_before_formatting(self):
         """The content is ours, but a docs renderer is exactly where a lazy
         innerHTML becomes an injection vector later."""

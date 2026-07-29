@@ -157,6 +157,22 @@ def propose(text: str, topic: str = "") -> dict | None:
     return entry
 
 
+def find_open(text: str) -> dict | None:
+    """The open claim matching this text, by normalized comparison.
+
+    Insight cards carry the claim's TEXT, not its id — they are rendered
+    from a stored insight, not from the queue. Without this, settling from
+    a card can't reach the queue entry at all.
+    """
+    key = normalize(text)
+    if not key:
+        return None
+    for e in list_all("open"):
+        if normalize(e["text"]) == key:
+            return e
+    return None
+
+
 def _settle(ts: int, status: str) -> dict | None:
     entries = _read()
     for e in entries:

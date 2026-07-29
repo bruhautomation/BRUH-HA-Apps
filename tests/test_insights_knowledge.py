@@ -626,28 +626,56 @@ class TestKnowledgeEndpoints(InsightsServerCase):
         self.assertIn("REJECTED", block)
         self.assertIn("Is the attic fan broken?", block)
 
-    def test_card_answer_records_in_store(self):
+    def test_confirming_from_a_card_settles_the_queue(self):
+        """Cards carry the claim's TEXT, not its id. Without resolving it in
+        the queue the card looked answered while the guess stayed open in
+        Memory until it expired a fortnight later."""
+        import hypotheses
+        claim = "The garage fridge is meant to run 24/7 — right?"
+        hypotheses.propose(claim, "energy")
         self.server.save_insight({
             "id": "energy", "category": "energy", "title": "T",
             "generated_at": "2026-07-20T10:00:00", "html": "<p>x</p>",
-            "questions": ["Is X ok?"]})
+            "questions": [claim]})
 
         async def run():
             client = self._client()
             await client.start_server()
             try:
                 resp = await client.post("/api/questions/answer", json={
-                    "insight_id": "energy", "question": "Is X ok?", "answer": "Yes"})
+                    "insight_id": "energy", "question": claim, "answer": claim})
                 self.assertEqual(resp.status, 200)
             finally:
                 await client.close()
 
         asyncio.run(run())
-        answered = knowledge_store.list_questions("answered")
-        self.assertEqual(len(answered), 1)
-        self.assertEqual(answered[0]["answer"], "Yes")
-        self.assertTrue(knowledge_store.is_known_question("Is X ok?"))
-        self.assertTrue(any("Yes" in f["text"] for f in knowledge_store.list_facts()))
+        self.assertEqual(hypotheses.list_all("open"), [])
+        self.assertEqual([h["status"] for h in hypotheses.list_all()], ["confirmed"])
+        self.assertTrue(any(claim in f["text"] for f in knowledge_store.list_facts()))
+
+    def test_rejecting_from_a_card_settles_the_queue(self):
+        import hypotheses
+        claim = "The attic fan is broken — right?"
+        hypotheses.propose(claim, "energy")
+        self.server.save_insight({
+            "id": "energy", "category": "energy", "title": "T",
+            "generated_at": "2026-07-20T10:00:00", "html": "<p>x</p>",
+            "questions": [claim]})
+
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                resp = await client.post("/api/questions/dismiss", json={
+                    "insight_id": "energy", "question": claim})
+                self.assertEqual(resp.status, 200)
+            finally:
+                await client.close()
+
+        asyncio.run(run())
+        self.assertEqual([h["status"] for h in hypotheses.list_all()], ["rejected"])
+        # and it becomes a dead end the analyst is told about
+        self.assertIn(claim, knowledge_store.prompt_block())
 
 
 class TestMemoryFile(InsightsServerCase):

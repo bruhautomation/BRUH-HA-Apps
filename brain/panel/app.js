@@ -434,63 +434,54 @@ function makeFrame(insight) {
 }
 
 function makeQuestions(insight) {
+  // These are hypotheses, not open questions — same two-tap affordance as
+  // the Memory tab. A text box asked for an essay when the answer is yes or
+  // no, and the card is where you most likely have the context to settle it.
   const wrap = el("div", "questions");
   insight.questions.forEach((q) => {
     const row = el("div", "qrow");
-    const head = el("div", "qhead");
-    head.appendChild(el("div", "qtext", `❓ ${q}`));
-    const dis = el("button", "btn icon qdismiss", "✕");
-    dis.type = "button";
-    tip(dis, "Not relevant — tell Insights it's on the wrong track; this won't be asked again");
-    dis.addEventListener("click", async () => {
-      dis.disabled = true;
+    row.appendChild(el("div", "qtext", q));
+
+    const actions = el("div", "qform");
+    const yes = el("button", "btn small primary", "\u2713  Yes");
+    const no = el("button", "btn small", "\u2717  No");
+    yes.type = no.type = "button";
+    tip(yes, "Right — remember it as a fact");
+    tip(no, "Wrong — don't pursue this again");
+
+    const settle = async (route, body, done) => {
+      yes.disabled = no.disabled = true;
       try {
-        await api("api/questions/dismiss", {
+        await api(route, {
           method: "POST",
-          body: JSON.stringify({ insight_id: insight.id, question: q }),
+          body: JSON.stringify({ insight_id: insight.id, question: q, ...body }),
         });
-        toast("Dismissed — Insights will drop that line of inquiry");
+        toast(done);
         await refreshInsights();
         renderIfChanged();
+        refreshMemoryBadge();
       } catch (e) {
         toast(e.message);
-        dis.disabled = false;
+        yes.disabled = no.disabled = false;
       }
-    });
-    head.appendChild(dis);
-    row.appendChild(head);
-    const form = el("form", "qform");
-    const input = el("input");
-    input.type = "text";
-    input.maxLength = 500;
-    input.placeholder = "Answer to help future insights…";
-    const btn = el("button", "btn small primary", "Send");
-    btn.type = "submit";
-    form.appendChild(input);
-    form.appendChild(btn);
-    form.addEventListener("submit", async (ev) => {
-      ev.preventDefault();
-      const answer = input.value.trim();
-      if (!answer) return;
-      btn.disabled = true;
-      try {
-        await api("api/questions/answer", {
-          method: "POST",
-          body: JSON.stringify({ insight_id: insight.id, question: q, answer }),
-        });
-        toast("Answer saved — the home will remember it");
-        await refreshInsights();
-        renderIfChanged();
-      } catch (e) {
-        toast(e.message);
-        btn.disabled = false;
-      }
-    });
-    row.appendChild(form);
+    };
+
+    // The confirm route still takes an "answer": the claim is its own
+    // answer, since confirming it is what makes it a fact.
+    yes.addEventListener("click", () => settle(
+      "api/questions/answer", { answer: q },
+      "Filed — it lands in memory at the next consolidation"));
+    no.addEventListener("click", () => settle(
+      "api/questions/dismiss", {}, "Noted as a dead end"));
+
+    actions.appendChild(yes);
+    actions.appendChild(no);
+    row.appendChild(actions);
     wrap.appendChild(row);
   });
   return wrap;
 }
+
 
 function makeHistoryControls(id, insight, view) {
   const wrap = el("span", "hist");
@@ -1545,28 +1536,9 @@ async function renderKnowledge() {
     factsEl.appendChild(row);
   });
 
-  // answered questions
-  const answered = (data.questions || []).filter((q) => q.status === "answered");
-  $("#kAnsweredWrap").classList.toggle("hidden", !answered.length);
-  const ansEl = $("#kAnswered");
-  ansEl.textContent = "";
-  answered.slice().reverse().forEach((q) => {
-    const row = el("div", "fbitem");
-    const txt = el("div", "txt");
-    txt.appendChild(el("div", null, `Q: ${q.text}`));
-    txt.appendChild(el("div", "kans", `A: ${q.answer}`));
-    row.appendChild(txt);
-    const del = el("button", "btn icon", "✕");
-    tip(del, "Forget — the analyst may ask this again");
-    del.addEventListener("click", async () => {
-      try {
-        await api(`api/knowledge/question/${q.ts}`, { method: "DELETE" });
-        renderKnowledge();
-      } catch (e) { toast(e.message); }
-    });
-    row.appendChild(del);
-    ansEl.appendChild(row);
-  });
+  // "Answered questions" is gone with the model it belonged to: a
+  // confirmed guess becomes a plain memory line and its record is
+  // settled, so there is no Q/A pair left to show.
 
   renderMemory(data);
 }
