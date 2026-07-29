@@ -2,6 +2,39 @@
 
 All notable changes to **BRain**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.1.0
+
+### The panel is finally one product
+
+- **Three tabs: Insights, Terminal, Memory.** The terminal is the same ttyd
+  the add-on already ran, reverse-proxied through the panel, so it is a tab
+  rather than a second sidebar entry. The frame only connects when you first
+  open the tab — no shell session is started for someone who never does.
+- **Memory is a tab, not a dialog.** The same pane, promoted out of the modal
+  it was hidden in.
+
+### Fixed
+
+- **The panel still said "BRUH Insights" in its header, and drew the Insights
+  bar-chart glyph.** The wordmark is split across HTML tags
+  (`BRUH <span>Insights</span>`), so the rename never matched it. It now reads
+  **BRain** with the neural-mesh mark. A test now strips tags before checking,
+  so this class of miss can't come back.
+- **Several hints told you to go run a command in "the BRain add-on" — from
+  inside BRain.** They were inherited from when Terminal and Insights were
+  separate. They now point at the Terminal tab.
+- **Retired CLI names in the UI.** `ha-share-login` and `ha-memory` no longer
+  exist; the panel referenced both.
+- **A new agent defaulted to the name "Claude Agent"** instead of "BRain Agent".
+
+### Branding
+
+- Added `logo.png` / `logo@2x.png` for the home-assistant/brands submission.
+  Until that PR merges, Home Assistant has no artwork for the `brain` domain
+  and shows the raw domain beside the name — which is why a fresh install
+  reads "brain BRain". Nothing in this repo can change that; see
+  `brands/README.md`.
+
 ## 1.0.1
 
 - **Fixed the panel's login failing with `su-exec: claude: No such file or directory`.**

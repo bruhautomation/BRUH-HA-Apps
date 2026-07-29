@@ -515,7 +515,7 @@ class TestPanelServer(unittest.TestCase):
                 resp = await client.get("/")
                 self.assertEqual(resp.status, 200)
                 text = await resp.text()
-                self.assertIn("BRUH", text)
+                self.assertIn("BRain", text)
                 self.assertNotIn("{{VERSION}}", text)
 
                 resp = await client.get("/api/health")

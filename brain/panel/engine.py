@@ -8,7 +8,7 @@ Works with a Claude subscription (Pro/Max) — no API key required:
     the resulting long-lived token (sk-ant-oat01-…).
   * Paste flow: the user runs `claude setup-token` anywhere (e.g. the BRUH
     Claude Terminal add-on) and pastes the token into the panel.
-  * Shared login: the BRain add-on's `ha-share-login` writes a
+  * Shared login: the terminal's `ha login` writes a
     credential to /config/.brain/secrets/claude_auth.json; Insights
     picks it up automatically (read-only fallback, local creds win).
   * API key: a plain Anthropic API key also works, for users who prefer it.
@@ -48,7 +48,7 @@ log = logging.getLogger("brain.auth")
 SECRETS_DIR = os.environ.get("BRAIN_SECRETS", "/data/secrets")
 CLAUDE_HOME = os.environ.get("BRAIN_HOME", "/data/home")
 AUTH_FILE = os.path.join(SECRETS_DIR, "claude_auth.json")
-# Credential shared by the BRain add-on (its `ha-share-login` tool
+# Credential shared by the terminal (its `ha login` tool
 # writes it to the /config volume, which we mount read-only). Insights only
 # ever READS this file — logout must never touch it.
 SHARED_AUTH_FILE = os.environ.get(
@@ -166,7 +166,7 @@ def _cli_credentials_present() -> bool:
 
 
 def _read_shared_auth() -> dict | None:
-    """The credential the BRain add-on shares via `ha-share-login`.
+    """The credential the terminal shares via `ha login`.
 
     Shape contract: {"type": "oauth_token"|"api_key", "value": "<str>",
     "saved_at": <epoch int>}. Missing, unreadable, or malformed files are
@@ -192,7 +192,7 @@ def get_auth() -> dict | None:
     'source': 'local'|'shared'|'cli'} or None.
 
     Resolution order: locally stored credential → credential shared by the
-    BRain add-on → the CLI's own saved login.
+    terminal login → the CLI's own saved login.
     """
     try:
         with open(AUTH_FILE, "r", encoding="utf-8") as f:

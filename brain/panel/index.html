@@ -21,12 +21,28 @@
         </defs>
         <rect width="512" height="512" fill="url(#bg)"/>
         <path d="M360 0 L512 0 L512 151 Z" fill="#0A1622"/>
-        <rect x="150" y="256" width="58" height="96" rx="14" fill="#0A1622"/>
-        <rect x="234" y="202" width="58" height="150" rx="14" fill="#0A1622"/>
-        <rect x="318" y="144" width="58" height="208" rx="14" fill="#0A1622"/>
+        <line x1="168" y1="196" x2="262" y2="154" stroke="#0A1622" stroke-width="17" stroke-linecap="round"/>
+        <line x1="262" y1="154" x2="344" y2="226" stroke="#0A1622" stroke-width="17" stroke-linecap="round"/>
+        <line x1="168" y1="196" x2="244" y2="258" stroke="#0A1622" stroke-width="17" stroke-linecap="round"/>
+        <line x1="262" y1="154" x2="244" y2="258" stroke="#0A1622" stroke-width="17" stroke-linecap="round"/>
+        <line x1="344" y1="226" x2="244" y2="258" stroke="#0A1622" stroke-width="17" stroke-linecap="round"/>
+        <line x1="168" y1="196" x2="152" y2="300" stroke="#0A1622" stroke-width="17" stroke-linecap="round"/>
+        <line x1="152" y1="300" x2="244" y2="258" stroke="#0A1622" stroke-width="17" stroke-linecap="round"/>
+        <line x1="244" y1="258" x2="346" y2="324" stroke="#0A1622" stroke-width="17" stroke-linecap="round"/>
+        <line x1="344" y1="226" x2="346" y2="324" stroke="#0A1622" stroke-width="17" stroke-linecap="round"/>
+        <line x1="152" y1="300" x2="236" y2="360" stroke="#0A1622" stroke-width="17" stroke-linecap="round"/>
+        <line x1="244" y1="258" x2="236" y2="360" stroke="#0A1622" stroke-width="17" stroke-linecap="round"/>
+        <line x1="236" y1="360" x2="346" y2="324" stroke="#0A1622" stroke-width="17" stroke-linecap="round"/>
+        <circle cx="168" cy="196" r="25" fill="#0A1622"/>
+        <circle cx="262" cy="154" r="21" fill="#0A1622"/>
+        <circle cx="344" cy="226" r="25" fill="#0A1622"/>
+        <circle cx="244" cy="258" r="33" fill="#0A1622"/>
+        <circle cx="152" cy="300" r="21" fill="#0A1622"/>
+        <circle cx="346" cy="324" r="23" fill="#0A1622"/>
+        <circle cx="236" cy="360" r="25" fill="#0A1622"/>
       </svg>
     </span>
-    <span class="txt">BRUH <span class="grad">Insights</span></span>
+    <span class="txt">BR<span class="grad">ain</span></span>
   </div>
   <div class="spacer"></div>
   <span id="authChip" class="chip"><span class="dot"></span><span id="authChipText">Checking…</span></span>
@@ -38,7 +54,15 @@
   <button id="refreshAll" class="btn primary hidden">↻&nbsp; Refresh all</button>
 </header>
 
+<nav class="viewtabs" role="tablist">
+  <button class="viewtab active" data-view="insights" role="tab">📊&nbsp; Insights</button>
+  <button class="viewtab" data-view="terminal" role="tab">▸_&nbsp; Terminal</button>
+  <button class="viewtab" data-view="memory" role="tab">🧠&nbsp; Memory</button>
+</nav>
+
 <main class="wrap">
+
+<div id="viewInsights" class="view active">
 
   <!-- Connect / setup screen (shown when no credential is stored) -->
   <section id="setup" class="setup hidden">
@@ -46,8 +70,8 @@
     <p class="sub">BRain uses your Claude subscription (Pro or Max) to analyze your home and
       generate live interactive visualizations. Connect once — the credential is stored only inside
       this add-on.</p>
-    <p class="hint">Tip: if <b>BRain</b> is installed, run <code>ha-share-login</code> there
-      and Insights will pick it up automatically — no pasting needed.</p>
+    <p class="hint">Tip: you can also sign in from the <b>Terminal</b> tab — run
+      <code>claude</code> there once and BRain picks the login up automatically.</p>
 
     <div class="tabs">
       <button class="btn small tab active" data-pane="guided">Guided sign-in</button>
@@ -82,8 +106,8 @@
     </div>
 
     <div class="pane" data-pane="paste">
-      <p class="hint">Already use the <b>BRain</b> add-on? Run <code>ha-share-login</code>
-        there instead — Insights picks the shared login up automatically. Or run
+      <p class="hint">Simpler: open the <b>Terminal</b> tab and run <code>claude</code>
+        once — BRain picks that login up automatically, no pasting. Otherwise run
         <code>claude setup-token</code> anywhere Claude Code is installed and paste the resulting
         <code>sk-ant-oat…</code> token here. It uses your subscription, not API credits.</p>
       <label for="pasteToken">Long-lived token</label>
@@ -112,6 +136,19 @@
     <div id="filters" class="filters"></div>
     <div id="grid" class="grid"></div>
   </section>
+</div>
+
+<!-- The terminal is the same ttyd the add-on runs, reverse-proxied through
+     this panel at /terminal/ so it lives behind one ingress port. The frame
+     is only pointed at it on first activation — no session is started for
+     someone who never opens the tab. -->
+<div id="viewTerminal" class="view">
+  <iframe id="termFrame" title="Terminal" src="about:blank"></iframe>
+</div>
+
+<div id="viewMemory" class="view">
+  <div id="memoryHost"></div>
+</div>
 
 </main>
 
@@ -392,18 +429,20 @@
     </header>
     <div class="edit-body ksplit">
       <div class="kcol">
-        <p class="hint">Insights remembers two ways, and both are given to the analyst on every
-          run. <b>This column</b> is what the analyst picked up on its own while analyzing your
-          home: questions it asked you, and facts it discovered. <b>The document on the right</b>
-          is the curated home memory file — the source of truth you can edit.</p>
+        <p class="hint"><b>The document on the right is the memory</b> — the one thing every
+          part of BRain reads. This column is the working queue behind it: what BRain is
+          currently unsure about, and what it has announced so it never announces the same
+          thing twice.</p>
 
-        <label>Open questions from the analyst</label>
+        <label>Waiting on you</label>
+        <p class="hint">Things BRain believes but hasn't confirmed. Never more than a few at
+          once — answering one files it into the document as a plain fact.</p>
         <div id="kOpenQs" class="klist"></div>
 
-        <label>Learned facts</label>
-        <p class="hint">Discovered automatically during insight runs (plus your answers and
-          feedback). Treated as established truth in every future analysis. Delete anything
-          wrong — it stops being used <i>and</i> is scrubbed from the memory file.</p>
+        <label>Recently discovered</label>
+        <p class="hint">Found during insight runs and study sessions. Each one is queued into
+          the document at the next consolidation. Delete anything wrong and BRain is asked to
+          drop it from the document too.</p>
         <div id="kFacts" class="klist"></div>
 
         <div id="kAnsweredWrap" class="hidden">
@@ -413,18 +452,19 @@
       </div>
 
       <div id="kMemWrap" class="kcol kmemcol">
-        <label>Home memory file</label>
-        <p class="hint">The home's curated memory document — preferences, nicknames, patterns,
-          device notes — injected into every analysis, and shared with BRain's
-          <code>ha-memory</code> when that add-on is installed. Teach it a fact and Claude files
-          it into the right section below, or edit the markdown yourself.</p>
+        <label>Home memory</label>
+        <p class="hint">The one thing that is "memory": preferences, nicknames, patterns,
+          device notes. Everything BRain does reads it — insight runs, voice, and the
+          terminal alike — and <code>brain memory</code> shows the same document there.
+          Teach it a fact and it is queued for the next consolidation, or edit the
+          markdown yourself.</p>
         <form id="kAddForm" class="kadd">
           <input id="kAddInput" type="text" maxlength="500" autocomplete="off"
                  placeholder="Teach it something — “The garage fridge is supposed to run 24/7”">
           <button class="btn small primary" type="submit">Add</button>
         </form>
-        <div id="kMemMerging" class="kmerging hidden">✨ Claude is updating the memory
-          file…</div>
+        <div id="kMemMerging" class="kmerging hidden">✨ Queued — it lands at the next
+          consolidation…</div>
         <div class="row kmemrow">
           <button id="kMemEdit" class="btn small">✎ Edit markdown</button>
           <button id="kMemSave" class="btn small primary hidden">Save</button>
@@ -432,8 +472,8 @@
           <span id="kMemDirty" class="kdirty hidden">unsaved edits</span>
         </div>
         <div id="kMemView" class="kmd"></div>
-        <div id="kMemEmpty" class="kempty hidden">No memory file yet — teach it a fact above, or
-          press “Edit markdown” to start one.</div>
+        <div id="kMemEmpty" class="kempty hidden">Nothing learned yet — teach it a fact above,
+          or press “Edit markdown” to start one.</div>
         <textarea id="kMemTa" class="kmemedit hidden" rows="14" maxlength="100000"
                   spellcheck="false"></textarea>
       </div>
