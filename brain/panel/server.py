@@ -102,8 +102,10 @@ HISTORY_KEEP_RUNS = int(os.environ.get("BRAIN_HISTORY_KEEP_RUNS", "40") or 40)
 HISTORY_KEEP_DAYS = int(os.environ.get("BRAIN_HISTORY_KEEP_DAYS", "30") or 30)
 # Fallback drop-box for learned facts when the brain integration
 # isn't installed — the BRain add-on ingests it from /share
+# Candidate facts wait here for the consolidator. Same directory the
+# terminal, voice reflection, and study sessions write to — one queue.
 MEMORY_INBOX_DIR = Path(os.environ.get(
-    "BRAIN_MEMORY_INBOX", "/share/brain/memory-inbox"))
+    "BRAIN_MEMORY_INBOX", "/config/.brain/memory/inbox"))
 # The home's consolidated memory file (same default as ha_data.MEMORY_FILE;
 # shared with BRain's brain memory when that add-on is installed).
 # Viewable AND editable from the knowledge panel — the /config mount is
@@ -128,30 +130,11 @@ MEMORY_TEMPLATE = """# Home Memory
 ## Device notes
 """
 
-MEMORY_MERGE_SYSTEM = """You maintain a home's long-term memory file: a small, well-organized markdown document of durable facts about a smart home and its household (preferences, entity nicknames, household patterns, device notes).
-
-You receive the current document and one or more new facts. Merge the facts in:
-- Put each fact in the most fitting existing section; create a new section only when nothing fits.
-- Never duplicate: if a fact is already present keep one copy; if it contradicts an older one, the NEW fact wins.
-- Keep the document's headings, HTML comments, and the homeowner's own wording and edits intact wherever possible.
-- Stay concise — one bullet per fact, plain factual language.
-
-Reply with ONLY the complete updated markdown document. No code fences, no commentary before or after."""
-
-MEMORY_REMOVE_SYSTEM = """You maintain a home's long-term memory file: a small, well-organized markdown document of durable facts about a smart home and its household (preferences, entity nicknames, household patterns, device notes).
-
-You receive the current document and one or more facts the homeowner DELETED — they are wrong, stale, or unwanted. Remove them:
-- Delete any bullet or statement that expresses the same information, even if reworded.
-- If nothing in the document matches a deleted fact, leave the document unchanged.
-- Change nothing else — keep the headings, HTML comments, and the homeowner's own wording and edits intact.
-
-Reply with ONLY the complete updated markdown document. No code fences, no commentary before or after."""
-
-# merge status surfaced to the panel; MEMORY_LAST_TASK lets tests (and
-# shutdown) await the in-flight merge deterministically
+# Whether the consolidator has pending work, surfaced to the panel so the
+# Memory tab can say "queued" rather than pretending an edit landed
+# instantly. The merge itself happens in the consolidator, not here.
 MEMORY_STATE: dict = {"merging": False, "error": ""}
-MEMORY_LOCK = asyncio.Lock()
-MEMORY_LAST_TASK: asyncio.Task | None = None
+
 MODEL = os.environ.get("BRAIN_MODEL", "").strip()
 TIMEOUT_S = int(float(os.environ.get("BRAIN_TIMEOUT_MIN", "8") or 8) * 60)
 
@@ -435,36 +418,16 @@ async def _call_ha_service(service: str, data: dict) -> bool:
         return False
 
 
-def _write_memory_inbox(fact: str) -> None:
-    """Fallback: append the fact as JSONL to the shared /share inbox.
-
-    Best-effort only — if /share isn't writable, log and drop silently;
-    memory hand-off must never break an insight run.
-    """
-    try:
-        MEMORY_INBOX_DIR.mkdir(parents=True, exist_ok=True)
-        line = json.dumps(
-            {"ts": int(time.time()), "source": "insights", "fact": fact,
-             "confidence": "medium"},
-            ensure_ascii=False,
-        )
-        path = MEMORY_INBOX_DIR / f"{int(time.time())}-insights.jsonl"
-        with open(path, "a", encoding="utf-8") as f:
-            f.write(line + "\n")
-    except OSError as exc:
-        log.debug("memory inbox write failed: %s", exc)
-
-
-async def _submit_memory(fact: str) -> None:
-    if not await _call_ha_service(
-            "add_memory", {"fact": fact, "source": "insights", "confidence": "medium"}):
-        await asyncio.to_thread(_write_memory_inbox, fact)
+async def _submit_memory(fact: str, source: str = "insights") -> None:
+    await asyncio.to_thread(_queue_memory_fact, fact, source)
 
 
 async def _submit_answer(question: str, answer: str) -> None:
-    if not await _call_ha_service(
-            "answer_question", {"question": question, "answer": answer, "source": "insights"}):
-        await asyncio.to_thread(_write_memory_inbox, f"Q: {question} → A: {answer}")
+    """An answered question is durable knowledge — but what gets remembered
+    is the ANSWER as a plain statement, not the Q/A pair. Storing
+    "Q: ... -> A: ..." is what made the old memory unreadable."""
+    await asyncio.to_thread(
+        _queue_memory_fact, f"{question.rstrip('?')}: {answer}", "homeowner", "high")
 
 
 # ---------------------------------------------------------------------------
@@ -1361,149 +1324,34 @@ def _write_shared_memory(text: str) -> None:
     tmp.replace(SHARED_MEMORY_FILE)
 
 
-def _append_memory_fallback(current: str, facts: list[str]) -> None:
-    """No-Claude path: park new facts under a "Recently added" section so
-    they are visible immediately (a later merge can file them properly)."""
-    base = current.strip() or MEMORY_TEMPLATE.strip()
-    if "## Recently added" not in base:
-        base += "\n\n## Recently added"
-    base += "".join(f"\n- {f}" for f in facts) + "\n"
-    _write_shared_memory(base)
+def _queue_memory_fact(fact: str, source: str = "panel",
+                      confidence: str = "medium") -> None:
+    """Append a candidate fact to the memory inbox.
+
+    The panel does NOT write memory.md. One writer owns that document —
+    the consolidator — which is what lets the terminal, voice, insights,
+    and study sessions all feed the same memory without a lock between
+    them. Everything here is a queue.
+    """
+    try:
+        MEMORY_INBOX_DIR.mkdir(parents=True, exist_ok=True)
+        line = json.dumps(
+            {"ts": int(time.time()), "source": source, "fact": fact,
+             "confidence": confidence},
+            ensure_ascii=False,
+        )
+        path = MEMORY_INBOX_DIR / f"{int(time.time())}-{source}.jsonl"
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except OSError as exc:
+        # A failed hand-off must never break an insight run.
+        log.debug("memory inbox write failed: %s", exc)
 
 
-def _strip_md_fences(text: str) -> str:
-    text = text.strip()
-    fence = re.match(r"^```(?:markdown|md)?\s*\n(.*?)\n?```\s*$", text, re.DOTALL)
-    return fence.group(1).strip() if fence else text
+def _queue_memory_removal(text: str) -> None:
+    """Ask the consolidator to drop a line (and its rewordings)."""
+    _queue_memory_fact(f"FORGET: {text}", source="panel-forget", confidence="high")
 
-
-async def _merge_memory_task(facts: list[str]) -> None:
-    """Fold new facts into memory.md with a cheap Claude pass (serialized).
-
-    The facts ALWAYS land in the document: any failure — Claude unreachable,
-    a timeout, an implausible reply — falls back to a plain append under
-    "## Recently added" (a later merge files them properly). This guarantee
-    is what lets taught facts live only in the document, with no shadow copy
-    in the facts ledger."""
-    async with MEMORY_LOCK:
-        MEMORY_STATE.update(merging=True, error="")
-        current = ""
-        written = False
-        try:
-            try:
-                current = _read_shared_memory()
-                merged = ""
-                if claude_client.get_auth():
-                    prompt = (
-                        "CURRENT MEMORY DOCUMENT:\n\n"
-                        + (current.strip() or MEMORY_TEMPLATE)
-                        + "\n\nNEW FACTS to merge in:\n"
-                        + "\n".join(f"- {f}" for f in facts)
-                    )
-                    result = await asyncio.to_thread(
-                        claude_client.run_claude, prompt, MEMORY_MERGE_SYSTEM,
-                        eff_model(), 180)
-                    _record_usage(result, "memory")
-                    if result["ok"]:
-                        merged = _strip_md_fences(result["text"])
-                # sanity: a merged doc is markdown of plausible size, not an
-                # apology or an empty string — otherwise take the fallback path
-                if merged and "#" in merged and len(merged) >= 40 \
-                        and len(merged) <= MAX_MEMORY_CHARS:
-                    await asyncio.to_thread(_write_shared_memory, merged)
-                    written = True
-            except Exception as exc:  # noqa: BLE001 — surface in the panel, never crash
-                MEMORY_STATE["error"] = str(exc)[:300]
-                log.warning("memory merge failed: %s", exc)
-            if not written:
-                try:
-                    await asyncio.to_thread(_append_memory_fallback, current, facts)
-                except Exception as exc:  # noqa: BLE001
-                    MEMORY_STATE["error"] = str(exc)[:300]
-                    log.warning("memory fallback append failed: %s", exc)
-        finally:
-            MEMORY_STATE["merging"] = False
-
-
-def _start_memory_merge(facts: list[str]) -> None:
-    global MEMORY_LAST_TASK
-    MEMORY_LAST_TASK = asyncio.create_task(_merge_memory_task(facts))
-
-
-def _strip_memory_fallback(current: str, facts: list[str]) -> str:
-    """No-Claude removal: drop bullet lines whose normalized text matches a
-    deleted fact — exact, or a substring either way when both are long enough
-    for the overlap to be meaningful."""
-    keys = [k for k in (knowledge_store.normalize(f) for f in facts) if k]
-
-    def matches(line_key: str) -> bool:
-        for k in keys:
-            if k == line_key:
-                return True
-            short, long_ = sorted((k, line_key), key=len)
-            if len(short) >= 12 and short in long_:
-                return True
-        return False
-
-    out = []
-    for line in current.split("\n"):
-        m = re.match(r"\s*[-*]\s+(.*)", line)
-        if m and matches(knowledge_store.normalize(m.group(1))):
-            continue
-        out.append(line)
-    return "\n".join(out)
-
-
-async def _remove_memory_task(facts: list[str]) -> None:
-    """Scrub deleted facts out of memory.md — Claude removes rewordings too;
-    without Claude, a normalized bullet-line match is stripped instead."""
-    async with MEMORY_LOCK:
-        MEMORY_STATE.update(merging=True, error="")
-        current = ""
-        done = False
-        try:
-            try:
-                current = _read_shared_memory()
-                if not current.strip():
-                    done = True
-                else:
-                    merged = ""
-                    if claude_client.get_auth():
-                        prompt = (
-                            "CURRENT MEMORY DOCUMENT:\n\n" + current
-                            + "\n\nFACTS THE HOMEOWNER DELETED — remove them "
-                            "from the document:\n"
-                            + "\n".join(f"- {f}" for f in facts)
-                        )
-                        result = await asyncio.to_thread(
-                            claude_client.run_claude, prompt,
-                            MEMORY_REMOVE_SYSTEM, eff_model(), 180)
-                        _record_usage(result, "memory")
-                        if result["ok"]:
-                            merged = _strip_md_fences(result["text"])
-                    # a removal never grows the doc much or empties the headings
-                    if merged and "#" in merged and len(merged) <= MAX_MEMORY_CHARS:
-                        if merged != current:
-                            await asyncio.to_thread(_write_shared_memory, merged)
-                        done = True
-            except Exception as exc:  # noqa: BLE001 — surface in the panel, never crash
-                MEMORY_STATE["error"] = str(exc)[:300]
-                log.warning("memory removal failed: %s", exc)
-            if not done and current.strip():
-                try:
-                    stripped = _strip_memory_fallback(current, facts)
-                    if stripped != current:
-                        await asyncio.to_thread(_write_shared_memory, stripped)
-                except Exception as exc:  # noqa: BLE001
-                    MEMORY_STATE["error"] = str(exc)[:300]
-                    log.warning("memory removal fallback failed: %s", exc)
-        finally:
-            MEMORY_STATE["merging"] = False
-
-
-def _start_memory_removal(facts: list[str]) -> None:
-    global MEMORY_LAST_TASK
-    MEMORY_LAST_TASK = asyncio.create_task(_remove_memory_task(facts))
 
 
 def _retire_question_everywhere(text: str) -> None:
@@ -1543,16 +1391,11 @@ async def h_knowledge_fact_add(request: web.Request) -> web.Response:
         raise web.HTTPBadRequest(
             text=f"fact too long (max {knowledge_store.MAX_TEXT_CHARS} chars)")
     key = knowledge_store.normalize(text)
-    known = any(knowledge_store.normalize(f["text"]) == key
-                for f in knowledge_store.list_facts())
-    if not known and key:
-        # re-add guard: the same wording already sits in the document
-        known = key in knowledge_store.normalize(_read_shared_memory())
-    if known:
-        return web.json_response({"added": False, "merging": False})
-    await _submit_memory(text)
-    _start_memory_merge([text])
-    return web.json_response({"added": True, "merging": True})
+    # Re-add guard: the same wording already sits in the document.
+    if key and key in knowledge_store.normalize(_read_shared_memory()):
+        return web.json_response({"added": False, "queued": False})
+    await _submit_memory(text, source="panel")
+    return web.json_response({"added": True, "queued": True})
 
 
 async def h_memory_put(request: web.Request) -> web.Response:
@@ -1571,8 +1414,10 @@ async def h_memory_put(request: web.Request) -> web.Response:
 
 
 async def h_knowledge_fact_delete(request: web.Request) -> web.Response:
-    """Forget a fact — and scrub it from the home memory document too, so a
-    deleted fact is gone everywhere, not just from the ledger."""
+    """Forget a fact: queue its removal from the memory document.
+
+    The panel never edits memory.md itself — it asks the consolidator to,
+    which is what keeps a single writer on that file."""
     try:
         ts = int(request.match_info["ts"])
     except ValueError:
@@ -1581,10 +1426,10 @@ async def h_knowledge_fact_delete(request: web.Request) -> web.Response:
                  if f["ts"] == ts), "")
     if not knowledge_store.remove_fact(ts):
         raise web.HTTPNotFound(text="no such fact")
-    removing = bool(text) and bool(_read_shared_memory().strip())
-    if removing:
-        _start_memory_removal([text])
-    return web.json_response({"deleted": ts, "removing": removing})
+    queued = bool(text)
+    if queued:
+        await asyncio.to_thread(_queue_memory_removal, text)
+    return web.json_response({"deleted": ts, "queued": queued})
 
 
 async def h_knowledge_answer(request: web.Request) -> web.Response:

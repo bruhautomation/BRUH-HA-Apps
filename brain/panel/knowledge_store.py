@@ -1,22 +1,23 @@
-"""Local knowledge base for BRain — what the analyst has learned.
+"""Dedup index for the insights analyst — what it has already said and asked.
 
-This is the add-on's own durable memory, independent of the BRain
-integration (whose memory.md we can only read). Two collections live in one
-JSON file at /data/knowledge.json:
+Two collections live in one JSON file at /data/knowledge.json:
 
-  facts      — durable discoveries about this home (from the model's
-               "findings", homeowner answers, or typed in by the user).
-               Deduplicated by normalized text so the same discovery is
-               never stored — or re-announced — twice.
-  questions  — every clarifying question the analyst has ever asked, with
-               a lifecycle: open → answered | dismissed. The store is the
-               single source of truth for "has this been asked before?",
-               which is what stops the analyst re-asking the same thing
-               run after run.
+  facts      — discoveries the analyst has already announced. Deduplicated
+               by normalized text so the same finding is never announced,
+               or re-queued to memory, twice.
+  questions  — every clarifying question ever put to the homeowner, with a
+               lifecycle: open → answered | dismissed. This is the single
+               source of truth for "have I asked this before?".
 
-``prompt_block()`` renders the whole store as a compact text block that is
-injected into every generation prompt, so the model *builds on* what it
-knows instead of rediscovering it.
+This store is a DEDUP INDEX, not memory. Memory is the document at
+memory.md, which the consolidator owns and which is injected separately.
+What lives here is the bookkeeping that stops the analyst repeating
+itself: which discoveries it has already announced, and which questions
+it has already put to the homeowner.
+
+``prompt_block()`` therefore renders almost none of it — only the
+rejected questions, because "that was the wrong track" is something the
+model cannot work out for itself.
 
 File shape:
   {"facts": [{"ts": 1752…, "text": "...", "source": "insights",
@@ -44,11 +45,11 @@ MAX_FACTS = 200
 MAX_QUESTIONS = 200
 MAX_TEXT_CHARS = 500
 MAX_ANSWER_CHARS = 1000
-# prompt_block caps: newest-first inclusion until the budget is spent
-PROMPT_FACTS = 60
-PROMPT_QA = 30
-PROMPT_OPEN = 15
-PROMPT_MAX_CHARS = 8000
+# prompt_block renders ONLY rejected lines of inquiry, hard-capped. Facts
+# live in the memory document and are injected from there; the ask-history
+# is enforced in code, not in the prompt.
+PROMPT_DEAD_ENDS = 20
+PROMPT_MAX_CHARS = 2000
 
 _WS_RE = re.compile(r"\s+")
 _PUNCT_RE = re.compile(r"[^\w\s]")
@@ -288,37 +289,26 @@ def remove_question(ts: int) -> bool:
 # ---------------------------------------------------------------------------
 
 def prompt_block() -> str:
-    """The store rendered for the generation prompt, or "" when empty.
+    """The only part of this store worth putting in a prompt: dead ends.
 
-    Three sections, each newest-first and capped: known facts, answered
-    questions (with their answers), and questions already asked. The whole
-    block is budgeted so a very chatty store can't crowd out the data.
+    Facts are NOT rendered here. The memory document is the single source
+    of what this home is, and it is injected separately — duplicating it
+    out of this ledger was how the same fact ended up stated two ways in
+    one prompt. Likewise the ask-history: re-asking is prevented in code
+    by ``is_known_question``, not by pasting every question ever asked
+    into the context.
+
+    What survives is the rejected list, because "you were on the wrong
+    track here" is information the model cannot derive on its own. It is
+    capped hard — an unbounded dead-ends section is exactly the runaway
+    this redesign removed.
     """
-    facts = list_facts()[-PROMPT_FACTS:]
-    answered = list_questions("answered")[-PROMPT_QA:]
-    open_qs = list_questions("open")[-PROMPT_OPEN:]
-    dismissed = list_questions("dismissed")
-
-    parts: list[str] = []
-    if facts:
-        parts.append("KNOWN FACTS about this home (already learned — build on them, "
-                     "never present one as a new discovery):")
-        parts += [f"- {f['text']}" for f in reversed(facts)]
-    if answered:
-        parts.append("\nANSWERED QUESTIONS (the homeowner already told you — use these "
-                     "answers, never ask again):")
-        parts += [f"- Q: {q['text']}\n  A: {q['answer']}" for q in reversed(answered)]
-    if open_qs:
-        parts.append("\nQUESTIONS ALREADY ASKED, awaiting an answer (do NOT ask these, "
-                     "or minor variations of them, again):")
-        parts += [f"- {q['text']}" for q in open_qs]
-    if dismissed:
-        parts.append("\nQUESTIONS THE HOMEOWNER DISMISSED AS NOT RELEVANT — you were on "
-                     "the wrong track. Treat these lines of inquiry as dead ends: don't "
-                     "re-ask them and don't build analysis around them:")
-        parts += [f"- {q['text']}" for q in dismissed]
-    if not parts:
+    dismissed = list_questions("dismissed")[-PROMPT_DEAD_ENDS:]
+    if not dismissed:
         return ""
+    parts = ["LINES OF INQUIRY THE HOMEOWNER REJECTED — you were on the wrong "
+             "track. Don't revisit these or build analysis around them:"]
+    parts += [f"- {q['text']}" for q in reversed(dismissed)]
     block = "\n".join(parts)
     if len(block) > PROMPT_MAX_CHARS:
         block = block[:PROMPT_MAX_CHARS].rsplit("\n", 1)[0]

@@ -483,9 +483,16 @@ class TestMemoryChangeLog(unittest.TestCase):
 class TestTerminalProxy(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        sys.path.insert(0, str(PANEL))
-        import terminal_proxy
-        cls.mod = terminal_proxy
+        # Load by path under a unique name. brain/panel and bruh-insights/panel
+        # both contain a `server.py`, so putting either on sys.path decides
+        # which one every OTHER test file gets — import order should not
+        # silently repoint another module's tests at a different add-on.
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "brain_terminal_proxy", PANEL / "terminal_proxy.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        cls.mod = module
 
     def test_registers_prefix_and_wildcard_routes(self):
         from aiohttp import web
