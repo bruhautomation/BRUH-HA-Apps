@@ -202,14 +202,18 @@ OUTPUT CONTRACT (strict JSON; title, summary, highlights, and html are required)
   "title": "Short punchy card title (max 60 chars)",
   "summary": "1-2 short sentences, max ~220 chars. The ONE thing worth knowing, with its number. No scene-setting, no restating the highlights, no fluff.",
   "highlights": [ {"label": "Metric name", "value": "42 kWh", "delta": "+12% vs avg (optional)", "status": "good|warning|serious|critical (optional)"} ],
-  "questions": [ "Optional: short clarifying questions for the homeowner" ],
+  "hypotheses": [ "Optional: something you believe about this home, phrased so it can be answered yes or no" ],
   "findings": [ "Optional: durable facts about this home worth remembering" ],
   "tags": [ "2-4 short lowercase topic tags" ],
   "html": "<!DOCTYPE html>... one complete self-contained HTML document ..."
 }
 Provide 3-6 highlights — they are the main content. Each is one specific, checkable data point: a real value with its unit, the entity/room/person it belongs to, and a time when relevant ("Dryer", "3.1 kWh", "+40% vs weekday avg"). Use "delta" for comparison against the period and "status" only when something genuinely deserves attention. Never pad with vague or derived filler ("Overall status", "Things look normal") — fewer sharp highlights beat more dull ones. Escape the HTML correctly as a JSON string.
 "tags" (2-4): short lowercase topic tags describing what this card is actually about — single words or hyphenated (e.g. "energy", "anomaly", "batteries", "left-on", "comfort"). Tag by CONTENT, not by the requested category: a lighting card that found a battery problem should carry "batteries" too. The dashboard uses tags to group related cards, so reuse plain common words over inventive ones.
-"questions" (optional, max 2 — but usually ZERO): ask only when you hit a genuine blocker — something the data cannot tell you AND whose answer would materially change your future analyses (e.g. "Is the garage fridge meant to run overnight?" when it looks like a fault). The bar is high: most runs should ask nothing. Never ask to seem thorough or conversational, never ask about preferences or context you can infer from the data, never ask vague or open-ended questions ("anything else I should know?"). If you wouldn't change your analysis based on the answer, don't ask. NEVER ask a question that appears in the prompt's already-asked or answered lists, or any rephrasing of one — an answered question is settled, use the answer. Omitting the field is the normal, expected case.
+"hypotheses" (optional — usually ZERO, and never more than the prompt's stated budget allows): do NOT ask open questions. Instead, state what you actually BELIEVE, phrased so the homeowner can answer yes or no in one tap: "The garage fridge is meant to run 24/7 — right?" rather than "What is the garage fridge for?".
+
+The bar is high. Propose one only when (a) you genuinely believe it, (b) the data cannot settle it on its own, and (c) knowing would change how you read this home in future. If you would not change your analysis either way, say nothing. Never propose one to seem thorough, never one whose answer is already in the memory document, and never a vague catch-all ("anything else I should know?").
+
+A guess the homeowner confirms becomes a plain remembered fact; one they reject is recorded as a dead end and never revisited. Omitting the field entirely is the normal, expected case.
 "findings" (optional, max 3): durable NEW discoveries about this home worth remembering for future analyses — sensor reliability issues, recurring patterns, quirks (e.g. "The hallway motion sensor drops offline most nights around 2 AM"). One plain factual sentence each, no advice. A finding must be genuinely new: never restate a KNOWN FACT from the prompt, and never restate the current snapshot ("3 lights are on" is a state, not a finding). Omit when nothing new was learned.
 
 THE HTML DOCUMENT:
@@ -281,15 +285,19 @@ def build_prompt(
     feedback: list[str] | None = None,
     knowledge: str | None = None,
     previous: dict | None = None,
+    hypothesis_budget: int = 0,
 ) -> str:
     """Assemble the user prompt: analysis focus + the data bundle.
 
     ``feedback`` is the homeowner's standing feedback on earlier versions of
     this card — injected as instructions the new insight must honor.
-    ``knowledge`` is the rendered knowledge-store block (known facts,
-    answered questions, questions already asked). ``previous`` is the last
-    stored run of this card, injected so the analyst advances the story
-    instead of regenerating it.
+    ``knowledge`` is the rendered knowledge-store block (rejected lines of
+    inquiry only — facts live in the memory document and are injected from
+    there). ``hypothesis_budget`` is how many guesses the analyst may still
+    propose; at zero it is told to propose none, which is what keeps the
+    queue from growing into the wall of open questions this replaced.
+    ``previous`` is the last stored run of this card, injected so the
+    analyst advances the story instead of regenerating it.
     """
     parts: list[str] = []
     if question:
@@ -317,6 +325,21 @@ def build_prompt(
 
     if knowledge and knowledge.strip():
         parts.append("\n" + knowledge.strip())
+
+    # The budget is stated explicitly rather than left implicit: a model told
+    # only "usually zero" still proposes one most runs, and three cards each
+    # proposing one is how the old question list grew without bound.
+    if hypothesis_budget <= 0:
+        parts.append(
+            "\nHYPOTHESIS BUDGET: 0. The homeowner already has guesses waiting on them. "
+            "Propose NONE this run — omit the \"hypotheses\" field entirely."
+        )
+    else:
+        parts.append(
+            f"\nHYPOTHESIS BUDGET: {hypothesis_budget}. You may propose at most "
+            f"{hypothesis_budget}, and only if one genuinely clears the bar. Zero is "
+            "still the expected outcome for most runs."
+        )
 
     if previous:
         parts.append("\n" + _previous_block(previous))

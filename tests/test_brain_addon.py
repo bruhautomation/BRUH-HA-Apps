@@ -182,6 +182,18 @@ class TestDocsTab(unittest.TestCase):
         self.assertIn('id="viewDocs"', self.html)
         self.assertIn('if (name === "docs") renderDocs();', self.app)
 
+    def test_docs_script_parses(self):
+        """docs.js is a template-literal minefield — an unescaped backtick in
+        prose is a syntax error, and a broken docs.js is a blank tab."""
+        res = subprocess.run(["node", "--check", str(PANEL / "docs.js")],
+                             capture_output=True, text=True, timeout=30)
+        self.assertEqual(res.returncode, 0, res.stderr)
+
+    def test_app_script_parses(self):
+        res = subprocess.run(["node", "--check", str(PANEL / "app.js")],
+                             capture_output=True, text=True, timeout=30)
+        self.assertEqual(res.returncode, 0, res.stderr)
+
     def test_docs_script_is_loaded_and_served(self):
         """A script tag with no route behind it is a blank tab."""
         self.assertIn('src="docs.js', self.html)
@@ -374,6 +386,143 @@ class TestSharedLoginWiring(unittest.TestCase):
     def test_interactive_shell_picks_up_the_credential(self):
         profile = self.run_sh.split("<< 'PROFILE'")[1]
         self.assertIn("brain-auth-env.sh", profile)
+
+
+class TestTurnBudgets(unittest.TestCase):
+    """A turn cap TRUNCATES — it doesn't degrade. A run that hits one stops
+    mid-thought and produces nothing parseable, so the work is paid for and
+    then thrown away. That makes a tight cap the most expensive setting in
+    the add-on, and it must not be set by reflex."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.config = yaml.safe_load((ADDON_DIR / "config.yaml").read_text())
+        cls.learn = (SCRIPTS / "brain-learn.sh").read_text()
+        cls.ask = (SCRIPTS / "brain-ask.sh").read_text()
+
+    def test_study_can_run_uncapped(self):
+        """Depth is the deliverable for a study session, so 0 must be legal."""
+        self.assertIn("study_max_turns", self.config["options"])
+        self.assertTrue(self.config["schema"]["study_max_turns"].startswith("int(0,"))
+
+    def test_study_omits_the_flag_when_uncapped(self):
+        """Passing --max-turns 0 would cap at zero, not remove the cap."""
+        self.assertIn('if [ "${MAX_TURNS:-0}" -gt 0 ]', self.learn)
+        self.assertIn('turn_args=(--max-turns "$MAX_TURNS")', self.learn)
+        self.assertIn('-p "${turn_args[@]}"', self.learn)
+
+    def test_ask_also_supports_uncapped(self):
+        self.assertIn('if [ "${MAX_TURNS:-0}" -gt 0 ]', self.ask)
+        self.assertIn('-p "${turn_args[@]}"', self.ask)
+
+    def test_study_defaults_are_generous(self):
+        self.assertGreaterEqual(self.config["options"]["study_max_turns"], 40)
+        self.assertGreaterEqual(self.config["options"]["study_timeout_minutes"], 15)
+
+    def test_voice_stays_tight_but_not_starved(self):
+        """Voice is the one place a cap is genuinely right — latency is the
+        product — but 5 was tight enough to truncate real commands."""
+        turns = self.config["options"]["assist_max_turns"]
+        self.assertGreaterEqual(turns, 8)
+        self.assertLessEqual(turns, 15)
+
+    def test_background_work_is_not_held_to_voice_limits(self):
+        self.assertGreaterEqual(self.config["options"]["automation_max_turns"], 20)
+
+    def test_truncation_is_reported_as_truncation(self):
+        """Blaming the model for a limit we imposed sends people looking in
+        entirely the wrong place."""
+        self.assertIn("hit its ${MAX_TURNS}-turn limit", self.learn)
+        self.assertIn("BRAIN_LEARN_MAX_TURNS", self.learn)
+
+    def test_model_is_told_to_land_before_it_runs_out(self):
+        """Converts a truncated run into a partial but useful one."""
+        self.assertIn("running low on room", self.learn)
+
+
+class TestStudyService(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.requests = self.root / "study_requests"
+        self.requests.mkdir()
+        self.learn_log = self.root / "learn.log"
+        # Stand in for brain-learn.sh so the watcher can be exercised without
+        # a Claude CLI.
+        self.fake_learn = self.root / "fake-learn.sh"
+        self.fake_learn.write_text(
+            "#!/bin/bash\nprintf '%s\\n' \"$*\" >> " + str(self.learn_log) + "\n")
+        self.fake_learn.chmod(0o755)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _watch_once(self):
+        return subprocess.run(
+            ["bash", str(SCRIPTS / "brain-study-watcher.sh"), "--once"],
+            capture_output=True, text=True, timeout=30,
+            env={**os.environ,
+                 "BRAIN_SHARED_DIR": str(self.root),
+                 "BRAIN_LEARN_SCRIPT": str(self.fake_learn)})
+
+    def _request(self, topic):
+        (self.requests / f"{int(time.time())}-{topic or 'auto'}.json").write_text(
+            json.dumps({"ts": int(time.time()), "topic": topic}))
+
+    def test_topic_request_runs_that_topic(self):
+        self._request("energy")
+        self._watch_once()
+        self.assertEqual(self.learn_log.read_text().strip(), "energy")
+
+    def test_empty_topic_studies_the_stalest(self):
+        """A nightly 'study something' automation is the main use, so an
+        empty topic must mean 'you choose', not 'study nothing'."""
+        self._request("")
+        self._watch_once()
+        self.assertEqual(self.learn_log.read_text().strip(), "")
+
+    def test_a_request_runs_exactly_once(self):
+        """Study sessions are expensive — re-running one on every poll would
+        quietly burn a usage window."""
+        self._request("energy")
+        self._watch_once()
+        self._watch_once()
+        self.assertEqual(len(self.learn_log.read_text().strip().splitlines()), 1)
+
+    def test_processed_requests_are_archived_not_left_pending(self):
+        self._request("energy")
+        self._watch_once()
+        self.assertEqual(list(self.requests.glob("*.json")), [])
+        self.assertTrue(list((self.requests / "processed").iterdir()))
+
+    def test_missing_learn_script_exits_quietly(self):
+        res = subprocess.run(
+            ["bash", str(SCRIPTS / "brain-study-watcher.sh"), "--once"],
+            capture_output=True, text=True, timeout=30,
+            env={**os.environ, "BRAIN_SHARED_DIR": str(self.root),
+                 "BRAIN_LEARN_SCRIPT": "/nonexistent/learn.sh"})
+        self.assertEqual(res.returncode, 0)
+
+
+class TestSlashCommands(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.run_sh = (ADDON_DIR / "run.sh").read_text()
+
+    def test_learn_and_memory_commands_are_installed(self):
+        self.assertIn('commands_dir="$claude_settings_dir/commands"', self.run_sh)
+        self.assertIn("learn.md", self.run_sh)
+        self.assertIn("memory.md", self.run_sh)
+
+    def test_learn_command_files_through_the_cli(self):
+        """A slash command that writes memory.md directly would bypass the
+        single-writer rule the whole design rests on."""
+        self.assertIn('brain memory add "<fact>"', self.run_sh)
+
+    def test_study_watcher_starts_with_learning_enabled(self):
+        self.assertIn("start_study_watcher", self.run_sh)
+        self.assertIn("Study watcher disabled (learning: false)", self.run_sh)
 
 
 # ---------------------------------------------------------------------------

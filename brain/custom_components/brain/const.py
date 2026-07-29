@@ -65,6 +65,9 @@ INSIGHTS_DIR = "insights"
 MEMORY_DIR = "memory"
 MEMORY_INBOX_DIR = "inbox"
 MEMORY_FILE = "memory.md"
+# Study requests: the integration drops one here, the add-on's watcher
+# runs `brain learn` and files whatever it finds through the inbox.
+STUDY_REQUESTS_DIR = "study_requests"
 QUESTIONS_FILE = "questions.jsonl"
 
 # Internal HTTP API published by the add-on's worker pool (fast mode).

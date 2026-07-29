@@ -1464,53 +1464,48 @@ async function renderKnowledge() {
     return;
   }
 
-  // open questions — answer inline or dismiss
+  // Hypotheses: two taps, not a text box. The whole point of replacing
+  // open questions is that answering costs nothing — a form to fill in is
+  // exactly the friction that let the old list pile up unanswered.
   const openBoxEl = $("#kOpenQs");
   openBoxEl.textContent = "";
-  const open = (data.questions || []).filter((q) => q.status === "open");
+  const open = data.hypotheses || [];
   if (!open.length) {
-    openBoxEl.appendChild(el("div", "kempty", "No open questions — the analyst has everything it needs."));
+    openBoxEl.appendChild(el("div", "kempty",
+      "Nothing waiting on you — BRain isn't unsure about anything right now."));
   }
-  open.slice().reverse().forEach((q) => {
+  open.slice().reverse().forEach((h) => {
     const row = el("div", "qrow");
-    const head = el("div", "qtext", `❓ ${q.text}`);
-    row.appendChild(head);
-    const form = el("form", "qform");
-    const input = el("input");
-    input.type = "text";
-    input.maxLength = 1000;
-    input.placeholder = "Answer — it becomes a learned fact…";
-    const send = el("button", "btn small primary", "Answer");
-    send.type = "submit";
-    const dismiss = el("button", "btn small", "Dismiss");
-    dismiss.type = "button";
-    tip(dismiss, "Retire without answering — it won't be asked again");
-    form.appendChild(input);
-    form.appendChild(send);
-    form.appendChild(dismiss);
-    form.addEventListener("submit", async (ev) => {
-      ev.preventDefault();
-      const answer = input.value.trim();
-      if (!answer) return;
-      send.disabled = true;
+    row.appendChild(el("div", "qtext", h.text));
+
+    const actions = el("div", "qform");
+    const yes = el("button", "btn small primary", "✓  Yes");
+    const no = el("button", "btn small", "✗  No");
+    yes.type = no.type = "button";
+    tip(yes, "Right — remember it as a fact");
+    tip(no, "Wrong — don't pursue this again");
+
+    const settle = async (verb, btn, done) => {
+      yes.disabled = no.disabled = true;
       try {
-        await api(`api/knowledge/question/${q.ts}/answer`, {
-          method: "POST", body: JSON.stringify({ answer }) });
-        toast("Answered — every future insight will use it");
+        await api(`api/hypothesis/${h.ts}/${verb}`, { method: "POST" });
+        toast(done);
         await refreshInsights().catch(() => {});
         renderIfChanged();
         renderKnowledge();
-      } catch (e) { toast(e.message); send.disabled = false; }
-    });
-    dismiss.addEventListener("click", async () => {
-      try {
-        await api(`api/knowledge/question/${q.ts}/dismiss`, { method: "POST" });
-        await refreshInsights().catch(() => {});
-        renderIfChanged();
-        renderKnowledge();
-      } catch (e) { toast(e.message); }
-    });
-    row.appendChild(form);
+      } catch (e) {
+        toast(e.message);
+        yes.disabled = no.disabled = false;
+      }
+    };
+    yes.addEventListener("click", () => settle(
+      "confirm", yes, "Filed — it lands in memory at the next consolidation"));
+    no.addEventListener("click", () => settle(
+      "reject", no, "Noted as a dead end"));
+
+    actions.appendChild(yes);
+    actions.appendChild(no);
+    row.appendChild(actions);
     openBoxEl.appendChild(row);
   });
 

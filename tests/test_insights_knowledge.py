@@ -26,6 +26,7 @@ sys.path.insert(0, str(PANEL_DIR))
 
 import categories  # noqa: E402
 import engine  # noqa: E402
+import hypotheses  # noqa: E402
 import feedback_store  # noqa: E402
 import knowledge_store  # noqa: E402
 import prompt_store  # noqa: E402
@@ -37,6 +38,7 @@ class KnowledgeStoreCase(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self._old = knowledge_store.KNOWLEDGE_FILE
         knowledge_store.KNOWLEDGE_FILE = os.path.join(self.tmp.name, "knowledge.json")
+        hypotheses.HYPOTHESES_FILE = Path(self.tmp.name) / "hypotheses.jsonl"
 
     def tearDown(self):
         knowledge_store.KNOWLEDGE_FILE = self._old
@@ -332,6 +334,7 @@ class InsightsServerCase(unittest.TestCase):
         user_categories.USER_CATS_FILE = os.path.join(self.tmp.name, "user_cats.json")
         self.server.CARD_TOKEN_FILE = Path(self.tmp.name) / "secrets" / "card_token"
         knowledge_store.KNOWLEDGE_FILE = os.path.join(self.tmp.name, "knowledge.json")
+        hypotheses.HYPOTHESES_FILE = Path(self.tmp.name) / "hypotheses.jsonl"
         self.server.SHARED_MEMORY_FILE = Path(self.tmp.name) / "memory.md"
         self._old_www = self.server.WWW_CARD_DIR
         self.server.WWW_CARD_DIR = Path(self.tmp.name) / "www" / "bruh_insights"
@@ -361,7 +364,7 @@ class TestGenerateLearns(InsightsServerCase):
             "title": "Energy story",
             "summary": "Stuff happened.",
             "highlights": [{"label": "Total", "value": "12 kWh"}],
-            "questions": ["Is the garage fridge meant to run overnight?"],
+            "hypotheses": ["The garage fridge is meant to run 24/7 — right?"],
             "findings": ["Hall sensor drops offline at 2 AM"],
             "tags": ["energy"],
             "html": "<!DOCTYPE html><html><body>ok</body></html>",
@@ -404,18 +407,29 @@ class TestGenerateLearns(InsightsServerCase):
         self.assertEqual(facts[0]["source"], "insights")
         self.assertEqual(facts[0]["category"], "energy")
 
-    def test_questions_recorded_and_repeats_dropped(self):
+    def test_hypotheses_queued_and_repeats_dropped(self):
+        import hypotheses
         asyncio.run(self.server._generate("energy"))
         self.assertEqual(self._stored()["questions"],
-                         ["Is the garage fridge meant to run overnight?"])
-        self.assertEqual(len(knowledge_store.list_questions("open")), 1)
-        # the model asks the same question next run → filtered out
+                         ["The garage fridge is meant to run 24/7 — right?"])
+        self.assertEqual(len(hypotheses.list_all("open")), 1)
+
+        # Proposed again next run → dropped in code, not merely discouraged
+        # by the prompt. A model that ignores the budget must not be able to
+        # grow the queue anyway.
         asyncio.run(self.server._generate("energy"))
         self.assertEqual(self._stored()["questions"], [])
-        # still just one recorded question, asked twice
-        qs = knowledge_store.list_questions()
-        self.assertEqual(len(qs), 1)
-        self.assertEqual(qs[0]["asked_count"], 2)
+        self.assertEqual(len(hypotheses.list_all("open")), 1)
+
+    def test_queue_is_capped_regardless_of_what_the_model_returns(self):
+        import hypotheses
+        for i in range(hypotheses.MAX_OPEN + 3):
+            hypotheses.propose(f"claim number {i}")
+        self.assertEqual(len(hypotheses.list_all("open")), hypotheses.MAX_OPEN)
+        self.assertEqual(hypotheses.budget(), 0)
+        # with no budget the card shows none, even though the stub offers one
+        asyncio.run(self.server._generate("energy"))
+        self.assertEqual(self._stored()["questions"], [])
 
     def test_ledger_is_not_injected_but_dead_ends_are(self):
         knowledge_store.add_fact("The beacon is the office lamp")

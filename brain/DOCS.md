@@ -60,8 +60,8 @@ runs, because it is the ingress target.
 | `enable_automation_integration` | bool | `true` | Watch for task requests from automations. |
 | `assist_fast_mode` | bool | `true` | Serve voice from a pool of pre-warmed persistent workers instead of spawning a CLI per request. |
 | `assist_tool_access` | `mcp_only` \| `full` | `mcp_only` | Whether voice can only touch HA, or also run Bash and edit files. |
-| `assist_max_turns` | 1–20 | `5` | Agentic turn cap for voice. |
-| `automation_max_turns` | 1–50 | `10` | Agentic turn cap for automation tasks. |
+| `assist_max_turns` | 1–40 | `8` | Agentic turn cap for voice. Kept modest on purpose: voice has a hard latency expectation, and a twenty-turn voice command is a failed interaction whatever it answers. The cached area map means most commands take one or two turns anyway. |
+| `automation_max_turns` | 1–200 | `30` | Turn cap for automation tasks. No latency pressure here, so it is generous. |
 
 ### Memory and learning
 
@@ -70,6 +70,15 @@ runs, because it is the ingress target.
 | `learning` | bool | `true` | Master switch for everything BRain learns: the consolidator, the end-of-conversation reflection pass, and study sessions. Turning it off leaves existing memory untouched. |
 | `memory_injection` | bool | `true` | Splice learned memory into voice prompts. |
 | `memory_max_kb` | 1–64 | `8` | Size cap for the memory document. |
+| `study_max_turns` | 0–500 | `60` | Turn cap for `brain learn`. **`0` removes the cap.** See the note below. |
+| `study_timeout_minutes` | 2–120 | `30` | Wall-clock limit for a study session. |
+
+> **Why the study limits are generous.** A turn cap is not a safety valve — it
+> *truncates*. A study session that hits it stops mid-thought and produces no
+> parseable result, so the whole run is wasted after paying for every token.
+> Depth is the entire point of a study session, so the honest guard is
+> wall-clock time and your account's own usage budget, not turn count. Raise
+> `study_max_turns`, or set it to `0`, if you want it digging harder.
 
 ### Insights
 

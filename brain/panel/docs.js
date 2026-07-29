@@ -292,6 +292,90 @@ queued into memory automatically.
 
 Leave it on \`mcp_only\` unless you specifically want voice editing your config.
 
+## Watching it learn
+
+Learning is a markdown file on disk, which is invisible to everything outside BRain. So it
+also surfaces where you already look:
+
+- **The logbook.** Every new fact fires a \`brain_learned\` event, so "BRain learned: the
+  hallway sensor drops offline around 2am" appears in your home's timeline next to lights
+  and doors.
+- **\`sensor.brain_facts_learned\`** — how much it knows.
+- **\`sensor.brain_last_learned\`** — when, with the facts as an attribute.
+- **\`binary_sensor.brain_waiting_on_you\`** — on when a guess needs a yes/no, with the
+  text in \`pending\`.
+
+That last one exists to be automated. A guess sitting in a panel nobody has open expires
+unanswered; pushed to a phone, it costs one tap:
+
+\`\`\`yaml
+triggers:
+  - trigger: state
+    entity_id: binary_sensor.brain_waiting_on_you
+    to: "on"
+actions:
+  - action: notify.mobile_app_phone
+    data:
+      message: "{{ state_attr('binary_sensor.brain_waiting_on_you', 'oldest') }}"
+\`\`\`
+
+## Studying on a schedule
+
+\`\`\`yaml
+action: brain.study
+data:
+  topic: energy      # omit to study whatever has gone stalest
+\`\`\`
+
+Returns immediately — a session runs for minutes, and what it finds arrives in memory
+rather than in a response. A nightly automation with no topic works its way through the
+curriculum on its own.
+
+In the terminal, **\`/learn\`** does the same thing where you can watch it and correct it
+mid-flight. **\`/memory\`** shows what it knows and anything waiting on you.
+
+## Watching it learn
+
+Learning is a markdown file on disk, which is invisible to everything outside BRain. So it
+also surfaces where you already look:
+
+- **The logbook.** Every new fact fires a \`brain_learned\` event, so "BRain learned: the
+  hallway sensor drops offline around 2am" appears in your home's timeline next to lights
+  and doors.
+- **\`sensor.brain_facts_learned\`** — how much it knows.
+- **\`sensor.brain_last_learned\`** — when, with the facts as an attribute.
+- **\`binary_sensor.brain_waiting_on_you\`** — on when a guess needs a yes/no, with the
+  text in \`pending\`.
+
+That last one exists to be automated. A guess sitting in a panel nobody has open expires
+unanswered; pushed to a phone it costs one tap:
+
+\`\`\`yaml
+triggers:
+  - trigger: state
+    entity_id: binary_sensor.brain_waiting_on_you
+    to: "on"
+actions:
+  - action: notify.mobile_app_phone
+    data:
+      message: "{{ state_attr('binary_sensor.brain_waiting_on_you', 'oldest') }}"
+\`\`\`
+
+## Studying on a schedule
+
+\`\`\`yaml
+action: brain.study
+data:
+  topic: energy      # omit to study whatever has gone stalest
+\`\`\`
+
+Returns immediately — a session runs for minutes, and what it finds arrives in memory
+rather than in a response. A nightly automation with no topic works through the curriculum
+on its own.
+
+In the terminal, **\`/learn\`** does the same where you can watch it and correct it
+mid-flight. **\`/memory\`** shows what it knows and anything waiting on you.
+
 ## From automations
 
 \`\`\`yaml
@@ -335,6 +419,23 @@ Biggest levers, in order:
 3. **A smaller model.** Settings → Claude model. Smaller models cost far fewer tokens;
    the bigger ones dig deeper.
 4. **Fewer history days.** Settings → History analyzed.
+
+## How deep it digs
+
+A turn cap is not a safety valve — it **truncates**. A run that hits one stops mid-thought
+and produces nothing usable, so you pay for every token and get no result. That makes a
+tight cap the most expensive setting in the add-on.
+
+So the limits are set by what each job is actually for:
+
+| Job | Default | Why |
+| --- | --- | --- |
+| Voice | 8 turns | Latency is the point. A twenty-turn voice command is a failed interaction whatever it answers — and the cached area map means most take one or two. |
+| Automation tasks | 30 turns | No one is waiting, so it can afford to be thorough. |
+| Study sessions | 60 turns, 30 min | Depth **is** the deliverable. Set \`study_max_turns\` to \`0\` to remove the cap entirely. |
+
+If a study session reports hitting its limit, raise it — that message means the run found
+things and then lost them.
 
 ## Turning faces off
 

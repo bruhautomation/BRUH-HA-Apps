@@ -84,6 +84,7 @@ import addon_options
 import categories as cat_mod
 import engine
 import feedback_store
+import hypotheses
 import knowledge_store
 import prompt_store
 import settings_store
@@ -492,6 +493,7 @@ async def _generate(insight_id: str) -> None:
             except (OSError, ValueError):
                 pass
         prompt = build_prompt(cat, bundle, question=question, feedback=feedback,
+                              hypothesis_budget=hypotheses.budget(),
                               knowledge=knowledge, previous=previous)
         result = await asyncio.to_thread(
             engine.run_claude, prompt, SYSTEM_PROMPT, eff_model(),
@@ -511,17 +513,17 @@ async def _generate(insight_id: str) -> None:
         highlights = obj.get("highlights")
         if not isinstance(highlights, list):
             highlights = []
-        # Backstop against re-asking: drop any question equivalent to one
-        # already in the knowledge store (whatever its status), then record
-        # the genuinely new ones so THEY are never asked twice either.
+        # Hypotheses, not open questions. propose() enforces the cap and the
+        # never-twice rule in code — the prompt states the budget, but a model
+        # that ignores it must not be able to grow the queue anyway. Anything
+        # it declines is dropped rather than shown, so the card never displays
+        # a guess the queue didn't accept.
         questions = []
-        for q in _clean_strings(obj.get("questions"), 2, 300):
-            entry = knowledge_store.record_question(q, cat["id"])
-            if (entry is None or entry.get("status") != "open"
-                    or int(entry.get("asked_count") or 1) > 1):
-                log.info("dropping re-asked question: %s", q)
+        for claim in _clean_strings(obj.get("hypotheses"), 3, 300):
+            if hypotheses.propose(claim, cat["id"]) is None:
+                log.info("dropping hypothesis (known, or queue full): %s", claim)
                 continue
-            questions.append(q)
+            questions.append(claim)
         findings = _clean_strings(obj.get("findings"), 3, 500)
         tags: list[str] = []
         for tag in _clean_strings(obj.get("tags"), 4, 24):
@@ -1370,9 +1372,43 @@ async def h_knowledge(request: web.Request) -> web.Response:
     return web.json_response({
         "facts": knowledge_store.list_facts(),
         "questions": knowledge_store.list_questions(),
+        "hypotheses": hypotheses.list_all("open"),
+        "hypothesis_budget": hypotheses.budget(),
         "shared_memory": _read_shared_memory(),
         "memory_state": dict(MEMORY_STATE),
     })
+
+
+async def h_hypothesis_confirm(request: web.Request) -> web.Response:
+    """Yes. The claim is the durable part, so it is queued as a plain memory
+    fact and the guess itself is settled — no Q/A pair is kept anywhere."""
+    try:
+        ts = int(request.match_info["ts"])
+    except ValueError:
+        raise web.HTTPBadRequest(text="bad hypothesis id")
+    settled = hypotheses.confirm(ts)
+    if not settled:
+        raise web.HTTPNotFound(text="no such open hypothesis")
+    await _submit_memory(settled["text"], source="confirmed")
+    _retire_question_everywhere(settled["text"])
+    return web.json_response({"confirmed": ts, "budget": hypotheses.budget()})
+
+
+async def h_hypothesis_reject(request: web.Request) -> web.Response:
+    """No. Recorded as a dead end so the same line of inquiry is not
+    revisited — that is the one part of the queue worth showing the model."""
+    try:
+        ts = int(request.match_info["ts"])
+    except ValueError:
+        raise web.HTTPBadRequest(text="bad hypothesis id")
+    settled = hypotheses.reject(ts)
+    if not settled:
+        raise web.HTTPNotFound(text="no such open hypothesis")
+    entry = knowledge_store.record_question(settled["text"])
+    if entry:
+        knowledge_store.dismiss_question(entry["ts"])
+    _retire_question_everywhere(settled["text"])
+    return web.json_response({"rejected": ts, "budget": hypotheses.budget()})
 
 
 async def h_knowledge_fact_add(request: web.Request) -> web.Response:
@@ -1641,6 +1677,8 @@ def make_app() -> web.Application:
     app.router.add_post("/api/questions/answer", h_answer_question)
     app.router.add_post("/api/questions/dismiss", h_dismiss_question_card)
     app.router.add_get("/api/knowledge", h_knowledge)
+    app.router.add_post("/api/hypothesis/{ts}/confirm", h_hypothesis_confirm)
+    app.router.add_post("/api/hypothesis/{ts}/reject", h_hypothesis_reject)
     app.router.add_put("/api/memory", h_memory_put)
     app.router.add_post("/api/knowledge/fact", h_knowledge_fact_add)
     app.router.add_delete("/api/knowledge/fact/{ts}", h_knowledge_fact_delete)
