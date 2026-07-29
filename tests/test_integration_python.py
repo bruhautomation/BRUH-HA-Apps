@@ -51,7 +51,7 @@ class TestManifestJson(unittest.TestCase):
         """Domain should be lowercase with underscores."""
         self.assertRegex(self.manifest["domain"], r'^[a-z][a-z0-9_]*$')
 
-    def test_domain_is_bruh_claude(self):
+    def test_domain_is_brain(self):
         """Domain should be 'brain'."""
         self.assertEqual(self.manifest["domain"], "brain")
 

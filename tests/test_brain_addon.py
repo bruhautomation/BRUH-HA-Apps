@@ -129,6 +129,34 @@ class TestPanelBranding(unittest.TestCase):
     def test_wordmark_reads_brain(self):
         self.assertIn('BR<span class="grad">ain</span>', self.html)
 
+    def test_the_mark_is_the_gable(self):
+        """The brand mark is a gable lifted from the parent BRUH logo, and it
+        is the same path everywhere — inline in the bar, in the favicon, in
+        every rendered PNG. A second hand-drawn copy is how a mark drifts."""
+        gable = "M293.5,21.6V70.83S189.86,174.05,188.83,175.5H450.09Z"
+        self.assertIn(gable, self.html, "the top bar isn't drawing the gable")
+        self.assertIn(gable, (PANEL / "favicon.svg").read_text())
+        for name in ("brain-icon.svg", "brain-app-tile-dark.svg",
+                     "brain-logo-ondark.svg", "brain-logo-onlight.svg"):
+            self.assertIn(gable, (BASE_DIR / "branding" / "icons" / name).read_text(),
+                          f"{name} does not carry the shared gable path")
+
+    def test_the_inline_mark_follows_the_theme(self):
+        """It has to inherit `currentColor` — the bar tints the mark with the
+        accent, and the window in the roof is a knockout, so a filled shape
+        would blot it out."""
+        self.assertIn('fill="currentColor" fill-rule="evenodd"', self.html)
+
+    def test_retired_marks_are_gone(self):
+        """The neural mesh and the solid-brain variant were two directions
+        kept while the choice was open. It is closed."""
+        icons = BASE_DIR / "branding" / "icons"
+        for stale in ("brain.svg", "brain-alt-solid.svg", "brain-logo.svg",
+                      "brain-logo-alt-solid.svg", "bruh-terminal.svg",
+                      "bruh-insights.svg"):
+            self.assertFalse((icons / stale).exists(),
+                             f"branding/icons/{stale} belongs to a retired mark")
+
     def test_no_old_product_names_are_rendered(self):
         """Catches the split-tag case: `BRUH <span>Insights</span>` reads as
         "BRUH Insights" on screen but never matches a naive replace."""

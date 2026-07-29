@@ -6,8 +6,8 @@ shipped inside a custom integration are never used there, which is why a
 fresh install shows "icon not available" until the brand is submitted.
 
 One-time submission (assets here are already to spec — `icon.png` 256×256,
-`icon@2x.png` 512×512, `logo.png` 640×200, `logo@2x.png` 1280×400,
-rasterized from `../branding/icons/`):
+`icon@2x.png` 512×512, `logo.png` 512×384, `logo@2x.png` 1024×768, rendered
+from `../branding/icons/` by `../branding/render.mjs`):
 
 1. Fork `home-assistant/brands`
 2. Copy `custom_integrations/brain/` and `custom_integrations/bruh_minecraft/`
@@ -20,6 +20,10 @@ name — which is why a fresh install reads "brain BRain" rather than a
 logo. Nothing in this repo can fix that; the artwork has to live in
 home-assistant/brands. The `logo.png` lockup is what renders on the
 integration page once it does.
+
+There is no `custom_integrations/bruh_claude/` here any more. That domain was
+renamed to `brain` in 1.0.0 and never submitted, so submitting it now would
+publish artwork for an integration nobody can install.
 
 The displayed strings come from three different places, so it is worth
 being precise about which is which:

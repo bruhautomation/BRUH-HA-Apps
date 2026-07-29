@@ -21,7 +21,7 @@ BRUH Terminal (`bruh-claude-terminal/`) and BRUH Insights (`bruh-insights/`) wer
 - **Hypotheses replace open-ended questions**: capped at 3 open, 14-day expiry, answered ones become plain memory lines and the record is settled. Rejected ones become a capped dead-ends block.
 - **Naming**: prefer `brain`/`ha` over `claude` in anything we own. `CLAUDE.md`, `CLAUDE_CONFIG_DIR`, the `claude` user, and the `claude-run` wrapper keep the name because they *are* Claude Code's file, env var, user, and binary. Everything else (`panel/engine.py`, `scripts/brain-*.sh`) is BRain-named.
 
-Shared brand sources live in `branding/` (Solid Blocks icon SVGs) and `brands/` (home-assistant/brands submission assets); cross-add-on tests live in `tests/`.
+Shared brand sources live in `branding/` (SVGs plus `render.mjs`, which regenerates every PNG in the repo) and `brands/` (home-assistant/brands submission assets); cross-add-on tests live in `tests/`. The BRain mark is a gable that doubles as the `A` in the wordmark, lifted from the parent BRUH logo — never redraw it, and never recolour the roof away from azure.
 
 ## Repository Structure
 
