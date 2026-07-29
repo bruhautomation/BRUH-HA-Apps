@@ -117,6 +117,54 @@ class TestNoStaleReferences(unittest.TestCase):
         self.assertIn('"BRAIN_API_PORT", "8098"', pool)
 
 
+class TestPanelBranding(unittest.TestCase):
+    """The panel is the only thing most users ever see, and a bulk rename
+    can't reach text that is split across HTML tags."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.html = (PANEL / "index.html").read_text()
+        cls.js = (PANEL / "app.js").read_text()
+
+    def test_wordmark_reads_brain(self):
+        self.assertIn('BR<span class="grad">ain</span>', self.html)
+
+    def test_no_old_product_names_are_rendered(self):
+        """Catches the split-tag case: `BRUH <span>Insights</span>` reads as
+        "BRUH Insights" on screen but never matches a naive replace."""
+        import re
+        text = re.sub(r"<[^>]+>", "", self.html)
+        text = re.sub(r"\s+", " ", text)
+        for stale in ("BRUH Insights", "BRUH Terminal", "BRUH Claude"):
+            self.assertNotIn(stale, text, f"panel still shows {stale!r}")
+
+    def test_panel_does_not_send_users_to_itself(self):
+        """Hints inherited from the standalone add-ons told you to go run a
+        command in the *other* add-on. Now that there is only one, that
+        advice points at the thing you are already looking at."""
+        for stale in ("BRain add-on? Run", "if <b>BRain</b> is installed"):
+            self.assertNotIn(stale, self.html)
+
+    def test_no_retired_cli_names_in_the_ui(self):
+        for stale in ("ha-share-login", "ha-memory", "ha-backup"):
+            self.assertNotIn(stale, self.html, f"panel references {stale}")
+
+    def test_three_view_tabs_exist(self):
+        for view in ("insights", "terminal", "memory"):
+            self.assertIn(f'data-view="{view}"', self.html)
+            self.assertIn(f'id="view{view.capitalize()}"', self.html)
+
+    def test_terminal_frame_is_lazy_and_points_at_the_proxy(self):
+        self.assertIn('id="termFrame"', self.html)
+        self.assertIn('src="about:blank"', self.html)
+        self.assertIn('frame.src = "terminal/"', self.js)
+
+    def test_memory_pane_is_adopted_rather_than_duplicated(self):
+        """Duplicating the markup would duplicate every id with it."""
+        self.assertIn("adoptMemoryPane", self.js)
+        self.assertEqual(self.html.count('id="kAddForm"'), 1)
+
+
 # ---------------------------------------------------------------------------
 # CLI dispatchers
 # ---------------------------------------------------------------------------

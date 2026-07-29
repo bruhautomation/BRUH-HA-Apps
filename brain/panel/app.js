@@ -1652,7 +1652,7 @@ function setMemEditing(on) {
 function pollMemoryMerge() {
   clearTimeout(memState.pollTimer);
   memState.pollTimer = setTimeout(async () => {
-    if (!$("#kModal").classList.contains("open")) return;
+    if (currentView !== "memory") return;
     try {
       const data = await api("api/knowledge");
       renderMemory(data);
@@ -1687,10 +1687,45 @@ $("#kMemSave").addEventListener("click", async () => {
   } catch (e) { toast(e.message); }
 });
 
-$("#knowledgeBtn").addEventListener("click", () => {
-  openBox("#kModal");
-  renderKnowledge();
-});
+// ---------------------------------------------------------------- views
+// Insights / Terminal / Memory. The Memory pane reuses the knowledge
+// dialog's markup verbatim — it is relocated out of the modal at startup
+// rather than duplicated, so every id (and every handler bound to one)
+// keeps working untouched.
+let currentView = "insights";
+
+function switchView(name) {
+  if (name === currentView) return;
+  if (currentView === "memory" && memState.editing && memState.dirty &&
+      !window.confirm("Discard your unsaved memory edits?")) return;
+  if (currentView === "memory" && memState.editing) setMemEditing(false);
+
+  currentView = name;
+  document.querySelectorAll(".viewtab").forEach((b) =>
+    b.classList.toggle("active", b.dataset.view === name));
+  document.querySelectorAll(".view").forEach((v) =>
+    v.classList.toggle("active", v.id === "view" + name[0].toUpperCase() + name.slice(1)));
+
+  // The Insights toolbar has no meaning on the other tabs.
+  const insightsOnly = ["#newInsight", "#refreshAll", "#settingsBtn"];
+  insightsOnly.forEach((sel) => {
+    const el = $(sel);
+    if (el) el.style.display = name === "insights" ? "" : "none";
+  });
+
+  if (name === "terminal") {
+    const frame = $("#termFrame");
+    // Lazy: don't start a shell session for someone who never opens the tab.
+    if (frame.getAttribute("src") === "about:blank") frame.src = "terminal/";
+  }
+  if (name === "memory") renderKnowledge();
+}
+
+document.querySelectorAll(".viewtab").forEach((b) =>
+  b.addEventListener("click", () => switchView(b.dataset.view)));
+
+// The old top-bar Memory button now just selects the tab.
+$("#knowledgeBtn").addEventListener("click", () => switchView("memory"));
 $("#kAddForm").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const text = $("#kAddInput").value.trim();
@@ -1717,16 +1752,17 @@ $("#kAddForm").addEventListener("submit", async (ev) => {
     renderKnowledge();
   } catch (e) { toast(e.message); }
 });
-function closeKnowledge() {
-  if (memState.editing && memState.dirty &&
-      !window.confirm("Discard your unsaved memory edits?")) return;
-  if (memState.editing) setMemEditing(false);
-  closeBox("#kModal");
-}
-$("#kClose").addEventListener("click", closeKnowledge);
-$("#kModal").addEventListener("click", (ev) => {
-  if (ev.target === $("#kModal")) closeKnowledge();
-});
+// Relocate the knowledge dialog's body into the Memory tab and retire the
+// dialog shell. Done in JS rather than by moving the markup so the ids stay
+// exactly where every handler above expects them.
+(function adoptMemoryPane() {
+  const modal = $("#kModal");
+  const host = $("#memoryHost");
+  if (!modal || !host) return;
+  const body = modal.querySelector(".edit-body");
+  if (body) host.appendChild(body);
+  modal.remove();
+})();
 
 // -------------------------------------------------- dashboard card modal
 

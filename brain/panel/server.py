@@ -100,22 +100,19 @@ HISTORY_DAYS = int(os.environ.get("BRAIN_HISTORY_DAYS", "7") or 7)
 # Dated per-run copies of each category insight (0 for either disables history)
 HISTORY_KEEP_RUNS = int(os.environ.get("BRAIN_HISTORY_KEEP_RUNS", "40") or 40)
 HISTORY_KEEP_DAYS = int(os.environ.get("BRAIN_HISTORY_KEEP_DAYS", "30") or 30)
-# Fallback drop-box for learned facts when the brain integration
-# isn't installed — the BRain add-on ingests it from /share
 # Candidate facts wait here for the consolidator. Same directory the
 # terminal, voice reflection, and study sessions write to — one queue.
 MEMORY_INBOX_DIR = Path(os.environ.get(
     "BRAIN_MEMORY_INBOX", "/config/.brain/memory/inbox"))
-# The home's consolidated memory file (same default as ha_data.MEMORY_FILE;
-# shared with BRain's brain memory when that add-on is installed).
-# Viewable AND editable from the knowledge panel — the /config mount is
-# writable solely so this one file can be maintained; nothing else under
-# /config is ever written.
+# The home's consolidated memory document — the same file `brain memory`
+# reads in the terminal and the consolidator owns. Viewable and editable
+# from the Memory tab; the panel queues changes rather than writing here
+# directly, so the consolidator stays the single writer.
 SHARED_MEMORY_FILE = Path(os.environ.get(
     "BRAIN_MEMORY_FILE", "/config/.brain/memory/memory.md"))
 MAX_MEMORY_CHARS = 100_000
 
-# Same skeleton BRain's brain memory tool starts from, so both add-ons
+# Same skeleton `brain memory` starts from, so the CLI and the panel
 # agree on the document's shape.
 MEMORY_TEMPLATE = """# Home Memory
 

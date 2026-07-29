@@ -317,7 +317,7 @@ class BruhClaudeConfigFlow(ConfigFlow, domain=DOMAIN):
             if not dir_exists:
                 errors["base"] = "addon_not_running"
             else:
-                name = user_input.get(CONF_NAME, "Claude Agent")
+                name = user_input.get(CONF_NAME, "BRain Agent")
                 unique_id = f"{DOMAIN}_{name.lower().replace(' ', '_')}"
                 await self.async_set_unique_id(unique_id)
                 self._abort_if_unique_id_configured()
