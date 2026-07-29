@@ -37,8 +37,17 @@ CURRICULUM_FILE="$MEMORY_DIR/curriculum.json"
 REPORTS_DIR="$MEMORY_DIR/reports"
 MEMORY_FILE="$MEMORY_DIR/memory.md"
 
-MAX_TURNS="${BRAIN_LEARN_MAX_TURNS:-14}"
-TIMEOUT="${BRAIN_LEARN_TIMEOUT:-600}"
+# Turns are the budget for THOROUGHNESS here, not a safety valve. A study
+# session reads the registry, then history for a dozen entities, then
+# long-term statistics — it can spend a lot of turns before it has anything
+# worth saying. And --max-turns does not degrade gracefully: it truncates
+# mid-thought, so a run that hits it produces no parseable JSON at all and
+# the whole session is wasted after paying for every token.
+#
+# So the real guard is wall-clock (and the account's own usage budget), not
+# turn count. Set BRAIN_LEARN_MAX_TURNS=0 to remove the cap entirely.
+MAX_TURNS="${BRAIN_LEARN_MAX_TURNS:-60}"
+TIMEOUT="${BRAIN_LEARN_TIMEOUT:-1800}"
 MODEL="${BRAIN_LEARN_MODEL:-${BRAIN_MODEL:-}}"
 MEMORY_BUDGET=4000
 # The hypothesis queue is deliberately tiny: a long list of open questions
@@ -242,8 +251,19 @@ Rules for "hypotheses":
   run 24/7 — right?"
 - Never ask an open-ended question, and never ask what the data can tell
   you on its own.
+
+Investigate as deeply as the topic deserves — there is no prize for
+finishing early. But if you sense you are running low on room, STOP
+investigating and emit the JSON with what you have. A partial result that
+lands is worth far more than a thorough one that gets cut off, because a
+truncated run files nothing at all.
 PROMPT
 )
+
+turn_args=()
+if [ "${MAX_TURNS:-0}" -gt 0 ] 2>/dev/null; then
+    turn_args=(--max-turns "$MAX_TURNS")
+fi
 
 claude_cmd=$(resolve_claude)
 echo -e "${CYAN}Studying: ${topic_label}${NC}" >&2
@@ -251,10 +271,16 @@ echo -e "${DIM}This runs a bounded agentic session and may take a minute…${NC}
 
 # shellcheck disable=SC2086
 if ! output=$(printf '%s' "$prompt" | timeout "$TIMEOUT" \
-        $claude_cmd -p --max-turns "$MAX_TURNS" \
+        $claude_cmd -p "${turn_args[@]}" \
         ${MODEL:+--model "$MODEL"} 2>/dev/null); then
-    echo -e "${RED}Study session failed — could not reach Claude, or it timed out.${NC}" >&2
-    echo -e "${DIM}Nothing was written. Check you're logged in and try again.${NC}" >&2
+    rc=$?
+    if [ "$rc" -eq 124 ]; then
+        echo -e "${RED}Study session ran past its ${TIMEOUT}s limit and was stopped.${NC}" >&2
+        echo -e "${DIM}Nothing was written. Raise BRAIN_LEARN_TIMEOUT for deeper sessions.${NC}" >&2
+    else
+        echo -e "${RED}Study session failed — could not reach Claude.${NC}" >&2
+        echo -e "${DIM}Nothing was written. Check you're logged in and try again.${NC}" >&2
+    fi
     exit 1
 fi
 
@@ -263,7 +289,14 @@ json=$(printf '%s' "$output" | sed -e 's/^```\(json\)\?$//' -e 's/^```$//' \
     | jq -c 'if type == "object" then . else empty end' 2>/dev/null | head -1)
 
 if [ -z "$json" ]; then
-    echo -e "${RED}Study session returned something unparseable — nothing written.${NC}" >&2
+    if [ "${MAX_TURNS:-0}" -gt 0 ] \
+        && printf '%s' "$output" | grep -qi "max.turns\|turn limit\|reached the maximum"; then
+        echo -e "${RED}Study session hit its ${MAX_TURNS}-turn limit before it finished.${NC}" >&2
+        echo -e "${DIM}Nothing was written — a truncated run has no result to file.${NC}" >&2
+        echo -e "${DIM}Raise it with BRAIN_LEARN_MAX_TURNS, or set 0 to remove the cap.${NC}" >&2
+    else
+        echo -e "${RED}Study session returned something unparseable — nothing written.${NC}" >&2
+    fi
     exit 1
 fi
 

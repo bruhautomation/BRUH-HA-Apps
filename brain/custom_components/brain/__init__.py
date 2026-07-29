@@ -50,8 +50,8 @@ from .const import (
     CONF_ENABLE_SENSORS,
     CONF_ENTRY_TYPE,
     CONF_INSIGHT_DAILY_AT,
-    CONF_INSIGHT_NOTIFY,
     CONF_INSIGHT_INTERVAL,
+    CONF_INSIGHT_NOTIFY,
     CONF_INSIGHT_PROMPT,
     CONF_INSIGHT_TEMPLATE,
     CONF_MODEL,
@@ -72,6 +72,7 @@ from .const import (
     QUESTIONS_FILE,
     SHARED_DIR,
     SIGNAL_INSIGHT_UPDATE,
+    STUDY_REQUESTS_DIR,
 )
 from .insight_format import (
     INSIGHT_TEMPLATES,
@@ -138,6 +139,14 @@ ANSWER_QUESTION_SCHEMA = vol.Schema(
         vol.Required("question"): vol.All(str, vol.Length(min=1)),
         vol.Required("answer"): vol.All(str, vol.Length(min=1)),
         vol.Optional("source", default="service"): str,
+    }
+)
+
+# Topic is optional: with none, BRain studies whatever has gone stalest,
+# which is what makes a nightly "study something" automation worth having.
+STUDY_SCHEMA = vol.Schema(
+    {
+        vol.Optional("topic", default=""): vol.All(str, vol.Length(max=200)),
     }
 )
 
@@ -404,6 +413,19 @@ def _sanitize_source(source: str) -> str:
     """Keep inbox filenames safe: alnum/underscore/dash only."""
     cleaned = "".join(c for c in str(source) if c.isalnum() or c in "_-")
     return cleaned or "service"
+
+
+def _write_study_request(requests_dir: str, topic: str) -> str:
+    """Drop a study request for the add-on's watcher. Executor-safe."""
+    os.makedirs(requests_dir, exist_ok=True)
+    now = int(time.time())
+    path = os.path.join(requests_dir, f"{now}-{os.getpid()}.json")
+    tmp = f"{path}.tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump({"ts": now, "topic": str(topic or "").strip()[:200]}, fh)
+    # Atomic rename: the watcher must never see a half-written request.
+    os.replace(tmp, path)
+    return path
 
 
 def _append_memory_fact(
@@ -757,6 +779,19 @@ def _register_services(hass: HomeAssistant) -> None:
         )
         _LOGGER.debug("Queued memory fact from %s", call.data.get("source"))
 
+    async def handle_study(call: ServiceCall):
+        """Send BRain off to study a topic.
+
+        Fire-and-forget by design: a study session can run for many minutes,
+        which is far longer than a service call should block. What it finds
+        goes through the memory inbox like everything else, so the result
+        shows up in memory rather than in this call's response.
+        """
+        requests_dir = hass.config.path(SHARED_DIR, STUDY_REQUESTS_DIR)
+        await hass.async_add_executor_job(
+            _write_study_request, requests_dir, call.data.get("topic", ""))
+        _LOGGER.info("Queued study session: %s", call.data.get("topic") or "(stalest topic)")
+
     async def handle_answer_question(call: ServiceCall):
         memory_dir = hass.config.path(SHARED_DIR, MEMORY_DIR)
         await hass.async_add_executor_job(
@@ -814,6 +849,13 @@ def _register_services(hass: HomeAssistant) -> None:
         "answer_question",
         handle_answer_question,
         schema=ANSWER_QUESTION_SCHEMA,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "study",
+        handle_study,
+        schema=STUDY_SCHEMA,
     )
 
     # BRUH Power Tools: registry-management admin services (power_tools.py)

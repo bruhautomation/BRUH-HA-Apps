@@ -18,8 +18,12 @@ NC='\033[0m'
 
 MEMORY_DIR="${BRAIN_MEMORY_DIR:-/config/.brain/memory}"
 MEMORY_FILE="$MEMORY_DIR/memory.md"
-MAX_TURNS="${BRAIN_ASK_MAX_TURNS:-8}"
-TIMEOUT="${BRAIN_ASK_TIMEOUT:-180}"
+# A real question about the home often needs live state, then history, then
+# statistics, then a cross-check — eight turns runs out mid-investigation,
+# and --max-turns truncates rather than degrading, so the answer is lost
+# entirely. Wall-clock is the honest guard. 0 removes the cap.
+MAX_TURNS="${BRAIN_ASK_MAX_TURNS:-30}"
+TIMEOUT="${BRAIN_ASK_TIMEOUT:-420}"
 MODEL="${BRAIN_ASK_MODEL:-${BRAIN_MODEL:-}}"
 MEMORY_BUDGET=4000
 
@@ -96,9 +100,14 @@ echo -e "${DIM}Thinking…${NC}" >&2
 format=(--output-format text)
 $json_mode && format=(--output-format json)
 
+turn_args=()
+if [ "${MAX_TURNS:-0}" -gt 0 ] 2>/dev/null; then
+    turn_args=(--max-turns "$MAX_TURNS")
+fi
+
 # shellcheck disable=SC2086
 if ! output=$(printf '%s' "$prompt" | timeout "$TIMEOUT" \
-        $claude_cmd -p --max-turns "$MAX_TURNS" \
+        $claude_cmd -p "${turn_args[@]}" \
         ${MODEL:+--model "$MODEL"} \
         "${format[@]}" 2>/dev/null); then
     echo -e "${RED}Could not reach Claude.${NC}" >&2

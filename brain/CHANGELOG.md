@@ -2,6 +2,52 @@
 
 All notable changes to **BRain**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.3.0
+
+### Guesses instead of questions
+
+Insight runs no longer ask open-ended questions. They state what they **believe**, phrased
+for a yes/no: *"The garage fridge is meant to run 24/7 — right?"* Two taps in the Memory
+tab settle it. **Yes** files it as a plain memory line; **No** records a dead end that is
+never revisited.
+
+The cap is enforced in code, not just asked for in the prompt — a model that ignores the
+budget still cannot grow the queue. Three open at once, 14-day expiry, and a claim already
+proposed is never proposed again in any wording.
+
+### Learning you can see from outside the panel
+
+- **Logbook events.** Every new fact fires `brain_learned`, so *"BRain learned: the hallway
+  sensor drops offline around 2am"* appears in your home's timeline next to lights and doors.
+- **`sensor.brain_facts_learned`** and **`sensor.brain_last_learned`**.
+- **`binary_sensor.brain_waiting_on_you`** — on when a guess needs an answer, with the text
+  in `pending`. This exists to be automated: a guess sitting in a panel nobody has open
+  expires unanswered, but pushed to a phone it costs one tap.
+
+### Studying on demand
+
+- **`brain.study`** service — with a topic, or without one to study whatever has gone
+  stalest. Returns immediately; results arrive in memory, not in a response.
+- **`/learn`** and **`/memory`** slash commands in the terminal, where you can watch a
+  session work and correct it mid-flight.
+
+### Turn limits were too tight, and failed badly
+
+A turn cap does not degrade — it **truncates**. A run that hits one stops mid-thought and
+produces nothing parseable, so the tokens are spent and the result is lost. That made a
+tight cap the most expensive setting in the add-on.
+
+- **Study sessions**: 14 turns → **60**, timeout 10 → **30 minutes**, and
+  `study_max_turns: 0` now removes the cap entirely.
+- **`brain ask`**: 8 → **30** turns.
+- **Automation tasks**: 10 → **30** turns. Nobody is waiting on those.
+- **Voice**: 5 → **8**. Deliberately still modest — latency *is* the product for voice, and
+  the cached area map means most commands take one or two turns anyway.
+- Hitting the limit is now reported as hitting the limit, rather than as unparseable
+  output — blaming the model for a limit we imposed sends you looking in the wrong place.
+- Study prompts now tell the model to land its result if it senses it is running short, so
+  a long session degrades to partial instead of losing everything.
+
 ## 1.2.0
 
 ### A Docs tab

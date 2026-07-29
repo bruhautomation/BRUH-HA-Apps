@@ -87,6 +87,25 @@ run_insight:
       description: The insight job's name (the config entry title). Empty runs every job.
       selector:
         text: null
+study:
+  name: Study the home
+  description: >-
+    Send BRain off to investigate one topic and write down what it finds. It reads the
+    registries, live state, history and long-term statistics, then files durable facts
+    into memory and leaves at most a few guesses for you to confirm. Returns immediately —
+    a session runs for minutes, and its results arrive in memory, not in a response.
+  fields:
+    topic:
+      name: Topic
+      description: >-
+        What to study. Leave empty to study whatever has gone stalest. Built-in topics:
+        naming, presence, energy, climate, devices, automations, lighting. Any other text
+        is studied as a one-off.
+      required: false
+      example: energy
+      selector:
+        text:
+
 add_memory:
   name: Add memory fact
   description: Queue a durable fact about your home for Claude's long-term memory (merged into /config/.brain/memory/memory.md

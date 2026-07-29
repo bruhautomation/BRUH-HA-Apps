@@ -111,6 +111,10 @@ async def async_setup_entry(
             )
         )
 
+    # What BRain knows, and when it last learned something.
+    entities.append(BrainFactsSensor(config_entry))
+    entities.append(BrainLastLearnedSensor(config_entry))
+
     async_add_entities(entities, update_before_add=True)
 
 
@@ -323,3 +327,74 @@ class BruhClaudeInsightSensor(SensorEntity):
                 self.entity_id or "sensor.insight", self._entry.title
             ),
         }
+
+
+# ---------------------------------------------------------------------------
+# Learning sensors — memory made visible outside the panel
+# ---------------------------------------------------------------------------
+
+MEMORY_DEVICE_INFO = DeviceInfo(
+    identifiers={(DOMAIN, "brain_memory")},
+    name="BRain memory",
+    manufacturer="BRUH Automation",
+    model="Home memory",
+)
+
+
+class BrainFactsSensor(SensorEntity):
+    """How much BRain currently knows about this home.
+
+    Counted from the change log rather than by parsing the document, so a
+    hand-edited memory file can never make the number disagree with the
+    history behind it.
+    """
+
+    _attr_has_entity_name = True
+    _attr_should_poll = True
+    _attr_name = "Facts learned"
+    _attr_icon = "mdi:brain"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = "facts"
+    _attr_device_info = MEMORY_DEVICE_INFO
+
+    def __init__(self, config_entry: ConfigEntry) -> None:
+        self._entry = config_entry
+        self._attr_unique_id = f"{DOMAIN}_facts_learned"
+        self._attr_native_value = 0
+
+    def update(self) -> None:
+        from .learning import total_learned
+        try:
+            self._attr_native_value = total_learned(self.hass)
+        except Exception:  # noqa: BLE001 — never take HA down over a sensor
+            _LOGGER.debug("could not count learned facts", exc_info=True)
+
+
+class BrainLastLearnedSensor(SensorEntity):
+    """When BRain last learned something, with what it was."""
+
+    _attr_has_entity_name = True
+    _attr_should_poll = True
+    _attr_name = "Last learned"
+    _attr_icon = "mdi:lightbulb-on-10"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_device_info = MEMORY_DEVICE_INFO
+
+    def __init__(self, config_entry: ConfigEntry) -> None:
+        self._entry = config_entry
+        self._attr_unique_id = f"{DOMAIN}_last_learned"
+        self._attr_native_value = None
+        self._facts: list[str] = []
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        return {"facts": self._facts, "latest": self._facts[-1] if self._facts else None}
+
+    def update(self) -> None:
+        from .learning import last_learned
+        try:
+            when, facts = last_learned(self.hass)
+            self._attr_native_value = when
+            self._facts = facts
+        except Exception:  # noqa: BLE001
+            _LOGGER.debug("could not read the memory change log", exc_info=True)

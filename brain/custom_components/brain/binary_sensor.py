@@ -26,6 +26,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN, POOL_STATUS_FILENAME, SHARED_DIR
+from .learning import read_open_hypotheses
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -49,7 +50,11 @@ async def async_setup_entry(
 
     bridge = domain_data.get(config_entry.entry_id)
     async_add_entities(
-        [BruhClaudeHealthSensor(config_entry, bridge)], update_before_add=True
+        [
+            BruhClaudeHealthSensor(config_entry, bridge),
+            BrainWantsInputSensor(config_entry),
+        ],
+        update_before_add=True,
     )
 
 
@@ -123,3 +128,47 @@ class BruhClaudeHealthSensor(BinarySensorEntity):
                 return json.load(fh)
         except (OSError, json.JSONDecodeError):
             return None
+
+
+class BrainWantsInputSensor(BinarySensorEntity):
+    """On when BRain has a guess waiting on a yes/no.
+
+    This exists to be *automatable*. A guess sitting in a panel nobody has
+    open is a guess that expires unanswered; a binary sensor can push it to
+    a phone, where answering costs one tap.
+    """
+
+    _attr_has_entity_name = True
+    _attr_should_poll = True
+    _attr_name = "Waiting on you"
+    _attr_icon = "mdi:comment-question-outline"
+    _attr_device_info = DeviceInfo(
+        identifiers={(DOMAIN, "brain_memory")},
+        name="BRain memory",
+        manufacturer="BRUH Automation",
+        model="Home memory",
+    )
+
+    def __init__(self, config_entry: ConfigEntry) -> None:
+        self._entry = config_entry
+        self._attr_unique_id = f"{DOMAIN}_wants_input"
+        self._attr_is_on = False
+        self._pending: list[dict] = []
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        # The text is the point — an automation that only knows "something is
+        # pending" can't put the actual question on a lock screen.
+        return {
+            "pending": [h["text"] for h in self._pending],
+            "count": len(self._pending),
+            "oldest": self._pending[0]["text"] if self._pending else None,
+        }
+
+    def update(self) -> None:
+        try:
+            self._pending = read_open_hypotheses(self.hass)
+        except Exception:  # noqa: BLE001 — a sensor must not take HA down
+            _LOGGER.debug("could not read the hypothesis queue", exc_info=True)
+            self._pending = []
+        self._attr_is_on = bool(self._pending)

@@ -1,7 +1,7 @@
 ---
 name: "BRain"
 description: "Your home's brain — a Claude Code terminal, an AI insights dashboard, and one shared memory that learns your house over time"
-version: "1.2.0"
+version: "1.3.0"
 slug: "brain"
 init: false
 
@@ -48,8 +48,10 @@ options:
   dangerously_skip_permissions: false
   assist_fast_mode: true
   assist_tool_access: mcp_only
-  assist_max_turns: 5
-  automation_max_turns: 10
+  assist_max_turns: 8
+  automation_max_turns: 30
+  study_max_turns: 60
+  study_timeout_minutes: 30
   learning: true
   memory_injection: true
   memory_max_kb: 8
@@ -81,8 +83,10 @@ schema:
   dangerously_skip_permissions: bool?
   assist_fast_mode: bool?
   assist_tool_access: "list(mcp_only|full)?"
-  assist_max_turns: "int(1,20)?"
-  automation_max_turns: "int(1,50)?"
+  assist_max_turns: "int(1,40)?"
+  automation_max_turns: "int(1,200)?"
+  study_max_turns: "int(0,500)?"
+  study_timeout_minutes: "int(2,120)?"
   learning: bool?
   memory_injection: bool?
   memory_max_kb: "int(1,64)?"

@@ -284,9 +284,9 @@ MEMORYMD
     #
     # NOTE: BRAIN_CLAUDE_PERMS_FLAG is used by the interactive terminal only.
     local assist_max_turns
-    assist_max_turns=$(bashio::config 'assist_max_turns' '5')
+    assist_max_turns=$(bashio::config 'assist_max_turns' '8')
     local automation_max_turns
-    automation_max_turns=$(bashio::config 'automation_max_turns' '10')
+    automation_max_turns=$(bashio::config 'automation_max_turns' '30')
     local assist_tool_access
     assist_tool_access=$(bashio::config 'assist_tool_access' 'mcp_only')
 
@@ -302,6 +302,16 @@ MEMORYMD
     export BRAIN_MEMORY_INJECTION="$memory_injection"
     export BRAIN_MEMORY_MAX_KB="$memory_max_kb"
     export BRAIN_EDIT_JOURNAL_DAYS="$edit_journal_days"
+
+    # Study sessions are where depth actually matters, and --max-turns
+    # truncates rather than degrading — a session that hits the cap files
+    # nothing at all. Generous by default; 0 removes the cap entirely.
+    local study_max_turns study_timeout_min
+    study_max_turns=$(bashio::config 'study_max_turns' '60')
+    study_timeout_min=$(bashio::config 'study_timeout_minutes' '30')
+    local study_timeout_s=$((study_timeout_min * 60))
+    export BRAIN_LEARN_MAX_TURNS="$study_max_turns"
+    export BRAIN_LEARN_TIMEOUT="$study_timeout_s"
 
     local env_file="/data/.brain_env"
     cat > "$env_file" << ENVEOF
@@ -326,6 +336,8 @@ export BRAIN_ASSIST_LEARNING="${assist_learning}"
 export BRAIN_MEMORY_INJECTION="${memory_injection}"
 export BRAIN_MEMORY_MAX_KB="${memory_max_kb}"
 export BRAIN_EDIT_JOURNAL_DAYS="${edit_journal_days}"
+export BRAIN_LEARN_MAX_TURNS="${study_max_turns}"
+export BRAIN_LEARN_TIMEOUT="${study_timeout_s}"
 export TZ="${TZ:-}"
 export CLAUDE_CODE_DISABLE_MCP_DISCOVERY=1
 export CLAUDE_MCP_SERVERS_OVERRIDE="/config/.mcp.json"
@@ -1177,6 +1189,52 @@ setup_claude_settings() {
 }
 SETTINGS
     chown -R claude:claude "$claude_settings_dir" 2>/dev/null || true
+    # Slash commands. /learn is the terminal-native face of a study session:
+    # you watch it work and can correct it mid-flight, which a scheduled run
+    # can't offer. Regenerated each start so an updated add-on ships updated
+    # commands.
+    local commands_dir="$claude_settings_dir/commands"
+    mkdir -p "$commands_dir"
+    cat > "$commands_dir/learn.md" << 'LEARNCMD'
+---
+description: Study one aspect of this home and write down what you find
+---
+
+Run a study session on: $ARGUMENTS
+
+If no topic was given, run `brain learn --list` first and pick whichever has
+gone stalest.
+
+Investigate properly before writing anything down — the registries for
+structure, current state for a snapshot, history for recent behaviour, and
+long-term statistics for patterns over weeks. Depth is the point; there is no
+prize for finishing early.
+
+Then file what you found with `brain memory add "<fact>"`, one call per fact.
+Only durable properties of this home — things that will still be true next
+month. "The dryer draws ~3 kWh per cycle" is a fact; "the dryer is on" is not.
+Never re-record something `brain memory list` already shows.
+
+Finish with a two-to-four sentence summary of what you learned. If you learned
+nothing new, say so plainly rather than padding.
+LEARNCMD
+
+    cat > "$commands_dir/memory.md" << 'MEMCMD'
+---
+description: Show what BRain knows about this home
+---
+
+Run `brain memory list` and summarise what the home memory currently holds.
+Then run `brain memory hypotheses` and, if anything is waiting, show it and
+offer to settle it with `brain memory confirm` / `brain memory reject`.
+
+If the user gave arguments ($ARGUMENTS), treat them as a fact to remember and
+queue it with `brain memory add` instead.
+MEMCMD
+
+    chown -R claude:claude "$commands_dir" 2>/dev/null || true
+    bashio::log.info "Slash commands installed: /learn, /memory"
+
     bashio::log.info "Claude Code project settings written to $claude_settings_dir/settings.local.json"
 }
 
@@ -1420,6 +1478,19 @@ start_usage_limits_tracker() {
 # ============================================================================
 # Memory Consolidator (learned home knowledge)
 # ============================================================================
+
+start_study_watcher() {
+    local learning
+    learning=$(bashio::config 'learning' 'true')
+    if [ "$learning" != "true" ]; then
+        bashio::log.info "Study watcher disabled (learning: false)"
+        return
+    fi
+    if [ -f "/opt/scripts/brain-study-watcher.sh" ]; then
+        su-exec claude bash /opt/scripts/brain-study-watcher.sh &
+        bashio::log.info "Study watcher started (runs brain.study requests from HA)"
+    fi
+}
 
 start_memory_consolidator() {
     # One-line hint (independent of the learning toggle): logged in, but the
@@ -1728,6 +1799,7 @@ main() {
     deploy_custom_integration
     start_usage_limits_tracker
     start_memory_consolidator
+    start_study_watcher
     setup_assist_integration
     setup_automation_integration
     start_web_terminal

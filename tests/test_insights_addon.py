@@ -32,6 +32,7 @@ sys.path.insert(0, str(PANEL_DIR))
 import categories  # noqa: E402
 import engine  # noqa: E402
 import feedback_store  # noqa: E402
+import hypotheses  # noqa: E402
 import knowledge_store  # noqa: E402
 import prompt_store  # noqa: E402
 import user_categories  # noqa: E402
@@ -889,6 +890,7 @@ class InsightsServerCase(unittest.TestCase):
         self._old_knowledge = knowledge_store.KNOWLEDGE_FILE
         self._old_shared_mem = self.server.SHARED_MEMORY_FILE
         knowledge_store.KNOWLEDGE_FILE = os.path.join(self.tmp.name, "knowledge.json")
+        hypotheses.HYPOTHESES_FILE = Path(self.tmp.name) / "hypotheses.jsonl"
         self.server.SHARED_MEMORY_FILE = Path(self.tmp.name) / "memory.md"
         self.server.INSIGHTS_DIR = Path(self.tmp.name)
         # NOT inside INSIGHTS_DIR — mirrors production (/data vs /data/insights)
@@ -1133,7 +1135,7 @@ class TestGenerateFlow(InsightsServerCase):
         self.reply = {
             "title": "Dryer watch", "summary": "S.",
             "highlights": [{"label": "Loads", "value": "3"}],
-            "questions": ["Is the garage fridge meant to run overnight?", "  ", 42],
+            "hypotheses": ["The garage fridge is meant to run 24/7 — right?", "  ", 42],
             "findings": ["Hall sensor drops offline at 2 AM", ""],
             "html": "<!DOCTYPE html><p>ok</p>",
         }
@@ -1166,7 +1168,7 @@ class TestGenerateFlow(InsightsServerCase):
         stored = self._stored()
         self.assertEqual(stored["focus_used"], "Watch the dryer")
         self.assertEqual(stored["questions"],
-                         ["Is the garage fridge meant to run overnight?"])
+                         ["The garage fridge is meant to run 24/7 — right?"])
         self.assertEqual(stored["findings"], ["Hall sensor drops offline at 2 AM"])
         # findings are QUEUED for the consolidator, not handed to a service:
         # the consolidator lives in this container now.
@@ -1201,7 +1203,7 @@ class TestGenerateFlow(InsightsServerCase):
         self.assertIsInstance(lines[0]["ts"], int)
 
     def test_missing_optional_fields_default_empty(self):
-        self.reply.pop("questions")
+        self.reply.pop("hypotheses")
         self.reply.pop("findings")
         asyncio.run(self.server._generate("energy"))
         stored = self._stored()
