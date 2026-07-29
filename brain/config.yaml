@@ -1,7 +1,7 @@
 ---
 name: "BRain"
 description: "Your home's brain — a Claude Code terminal, an AI insights dashboard, and one shared memory that learns your house over time"
-version: "1.5.1"
+version: "1.6.0"
 slug: "brain"
 init: false
 
@@ -22,7 +22,10 @@ url: "https://github.com/bruhautomation/BRUH-HA-Apps/tree/main/brain"
 # inconvenient (a tablet kiosk, a bookmarked full-screen terminal).
 ingress: true
 ingress_port: 8099
-panel_icon: mdi:head-snowflake
+# The sidebar icon has to be an MDI name — Home Assistant won't take custom
+# artwork here — so it can only rhyme with the mark, which is a gable with a
+# window. A snowflake head was chosen when the mark was a neural mesh.
+panel_icon: mdi:home-analytics
 panel_title: "BRain"
 panel_admin: true
 

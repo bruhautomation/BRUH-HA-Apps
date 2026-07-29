@@ -10,18 +10,16 @@
 <body>
 
 <header class="topbar">
+  <!-- The gable, used alone. The brand's full wordmark builds its "A" out of
+       this same roof, but it has a 132px minimum width and the bar has room
+       for about 52px — so below that the kit says to use the gable by itself,
+       which is exactly this case. The window is a knockout (fill-rule
+       evenodd), so the mark works in one colour and follows currentColor. -->
   <span class="mark" aria-hidden="true" title="BRain">
-    <svg viewBox="0 0 512 512" class="marksvg">
-      <g stroke="currentColor" stroke-width="30" stroke-linecap="round" fill="none">
-        <path d="M168 196 L262 154 L344 226 M168 196 L244 258 L262 154 M344 226 L244 258
-                 M168 196 L152 300 L244 258 M244 258 L346 324 L344 226
-                 M152 300 L236 360 L244 258 M236 360 L346 324"/>
-      </g>
-      <g fill="currentColor">
-        <circle cx="168" cy="196" r="30"/><circle cx="262" cy="154" r="26"/>
-        <circle cx="344" cy="226" r="30"/><circle cx="244" cy="258" r="38"/>
-        <circle cx="152" cy="300" r="26"/><circle cx="346" cy="324" r="28"/>
-        <circle cx="236" cy="360" r="30"/>
+    <svg viewBox="0 0 100 100" class="marksvg">
+      <g transform="translate(6 26) scale(0.3446) translate(-188.83 -21.6)">
+        <path fill="currentColor" fill-rule="evenodd"
+              d="M293.5,21.6V70.83S189.86,174.05,188.83,175.5H450.09Zm-1,110.9h-10v-10h10Zm0-12h-10v-10h10Zm12,12h-10v-10h10Zm-10-12v-10h10v10Z"/>
       </g>
     </svg>
   </span>
