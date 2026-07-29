@@ -49,7 +49,12 @@ def clean_tags(tags) -> list[str]:
     return out
 
 
-def _load() -> dict:
+def load_edits() -> dict:
+    """Every card's stored edit, keyed by card id.
+
+    Public so a caller shaping a whole dashboard reads the file once rather
+    than once per card — see ``effective_tags``.
+    """
     try:
         data = json.loads(TAGS_FILE.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -57,6 +62,9 @@ def _load() -> dict:
     cards = data.get("cards") if isinstance(data, dict) else None
     return {k: v for k, v in cards.items() if isinstance(v, dict)} \
         if isinstance(cards, dict) else {}
+
+
+_load = load_edits
 
 
 def _write(cards: dict) -> None:
@@ -84,9 +92,15 @@ def base_tags(insight: dict) -> list[str]:
     return tags[:MAX_TAGS]
 
 
-def effective_tags(insight: dict) -> list[str]:
-    """What the card actually shows: base tags minus removals plus additions."""
-    entry = _load().get(str(insight.get("id") or "")) or {}
+def effective_tags(insight: dict, edits: dict | None = None) -> list[str]:
+    """What the card actually shows: base tags minus removals plus additions.
+
+    ``edits`` lets a caller shaping many cards pass one ``load_edits()``
+    result in rather than re-reading the file per card.
+    """
+    if edits is None:
+        edits = load_edits()
+    entry = edits.get(str(insight.get("id") or "")) or {}
     hide = set(clean_tags(entry.get("hide")))
     out = [t for t in base_tags(insight) if t not in hide]
     for tag in clean_tags(entry.get("add")):

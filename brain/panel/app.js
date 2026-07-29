@@ -743,8 +743,7 @@ function makeCard(catInfo, insight, fallbackId) {
 // many cards: #batteries surfaces every card that found a battery problem,
 // whatever category it belongs to.
 function effectiveTags(i) {
-  return (Array.isArray(i.tags) ? i.tags : [])
-    .filter((t) => typeof t === "string" && t.trim());
+  return Array.isArray(i.tags) ? i.tags : [];
 }
 
 // The tag row on a card. Read-only chips until you press ✎ — then each grows
@@ -965,18 +964,19 @@ function fastPoll() {
     const hadActive = anyActive();
     await refreshStatus().catch(() => {});
     if (hadActive && !anyActive()) {
-      await refreshInsights().catch(() => {});
-    }
-    renderIfChanged();
-    refreshOpenSettings();
-    // A fix run and an insight run both change the findings list — the first
-    // by finishing, the second by turning up something new.
-    if (hadActive && !anyActive()) {
-      await refreshFindings();
+      // A run just finished. Both lists can have changed — an insight run
+      // rewrites its card AND may have turned up a problem — and neither
+      // fetch depends on the other, so don't pay for them in series.
+      await Promise.all([
+        refreshInsights().catch(() => {}),
+        refreshFindings(),
+      ]);
       if (currentView === "findings") renderFindings();
     } else if (state.status) {
       updateFindBadge(state.status.findings_open);
     }
+    renderIfChanged();
+    refreshOpenSettings();
     state.pollTimer = setTimeout(tick, anyActive() ? 2500 : 20000);
   };
   state.pollTimer = setTimeout(tick, 2500);
@@ -1530,22 +1530,25 @@ async function refreshFindings() {
   }
 }
 
+// The badge count always comes from the server (findings_store owns what
+// "unsettled" means) — deriving a second answer here is how the tab and the
+// list end up disagreeing about how much is waiting.
 function updateFindBadge(n) {
   const badge = $("#findBadge");
   if (!badge) return;
-  const count = n == null
-    ? state.findings.filter((f) =>
-      ["open", "failed", "needs_you"].includes(f.status)).length
-    : n;
-  badge.textContent = count ? String(count) : "";
-  badge.classList.toggle("hidden", !count);
+  badge.textContent = n ? String(n) : "";
+  badge.classList.toggle("hidden", !n);
 }
 
+// Every finding button goes through here: all six endpoints answer with the
+// same {findings, open}, so there is one place that knows what to do with it.
 async function findAction(finding, verb, done, btns) {
   btns.forEach((b) => { b.disabled = true; });
+  const del = verb === "forget";
   try {
-    const data = await api(`api/finding/${finding.ts}/${verb}`,
-      { method: "POST" });
+    const data = await api(
+      del ? `api/finding/${finding.ts}` : `api/finding/${finding.ts}/${verb}`,
+      { method: del ? "DELETE" : "POST" });
     state.findings = data.findings || [];
     updateFindBadge(data.open);
     renderFindings();
@@ -1561,16 +1564,12 @@ function makeFinding(f) {
   const meta = FIND_STATUS[f.status] || FIND_STATUS.open;
   const card = el("article", `finding sev-${f.severity} st-${meta.cls}`);
 
-  const head = el("div", "findhead-row");
-  const titles = el("div", "findtitles");
   const line = el("div", "findmeta");
   line.appendChild(el("span", "findsev", FIND_SEVERITY[f.severity] || "Degraded"));
   line.appendChild(el("span", "findstate", meta.label));
   if (f.source_title) line.appendChild(el("span", "findsrc", f.source_title));
-  titles.appendChild(line);
-  titles.appendChild(el("h3", null, f.text));
-  head.appendChild(titles);
-  card.appendChild(head);
+  card.appendChild(line);
+  card.appendChild(el("h3", "findtitle", f.text));
 
   if (f.detail) card.appendChild(el("p", "finddetail", f.detail));
   if (f.entity_id) card.appendChild(el("code", "findentity", f.entity_id));
@@ -1610,16 +1609,10 @@ function makeFinding(f) {
       findAction(f, "reopen", "Back on the list", btns));
     const forget = add(el("button", "btn icon", "✕"));
     tip(forget, "Forget this finding entirely — it can be reported again");
-    forget.addEventListener("click", async () => {
+    forget.addEventListener("click", () => {
       if (!window.confirm(
         `Forget “${f.text}”? Unlike dismissing it, BRain may report it again.`)) return;
-      btns.forEach((b) => { b.disabled = true; });
-      try {
-        const data = await api(`api/finding/${f.ts}`, { method: "DELETE" });
-        state.findings = data.findings || [];
-        updateFindBadge(data.open);
-        renderFindings();
-      } catch (e) { toast(e.message); btns.forEach((b) => { b.disabled = false; }); }
+      findAction(f, "forget", "Forgotten", btns);
     });
   } else {
     if (f.fixable) {
@@ -1909,7 +1902,8 @@ $("#kConsolidate").addEventListener("click", async () => {
     setMemEditing(false);
   }
   memState.consolidating = true;
-  renderPending(0);
+  $("#kConsolidate").disabled = true;
+  $("#kConsolidate").textContent = "Filing…";
   $("#kMemMerging").classList.remove("hidden");
   try {
     const res = await api("api/memory/consolidate", { method: "POST" });
@@ -2340,6 +2334,8 @@ function switchView(name) {
   if (refresh) refresh.style.display = name === "insights" ? "" : "none";
 
   if (name === "findings") {
+    // render what we have, then again once the fetch lands — but only if
+    // it actually changed anything
     renderFindings();
     refreshFindings().then(renderFindings);
   }
@@ -2490,9 +2486,9 @@ $("#askForm").addEventListener("submit", async (ev) => {
   const q = $("#askInput").value.trim();
   if (!q) return;
   $("#askInput").value = "";
-  if (!/^\s*(?:go\s+|please\s+)?(?:learn|study|research|figure\s+out)\b/i.test(q)) {
-    toast("Asking Claude about your home…");
-  }
+  // No optimistic toast: whether this is a question or a study session is
+  // decided server-side (LEARN_RE), and a second copy of that rule here
+  // would drift into telling you the wrong thing is happening.
   await generate(null, q);
 });
 

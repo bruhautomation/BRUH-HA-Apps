@@ -121,7 +121,8 @@ class PanelCase(unittest.TestCase):
             self.server.CONSOLIDATE_SCRIPT, prompt_store.OVERRIDES_FILE,
             feedback_store.FEEDBACK_FILE, user_categories.USER_CATS_FILE,
             knowledge_store.KNOWLEDGE_FILE, onboarding.STUDY_REQUESTS_DIR,
-            engine.run_claude,
+            engine.run_claude, self.server.CARD_TOKEN_FILE,
+            self.server.WWW_CARD_DIR,
         )
         card_tags.TAGS_FILE = tmp / "card_tags.json"
         findings_store.FINDINGS_FILE = tmp / "findings.json"
@@ -137,6 +138,10 @@ class PanelCase(unittest.TestCase):
         settings_store.SETTINGS_FILE = os.path.join(self.tmp.name, "settings.json")
         onboarding.STATE_FILE = tmp / "onboarding.json"
         onboarding.STUDY_REQUESTS_DIR = tmp / "study_requests"
+        # Both default under /data or /config — writable for root, denied for
+        # everyone else, so leaving them out passes locally and fails in CI.
+        self.server.CARD_TOKEN_FILE = tmp / "secrets" / "card_token"
+        self.server.WWW_CARD_DIR = tmp / "www" / "brain"
         settings_store.save({"onboarded": True})
         # never reach the real CLI: make_app() starts a worker, and this
         # container has `claude` on PATH
@@ -152,7 +157,8 @@ class PanelCase(unittest.TestCase):
          self.server.CONSOLIDATE_SCRIPT, prompt_store.OVERRIDES_FILE,
          feedback_store.FEEDBACK_FILE, user_categories.USER_CATS_FILE,
          knowledge_store.KNOWLEDGE_FILE, onboarding.STUDY_REQUESTS_DIR,
-         engine.run_claude) = self._olds
+         engine.run_claude, self.server.CARD_TOKEN_FILE,
+         self.server.WWW_CARD_DIR) = self._olds
         self.server.JOBS.clear()
         self.tmp.cleanup()
 

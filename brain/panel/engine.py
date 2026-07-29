@@ -330,30 +330,9 @@ def run_claude(
     dying with "max number of turns" instead of producing the insight. The
     max_turns margin covers any residual multi-turn behavior.
     """
-    argv = _claude_argv() + [
-        "-p",
-        "--output-format", "json",
-        "--max-turns", str(max_turns),
-        "--disallowedTools", "*",
-        "--system-prompt", system_prompt,
-    ]
-    if model:
-        argv += ["--model", model]
-    try:
-        proc = subprocess.run(
-            argv,
-            input=prompt,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            env=_claude_env(),
-            cwd=CLAUDE_HOME if os.path.isdir(CLAUDE_HOME) else None,
-        )
-    except subprocess.TimeoutExpired:
-        return {"ok": False, "error": f"Claude timed out after {timeout}s", "text": "", "meta": {}}
-    except FileNotFoundError:
-        return {"ok": False, "error": "claude CLI not found", "text": "", "meta": {}}
-    return _envelope(proc)
+    return _run_cli(
+        prompt, ["--disallowedTools", "*", "--system-prompt", system_prompt],
+        model, timeout, max_turns, f"Claude timed out after {timeout}s")
 
 
 def run_agent(
@@ -377,12 +356,26 @@ def run_agent(
       the CLI's own system prompt strips everything it knows about using its
       tools, which is precisely what this run needs.
     """
+    return _run_cli(
+        prompt, ["--append-system-prompt", system_prompt],
+        model, timeout, max_turns,
+        f"the fix run passed its {timeout}s limit and was stopped")
+
+
+def _run_cli(prompt: str, flags: list[str], model: str, timeout: int,
+             max_turns: int, timeout_message: str) -> dict:
+    """Invoke `claude -p` and parse its envelope.
+
+    The su-exec drop to the non-root user, the credential injection, and the
+    working directory are the fiddly parts, and they must not have two
+    copies: a fix applied to one and not the other is how the tool-enabled
+    path quietly stops authenticating the way the analysis path does.
+    """
     argv = _claude_argv() + [
         "-p",
         "--output-format", "json",
         "--max-turns", str(max_turns),
-        "--append-system-prompt", system_prompt,
-    ]
+    ] + flags
     if model:
         argv += ["--model", model]
     try:
@@ -396,8 +389,7 @@ def run_agent(
             cwd=CLAUDE_HOME if os.path.isdir(CLAUDE_HOME) else None,
         )
     except subprocess.TimeoutExpired:
-        return {"ok": False, "text": "", "meta": {},
-                "error": f"the fix run passed its {timeout}s limit and was stopped"}
+        return {"ok": False, "error": timeout_message, "text": "", "meta": {}}
     except FileNotFoundError:
         return {"ok": False, "error": "claude CLI not found", "text": "", "meta": {}}
     return _envelope(proc)

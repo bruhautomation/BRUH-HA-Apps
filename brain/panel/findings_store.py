@@ -59,6 +59,9 @@ SEVERITIES = ("info", "warning", "serious", "critical")
 STATUSES = ("open", "fixing", "fixed", "failed", "needs_you", "ignored")
 # Statuses that still want the homeowner's attention on the Findings tab.
 LIVE_STATUSES = ("open", "fixing", "failed", "needs_you")
+# ...and the subset the tab badge counts: a fix already running isn't a
+# decision anyone has to make.
+UNSETTLED_STATUSES = ("open", "failed", "needs_you")
 
 # What goes back into the analyst's prompt. Ignored findings are the point of
 # the block — capped so it can never grow into a wall.
@@ -159,12 +162,14 @@ def sweep_inbox() -> int:
         files = sorted(INBOX_DIR.glob("*.jsonl"))
     except OSError:
         return 0
-    added = 0
+    pending: list[dict] = []
+    swept: list[Path] = []
     for path in files:
         try:
             raw = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
+        swept.append(path)
         for line in raw.splitlines():
             line = line.strip()
             if not line:
@@ -173,20 +178,13 @@ def sweep_inbox() -> int:
                 obj = json.loads(line)
             except ValueError:
                 continue
-            if not isinstance(obj, dict):
-                continue
-            _, created = add(
-                obj.get("text") or obj.get("finding") or "",
-                detail=obj.get("detail") or "",
-                fix=obj.get("fix") or "",
-                severity=obj.get("severity") or "warning",
-                fixable=obj.get("fixable", True),
-                entity_id=obj.get("entity_id") or "",
-                source=obj.get("source") or "study",
-                source_title=obj.get("source_title") or "Study session",
-            )
-            if created:
-                added += 1
+            if isinstance(obj, dict):
+                pending.append(obj)
+    # One write for the whole sweep, not one per finding: a study session
+    # that files five would otherwise rewrite the store five times, which on
+    # an SD card is five erase cycles for one batch of results.
+    added = len(add_many(pending))
+    for path in swept:
         try:
             path.unlink()
         except OSError:
@@ -198,22 +196,36 @@ def sweep_inbox() -> int:
 # Reads
 # ---------------------------------------------------------------------------
 
+def _matches(shaped: dict, status: str | None) -> bool:
+    if status is None:
+        return True
+    if status == "live":
+        return shaped["status"] in LIVE_STATUSES
+    return shaped["status"] == status
+
+
 def list_all(status: str | None = None) -> list[dict]:
     """Stored findings, newest first. ``status`` may be one status or the
     sentinel ``"live"`` for everything still wanting attention."""
-    out = []
-    for entry in _load():
-        shaped = _shape(entry)
-        if not shaped["text"]:
-            continue
-        if status == "live":
-            if shaped["status"] not in LIVE_STATUSES:
-                continue
-        elif status is not None and shaped["status"] != status:
-            continue
-        out.append(shaped)
+    out = [s for s in (_shape(e) for e in _load())
+           if s["text"] and _matches(s, status)]
     out.sort(key=lambda f: f["ts"], reverse=True)
     return out
+
+
+def listing() -> dict:
+    """Everything the Findings tab needs, from ONE read of the file.
+
+    The tab wants the list and the badge count together, and asking for
+    them separately meant parsing (and fully shaping) the same file twice
+    per request — on a Pi, for a screen that polls.
+    """
+    shaped = [s for s in (_shape(e) for e in _load()) if s["text"]]
+    shaped.sort(key=lambda f: f["ts"], reverse=True)
+    return {
+        "findings": shaped,
+        "open": len([f for f in shaped if f["status"] in UNSETTLED_STATUSES]),
+    }
 
 
 def get(ts: int) -> dict | None:
@@ -224,8 +236,16 @@ def get(ts: int) -> dict | None:
 
 
 def open_count() -> int:
-    """What the Findings tab badge shows: things you haven't settled."""
-    return len([f for f in list_all() if f["status"] in ("open", "failed", "needs_you")])
+    """What the Findings tab badge shows: things you haven't settled.
+
+    Counted straight off the raw entries: /api/status polls this every few
+    seconds, and shaping 200 findings (slicing every detail, fix and result
+    string) to then throw all of it away but the length is real work on a
+    Raspberry Pi.
+    """
+    return len([e for e in _load()
+                if e.get("status", "open") in UNSETTLED_STATUSES
+                and str(e.get("text") or "").strip()])
 
 
 def is_known(text: str) -> bool:
@@ -244,44 +264,85 @@ def is_known(text: str) -> bool:
 # Writes
 # ---------------------------------------------------------------------------
 
-def add(text: str, detail: str = "", fix: str = "", severity: str = "warning",
-        fixable: bool = True, entity_id: str = "", source: str = "",
-        source_title: str = "") -> tuple[dict | None, bool]:
-    """Record a finding. Returns (entry, created); an already-known finding
-    returns the existing entry untouched, whatever status it now holds."""
-    text = str(text or "").strip()[:MAX_TEXT]
-    key = normalize(text)
-    if not key:
-        return None, False
-    items = _load()
-    for entry in items:
-        if normalize(entry.get("text", "")) == key:
-            return _shape(entry), False
-    entry = {
-        "ts": _unique_ts({int(f.get("ts") or 0) for f in items}),
+def coerce(obj: dict) -> dict | None:
+    """One wire-shaped finding — from a model reply or an inbox line — turned
+    into a stored entry, or None if there is nothing there.
+
+    Both producers hand over the same loose shape, so both go through here:
+    a second hand-written coercion is how the panel and the CLI drift on what
+    "fixable" defaults to.
+    """
+    if not isinstance(obj, dict):
+        return None
+    text = str(obj.get("text") or obj.get("finding") or "").strip()[:MAX_TEXT]
+    if not normalize(text):
+        return None
+    severity = str(obj.get("severity") or "").strip().lower()
+    return {
         "text": text,
-        "detail": str(detail or "").strip()[:MAX_DETAIL],
-        "fix": str(fix or "").strip()[:MAX_FIX],
+        "detail": str(obj.get("detail") or "").strip()[:MAX_DETAIL],
+        "fix": str(obj.get("fix") or "").strip()[:MAX_FIX],
         "severity": severity if severity in SEVERITIES else "warning",
-        "fixable": bool(fixable),
-        "entity_id": str(entity_id or "").strip()[:255],
-        "source": str(source or "").strip()[:64],
-        "source_title": str(source_title or "").strip()[:120],
+        # absent means fixable; only an explicit false means hands required
+        "fixable": obj.get("fixable", True) is not False,
+        "entity_id": str(obj.get("entity_id") or "").strip()[:255],
+        "source": str(obj.get("source") or "").strip()[:64],
+        "source_title": str(obj.get("source_title") or "").strip()[:120],
         "status": "open",
         "result": "",
         "changed": [],
         "settled_at": 0,
     }
-    items.append(entry)
-    # Prune oldest SETTLED entries first: an open finding is live work, and
-    # dropping it silently is how a problem disappears without being fixed.
-    if len(items) > MAX_FINDINGS:
-        settled = [f for f in items if f.get("status") in ("fixed", "ignored")]
-        settled.sort(key=lambda f: int(f.get("settled_at") or f.get("ts") or 0))
-        drop = {id(f) for f in settled[:len(items) - MAX_FINDINGS]}
-        items = [f for f in items if id(f) not in drop][-MAX_FINDINGS:]
-    _write(items)
-    return _shape(entry), True
+
+
+def _prune(items: list[dict]) -> list[dict]:
+    """Cap the store, dropping oldest SETTLED entries first: an open finding
+    is live work, and losing it silently is how a real problem disappears
+    without ever being fixed."""
+    if len(items) <= MAX_FINDINGS:
+        return items
+    settled = [f for f in items if f.get("status") in ("fixed", "ignored")]
+    settled.sort(key=lambda f: int(f.get("settled_at") or f.get("ts") or 0))
+    drop = {id(f) for f in settled[:len(items) - MAX_FINDINGS]}
+    return [f for f in items if id(f) not in drop][-MAX_FINDINGS:]
+
+
+def add_many(objs: list[dict]) -> list[dict]:
+    """Record a batch of wire-shaped findings in ONE read and ONE write.
+
+    Returns only the ones that were new — already-known findings are dropped
+    silently, in any status, which is what makes a dismissal permanent.
+    """
+    items = _load()
+    seen = {normalize(f.get("text", "")) for f in items}
+    used = {int(f.get("ts") or 0) for f in items}
+    created = []
+    for obj in objs:
+        entry = coerce(obj)
+        if entry is None or normalize(entry["text"]) in seen:
+            continue
+        entry["ts"] = _unique_ts(used)
+        used.add(entry["ts"])
+        seen.add(normalize(entry["text"]))
+        items.append(entry)
+        created.append(_shape(entry))
+    if created:
+        _write(_prune(items))
+    return created
+
+
+def add(text: str, **fields) -> tuple[dict | None, bool]:
+    """Record one finding. Returns (entry, created); an already-known finding
+    returns the existing entry untouched, whatever status it now holds."""
+    entry = coerce({"text": text, **fields})
+    if entry is None:
+        return None, False
+    key = normalize(entry["text"])
+    for existing in _load():
+        if normalize(existing.get("text", "")) == key:
+            return _shape(existing), False
+    created = add_many([{"text": text, **fields}])
+    return (created[0], True) if created else (None, False)
 
 
 def set_status(ts: int, status: str, result: str = "",
@@ -304,6 +365,26 @@ def set_status(ts: int, status: str, result: str = "",
     return None
 
 
+def reconcile_running(reason: str) -> int:
+    """Demote findings left mid-fix by a process that is no longer running.
+
+    "fixing" is claimed on disk but owned by an in-memory job, so a restart
+    (an add-on update, a crash) orphans it: the row still says fixing, the
+    job that would settle it is gone, and the tab offers no buttons in that
+    status — the finding becomes permanently unreachable. Called at startup,
+    which is the only moment we know for certain that nothing is in flight.
+    """
+    items = _load()
+    stuck = [f for f in items if f.get("status") == "fixing"]
+    for entry in stuck:
+        entry["status"] = "failed"
+        entry["result"] = reason
+        entry["settled_at"] = int(time.time())
+    if stuck:
+        _write(items)
+    return len(stuck)
+
+
 def remove(ts: int) -> bool:
     items = _load()
     kept = [f for f in items if int(f.get("ts") or 0) != ts]
@@ -324,8 +405,9 @@ def prompt_block() -> str:
     (so three cards don't all raise the same dead battery) and what the
     homeowner has explicitly waved off (so it stays waved off).
     """
-    live = [f for f in list_all() if f["status"] in LIVE_STATUSES][:PROMPT_OPEN]
-    ignored = [f for f in list_all("ignored")][:PROMPT_IGNORED]
+    everything = list_all()
+    live = [f for f in everything if f["status"] in LIVE_STATUSES][:PROMPT_OPEN]
+    ignored = [f for f in everything if f["status"] == "ignored"][:PROMPT_IGNORED]
     parts: list[str] = []
     if live:
         parts.append(

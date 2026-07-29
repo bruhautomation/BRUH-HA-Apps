@@ -16,12 +16,12 @@ version: change the minimum, never delete what you did not create, never
 touch credentials, and if the fix turns out to need hands rather than
 software, say so and stop instead of improvising something adjacent.
 
-Stdlib only, so the test suite can import it without the add-on runtime.
+Stdlib plus engine (itself stdlib-only), so the test suite can import
+it without the add-on runtime.
 """
 from __future__ import annotations
 
-import json
-import re
+import engine
 
 # Turn budget for one fix. Generous rather than tight: a truncated agentic
 # run leaves the house half-changed, which is far worse than a slow one.
@@ -99,23 +99,17 @@ def build_prompt(finding: dict, memory: str = "", context: str = "") -> str:
 def parse_result(text: str) -> dict:
     """Read the fix run's reply.
 
+    Uses the same extractor the analysis path does — a second, subtly
+    different JSON parser on the one path that edits a real house is not a
+    place to be creative.
+
     A run that edits the house and then fails to produce parseable JSON has
     still edited the house, so this never raises: an unreadable reply comes
     back as a failure carrying the raw tail, which is the only honest thing
     to show someone whose home was just touched.
     """
     raw = (text or "").strip()
-    stripped = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw)
-    obj = None
-    try:
-        obj = json.loads(stripped)
-    except ValueError:
-        match = re.search(r"\{.*\}", stripped, re.S)
-        if match:
-            try:
-                obj = json.loads(match.group(0))
-            except ValueError:
-                obj = None
+    obj = engine.extract_json(raw)
     if not isinstance(obj, dict):
         return {
             "ok": False,
@@ -129,14 +123,14 @@ def parse_result(text: str) -> dict:
             "also_found": [],
         }
 
-    def _strings(value, limit):
+    def _strings(value, limit=None):
         if not isinstance(value, list):
             return []
         out = []
         for item in value:
             if isinstance(item, str) and item.strip():
                 out.append(item.strip()[:200])
-            if len(out) >= limit:
+            if limit is not None and len(out) >= limit:
                 break
         return out
 
@@ -147,7 +141,8 @@ def parse_result(text: str) -> dict:
         "ok": bool(obj.get("ok")) and not needs_you,
         "needs_you": needs_you,
         "summary": str(obj.get("summary") or "").strip()[:1000],
-        "changed": _strings(obj.get("changed"), 8),
+        # length is capped by findings_store, which owns MAX_CHANGED
+        "changed": _strings(obj.get("changed")),
         "verified": str(obj.get("verified") or "").strip()[:400],
         "also_found": _strings(obj.get("also_found"), 5),
     }

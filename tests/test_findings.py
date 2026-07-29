@@ -171,6 +171,65 @@ class TestFindingsStore(StoreCase):
     def test_prompt_block_is_empty_when_nothing_is_known(self):
         self.assertEqual(findings_store.prompt_block(), "")
 
+    def test_a_fix_orphaned_by_a_restart_is_recoverable(self):
+        """"fixing" is claimed on disk but owned by an in-memory job. A
+        restart mid-fix orphans it: the row still says fixing, the job that
+        would settle it is gone, and the tab offers no buttons in that
+        status — so the finding becomes permanently unreachable."""
+        findings_store.add("Automation can't fire")
+        ts = findings_store.list_all()[0]["ts"]
+        findings_store.set_status(ts, "fixing")
+
+        self.assertEqual(findings_store.reconcile_running("BRain restarted"), 1)
+        entry = findings_store.get(ts)
+        self.assertEqual(entry["status"], "failed")
+        self.assertIn("restarted", entry["result"])
+        # back on the badge, and Try again is offered
+        self.assertEqual(findings_store.open_count(), 1)
+        # nothing else is touched, and a second pass is a no-op
+        self.assertEqual(findings_store.reconcile_running("again"), 0)
+
+    def test_a_running_fix_is_not_counted_as_a_decision(self):
+        """The badge is "things waiting on you". A fix already in flight is
+        waiting on Claude, not on the homeowner."""
+        findings_store.add("A")
+        ts = findings_store.list_all()[0]["ts"]
+        findings_store.set_status(ts, "fixing")
+        self.assertEqual(findings_store.open_count(), 0)
+        self.assertEqual(len(findings_store.list_all("live")), 1)
+
+    def test_add_many_writes_once_and_dedupes_within_the_batch(self):
+        """A study session filing five findings must not rewrite the store
+        five times — that is five SD-card erase cycles for one batch."""
+        writes = []
+        real_write = findings_store._write
+        findings_store._write = lambda items: (writes.append(len(items)),
+                                               real_write(items))[1]
+        try:
+            created = findings_store.add_many([
+                {"text": "One"}, {"text": "Two"},
+                {"text": "one"},        # same as the first, normalized
+                {"text": "   "},        # nothing there
+                "not a dict",
+            ])
+        finally:
+            findings_store._write = real_write
+        self.assertEqual([f["text"] for f in created], ["One", "Two"])
+        self.assertEqual(len(writes), 1, "add_many rewrote the store per item")
+
+    def test_coerce_is_the_one_reader_of_the_wire_shape(self):
+        """Both producers — a model reply and an inbox line — hand over the
+        same loose shape, so both go through one coercion."""
+        entry = findings_store.coerce({"finding": "  Stuck sensor  ",
+                                       "severity": "SERIOUS", "fixable": False})
+        self.assertEqual(entry["text"], "Stuck sensor")
+        self.assertEqual(entry["severity"], "serious")
+        self.assertFalse(entry["fixable"])
+        # absent means fixable; only an explicit false means hands required
+        self.assertTrue(findings_store.coerce({"text": "x"})["fixable"])
+        self.assertIsNone(findings_store.coerce({"text": "  "}))
+        self.assertIsNone(findings_store.coerce("nope"))
+
 
 class TestFindingsInbox(StoreCase):
     """Study sessions run on the CLI side and must be able to file what they
@@ -302,7 +361,13 @@ class ServerCase(unittest.TestCase):
         # A credential has to exist: pressing Fix without one is rejected.
         engine.CLAUDE_HOME = os.path.join(self.tmp.name, "home")
         engine.SHARED_AUTH_FILE = os.path.join(self.tmp.name, "shared.json")
+        # SECRETS_DIR too, not just AUTH_FILE: save_auth() mkdirs it, and the
+        # default is /data — writable for root, denied for everyone else, so
+        # skipping it passes locally and fails in CI.
+        engine.SECRETS_DIR = os.path.join(self.tmp.name, "secrets")
         engine.AUTH_FILE = os.path.join(self.tmp.name, "auth.json")
+        self.server.CARD_TOKEN_FILE = tmp / "secrets" / "card_token"
+        self.server.WWW_CARD_DIR = tmp / "www" / "brain"
         engine.save_auth("sk-ant-oat01-" + "x" * 30)
         # NOTHING in these tests may reach the real Claude CLI. make_app()
         # starts a worker and an auth check on startup, and this container

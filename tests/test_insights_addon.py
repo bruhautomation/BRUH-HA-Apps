@@ -1195,10 +1195,11 @@ class TestGenerateFlow(InsightsServerCase):
         self.assertEqual(stored["questions"],
                          ["The garage fridge is meant to run 24/7 — right?"])
         self.assertEqual(stored["learned"], ["Hall sensor drops offline at 2 AM"])
-        # A finding is a work-list item, not a memory fact: it lands in the
-        # findings store, and the card keeps only a reference to it.
-        self.assertEqual([f["text"] for f in stored["findings"]],
-                         ["Back Door battery is dead"])
+        # A finding is a work-list item, not part of the card: it lands in
+        # the findings store, and the card stores NOTHING about it. A copy on
+        # the card would be a snapshot guaranteed to go stale the moment the
+        # finding is fixed or dismissed.
+        self.assertNotIn("findings", stored)
         listed = findings_store.list_all()
         self.assertEqual(len(listed), 1)
         self.assertEqual(listed[0]["text"], "Back Door battery is dead")
@@ -1215,14 +1216,13 @@ class TestGenerateFlow(InsightsServerCase):
         self.assertEqual(queued[0]["fact"], "Hall sensor drops offline at 2 AM")
 
     def test_a_finding_is_never_reported_twice(self):
-        """The same problem in different words must not pile up — and the
-        card must only show what the store actually accepted, or it displays
-        a finding the Findings tab doesn't hold."""
+        """The same problem must not pile up when two cards both notice it —
+        the store is the one place that decides, so the second run's report
+        is dropped rather than filed again."""
         asyncio.run(self.server._generate("energy"))
         self.server.JOBS.clear()
         asyncio.run(self.server._generate("climate"))
         self.assertEqual(len(findings_store.list_all()), 1)
-        self.assertEqual(self._stored("climate")["findings"], [])
 
     def test_a_dismissed_finding_goes_back_into_the_prompt(self):
         """Dismissing is only worth a button if it sticks across runs."""
@@ -1266,8 +1266,8 @@ class TestGenerateFlow(InsightsServerCase):
         stored = self._stored()
         self.assertEqual(stored["questions"], [])
         self.assertEqual(stored["learned"], [])
-        self.assertEqual(stored["findings"], [])
         self.assertEqual(stored["tags"], [])
+        self.assertEqual(findings_store.list_all(), [])
 
     def test_feedback_injected_and_tags_stored(self):
         feedback_store.add_feedback("energy", "No pie charts")

@@ -493,35 +493,23 @@ def _clean_strings(value, max_items: int, max_chars: int) -> list[str]:
     return out
 
 
-def _clean_findings(value, max_items: int = 3) -> list[dict]:
-    """Sanitize the model's ``findings`` array into store-shaped dicts.
+def _model_findings(value, max_items: int = 3) -> list[dict]:
+    """The model's ``findings`` array, ready for ``findings_store.add_many``.
 
-    Tolerates a bare string per finding as well as the documented object —
-    a model that drops to the simpler shape should still get its problem
-    onto the work list rather than have it silently discarded.
+    Only the shape the store can't be expected to know about is handled
+    here — a list, capped, tolerating a bare string per finding (a model
+    that drops to the simpler form should still get its problem onto the
+    work list). Every field's validation belongs to the store, which owns
+    the constants and applies them to the study-session path too.
     """
     if not isinstance(value, list):
         return []
     out: list[dict] = []
-    for item in value:
+    for item in value[:max_items]:
         if isinstance(item, str):
             item = {"text": item}
-        if not isinstance(item, dict):
-            continue
-        text = str(item.get("text") or item.get("finding") or "").strip()
-        if not text:
-            continue
-        severity = str(item.get("severity") or "").strip().lower()
-        out.append({
-            "text": text[:findings_store.MAX_TEXT],
-            "detail": str(item.get("detail") or "").strip()[:findings_store.MAX_DETAIL],
-            "fix": str(item.get("fix") or "").strip()[:findings_store.MAX_FIX],
-            "severity": severity if severity in findings_store.SEVERITIES else "warning",
-            "fixable": item.get("fixable", True) is not False,
-            "entity_id": str(item.get("entity_id") or "").strip()[:255],
-        })
-        if len(out) >= max_items:
-            break
+        if isinstance(item, dict):
+            out.append(item)
     return out
 
 
@@ -593,21 +581,13 @@ async def _generate(insight_id: str) -> None:
                 continue
             questions.append(claim)
         learned = _clean_strings(obj.get("learned"), 3, 500)
-        # Findings are a work list, not prose: only genuinely new problems are
-        # kept, and the card shows exactly the ones the store accepted, so it
-        # can never display a problem the Findings tab doesn't hold.
-        findings: list[dict] = []
-        for raw in _clean_findings(obj.get("findings")):
-            entry, created = findings_store.add(
-                raw["text"], detail=raw["detail"], fix=raw["fix"],
-                severity=raw["severity"], fixable=raw["fixable"],
-                entity_id=raw["entity_id"], source=cat["id"],
-                source_title=cat.get("title", "Insight"))
-            if entry is None or not created:
-                log.info("dropping finding (already reported): %s", raw["text"])
-                continue
-            findings.append({"ts": entry["ts"], "text": entry["text"],
-                             "severity": entry["severity"]})
+        # Findings are a work list, not part of the card: what this run
+        # reported lives in the store, which is the one place that knows
+        # whether it has since been fixed or dismissed. Storing a copy on
+        # the card would be a snapshot guaranteed to go stale.
+        filed = findings_store.add_many([
+            {**f, "source": cat["id"], "source_title": cat.get("title", "Insight")}
+            for f in _model_findings(obj.get("findings"))])
         tags = card_tags.clean_tags(_clean_strings(obj.get("tags"), 4, 24))
         insight = {
             "id": insight_id,
@@ -622,7 +602,6 @@ async def _generate(insight_id: str) -> None:
             "highlights": highlights[:6],
             "questions": questions,
             "learned": learned,
-            "findings": findings,
             "tags": tags,
             "focus_used": cat.get("focus", "") if question is None else "",
             "html": html,
@@ -640,7 +619,8 @@ async def _generate(insight_id: str) -> None:
             if created:
                 await _submit_memory(fact)
         _set_job(insight_id, state="done", error="")
-        log.info("insight %s generated (%s)", insight_id, insight["title"])
+        log.info("insight %s generated (%s)%s", insight_id, insight["title"],
+                 f", {len(filed)} new finding(s)" if filed else "")
     except Exception as exc:  # noqa: BLE001 — job errors surface in the UI
         log.warning("insight %s failed: %s", insight_id, exc)
         _set_job(insight_id, state="error", error=str(exc)[:500])
@@ -664,8 +644,8 @@ async def _run_fix(job_id: str) -> None:
         _set_job(job_id, state="error", error="that finding is gone")
         return
     try:
+        # the route already claimed it on disk — this is the in-memory half
         _set_job(job_id, state="fixing", error="")
-        findings_store.set_status(ts, "fixing")
         memory = await asyncio.to_thread(_read_shared_memory)
         prompt = fixer.build_prompt(finding, memory=memory)
         result = await asyncio.to_thread(
@@ -693,9 +673,10 @@ async def _run_fix(job_id: str) -> None:
                 source="fix")
         # Anything it noticed on the way in becomes its own finding rather
         # than an edit it was not asked to make.
-        for extra in parsed["also_found"]:
-            findings_store.add(extra, source="fix",
-                               source_title=f"Noticed while fixing “{finding['text']}”")
+        findings_store.add_many([
+            {"text": extra, "source": "fix",
+             "source_title": f"Noticed while fixing “{finding['text']}”"}
+            for extra in parsed["also_found"]])
         _set_job(job_id, state="done", error="")
         log.info("finding %s → %s", ts, status)
     except Exception as exc:  # noqa: BLE001 — job errors surface in the UI
@@ -783,6 +764,17 @@ async def _scheduler() -> None:
     budget_logged = False
     while True:
         await asyncio.sleep(60)
+        # Fold in what the CLI side found. This belongs on the tick rather
+        # than on the Findings tab's own request: study sessions are the
+        # other producer, and the badge that tells you to go look is served
+        # by /api/status. Sweeping only on tab open made that circular — the
+        # badge couldn't count a finding until you'd already visited.
+        try:
+            swept = await asyncio.to_thread(findings_store.sweep_inbox)
+            if swept:
+                log.info("swept %d finding(s) from study sessions", swept)
+        except Exception as exc:  # never let this kill the loop
+            log.debug("findings sweep failed: %s", exc)
         if not engine.get_auth():
             continue
         settings = settings_store.load()
@@ -962,10 +954,15 @@ async def h_insights(request: web.Request) -> web.Response:
     # Tags are resolved at read time, not stored: a hand-edited tag is a diff
     # against whatever the latest run wrote, so a new run's new tag still
     # appears while the one you threw away stays gone.
-    insights = load_insights()
-    for ins in insights:
-        ins["tags"] = card_tags.effective_tags(ins)
-    return web.json_response({"insights": insights})
+    def listing() -> list[dict]:
+        insights = load_insights()
+        # one read of the edits file for the whole list, not one per card
+        edits = card_tags.load_edits()
+        for ins in insights:
+            ins["tags"] = card_tags.effective_tags(ins, edits)
+        return insights
+
+    return web.json_response({"insights": await asyncio.to_thread(listing)})
 
 
 # "learn about the boiler", "study my energy use" — the ask bar's second verb.
@@ -1413,29 +1410,63 @@ async def h_card_info(request: web.Request) -> web.Response:
 
 # -- findings: what's broken, and what BRain did about it -------------------
 
-def _finding_or_404(request: web.Request) -> dict:
+def _finding_ts(request: web.Request) -> int:
     try:
-        ts = int(request.match_info["ts"])
+        return int(request.match_info["ts"])
     except ValueError:
         raise web.HTTPBadRequest(text="bad finding id")
-    finding = findings_store.get(ts)
+
+
+def _finding_or_404(request: web.Request) -> dict:
+    finding = findings_store.get(_finding_ts(request))
     if finding is None:
         raise web.HTTPNotFound(text="no such finding")
     return finding
 
 
-def _findings_payload() -> dict:
-    return {
-        "findings": findings_store.list_all(),
-        "open": findings_store.open_count(),
-    }
-
-
 async def h_findings(request: web.Request) -> web.Response:
-    # Study sessions leave findings on the shared volume; fold them in on
-    # read so the tab is the one place they surface, whoever found them.
-    await asyncio.to_thread(findings_store.sweep_inbox)
-    return web.json_response(_findings_payload())
+    # The scheduler owns ingestion; sweeping here too is only about latency,
+    # so opening the tab right after a study session finishes doesn't wait
+    # out the tick. Both are idempotent, and an empty inbox costs one glob.
+    def listing() -> dict:
+        findings_store.sweep_inbox()
+        return findings_store.listing()
+
+    return web.json_response(await asyncio.to_thread(listing))
+
+
+# The lifecycle buttons: each is one status transition and the same reply.
+# Keeping them as one handler means adding a verb is a line here rather than
+# a handler, a route, and two docstrings that can disagree with each other.
+FINDING_VERBS = {
+    # "Not a problem here." Sticky: dismissed findings are fed back into
+    # every future analysis, so it is never raised again rather than
+    # re-dismissed weekly.
+    "ignore": ("ignored", ""),
+    # "I handled it myself" — the ending for anything needing hands.
+    "done": ("fixed", "Marked done by you."),
+    "reopen": ("open", ""),
+}
+
+
+async def h_finding_verb(request: web.Request) -> web.Response:
+    verb = request.match_info["verb"]
+    if verb not in FINDING_VERBS:
+        raise web.HTTPNotFound(text="no such action")
+    finding = _finding_or_404(request)
+    status, result = FINDING_VERBS[verb]
+
+    def settle() -> dict:
+        findings_store.set_status(finding["ts"], status, result=result)
+        return findings_store.listing()
+
+    payload = await asyncio.to_thread(settle)
+    if verb == "done":
+        # resolving it yourself is durable knowledge about this home
+        await _submit_memory(
+            f"Resolved on {time.strftime('%Y-%m-%d')}: {finding['text']}",
+            source="homeowner")
+    return web.json_response(payload)
 
 
 async def h_finding_fix(request: web.Request) -> web.Response:
@@ -1443,45 +1474,30 @@ async def h_finding_fix(request: web.Request) -> web.Response:
     finding = _finding_or_404(request)
     if not engine.get_auth():
         raise web.HTTPBadRequest(text="connect your Claude account first")
-    if finding["status"] == "fixing":
-        raise web.HTTPConflict(text="already being fixed")
     job_id = f"{FIX_JOB_PREFIX}{finding['ts']}"
-    if not _enqueue(job_id, kind="fix", finding_ts=finding["ts"]):
+    # The in-memory job is the authority on "a fix is running" — it is what
+    # actually knows. The stored status is the copy the browser renders, and
+    # any left behind by a dead process is reconciled at startup.
+    if finding["status"] == "fixing" or not _enqueue(
+            job_id, kind="fix", finding_ts=finding["ts"]):
         raise web.HTTPConflict(text="already being fixed")
-    findings_store.set_status(finding["ts"], "fixing", result="")
-    return web.json_response(_findings_payload())
 
+    def claim() -> dict:
+        findings_store.set_status(finding["ts"], "fixing", result="")
+        return findings_store.listing()
 
-async def h_finding_ignore(request: web.Request) -> web.Response:
-    """"Not a problem here." Sticky: it is fed back into every future
-    analysis, so it is never raised again rather than re-dismissed weekly."""
-    finding = _finding_or_404(request)
-    findings_store.set_status(finding["ts"], "ignored")
-    return web.json_response(_findings_payload())
-
-
-async def h_finding_done(request: web.Request) -> web.Response:
-    """"I handled it myself" — the ending for anything needing hands."""
-    finding = _finding_or_404(request)
-    findings_store.set_status(
-        finding["ts"], "fixed", result="Marked done by you.")
-    await _submit_memory(
-        f"Resolved on {time.strftime('%Y-%m-%d')}: {finding['text']}",
-        source="homeowner")
-    return web.json_response(_findings_payload())
-
-
-async def h_finding_reopen(request: web.Request) -> web.Response:
-    finding = _finding_or_404(request)
-    findings_store.set_status(finding["ts"], "open", result="")
-    return web.json_response(_findings_payload())
+    return web.json_response(await asyncio.to_thread(claim))
 
 
 async def h_finding_delete(request: web.Request) -> web.Response:
     """Forget it entirely — unlike Ignore, it can be reported again."""
     finding = _finding_or_404(request)
-    findings_store.remove(finding["ts"])
-    return web.json_response(_findings_payload())
+
+    def forget() -> dict:
+        findings_store.remove(finding["ts"])
+        return findings_store.listing()
+
+    return web.json_response(await asyncio.to_thread(forget))
 
 
 # -- card tags --------------------------------------------------------------
@@ -2061,9 +2077,7 @@ def make_app() -> web.Application:
     app.router.add_put("/api/card/{id}/tags", h_card_tags_put)
     app.router.add_get("/api/findings", h_findings)
     app.router.add_post("/api/finding/{ts}/fix", h_finding_fix)
-    app.router.add_post("/api/finding/{ts}/ignore", h_finding_ignore)
-    app.router.add_post("/api/finding/{ts}/done", h_finding_done)
-    app.router.add_post("/api/finding/{ts}/reopen", h_finding_reopen)
+    app.router.add_post("/api/finding/{ts}/{verb}", h_finding_verb)
     app.router.add_delete("/api/finding/{ts}", h_finding_delete)
     app.router.add_get("/api/insight/{id}/history", h_history_list)
     app.router.add_get("/api/insight/{id}/history/{ts}", h_history_get)
@@ -2110,6 +2124,15 @@ def make_app() -> web.Application:
     terminal_proxy.setup(app)
 
     async def on_startup(app: web.Application) -> None:
+        # Startup is the one moment we know nothing is in flight, so it is
+        # the only place a fix orphaned by a restart can be told apart from
+        # one that is genuinely still running.
+        orphaned = await asyncio.to_thread(
+            findings_store.reconcile_running,
+            "BRain restarted while this fix was running, so it could not "
+            "report what it did. Check the entity before trying again.")
+        if orphaned:
+            log.warning("%d fix run(s) were interrupted by a restart", orphaned)
         await _options_sync()
         app["worker"] = asyncio.create_task(_worker())
         app["scheduler"] = asyncio.create_task(_scheduler())

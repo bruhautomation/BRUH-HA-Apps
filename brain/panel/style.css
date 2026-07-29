@@ -1337,9 +1337,7 @@ body.modal-open {
    check what BRain changed in your house last week. */
 .finding.st-fixed, .finding.st-ignored { opacity: 0.72; border-left-color: var(--hairline); }
 
-.findhead-row { display: flex; gap: 12px; align-items: flex-start; }
-.findtitles { min-width: 0; flex: 1; }
-.findtitles h3 { margin: 3px 0 0; font-size: 15.5px; line-height: 1.35; }
+.findtitle { margin: 3px 0 0; font-size: 15.5px; line-height: 1.35; }
 
 .findmeta {
   display: flex;
@@ -1358,6 +1356,8 @@ body.modal-open {
 .st-fixed .findstate { color: var(--good); }
 .st-fixing .findstate { color: var(--accent-2); }
 .st-failed .findstate, .st-needsyou .findstate { color: var(--serious); }
+/* Where it came from is context, not status — the quietest thing in the row. */
+.findsrc { color: var(--ink-3); font-weight: 600; opacity: 0.75; }
 
 .finddetail { margin: 9px 0 0; font-size: 13.5px; color: var(--ink-2); }
 
