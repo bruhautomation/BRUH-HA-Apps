@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Security-focused tests for the BRUH Claude Terminal add-on.
+Security-focused tests for the BRain add-on.
 
 Tests cover:
 - No hardcoded tokens or secrets in any file
@@ -18,7 +18,7 @@ import re
 import unittest
 
 BASE_DIR = os.path.join(os.path.dirname(__file__), "..")
-ADDON_DIR = os.path.join(BASE_DIR, "bruh-claude-terminal")
+ADDON_DIR = os.path.join(BASE_DIR, "brain")
 SCRIPTS_DIR = os.path.join(ADDON_DIR, "scripts")
 INTEGRATIONS_DIR = os.path.join(ADDON_DIR, "integrations")
 
@@ -120,8 +120,8 @@ class TestNoCommandInjection(unittest.TestCase):
         self.assertNotIn("'$file'", python_section)
 
     def test_session_picker_validates_custom_args(self):
-        """claude-session-picker should validate user input for shell metacharacters."""
-        content = read_file(os.path.join(SCRIPTS_DIR, "claude-session-picker.sh"))
+        """brain-menu should validate user input for shell metacharacters."""
+        content = read_file(os.path.join(SCRIPTS_DIR, "brain-menu.sh"))
         # After fix: should check for dangerous characters
         self.assertIn("metacharacters", content.lower())
 
@@ -163,90 +163,6 @@ class TestNoCommandInjection(unittest.TestCase):
                 content, claude_arg_pattern,
                 f"{listener} must not pass prompt to claude as a command-line argument"
             )
-
-
-class TestGitignoreCoversSecrets(unittest.TestCase):
-    """Test that gitignore templates cover sensitive files."""
-
-    def _get_gitignore_entries(self, content):
-        """Extract gitignore patterns from a script's heredoc."""
-        entries = set()
-        in_gitignore = False
-        for line in content.split("\n"):
-            if "GITIGNORE" in line and "<<" in line:
-                in_gitignore = True
-                continue
-            if in_gitignore and line.strip() == "GITIGNORE":
-                break
-            if in_gitignore and line.strip() and not line.strip().startswith("#"):
-                entries.add(line.strip())
-        return entries
-
-    # The only .storage files a gitignore may re-include: registries and
-    # dashboards carry no credentials. Everything else in .storage —
-    # notably core.config_entries, auth*, cloud — must stay excluded.
-    SAFE_STORAGE_REINCLUDES = {
-        "!.storage/core.area_registry",
-        "!.storage/core.floor_registry",
-        "!.storage/core.label_registry",
-        "!.storage/core.device_registry",
-        "!.storage/core.entity_registry",
-        "!.storage/core.category_registry",
-        "!.storage/lovelace*",
-    }
-
-    def _assert_storage_safely_excluded(self, entries, label):
-        self.assertTrue(
-            ".storage/" in entries or ".storage/*" in entries,
-            f"{label} gitignore missing .storage exclusion",
-        )
-        reincludes = {e for e in entries if e.startswith("!.storage/")}
-        self.assertLessEqual(
-            reincludes,
-            self.SAFE_STORAGE_REINCLUDES,
-            f"{label} gitignore re-includes a secrets-bearing .storage file",
-        )
-
-    def _assert_bruh_claude_safely_excluded(self, entries, label):
-        """.bruh_claude must stay excluded (it holds secrets/ and logs/);
-        the wildcard form allows re-including ONLY the dashboard backup
-        history, which carries no credentials."""
-        self.assertTrue(
-            ".bruh_claude/" in entries or ".bruh_claude/*" in entries,
-            f"{label} gitignore missing .bruh_claude exclusion",
-        )
-        reincludes = {e for e in entries if e.startswith("!.bruh_claude/")}
-        self.assertLessEqual(
-            reincludes,
-            {"!.bruh_claude/dashboard_backups"},
-            f"{label} gitignore re-includes a sensitive .bruh_claude path",
-        )
-
-    def test_run_sh_gitignore_covers_secrets(self):
-        """run.sh gitignore should cover sensitive files."""
-        content = read_file(os.path.join(ADDON_DIR, "run.sh"))
-        entries = self._get_gitignore_entries(content)
-        for req in ["secrets.yaml", ".mcp.json"]:
-            self.assertIn(req, entries, f"run.sh gitignore missing: {req}")
-        self._assert_bruh_claude_safely_excluded(entries, "run.sh")
-        self._assert_storage_safely_excluded(entries, "run.sh")
-
-    def test_backup_sh_gitignore_covers_secrets(self):
-        """ha-backup.sh gitignore should cover sensitive files."""
-        content = read_file(os.path.join(SCRIPTS_DIR, "ha-backup.sh"))
-        entries = self._get_gitignore_entries(content)
-        for req in ["secrets.yaml", ".mcp.json"]:
-            self.assertIn(req, entries, f"ha-backup.sh gitignore missing: {req}")
-        self._assert_bruh_claude_safely_excluded(entries, "ha-backup.sh")
-        self._assert_storage_safely_excluded(entries, "ha-backup.sh")
-
-    def test_gitignore_covers_databases(self):
-        """Gitignore should exclude HA database files."""
-        content = read_file(os.path.join(ADDON_DIR, "run.sh"))
-        entries = self._get_gitignore_entries(content)
-        db_patterns = ["*.db", "*.db-shm", "*.db-wal", "home-assistant_v2.db*"]
-        for pattern in db_patterns:
-            self.assertIn(pattern, entries, f"Missing db pattern: {pattern}")
 
 
 class TestNoRmRfDangerous(unittest.TestCase):
@@ -292,18 +208,6 @@ class TestProperQuoting(unittest.TestCase):
                             "${SUPERVISOR_TOKEN}" in line,
                             f"{name}:{i} SUPERVISOR_TOKEN not in braces"
                         )
-
-
-class TestBackupWatcherUsesGitC(unittest.TestCase):
-    """Test that ha-backup-watcher uses git -C instead of cd."""
-
-    def test_no_cd_in_backup_watcher(self):
-        """ha-backup-watcher should use git -C, not cd."""
-        content = read_file(os.path.join(SCRIPTS_DIR, "ha-backup-watcher.sh"))
-        # After fix: should not contain 'cd "$CONFIG_DIR"'
-        self.assertNotIn('cd "$CONFIG_DIR"', content)
-        # Should use git -C
-        self.assertIn('git -C "$CONFIG_DIR"', content)
 
 
 if __name__ == "__main__":

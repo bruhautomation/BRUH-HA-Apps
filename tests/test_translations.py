@@ -16,7 +16,7 @@ import pytest
 
 COMPONENT_DIR = (
     Path(__file__).resolve().parent.parent
-    / "bruh-claude-terminal" / "custom_components" / "bruh_claude"
+    / "brain" / "custom_components" / "brain"
 )
 FILES = [
     COMPONENT_DIR / "strings.json",

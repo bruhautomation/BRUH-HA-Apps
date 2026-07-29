@@ -8,31 +8,33 @@ Full documentation for every add-on lives at **[bruhautomation.com](https://bruh
 
 ## Add-ons
 
-### [BRUH Terminal](bruh-claude-terminal/)
+### [BRain](brain/)
 
-Claude Code for Home Assistant — terminal, voice assistant, and proactive AI in one add-on:
+Your home's brain — a Claude Code terminal, an AI insights dashboard, and one shared memory that learns your house over time, in a single add-on behind one sidebar panel and one Claude login.
 
-- **Fast voice assistant** - pre-warmed Claude workers (~3-5s commands), streaming TTS, conversation memory, multiple personalities, area-aware control
-- **Insight jobs** - scheduled Claude reports (daily briefing, anomaly watch, camera check) written to dashboard-ready sensors
-- **Native HA API access** via built-in MCP server - entity control, camera vision, history & statistics, automation traces, logs
-- **Auto-generated context** - CLAUDE.md describes your installation on startup
-- **Long-term memory** - the assistant learns your home's nicknames, patterns, and preferences over time
-- **Git-based config backup** - automatic versioning of your /config directory
-- **CLI tools** - `ha-reload`, `ha-log -f`, `ha-entity`, `ha-selftest`, and more
-- **Persistent environment** - packages survive restarts; tmux multi-session; mobile UI
-- **Usage limit sensors** - your Anthropic session/weekly utilization as HA sensors
-- **Automation integration** - trigger Claude tasks from HA automations
+**Terminal**
 
-### [BRUH Insights](bruh-insights/)
+- **Native HA API access** via a built-in MCP server — entity control, camera vision, history & statistics, automation traces, logs
+- **Fast voice assistant** — pre-warmed workers (~3-5s commands), streaming TTS, conversation memory, area-aware control
+- **Auto-generated context** — `CLAUDE.md` describes your installation on startup
+- **Two-command CLI** — `brain` for memory, learning and undo; `ha` for `ha log`, `ha reload`, `ha entity`, and the rest
+- **Undo for Claude's edits** — every file Claude writes under `/config` is snapshotted first; `brain undo` puts it back
+- **Persistent environment** — packages survive restarts; tmux multi-session; mobile UI
+- **Usage limit sensors** — your Anthropic session/weekly utilisation as HA sensors
 
-AI-powered insights dashboard — Claude analyzes your Home Assistant data and generates beautiful, interactive visualizations in the sidebar:
+**Insights**
 
-- **Nine built-in categories** - Overview, Energy, Climate, Lighting, Security, Presence, Media, Device Health, Automations
-- **Ask anything** - free-form questions become bespoke insight cards; one click makes them recurring
-- **Memory that loops** - findings, answers, and feedback persist and feed every future analysis; questions are never asked twice
-- **Deep presence** - cross-references phone sensors (WiFi, geocoded address, charging) and cites its evidence
-- **Dashboard cards** - embed any insight on an HA dashboard via token-protected Webpage cards
-- **Sandboxed rendering** - visualizations run in sandboxed iframes; `/config` is mounted read-only
+- **Nine built-in categories** — Overview, Energy, Climate, Lighting, Security, Presence, Media, Device Health, Automations
+- **Ask anything** — free-form questions become bespoke insight cards; one click makes them recurring
+- **Dashboard cards** — embed any insight on an HA dashboard via token-protected Webpage cards
+- **Sandboxed rendering** — visualisations run in sandboxed iframes
+
+**Memory**
+
+- **One document** of durable facts about your home, shared by the terminal, voice, and every insight run
+- **Guesses, not questionnaires** — BRain proposes what it believes and you confirm or reject; never more than three waiting on you
+- **Study sessions** — `brain learn energy` sends it off to investigate a topic and write down what it finds
+- **A change log with undo** — see exactly what it learned this week, and revert any single line
 
 ### [BRUH Minecraft](bruh-minecraft-server/)
 

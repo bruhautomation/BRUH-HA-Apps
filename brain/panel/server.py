@@ -82,7 +82,7 @@ from aiohttp import web
 
 import addon_options
 import categories as cat_mod
-import claude_client
+import engine
 import feedback_store
 import knowledge_store
 import prompt_store
@@ -497,7 +497,7 @@ async def _generate(insight_id: str) -> None:
         prompt = build_prompt(cat, bundle, question=question, feedback=feedback,
                               knowledge=knowledge, previous=previous)
         result = await asyncio.to_thread(
-            claude_client.run_claude, prompt, SYSTEM_PROMPT, eff_model(),
+            engine.run_claude, prompt, SYSTEM_PROMPT, eff_model(),
             eff_timeout_s(),
         )
         _record_usage(result, insight_id)
@@ -505,7 +505,7 @@ async def _generate(insight_id: str) -> None:
             raise RuntimeError(result["error"] or "generation failed")
 
         _set_job(insight_id, state="parsing")
-        obj = claude_client.extract_json(result["text"])
+        obj = engine.extract_json(result["text"])
         if not obj or not isinstance(obj.get("html"), str) or not obj.get("title"):
             raise RuntimeError("Claude returned an unparseable insight (no JSON/html)")
         html = obj["html"]
@@ -641,7 +641,7 @@ async def _scheduler() -> None:
     budget_logged = False
     while True:
         await asyncio.sleep(60)
-        if not claude_client.get_auth():
+        if not engine.get_auth():
             continue
         settings = settings_store.load()
         if not settings["auto_enabled"]:
@@ -719,7 +719,7 @@ async def _options_poller() -> None:
 
 async def _check_auth_bg() -> None:
     AUTH_CHECK.update(state="checking", error="")
-    result = await asyncio.to_thread(claude_client.validate_auth)
+    result = await asyncio.to_thread(engine.validate_auth)
     AUTH_CHECK.update(
         state="ok" if result["ok"] else "failed",
         error=result["error"],
@@ -784,7 +784,7 @@ def _category_status(c: dict, insights: dict) -> dict:
 
 
 async def h_status(request: web.Request) -> web.Response:
-    auth = claude_client.get_auth()
+    auth = engine.get_auth()
     insights = {i["id"]: i.get("generated_at") for i in load_insights()}
     settings = settings_store.load()
     return web.json_response({
@@ -1274,7 +1274,9 @@ async def h_answer_question(request: web.Request) -> web.Response:
     # the answer is durable knowledge: retire the question locally and keep
     # the Q→A as a fact every future run sees
     knowledge_store.answer_question(question, answer)
-    knowledge_store.add_fact(f"Q: {question} → A: {answer}",
+    # Stored as a statement, not a Q/A pair — "Q: ... → A: ..." strings are
+    # what made the old memory unreadable to a human.
+    knowledge_store.add_fact(f"{question.rstrip('?')}: {answer}",
                              source="homeowner", category=insight.get("category", ""))
     await _submit_answer(question, answer)
     # answered — stop surfacing it
@@ -1448,7 +1450,7 @@ async def h_knowledge_answer(request: web.Request) -> web.Response:
     if match is None:
         raise web.HTTPNotFound(text="no such question")
     knowledge_store.answer_question(match["text"], answer)
-    knowledge_store.add_fact(f"Q: {match['text']} → A: {answer}",
+    knowledge_store.add_fact(f"{match['text'].rstrip('?')}: {answer}",
                              source="homeowner", category=match.get("category", ""))
     await _submit_answer(match["text"], answer)
     _retire_question_everywhere(match["text"])
@@ -1487,7 +1489,7 @@ def _settings_payload(settings: dict) -> dict:
         "usage": usage_store.budget_state(settings),
         "addon_defaults": addon_defaults(),
         "options_synced": addon_options.snapshot() is not None,
-        "models": claude_client.MODEL_CHOICES,
+        "models": engine.MODEL_CHOICES,
     }
 
 
@@ -1559,7 +1561,7 @@ async def h_auth_token(request: web.Request) -> web.Response:
     body = await request.json()
     token = (body.get("token") or "").strip()
     try:
-        saved = claude_client.save_auth(token)
+        saved = engine.save_auth(token)
     except ValueError as exc:
         raise web.HTTPBadRequest(text=str(exc))
     asyncio.create_task(_check_auth_bg())
@@ -1567,14 +1569,14 @@ async def h_auth_token(request: web.Request) -> web.Response:
 
 
 async def h_auth_logout(request: web.Request) -> web.Response:
-    claude_client.clear_auth()
-    claude_client.SETUP_FLOW.cancel()
+    engine.clear_auth()
+    engine.SETUP_FLOW.cancel()
     AUTH_CHECK.update(state="unchecked", error="", checked_at=0)
     return web.json_response({"cleared": True})
 
 
 async def h_setup_start(request: web.Request) -> web.Response:
-    status = await asyncio.to_thread(claude_client.SETUP_FLOW.start)
+    status = await asyncio.to_thread(engine.SETUP_FLOW.start)
     return web.json_response(status)
 
 
@@ -1583,20 +1585,20 @@ async def h_setup_code(request: web.Request) -> web.Response:
     code = (body.get("code") or "").strip()
     if not code:
         raise web.HTTPBadRequest(text="empty code")
-    status = await asyncio.to_thread(claude_client.SETUP_FLOW.submit_code, code)
+    status = await asyncio.to_thread(engine.SETUP_FLOW.submit_code, code)
     return web.json_response(status)
 
 
 async def h_setup_status(request: web.Request) -> web.Response:
-    status = claude_client.SETUP_FLOW.status()
+    status = engine.SETUP_FLOW.status()
     if status["phase"] == "done" and AUTH_CHECK["state"] == "unchecked":
         asyncio.create_task(_check_auth_bg())
     return web.json_response(status)
 
 
 async def h_setup_cancel(request: web.Request) -> web.Response:
-    claude_client.SETUP_FLOW.cancel()
-    return web.json_response(claude_client.SETUP_FLOW.status())
+    engine.SETUP_FLOW.cancel()
+    return web.json_response(engine.SETUP_FLOW.status())
 
 
 async def h_health(request: web.Request) -> web.Response:
@@ -1665,7 +1667,7 @@ def make_app() -> web.Application:
         app["scheduler"] = asyncio.create_task(_scheduler())
         if addon_options.available():
             app["options"] = asyncio.create_task(_options_poller())
-        if claude_client.get_auth():
+        if engine.get_auth():
             asyncio.create_task(_check_auth_bg())
 
     app.on_startup.append(on_startup)

@@ -25,8 +25,8 @@ log_path = os.environ.get("FAKE_CLAUDE_LOG")
 if log_path:
     with open(log_path, "a") as fh:
         fh.write(json.dumps(argv) + "\n")
-        fh.write("ENV BRUH_DENIED_SERVICES="
-                 + os.environ.get("BRUH_DENIED_SERVICES", "") + "\n")
+        fh.write("ENV BRAIN_DENIED_SERVICES="
+                 + os.environ.get("BRAIN_DENIED_SERVICES", "") + "\n")
 
 mode = os.environ.get("FAKE_MODE", "ok")
 

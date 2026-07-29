@@ -9,10 +9,7 @@ This repository contains Home Assistant add-ons by BRUH Automation:
 - **BRain** (`brain/`) - **the primary add-on.** A Claude Code terminal, an AI insights dashboard, and one shared memory that learns the house over time, merged into a single add-on behind one ingress panel and one Claude login. Supersedes BRUH Terminal and BRUH Insights. Integration domain: `brain`.
 - **BRUH Minecraft** (`bruh-minecraft-server/`) - a Minecraft Java Edition server with an ingress management panel, git-based world version control, RCON, and a companion `bruh_minecraft` custom integration.
 
-Deprecated, retained until BRain replaces them outright:
-
-- **BRUH Terminal** (`bruh-claude-terminal/`) - the terminal half of BRain, as a standalone add-on. Its architecture is documented in detail below and still describes BRain's inherited internals.
-- **BRUH Insights** (`bruh-insights/`) - the dashboard half, as a standalone add-on (`bruh-insights/panel/`).
+BRUH Terminal (`bruh-claude-terminal/`) and BRUH Insights (`bruh-insights/`) were removed in favour of BRain; the architecture notes below describe the internals BRain inherited from them.
 
 ### BRain specifics
 
@@ -22,6 +19,7 @@ Deprecated, retained until BRain replaces them outright:
 - **Two CLI dispatchers**, not fourteen scripts: `brain` (memory, learn, ask, undo, doctor) and `ha` (log, reload, entity, service, addon, notify, share, check, context). Both delegate to `/opt/scripts`. Adding a command = a script plus one dispatcher line.
 - **Memory**: `memory.md` is the only thing that is "memory". The inbox, the hypothesis queue, and the change log are queues and audit trails, and are never injected into prompts. Every writer goes through the inbox — nothing writes `memory.md` except the consolidator.
 - **Hypotheses replace open-ended questions**: capped at 3 open, 14-day expiry, answered ones become plain memory lines and the record is settled. Rejected ones become a capped dead-ends block.
+- **Naming**: prefer `brain`/`ha` over `claude` in anything we own. `CLAUDE.md`, `CLAUDE_CONFIG_DIR`, the `claude` user, and the `claude-run` wrapper keep the name because they *are* Claude Code's file, env var, user, and binary. Everything else (`panel/engine.py`, `scripts/brain-*.sh`) is BRain-named.
 
 Shared brand sources live in `branding/` (Solid Blocks icon SVGs) and `brands/` (home-assistant/brands submission assets); cross-add-on tests live in `tests/`.
 
@@ -30,7 +28,7 @@ Shared brand sources live in `branding/` (Solid Blocks icon SVGs) and `brands/` 
 ```
 BRUH-HA-Apps/
 ├── repository.yaml              # HA add-on repository metadata
-├── bruh-claude-terminal/        # Main add-on
+├── brain/                       # Main add-on
 │   ├── config.yaml              # HA add-on configuration manifest
 │   ├── build.yaml               # Multi-arch build config
 │   ├── Dockerfile               # Container build definition
@@ -134,12 +132,12 @@ BRUH-HA-Apps/
 
 ### Build locally
 ```bash
-podman build -t local/bruh-claude-terminal ./bruh-claude-terminal
+podman build -t local/brain ./brain
 ```
 
 ### Run locally
 ```bash
-podman run -p 7681:7681 -v $(pwd)/config:/config local/bruh-claude-terminal
+podman run -p 8099:8099 -p 7681:7681 -v $(pwd)/config:/config local/brain
 ```
 
 ### File Conventions

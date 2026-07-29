@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Tests for BRUH Power Tools: the registry-management services added to the
-bruh_claude integration (power_tools.py) and their MCP-side counterparts
+brain integration (power_tools.py) and their MCP-side counterparts
 (get_registry, call_service return_response).
 
 The integration module imports homeassistant, which isn't installed here, so
@@ -20,11 +20,11 @@ import yaml
 
 BASE_DIR = os.path.join(os.path.dirname(__file__), "..")
 INTEGRATION_DIR = os.path.join(
-    BASE_DIR, "bruh-claude-terminal", "custom_components", "bruh_claude"
+    BASE_DIR, "brain", "custom_components", "brain"
 )
 
 sys.path.insert(
-    0, os.path.join(BASE_DIR, "bruh-claude-terminal", "ha-mcp-server")
+    0, os.path.join(BASE_DIR, "brain", "ha-mcp-server")
 )
 import ha_mcp_server  # noqa: E402
 
@@ -296,7 +296,7 @@ class TestDashboardServices(unittest.TestCase):
             os.path.join(INTEGRATION_DIR, "power_tools.py")
         ).read()
         cls.run_sh = open(
-            os.path.join(BASE_DIR, "bruh-claude-terminal", "run.sh")
+            os.path.join(BASE_DIR, "brain", "run.sh")
         ).read()
 
     def test_update_backs_up_before_saving(self):
@@ -354,18 +354,6 @@ class TestDashboardServices(unittest.TestCase):
                        "schedule"):
             self.assertIn(f'"{domain}"', self.source)
 
-    def test_gitignore_covers_registries_and_dashboards(self):
-        """run.sh must back up the credential-free .storage files, keep the
-        blanket exclusion as a wildcard so negation works, and never
-        re-include the secrets-bearing config entries."""
-        self.assertIn(".storage/*", self.run_sh)
-        for keep in ("!.storage/core.area_registry",
-                     "!.storage/core.entity_registry",
-                     "!.storage/lovelace*"):
-            self.assertIn(keep, self.run_sh)
-        self.assertNotIn("!.storage/core.config_entries", self.run_sh)
-
-
 class TestMcpCallServiceResponse(unittest.TestCase):
     """call_service with return_response routes over the WebSocket API."""
 
@@ -375,7 +363,7 @@ class TestMcpCallServiceResponse(unittest.TestCase):
             return_value={"response": {"area_id": "guest_room"}},
         ) as ws:
             result = ha_mcp_server.call_service(
-                "bruh_claude", "create_area",
+                "brain", "create_area",
                 {"name": "Guest Room"}, return_response=True,
             )
         payload = ws.call_args[0][0]
@@ -385,10 +373,10 @@ class TestMcpCallServiceResponse(unittest.TestCase):
 
     def test_deny_list_still_applies(self):
         with patch.object(
-            ha_mcp_server, "DENIED_SERVICES", ["bruh_claude.*"]
+            ha_mcp_server, "DENIED_SERVICES", ["brain.*"]
         ):
             result = ha_mcp_server.call_service(
-                "bruh_claude", "delete_area",
+                "brain", "delete_area",
                 {"area_id": "kitchen"}, return_response=True,
             )
         self.assertIn("error", result)

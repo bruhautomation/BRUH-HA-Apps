@@ -43,12 +43,8 @@ jobs:
         run: |
           yamllint -d '{extends: relaxed, rules: {line-length: disable, trailing-spaces: enable, empty-lines: {max: 2}}}' \
             repository.yaml \
-            bruh-claude-terminal/config.yaml \
-            bruh-claude-terminal/build.yaml \
             bruh-minecraft-server/config.yaml \
             bruh-minecraft-server/build.yaml \
-            bruh-insights/config.yaml \
-            bruh-insights/build.yaml \
             brain/config.yaml \
             brain/build.yaml
 
@@ -57,20 +53,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-
-      - name: Run shellcheck
-        uses: ludeeus/action-shellcheck@master
-        env:
-          # bashio's `#!/usr/bin/with-contenv bashio` shebang is not one
-          # shellcheck recognises — tell it to treat those scripts as bash.
-          # SC1091: can't follow source (runtime paths).
-          SHELLCHECK_OPTS: -s bash -e SC1091
-        with:
-          scandir: ./bruh-claude-terminal
-          severity: error
-          ignore_paths: >-
-            bruh-claude-terminal/ha-mcp-server
-            bruh-claude-terminal/custom_components
 
       - name: Run shellcheck (minecraft)
         uses: ludeeus/action-shellcheck@master
@@ -83,19 +65,12 @@ jobs:
             bruh-minecraft-server/custom_components
             bruh-minecraft-server/panel
 
-      - name: Run shellcheck (insights)
-        uses: ludeeus/action-shellcheck@master
-        env:
-          SHELLCHECK_OPTS: -s bash -e SC1091
-        with:
-          scandir: ./bruh-insights
-          severity: error
-          ignore_paths: >-
-            bruh-insights/panel
-
       - name: Run shellcheck (brain)
         uses: ludeeus/action-shellcheck@master
         env:
+          # bashio's `#!/usr/bin/with-contenv bashio` shebang is not one
+          # shellcheck recognises — tell it to treat those scripts as bash.
+          # SC1091: can't follow source (runtime paths).
           SHELLCHECK_OPTS: -s bash -e SC1091
         with:
           scandir: ./brain
@@ -111,11 +86,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Lint Claude Terminal Dockerfile
-        uses: hadolint/hadolint-action@v3.3.0
-        with:
-          dockerfile: bruh-claude-terminal/Dockerfile
-          failure-threshold: error
 
       - name: Lint Minecraft Dockerfile
         uses: hadolint/hadolint-action@v3.3.0
@@ -123,11 +93,6 @@ jobs:
           dockerfile: bruh-minecraft-server/Dockerfile
           failure-threshold: error
 
-      - name: Lint Insights Dockerfile
-        uses: hadolint/hadolint-action@v3.3.0
-        with:
-          dockerfile: bruh-insights/Dockerfile
-          failure-threshold: error
 
       - name: Lint BRain Dockerfile
         uses: hadolint/hadolint-action@v3.3.0
@@ -141,16 +106,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Check Claude Terminal version parity
-        run: |
-          addon_version=$(grep -E '^version:' bruh-claude-terminal/config.yaml | head -1 | sed 's/.*"\([^"]*\)".*/\1/')
-          manifest_version=$(python3 -c 'import json; print(json.load(open("bruh-claude-terminal/custom_components/bruh_claude/manifest.json"))["version"])')
-          echo "add-on:         $addon_version"
-          echo "HA integration: $manifest_version"
-          if [ "$addon_version" != "$manifest_version" ]; then
-            echo "::error::Claude Terminal add-on ($addon_version) and integration manifest ($manifest_version) versions disagree"
-            exit 1
-          fi
 
       - name: Check BRain version parity
         run: |
@@ -177,16 +132,12 @@ jobs:
       # HA's store offers whatever config.yaml says — a changelog entry
       # announcing a version config.yaml doesn't carry means users read
       # about a release the store never offers them.
-      - name: Check Claude Terminal changelog matches shipped version
-        run: .github/scripts/check-changelog-version.sh bruh-claude-terminal
 
       - name: Check Minecraft changelog matches shipped version
         run: .github/scripts/check-changelog-version.sh bruh-minecraft-server
 
       # BRUH Insights has no companion HA integration, so no manifest
       # parity check — just the changelog/version consistency.
-      - name: Check Insights changelog matches shipped version
-        run: .github/scripts/check-changelog-version.sh bruh-insights
 
       - name: Check BRain changelog matches shipped version
         run: .github/scripts/check-changelog-version.sh brain
@@ -206,14 +157,10 @@ jobs:
           # Need git history to diff HEAD against the PR base.
           fetch-depth: 0
 
-      - name: Verify Claude Terminal version bumped if files changed
-        run: .github/scripts/check-version-bump.sh "origin/${{ github.base_ref }}" bruh-claude-terminal
 
       - name: Verify Minecraft Server version bumped if files changed
         run: .github/scripts/check-version-bump.sh "origin/${{ github.base_ref }}" bruh-minecraft-server
 
-      - name: Verify Insights version bumped if files changed
-        run: .github/scripts/check-version-bump.sh "origin/${{ github.base_ref }}" bruh-insights
 
       - name: Verify BRain version bumped if files changed
         run: .github/scripts/check-version-bump.sh "origin/${{ github.base_ref }}" brain

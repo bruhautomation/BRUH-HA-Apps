@@ -251,9 +251,46 @@ def clear_auth() -> None:
 # CLI invocation
 # ---------------------------------------------------------------------------
 
+# Where the CLI actually lives, in resolution order. run.sh installs the
+# native binary under the claude user's home and the image symlinks it into
+# /root/.local/bin — neither is on the default PATH, so `shutil.which` alone
+# resolves to nothing and the bare name "claude" gets handed to su-exec,
+# which then fails with "su-exec: claude: No such file or directory".
+CLAUDE_BIN_CANDIDATES = (
+    os.path.join(CLAUDE_HOME, ".local", "bin", "claude"),
+    "/root/.local/bin/claude",
+    "/usr/local/bin/claude",
+)
+
+
+def resolve_claude_bin() -> str:
+    """Absolute path to the Claude CLI, or the bare name as a last resort.
+
+    Always prefer an absolute path: this process runs as root but execs as
+    the `claude` user, so a PATH-relative name is resolved against a PATH
+    that may not contain the binary at all.
+    """
+    override = os.environ.get("BRAIN_CLAUDE_BIN")
+    if override:
+        return override
+    for candidate in CLAUDE_BIN_CANDIDATES:
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return shutil.which("claude") or "claude"
+
+
+# run.sh installs this wrapper: it sources /data/.brain_env and drops to the
+# claude user itself, so it must NOT be wrapped in su-exec again.
+CLAUDE_RUN_WRAPPER = "/usr/local/bin/claude-run"
+
+
 def _claude_argv() -> list[str]:
     """Base argv, dropping to the non-root `claude` user when we're root."""
-    claude_bin = os.environ.get("BRAIN_CLAUDE_BIN") or shutil.which("claude") or "claude"
+    if not os.environ.get("BRAIN_CLAUDE_BIN") \
+            and os.path.isfile(CLAUDE_RUN_WRAPPER) \
+            and os.access(CLAUDE_RUN_WRAPPER, os.X_OK):
+        return [CLAUDE_RUN_WRAPPER]
+    claude_bin = resolve_claude_bin()
     if os.geteuid() == 0 and shutil.which("su-exec"):
         return ["su-exec", "claude", claude_bin]
     return [claude_bin]

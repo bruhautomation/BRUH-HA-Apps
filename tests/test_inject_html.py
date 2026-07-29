@@ -1,5 +1,5 @@
 """
-Structural tests for `bruh-claude-terminal/ttyd-assets/inject.html`.
+Structural tests for `brain/ttyd-assets/inject.html`.
 
 This file is the mobile-UI splice that `scripts/build-mobile-index.py`
 injects into ttyd's `<head>` at addon startup. It is small (one inline
@@ -45,7 +45,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 INJECT_HTML = (
     REPO_ROOT
-    / "bruh-claude-terminal"
+    / "brain"
     / "ttyd-assets"
     / "inject.html"
 )

@@ -22,7 +22,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT_PATH = (
     REPO_ROOT
-    / "bruh-claude-terminal"
+    / "brain"
     / "scripts"
     / "build-mobile-index.py"
 )
@@ -146,7 +146,7 @@ def test_splice_error_preview_is_truncated(builder: ModuleType):
 
 REAL_INJECT = (
     REPO_ROOT
-    / "bruh-claude-terminal"
+    / "brain"
     / "ttyd-assets"
     / "inject.html"
 )

@@ -24,8 +24,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 # and logic patterns used in bridge.py
 
 BRIDGE_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "bruh-claude-terminal",
-    "custom_components", "bruh_claude", "bridge.py"
+    os.path.dirname(__file__), "..", "brain",
+    "custom_components", "brain", "bridge.py"
 )
 
 
@@ -230,7 +230,7 @@ class TestBridgePathSafety(unittest.TestCase):
 
     def test_path_join_with_safe_id(self):
         """os.path.join with UUID hex should produce expected paths."""
-        base = "/config/.bruh_claude/requests"
+        base = "/config/.brain/requests"
         req_id = "abc123def456"
         expected = f"{base}/{req_id}.json"
         result = os.path.join(base, f"{req_id}.json")
@@ -242,23 +242,23 @@ class TestConstValues(unittest.TestCase):
 
     def test_const_file_exists(self):
         const_path = os.path.join(
-            os.path.dirname(__file__), "..", "bruh-claude-terminal",
-            "custom_components", "bruh_claude", "const.py"
+            os.path.dirname(__file__), "..", "brain",
+            "custom_components", "brain", "const.py"
         )
         self.assertTrue(os.path.isfile(const_path))
 
     def test_const_values(self):
         """Verify expected constant values."""
         const_path = os.path.join(
-            os.path.dirname(__file__), "..", "bruh-claude-terminal",
-            "custom_components", "bruh_claude", "const.py"
+            os.path.dirname(__file__), "..", "brain",
+            "custom_components", "brain", "const.py"
         )
         with open(const_path) as f:
             content = f.read()
 
-        self.assertIn('DOMAIN = "bruh_claude"', content)
+        self.assertIn('DOMAIN = "brain"', content)
         self.assertIn("DEFAULT_TIMEOUT = 120", content)
-        self.assertIn('SHARED_DIR = ".bruh_claude"', content)
+        self.assertIn('SHARED_DIR = ".brain"', content)
         self.assertIn('REQUESTS_DIR = "requests"', content)
         self.assertIn('RESPONSES_DIR = "responses"', content)
         self.assertIn('TASKS_DIR = "tasks"', content)

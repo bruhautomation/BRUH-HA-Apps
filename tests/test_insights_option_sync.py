@@ -30,7 +30,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-PANEL_DIR = BASE_DIR / "bruh-insights" / "panel"
+PANEL_DIR = BASE_DIR / "brain" / "panel"
 sys.path.insert(0, str(PANEL_DIR))
 
 import addon_options  # noqa: E402
@@ -195,10 +195,10 @@ class TestAddonOptions(SupervisorMixin, unittest.TestCase):
 class TestServerSync(SupervisorMixin, unittest.TestCase):
     def setUp(self):
         super().setUp()
-        os.environ["BRUH_INSIGHTS_DIR"] = os.path.join(self.tmp.name, "insights")
-        os.environ["BRUH_INSIGHTS_SECRETS"] = os.path.join(self.tmp.name, "secrets")
-        os.environ["BRUH_INSIGHTS_SETTINGS_FILE"] = settings_store.SETTINGS_FILE
-        os.environ["BRUH_INSIGHTS_USAGE_FILE"] = usage_store.USAGE_FILE
+        os.environ["BRAIN_INSIGHTS_DIR"] = os.path.join(self.tmp.name, "insights")
+        os.environ["BRAIN_INSIGHTS_SECRETS"] = os.path.join(self.tmp.name, "secrets")
+        os.environ["BRAIN_INSIGHTS_SETTINGS_FILE"] = settings_store.SETTINGS_FILE
+        os.environ["BRAIN_INSIGHTS_USAGE_FILE"] = usage_store.USAGE_FILE
         import server
         self.server = importlib.reload(server)
 

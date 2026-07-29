@@ -2,6 +2,22 @@
 
 All notable changes to **BRain**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.0.1
+
+- **Fixed the panel's login failing with `su-exec: claude: No such file or directory`.**
+  The CLI was looked up with the root user's `PATH` and then executed as the
+  `claude` user. The binary lives at `/root/.local/bin/claude`, which is on neither
+  user's `PATH`, so the lookup fell through to the bare name `claude` and su-exec
+  couldn't find it. The panel now prefers the `claude-run` wrapper and otherwise
+  resolves an absolute path.
+- **BRUH Terminal and BRUH Insights are removed.** BRain replaces both; their test
+  suites now cover BRain.
+- **Renamed the files that were ours rather than Claude Code's**: `claude_client.py`
+  is now `panel/engine.py`, and the session picker and auth helper are
+  `brain-menu.sh` and `brain-auth-helper.sh`. `CLAUDE.md`, `CLAUDE_CONFIG_DIR`, the
+  `claude` user, and the `claude-run` wrapper keep the name — they *are* Claude
+  Code's own file, env var, user, and binary.
+
 ## 1.0.0
 
 First release. BRain replaces **BRUH Terminal** and **BRUH Insights**, which are now

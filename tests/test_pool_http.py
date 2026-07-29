@@ -21,19 +21,19 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 POOL_PATH = (
-    REPO_ROOT / "bruh-claude-terminal" / "integrations" / "assist-worker-pool.py"
+    REPO_ROOT / "brain" / "integrations" / "assist-worker-pool.py"
 )
 BRIDGE_DIR = (
-    REPO_ROOT / "bruh-claude-terminal" / "custom_components" / "bruh_claude"
+    REPO_ROOT / "brain" / "custom_components" / "brain"
 )
 FAKE_CLAUDE = Path(__file__).resolve().parent / "fake_claude.py"
 
 
 def load_pool_module(tmp_path: Path, monkeypatch, **extra_env):
     shared = tmp_path / "shared"
-    monkeypatch.setenv("BRUH_SHARED_DIR", str(shared))
-    monkeypatch.setenv("BRUH_ASSIST_WORKDIR", str(tmp_path))
-    monkeypatch.setenv("BRUH_CLAUDE_BIN", f"{sys.executable} {FAKE_CLAUDE}")
+    monkeypatch.setenv("BRAIN_SHARED_DIR", str(shared))
+    monkeypatch.setenv("BRAIN_ASSIST_WORKDIR", str(tmp_path))
+    monkeypatch.setenv("BRAIN_CLAUDE_BIN", f"{sys.executable} {FAKE_CLAUDE}")
     monkeypatch.setenv("FAKE_CLAUDE_LOG", str(tmp_path / "argv.log"))
     monkeypatch.delenv("SUPERVISOR_TOKEN", raising=False)
     monkeypatch.delenv("FAKE_MODE", raising=False)
@@ -188,7 +188,7 @@ def test_process_delta_cb_direct(tmp_path, monkeypatch):
 
 def test_mcp_only_scoping_adds_settings_flag(tmp_path, monkeypatch):
     mod = load_pool_module(
-        tmp_path, monkeypatch, BRUH_ASSIST_TOOL_ACCESS="mcp_only"
+        tmp_path, monkeypatch, BRAIN_ASSIST_TOOL_ACCESS="mcp_only"
     )
     with open(mod.ASSIST_SETTINGS_FILE, "w") as fh:
         json.dump({"permissions": {"deny": ["Bash"]}}, fh)
@@ -207,7 +207,7 @@ def test_mcp_only_scoping_adds_settings_flag(tmp_path, monkeypatch):
 
 def test_full_access_skips_settings_flag(tmp_path, monkeypatch):
     mod = load_pool_module(
-        tmp_path, monkeypatch, BRUH_ASSIST_TOOL_ACCESS="full"
+        tmp_path, monkeypatch, BRAIN_ASSIST_TOOL_ACCESS="full"
     )
     with open(mod.ASSIST_SETTINGS_FILE, "w") as fh:
         json.dump({"permissions": {"deny": ["Bash"]}}, fh)
@@ -289,7 +289,7 @@ def test_bridge_streams_over_http_end_to_end(tmp_path, monkeypatch):
         class FakeConfig:
             def path(self, *parts):
                 return os.path.join(str(tmp_path / "shared"), *parts[1:]) \
-                    if parts and parts[0] == ".bruh_claude" \
+                    if parts and parts[0] == ".brain" \
                     else os.path.join(str(tmp_path), *parts)
 
         class FakeHass:
@@ -340,7 +340,7 @@ def test_bridge_falls_back_to_files_when_api_down(tmp_path, monkeypatch):
     class FakeConfig:
         def path(self, *parts):
             return os.path.join(str(tmp_path / "shared"), *parts[1:]) \
-                if parts and parts[0] == ".bruh_claude" \
+                if parts and parts[0] == ".brain" \
                 else os.path.join(str(tmp_path), *parts)
 
     class FakeHass:
@@ -422,7 +422,7 @@ def test_bridge_does_not_resend_after_accepted_stream_break(tmp_path, monkeypatc
     class FakeConfig:
         def path(self, *parts):
             return os.path.join(str(tmp_path / "shared"), *parts[1:]) \
-                if parts and parts[0] == ".bruh_claude" \
+                if parts and parts[0] == ".brain" \
                 else os.path.join(str(tmp_path), *parts)
 
     class FakeHass:
@@ -459,7 +459,7 @@ def test_runsh_voice_deny_list_blocks_all_file_access():
     """The mcp_only deny-list must block shell, web, AND file reads —
     voice gets HA data exclusively via MCP; Read/Glob/Grep would only
     enable reading /config secrets aloud."""
-    run_sh = (REPO_ROOT / "bruh-claude-terminal" / "run.sh").read_text()
+    run_sh = (REPO_ROOT / "brain" / "run.sh").read_text()
     start = run_sh.index("assist_settings.json << 'SCOPE'")
     deny_block = run_sh[start:run_sh.index("SCOPE", start + 40)]
     for tool in ("Bash", "Read", "Glob", "Grep", "Write", "Edit",

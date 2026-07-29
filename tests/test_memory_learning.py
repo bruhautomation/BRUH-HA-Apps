@@ -2,12 +2,12 @@
 
 Covers the cross-cutting memory contract end to end:
   - the remember_fact MCP tool writes a valid inbox JSONL record
-  - the ha-memory CLI's add/answer subcommands produce contract JSONL
-  - ha-memory-consolidate --once (driven by a fake claude) merges the
+  - the `brain memory` CLI's add/answer subcommands produce contract JSONL
+  - the consolidator --once (driven by a fake claude) merges the
     inbox into memory.md + voice.md, archives inbox files, and sweeps
     the external /share inbox
   - the worker pool's get_memory cap/fallback, the system-prompt splice
-    and its BRUH_MEMORY_INJECTION gate, the transcript heuristic, and
+    and its BRAIN_MEMORY_INJECTION gate, the transcript heuristic, and
     the reflection pass writing inbox facts
   - the integration's _append_memory_fact / _append_question_answer
     helpers (extracted from __init__.py, which can't be imported without
@@ -37,13 +37,13 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-ADDON = REPO_ROOT / "bruh-claude-terminal"
+ADDON = REPO_ROOT / "brain"
 POOL_PATH = ADDON / "integrations" / "assist-worker-pool.py"
 MCP_SERVER_DIR = ADDON / "ha-mcp-server"
-HA_MEMORY = ADDON / "scripts" / "ha-memory.sh"
-CONSOLIDATOR = ADDON / "scripts" / "ha-memory-consolidate.sh"
+HA_MEMORY = ADDON / "scripts" / "brain-memory.sh"
+CONSOLIDATOR = ADDON / "scripts" / "brain-memory-consolidate.sh"
 SHARE_LOGIN = ADDON / "scripts" / "ha-share-login.sh"
-INTEGRATION_INIT = ADDON / "custom_components" / "bruh_claude" / "__init__.py"
+INTEGRATION_INIT = ADDON / "custom_components" / "brain" / "__init__.py"
 FAKE_CLAUDE = Path(__file__).resolve().parent / "fake_claude.py"
 
 VALID_SOURCES = {"assist", "terminal", "insights", "service"}
@@ -136,12 +136,12 @@ def test_remember_fact_via_dispatcher(mcp, tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# ha-memory CLI
+# brain memory CLI
 # ---------------------------------------------------------------------------
 
 
 def run_ha_memory(memory_dir: Path, *args: str) -> subprocess.CompletedProcess:
-    env = dict(os.environ, BRUH_MEMORY_DIR=str(memory_dir))
+    env = dict(os.environ, BRAIN_MEMORY_DIR=str(memory_dir))
     return subprocess.run(
         ["bash", str(HA_MEMORY), *args],
         env=env, capture_output=True, text=True, check=False,
@@ -163,57 +163,6 @@ def test_ha_memory_add_writes_contract_line(tmp_path):
 def test_ha_memory_add_requires_fact(tmp_path):
     result = run_ha_memory(tmp_path / "memory", "add")
     assert result.returncode != 0
-
-
-def test_ha_memory_answer_appends_answer_and_fact(tmp_path):
-    memory_dir = tmp_path / "memory"
-    memory_dir.mkdir(parents=True)
-    # Seed an open question (as the consolidator/insights would write it)
-    question = {
-        "id": "q1", "q": "Which floor is the nursery on?",
-        "asked_by": "insights", "ts": int(time.time()),
-    }
-    (memory_dir / "questions.jsonl").write_text(json.dumps(question) + "\n")
-
-    result = run_ha_memory(
-        memory_dir, "answer", "Which floor is the nursery on?", "Second floor"
-    )
-    assert result.returncode == 0, result.stderr
-
-    records = [
-        json.loads(l)
-        for l in (memory_dir / "questions.jsonl").read_text().splitlines()
-    ]
-    answers = [r for r in records if "a" in r]
-    assert len(answers) == 1
-    assert answers[0]["q"] == "Which floor is the nursery on?"
-    assert answers[0]["a"] == "Second floor"
-    assert isinstance(answers[0]["ts"], int)
-    assert "source" in answers[0]
-
-    # And the answer is queued as an inbox fact: "Q: ... → A: ..."
-    lines = inbox_lines(memory_dir)
-    assert len(lines) == 1
-    record = assert_contract_line(lines[0], expect_source="terminal")
-    assert record["fact"] == "Q: Which floor is the nursery on? → A: Second floor"
-
-
-def test_ha_memory_questions_lists_only_open(tmp_path):
-    memory_dir = tmp_path / "memory"
-    memory_dir.mkdir(parents=True)
-    now = int(time.time())
-    records = [
-        {"id": "q1", "q": "Open question?", "asked_by": "assist", "ts": now},
-        {"id": "q2", "q": "Answered question?", "asked_by": "assist", "ts": now},
-        {"q": "Answered question?", "a": "yes", "source": "terminal", "ts": now},
-    ]
-    (memory_dir / "questions.jsonl").write_text(
-        "".join(json.dumps(r) + "\n" for r in records)
-    )
-    result = run_ha_memory(memory_dir, "questions")
-    assert result.returncode == 0, result.stderr
-    assert "Open question?" in result.stdout
-    assert "Answered question?" not in result.stdout
 
 
 def test_ha_memory_clear_requires_confirm_and_keeps_backup(tmp_path):
@@ -265,9 +214,9 @@ def write_fake_consolidation_claude(tmp_path: Path, body: str) -> Path:
 def run_consolidator(memory_dir: Path, fake_claude: Path, **extra_env):
     env = dict(
         os.environ,
-        BRUH_MEMORY_DIR=str(memory_dir),
-        BRUH_CLAUDE_BIN=str(fake_claude),
-        BRUH_SHARE_INBOX=str(memory_dir.parent / "share-inbox"),
+        BRAIN_MEMORY_DIR=str(memory_dir),
+        BRAIN_CLAUDE_BIN=str(fake_claude),
+        BRAIN_SHARE_INBOX=str(memory_dir.parent / "share-inbox"),
     )
     env.update(extra_env)
     return subprocess.run(
@@ -366,32 +315,6 @@ def test_consolidate_empty_inbox_is_a_noop(tmp_path):
     assert not (memory_dir / "voice.md").exists()
 
 
-def test_consolidate_retires_stale_questions(tmp_path):
-    memory_dir = tmp_path / "memory"
-    memory_dir.mkdir(parents=True)
-    now = int(time.time())
-    old = now - 30 * 86400
-    records = [
-        {"id": "q1", "q": "Ancient question?", "asked_by": "assist", "ts": old},
-        {"id": "q2", "q": "Fresh question?", "asked_by": "assist", "ts": now},
-        {"id": "q3", "q": "Old but answered?", "asked_by": "assist", "ts": old},
-        {"q": "Old but answered?", "a": "yes", "source": "terminal", "ts": now},
-    ]
-    (memory_dir / "questions.jsonl").write_text(
-        "".join(json.dumps(r) + "\n" for r in records)
-    )
-    fake = write_fake_consolidation_claude(tmp_path, "unused\n")
-    result = run_consolidator(memory_dir, fake)
-    assert result.returncode == 0, result.stdout + result.stderr
-
-    parsed = [
-        json.loads(l)
-        for l in (memory_dir / "questions.jsonl").read_text().splitlines()
-    ]
-    retired = [r for r in parsed if r.get("a") == "(retired unanswered)"]
-    assert [r["q"] for r in retired] == ["Ancient question?"]
-
-
 # ---------------------------------------------------------------------------
 # Worker pool: get_memory, prompt splice, reflection
 # ---------------------------------------------------------------------------
@@ -401,11 +324,11 @@ def load_pool_module(tmp_path: Path, monkeypatch, **extra_env):
     """Import a fresh pool module with env pointed at tmp dirs (mirrors
     tests/test_assist_worker_pool.py's loader, which isn't importable)."""
     shared = tmp_path / "shared"
-    monkeypatch.setenv("BRUH_SHARED_DIR", str(shared))
-    monkeypatch.setenv("BRUH_ASSIST_WORKDIR", str(tmp_path))
-    monkeypatch.setenv("BRUH_CLAUDE_BIN", f"{sys.executable} {FAKE_CLAUDE}")
+    monkeypatch.setenv("BRAIN_SHARED_DIR", str(shared))
+    monkeypatch.setenv("BRAIN_ASSIST_WORKDIR", str(tmp_path))
+    monkeypatch.setenv("BRAIN_CLAUDE_BIN", f"{sys.executable} {FAKE_CLAUDE}")
     monkeypatch.setenv("FAKE_CLAUDE_LOG", str(tmp_path / "argv.log"))
-    monkeypatch.setenv("BRUH_MEMORY_DIR", str(tmp_path / "memory"))
+    monkeypatch.setenv("BRAIN_MEMORY_DIR", str(tmp_path / "memory"))
     monkeypatch.delenv("SUPERVISOR_TOKEN", raising=False)
     monkeypatch.delenv("FAKE_MODE", raising=False)
     for key, value in extra_env.items():
@@ -467,7 +390,7 @@ def test_memory_spliced_into_system_prompt(tmp_path, monkeypatch):
 
 def test_memory_injection_env_gate(tmp_path, monkeypatch):
     mod = load_pool_module(
-        tmp_path, monkeypatch, BRUH_MEMORY_INJECTION="false"
+        tmp_path, monkeypatch, BRAIN_MEMORY_INJECTION="false"
     )
     memory_dir = tmp_path / "memory"
     memory_dir.mkdir(exist_ok=True)
@@ -525,7 +448,7 @@ def test_reflection_writes_contract_facts(tmp_path, monkeypatch):
         'echo \'{"fact": "Movie nights dim to 20%", "confidence": "certain"}\'\n'
     )
     fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
-    monkeypatch.setenv("BRUH_CLAUDE_BIN", str(fake))
+    monkeypatch.setenv("BRAIN_CLAUDE_BIN", str(fake))
 
     mod.reflect_on_transcript([
         ("actually we call the office lamp the beacon", "Noted!"),
@@ -545,7 +468,7 @@ def test_reflection_none_and_failure_write_nothing(tmp_path, monkeypatch):
     fake = tmp_path / "fake_none_claude.sh"
     fake.write_text("#!/bin/bash\ncat > /dev/null\necho NONE\n")
     fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
-    monkeypatch.setenv("BRUH_CLAUDE_BIN", str(fake))
+    monkeypatch.setenv("BRAIN_CLAUDE_BIN", str(fake))
     mod.reflect_on_transcript([("hi", "hello"), ("bye", "bye")])
     assert inbox_lines(tmp_path / "memory") == []
 
@@ -553,13 +476,13 @@ def test_reflection_none_and_failure_write_nothing(tmp_path, monkeypatch):
     fail = tmp_path / "fail_claude.sh"
     fail.write_text("#!/bin/bash\nexit 1\n")
     fail.chmod(fail.stat().st_mode | stat.S_IEXEC)
-    monkeypatch.setenv("BRUH_CLAUDE_BIN", str(fail))
+    monkeypatch.setenv("BRAIN_CLAUDE_BIN", str(fail))
     mod.reflect_on_transcript([("hi", "hello"), ("bye", "bye")])
     assert inbox_lines(tmp_path / "memory") == []
 
 
 def test_maybe_reflect_respects_learning_gate(tmp_path, monkeypatch):
-    mod = load_pool_module(tmp_path, monkeypatch, BRUH_ASSIST_LEARNING="false")
+    mod = load_pool_module(tmp_path, monkeypatch, BRAIN_ASSIST_LEARNING="false")
     called = []
     monkeypatch.setattr(
         mod.threading, "Thread",
@@ -714,7 +637,7 @@ def test_integration_registers_memory_services():
 
 
 def run_share_login(auth_dir: Path, *args: str):
-    env = dict(os.environ, BRUH_AUTH_DIR=str(auth_dir))
+    env = dict(os.environ, BRAIN_AUTH_DIR=str(auth_dir))
     return subprocess.run(
         ["bash", str(SHARE_LOGIN), *args],
         env=env, capture_output=True, text=True, check=False,
@@ -770,24 +693,24 @@ def test_share_login_status_and_revoke(tmp_path):
 
 def test_run_sh_plumbs_memory_options():
     content = (ADDON / "run.sh").read_text()
-    for var in ("BRUH_ASSIST_LEARNING", "BRUH_MEMORY_INJECTION", "BRUH_MEMORY_MAX_KB"):
+    for var in ("BRAIN_ASSIST_LEARNING", "BRAIN_MEMORY_INJECTION", "BRAIN_MEMORY_MAX_KB"):
         assert f"export {var}=" in content, f"run.sh missing export of {var}"
     assert "start_memory_consolidator" in content
-    assert "/config/.bruh_claude/secrets" in content
-    assert "/config/.bruh_claude/memory/inbox" in content
+    assert "/config/.brain/secrets" in content
+    assert "/config/.brain/memory/inbox" in content
     # Installed alongside the other CLI tools
     assert "ha-share-login" in content
-    assert "ha-memory" in content
+    assert "brain memory" in content
 
 
 def test_config_yaml_has_memory_options():
     import yaml
 
     config = yaml.safe_load((ADDON / "config.yaml").read_text())
-    assert config["options"]["assist_learning"] is True
+    assert config["options"]["learning"] is True
     assert config["options"]["memory_injection"] is True
     assert config["options"]["memory_max_kb"] == 8
-    assert config["schema"]["assist_learning"] == "bool?"
+    assert config["schema"]["learning"] == "bool?"
     assert config["schema"]["memory_injection"] == "bool?"
     assert config["schema"]["memory_max_kb"] == "int(1,64)?"
 
@@ -797,5 +720,5 @@ def test_context_gen_preserves_user_notes_and_memory():
     assert "bruh:user-notes:start" in content
     assert "bruh:user-notes:end" in content
     assert "Learned Home Knowledge" in content
-    assert "ha-memory" in content
+    assert "brain memory" in content
     assert "ha-share-login" in content

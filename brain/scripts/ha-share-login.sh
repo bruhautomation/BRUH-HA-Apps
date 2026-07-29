@@ -27,7 +27,7 @@ NC='\033[0m'
 AUTH_DIR="${BRAIN_AUTH_DIR:-/config/.brain/secrets}"
 AUTH_FILE="$AUTH_DIR/claude_auth.json"
 
-# Must match OAUTH_TOKEN_RE in brain/panel/claude_client.py
+# Must match OAUTH_TOKEN_RE in brain/panel/engine.py
 TOKEN_RE='sk-ant-oat[0-9]{2}-[A-Za-z0-9_-]{20,}'
 
 usage() {

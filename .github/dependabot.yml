@@ -9,20 +9,13 @@ updates:
       - github-actions
 
   - package-ecosystem: docker
-    directory: /bruh-claude-terminal
+    directory: /brain
     schedule:
       interval: weekly
     labels:
       - dependencies
       - docker
 
-  - package-ecosystem: docker
-    directory: /bruh-insights
-    schedule:
-      interval: weekly
-    labels:
-      - dependencies
-      - docker
 
   - package-ecosystem: docker
     directory: /bruh-minecraft-server
