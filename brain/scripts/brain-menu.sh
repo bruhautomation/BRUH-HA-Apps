@@ -219,7 +219,7 @@ launch_background_task() {
 launch_auth_helper() {
     echo "Starting authentication helper..."
     sleep 1
-    exec /opt/scripts/claude-auth-helper.sh
+    exec /opt/scripts/brain-auth-helper.sh
 }
 
 launch_bash_shell() {

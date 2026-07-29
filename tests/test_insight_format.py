@@ -12,7 +12,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 COMPONENT_DIR = (
-    REPO_ROOT / "bruh-claude-terminal" / "custom_components" / "bruh_claude"
+    REPO_ROOT / "brain" / "custom_components" / "brain"
 )
 
 

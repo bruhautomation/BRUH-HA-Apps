@@ -19,7 +19,7 @@ from unittest.mock import patch, MagicMock
 from urllib.error import HTTPError, URLError
 
 # Add the MCP server directory to the path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "bruh-claude-terminal", "ha-mcp-server"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "brain", "ha-mcp-server"))
 
 import ha_mcp_server
 

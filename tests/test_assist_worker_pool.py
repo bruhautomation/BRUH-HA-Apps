@@ -22,16 +22,16 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 POOL_PATH = (
-    REPO_ROOT / "bruh-claude-terminal" / "integrations" / "assist-worker-pool.py"
+    REPO_ROOT / "brain" / "integrations" / "assist-worker-pool.py"
 )
 FAKE_CLAUDE = Path(__file__).resolve().parent / "fake_claude.py"
 
 
 def load_pool_module(tmp_path: Path, monkeypatch, **extra_env):
     shared = tmp_path / "shared"
-    monkeypatch.setenv("BRUH_SHARED_DIR", str(shared))
-    monkeypatch.setenv("BRUH_ASSIST_WORKDIR", str(tmp_path))
-    monkeypatch.setenv("BRUH_CLAUDE_BIN", f"{sys.executable} {FAKE_CLAUDE}")
+    monkeypatch.setenv("BRAIN_SHARED_DIR", str(shared))
+    monkeypatch.setenv("BRAIN_ASSIST_WORKDIR", str(tmp_path))
+    monkeypatch.setenv("BRAIN_CLAUDE_BIN", f"{sys.executable} {FAKE_CLAUDE}")
     monkeypatch.setenv("FAKE_CLAUDE_LOG", str(tmp_path / "argv.log"))
     # No token -> area-map refresh is skipped; prompts use the no-map branch.
     monkeypatch.delenv("SUPERVISOR_TOKEN", raising=False)
@@ -164,7 +164,7 @@ def test_auth_error_recycles_pool_and_gives_guidance(tmp_path, monkeypatch):
         pool.handle(req)
         resp = read_response(mod, req["id"])
         assert "OAuth session expired" not in resp
-        assert "/login" in resp and "BRUH Terminal" in resp
+        assert "/login" in resp and "BRain" in resp
         assert "convA" not in pool.workers, "broken worker must be dropped"
     finally:
         shutdown(pool)
@@ -190,7 +190,7 @@ def test_auth_error_regex_matches_cli_phrasings(tmp_path, monkeypatch):
 
 def test_hang_produces_timeout_message(tmp_path, monkeypatch):
     mod = load_pool_module(
-        tmp_path, monkeypatch, BRUH_ASSIST_LIMIT_FLOOR="3"
+        tmp_path, monkeypatch, BRAIN_ASSIST_LIMIT_FLOOR="3"
     )
     monkeypatch.setenv("FAKE_MODE", "hang")
     pool = mod.Pool()
@@ -399,7 +399,7 @@ def test_pool_script_compiles_and_has_main():
 
 
 def test_clear_conversation_resets_warm_worker(tmp_path, monkeypatch):
-    """Deleting the session mapping (bruh_claude.clear_conversation) must
+    """Deleting the session mapping (brain.clear_conversation) must
     reset a live warm worker too — otherwise the old context survives."""
     mod = load_pool_module(tmp_path, monkeypatch)
     pool = mod.Pool()
@@ -484,7 +484,7 @@ def test_prompt_layering_personality_owns_identity(tmp_path, monkeypatch):
 
 def _env_lines(tmp_path):
     return [l for l in (tmp_path / "argv.log").read_text().splitlines()
-            if l.startswith("ENV BRUH_DENIED_SERVICES=")]
+            if l.startswith("ENV BRAIN_DENIED_SERVICES=")]
 
 
 def test_normalize_denied_stable_sorted_dedup(tmp_path, monkeypatch):
@@ -505,7 +505,7 @@ def test_denied_services_reach_worker_env(tmp_path, monkeypatch):
         envs = _env_lines(tmp_path)
         assert envs, "no env line captured"
         # normalized: sorted + comma-joined
-        assert envs[-1] == "ENV BRUH_DENIED_SERVICES=alarm_control_panel.*,lock.unlock"
+        assert envs[-1] == "ENV BRAIN_DENIED_SERVICES=alarm_control_panel.*,lock.unlock"
         # and the deny-list is part of the worker profile (so agents separate)
         conv = "convA"
         assert pool.workers[conv].profile[2] == "alarm_control_panel.*,lock.unlock"
@@ -519,6 +519,6 @@ def test_no_denied_services_empty_env(tmp_path, monkeypatch):
     try:
         pool.handle(make_request("hi"))
         envs = _env_lines(tmp_path)
-        assert envs and envs[-1] == "ENV BRUH_DENIED_SERVICES="
+        assert envs and envs[-1] == "ENV BRAIN_DENIED_SERVICES="
     finally:
         shutdown(pool)

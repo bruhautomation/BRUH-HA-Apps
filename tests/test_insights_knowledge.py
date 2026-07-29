@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for the BRUH Insights knowledge layer (the "depth" release).
+"""Tests for the BRain knowledge layer (the "depth" release).
 
 Covers:
 - knowledge_store: fact dedup, question lifecycle, prompt block rendering
@@ -20,12 +20,12 @@ import unittest
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-PANEL_DIR = BASE_DIR / "bruh-insights" / "panel"
+PANEL_DIR = BASE_DIR / "brain" / "panel"
 
 sys.path.insert(0, str(PANEL_DIR))
 
 import categories  # noqa: E402
-import claude_client  # noqa: E402
+import engine  # noqa: E402
 import feedback_store  # noqa: E402
 import knowledge_store  # noqa: E402
 import prompt_store  # noqa: E402
@@ -135,23 +135,32 @@ class TestPromptBlock(KnowledgeStoreCase):
     def test_empty_store_renders_nothing(self):
         self.assertEqual(knowledge_store.prompt_block(), "")
 
-    def test_sections_present(self):
+    def test_only_rejected_lines_of_inquiry_are_rendered(self):
+        """Facts live in the memory document and are injected from there;
+        the ask-history is enforced in code. Neither belongs in the prompt."""
         knowledge_store.add_fact("The office lamp is called the beacon")
-        q = knowledge_store.record_question("Is the fridge ok?")
+        knowledge_store.record_question("Is the fridge ok?")
         knowledge_store.answer_question("Is the fridge ok?", "Yes, by design")
         knowledge_store.record_question("Should the porch light stay on?")
+        dead = knowledge_store.record_question("Is the attic fan broken?")
+        knowledge_store.dismiss_question(dead["ts"])
+
         block = knowledge_store.prompt_block()
-        self.assertIn("KNOWN FACTS", block)
-        self.assertIn("the beacon", block)
-        self.assertIn("ANSWERED QUESTIONS", block)
-        self.assertIn("Yes, by design", block)
-        self.assertIn("QUESTIONS ALREADY ASKED", block)
-        self.assertIn("porch light", block)
-        del q
+        self.assertIn("REJECTED", block)
+        self.assertIn("attic fan", block)
+        for leaked in ("KNOWN FACTS", "the beacon", "ANSWERED QUESTIONS",
+                       "Yes, by design", "QUESTIONS ALREADY ASKED", "porch light"):
+            self.assertNotIn(leaked, block)
+
+    def test_empty_when_nothing_was_rejected(self):
+        knowledge_store.add_fact("The office lamp is called the beacon")
+        knowledge_store.record_question("Should the porch light stay on?")
+        self.assertEqual(knowledge_store.prompt_block(), "")
 
     def test_budget_capped(self):
         for i in range(60):
-            knowledge_store.add_fact(f"fact {i} " + "x" * 400)
+            q = knowledge_store.record_question(f"question {i} " + "x" * 400)
+            knowledge_store.dismiss_question(q["ts"])
         block = knowledge_store.prompt_block()
         self.assertLessEqual(len(block), knowledge_store.PROMPT_MAX_CHARS)
 
@@ -359,7 +368,7 @@ class TestGenerateLearns(InsightsServerCase):
         }
         self.prompts = []
         self._old_collect = self.ha_data.collect_bundle
-        self._old_run = claude_client.run_claude
+        self._old_run = engine.run_claude
         self._old_service = self.ha_data.call_service
 
         async def fake_collect(category, days, question=None):
@@ -374,12 +383,12 @@ class TestGenerateLearns(InsightsServerCase):
             pass
 
         self.ha_data.collect_bundle = fake_collect
-        claude_client.run_claude = fake_run
+        engine.run_claude = fake_run
         self.ha_data.call_service = ok_service
 
     def tearDown(self):
         self.ha_data.collect_bundle = self._old_collect
-        claude_client.run_claude = self._old_run
+        engine.run_claude = self._old_run
         self.ha_data.call_service = self._old_service
         super().tearDown()
 
@@ -408,14 +417,16 @@ class TestGenerateLearns(InsightsServerCase):
         self.assertEqual(len(qs), 1)
         self.assertEqual(qs[0]["asked_count"], 2)
 
-    def test_known_facts_and_asked_questions_injected(self):
+    def test_ledger_is_not_injected_but_dead_ends_are(self):
         knowledge_store.add_fact("The beacon is the office lamp")
         knowledge_store.record_question("Old question?")
+        dead = knowledge_store.record_question("Is the attic fan broken?")
+        knowledge_store.dismiss_question(dead["ts"])
         asyncio.run(self.server._generate("energy"))
-        self.assertIn("KNOWN FACTS", self.prompts[0])
-        self.assertIn("The beacon is the office lamp", self.prompts[0])
-        self.assertIn("QUESTIONS ALREADY ASKED", self.prompts[0])
-        self.assertIn("Old question?", self.prompts[0])
+        for leaked in ("KNOWN FACTS", "The beacon is the office lamp",
+                       "QUESTIONS ALREADY ASKED", "Old question?"):
+            self.assertNotIn(leaked, self.prompts[0])
+        self.assertIn("attic fan", self.prompts[0])
 
     def test_previous_run_injected_on_second_generation(self):
         asyncio.run(self.server._generate("energy"))
@@ -429,7 +440,7 @@ class TestGenerateLearns(InsightsServerCase):
         knowledge_store.add_fact("The beacon is the office lamp")
         self.server._set_job("custom-9", state="queued", question="Why cold?")
         asyncio.run(self.server._generate("custom-9"))
-        self.assertIn("KNOWN FACTS", self.prompts[0])
+        self.assertNotIn("KNOWN FACTS", self.prompts[0])
         self.assertNotIn("YOUR PREVIOUS ANALYSIS", self.prompts[0])
 
     def test_duplicate_finding_not_relearned(self):
@@ -455,8 +466,8 @@ class TestKnowledgeEndpoints(InsightsServerCase):
         self._old_service = self.ha_data.call_service
         # taught facts trigger a background memory merge — pin auth off so
         # the merge deterministically takes the plain-append path
-        self._old_auth = claude_client.get_auth
-        claude_client.get_auth = lambda: None
+        self._old_auth = engine.get_auth
+        engine.get_auth = lambda: None
 
         async def ok_service(service, data):
             pass
@@ -465,7 +476,7 @@ class TestKnowledgeEndpoints(InsightsServerCase):
 
     def tearDown(self):
         self.ha_data.call_service = self._old_service
-        claude_client.get_auth = self._old_auth
+        engine.get_auth = self._old_auth
         super().tearDown()
 
     def test_knowledge_roundtrip(self):
@@ -475,16 +486,18 @@ class TestKnowledgeEndpoints(InsightsServerCase):
             client = self._client()
             await client.start_server()
             try:
-                # teach a fact — it goes into the memory DOCUMENT, not the
-                # facts ledger (no duplicate row under the Add button)
+                # teach a fact — it is QUEUED for the consolidator, and never
+                # lands in the facts ledger (no duplicate row under Add)
                 resp = await client.post("/api/knowledge/fact",
                                          json={"text": "Garage fridge runs 24/7"})
                 self.assertEqual(resp.status, 200)
-                self.assertTrue((await resp.json())["added"])
-                await self.server.MEMORY_LAST_TASK
-                self.assertIn("Garage fridge runs 24/7",
-                              self.server.SHARED_MEMORY_FILE.read_text())
+                body = await resp.json()
+                self.assertTrue(body["added"])
+                self.assertTrue(body["queued"])
                 self.assertEqual(knowledge_store.list_facts(), [])
+                # the document is only written once the consolidator runs
+                self.server.SHARED_MEMORY_FILE.write_text(
+                    "# Home Memory\n- a note\n- Garage fridge runs 24/7\n")
                 # duplicate (already in the document) → added: false
                 resp = await client.post("/api/knowledge/fact",
                                          json={"text": "garage fridge runs 24/7!"})
@@ -510,15 +523,15 @@ class TestKnowledgeEndpoints(InsightsServerCase):
                 data = (await (await client.get("/api/knowledge")).json())
                 self.assertEqual(data["questions"][0]["status"], "answered")
                 self.assertEqual(data["questions"][0]["answer"], "Yes, security")
-                # the Q→A became a fact
+                # the answer became a fact — as a statement, not a Q/A pair
                 self.assertTrue(any("Yes, security" in f["text"] for f in data["facts"]))
+                self.assertFalse(any(f["text"].startswith("Q:") for f in data["facts"]))
 
-                # delete the fact — also kicks off a memory-file scrub
+                # deleting it queues a removal for the consolidator
                 ts = data["facts"][0]["ts"]
                 resp = await client.delete(f"/api/knowledge/fact/{ts}")
                 self.assertEqual(resp.status, 200)
-                self.assertTrue((await resp.json())["removing"])
-                await self.server.MEMORY_LAST_TASK
+                self.assertTrue((await resp.json())["queued"])
                 resp = await client.delete(f"/api/knowledge/fact/{ts}")
                 self.assertEqual(resp.status, 404)
             finally:
@@ -596,7 +609,7 @@ class TestKnowledgeEndpoints(InsightsServerCase):
         self.assertEqual(stored["questions"], [])
         # the wrong-track signal reaches the prompt
         block = knowledge_store.prompt_block()
-        self.assertIn("NOT RELEVANT", block)
+        self.assertIn("REJECTED", block)
         self.assertIn("Is the attic fan broken?", block)
 
     def test_card_answer_records_in_store(self):
@@ -624,26 +637,48 @@ class TestKnowledgeEndpoints(InsightsServerCase):
 
 
 class TestMemoryFile(InsightsServerCase):
-    """The editable home memory file behind the panel's Memory section."""
+    """The memory document behind the panel's Memory section.
+
+    The panel does not write this file. One writer owns it — the
+    consolidator — so everything here queues into the inbox instead, and
+    these tests assert the queueing rather than a merge.
+    """
 
     def setUp(self):
         super().setUp()
-        self._old_auth = claude_client.get_auth
-        self._old_run = claude_client.run_claude
         self._old_service = self.ha_data.call_service
+        self._old_auth = engine.get_auth
+        self._old_run = engine.run_claude
 
         async def ok_service(service, data):
             pass
 
         self.ha_data.call_service = ok_service
+        # The app starts a generation scheduler on startup. Without an auth
+        # stub it finds the real CLI on PATH and blocks the whole test.
+        engine.get_auth = lambda: None
+        engine.run_claude = lambda *a, **k: {
+            "ok": False, "text": "", "error": "stubbed", "meta": {}}
+        self.inbox = Path(self.tmp.name) / "inbox"
+        self.server.MEMORY_INBOX_DIR = self.inbox
 
     def tearDown(self):
-        claude_client.get_auth = self._old_auth
-        claude_client.run_claude = self._old_run
         self.ha_data.call_service = self._old_service
+        engine.get_auth = self._old_auth
+        engine.run_claude = self._old_run
         super().tearDown()
 
+    def _queued_facts(self):
+        facts = []
+        for f in sorted(self.inbox.glob("*.jsonl")):
+            for line in f.read_text().splitlines():
+                if line.strip():
+                    facts.append(json.loads(line))
+        return facts
+
     def test_put_and_read_roundtrip(self):
+        """A manual edit is the one write the panel still performs — it is
+        the user typing, not the analyst learning."""
         async def run():
             client = self._client()
             await client.start_server()
@@ -653,7 +688,6 @@ class TestMemoryFile(InsightsServerCase):
                 self.assertEqual(resp.status, 200)
                 data = await (await client.get("/api/knowledge")).json()
                 self.assertIn("Lights warm at night", data["shared_memory"])
-                self.assertFalse(data["memory_state"]["merging"])
                 # invalid bodies rejected
                 resp = await client.put("/api/memory", json={"text": 42})
                 self.assertEqual(resp.status, 400)
@@ -667,20 +701,9 @@ class TestMemoryFile(InsightsServerCase):
         self.assertIn("Lights warm at night",
                       self.server.SHARED_MEMORY_FILE.read_text())
 
-    def test_teach_fact_merges_via_claude(self):
+    def test_taught_fact_is_queued_not_written(self):
         self.server.SHARED_MEMORY_FILE.write_text(
             "# Home Memory\n\n## Device notes\n- Old note\n")
-        prompts = []
-        claude_client.get_auth = lambda: {"type": "api_key", "value": "k"}
-
-        def fake_run(prompt, system, *a, **k):
-            prompts.append((prompt, system))
-            return {"ok": True, "text":
-                    "# Home Memory\n\n## Device notes\n- Old note\n"
-                    "- Garage fridge runs 24/7 by design\n",
-                    "error": "", "meta": {}}
-
-        claude_client.run_claude = fake_run
 
         async def run():
             client = self._client()
@@ -691,182 +714,85 @@ class TestMemoryFile(InsightsServerCase):
                 self.assertEqual(resp.status, 200)
                 body = await resp.json()
                 self.assertTrue(body["added"])
-                self.assertTrue(body["merging"])
-                await self.server.MEMORY_LAST_TASK
+                self.assertTrue(body["queued"])
             finally:
                 await client.close()
 
         asyncio.run(run())
-        merged = self.server.SHARED_MEMORY_FILE.read_text()
-        self.assertIn("Garage fridge runs 24/7 by design", merged)
-        self.assertIn("Old note", merged)
-        # the merge prompt carried the current doc and the new fact (skip the
-        # startup auth-check call, which also goes through run_claude)
-        merge_calls = [p for p in prompts if "NEW FACTS" in p[0]]
-        self.assertEqual(len(merge_calls), 1)
-        self.assertIn("Old note", merge_calls[0][0])
-        self.assertIn("Garage fridge runs 24/7", merge_calls[0][0])
-        self.assertIn("ONLY the complete updated markdown", merge_calls[0][1])
-        self.assertFalse(self.server.MEMORY_STATE["merging"])
 
-    def test_merge_strips_code_fences(self):
-        claude_client.get_auth = lambda: {"type": "api_key", "value": "k"}
-        claude_client.run_claude = lambda *a, **k: {
-            "ok": True,
-            "text": "```markdown\n# Home Memory\n\n## Preferences\n- A fact\n```",
-            "error": "", "meta": {}}
+        queued = self._queued_facts()
+        self.assertEqual(len(queued), 1)
+        self.assertEqual(queued[0]["fact"], "Garage fridge runs 24/7 by design")
 
-        async def run():
-            client = self._client()
-            await client.start_server()
-            try:
-                await client.post("/api/knowledge/fact", json={"text": "A fact"})
-                await self.server.MEMORY_LAST_TASK
-            finally:
-                await client.close()
+        # The document is untouched until the consolidator runs.
+        self.assertEqual(self.server.SHARED_MEMORY_FILE.read_text(),
+                         "# Home Memory\n\n## Device notes\n- Old note\n")
 
-        asyncio.run(run())
-        text = self.server.SHARED_MEMORY_FILE.read_text()
-        self.assertNotIn("```", text)
-        self.assertIn("- A fact", text)
-
-    def test_no_auth_falls_back_to_append(self):
-        claude_client.get_auth = lambda: None
-
-        async def run():
-            client = self._client()
-            await client.start_server()
-            try:
-                await client.post("/api/knowledge/fact", json={
-                    "text": "The beacon is the office lamp"})
-                await self.server.MEMORY_LAST_TASK
-            finally:
-                await client.close()
-
-        asyncio.run(run())
-        text = self.server.SHARED_MEMORY_FILE.read_text()
-        self.assertIn("## Recently added", text)
-        self.assertIn("- The beacon is the office lamp", text)
-        # started from the shared template since no file existed
-        self.assertIn("# Home Memory", text)
-
-    def test_bogus_merge_output_falls_back(self):
-        self.server.SHARED_MEMORY_FILE.write_text("# Home Memory\n\n- Keep me\n")
-        claude_client.get_auth = lambda: {"type": "api_key", "value": "k"}
-        claude_client.run_claude = lambda *a, **k: {
-            "ok": True, "text": "Sorry, I can't do that.", "error": "", "meta": {}}
-
-        async def run():
-            client = self._client()
-            await client.start_server()
-            try:
-                await client.post("/api/knowledge/fact", json={"text": "New fact"})
-                await self.server.MEMORY_LAST_TASK
-            finally:
-                await client.close()
-
-        asyncio.run(run())
-        text = self.server.SHARED_MEMORY_FILE.read_text()
-        self.assertIn("Keep me", text)
-        self.assertIn("## Recently added", text)
-        self.assertIn("- New fact", text)
-        self.assertNotIn("Sorry", text)
-
-    def test_fact_delete_scrubs_memory_without_claude(self):
-        """Fallback path: the matching bullet is stripped deterministically."""
-        claude_client.get_auth = lambda: None
-        entry, _ = knowledge_store.add_fact("Hall sensor drops offline at 2 AM")
+    def test_duplicate_fact_is_not_queued_twice(self):
         self.server.SHARED_MEMORY_FILE.write_text(
-            "# Home Memory\n\n## Device notes\n"
-            "- Hall sensor drops offline at 2 AM\n- Keep me\n")
+            "# Home Memory\n\n## Device notes\n- Garage fridge runs 24/7 by design\n")
 
         async def run():
             client = self._client()
             await client.start_server()
             try:
-                resp = await client.delete(f"/api/knowledge/fact/{entry['ts']}")
+                resp = await client.post("/api/knowledge/fact", json={
+                    "text": "Garage fridge runs 24/7 by design"})
                 self.assertEqual(resp.status, 200)
-                self.assertTrue((await resp.json())["removing"])
-                await self.server.MEMORY_LAST_TASK
-            finally:
-                await client.close()
-
-        asyncio.run(run())
-        text = self.server.SHARED_MEMORY_FILE.read_text()
-        self.assertNotIn("Hall sensor drops offline", text)
-        self.assertIn("- Keep me", text)
-        self.assertEqual(knowledge_store.list_facts(), [])
-
-    def test_fact_delete_scrubs_memory_via_claude(self):
-        """Claude path: reworded statements are removed by the model."""
-        entry, _ = knowledge_store.add_fact("The garage fridge runs 24/7")
-        self.server.SHARED_MEMORY_FILE.write_text(
-            "# Home Memory\n\n## Device notes\n"
-            "- Garage refrigerator is expected to run around the clock\n"
-            "- Keep me\n")
-        prompts = []
-        claude_client.get_auth = lambda: {"type": "api_key", "value": "k"}
-
-        def fake_run(prompt, system, *a, **k):
-            prompts.append((prompt, system))
-            return {"ok": True, "text":
-                    "# Home Memory\n\n## Device notes\n- Keep me\n",
-                    "error": "", "meta": {}}
-
-        claude_client.run_claude = fake_run
-
-        async def run():
-            client = self._client()
-            await client.start_server()
-            try:
-                await client.delete(f"/api/knowledge/fact/{entry['ts']}")
-                await self.server.MEMORY_LAST_TASK
-            finally:
-                await client.close()
-
-        asyncio.run(run())
-        text = self.server.SHARED_MEMORY_FILE.read_text()
-        self.assertNotIn("around the clock", text)
-        self.assertIn("- Keep me", text)
-        removal_calls = [p for p in prompts if "DELETED" in p[0]]
-        self.assertEqual(len(removal_calls), 1)
-        self.assertIn("The garage fridge runs 24/7", removal_calls[0][0])
-        self.assertIn("even if reworded", removal_calls[0][1])
-
-    def test_fact_delete_without_memory_file_skips_scrub(self):
-        entry, _ = knowledge_store.add_fact("Orphan fact")
-
-        async def run():
-            client = self._client()
-            await client.start_server()
-            try:
-                resp = await client.delete(f"/api/knowledge/fact/{entry['ts']}")
-                self.assertEqual(resp.status, 200)
-                self.assertFalse((await resp.json())["removing"])
-                self.assertIsNone(self.server.MEMORY_LAST_TASK)
-            finally:
-                await client.close()
-
-        asyncio.run(run())
-
-    def test_duplicate_fact_does_not_merge(self):
-        knowledge_store.add_fact("Already known")
-
-        async def run():
-            client = self._client()
-            await client.start_server()
-            try:
-                resp = await client.post("/api/knowledge/fact",
-                                         json={"text": "Already known"})
                 body = await resp.json()
                 self.assertFalse(body["added"])
-                self.assertFalse(body["merging"])
-                self.assertIsNone(self.server.MEMORY_LAST_TASK)
+                self.assertFalse(body["queued"])
             finally:
                 await client.close()
 
         asyncio.run(run())
-        self.assertFalse(self.server.SHARED_MEMORY_FILE.exists())
+        self.assertEqual(self._queued_facts(), [])
+
+    def test_deleting_a_fact_queues_a_removal(self):
+        """Deletion asks the consolidator to drop the line; the panel never
+        edits the document itself.
+
+        Exercised through the handler's logic rather than an HTTP round-trip
+        — DELETE routing is already covered by the question-delete test.
+        """
+        entry, _ = knowledge_store.add_fact("Hallway sensor drops offline nightly")
+        self.server.SHARED_MEMORY_FILE.write_text(
+            "# Home Memory\n\n## Device notes\n"
+            "- Hallway sensor drops offline nightly\n")
+
+        self.assertTrue(knowledge_store.remove_fact(entry["ts"]))
+        self.server._queue_memory_removal(entry["text"])
+
+        queued = self._queued_facts()
+        self.assertEqual(len(queued), 1)
+        self.assertEqual(queued[0]["fact"],
+                         "FORGET: Hallway sensor drops offline nightly")
+        # Still in the document — the consolidator removes it, not the panel.
+        self.assertIn("Hallway sensor",
+                      self.server.SHARED_MEMORY_FILE.read_text())
+
+    def test_answered_question_is_remembered_as_a_statement(self):
+        """Not as "Q: ... -> A: ...", which is what made memory unreadable."""
+        async def run():
+            await self.server._submit_answer(
+                "Is the garage fridge meant to run overnight?", "Yes, always")
+
+        asyncio.run(run())
+        queued = self._queued_facts()
+        self.assertEqual(len(queued), 1)
+        self.assertNotIn("Q:", queued[0]["fact"])
+        self.assertNotIn("→", queued[0]["fact"])
+        self.assertIn("Yes, always", queued[0]["fact"])
+
+    def test_inbox_failure_never_breaks_the_request(self):
+        """A memory hand-off that cannot write must not fail an insight run."""
+        self.server.MEMORY_INBOX_DIR = Path("/proc/nonexistent/inbox")
+
+        async def run():
+            await self.server._submit_memory("something worth knowing")
+
+        asyncio.run(run())  # must not raise
+
 
 
 if __name__ == "__main__":

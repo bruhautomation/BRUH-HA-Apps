@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Tests for the BRUH Insights add-on.
+"""Tests for the BRain add-on.
 
 Covers:
 - config.yaml / build.yaml / Dockerfile validity and cross-file consistency
 - category definitions and prompt building
-- credential storage + classification (claude_client)
+- credential storage + classification (engine)
 - insight JSON extraction from model replies
 - headless claude invocation via a stub binary
 - panel server routes (status, generate validation, insight storage)
@@ -24,13 +24,13 @@ from pathlib import Path
 import yaml
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-ADDON_DIR = BASE_DIR / "bruh-insights"
+ADDON_DIR = BASE_DIR / "brain"
 PANEL_DIR = ADDON_DIR / "panel"
 
 sys.path.insert(0, str(PANEL_DIR))
 
 import categories  # noqa: E402
-import claude_client  # noqa: E402
+import engine  # noqa: E402
 import feedback_store  # noqa: E402
 import knowledge_store  # noqa: E402
 import prompt_store  # noqa: E402
@@ -73,7 +73,7 @@ class TestInsightsConfigYaml(unittest.TestCase):
 
     def test_config_map_writable_for_memory(self):
         """/config is writable since 1.3.1 — solely so the panel's Memory
-        editor can maintain /config/.bruh_claude/memory/memory.md. Server
+        editor can maintain /config/.brain/memory/memory.md. Server
         code must never write anywhere else under /config."""
         for entry in self.config.get("map", []):
             if isinstance(entry, dict) and entry.get("type") == "homeassistant_config":
@@ -85,11 +85,11 @@ class TestInsightsConfigYaml(unittest.TestCase):
         self.assertIn("amd64", self.config["arch"])
         self.assertIn("aarch64", self.config["arch"])
 
-    def test_no_ports_exposed(self):
-        """Cards are served via the /local mirror by HA itself — the add-on
-        exposes no host ports at all."""
-        self.assertNotIn("ports", self.config)
-        self.assertNotIn("ports_description", self.config)
+    def test_only_the_terminal_port_is_published(self):
+        """Cards go through HA's own /local mirror, and the panel is reached
+        via ingress — the single published port is ttyd, for direct access."""
+        self.assertEqual(list(self.config["ports"]), ["7681/tcp"])
+        self.assertIn("7681/tcp", self.config["ports_description"])
 
 
 class TestInsightsBuildFiles(unittest.TestCase):
@@ -107,7 +107,7 @@ class TestInsightsBuildFiles(unittest.TestCase):
         for name in ("run.sh", "panel/server.py", "panel/index.html",
                      "panel/app.js", "panel/style.css", "panel/favicon.svg",
                      "panel/categories.py", "panel/ha_data.py",
-                     "panel/claude_client.py", "panel/prompt_store.py",
+                     "panel/engine.py", "panel/prompt_store.py",
                      "panel/settings_store.py", "panel/addon_options.py",
                      "panel/user_categories.py", "panel/feedback_store.py",
                      "panel/knowledge_store.py",
@@ -129,9 +129,9 @@ class TestModelChoices(unittest.TestCase):
     """The ⚙ dialog's model dropdown (1.8.0)."""
 
     def test_shape_and_uniqueness(self):
-        ids = [m["id"] for m in claude_client.MODEL_CHOICES]
+        ids = [m["id"] for m in engine.MODEL_CHOICES]
         self.assertEqual(len(ids), len(set(ids)), "duplicate model id")
-        for choice in claude_client.MODEL_CHOICES:
+        for choice in engine.MODEL_CHOICES:
             for key in ("id", "group", "label", "hint"):
                 self.assertIn(key, choice, f"{choice.get('id')} missing {key}")
             self.assertTrue(choice["label"].strip())
@@ -142,19 +142,19 @@ class TestModelChoices(unittest.TestCase):
 
     def test_default_choice_is_first_and_empty(self):
         """"" is what the dropdown lands on when no model is configured."""
-        self.assertEqual(claude_client.MODEL_CHOICES[0]["id"], "")
+        self.assertEqual(engine.MODEL_CHOICES[0]["id"], "")
 
     def test_groups_are_contiguous(self):
         """The panel opens a new <optgroup> whenever the group changes, so a
         group that reappears later would render twice."""
         seen = []
-        for choice in claude_client.MODEL_CHOICES:
+        for choice in engine.MODEL_CHOICES:
             if not seen or seen[-1] != choice["group"]:
                 self.assertNotIn(choice["group"], seen, "group is split up")
                 seen.append(choice["group"])
 
     def test_offers_a_current_model_per_tier(self):
-        ids = {m["id"] for m in claude_client.MODEL_CHOICES}
+        ids = {m["id"] for m in engine.MODEL_CHOICES}
         for expected in ("opus", "sonnet", "haiku", "claude-opus-5",
                          "claude-sonnet-5", "claude-haiku-4-5"):
             self.assertIn(expected, ids)
@@ -212,63 +212,63 @@ class TestCategories(unittest.TestCase):
 class TestClaudeClient(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self._old = (claude_client.SECRETS_DIR, claude_client.AUTH_FILE,
-                     claude_client.CLAUDE_HOME)
-        claude_client.SECRETS_DIR = self.tmp.name
-        claude_client.AUTH_FILE = os.path.join(self.tmp.name, "claude_auth.json")
-        claude_client.CLAUDE_HOME = os.path.join(self.tmp.name, "home")
+        self._old = (engine.SECRETS_DIR, engine.AUTH_FILE,
+                     engine.CLAUDE_HOME)
+        engine.SECRETS_DIR = self.tmp.name
+        engine.AUTH_FILE = os.path.join(self.tmp.name, "claude_auth.json")
+        engine.CLAUDE_HOME = os.path.join(self.tmp.name, "home")
 
     def tearDown(self):
-        (claude_client.SECRETS_DIR, claude_client.AUTH_FILE,
-         claude_client.CLAUDE_HOME) = self._old
+        (engine.SECRETS_DIR, engine.AUTH_FILE,
+         engine.CLAUDE_HOME) = self._old
         self.tmp.cleanup()
 
     def _write_cli_credentials(self, token="sk-ant-oat01-" + "x" * 30):
-        cred_dir = os.path.join(claude_client.CLAUDE_HOME, ".claude")
+        cred_dir = os.path.join(engine.CLAUDE_HOME, ".claude")
         os.makedirs(cred_dir, exist_ok=True)
         with open(os.path.join(cred_dir, ".credentials.json"), "w") as f:
             json.dump({"claudeAiOauth": {"accessToken": token}}, f)
 
     def test_classify(self):
-        self.assertEqual(claude_client.classify_credential("sk-ant-oat01-abc"), "oauth_token")
-        self.assertEqual(claude_client.classify_credential("sk-ant-api03-xyz"), "api_key")
-        self.assertIsNone(claude_client.classify_credential("hunter2"))
+        self.assertEqual(engine.classify_credential("sk-ant-oat01-abc"), "oauth_token")
+        self.assertEqual(engine.classify_credential("sk-ant-api03-xyz"), "api_key")
+        self.assertIsNone(engine.classify_credential("hunter2"))
 
     def test_save_get_clear_roundtrip(self):
-        self.assertIsNone(claude_client.get_auth())
-        claude_client.save_auth("sk-ant-oat01-" + "a" * 30)
-        auth = claude_client.get_auth()
+        self.assertIsNone(engine.get_auth())
+        engine.save_auth("sk-ant-oat01-" + "a" * 30)
+        auth = engine.get_auth()
         self.assertEqual(auth["type"], "oauth_token")
-        mode = stat.S_IMODE(os.stat(claude_client.AUTH_FILE).st_mode)
+        mode = stat.S_IMODE(os.stat(engine.AUTH_FILE).st_mode)
         self.assertEqual(mode, 0o600)
-        claude_client.clear_auth()
-        self.assertIsNone(claude_client.get_auth())
+        engine.clear_auth()
+        self.assertIsNone(engine.get_auth())
 
     def test_save_rejects_garbage(self):
         with self.assertRaises(ValueError):
-            claude_client.save_auth("not-a-token")
+            engine.save_auth("not-a-token")
 
     def test_extract_json_plain(self):
-        obj = claude_client.extract_json('{"title": "T", "html": "<p>x</p>"}')
+        obj = engine.extract_json('{"title": "T", "html": "<p>x</p>"}')
         self.assertEqual(obj["title"], "T")
 
     def test_extract_json_fenced(self):
-        obj = claude_client.extract_json('```json\n{"title": "T"}\n```')
+        obj = engine.extract_json('```json\n{"title": "T"}\n```')
         self.assertEqual(obj["title"], "T")
 
     def test_extract_json_embedded(self):
-        obj = claude_client.extract_json('Here you go:\n{"title": "T"}\nEnjoy!')
+        obj = engine.extract_json('Here you go:\n{"title": "T"}\nEnjoy!')
         self.assertEqual(obj["title"], "T")
 
     def test_extract_json_invalid(self):
-        self.assertIsNone(claude_client.extract_json("no json here"))
+        self.assertIsNone(engine.extract_json("no json here"))
 
     def test_extract_oauth_url_single_line(self):
         url = ("https://claude.ai/oauth/authorize?code=true&client_id=abc"
                "&redirect_uri=https%3A%2F%2Fconsole.anthropic.com%2Foauth%2Fcode%2Fcallback"
                "&code_challenge=xyz")
         buf = f"Browse to the following URL:\n{url}\nPaste code here if prompted:"
-        self.assertEqual(claude_client.extract_oauth_url(buf), url)
+        self.assertEqual(engine.extract_oauth_url(buf), url)
 
     def test_extract_oauth_url_stitches_wrapped_lines(self):
         """A pty hard-wraps the long authorize URL; fragments must be rejoined."""
@@ -278,28 +278,28 @@ class TestClaudeClient(unittest.TestCase):
                 "&scope=org%3Acreate_api_key&code_challenge=AbCdEf&state=XyZ")
         wrapped = "\n".join([full[i:i + 60] for i in range(0, len(full), 60)])
         buf = f"Browse to the following URL:\n{wrapped}\n\nPaste code here if prompted:"
-        self.assertEqual(claude_client.extract_oauth_url(buf), full)
+        self.assertEqual(engine.extract_oauth_url(buf), full)
 
     def test_extract_oauth_url_rejects_truncated(self):
         """A bare origin with no query string is a wrap artifact, not a link."""
         buf = "Browse to the following URL:\nhttps://claude.ai/oauth/authorize\n"
-        self.assertEqual(claude_client.extract_oauth_url(buf), "")
+        self.assertEqual(engine.extract_oauth_url(buf), "")
 
     def test_extract_oauth_url_does_not_glue_prose(self):
         url = "https://claude.ai/oauth/authorize?code=true&client_id=abc&redirect_uri=x"
         buf = f"{url}\nPaste code here if prompted:"
-        self.assertEqual(claude_client.extract_oauth_url(buf), url)
+        self.assertEqual(engine.extract_oauth_url(buf), url)
 
     def test_token_regex_accepts_future_prefixes(self):
-        self.assertTrue(claude_client.OAUTH_TOKEN_RE.search("sk-ant-oat01-" + "a" * 24))
-        self.assertTrue(claude_client.OAUTH_TOKEN_RE.search("sk-ant-oat05-" + "b" * 24))
-        self.assertFalse(claude_client.OAUTH_TOKEN_RE.search("sk-ant-api03-" + "c" * 24))
+        self.assertTrue(engine.OAUTH_TOKEN_RE.search("sk-ant-oat01-" + "a" * 24))
+        self.assertTrue(engine.OAUTH_TOKEN_RE.search("sk-ant-oat05-" + "b" * 24))
+        self.assertFalse(engine.OAUTH_TOKEN_RE.search("sk-ant-api03-" + "c" * 24))
 
     def test_setup_flow_retry_after_failed_exchange(self):
         """Failed code exchange: CLI prints 'OAuth error…Press Enter to retry.'
         and blocks; the flow must press Enter, loop to awaiting_code, and pick
         up the FRESH URL (new state) while ignoring the stale one."""
-        flow = claude_client.SetupTokenFlow()
+        flow = engine.SetupTokenFlow()
         read_fd, write_fd = os.pipe()
         try:
             old_url = ("https://claude.ai/oauth/authorize?code=true&client_id=a"
@@ -339,29 +339,29 @@ class TestClaudeClient(unittest.TestCase):
             flow._fd = None
 
     def test_cli_credentials_detected_as_auth(self):
-        self.assertIsNone(claude_client.get_auth())
+        self.assertIsNone(engine.get_auth())
         self._write_cli_credentials()
-        auth = claude_client.get_auth()
+        auth = engine.get_auth()
         self.assertEqual(auth["type"], "cli_login")
         # CLI-managed login must not inject env tokens
-        env = claude_client._claude_env()
+        env = engine._claude_env()
         self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", env)
         self.assertNotIn("ANTHROPIC_API_KEY", env)
         # logout must also forget the CLI credential
-        claude_client.clear_auth()
-        self.assertIsNone(claude_client.get_auth())
+        engine.clear_auth()
+        self.assertIsNone(engine.get_auth())
 
     def test_cli_credentials_ignores_bad_file(self):
-        cred_dir = os.path.join(claude_client.CLAUDE_HOME, ".claude")
+        cred_dir = os.path.join(engine.CLAUDE_HOME, ".claude")
         os.makedirs(cred_dir, exist_ok=True)
         with open(os.path.join(cred_dir, ".credentials.json"), "w") as f:
             f.write("not json")
-        self.assertIsNone(claude_client.get_auth())
+        self.assertIsNone(engine.get_auth())
 
     def test_setup_flow_credentials_file_completes_working_phase(self):
         """Some CLI versions save the credential without printing a token —
         the appearing credentials file must count as sign-in success."""
-        flow = claude_client.SetupTokenFlow()
+        flow = engine.SetupTokenFlow()
         flow.phase = "working"
         flow._code_from = 0
         self._write_cli_credentials()
@@ -369,7 +369,7 @@ class TestClaudeClient(unittest.TestCase):
         self.assertEqual(flow.phase, "done")
 
     def test_setup_flow_status_masks_token_in_detail(self):
-        flow = claude_client.SetupTokenFlow()
+        flow = engine.SetupTokenFlow()
         flow.output = "some line\nyour token: sk-ant-oat01-" + "z" * 30
         status = flow.status()
         self.assertIn("detail", status)
@@ -388,13 +388,13 @@ class TestClaudeClient(unittest.TestCase):
             "sleep 600\n"
         )
         stub.chmod(0o755)
-        old_argv = claude_client._claude_argv
-        old_timeout = claude_client.EXCHANGE_TIMEOUT
-        old_nudges = claude_client.NUDGE_TIMES
-        claude_client._claude_argv = lambda: [str(stub)]
-        claude_client.EXCHANGE_TIMEOUT = 5
-        claude_client.NUDGE_TIMES = (2, 3)
-        flow = claude_client.SetupTokenFlow()
+        old_argv = engine._claude_argv
+        old_timeout = engine.EXCHANGE_TIMEOUT
+        old_nudges = engine.NUDGE_TIMES
+        engine._claude_argv = lambda: [str(stub)]
+        engine.EXCHANGE_TIMEOUT = 5
+        engine.NUDGE_TIMES = (2, 3)
+        flow = engine.SetupTokenFlow()
         try:
             flow.start()
             for _ in range(40):
@@ -413,9 +413,9 @@ class TestClaudeClient(unittest.TestCase):
             self.assertIn("Timed out exchanging the code", status["error"])
         finally:
             flow.cancel()
-            claude_client._claude_argv = old_argv
-            claude_client.EXCHANGE_TIMEOUT = old_timeout
-            claude_client.NUDGE_TIMES = old_nudges
+            engine._claude_argv = old_argv
+            engine.EXCHANGE_TIMEOUT = old_timeout
+            engine.NUDGE_TIMES = old_nudges
 
     def test_run_claude_with_stub(self):
         stub = Path(self.tmp.name) / "claude"
@@ -423,12 +423,12 @@ class TestClaudeClient(unittest.TestCase):
                     "is_error": False, "duration_ms": 12, "num_turns": 1}
         stub.write_text("#!/bin/sh\ncat > /dev/null\necho '%s'\n" % json.dumps(envelope))
         stub.chmod(0o755)
-        orig = claude_client._claude_argv
-        claude_client._claude_argv = lambda: [str(stub)]
+        orig = engine._claude_argv
+        engine._claude_argv = lambda: [str(stub)]
         try:
-            result = claude_client.run_claude("prompt", "system", timeout=20)
+            result = engine.run_claude("prompt", "system", timeout=20)
         finally:
-            claude_client._claude_argv = orig
+            engine._claude_argv = orig
         self.assertTrue(result["ok"])
         self.assertEqual(result["text"], '{"title":"T"}')
         self.assertEqual(result["meta"]["duration_ms"], 12)
@@ -438,12 +438,12 @@ class TestClaudeClient(unittest.TestCase):
         stub.write_text("#!/bin/sh\ncat > /dev/null\n"
                         "echo '{\"type\":\"result\",\"is_error\":true,\"result\":\"boom\"}'\n")
         stub.chmod(0o755)
-        orig = claude_client._claude_argv
-        claude_client._claude_argv = lambda: [str(stub)]
+        orig = engine._claude_argv
+        engine._claude_argv = lambda: [str(stub)]
         try:
-            result = claude_client.run_claude("p", "s", timeout=20)
+            result = engine.run_claude("p", "s", timeout=20)
         finally:
-            claude_client._claude_argv = orig
+            engine._claude_argv = orig
         self.assertFalse(result["ok"])
         self.assertIn("boom", result["error"])
 
@@ -539,24 +539,24 @@ class TestPanelServer(unittest.TestCase):
 
 
 class TestSharedAuth(unittest.TestCase):
-    """Shared-credential fallback (written by the BRUH Terminal add-on)."""
+    """Shared-credential fallback (written by the BRain add-on)."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self._old = (claude_client.SECRETS_DIR, claude_client.AUTH_FILE,
-                     claude_client.CLAUDE_HOME, claude_client.SHARED_AUTH_FILE)
-        claude_client.SECRETS_DIR = self.tmp.name
-        claude_client.AUTH_FILE = os.path.join(self.tmp.name, "claude_auth.json")
-        claude_client.CLAUDE_HOME = os.path.join(self.tmp.name, "home")
-        claude_client.SHARED_AUTH_FILE = os.path.join(self.tmp.name, "shared_auth.json")
+        self._old = (engine.SECRETS_DIR, engine.AUTH_FILE,
+                     engine.CLAUDE_HOME, engine.SHARED_AUTH_FILE)
+        engine.SECRETS_DIR = self.tmp.name
+        engine.AUTH_FILE = os.path.join(self.tmp.name, "claude_auth.json")
+        engine.CLAUDE_HOME = os.path.join(self.tmp.name, "home")
+        engine.SHARED_AUTH_FILE = os.path.join(self.tmp.name, "shared_auth.json")
 
     def tearDown(self):
-        (claude_client.SECRETS_DIR, claude_client.AUTH_FILE,
-         claude_client.CLAUDE_HOME, claude_client.SHARED_AUTH_FILE) = self._old
+        (engine.SECRETS_DIR, engine.AUTH_FILE,
+         engine.CLAUDE_HOME, engine.SHARED_AUTH_FILE) = self._old
         self.tmp.cleanup()
 
     def _write_shared(self, payload):
-        with open(claude_client.SHARED_AUTH_FILE, "w") as f:
+        with open(engine.SHARED_AUTH_FILE, "w") as f:
             if isinstance(payload, str):
                 f.write(payload)
             else:
@@ -565,33 +565,33 @@ class TestSharedAuth(unittest.TestCase):
     def test_shared_auth_picked_up(self):
         token = "sk-ant-oat01-" + "s" * 30
         self._write_shared({"type": "oauth_token", "value": token, "saved_at": 1752000000})
-        auth = claude_client.get_auth()
+        auth = engine.get_auth()
         self.assertEqual(auth["type"], "oauth_token")
         self.assertEqual(auth["value"], token)
         self.assertEqual(auth["source"], "shared")
-        env = claude_client._claude_env()
+        env = engine._claude_env()
         self.assertEqual(env.get("CLAUDE_CODE_OAUTH_TOKEN"), token)
         self.assertNotIn("ANTHROPIC_API_KEY", env)
 
     def test_shared_api_key_injected_as_api_key(self):
         key = "sk-ant-api03-" + "k" * 30
         self._write_shared({"type": "api_key", "value": key, "saved_at": 1752000000})
-        env = claude_client._claude_env()
+        env = engine._claude_env()
         self.assertEqual(env.get("ANTHROPIC_API_KEY"), key)
         self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", env)
 
     def test_local_wins_over_shared(self):
         local = "sk-ant-oat01-" + "l" * 30
-        claude_client.save_auth(local)
+        engine.save_auth(local)
         self._write_shared({"type": "oauth_token", "value": "sk-ant-oat01-" + "s" * 30,
                             "saved_at": 1752000000})
-        auth = claude_client.get_auth()
+        auth = engine.get_auth()
         self.assertEqual(auth["value"], local)
         self.assertEqual(auth["source"], "local")
 
     def test_source_reported_for_local(self):
-        claude_client.save_auth("sk-ant-oat01-" + "a" * 30)
-        self.assertEqual(claude_client.get_auth()["source"], "local")
+        engine.save_auth("sk-ant-oat01-" + "a" * 30)
+        self.assertEqual(engine.get_auth()["source"], "local")
 
     def test_malformed_shared_tolerated(self):
         for payload in ("not json", ["a", "b"],
@@ -600,19 +600,19 @@ class TestSharedAuth(unittest.TestCase):
                         {"type": "oauth_token", "value": 42},
                         {"value": "sk-ant-oat01-zzz"}):
             self._write_shared(payload)
-            self.assertIsNone(claude_client.get_auth(), payload)
+            self.assertIsNone(engine.get_auth(), payload)
 
     def test_missing_shared_tolerated(self):
-        self.assertIsNone(claude_client.get_auth())
+        self.assertIsNone(engine.get_auth())
 
     def test_logout_leaves_shared_file_intact(self):
-        claude_client.save_auth("sk-ant-oat01-" + "l" * 30)
+        engine.save_auth("sk-ant-oat01-" + "l" * 30)
         self._write_shared({"type": "oauth_token", "value": "sk-ant-oat01-" + "s" * 30,
                             "saved_at": 1752000000})
-        claude_client.clear_auth()
-        self.assertTrue(os.path.exists(claude_client.SHARED_AUTH_FILE))
+        engine.clear_auth()
+        self.assertTrue(os.path.exists(engine.SHARED_AUTH_FILE))
         # after logout, the shared credential takes over again
-        auth = claude_client.get_auth()
+        auth = engine.get_auth()
         self.assertEqual(auth["source"], "shared")
 
     def test_status_reports_auth_source(self):
@@ -624,8 +624,8 @@ class TestSharedAuth(unittest.TestCase):
         # previous test's event loop
         server.QUEUE = asyncio.Queue()
         # keep the startup auth check from invoking a real claude binary
-        old_validate = claude_client.validate_auth
-        claude_client.validate_auth = lambda timeout=120: {"ok": True, "error": ""}
+        old_validate = engine.validate_auth
+        engine.validate_auth = lambda timeout=120: {"ok": True, "error": ""}
         self._write_shared({"type": "oauth_token", "value": "sk-ant-oat01-" + "s" * 30,
                             "saved_at": 1752000000})
 
@@ -644,7 +644,7 @@ class TestSharedAuth(unittest.TestCase):
             asyncio.run(run())
         finally:
             server.INSIGHTS_DIR = old_dir
-            claude_client.validate_auth = old_validate
+            engine.validate_auth = old_validate
 
 
 class TestPromptStore(unittest.TestCase):
@@ -1122,7 +1122,7 @@ class TestGenerateFlow(InsightsServerCase):
     def setUp(self):
         super().setUp()
         self._old_collect = self.ha_data.collect_bundle
-        self._old_run = claude_client.run_claude
+        self._old_run = engine.run_claude
         self._old_service = self.ha_data.call_service
 
         async def fake_bundle(cat, days, question=None):
@@ -1137,13 +1137,13 @@ class TestGenerateFlow(InsightsServerCase):
             "findings": ["Hall sensor drops offline at 2 AM", ""],
             "html": "<!DOCTYPE html><p>ok</p>",
         }
-        claude_client.run_claude = lambda *a, **k: {
+        engine.run_claude = lambda *a, **k: {
             "ok": True, "text": json.dumps(self.reply), "error": "",
             "meta": {"duration_ms": 5}}
 
     def tearDown(self):
         self.ha_data.collect_bundle = self._old_collect
-        claude_client.run_claude = self._old_run
+        engine.run_claude = self._old_run
         self.ha_data.call_service = self._old_service
         super().tearDown()
 
@@ -1168,21 +1168,31 @@ class TestGenerateFlow(InsightsServerCase):
         self.assertEqual(stored["questions"],
                          ["Is the garage fridge meant to run overnight?"])
         self.assertEqual(stored["findings"], ["Hall sensor drops offline at 2 AM"])
-        # findings handed to bruh_claude.add_memory
-        self.assertEqual(calls, [("add_memory", {
-            "fact": "Hall sensor drops offline at 2 AM",
-            "source": "insights", "confidence": "medium"})])
-        # no fallback writes when the service worked
-        self.assertFalse(self.server.MEMORY_INBOX_DIR.exists())
+        # findings are QUEUED for the consolidator, not handed to a service:
+        # the consolidator lives in this container now.
+        self.assertEqual(calls, [])
+        queued = self._queued_facts()
+        self.assertEqual(len(queued), 1)
+        self.assertEqual(queued[0]["fact"], "Hall sensor drops offline at 2 AM")
 
-    def test_findings_fall_back_to_share_inbox(self):
+    def _queued_facts(self):
+        facts = []
+        for f in sorted(self.server.MEMORY_INBOX_DIR.glob("*.jsonl")):
+            for line in f.read_text().splitlines():
+                if line.strip():
+                    facts.append(json.loads(line))
+        return facts
+
+    def test_findings_are_queued_even_with_no_integration(self):
+        """The hand-off is a local file write, so an absent integration
+        cannot lose a learned fact."""
         async def broken_service(service, data):
             raise RuntimeError("integration not installed")
 
         self.ha_data.call_service = broken_service
         asyncio.run(self.server._generate("energy"))
         self.assertEqual(self.server.JOBS["energy"]["state"], "done")
-        files = list(self.server.MEMORY_INBOX_DIR.glob("*-insights.jsonl"))
+        files = list(self.server.MEMORY_INBOX_DIR.glob("*.jsonl"))
         self.assertEqual(len(files), 1)
         lines = [json.loads(l) for l in files[0].read_text().splitlines()]
         self.assertEqual(lines[0]["fact"], "Hall sensor drops offline at 2 AM")
@@ -1209,7 +1219,7 @@ class TestGenerateFlow(InsightsServerCase):
             return {"ok": True, "text": json.dumps(self.reply), "error": "",
                     "meta": {"duration_ms": 5}}
 
-        claude_client.run_claude = capture
+        engine.run_claude = capture
         asyncio.run(self.server._generate("energy"))
         stored = self._stored()
         self.assertEqual(stored["tags"], ["energy", "anomaly"])
@@ -1225,7 +1235,7 @@ class TestGenerateFlow(InsightsServerCase):
             return {"ok": True, "text": json.dumps(self.reply), "error": "",
                     "meta": {"duration_ms": 5}}
 
-        claude_client.run_claude = capture
+        engine.run_claude = capture
         self.server._set_job("custom-77", state="queued", question="Why cold?")
         asyncio.run(self.server._generate("custom-77"))
         self.assertNotIn("HOMEOWNER FEEDBACK", prompts[0])
@@ -1278,10 +1288,9 @@ class TestQuestionsEndpoints(InsightsServerCase):
                     "insight_id": "energy", "question": "Is X on purpose?",
                     "answer": "Yes, it runs the pond pump."})
                 self.assertEqual(resp.status, 200)
-                self.assertEqual(self.calls, [("answer_question", {
-                    "question": "Is X on purpose?",
-                    "answer": "Yes, it runs the pond pump.",
-                    "source": "insights"})])
+                # Queued locally rather than round-tripped through an HA
+                # service — the consolidator is in this container.
+                self.assertEqual(self.calls, [])
 
                 # the question stops surfacing
                 resp = await client.get("/api/questions")
@@ -1305,7 +1314,9 @@ class TestQuestionsEndpoints(InsightsServerCase):
 
         asyncio.run(run())
 
-    def test_answer_falls_back_to_share_inbox(self):
+    def test_answer_is_queued_as_a_statement(self):
+        """The answer is remembered as prose, not as a "Q: ... -> A: ..."
+        pair — that form is what made the old memory unreadable."""
         self._save("energy", "2026-07-18T10:00:00", questions=["Why cold?"])
 
         async def broken_service(service, data):
@@ -1325,10 +1336,11 @@ class TestQuestionsEndpoints(InsightsServerCase):
                 await client.close()
 
         asyncio.run(run())
-        files = list(self.server.MEMORY_INBOX_DIR.glob("*-insights.jsonl"))
+        files = list(self.server.MEMORY_INBOX_DIR.glob("*.jsonl"))
         self.assertEqual(len(files), 1)
         fact = json.loads(files[0].read_text().splitlines()[0])["fact"]
-        self.assertEqual(fact, "Q: Why cold? → A: Broken vent.")
+        self.assertEqual(fact, "Why cold: Broken vent.")
+        self.assertNotIn("Q:", fact)
 
 
 class TestUserCategoryEndpoints(InsightsServerCase):
@@ -1603,6 +1615,14 @@ class TestCardDeletionAndRenaming(InsightsServerCase):
 
 
 class TestFeedbackEndpoints(InsightsServerCase):
+    def _queued_facts(self):
+        facts = []
+        for f in sorted(self.server.MEMORY_INBOX_DIR.glob("*.jsonl")):
+            for line in f.read_text().splitlines():
+                if line.strip():
+                    facts.append(json.loads(line))
+        return facts
+
     def setUp(self):
         super().setUp()
         self._old_service = self.ha_data.call_service
@@ -1629,10 +1649,11 @@ class TestFeedbackEndpoints(InsightsServerCase):
                 self.assertEqual(
                     [e["text"] for e in data["feedback"]], ["Show cost in dollars"])
                 ts = data["added"]["ts"]
-                # handed to the home's memory as a durable preference
-                self.assertEqual(self.calls[0][0], "add_memory")
-                self.assertIn('"Energy" insight card: Show cost in dollars',
-                              self.calls[0][1]["fact"])
+                # queued to the home's memory as a durable preference
+                self.assertEqual(self.calls, [])
+                queued = self._queued_facts()
+                self.assertTrue(any('"Energy" insight card: Show cost in dollars'
+                                    in f["fact"] for f in queued), queued)
 
                 resp = await client.get("/api/insight/energy/feedback")
                 self.assertEqual(
@@ -1673,7 +1694,7 @@ class TestFeedbackEndpoints(InsightsServerCase):
 
         asyncio.run(run())
         self.assertIn('"Fridge" insight card: Celsius please',
-                      self.calls[0][1]["fact"])
+                      self._queued_facts()[0]["fact"])
 
 
 class TestCardServer(InsightsServerCase):

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Tests for the BRUH Claude custom Home Assistant integration Python files.
+Tests for the BRain custom Home Assistant integration Python files.
 
 Tests cover:
 - __init__.py: service registration patterns, schema validation
@@ -21,7 +21,7 @@ import yaml
 
 BASE_DIR = os.path.join(os.path.dirname(__file__), "..")
 INTEGRATION_DIR = os.path.join(
-    BASE_DIR, "bruh-claude-terminal", "custom_components", "bruh_claude"
+    BASE_DIR, "brain", "custom_components", "brain"
 )
 
 
@@ -52,8 +52,8 @@ class TestManifestJson(unittest.TestCase):
         self.assertRegex(self.manifest["domain"], r'^[a-z][a-z0-9_]*$')
 
     def test_domain_is_bruh_claude(self):
-        """Domain should be 'bruh_claude'."""
-        self.assertEqual(self.manifest["domain"], "bruh_claude")
+        """Domain should be 'brain'."""
+        self.assertEqual(self.manifest["domain"], "brain")
 
     def test_config_flow_enabled(self):
         """config_flow should be True."""
@@ -492,7 +492,7 @@ class TestManifestConfigVersionSync(unittest.TestCase):
             manifest = json.load(f)
 
         config_path = os.path.join(
-            os.path.dirname(__file__), "..", "bruh-claude-terminal", "config.yaml"
+            os.path.dirname(__file__), "..", "brain", "config.yaml"
         )
         with open(config_path) as f:
             config = yaml.safe_load(f)

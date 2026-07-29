@@ -154,7 +154,7 @@ def test_script_exists_and_is_executable() -> None:
 
 
 @pytest.mark.parametrize(
-    "addon_dir", ["bruh-claude-terminal", "bruh-minecraft-server"]
+    "addon_dir", ["brain", "bruh-minecraft-server"]
 )
 def test_real_addons_changelog_matches_shipped_version(addon_dir: str) -> None:
     """The real repo must always pass: the latest CHANGELOG entry of each

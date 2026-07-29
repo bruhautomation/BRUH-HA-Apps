@@ -18,7 +18,7 @@ import re
 import unittest
 
 BASE_DIR = os.path.join(os.path.dirname(__file__), "..")
-ADDON_DIR = os.path.join(BASE_DIR, "bruh-claude-terminal")
+ADDON_DIR = os.path.join(BASE_DIR, "brain")
 SCRIPTS_DIR = os.path.join(ADDON_DIR, "scripts")
 INTEGRATIONS_DIR = os.path.join(ADDON_DIR, "integrations")
 
@@ -143,16 +143,6 @@ class TestRunSh(unittest.TestCase):
         """run.sh should export HA_TOKEN from SUPERVISOR_TOKEN."""
         self.assertIn('HA_TOKEN="${SUPERVISOR_TOKEN}"', self.content)
 
-    def test_uses_git_c_not_cd(self):
-        """run.sh should use 'git -C' instead of 'cd' + 'git'."""
-        # Should use git -C /config for all git operations
-        self.assertIn("git -C /config", self.content)
-        # The only cd should be in init for legacy or not present at all in git sections
-        # Count cd and git -C usage in the backup section
-        backup_section = self.content[self.content.index("setup_auto_backup"):]
-        backup_section = backup_section[:backup_section.index("# ====", 10)]
-        self.assertNotIn("cd /config", backup_section)
-
     def test_approves_project_mcp_servers_for_headless(self):
         """run.sh must pre-approve the project .mcp.json HA server so it
         loads in non-interactive `-p` runs (Automation / classic Assist).
@@ -184,14 +174,6 @@ class TestRunSh(unittest.TestCase):
         """The .gitignore template should exclude .mcp.json."""
         self.assertIn(".mcp.json", self.content)
 
-    def test_gitignore_includes_secrets(self):
-        """The .gitignore template should exclude secrets.yaml."""
-        self.assertIn("secrets.yaml", self.content)
-
-    def test_gitignore_includes_storage(self):
-        """The .gitignore template should exclude .storage/."""
-        self.assertIn(".storage/", self.content)
-
     def test_persistent_packages_uses_jq(self):
         """Persistent package parsing should use jq for JSON arrays."""
         pkg_section = self.content[self.content.index("install_persistent_packages"):]
@@ -205,8 +187,7 @@ class TestRunSh(unittest.TestCase):
             "install_tools",
             "install_cli_tools",
             "install_persistent_packages",
-            "setup_auto_backup",
-            "setup_context_generation",
+                        "setup_context_generation",
             "setup_mcp_server",
             "setup_assist_integration",
             "setup_automation_integration",
@@ -274,34 +255,6 @@ class TestHaLog(unittest.TestCase):
         """Follow mode should track line count, not byte count."""
         self.assertIn("last_line_count", self.content)
         self.assertNotIn("last_size", self.content)
-
-
-class TestHaBackup(unittest.TestCase):
-    """Test ha-backup.sh."""
-
-    @classmethod
-    def setUpClass(cls):
-        cls.content = read_file(os.path.join(SCRIPTS_DIR, "ha-backup.sh"))
-
-    def test_supports_all_commands(self):
-        """ha-backup should support backup, history, diff, restore."""
-        self.assertIn("history", self.content)
-        self.assertIn("diff", self.content)
-        self.assertIn("restore", self.content)
-
-    def test_uses_git_c(self):
-        """ha-backup should use 'git -C' instead of 'cd'."""
-        self.assertIn('git -C "$CONFIG_DIR"', self.content)
-        # Should not cd into config dir
-        self.assertNotIn('cd "$CONFIG_DIR"', self.content)
-
-    def test_gitignore_includes_mcp_json(self):
-        """ha-backup .gitignore should exclude .mcp.json."""
-        self.assertIn(".mcp.json", self.content)
-
-    def test_has_help(self):
-        """ha-backup should have a help command."""
-        self.assertIn("show_help", self.content)
 
 
 class TestIntegrationListeners(unittest.TestCase):

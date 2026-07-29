@@ -17,7 +17,7 @@ import json
 import unittest
 
 BASE_DIR = os.path.join(os.path.dirname(__file__), "..")
-ADDON_DIR = os.path.join(BASE_DIR, "bruh-claude-terminal")
+ADDON_DIR = os.path.join(BASE_DIR, "brain")
 
 
 class TestConfigYaml(unittest.TestCase):
@@ -56,7 +56,7 @@ class TestConfigYaml(unittest.TestCase):
     def test_ingress_configuration(self):
         """Ingress must be properly configured."""
         self.assertTrue(self.config.get("ingress"))
-        self.assertEqual(self.config.get("ingress_port"), 7681)
+        self.assertEqual(self.config.get("ingress_port"), 8099)
 
     def test_api_access(self):
         """API access flags should be set."""
@@ -113,14 +113,14 @@ class TestConfigYaml(unittest.TestCase):
         options = self.config.get("options", {})
 
         bool_options = [
-            "auto_launch_claude", "auto_backup", "auto_generate_context",
+            "auto_launch_claude", "enable_terminal", "auto_generate_context",
             "enable_ha_mcp_server", "enable_assist_integration",
             "enable_automation_integration", "enable_mobile_ui"
         ]
         for opt in bool_options:
             self.assertIsInstance(options.get(opt), bool, f"{opt} should be bool")
 
-        self.assertIsInstance(options.get("backup_interval_minutes"), int)
+        self.assertIsInstance(options.get("edit_journal_days"), int)
         self.assertIsInstance(options.get("persistent_apk_packages"), list)
         self.assertIsInstance(options.get("persistent_pip_packages"), list)
 
@@ -285,11 +285,10 @@ class TestFileExistence(unittest.TestCase):
     def test_script_files_exist(self):
         """All script files should exist."""
         expected_scripts = [
-            "claude-auth-helper.sh",
-            "claude-session-picker.sh",
+            "brain-auth-helper.sh",
+            "brain-menu.sh",
             "ha-api-examples.sh",
-            "ha-backup.sh",
-            "ha-backup-watcher.sh",
+            "brain-undo.sh",
             "ha-context-gen.sh",
             "ha-log.sh",
             "ha-reload.sh",

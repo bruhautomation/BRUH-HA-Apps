@@ -100,10 +100,11 @@ class TestNoStaleReferences(unittest.TestCase):
             except (UnicodeDecodeError, OSError):
                 continue
 
-    def test_no_bruh_claude_identifiers_remain(self):
+    def test_no_legacy_identifiers_remain(self):
+        legacy = "bruh" + "_claude"  # split so this test never matches itself
         offenders = [str(p.relative_to(BASE_DIR))
-                     for p, t in self._all_text_files() if "bruh_claude" in t]
-        self.assertEqual(offenders, [], f"stale bruh_claude refs: {offenders}")
+                     for p, t in self._all_text_files() if legacy in t]
+        self.assertEqual(offenders, [], f"stale {legacy} refs: {offenders}")
 
     def test_no_bruh_env_prefix_remains(self):
         offenders = [str(p.relative_to(BASE_DIR))
@@ -483,7 +484,7 @@ class TestMemoryChangeLog(unittest.TestCase):
 class TestTerminalProxy(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        # Load by path under a unique name. brain/panel and bruh-insights/panel
+        # Load by path under a unique name. brain/panel and brain/panel
         # both contain a `server.py`, so putting either on sys.path decides
         # which one every OTHER test file gets — import order should not
         # silently repoint another module's tests at a different add-on.
