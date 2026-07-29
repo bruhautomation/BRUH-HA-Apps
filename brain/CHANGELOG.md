@@ -2,6 +2,31 @@
 
 All notable changes to **BRain**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.4.0
+
+### Fixed: confirming a guess settled the wrong one
+
+Clicking ✓ on the second or third pending guess settled the **first** one. Hypotheses used
+the current epoch second as their id, and a study session proposes several claims inside
+the same second — so they collided, and settling matched whichever came first in the file.
+Ids are now unique per entry. (`knowledge_store` had guarded against exactly this; the
+hypothesis queue didn't inherit it.)
+
+### A single, compact bar
+
+The chrome was two stacked bars plus a row of labelled buttons — roughly 110px of fixed
+furniture above every view, which on the **terminal**, where each pixel is a line of
+output, cost real content. It is now **one 48px bar** carrying the mark, the tabs, status
+and actions.
+
+- **Monochrome line icons**, inline SVG inheriting `currentColor`, so they follow tab state
+  rather than competing with it. Azure is the only colour in the chrome and it marks only
+  what is active.
+- Toolbar actions are **icon-only** — the labels were noise beside four tabs.
+- On narrow screens the tab labels drop and the icons stay, so all four still fit.
+- **The Memory tab shows a count** when guesses are waiting. A guess nobody sees is a guess
+  that expires unanswered.
+
 ## 1.3.0
 
 ### Guesses instead of questions

@@ -1884,6 +1884,22 @@ function selectDocs(id) {
   renderDocsNav();
 }
 
+// Surface pending guesses on the tab itself. The whole point of two-tap
+// confirmation is that answering is cheap — but only if you know there is
+// something to answer without opening the tab to check.
+async function refreshMemoryBadge() {
+  const badge = $("#memBadge");
+  if (!badge) return;
+  try {
+    const data = await api("api/knowledge");
+    const n = (data.hypotheses || []).length;
+    badge.textContent = n ? String(n) : "";
+    badge.classList.toggle("hidden", !n);
+  } catch (e) {
+    badge.classList.add("hidden");
+  }
+}
+
 function renderDocs() {
   if (!docsState.section) selectDocs((window.BRAIN_DOCS || [{}])[0].id);
   else renderDocsNav();
@@ -1916,8 +1932,9 @@ function switchView(name) {
   document.querySelectorAll(".view").forEach((v) =>
     v.classList.toggle("active", v.id === "view" + name[0].toUpperCase() + name.slice(1)));
 
-  // The Insights toolbar has no meaning on the other tabs.
-  const insightsOnly = ["#newInsight", "#refreshAll", "#settingsBtn"];
+  // Insights actions have no meaning on the other tabs. Settings stays —
+  // it is add-on-wide, not per-view.
+  const insightsOnly = ["#newInsight", "#refreshAll"];
   insightsOnly.forEach((sel) => {
     const el = $(sel);
     if (el) el.style.display = name === "insights" ? "" : "none";
@@ -1929,6 +1946,7 @@ function switchView(name) {
     if (frame.getAttribute("src") === "about:blank") frame.src = "terminal/";
   }
   if (name === "memory") renderKnowledge();
+  if (name !== "memory") refreshMemoryBadge();
   if (name === "docs") renderDocs();
 }
 
@@ -2096,6 +2114,7 @@ document.addEventListener("visibilitychange", () => {
   }
   render();
   fastPoll();
+  refreshMemoryBadge();
   // resume a guided sign-in if one is mid-flight (page reload)
   try {
     const st = await api("api/auth/setup/status");

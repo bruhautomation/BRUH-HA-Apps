@@ -78,6 +78,20 @@ def _write(entries: list[dict]) -> None:
     tmp.replace(HYPOTHESES_FILE)
 
 
+def _unique_ts(used: set[int]) -> int:
+    """A timestamp no open entry already holds.
+
+    ts doubles as the id the panel settles by, and a study session or an
+    insight run can propose several claims inside the same second. Without
+    this they collide, and confirming the second one settles the first —
+    i.e. the UI appears to act on the wrong row.
+    """
+    ts = int(time.time())
+    while ts in used:
+        ts += 1
+    return ts
+
+
 def _expire(entries: list[dict], now: float | None = None) -> bool:
     """Retire anything nobody answered in time. Returns True if changed."""
     if TTL_DAYS <= 0:
@@ -136,8 +150,8 @@ def propose(text: str, topic: str = "") -> dict | None:
         return None
     entries = _read()
     _expire(entries)
-    entry = {"ts": int(time.time()), "text": text,
-             "topic": str(topic or "")[:64], "status": "open"}
+    entry = {"ts": _unique_ts({int(e.get("ts") or 0) for e in entries}),
+             "text": text, "topic": str(topic or "")[:64], "status": "open"}
     entries.append(entry)
     _write(entries)
     return entry

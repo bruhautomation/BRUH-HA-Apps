@@ -52,19 +52,6 @@ html, body {
 }
 
 /* ---------------------------------------------------------------- header */
-.topbar {
-  position: sticky;
-  top: 0;
-  z-index: 30;
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 12px 20px;
-  background: color-mix(in srgb, var(--plane) 82%, transparent);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border-bottom: 1px solid var(--hairline);
-}
 
 .brand {
   display: flex;
@@ -916,69 +903,6 @@ body.modal-open {
 .removedrow .badge { flex: none; }
 
 
-/* ---------------------------------------------------------------- views
-   Insights / Terminal / Memory. One ingress panel, three faces — the
-   terminal is an iframe onto the ttyd this same add-on proxies at
-   /terminal/, so it is a tab rather than a second sidebar entry. */
-
-.viewtabs {
-  position: sticky;
-  top: 57px;
-  z-index: 29;
-  display: flex;
-  gap: 4px;
-  padding: 0 20px;
-  background: color-mix(in srgb, var(--plane) 82%, transparent);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border-bottom: 1px solid var(--hairline);
-}
-
-.viewtab {
-  appearance: none;
-  border: 0;
-  background: none;
-  color: var(--ink-3);
-  font: inherit;
-  font-weight: 600;
-  font-size: 0.94rem;
-  padding: 10px 14px;
-  cursor: pointer;
-  border-bottom: 2px solid transparent;
-  transition: color 0.15s ease, border-color 0.15s ease;
-}
-
-.viewtab:hover { color: var(--ink-2); }
-
-.viewtab.active {
-  color: var(--ink);
-  border-bottom-color: var(--accent);
-}
-
-.view { display: none; }
-.view.active { display: block; }
-
-/* The terminal wants the whole viewport below the two sticky bars. */
-#viewTerminal.active {
-  display: block;
-  height: calc(100vh - 106px);
-  margin: -18px -20px -20px;
-}
-
-#termFrame {
-  width: 100%;
-  height: 100%;
-  border: 0;
-  display: block;
-  background: #1a1613;
-}
-
-@media (max-width: 720px) {
-  .viewtabs { top: 0; position: static; padding: 0 12px; }
-  .viewtab { padding: 9px 10px; font-size: 0.88rem; }
-  #viewTerminal.active { height: calc(100vh - 130px); margin: -12px -12px -14px; }
-}
-
 /* ----------------------------------------------------------------- docs
    A two-column guide: sticky section list plus the rendered page. The
    nav, the search index, and the body all come from the same source in
@@ -1131,4 +1055,148 @@ body.modal-open {
   .docs { grid-template-columns: 1fr; gap: 16px; }
   .docsnav { position: static; }
   .docsbody { max-width: none; }
+}
+
+
+/* --------------------------------------------------------------- chrome
+   One 48px bar carries the mark, the tabs, status and actions. It used to
+   be two stacked bars plus a row of labelled buttons, which on the
+   terminal — where every pixel is a line of output — cost real content.
+
+   Icons are inline strokes inheriting currentColor, so they follow tab
+   state instead of competing with it. Azure is the only colour in the
+   chrome and it only ever marks what is active. */
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 48px;
+  padding: 0 12px;
+  background: color-mix(in srgb, var(--plane) 88%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.mark { display: flex; color: var(--accent); flex: none; }
+.marksvg { width: 22px; height: 22px; display: block; }
+
+.topbar .txt {
+  font-weight: 700;
+  font-size: 0.95rem;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  flex: none;
+}
+
+.topbar .txt .grad { color: var(--accent-2); }
+
+.ico {
+  width: 17px;
+  height: 17px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.viewtabs { display: flex; gap: 2px; margin-left: 6px; min-width: 0; }
+
+.viewtab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  appearance: none;
+  border: 0;
+  background: none;
+  color: var(--ink-3);
+  font: inherit;
+  font-weight: 500;
+  font-size: 0.875rem;
+  height: 32px;
+  padding: 0 11px;
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color .14s ease, background .14s ease;
+}
+
+.viewtab:hover {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+}
+
+.viewtab.active {
+  color: var(--accent-2);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.viewtab .badge {
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+
+/* Icon-only actions — labels were noise beside four tabs. */
+.btn.icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 8px;
+  color: var(--ink-3);
+  background: none;
+  border: 0;
+}
+
+.btn.icon:hover {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+}
+
+.topbar .chip { height: 26px; font-size: 0.8rem; padding: 0 9px; }
+
+.view { display: none; }
+.view.active { display: block; }
+
+/* The terminal gets everything below the single bar. */
+#viewTerminal.active {
+  display: block;
+  height: calc(100vh - 48px);
+  margin: -18px -20px -20px;
+}
+
+#termFrame {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+  background: #1a1613;
+}
+
+.docsnav { top: 60px; }
+
+@media (max-width: 780px) {
+  /* Labels go, icons stay — four tabs still fit on a phone. */
+  .viewtab span:not(.badge) { display: none; }
+  .viewtab { padding: 0 10px; }
+  .topbar { padding: 0 8px; gap: 4px; }
+  #viewTerminal.active { height: calc(100vh - 48px); margin: -12px -12px -14px; }
+  .docsnav { position: static; }
 }

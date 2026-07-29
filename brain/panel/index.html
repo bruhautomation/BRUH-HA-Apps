@@ -10,55 +10,59 @@
 <body>
 
 <header class="topbar">
-  <div class="brand">
-    <span class="tile" aria-hidden="true">
-      <svg viewBox="0 0 512 512">
-        <defs>
-          <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0" stop-color="#5AC4F2"/>
-            <stop offset="1" stop-color="#1E9FE0"/>
-          </linearGradient>
-        </defs>
-        <rect width="512" height="512" fill="url(#bg)"/>
-        <path d="M360 0 L512 0 L512 151 Z" fill="#0A1622"/>
-        <line x1="168" y1="196" x2="262" y2="154" stroke="#0A1622" stroke-width="17" stroke-linecap="round"/>
-        <line x1="262" y1="154" x2="344" y2="226" stroke="#0A1622" stroke-width="17" stroke-linecap="round"/>
-        <line x1="168" y1="196" x2="244" y2="258" stroke="#0A1622" stroke-width="17" stroke-linecap="round"/>
-        <line x1="262" y1="154" x2="244" y2="258" stroke="#0A1622" stroke-width="17" stroke-linecap="round"/>
-        <line x1="344" y1="226" x2="244" y2="258" stroke="#0A1622" stroke-width="17" stroke-linecap="round"/>
-        <line x1="168" y1="196" x2="152" y2="300" stroke="#0A1622" stroke-width="17" stroke-linecap="round"/>
-        <line x1="152" y1="300" x2="244" y2="258" stroke="#0A1622" stroke-width="17" stroke-linecap="round"/>
-        <line x1="244" y1="258" x2="346" y2="324" stroke="#0A1622" stroke-width="17" stroke-linecap="round"/>
-        <line x1="344" y1="226" x2="346" y2="324" stroke="#0A1622" stroke-width="17" stroke-linecap="round"/>
-        <line x1="152" y1="300" x2="236" y2="360" stroke="#0A1622" stroke-width="17" stroke-linecap="round"/>
-        <line x1="244" y1="258" x2="236" y2="360" stroke="#0A1622" stroke-width="17" stroke-linecap="round"/>
-        <line x1="236" y1="360" x2="346" y2="324" stroke="#0A1622" stroke-width="17" stroke-linecap="round"/>
-        <circle cx="168" cy="196" r="25" fill="#0A1622"/>
-        <circle cx="262" cy="154" r="21" fill="#0A1622"/>
-        <circle cx="344" cy="226" r="25" fill="#0A1622"/>
-        <circle cx="244" cy="258" r="33" fill="#0A1622"/>
-        <circle cx="152" cy="300" r="21" fill="#0A1622"/>
-        <circle cx="346" cy="324" r="23" fill="#0A1622"/>
-        <circle cx="236" cy="360" r="25" fill="#0A1622"/>
-      </svg>
-    </span>
-    <span class="txt">BR<span class="grad">ain</span></span>
-  </div>
+  <span class="mark" aria-hidden="true" title="BRain">
+    <svg viewBox="0 0 512 512" class="marksvg">
+      <g stroke="currentColor" stroke-width="30" stroke-linecap="round" fill="none">
+        <path d="M168 196 L262 154 L344 226 M168 196 L244 258 L262 154 M344 226 L244 258
+                 M168 196 L152 300 L244 258 M244 258 L346 324 L344 226
+                 M152 300 L236 360 L244 258 M236 360 L346 324"/>
+      </g>
+      <g fill="currentColor">
+        <circle cx="168" cy="196" r="30"/><circle cx="262" cy="154" r="26"/>
+        <circle cx="344" cy="226" r="30"/><circle cx="244" cy="258" r="38"/>
+        <circle cx="152" cy="300" r="26"/><circle cx="346" cy="324" r="28"/>
+        <circle cx="236" cy="360" r="30"/>
+      </g>
+    </svg>
+  </span>
+  <span class="txt">BR<span class="grad">ain</span></span>
+
+  <nav class="viewtabs" role="tablist">
+    <button class="viewtab active" data-view="insights" role="tab" data-tip="Insights">
+      <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M4 19V11M9.5 19V5M15 19v-6M20.5 19v-9"/></svg>
+      <span>Insights</span>
+    </button>
+    <button class="viewtab" data-view="terminal" role="tab" data-tip="Terminal">
+      <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="m5 8 4 4-4 4M13 16h6"/></svg>
+      <span>Terminal</span>
+    </button>
+    <button class="viewtab" data-view="memory" role="tab" data-tip="Memory">
+      <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 5.5a3 3 0 0 0-5.7-1.3A2.8 2.8 0 0 0 4 9.4a3 3 0 0 0 .4 4.8A2.9 2.9 0 0 0 7 19a3 3 0 0 0 5-1.2zM12 5.5a3 3 0 0 1 5.7-1.3A2.8 2.8 0 0 1 20 9.4a3 3 0 0 1-.4 4.8A2.9 2.9 0 0 1 17 19a3 3 0 0 1-5-1.2z"/></svg>
+      <span>Memory</span>
+      <span id="memBadge" class="badge hidden"></span>
+    </button>
+    <button class="viewtab" data-view="docs" role="tab" data-tip="Docs">
+      <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H11v16H5.5A1.5 1.5 0 0 1 4 18.5zM20 5.5A1.5 1.5 0 0 0 18.5 4H13v16h5.5a1.5 1.5 0 0 0 1.5-1.5z"/></svg>
+      <span>Docs</span>
+    </button>
+  </nav>
+
   <div class="spacer"></div>
+
   <span id="authChip" class="chip"><span class="dot"></span><span id="authChipText">Checking…</span></span>
   <button id="usageChip" class="chip clickable hidden"><span class="dot"></span><span id="usageChipText"></span></button>
   <button id="pausedChip" class="chip clickable warn hidden"><span class="dot"></span><span id="pausedChipText"></span></button>
-  <button id="settingsBtn" class="btn hidden" data-tip="Settings — auto-refresh, plan &amp; usage budget">⚙&nbsp; Settings</button>
-  <button id="newInsight" class="btn hidden">＋&nbsp; New insight</button>
-  <button id="refreshAll" class="btn primary hidden">↻&nbsp; Refresh all</button>
-</header>
 
-<nav class="viewtabs" role="tablist">
-  <button class="viewtab active" data-view="insights" role="tab">📊&nbsp; Insights</button>
-  <button class="viewtab" data-view="terminal" role="tab">▸_&nbsp; Terminal</button>
-  <button class="viewtab" data-view="memory" role="tab">🧠&nbsp; Memory</button>
-  <button class="viewtab" data-view="docs" role="tab">📖&nbsp; Docs</button>
-</nav>
+  <button id="newInsight" class="btn icon hidden" data-tip="New insight">
+    <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+  </button>
+  <button id="refreshAll" class="btn icon hidden" data-tip="Refresh all">
+    <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M20 11a8 8 0 1 0-.6 4M20 5v6h-6"/></svg>
+  </button>
+  <button id="settingsBtn" class="btn icon hidden" data-tip="Settings">
+    <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 8.9 19a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0-1.1-2.7H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 6.9a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 2.7 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/></svg>
+  </button>
+</header>
 
 <main class="wrap">
 

@@ -165,6 +165,45 @@ class TestPanelBranding(unittest.TestCase):
         self.assertEqual(self.html.count('id="kAddForm"'), 1)
 
 
+class TestHypothesisIdentity(unittest.TestCase):
+    """ts doubles as the id the panel settles by."""
+
+    def setUp(self):
+        import tempfile
+        sys.path.insert(0, str(PANEL))
+        import hypotheses
+        self.mod = hypotheses
+        self.tmp = tempfile.TemporaryDirectory()
+        self._old = hypotheses.HYPOTHESES_FILE
+        hypotheses.HYPOTHESES_FILE = Path(self.tmp.name) / "h.jsonl"
+
+    def tearDown(self):
+        self.mod.HYPOTHESES_FILE = self._old
+        self.tmp.cleanup()
+
+    def test_claims_proposed_in_the_same_second_get_distinct_ids(self):
+        """A study session proposes several at once. Colliding ids made the
+        panel settle the FIRST match — so clicking ✓ on the second row
+        confirmed the first one instead."""
+        made = [self.mod.propose(f"claim {i}") for i in range(3)]
+        self.assertEqual(len({m["ts"] for m in made}), 3)
+
+    def test_settling_acts_on_the_row_you_picked(self):
+        a, b, c = (self.mod.propose(f"claim {i}") for i in range(3))
+        self.mod.confirm(b["ts"])
+        by_text = {e["text"]: e["status"] for e in self.mod.list_all()}
+        self.assertEqual(by_text["claim 1"], "confirmed")
+        self.assertEqual(by_text["claim 0"], "open")
+        self.assertEqual(by_text["claim 2"], "open")
+
+    def test_rejecting_acts_on_the_row_you_picked(self):
+        a, b, c = (self.mod.propose(f"claim {i}") for i in range(3))
+        self.mod.reject(c["ts"])
+        by_text = {e["text"]: e["status"] for e in self.mod.list_all()}
+        self.assertEqual(by_text["claim 2"], "rejected")
+        self.assertEqual(by_text["claim 0"], "open")
+
+
 class TestDocsTab(unittest.TestCase):
     """The guide's nav, search index and body all come from one source, so
     the thing worth testing is that the source is well-formed and that the

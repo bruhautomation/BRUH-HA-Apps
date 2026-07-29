@@ -59,9 +59,9 @@ about your home and controls it, using the same memory.
   {
     id: "tabs",
     icon: "🗂",
-    title: "The three tabs",
+    title: "The tabs",
     body: `
-# The three tabs
+# The tabs
 
 ## Insights
 
@@ -90,6 +90,11 @@ sidebar entry and no second login.
 ## Memory
 
 What BRain knows about your home, and the queue behind it. See **Memory** in this guide.
+A number on the tab means BRain has a guess waiting on a yes/no.
+
+## Docs
+
+This guide.
 `,
   },
 
