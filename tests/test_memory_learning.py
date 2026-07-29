@@ -721,4 +721,9 @@ def test_context_gen_preserves_user_notes_and_memory():
     assert "bruh:user-notes:end" in content
     assert "Learned Home Knowledge" in content
     assert "brain memory" in content
-    assert "ha-share-login" in content
+    assert "ha login" in content
+    # The generated CLAUDE.md is what Claude reads to learn its own tooling,
+    # so a retired command documented here is one it will actually try to run.
+    for retired in ("ha-share-login", "ha-reload", "ha-backup", "ha-entity",
+                    "ha-yaml-check", "ha-selftest"):
+        assert retired not in content, f"CLAUDE.md still teaches {retired}"

@@ -295,21 +295,33 @@ The Home Assistant configuration lives in \`/config/\`. Key files:
 
 ## CLI Tools
 
-You have access to these CLI tools:
-- \`ha-reload <target>\` - Reload HA config (automations, scripts, scenes, groups, core, all)
-- \`ha-log [core|supervisor|addons]\` - View HA logs in real-time
-- \`ha-backup [commit-message]\` - Manually trigger a config backup
-- \`ha-context-gen\` - Regenerate this context file
-- \`ha-yaml-check\` - Validate YAML configuration
-- \`ha-addon <action> <slug>\` - Manage add-ons (list, info, restart, stop, start, logs, options)
-- \`ha-entity <action> <id>\` - Get/set entity states (get, set, list, search)
-- \`ha-service call <domain>.<service>\` - Call HA services
-- \`ha-notify "msg"\` - Send notifications (persistent or mobile push)
-- \`ha-share <action>\` - Cross-addon file sync via /share (push, pull, ls)
+Two dispatchers, split by what they act on. Run \`brain help\` or \`ha help\`
+for the full list.
+
+**\`ha\` — Home Assistant operations**
+- \`ha reload <target>\` - Reload HA config (automations, scripts, scenes, groups, core, all)
+- \`ha log [core|supervisor|addons]\` - View HA logs in real-time
+- \`ha check [path]\` - Validate YAML configuration
+- \`ha context\` - Regenerate this context file
+- \`ha entity <action> <id>\` - Get/set entity states (get, set, list, search)
+- \`ha service call <domain>.<service>\` - Call HA services
+- \`ha addon <action> <slug>\` - Manage add-ons (list, info, restart, stop, start, logs, options)
+- \`ha notify "msg"\` - Send notifications (persistent or mobile push)
+- \`ha share <action>\` - Cross-addon file sync via /share (push, pull, ls)
+- \`ha login\` - Share this Claude login with other BRUH add-ons (--status, --revoke)
+
+**\`brain\` — BRain's own faculties**
 - \`brain memory <action>\` - Home memory (add, list, edit, forget, log, undo, hypotheses, confirm, reject)
-- \`ha-share-login\` - Share your Claude login with other BRUH add-ons (--status, --revoke)
-- \`ha-selftest\` - End-to-end diagnostic (MCP, auth, listeners, CLI smoke tests)
+- \`brain learn [topic]\` - Study a topic and record what it finds
+- \`brain ask "<question>"\` - One-shot question about the home
+- \`brain undo [n]\` - Review and revert your edits to /config
+- \`brain doctor\` - End-to-end diagnostic (MCP, auth, listeners, CLI smoke tests)
+
+**Other**
 - \`persist-install apk|pip <packages>\` - Install persistent packages
+
+There is no backup command. Home Assistant's own backups cover the config;
+\`brain undo\` covers the files you edit.
 
 ## MCP Server
 
@@ -402,8 +414,8 @@ safe-mode restart use core \`homeassistant.restart\` with \`safe_mode: true\`.
 
 ## Important Notes
 
-- **Always run \`ha-reload automations\` after editing automations.yaml**
-- **Always run \`ha-reload scripts\` after editing scripts.yaml**
+- **Always run \`ha reload automations\` after editing automations.yaml**
+- **Always run \`ha reload scripts\` after editing scripts.yaml**
 - **Never modify secrets.yaml directly**
 - **YAML edits are auto-backed up via git** (if auto_backup is enabled)
 - **Test templates** using the \`render_template\` MCP tool before using them in automations

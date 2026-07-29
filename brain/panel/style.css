@@ -978,3 +978,157 @@ body.modal-open {
   .viewtab { padding: 9px 10px; font-size: 0.88rem; }
   #viewTerminal.active { height: calc(100vh - 130px); margin: -12px -12px -14px; }
 }
+
+/* ----------------------------------------------------------------- docs
+   A two-column guide: sticky section list plus the rendered page. The
+   nav, the search index, and the body all come from the same source in
+   docs.js, so navigation can never drift out of sync with content. */
+
+.docs {
+  display: grid;
+  grid-template-columns: 264px minmax(0, 1fr);
+  gap: 28px;
+  align-items: start;
+}
+
+.docsnav { position: sticky; top: 106px; }
+
+.docssearch { margin-bottom: 10px; }
+
+.docssearch input {
+  width: 100%;
+  padding: 9px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--hairline);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.9rem;
+}
+
+.docssearch input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.docslink {
+  display: block;
+  width: 100%;
+  text-align: left;
+  appearance: none;
+  border: 0;
+  background: none;
+  color: var(--ink-2);
+  font: inherit;
+  padding: 9px 12px;
+  border-radius: 10px;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+}
+
+.docslink:hover { background: var(--surface); color: var(--ink); }
+
+.docslink.active {
+  background: var(--surface);
+  color: var(--ink);
+  border-left-color: var(--accent);
+}
+
+.docslinktitle { display: block; font-weight: 600; font-size: 0.92rem; }
+
+.docssnippet,
+.docscount {
+  display: block;
+  font-size: 0.78rem;
+  color: var(--ink-3);
+  margin-top: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.docsempty { color: var(--ink-3); font-size: 0.9rem; padding: 10px 12px; }
+
+.docsbody {
+  max-width: 62ch;
+  line-height: 1.65;
+  color: var(--ink-2);
+  padding-bottom: 60px;
+}
+
+.docsbody h1 {
+  font-size: 1.6rem;
+  color: var(--ink);
+  margin: 0 0 18px;
+  letter-spacing: -0.01em;
+}
+
+.docsbody h2 {
+  font-size: 1.16rem;
+  color: var(--ink);
+  margin: 34px 0 10px;
+  padding-top: 18px;
+  border-top: 1px solid var(--hairline);
+}
+
+.docsbody h3 { font-size: 1rem; color: var(--ink); margin: 24px 0 8px; }
+.docsbody p { margin: 0 0 14px; }
+.docsbody ul, .docsbody ol { margin: 0 0 14px; padding-left: 22px; }
+.docsbody li { margin-bottom: 6px; }
+.docsbody a { color: var(--accent-2); }
+
+.docsbody code {
+  background: var(--surface-2);
+  padding: 0.12em 0.4em;
+  border-radius: 5px;
+  font-size: 0.88em;
+}
+
+.docsbody blockquote {
+  margin: 0 0 16px;
+  padding: 12px 16px;
+  border-left: 3px solid var(--accent);
+  background: var(--surface);
+  border-radius: 0 10px 10px 0;
+  color: var(--ink);
+}
+
+.doccode {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  padding: 14px 16px;
+  overflow-x: auto;
+  margin: 0 0 16px;
+  font-size: 0.86rem;
+  line-height: 1.55;
+}
+
+.doccode code { background: none; padding: 0; font-size: inherit; }
+
+/* Wide content scrolls inside its own box — the page never scrolls sideways. */
+.doctablewrap { overflow-x: auto; margin: 0 0 16px; }
+
+.doctable { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+
+.doctable th, .doctable td {
+  text-align: left;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--hairline);
+  vertical-align: top;
+}
+
+.doctable th { color: var(--ink); font-weight: 600; white-space: nowrap; }
+
+.docsbody mark {
+  background: color-mix(in srgb, var(--accent) 40%, transparent);
+  color: var(--ink);
+  border-radius: 3px;
+  padding: 0 2px;
+}
+
+@media (max-width: 860px) {
+  .docs { grid-template-columns: 1fr; gap: 16px; }
+  .docsnav { position: static; }
+  .docsbody { max-width: none; }
+}

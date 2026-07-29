@@ -128,7 +128,6 @@ function renderAuth() {
   $("#dash").classList.toggle("hidden", !s.authenticated);
   $("#refreshAll").classList.toggle("hidden", !s.authenticated);
   $("#newInsight").classList.toggle("hidden", !s.authenticated);
-  $("#knowledgeBtn").classList.toggle("hidden", !s.authenticated);
   $("#settingsBtn").classList.toggle("hidden", !s.authenticated);
   renderUsageChip();
   renderPausedChip();
@@ -1687,6 +1686,222 @@ $("#kMemSave").addEventListener("click", async () => {
   } catch (e) { toast(e.message); }
 });
 
+
+// ----------------------------------------------------------------- docs
+// A small markdown subset is enough for the guide, and keeps the page a
+// single self-contained file — no bundler, no CDN (the panel runs behind
+// ingress with no outbound access anyway).
+//
+// The content is authored in docs.js and never user-supplied, but the
+// renderer escapes first regardless: a docs page is exactly where a lazy
+// innerHTML becomes an injection vector later.
+
+const docsState = { section: null, query: "" };
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, (c) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+// Inline: `code`, **bold**, [text](url). Applied AFTER escaping.
+function inlineMd(s) {
+  return esc(s)
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
+             '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+}
+
+function renderMarkdown(src) {
+  const lines = src.replace(/\r/g, "").split("\n");
+  const out = [];
+  let i = 0;
+
+  const closeList = (stack) => { while (stack.length) out.push(`</${stack.pop()}>`); };
+  const listStack = [];
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // fenced code
+    if (/^```/.test(line)) {
+      closeList(listStack);
+      const lang = line.slice(3).trim();
+      const buf = [];
+      i++;
+      while (i < lines.length && !/^```/.test(lines[i])) buf.push(lines[i++]);
+      i++;
+      out.push(`<pre class="doccode"${lang ? ` data-lang="${esc(lang)}"` : ""}>`
+               + `<code>${esc(buf.join("\n"))}</code></pre>`);
+      continue;
+    }
+
+    // table: a header row followed by a |---| separator
+    if (/^\s*\|/.test(line) && i + 1 < lines.length && /^\s*\|[\s:|-]+\|\s*$/.test(lines[i + 1])) {
+      closeList(listStack);
+      const cells = (r) => r.trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim());
+      const head = cells(line);
+      i += 2;
+      const rows = [];
+      while (i < lines.length && /^\s*\|/.test(lines[i])) rows.push(cells(lines[i++]));
+      out.push('<div class="doctablewrap"><table class="doctable"><thead><tr>'
+               + head.map((c) => `<th>${inlineMd(c)}</th>`).join("")
+               + "</tr></thead><tbody>"
+               + rows.map((r) => "<tr>" + r.map((c) => `<td>${inlineMd(c)}</td>`).join("") + "</tr>").join("")
+               + "</tbody></table></div>");
+      continue;
+    }
+
+    // blockquote
+    if (/^>\s?/.test(line)) {
+      closeList(listStack);
+      const buf = [];
+      while (i < lines.length && /^>\s?/.test(lines[i])) buf.push(lines[i++].replace(/^>\s?/, ""));
+      out.push(`<blockquote>${inlineMd(buf.join(" "))}</blockquote>`);
+      continue;
+    }
+
+    // headings
+    const h = line.match(/^(#{1,4})\s+(.*)$/);
+    if (h) {
+      closeList(listStack);
+      const level = h[1].length;
+      out.push(`<h${level}>${inlineMd(h[2])}</h${level}>`);
+      i++;
+      continue;
+    }
+
+    // lists (one level of nesting is plenty for this guide)
+    const li = line.match(/^(\s*)([-*]|\d+\.)\s+(.*)$/);
+    if (li) {
+      const tag = /\d/.test(li[2]) ? "ol" : "ul";
+      const depth = li[1].length >= 2 ? 2 : 1;
+      while (listStack.length > depth) out.push(`</${listStack.pop()}>`);
+      if (listStack.length < depth) { out.push(`<${tag}>`); listStack.push(tag); }
+      // continuation lines belong to the item above
+      let text = li[3];
+      while (i + 1 < lines.length && /^\s{2,}\S/.test(lines[i + 1])
+             && !/^\s*([-*]|\d+\.)\s/.test(lines[i + 1])) {
+        text += " " + lines[++i].trim();
+      }
+      out.push(`<li>${inlineMd(text)}</li>`);
+      i++;
+      continue;
+    }
+
+    if (!line.trim()) { closeList(listStack); i++; continue; }
+
+    // paragraph (join until a blank line)
+    const buf = [line];
+    while (i + 1 < lines.length && lines[i + 1].trim()
+           && !/^(#{1,4}\s|```|>|\s*([-*]|\d+\.)\s|\s*\|)/.test(lines[i + 1])) {
+      buf.push(lines[++i]);
+    }
+    out.push(`<p>${inlineMd(buf.join(" "))}</p>`);
+    i++;
+  }
+  closeList(listStack);
+  return out.join("\n");
+}
+
+// Search matches section titles and body text, and reports where it hit so
+// a result is worth clicking rather than a bare title.
+function docsSearch(query) {
+  const q = query.trim().toLowerCase();
+  if (!q) return null;
+  const hits = [];
+  (window.BRAIN_DOCS || []).forEach((sec) => {
+    const inTitle = sec.title.toLowerCase().includes(q);
+    const lines = sec.body.split("\n")
+      .filter((l) => l.trim() && !/^(#{1,4}\s|```)/.test(l))
+      .filter((l) => l.toLowerCase().includes(q));
+    if (inTitle || lines.length) {
+      hits.push({
+        sec,
+        count: lines.length,
+        snippet: lines[0] ? lines[0].replace(/^[>\s*-]+/, "").slice(0, 120) : "",
+      });
+    }
+  });
+  return hits;
+}
+
+function renderDocsNav() {
+  const nav = $("#docsNav");
+  const hits = docsSearch(docsState.query);
+  nav.innerHTML = "";
+
+  if (hits) {
+    if (!hits.length) {
+      nav.appendChild(el("p", "docsempty", `No matches for “${docsState.query}”`));
+      return;
+    }
+    hits.forEach(({ sec, count, snippet }) => {
+      const b = el("button", "docslink"
+        + (sec.id === docsState.section ? " active" : ""));
+      b.appendChild(el("span", "docslinktitle", `${sec.icon}  ${sec.title}`));
+      if (snippet) b.appendChild(el("span", "docssnippet", snippet));
+      if (count > 1) b.appendChild(el("span", "docscount", `${count} matches`));
+      b.addEventListener("click", () => selectDocs(sec.id));
+      nav.appendChild(b);
+    });
+    return;
+  }
+
+  (window.BRAIN_DOCS || []).forEach((sec) => {
+    const b = el("button", "docslink"
+      + (sec.id === docsState.section ? " active" : ""));
+    b.appendChild(el("span", "docslinktitle", `${sec.icon}  ${sec.title}`));
+    b.addEventListener("click", () => selectDocs(sec.id));
+    nav.appendChild(b);
+  });
+}
+
+function selectDocs(id) {
+  const sections = window.BRAIN_DOCS || [];
+  const sec = sections.find((s) => s.id === id) || sections[0];
+  if (!sec) return;
+  docsState.section = sec.id;
+  $("#docsBody").innerHTML = renderMarkdown(sec.body);
+  $("#docsBody").scrollTop = 0;
+
+  // Highlight the search term in the rendered body so a hit is findable
+  // on the page, not just in the sidebar.
+  const q = docsState.query.trim();
+  if (q) {
+    const walker = document.createTreeWalker($("#docsBody"), NodeFilter.SHOW_TEXT);
+    const targets = [];
+    while (walker.nextNode()) {
+      if (walker.currentNode.nodeValue.toLowerCase().includes(q.toLowerCase())) {
+        targets.push(walker.currentNode);
+      }
+    }
+    targets.forEach((node) => {
+      const span = document.createElement("span");
+      span.innerHTML = esc(node.nodeValue).replace(
+        new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi"),
+        '<mark>$1</mark>');
+      node.parentNode.replaceChild(span, node);
+    });
+    const first = $("#docsBody").querySelector("mark");
+    if (first) first.scrollIntoView({ block: "center" });
+  }
+  renderDocsNav();
+}
+
+function renderDocs() {
+  if (!docsState.section) selectDocs((window.BRAIN_DOCS || [{}])[0].id);
+  else renderDocsNav();
+}
+
+$("#docsSearch").addEventListener("input", (ev) => {
+  docsState.query = ev.target.value;
+  const hits = docsSearch(docsState.query);
+  // Jump straight to the best match so typing feels like it does something.
+  if (hits && hits.length) selectDocs(hits[0].sec.id);
+  else renderDocsNav();
+});
+
 // ---------------------------------------------------------------- views
 // Insights / Terminal / Memory. The Memory pane reuses the knowledge
 // dialog's markup verbatim — it is relocated out of the modal at startup
@@ -1719,13 +1934,12 @@ function switchView(name) {
     if (frame.getAttribute("src") === "about:blank") frame.src = "terminal/";
   }
   if (name === "memory") renderKnowledge();
+  if (name === "docs") renderDocs();
 }
 
 document.querySelectorAll(".viewtab").forEach((b) =>
   b.addEventListener("click", () => switchView(b.dataset.view)));
 
-// The old top-bar Memory button now just selects the tab.
-$("#knowledgeBtn").addEventListener("click", () => switchView("memory"));
 $("#kAddForm").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const text = $("#kAddInput").value.trim();

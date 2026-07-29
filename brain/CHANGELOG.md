@@ -2,6 +2,44 @@
 
 All notable changes to **BRain**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.2.0
+
+### A Docs tab
+
+- **A built-in guide**, next to Memory: getting started, the three tabs, how memory
+  works, the command line, undo, voice, cost control, and troubleshooting. Searchable,
+  with the matched term highlighted in the page. The nav, the search index, and the body
+  all come from one source, so navigation can't drift out of sync with the content.
+- **Removed the Memory button from the header** — it duplicated the tab.
+
+### Fixed
+
+- **`brain doctor` reported the Assist worker pool as failing when it was healthy.**
+  The probe was pinned to port 8099, which the panel took over when the two add-ons
+  merged; the panel answered — with a 404 — so the check failed against a perfectly
+  working pool. It now reads the port the pool publishes instead of assuming one.
+- **`brain doctor` smoke-tested CLI names that no longer exist** (`ha-entity`,
+  `ha-addon`, `ha-service`, `ha-yaml-check`), producing five warnings for tools that
+  were fine. It now exercises the `ha` dispatcher.
+- **The generated `/config/CLAUDE.md` still documented the retired hyphenated commands,
+  including `ha-backup`, which no longer exists at all.** That file is how Claude learns
+  its own tooling, so a stale entry is a command it will actually try to run. Rewritten
+  for the two dispatchers, and a test now fails if a retired name reappears.
+
+## 1.1.1
+
+- **Signing in once is now enough.** Signing in through the panel still left the
+  terminal asking for a login. Credential sharing was built when Terminal and
+  Insights were separate add-ons and only ran one way: the terminal's
+  `ha login` published a credential the panel read. Merged into one add-on the
+  panel became the primary sign-in surface, so the arrow has to point both ways.
+  A single resolver now hands whatever credential exists to the CLI — used by
+  both the `claude-run` wrapper and interactive shells.
+
+  If the CLI already holds its own OAuth login it is left strictly alone: it
+  refreshes that credential itself, and injecting a token over the top would
+  break the refresh.
+
 ## 1.1.0
 
 ### The panel is finally one product

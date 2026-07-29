@@ -1613,6 +1613,7 @@ def make_app() -> web.Application:
     app.router.add_get("/", h_index)
     app.router.add_get("/style.css", _static("style.css", "text/css"))
     app.router.add_get("/app.js", _static("app.js", "application/javascript"))
+    app.router.add_get("/docs.js", _static("docs.js", "application/javascript"))
     app.router.add_get("/favicon.svg", _static("favicon.svg", "image/svg+xml"))
     app.router.add_get("/api/status", h_status)
     app.router.add_get("/api/settings", h_settings_get)
