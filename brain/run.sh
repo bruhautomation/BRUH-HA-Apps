@@ -448,8 +448,16 @@ setup_claude_user() {
 if [ -r /data/.brain_env ]; then
     . /data/.brain_env
 fi
+# A sign-in done in the panel has to reach the CLI too, or the terminal
+# asks you to log in again for no reason.
+if [ -r /opt/scripts/brain-auth-env.sh ]; then
+    . /opt/scripts/brain-auth-env.sh
+fi
 if [ "$(id -u)" = "0" ]; then
-    exec su-exec claude /root/.local/bin/claude "$@"
+    exec su-exec claude \
+        env ${ANTHROPIC_API_KEY:+ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY"} \
+            ${CLAUDE_CODE_OAUTH_TOKEN:+CLAUDE_CODE_OAUTH_TOKEN="$CLAUDE_CODE_OAUTH_TOKEN"} \
+        /root/.local/bin/claude "$@"
 else
     exec /root/.local/bin/claude "$@"
 fi
@@ -473,6 +481,12 @@ fi
 # HA API token (inherited from add-on environment)
 if [ -z "$SUPERVISOR_TOKEN" ] && [ -n "$HA_TOKEN" ]; then
     export SUPERVISOR_TOKEN="$HA_TOKEN"
+fi
+
+# Pick up a credential saved from the panel, so a bare `claude` in this
+# shell is already signed in rather than prompting a second time.
+if [ -r /opt/scripts/brain-auth-env.sh ]; then
+    . /opt/scripts/brain-auth-env.sh
 fi
 PROFILE
     chown claude:claude "$profile"

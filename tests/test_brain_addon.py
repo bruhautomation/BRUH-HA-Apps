@@ -218,6 +218,111 @@ class TestCliDispatchers(unittest.TestCase):
         self.assertEqual(missing, [], f"dispatcher points at missing scripts: {missing}")
 
 
+class TestSharedLogin(unittest.TestCase):
+    """Signing in once must be enough.
+
+    Sharing used to run one way — the terminal's `ha login` published a
+    credential the Insights panel read. Merged into one add-on the panel
+    became the primary sign-in surface, so a panel login has to reach the
+    CLI too or the terminal prompts for a second, pointless login.
+    """
+
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        (self.root / "secrets").mkdir()
+        (self.root / "shared").mkdir()
+        (self.root / "home" / ".claude").mkdir(parents=True)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _resolve(self):
+        """Source the resolver and report what it exported."""
+        script = SCRIPTS / "brain-auth-env.sh"
+        cmd = (f". {script}; "
+               'echo "OAUTH=${CLAUDE_CODE_OAUTH_TOKEN:-}"; '
+               'echo "APIKEY=${ANTHROPIC_API_KEY:-}"')
+        res = subprocess.run(
+            ["bash", "-c", cmd], capture_output=True, text=True, timeout=30,
+            env={**os.environ,
+                 "BRAIN_HOME": str(self.root / "home"),
+                 "BRAIN_SECRETS": str(self.root / "secrets"),
+                 "BRAIN_SHARED_AUTH": str(self.root / "shared" / "claude_auth.json")})
+        out = dict(line.split("=", 1) for line in res.stdout.splitlines() if "=" in line)
+        return out.get("OAUTH", ""), out.get("APIKEY", "")
+
+    def _panel_login(self, cred_type, value):
+        (self.root / "secrets" / "claude_auth.json").write_text(
+            json.dumps({"type": cred_type, "value": value}))
+
+    def _terminal_login(self, cred_type, value):
+        (self.root / "shared" / "claude_auth.json").write_text(
+            json.dumps({"type": cred_type, "value": value}))
+
+    def test_panel_oauth_login_reaches_the_cli(self):
+        self._panel_login("oauth_token", "sk-ant-oat01-PANEL")
+        oauth, apikey = self._resolve()
+        self.assertEqual(oauth, "sk-ant-oat01-PANEL")
+        self.assertEqual(apikey, "")
+
+    def test_panel_api_key_uses_the_api_key_variable(self):
+        self._panel_login("api_key", "sk-ant-api-PANEL")
+        oauth, apikey = self._resolve()
+        self.assertEqual(apikey, "sk-ant-api-PANEL")
+        self.assertEqual(oauth, "")
+
+    def test_terminal_shared_login_is_still_honoured(self):
+        self._terminal_login("oauth_token", "sk-ant-oat01-SHARED")
+        oauth, _ = self._resolve()
+        self.assertEqual(oauth, "sk-ant-oat01-SHARED")
+
+    def test_panel_login_wins_over_the_shared_file(self):
+        self._panel_login("oauth_token", "sk-ant-oat01-PANEL")
+        self._terminal_login("oauth_token", "sk-ant-oat01-SHARED")
+        oauth, _ = self._resolve()
+        self.assertEqual(oauth, "sk-ant-oat01-PANEL")
+
+    def test_cli_own_login_is_left_alone(self):
+        """The CLI refreshes its own OAuth credential; injecting a token over
+        the top would break that refresh."""
+        (self.root / "home" / ".claude" / ".credentials.json").write_text(
+            json.dumps({"claudeAiOauth": {"accessToken": "sk-ant-oat01-CLIOWN"}}))
+        self._panel_login("oauth_token", "sk-ant-oat01-PANEL")
+        oauth, apikey = self._resolve()
+        self.assertEqual((oauth, apikey), ("", ""))
+
+    def test_nothing_stored_exports_nothing(self):
+        """An empty variable makes the CLI fail with an auth error instead of
+        prompting to log in — unset is the correct 'signed out' state."""
+        self.assertEqual(self._resolve(), ("", ""))
+
+    def test_malformed_credential_is_ignored(self):
+        (self.root / "secrets" / "claude_auth.json").write_text("not json{")
+        self.assertEqual(self._resolve(), ("", ""))
+
+
+class TestSharedLoginWiring(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.run_sh = (ADDON_DIR / "run.sh").read_text()
+
+    def test_claude_run_wrapper_sources_the_resolver(self):
+        wrapper = self.run_sh.split("claude-run << 'WRAPPER'")[1]
+        self.assertIn("brain-auth-env.sh", wrapper)
+
+    def test_wrapper_forwards_the_credential_across_su_exec(self):
+        """su-exec does not preserve the environment by itself."""
+        wrapper = self.run_sh.split("claude-run << 'WRAPPER'")[1]
+        self.assertIn("CLAUDE_CODE_OAUTH_TOKEN", wrapper)
+        self.assertIn("ANTHROPIC_API_KEY", wrapper)
+
+    def test_interactive_shell_picks_up_the_credential(self):
+        profile = self.run_sh.split("<< 'PROFILE'")[1]
+        self.assertIn("brain-auth-env.sh", profile)
+
+
 # ---------------------------------------------------------------------------
 # Edit journal (the git-auto-backup replacement)
 # ---------------------------------------------------------------------------

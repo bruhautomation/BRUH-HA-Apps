@@ -1,7 +1,7 @@
 ---
 name: "BRain"
 description: "Your home's brain — a Claude Code terminal, an AI insights dashboard, and one shared memory that learns your house over time"
-version: "1.1.0"
+version: "1.1.1"
 slug: "brain"
 init: false
 

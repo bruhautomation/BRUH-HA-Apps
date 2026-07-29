@@ -2,6 +2,20 @@
 
 All notable changes to **BRain**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.1.1
+
+- **Signing in once is now enough.** Signing in through the panel still left the
+  terminal asking for a login. Credential sharing was built when Terminal and
+  Insights were separate add-ons and only ran one way: the terminal's
+  `ha login` published a credential the panel read. Merged into one add-on the
+  panel became the primary sign-in surface, so the arrow has to point both ways.
+  A single resolver now hands whatever credential exists to the CLI — used by
+  both the `claude-run` wrapper and interactive shells.
+
+  If the CLI already holds its own OAuth login it is left strictly alone: it
+  refreshes that credential itself, and injecting a token over the top would
+  break the refresh.
+
 ## 1.1.0
 
 ### The panel is finally one product
