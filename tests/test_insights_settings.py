@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for the BRain settings/budget/schedule features (1.6.0).
+"""Tests for the brAIn settings/budget/schedule features (1.6.0).
 
 Covers:
 - settings_store: defaults, validation, persistence, schedule cleaning
@@ -153,6 +153,42 @@ class TestUsageStore(TempStoresMixin, unittest.TestCase):
         self.assertEqual(st["source"], "account")
         self.assertTrue(st["blocked"])
         self.assertEqual(st["resets_at"], int(resets.timestamp()))
+
+    def test_the_weekly_window_rides_along_with_the_session(self):
+        """A Claude plan's seven-day limit is the one that actually ends your
+        week, so the panel shows it beside the session. Nothing schedules
+        against it — only the session gates automatic runs."""
+        now_dt = datetime.datetime.now(datetime.timezone.utc)
+        session_reset = now_dt + datetime.timedelta(hours=2)
+        week_reset = now_dt + datetime.timedelta(days=3)
+        Path(usage_store.LIMITS_FILE).write_text(json.dumps(
+            {"updated_at": now_dt.isoformat(),
+             "five_hour": {"utilization": 12,
+                           "resets_at": session_reset.isoformat()},
+             "seven_day": {"utilization": 64,
+                           "resets_at": week_reset.isoformat()}}))
+        st = usage_store.budget_state({"plan": "max20", "budget_percent": 90})
+        self.assertEqual(st["used_percent"], 12)
+        self.assertEqual(st["week_percent"], 64)
+        self.assertEqual(st["week_resets_at"], int(week_reset.timestamp()))
+        self.assertFalse(st["blocked"], "the week must not gate generation")
+
+    def test_no_weekly_number_without_the_tracker(self):
+        """Without OAuth there is no account data at all, and an invented
+        weekly percentage would be worse than a chip that doesn't claim one."""
+        st = usage_store.budget_state({"plan": "pro", "budget_percent": 50})
+        self.assertIsNone(st["week_percent"])
+        self.assertIsNone(st["week_resets_at"])
+
+    def test_a_nonsense_weekly_number_is_dropped_not_shown(self):
+        now_dt = datetime.datetime.now(datetime.timezone.utc)
+        Path(usage_store.LIMITS_FILE).write_text(json.dumps(
+            {"updated_at": now_dt.isoformat(),
+             "five_hour": {"utilization": 12},
+             "seven_day": {"utilization": "lots"}}))
+        st = usage_store.budget_state({"plan": "pro", "budget_percent": 50})
+        self.assertEqual(st["used_percent"], 12)
+        self.assertIsNone(st["week_percent"])
 
     def test_estimate_resets_when_oldest_run_ages_out(self):
         now = time.time()

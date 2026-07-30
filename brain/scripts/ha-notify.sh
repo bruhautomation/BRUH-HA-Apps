@@ -4,7 +4,7 @@
 # Usage:
 #   ha-notify "message" [--title "title"] [--target <name>|all]
 # Examples:
-#   ha-notify "Docs regenerated" --title "BRain"
+#   ha-notify "Docs regenerated" --title "brAIn"
 #   ha-notify "Hello" --target all
 #   ha-notify "Task done" --target bi17pm
 
@@ -27,7 +27,7 @@ Usage:
   ha-notify "message" [--title "title"] [--target <name>|all]
 
 Options:
-  --title    Notification title (default: "BRain")
+  --title    Notification title (default: "brAIn")
   --target   Notification target: a mobile_app name suffix or "all"
              If omitted, sends a persistent notification to the HA UI
 
@@ -71,7 +71,7 @@ get_notify_services() {
 check_token
 
 message=""
-title="BRain"
+title="brAIn"
 target=""
 
 # Parse arguments

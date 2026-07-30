@@ -180,7 +180,7 @@ class TestFindingsStore(StoreCase):
         ts = findings_store.list_all()[0]["ts"]
         findings_store.set_status(ts, "fixing")
 
-        self.assertEqual(findings_store.reconcile_running("BRain restarted"), 1)
+        self.assertEqual(findings_store.reconcile_running("brAIn restarted"), 1)
         entry = findings_store.get(ts)
         self.assertEqual(entry["status"], "failed")
         self.assertIn("restarted", entry["result"])
@@ -546,7 +546,7 @@ class TestFixRun(ServerCase):
         self.assertEqual(entry["changed"],
                          ["automation.morning_lights — trigger corrected"])
         self.assertEqual(self.server.JOBS[self.job]["state"], "done")
-        # a later analysis must not rediscover a problem BRain resolved
+        # a later analysis must not rediscover a problem brAIn resolved
         queued = list(self.server.MEMORY_INBOX_DIR.glob("*.jsonl"))
         self.assertTrue(queued, "the fix was not written into memory")
         self.assertIn("Automation can't fire", queued[0].read_text())

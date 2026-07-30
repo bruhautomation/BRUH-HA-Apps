@@ -1,6 +1,6 @@
 #!/usr/bin/with-contenv bashio
 
-# BRain - Enhanced startup script
+# brAIn - Enhanced startup script
 # Features: HA MCP server, auto-backup, context generation, config reload, log access
 
 set -e
@@ -57,7 +57,7 @@ init_environment() {
     local state_dir="/data/.local/state"
     local claude_config_dir="/data/.config/claude"
 
-    bashio::log.info "Initializing BRain environment..."
+    bashio::log.info "Initializing brAIn environment..."
 
     if ! mkdir -p \
         "$data_home" \
@@ -136,7 +136,7 @@ init_environment() {
     fi
 
     # Shared secrets directory for cross-add-on auth (ha-share-login writes
-    # /config/.brain/secrets/claude_auth.json for e.g. BRain).
+    # /config/.brain/secrets/claude_auth.json for e.g. brAIn).
     mkdir -p /config/.brain/secrets
     chmod 700 /config/.brain/secrets
 
@@ -486,7 +486,7 @@ WRAPPER
     # 3. The `claude` command resolves to the native binary
     local profile="/data/home/.bashrc"
     cat > "$profile" << 'PROFILE'
-# BRain shell profile (auto-generated at startup)
+# brAIn shell profile (auto-generated at startup)
 export PATH="$HOME/.local/bin:$PATH"
 
 # Source HA environment if available
@@ -669,9 +669,9 @@ install_tools() {
 # ============================================================================
 
 install_cli_tools() {
-    bashio::log.info "Installing BRain CLI..."
+    bashio::log.info "Installing brAIn CLI..."
 
-    # Two dispatchers replace the old ha-* script pile: `brain` for BRain's
+    # Two dispatchers replace the old ha-* script pile: `brain` for brAIn's
     # own faculties (memory, learning, undo) and `ha` for Home Assistant
     # operations. Both delegate to the scripts already in /opt/scripts, so
     # nothing else needs to land on PATH.
@@ -691,14 +691,14 @@ install_cli_tools() {
         local ha_target="/usr/local/bin/ha"
         if command -v ha >/dev/null 2>&1; then
             ha_target="/usr/local/bin/hass"
-            bashio::log.warning "A pre-existing 'ha' command was found; installing BRain's as 'hass' instead"
+            bashio::log.warning "A pre-existing 'ha' command was found; installing brAIn's as 'hass' instead"
         fi
         cp /opt/scripts/ha.sh "$ha_target"
         chmod +x "$ha_target"
         installed="${installed}, $(basename "$ha_target")"
     fi
 
-    # Kept on PATH in their own right: neither is a BRain faculty nor an HA
+    # Kept on PATH in their own right: neither is a brAIn faculty nor an HA
     # operation, and both are typed directly by users and by Claude.
     for script in persist-install brain-menu; do
         if [ -f "/opt/scripts/${script}.sh" ]; then
@@ -1031,7 +1031,7 @@ setup_mcp_server() {
 }'
 
     # ALWAYS write a clean config — do NOT merge with existing entries.
-    # The add-on owns this file. The only valid MCP server is the BRain
+    # The add-on owns this file. The only valid MCP server is the brAIn
     # stdio server. Merging risks preserving stale entries from broken
     # marketplace plugins that cause /api/mcp auth errors.
     echo "$mcp_entry" > "$project_config"
@@ -1225,7 +1225,7 @@ LEARNCMD
 
     cat > "$commands_dir/memory.md" << 'MEMCMD'
 ---
-description: Show what BRain knows about this home
+description: Show what brAIn knows about this home
 ---
 
 Run `brain memory list` and summarise what the home memory currently holds.
@@ -1318,7 +1318,7 @@ deploy_custom_integration() {
     local is_fresh_install=false
     local src_version
 
-    bashio::log.info "Deploying BRain custom integration..."
+    bashio::log.info "Deploying brAIn custom integration..."
 
     # Create shared communication directories
     mkdir -p /config/.brain/requests \
@@ -1345,17 +1345,17 @@ deploy_custom_integration() {
         dest_version=$(jq -r '.version // "0"' "$dest/manifest.json" 2>/dev/null || echo "0")
 
         if [ "$src_version" != "$dest_version" ]; then
-            bashio::log.info "Updating BRain integration: $dest_version -> $src_version"
+            bashio::log.info "Updating brAIn integration: $dest_version -> $src_version"
             rm -rf "$dest"
             cp -r "$src" "$dest"
             bashio::log.info "Integration updated - Home Assistant will need to restart to apply"
             first_install=true
         else
-            bashio::log.info "BRain integration is up to date (v${dest_version})"
+            bashio::log.info "brAIn integration is up to date (v${dest_version})"
         fi
     else
         cp -r "$src" "$dest"
-        bashio::log.info "BRain integration installed to $dest"
+        bashio::log.info "brAIn integration installed to $dest"
         first_install=true
         is_fresh_install=true
     fi
@@ -1380,7 +1380,7 @@ send_discovery_message() {
     local config
     config=$(bashio::var.json \
         addon "brain" \
-        addon_name "BRain" \
+        addon_name "brAIn" \
         version "${addon_version}" \
     )
 
@@ -1408,7 +1408,7 @@ send_discovery_message() {
             bashio::log.info "Discovery message sent via fallback"
         else
             bashio::log.warning "Discovery API returned HTTP ${response} - auto-discovery may not trigger"
-            bashio::log.info "You can set up the integration manually: Settings > Devices & Services > Add Integration > BRain"
+            bashio::log.info "You can set up the integration manually: Settings > Devices & Services > Add Integration > brAIn"
         fi
     fi
 }
@@ -1420,7 +1420,7 @@ notify_restart_required() {
     bashio::log.info "============================================"
     bashio::log.info "  New integration files deployed (v${version})!"
     bashio::log.info "  Home Assistant needs a restart to load"
-    bashio::log.info "  the BRain integration."
+    bashio::log.info "  the brAIn integration."
     bashio::log.info "============================================"
 
     # Write a marker file so the integration can detect the pending restart
@@ -1440,12 +1440,12 @@ notify_restart_required() {
         bashio::log.info "First install - sending persistent notification"
         bashio::log.info "Please restart Home Assistant from:"
         bashio::log.info "  Settings > System > Restart"
-        bashio::log.info "Then check Settings > Devices & Services for BRain"
+        bashio::log.info "Then check Settings > Devices & Services for brAIn"
 
         local notify_payload
         notify_payload=$(jq -n \
-            --arg title "BRain: Restart Required" \
-            --arg msg "The BRain integration has been installed. Please restart Home Assistant to load it.\n\nGo to **Settings > System > Restart**, then check **Settings > Devices & Services** for BRain." \
+            --arg title "brAIn: Restart Required" \
+            --arg msg "The brAIn integration has been installed. Please restart Home Assistant to load it.\n\nGo to **Settings > System > Restart**, then check **Settings > Devices & Services** for brAIn." \
             --arg nid "brain_restart_needed" \
             '{"title": $title, "message": $msg, "notification_id": $nid}')
         curl -s -X POST \
@@ -1502,7 +1502,7 @@ start_memory_consolidator() {
     # that a one-command fix.
     if [ ! -f /config/.brain/secrets/claude_auth.json ]; then
         if [ -f /data/home/.claude/.credentials.json ] || [ -f /data/.config/claude/.credentials.json ]; then
-            bashio::log.info "Tip: run 'ha-share-login' in the terminal to share this Claude login with other BRUH add-ons (like BRain)."
+            bashio::log.info "Tip: run 'ha-share-login' in the terminal to share this Claude login with other BRUH add-ons (like brAIn)."
         fi
     fi
 
@@ -1784,7 +1784,7 @@ trap cleanup SIGTERM SIGINT EXIT
 
 main() {
     bashio::log.info "============================================"
-    bashio::log.info "  BRain v$(bashio::addon.version 2>/dev/null || echo '1.0.0')"
+    bashio::log.info "  brAIn v$(bashio::addon.version 2>/dev/null || echo '1.0.0')"
     bashio::log.info "  Your home's brain — terminal, insights, memory"
     bashio::log.info "============================================"
 

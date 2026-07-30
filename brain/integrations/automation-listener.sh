@@ -334,7 +334,7 @@ process_task() {
     # background channel picks up automatically on its next spawn.
     if printf '%s' "$result" | grep -qiE "OAuth session expired|OAuth token (refresh failed|revoked)|failed to authenticate|please run /login|invalid api key"; then
         bashio::log.error "Claude auth failure in task [$task_id]: ${result:0:200}"
-        result="Claude's saved login has expired and could not be refreshed automatically. Open the BRain add-on from the sidebar and run /login once — background tasks and insights pick up the fresh login automatically."
+        result="Claude's saved login has expired and could not be refreshed automatically. Open the brAIn add-on from the sidebar and run /login once — background tasks and insights pick up the fresh login automatically."
     fi
 
     # If result is empty, something went wrong — check stderr for clues
@@ -342,14 +342,14 @@ process_task() {
         bashio::log.error "Empty result for task [$task_id] after ${duration}s"
         bashio::log.error "Stderr: ${stderr_output:0:500}"
         if [ "$duration" -ge "$((claude_limit - 5))" ] 2>/dev/null; then
-            result="Claude task timed out after ${duration}s. This may be caused by a broken MCP server connection. Try restarting the BRain add-on."
+            result="Claude task timed out after ${duration}s. This may be caused by a broken MCP server connection. Try restarting the brAIn add-on."
             bashio::log.error "Claude process timed out (limit=${claude_limit}s)"
         elif echo "$stderr_output" | grep -qi "not logged in\|please log in\|authentication"; then
-            result="Claude is not logged in. Please open the BRain sidebar and complete the OAuth login first."
+            result="Claude is not logged in. Please open the brAIn sidebar and complete the OAuth login first."
         elif echo "$stderr_output" | grep -qi "permission\|not allowed\|denied"; then
             result="Claude encountered a permission error. Check the add-on logs for details."
         else
-            result="Task failed — Claude didn't produce a result. Check the BRain add-on logs."
+            result="Task failed — Claude didn't produce a result. Check the brAIn add-on logs."
         fi
     fi
 
@@ -374,7 +374,7 @@ process_task() {
 
     # Check for auth errors in the result text
     if echo "$result" | grep -qi "not logged in\|please log in\|authentication required"; then
-        result="Claude is not logged in. Please open the BRain sidebar and complete the OAuth login first."
+        result="Claude is not logged in. Please open the brAIn sidebar and complete the OAuth login first."
         bashio::log.error "Claude auth error - user needs to log in via the terminal"
     fi
 

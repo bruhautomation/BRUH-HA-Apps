@@ -1,4 +1,4 @@
-"""Config flow for BRain integration.
+"""Config flow for brAIn integration.
 
 Supports multiple config entries so users can create several conversation
 agents with different names and system prompts (personalities).
@@ -156,7 +156,7 @@ def _valid_daily_at(value: str) -> bool:
 
 
 class BruhClaudeConfigFlow(ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for BRain."""
+    """Handle a config flow for brAIn."""
 
     VERSION = 3
 
@@ -317,7 +317,7 @@ class BruhClaudeConfigFlow(ConfigFlow, domain=DOMAIN):
             if not dir_exists:
                 errors["base"] = "addon_not_running"
             else:
-                name = user_input.get(CONF_NAME, "BRain Agent")
+                name = user_input.get(CONF_NAME, "brAIn Agent")
                 unique_id = f"{DOMAIN}_{name.lower().replace(' ', '_')}"
                 await self.async_set_unique_id(unique_id)
                 self._abort_if_unique_id_configured()
@@ -364,7 +364,7 @@ class BruhClaudeConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_hassio(
         self, discovery_info: Any
     ):
-        """Handle discovery from the BRain app."""
+        """Handle discovery from the brAIn app."""
         if self._async_current_entries():
             return self.async_abort(reason="already_configured")
 
@@ -399,12 +399,12 @@ class BruhClaudeConfigFlow(ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="hassio_confirm",
-            description_placeholders={"addon": "BRain"},
+            description_placeholders={"addon": "brAIn"},
         )
 
 
 class BruhClaudeOptionsFlowHandler(OptionsFlow):
-    """Handle options for a BRain config entry."""
+    """Handle options for a brAIn config entry."""
 
     def __init__(self, config_entry: ConfigEntry) -> None:
         self._config_entry = config_entry

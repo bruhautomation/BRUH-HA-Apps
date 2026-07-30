@@ -144,7 +144,7 @@ AUTH_ERROR_RE = re.compile(
 )
 AUTH_ERROR_MESSAGE = (
     "Claude's saved login has expired and could not be refreshed "
-    "automatically. Open the BRain add-on from the sidebar and run "
+    "automatically. Open the brAIn add-on from the sidebar and run "
     "/login once — Assist and background tasks pick up the fresh login "
     "automatically."
 )
@@ -946,7 +946,7 @@ class Pool:
                 response = (
                     f"Claude timed out after {int(duration)}s. This may be "
                     "caused by a broken MCP server connection. Try restarting "
-                    "the BRain add-on."
+                    "the brAIn add-on."
                 )
             else:
                 response = (

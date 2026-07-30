@@ -1,7 +1,7 @@
-"""BRain integration for Home Assistant.
+"""brAIn integration for Home Assistant.
 
 Provides:
-- A conversation agent ("BRain") selectable in Settings > Voice Assistants
+- A conversation agent ("brAIn") selectable in Settings > Voice Assistants
 - Usage limit sensors for Anthropic account data
 - brain.send_prompt          — send a one-shot prompt to Claude
 - brain.run_task             — run a Claude task with optional notification
@@ -142,7 +142,7 @@ ANSWER_QUESTION_SCHEMA = vol.Schema(
     }
 )
 
-# Topic is optional: with none, BRain studies whatever has gone stalest,
+# Topic is optional: with none, brAIn studies whatever has gone stalest,
 # which is what makes a nightly "study something" automation worth having.
 STUDY_SCHEMA = vol.Schema(
     {
@@ -196,7 +196,7 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up BRain from a config entry."""
+    """Set up brAIn from a config entry."""
     opts = {**entry.data, **entry.options}
     timeout = opts.get(CONF_TIMEOUT, DEFAULT_TIMEOUT)
     bridge = ClaudeBridge(hass, timeout=timeout)
@@ -348,9 +348,9 @@ async def _check_restart_required(hass: HomeAssistant) -> None:
             "persistent_notification",
             "create",
             {
-                "title": f"BRain: Restart Required (v{required_version})",
+                "title": f"brAIn: Restart Required (v{required_version})",
                 "message": (
-                    f"The BRain integration has been updated to v{required_version}. "
+                    f"The brAIn integration has been updated to v{required_version}. "
                     "Please restart Home Assistant to load the new version.\n\n"
                     "Go to **Settings > System > Restart**, or check "
                     "**Settings > System > Repairs** to fix automatically."
@@ -705,7 +705,7 @@ def _get_bridge(hass: HomeAssistant) -> ClaudeBridge:
     for key, value in domain_data.items():
         if isinstance(value, ClaudeBridge):
             return value
-    raise ValueError("BRain integration is not configured")
+    raise ValueError("brAIn integration is not configured")
 
 
 def _register_services(hass: HomeAssistant) -> None:
@@ -780,7 +780,7 @@ def _register_services(hass: HomeAssistant) -> None:
         _LOGGER.debug("Queued memory fact from %s", call.data.get("source"))
 
     async def handle_study(call: ServiceCall):
-        """Send BRain off to study a topic.
+        """Send brAIn off to study a topic.
 
         Fire-and-forget by design: a study session can run for many minutes,
         which is far longer than a service call should block. What it finds

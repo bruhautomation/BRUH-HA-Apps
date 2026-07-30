@@ -8,7 +8,7 @@ Full documentation for every add-on lives at **[bruhautomation.com](https://bruh
 
 ## Add-ons
 
-### [BRain](brain/)
+### [brAIn](brain/)
 
 Your home's brain — a Claude Code terminal, an AI insights dashboard, and one shared memory that learns your house over time, in a single add-on behind one sidebar panel and one Claude login.
 
@@ -32,7 +32,7 @@ Your home's brain — a Claude Code terminal, an AI insights dashboard, and one 
 **Memory**
 
 - **One document** of durable facts about your home, shared by the terminal, voice, and every insight run
-- **Guesses, not questionnaires** — BRain proposes what it believes and you confirm or reject; never more than three waiting on you
+- **Guesses, not questionnaires** — brAIn proposes what it believes and you confirm or reject; never more than three waiting on you
 - **Study sessions** — `brain learn energy` sends it off to investigate a topic and write down what it finds
 - **A change log with undo** — see exactly what it learned this week, and revert any single line
 

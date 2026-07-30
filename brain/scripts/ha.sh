@@ -1,8 +1,8 @@
 #!/bin/bash
 
-# ha — Home Assistant operations from inside BRain.
+# ha — Home Assistant operations from inside brAIn.
 #
-# One command in place of the old ha-* script pile. BRain's own faculties
+# One command in place of the old ha-* script pile. brAIn's own faculties
 # (memory, learning, undo) live under the sibling `brain` command.
 #
 # Usage:
@@ -43,7 +43,7 @@ Usage:
   ha login                 Authenticate the shared Claude credential
   ha help                  This help
 
-BRain's memory and learning live under `brain` (brain memory, brain learn, ...).
+brAIn's memory and learning live under `brain` (brain memory, brain learn, ...).
 EOF
     exit "${1:-0}"
 }
@@ -75,7 +75,7 @@ case "$action" in
     share)      delegate ha-share.sh "$@" ;;
     login)      delegate ha-share-login.sh "$@" ;;
     memory|learn|ask|undo|doctor)
-        echo -e "${RED}'${action}' is a BRain faculty, not a Home Assistant operation.${NC}" >&2
+        echo -e "${RED}'${action}' is a brAIn faculty, not a Home Assistant operation.${NC}" >&2
         echo -e "Run: ${CYAN}brain ${action}${NC}" >&2
         exit 1
         ;;

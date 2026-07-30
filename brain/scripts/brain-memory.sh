@@ -48,7 +48,7 @@ HYPOTHESIS_TTL_DAYS="${BRAIN_HYPOTHESIS_TTL_DAYS:-14}"
 
 usage() {
     cat << 'EOF'
-brain memory — what BRain knows about your home
+brain memory — what brAIn knows about your home
 
 Usage:
   brain memory add "<fact>"        Teach it something
@@ -182,16 +182,16 @@ retire_stale_hypotheses() {
 cmd_hypotheses() {
     retire_stale_hypotheses
     if [ ! -s "$HYPOTHESES_FILE" ]; then
-        echo -e "${GREEN}No guesses pending — BRain isn't waiting on you.${NC}"
+        echo -e "${GREEN}No guesses pending — brAIn isn't waiting on you.${NC}"
         return
     fi
     local open
     open=$(jq -r 'select(.status == "open") | .text' "$HYPOTHESES_FILE" 2>/dev/null)
     if [ -z "$open" ]; then
-        echo -e "${GREEN}No guesses pending — BRain isn't waiting on you.${NC}"
+        echo -e "${GREEN}No guesses pending — brAIn isn't waiting on you.${NC}"
         return
     fi
-    echo -e "${CYAN}BRain thinks:${NC}"
+    echo -e "${CYAN}brAIn thinks:${NC}"
     printf '%s\n' "$open" | sed 's/^/  ? /'
     echo ""
     echo -e "  ${CYAN}brain memory confirm \"<text>\"${NC}   yes, that's right"
@@ -263,7 +263,7 @@ cmd_reject() {
         exit 1
     fi
     settle_hypothesis "$text" "rejected"
-    echo -e "${GREEN}Rejected.${NC} ${DIM}BRain won't pursue that line again.${NC}"
+    echo -e "${GREEN}Rejected.${NC} ${DIM}brAIn won't pursue that line again.${NC}"
 }
 
 # --------------------------------------------------------------------------
@@ -276,7 +276,7 @@ cmd_log() {
         echo -e "${GREEN}No changes recorded yet.${NC}"
         return
     fi
-    echo -e "${CYAN}What BRain learned recently:${NC}"
+    echo -e "${CYAN}What brAIn learned recently:${NC}"
     echo ""
     jq -cs --argjson limit "$limit" 'reverse | .[:$limit]' "$LOG_FILE" 2>/dev/null \
         | jq -r 'to_entries[] | "\(.key + 1)|\(.value.ts)|\(.value.added | length)|\(.value.removed | length)|\(.value.source // "consolidation")"' \

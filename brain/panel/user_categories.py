@@ -1,4 +1,4 @@
-"""User-defined insight categories for BRain.
+"""User-defined insight categories for brAIn.
 
 Users can create their own recurring insights (a title, an icon, an
 analysis prompt, and an optional refresh interval) — either from scratch

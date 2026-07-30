@@ -1,4 +1,4 @@
-"""Repair flows for the BRain integration.
+"""Repair flows for the brAIn integration.
 
 Provides a fixable repair that lets users restart Home Assistant directly
 from Settings > System > Repairs when the integration files have been updated.

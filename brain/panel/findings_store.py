@@ -1,4 +1,4 @@
-"""Findings — the things BRain thinks are broken, and what it did about them.
+"""Findings — the things brAIn thinks are broken, and what it did about them.
 
 Memory answers "what is true of this home". A hypothesis answers "am I right
 about this home". A **finding** is the third thing neither of those covers:
@@ -9,7 +9,7 @@ name means nothing to anyone.
 The lifecycle is deliberately short, because a list of problems nobody ever
 settles is just a second inbox:
 
-  open ──fix──▶ fixing ──▶ fixed        BRain made the change
+  open ──fix──▶ fixing ──▶ fixed        brAIn made the change
                        ──▶ failed       it tried and couldn't
                        ──▶ needs_you    only a human can (replace the battery)
        ──ignore────────▶ ignored        not a problem — never raise it again

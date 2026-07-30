@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# BRain - Enhanced Session Picker
+# brAIn - Enhanced Session Picker
 # Adds background task support, multi-session via tmux windows
 
 TMUX_SESSION_NAME="claude"
@@ -20,7 +20,7 @@ fi
 show_banner() {
     clear
     echo "╔══════════════════════════════════════════════════════════════╗"
-    echo "║             BRain                           ║"
+    echo "║             brAIn                           ║"
     echo "║             Enhanced Session Picker                        ║"
     echo "╚══════════════════════════════════════════════════════════════╝"
     echo ""

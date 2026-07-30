@@ -1,4 +1,4 @@
-"""Claude CLI plumbing for BRain.
+"""Claude CLI plumbing for brAIn.
 
 Auth
 ----
@@ -236,7 +236,7 @@ def save_auth(value: str, cred_type: str | None = None) -> dict:
 def clear_auth() -> None:
     """Forget the locally stored credential and the CLI's own login.
 
-    NEVER touches SHARED_AUTH_FILE — that file belongs to the BRain
+    NEVER touches SHARED_AUTH_FILE — that file belongs to the brAIn
     add-on. (The /config mount is writable for the memory file, but this
     module never writes anything under it.)
     """

@@ -4,7 +4,7 @@
 
 ## Add-on affected
 
-- [ ] BRain
+- [ ] brAIn
 - [ ] BRUH Minecraft
 - [ ] Repo-wide (CI, docs, etc.)
 

@@ -4,7 +4,7 @@
 #
 # Runs `claude setup-token` interactively (as the non-root claude user),
 # captures the generated long-lived OAuth token, and writes it to the
-# shared auth file that other BRUH add-ons (like BRain) read:
+# shared auth file that other BRUH add-ons (like brAIn) read:
 #
 #   /config/.brain/secrets/claude_auth.json
 #   {"type": "oauth_token", "value": "sk-ant-oat...", "saved_at": <epoch>}
@@ -43,7 +43,7 @@ Usage:
   ha-share-login --force         Overwrite an existing shared login
 
 The shared file lives at /config/.brain/secrets/claude_auth.json
-(0600, owned by the claude user). Other BRUH add-ons (like BRain)
+(0600, owned by the claude user). Other BRUH add-ons (like brAIn)
 pick it up automatically — one login for the whole family.
 EOF
     exit 0
@@ -81,7 +81,7 @@ write_auth_file() {
     chown -R claude:claude "$AUTH_DIR" 2>/dev/null || true
 
     echo -e "${GREEN}Shared login saved to ${AUTH_FILE}${NC}"
-    echo -e "${GREEN}Other BRUH add-ons (like BRain) will now use this login automatically.${NC}"
+    echo -e "${GREEN}Other BRUH add-ons (like brAIn) will now use this login automatically.${NC}"
 }
 
 show_status() {

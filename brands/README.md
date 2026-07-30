@@ -16,7 +16,7 @@ from `../branding/icons/` by `../branding/render.mjs`):
 
 **Until that PR merges**, Home Assistant has no artwork for the `brain`
 domain and falls back to showing the raw domain next to the integration
-name — which is why a fresh install reads "brain BRain" rather than a
+name — which is why a fresh install reads "brain brAIn" rather than a
 logo. Nothing in this repo can fix that; the artwork has to live in
 home-assistant/brands. The `logo.png` lockup is what renders on the
 integration page once it does.
@@ -30,7 +30,7 @@ being precise about which is which:
 
 | What you see | Where it comes from |
 | --- | --- |
-| The integration's name | `manifest.json` → `"name": "BRain"` |
+| The integration's name | `manifest.json` → `"name": "brAIn"` |
 | The config-entry title under it | whatever you typed at setup; defaults to `DEFAULT_NAME` in `const.py` |
 | The icon and wide logo | home-assistant/brands (the PR above) |
 

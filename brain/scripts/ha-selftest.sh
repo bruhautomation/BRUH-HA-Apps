@@ -1,5 +1,5 @@
 #!/bin/bash
-# BRain — in-situ self-test
+# brAIn — in-situ self-test
 #
 # Run this INSIDE the add-on terminal (`ha-selftest`) to verify the moving
 # parts end-to-end: HA API auth, the MCP server (driven over stdio JSON-RPC
@@ -40,7 +40,7 @@ warn() { WARN=$((WARN + 1)); printf '  %s!%s %s\n' "$C_WARN" "$C_RST" "$1"; }
 info() { printf '    %s%s%s\n' "$C_DIM" "$1" "$C_RST"; }
 hdr()  { printf '\n%s%s%s\n' "$C_DIM" "$1" "$C_RST"; }
 
-printf '%s\n' "BRain — self-test"
+printf '%s\n' "brAIn — self-test"
 
 # --- 1. environment & auth --------------------------------------------------
 hdr "Environment & Home Assistant API"

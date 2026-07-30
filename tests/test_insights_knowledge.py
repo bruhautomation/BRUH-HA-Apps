@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for the BRain knowledge layer (the "depth" release).
+"""Tests for the brAIn knowledge layer (the "depth" release).
 
 Covers:
 - knowledge_store: fact dedup, question lifecycle, prompt block rendering
@@ -336,6 +336,7 @@ class InsightsServerCase(unittest.TestCase):
             self.server.MEMORY_INBOX_DIR, feedback_store.FEEDBACK_FILE,
             user_categories.USER_CATS_FILE, self.server.CARD_TOKEN_FILE,
             knowledge_store.KNOWLEDGE_FILE, self.server.SHARED_MEMORY_FILE,
+            self.server.MEMORY_MARKER_FILE,
         )
         self.server.INSIGHTS_DIR = Path(self.tmp.name)
         prompt_store.OVERRIDES_FILE = os.path.join(self.tmp.name, "o", "overrides.json")
@@ -352,6 +353,7 @@ class InsightsServerCase(unittest.TestCase):
         onboarding.STATE_FILE = Path(self.tmp.name) / "onboarding.json"
         settings_store.save({"onboarded": True})
         self.server.SHARED_MEMORY_FILE = Path(self.tmp.name) / "memory.md"
+        self.server.MEMORY_MARKER_FILE = Path(self.tmp.name) / ".last_consolidated"
         self._old_www = self.server.WWW_CARD_DIR
         self._old_findings = (findings_store.FINDINGS_FILE, findings_store.INBOX_DIR)
         self._old_tags = card_tags.TAGS_FILE
@@ -368,7 +370,8 @@ class InsightsServerCase(unittest.TestCase):
         (self.server.INSIGHTS_DIR, prompt_store.OVERRIDES_FILE,
          self.server.MEMORY_INBOX_DIR, feedback_store.FEEDBACK_FILE,
          user_categories.USER_CATS_FILE, self.server.CARD_TOKEN_FILE,
-         knowledge_store.KNOWLEDGE_FILE, self.server.SHARED_MEMORY_FILE) = self._olds
+         knowledge_store.KNOWLEDGE_FILE, self.server.SHARED_MEMORY_FILE,
+         self.server.MEMORY_MARKER_FILE) = self._olds
         self.server.WWW_CARD_DIR = self._old_www
         (findings_store.FINDINGS_FILE, findings_store.INBOX_DIR) = self._old_findings
         card_tags.TAGS_FILE = self._old_tags

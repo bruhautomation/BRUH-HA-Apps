@@ -1,9 +1,9 @@
-# BRain
+# brAIn
 
 **Your home's brain.** A Claude Code terminal, an AI insights dashboard, and one shared
 memory that learns your house over time — in a single Home Assistant add-on.
 
-BRain replaces **BRUH Terminal** and **BRUH Insights**. Both are deprecated; BRain is a
+brAIn replaces **BRUH Terminal** and **BRUH Insights**. Both are deprecated; brAIn is a
 clean install, not an upgrade.
 
 ## What's in it
@@ -12,8 +12,8 @@ clean install, not an upgrade.
 | --- | --- |
 | **Terminal** | Full Claude Code in your browser, with native Home Assistant access through an MCP server — read states, call services, check history, reload config, edit YAML. |
 | **Insights** | Claude analyses your home's data and writes interactive cards you can drop on a dashboard. Ask it anything about your house and get an answer card back. |
-| **Findings** | The things BRain thinks are broken — a dead battery, a sensor that stopped reporting, an automation that can never fire. Send it to fix one, or tell it that isn't a problem here and it never raises it again. |
-| **Memory** | One document of durable facts about your home, learned from voice conversations, insight runs, and anything you tell it directly. Every part of BRain reads and writes the same memory. |
+| **Findings** | The things brAIn thinks are broken — a dead battery, a sensor that stopped reporting, an automation that can never fire. Send it to fix one, or tell it that isn't a problem here and it never raises it again. |
+| **Memory** | One document of durable facts about your home, learned from voice conversations, insight runs, and anything you tell it directly. Every part of brAIn reads and writes the same memory. |
 
 All of it lives behind one sidebar panel, and shares one Claude login.
 
@@ -45,11 +45,11 @@ ha context                    # regenerate /config/CLAUDE.md
 
 ## Backups
 
-BRain does **not** back up your config. Use Home Assistant's own backups (with the
+brAIn does **not** back up your config. Use Home Assistant's own backups (with the
 Google Drive add-on or any other backup target) — they're whole-system, restorable, and
 already solved.
 
-What BRain does keep is an **edit journal**: before Claude writes to any file under
+What brAIn does keep is an **edit journal**: before Claude writes to any file under
 `/config`, the previous version is snapshotted, and `brain undo` puts it back. That's
 scoped to Claude's own edits and stored under `/data`, so it never ends up inside your
 Home Assistant backups.

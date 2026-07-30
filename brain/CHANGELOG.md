@@ -1,19 +1,76 @@
 # Changelog
 
-All notable changes to **BRain**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
+All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
+
+## 1.8.0
+
+### It's brAIn
+
+The name is spelled **brAIn** everywhere now — add-on, panel, integration,
+sensors, CLI help, docs. The wordmark never needed changing: the gable already
+doubles as the `A`, and the `A` and the `I` were already the one part drawn in
+the accent colour. The letters were saying it before the text was.
+
+The conversation agent, the system health sensor and the usage sensors read
+"brAIn" in Home Assistant now. **Entity IDs are unchanged**, so nothing in your
+automations, scripts or dashboards breaks.
+
+### "File into memory now" actually empties the list
+
+Pressing it filed the queue and then showed you the same list, unchanged, with
+the same "2 things waiting" underneath. Two separate faults:
+
+- **Filed discoveries never left the list.** The list was reading the dedup
+  ledger — the record of what has already been announced, which by design
+  keeps entries forever. It is now split: **Waiting to be filed** is only what
+  is genuinely still queued, and everything already folded into the document
+  moves into a collapsed *Already in memory* group below it. The ✕ still works
+  in both, because it is the one-click way to make brAIn forget something.
+  Nothing was deleted from the ledger, so the analyst still can't re-announce
+  a fact you have seen.
+- **A pass that filed nothing reported success.** The consolidator exits 0 in
+  cases where it deliberately keeps the facts, and being skipped because
+  another pass held the lock exited 0 too. The count is now read either side of
+  the pass and the response says what actually moved — "the queue didn't move"
+  and "another consolidation is already running" are now things the panel can
+  tell you, instead of "Filed 2 things" over an unchanged list.
+
+### One usage pill, both windows
+
+The top bar's usage pill showed the 5-hour session and its reset time. It now
+shows the **session and the week** — `19% session · 64% week` — because the
+seven-day limit is the one that actually ends your week on a Claude plan. The
+reset times moved into the hover, where a value that changes once per window
+belongs; the numbers, which change all day, stay in the bar. The ⚙ dialog
+states the week too.
+
+### The "Claude · subscription" pill is gone
+
+A green pill labelling a state that never changes, sitting in a bar where
+space is the scarce thing. The auth chip now appears **only when there is
+something to say** — verifying, failed, or not connected — which paid for the
+second usage number twice over.
+
+On a 320px screen the bar had been overflowing whenever the login failed;
+nothing reported it, because the fit was only ever measured with a healthy
+login. `tests/manual/measure-topbar.mjs` now measures three bar states at
+every width, and the breakpoints moved to what it reports — five bands now
+rather than four. Below 450px the weekly number steps aside, and below 410px
+so does the whole pill if a trouble chip needs the room: a login that isn't
+working outranks a reading you can check afterwards.
 
 ## 1.7.0
 
 ### Findings — memory you can act on
 
-Memory tells you what is *true* of your home. A guess asks whether BRain has
+Memory tells you what is *true* of your home. A guess asks whether brAIn has
 something *wrong*. Neither has anywhere to put the third thing: something that
 is **broken**.
 
 **Findings** is a new tab, and it is a work list. A battery that died. A sensor
 that has read the same value for six days. A device stuck unavailable. An
 automation whose trigger entity was renamed, so it can never fire again.
-Insight runs and study sessions both file them, and BRain reports a given
+Insight runs and study sessions both file them, and brAIn reports a given
 problem exactly **once** — the same problem in different words is recognised
 and dropped.
 
@@ -37,8 +94,8 @@ rather than offered a fix, because inventing a software substitute for a dead
 battery is worse than saying so. **✓ I did it** closes those.
 
 Fixed and dismissed findings don't vanish; the filter at the top of the tab is
-how you check what BRain changed in your house last week. Successful fixes are
-written into memory too, so a later analysis doesn't rediscover a problem BRain
+how you check what brAIn changed in your house last week. Successful fixes are
+written into memory too, so a later analysis doesn't rediscover a problem brAIn
 resolved itself.
 
 Under the hood the generation contract split in two: what a run *learned* about
@@ -53,7 +110,7 @@ second, harder path to somewhere you had already been taken — so it's gone fro
 the header.
 
 The bar now has a second verb. Start a line with **"learn about…"** or
-**"study…"** and BRain runs a study session instead of drawing a card: it digs
+**"study…"** and brAIn runs a study session instead of drawing a card: it digs
 through the registry, history and long-term statistics for that corner of the
 house, and what it finds lands in Memory and Findings. That was previously
 reachable only from the terminal, which meant nobody ran one. The placeholder
@@ -77,7 +134,7 @@ frozen the card's tags forever.
 
 The consolidator runs daily, and early once more than 20 things are waiting.
 That's the right cadence for a background job and the wrong one for someone who
-has just taught BRain something and wants to see it land. The Memory tab now
+has just taught brAIn something and wants to see it land. The Memory tab now
 has a **⇪ File into memory now** button that runs the same pass immediately —
 same script, same safety checks, and it says how much is waiting before you
 press it.
@@ -85,15 +142,15 @@ press it.
 ### Removed: the removed-cards graveyard
 
 ⚙ Settings kept a list of built-in cards you had deleted, offering them back.
-That belongs to a version of BRain that shipped nine cards to every house. This
+That belongs to a version of brAIn that shipped nine cards to every house. This
 one studies your home and proposes cards *for that home*, so the way to get a
-card back is to ask for it again and have BRain build it for the house it now
+card back is to ask for it again and have brAIn build it for the house it now
 knows — not to resurrect a generic one. ✕ now means the same thing for every
 card: gone.
 
 ### The header carries the real wordmark
 
-The bar drew the gable alone beside the word "BRain" set as live text, because
+The bar drew the gable alone beside the word "brAIn" set as live text, because
 the full lockup has a 132px minimum width and the bar has room for about 52px.
 It now draws the actual wordmark — `BR`, the gable that *is* the `A`, `IN` —
 as one piece of art, in three brand roles so a single file works in both
@@ -109,7 +166,7 @@ guessing.
 
 ### A new mark
 
-BRain's logo is now a **descendant of the BRUH Automation logo rather than a
+brAIn's logo is now a **descendant of the BRUH Automation logo rather than a
 cousin of it**. The `BR` ligature, the gable and the signal motif are lifted
 unmodified from the parent mark; only the `A`, `I` and `N` are newly drawn, on
 the parent's own ratios. The gable *is* the `A`.
@@ -183,9 +240,9 @@ silently, and invisibly to a test.
 
 ### No default cards — it learns your home first
 
-BRain used to ship nine cards (Overview, Energy, Climate, Lighting, Security, Presence,
+brAIn used to ship nine cards (Overview, Energy, Climate, Lighting, Security, Presence,
 Media, Device Health, Automations), all enabled from the moment you installed it. They
-generated before BRain knew anything about the house, so they said generic things about a
+generated before brAIn knew anything about the house, so they said generic things about a
 home it had never looked at — and cost tokens doing it, on every schedule, forever.
 
 **A fresh install now has no cards at all.** The first run studies the home — naming,
@@ -193,7 +250,7 @@ occupancy, energy, climate, device reliability — and only then proposes cards 
 what it actually found, each with a one-line reason citing the evidence. You pick which to
 keep. Nothing generates, and the scheduler stays idle, until you do.
 
-**There is no canned fallback.** If the home is too sparse to learn from, BRain says what's
+**There is no canned fallback.** If the home is too sparse to learn from, brAIn says what's
 missing and stops. Generic cards about a house it can't read would be noise on every run,
 and would teach you to ignore the dashboard.
 
@@ -255,7 +312,7 @@ proposed is never proposed again in any wording.
 
 ### Learning you can see from outside the panel
 
-- **Logbook events.** Every new fact fires `brain_learned`, so *"BRain learned: the hallway
+- **Logbook events.** Every new fact fires `brain_learned`, so *"brAIn learned: the hallway
   sensor drops offline around 2am"* appears in your home's timeline next to lights and doors.
 - **`sensor.brain_facts_learned`** and **`sensor.brain_last_learned`**.
 - **`binary_sensor.brain_waiting_on_you`** — on when a guess needs an answer, with the text
@@ -340,21 +397,21 @@ tight cap the most expensive setting in the add-on.
 - **The panel still said "BRUH Insights" in its header, and drew the Insights
   bar-chart glyph.** The wordmark is split across HTML tags
   (`BRUH <span>Insights</span>`), so the rename never matched it. It now reads
-  **BRain** with the neural-mesh mark. A test now strips tags before checking,
+  **brAIn** with the neural-mesh mark. A test now strips tags before checking,
   so this class of miss can't come back.
-- **Several hints told you to go run a command in "the BRain add-on" — from
-  inside BRain.** They were inherited from when Terminal and Insights were
+- **Several hints told you to go run a command in "the brAIn add-on" — from
+  inside brAIn.** They were inherited from when Terminal and Insights were
   separate. They now point at the Terminal tab.
 - **Retired CLI names in the UI.** `ha-share-login` and `ha-memory` no longer
   exist; the panel referenced both.
-- **A new agent defaulted to the name "Claude Agent"** instead of "BRain Agent".
+- **A new agent defaulted to the name "Claude Agent"** instead of "brAIn Agent".
 
 ### Branding
 
 - Added `logo.png` / `logo@2x.png` for the home-assistant/brands submission.
   Until that PR merges, Home Assistant has no artwork for the `brain` domain
   and shows the raw domain beside the name — which is why a fresh install
-  reads "brain BRain". Nothing in this repo can change that; see
+  reads "brain brAIn". Nothing in this repo can change that; see
   `brands/README.md`.
 
 ## 1.0.1
@@ -365,8 +422,8 @@ tight cap the most expensive setting in the add-on.
   user's `PATH`, so the lookup fell through to the bare name `claude` and su-exec
   couldn't find it. The panel now prefers the `claude-run` wrapper and otherwise
   resolves an absolute path.
-- **BRUH Terminal and BRUH Insights are removed.** BRain replaces both; their test
-  suites now cover BRain.
+- **BRUH Terminal and BRUH Insights are removed.** brAIn replaces both; their test
+  suites now cover brAIn.
 - **Renamed the files that were ours rather than Claude Code's**: `claude_client.py`
   is now `panel/engine.py`, and the session picker and auth helper are
   `brain-menu.sh` and `brain-auth-helper.sh`. `CLAUDE.md`, `CLAUDE_CONFIG_DIR`, the
@@ -375,7 +432,7 @@ tight cap the most expensive setting in the add-on.
 
 ## 1.0.0
 
-First release. BRain replaces **BRUH Terminal** and **BRUH Insights**, which are now
+First release. brAIn replaces **BRUH Terminal** and **BRUH Insights**, which are now
 deprecated. It is a clean install — there is no migration from either add-on.
 
 ### One add-on, one brain
@@ -397,8 +454,8 @@ deprecated. It is a clean install — there is no migration from either add-on.
   `brain.run_task`, and the rest, including all 56 Power Tools.
 - Shared state moved from `/config/.bruh_claude/` to **`/config/.brain/`**.
 - Environment variables use the `BRAIN_` prefix.
-- The conversation agent appears as **BRain** in Settings → Voice Assistants.
-- `assist_learning` is now just **`learning`** — it governs everything BRain learns,
+- The conversation agent appears as **brAIn** in Settings → Voice Assistants.
+- `assist_learning` is now just **`learning`** — it governs everything brAIn learns,
   not only the voice channel.
 
 ### The CLI is two commands
@@ -411,7 +468,7 @@ Fourteen `ha-*` scripts collapse into two dispatchers, split by what they act on
   `ha service`, `ha addon`, `ha notify`, `ha share`, `ha check`, `ha context`
 
 `brain help` and `ha help` list everything. If a pre-existing `ha` command is ever
-found on `PATH`, BRain installs its own as `hass` instead rather than shadowing it.
+found on `PATH`, brAIn installs its own as `hass` instead rather than shadowing it.
 
 ### Git auto-backup is gone, replaced by something narrower
 
@@ -424,6 +481,6 @@ found on `PATH`, BRain installs its own as `hass` instead rather than shadowing 
   English and restores one. It records only what Claude touched, lives under `/data`
   so it never pollutes the config directory, and prunes on `edit_journal_days`
   (default 14).
-- Existing `/config/.git` directories are left strictly alone. BRain no longer writes
+- Existing `/config/.git` directories are left strictly alone. brAIn no longer writes
   to them; delete yours if you don't want it.
 - The `git` binary is still installed — it's useful in a terminal.

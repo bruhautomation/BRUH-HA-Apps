@@ -27,7 +27,7 @@ import engine
 # run leaves the house half-changed, which is far worse than a slow one.
 DEFAULT_MAX_TURNS = 30
 
-FIX_SYSTEM = """You are BRain, the AI that looks after one specific Home Assistant home. The homeowner has looked at a problem you reported and pressed "Fix it". You are now going to fix that one problem, in their real house.
+FIX_SYSTEM = """You are brAIn, the AI that looks after one specific Home Assistant home. The homeowner has looked at a problem you reported and pressed "Fix it". You are now going to fix that one problem, in their real house.
 
 You have Home Assistant tools and shell/file access to the config directory. Use them.
 
@@ -115,7 +115,7 @@ def parse_result(text: str) -> dict:
             "ok": False,
             "needs_you": False,
             "summary": "The fix run finished but its report was unreadable, so "
-                       "BRain cannot say what it changed. Check the affected "
+                       "brAIn cannot say what it changed. Check the affected "
                        "entity before pressing Fix again."
                        + (f" It ended with: …{raw[-300:]}" if raw else ""),
             "changed": [],

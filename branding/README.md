@@ -4,9 +4,9 @@ Source SVGs for the add-ons in this repo. The SVGs are the source of truth;
 every PNG is derived from them by `render.mjs` and should be regenerated, not
 hand-edited.
 
-## BRain
+## brAIn
 
-The BRain mark is a **descendant of the BRUH Automation logo, not a lookalike**.
+The brAIn mark is a **descendant of the BRUH Automation logo, not a lookalike**.
 The `BR` ligature, the gable and the signal motif are lifted unmodified from
 `bruh-logo-dark.svg`; only the `A`, `I` and `N` are newly drawn, as monoline
 geometric caps built on the parent's own ratios (cap height 135, stem 15, so

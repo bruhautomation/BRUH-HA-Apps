@@ -1,4 +1,4 @@
-"""Run-now buttons for BRain insight jobs."""
+"""Run-now buttons for brAIn insight jobs."""
 
 from __future__ import annotations
 

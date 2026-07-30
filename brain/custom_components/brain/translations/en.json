@@ -2,7 +2,7 @@
   "config": {
     "step": {
       "first_setup": {
-        "title": "Set Up BRain",
+        "title": "Set Up brAIn",
         "description": "This creates:\n- A **conversation agent** that appears in Settings > Voice Assistants\n- **Usage limit sensors** that track your Anthropic account usage\n\nYou can add more agents with different personalities later using the **Add Service** button.",
         "data": {
           "name": "Conversation agent name"
@@ -30,11 +30,11 @@
         }
       },
       "hassio_confirm": {
-        "title": "BRain Discovered",
-        "description": "The BRain add-on has been detected. Click Submit to create a conversation agent and usage limit sensors.\n\nYou can add more agents with different personalities later from the integration page."
+        "title": "brAIn Discovered",
+        "description": "The brAIn add-on has been detected. Click Submit to create a conversation agent and usage limit sensors.\n\nYou can add more agents with different personalities later from the integration page."
       },
       "user": {
-        "title": "Add BRain",
+        "title": "Add brAIn",
         "menu_options": {
           "add_agent": "Conversation agent — a voice personality for Assist",
           "add_insight": "Insight job — a scheduled Claude report on a sensor"
@@ -63,12 +63,12 @@
       }
     },
     "error": {
-      "addon_not_running": "The BRain add-on does not appear to be running. Start the add-on and try again.",
+      "addon_not_running": "The brAIn add-on does not appear to be running. Start the add-on and try again.",
       "no_features": "Please enable at least one feature.",
       "invalid_daily_at": "Daily time must be HH:MM (24-hour), e.g. 07:30."
     },
     "abort": {
-      "already_configured": "BRain is already configured. You can add more conversation agents from the integration page using 'Add Service'."
+      "already_configured": "brAIn is already configured. You can add more conversation agents from the integration page using 'Add Service'."
     }
   },
   "options": {
@@ -1040,12 +1040,12 @@
   },
   "issues": {
     "restart_required": {
-      "title": "BRain: Restart required (v{version})",
+      "title": "brAIn: Restart required (v{version})",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "Restart Home Assistant",
-            "description": "The BRain integration has been updated to version {version}. Home Assistant will restart to load the new version.\n\nThis will briefly interrupt all automations and connections."
+            "description": "The brAIn integration has been updated to version {version}. Home Assistant will restart to load the new version.\n\nThis will briefly interrupt all automations and connections."
           }
         }
       }

@@ -1,13 +1,13 @@
-"""Make BRain's learning visible inside Home Assistant.
+"""Make brAIn's learning visible inside Home Assistant.
 
-Memory is a markdown file on disk, which is fine for BRain and invisible to
+Memory is a markdown file on disk, which is fine for brAIn and invisible to
 everyone else. This module surfaces it where people already look:
 
   * a ``brain_learned`` event per new fact, so learning shows up in the
     **logbook** next to lights and doors — the cheapest, most legible signal
     that the house is getting smarter
   * sensors for how much it knows and when it last learned something
-  * a binary sensor for "BRain is waiting on you", which is automatable —
+  * a binary sensor for "brAIn is waiting on you", which is automatable —
     that is what lets a guess reach a phone instead of a panel nobody has
     open
 
@@ -164,13 +164,13 @@ class LearningWatcher:
                     "source": change["source"],
                     # The logbook renders this verbatim, so it has to read as
                     # a sentence rather than a field dump.
-                    "name": "BRain",
+                    "name": "brAIn",
                     "message": f"learned: {fact}",
                 })
             for fact in change["removed"]:
                 self.hass.bus.fire(EVENT_LEARNED, {
                     "fact": fact,
                     "source": change["source"],
-                    "name": "BRain",
+                    "name": "brAIn",
                     "message": f"forgot: {fact}",
                 })

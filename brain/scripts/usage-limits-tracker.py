@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Anthropic usage limits tracker for BRain.
+"""Anthropic usage limits tracker for brAIn.
 
 Periodically queries the Anthropic API for real account-wide usage
 limits (session and weekly utilization percentages with reset times).

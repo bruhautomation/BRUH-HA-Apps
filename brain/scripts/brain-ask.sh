@@ -42,7 +42,7 @@ Usage:
   brain ask --json "<question>" Print the raw JSON result
 
 Reads live Home Assistant state, history, and statistics, plus everything
-BRain has learned about the house. For a saved, recurring answer, use the
+brAIn has learned about the house. For a saved, recurring answer, use the
 Ask card in the panel instead.
 EOF
     exit "${1:-0}"
