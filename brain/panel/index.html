@@ -72,9 +72,15 @@
        "Claude · subscription" was a permanent label for a state that never
        changes. Usage carries both windows, each behind its own word: the
        5-hour session that gates automatic runs, and the weekly one that
-       actually ends your week. Reset times live in the hover. -->
+       actually ends your week.
+
+       Each control in this bar does its own job. Three of them used to open
+       Settings, which meant the bar could report three different things and
+       answer all of them with the same dialog. Now: the usage pill opens the
+       reset times where it stands, the paused chip undoes the thing it is
+       reporting, and ⚙ is the one route to Settings. -->
   <span id="authChip" class="chip hidden"><span class="dot"></span><span id="authChipText">Checking…</span></span>
-  <button id="usageChip" class="chip clickable hidden"><span class="dot"></span><span class="uwin"><span class="ulab">Session</span><span id="usageChipPct"></span></span><span id="usageChipWeek" class="uwin hidden"><span class="ulab">Week</span><span id="usageChipWeekPct"></span></span></button>
+  <button id="usageChip" class="chip clickable hidden" aria-expanded="false"><span class="dot"></span><span class="uwin"><span class="ulab">Session</span><span id="usageChipPct"></span></span><span id="usageChipWeek" class="uwin hidden"><span class="ulab">Week</span><span id="usageChipWeekPct"></span></span></button>
   <button id="pausedChip" class="chip clickable warn hidden"><span class="dot"></span><span id="pausedChipText"></span></button>
 
   <button id="refreshAll" class="btn icon hidden" data-tip="Refresh all">
@@ -84,6 +90,16 @@
     <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 8.9 19a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0-1.1-2.7H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 6.9a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 2.7 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/></svg>
   </button>
 </header>
+
+<!-- What a chip has to say when there is more to it than the chip's own
+     words. Opened by pressing the chip, not by hovering it: a phone has no
+     hover, and the reset times were only ever in a `title`. Anchored to the
+     chip and dismissed by pressing anywhere else — it is a disclosure, not a
+     dialog, so it never locks the page behind it. -->
+<div id="chipPop" class="chippop hidden" role="dialog" aria-labelledby="chipPopTitle">
+  <h4 id="chipPopTitle"></h4>
+  <div id="chipPopBody"></div>
+</div>
 
 <main class="wrap">
 
@@ -240,8 +256,22 @@
      this panel at /terminal/ so it lives behind one ingress port. The frame
      is only pointed at it on first activation — no session is started for
      someone who never opens the tab. -->
+<!-- The terminal is the one tab whose content wants the whole screen, and on
+     a phone with the keyboard up it was getting about a third of it: the HA
+     header, then our two-row bar, then the tab strip, then a keyboard. The
+     bar folds away here — automatically while the keyboard is up (the ttyd
+     frame already knows, and tells us), or for good if you press ⤢.
+
+     The control floats over the terminal rather than sitting in the top bar
+     because a button in the bar cannot be the way back to a bar that is
+     gone. It is the same button both ways round. -->
 <div id="viewTerminal" class="view">
   <iframe id="termFrame" title="Terminal" src="about:blank"></iframe>
+  <button id="termExpand" class="termfab" data-tip="Full-screen terminal"
+          aria-label="Full-screen terminal" aria-pressed="false">
+    <svg viewBox="0 0 24 24" class="ico ico-in" aria-hidden="true"><path d="M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5"/></svg>
+    <svg viewBox="0 0 24 24" class="ico ico-out" aria-hidden="true"><path d="M4 9h5V4M20 9h-5V4M4 15h5v5M20 15h-5v5"/></svg>
+  </button>
 </div>
 
 <div id="viewMemory" class="view">

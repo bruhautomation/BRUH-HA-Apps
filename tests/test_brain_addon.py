@@ -277,20 +277,38 @@ class TestTopbarLayout(unittest.TestCase):
             self.assertNotIn("reset", m.group(1),
                              "reset times belong in the hover, not the bar")
 
-    def test_usage_hover_is_only_the_reset_times(self):
-        """The tooltip used to carry the two windows, the budget threshold
-        and 'tap for settings' — three of which are visible on screen or
-        obvious from the cursor. What isn't visible anywhere is when each
-        window rolls over, so that is all the hover says."""
-        import re
+    def test_the_reset_times_are_behind_a_press_not_a_hover(self):
+        """When each usage window rolls over is the one fact the pill has no
+        room for — and it lived in a `title`, which on a phone is a fact that
+        exists and cannot be read. Pressing the pill opens it in place."""
         body = self.js[self.js.index("function renderUsageChip()"):]
         body = body[:body.index("\n}\n")]
-        self.assertIn('lines.push(`Session resets ${reset}`)', body)
-        self.assertIn('lines.push(`Week resets ${weekReset}`)', body)
-        self.assertIn('chip.title = lines.join("\\n")', body)
-        self.assertNotIn("budget_percent", body,
-                         "the budget threshold is a settings fact, not a hover")
-        self.assertNotIn("Tap for settings", body)
+        self.assertIn("chip.removeAttribute(\"title\")", body)
+        self.assertNotIn("chip.title =", body)
+        fill = self.js[self.js.index("function fillUsagePop()"):]
+        fill = fill[:fill.index("\n}\n")]
+        self.assertIn("resets_at", fill)
+        self.assertIn("week_resets_at", fill)
+        self.assertIn('id="chipPop"', self.html)
+
+    def test_every_control_in_the_bar_does_its_own_job(self):
+        """Three controls all opened Settings, so a bar that reported three
+        different things answered all of them with the same dialog. The pill
+        opens its own reset times, the paused chip switches automatic
+        insights back on, and ⚙ is the one route to Settings."""
+        import re
+        handlers = dict(re.findall(
+            r'\$\("#(\w+)"\)\.addEventListener\("click", (.{0,90})', self.js,
+            re.S))
+        self.assertIn("openSettings", handlers.get("settingsBtn", ""))
+        self.assertNotIn("openSettings", handlers.get("usageChip", ""))
+        self.assertNotIn("openSettings", handlers.get("pausedChip", ""))
+        self.assertIn("toggleChipPop", handlers.get("usageChip", ""))
+        # The paused chip's press is the switch itself, not a trip to a
+        # dialog that holds the switch.
+        press = self.js[self.js.index('$("#pausedChip").addEventListener'):]
+        press = press[:press.index("\n});")]
+        self.assertIn("auto_enabled: true", press)
 
     def test_collapsed_chips_keep_their_meaning(self):
         """Sighted users read the words; a screen reader reads the label."""
@@ -320,24 +338,35 @@ class TestTopbarLayout(unittest.TestCase):
         and fails on any overflow. This pins that the staging exists at all
         and reads downward."""
         widths = [w for w, _ in self._bands()]
-        self.assertGreaterEqual(len(widths), 3, "the bar needs staged bands")
+        self.assertGreaterEqual(len(widths), 2, "the bar needs staged bands")
         self.assertEqual(widths, sorted(widths, reverse=True),
                          "bands must narrow monotonically")
 
-    def test_tab_labels_come_back_on_the_phone_strip(self):
-        """Labels drop out of the single row because five names cost more
-        than the whole right-hand end of the bar. They are not gone for
-        good: the phone layout stacks each name under its icon, which is the
-        width where an unlabelled glyph row was hardest to read."""
-        self.assertIn(".viewtab span:not(.badge) { display: none; }", self.css)
+    def test_no_width_gets_a_row_of_bare_glyphs(self):
+        """There used to be a middle band — one row, tab labels deleted,
+        tabs shrunk to icons — and it covered 960 to 1239px, which is what a
+        laptop with the HA sidebar open actually renders. So the compromise
+        shape was the one most people saw, and widening the window made the
+        tabs grow, which reads as a bug. Labels now leave only when the
+        single row does, and the two-row bar keeps them."""
+        self.assertNotIn(".viewtab span:not(.badge) { display: none; }", self.css)
         phone = next((css for _, css in self._bands()
                       if "flex-wrap: wrap" in css), None)
-        self.assertIsNotNone(phone, "no band turns the bar into the phone shape")
+        self.assertIsNotNone(phone, "no band turns the bar into the two-row shape")
         self.assertIn("flex-direction: column", phone)
         self.assertIn(".viewtab span:not(.badge) {", phone)
         self.assertIn("width: 100%", phone, "the tabs need a strip of their own")
         for view in ("insights", "findings", "terminal", "memory", "docs"):
             self.assertIn(f'data-view="{view}"', self.html)
+
+    def test_the_two_row_tabs_stop_growing_with_the_window(self):
+        """Five equal shares of a phone is a thumb-sized tab; five equal
+        shares of 1200px is a 240px target with a 20px glyph adrift in it.
+        The tabs cap and centre instead."""
+        phone = next((css for _, css in self._bands()
+                      if "flex-wrap: wrap" in css), None)
+        self.assertIn("justify-content: center", phone)
+        self.assertRegex(phone, r"max-width: \d+px;")
 
     def test_badges_survive_the_phone_layout_as_a_corner_count(self):
         """A badge you can't see is a decision nobody makes. Stacked tabs
@@ -358,7 +387,25 @@ class TestTopbarLayout(unittest.TestCase):
         self.assertIn("--bar-h", self.css)
         self.assertIn("height: calc(100dvh - var(--bar-h))", self.css)
         self.assertIn("trackBarHeight", self.js)
-        self.assertIn('setProperty(\n      "--bar-h"', self.js)
+        self.assertIn('"--bar-h", Math.round(bar.getBoundingClientRect()', self.js)
+
+    def test_the_terminal_can_fold_the_bar_away(self):
+        """A phone with the keyboard up gave the terminal about a third of
+        the screen: HA's header, our two rows, the tab strip, the keyboard.
+        The bar folds — on ⤢, and by itself while the keyboard is up, which
+        only the ttyd frame can see and so is where it is reported from."""
+        self.assertIn("body.term-immersive .topbar { display: none; }", self.css)
+        self.assertIn("body.term-immersive { --bar-h: 0px; }", self.css)
+        self.assertIn('id="termExpand"', self.html)
+        self.assertIn("brain-keyboard", self.js)
+        inject = (ADDON_DIR / "ttyd-assets" / "inject.html").read_text()
+        self.assertIn("brain-keyboard", inject)
+        self.assertIn("function reportKeyboard(", inject)
+        # A press of ⤢ outlives a reload; the keyboard's fold does not. And
+        # it goes through prefSet, because a browser may refuse an iframe its
+        # storage — a throw there would take out every handler bound below.
+        self.assertIn('prefSet("brain.termFull"', self.js)
+        self.assertIn("try { return localStorage.getItem(key); }", self.js)
 
 
 class TestHypothesisIdentity(unittest.TestCase):

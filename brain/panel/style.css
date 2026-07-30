@@ -637,6 +637,63 @@ body.modal-open {
   bottom: calc(100% + 7px);
 }
 
+/* chip disclosure — what a status chip says when pressed.
+   A popover rather than a tooltip, because the thing it explains (when a
+   usage window rolls over) is a fact you go looking for, and looking for it
+   on a phone means pressing something. Fixed-position so it is anchored to
+   the chip as rendered rather than to a scrolled box, and measured in JS. */
+.chippop {
+  position: fixed;
+  z-index: 80;
+  width: max-content;
+  max-width: min(320px, calc(100vw - 16px));
+  padding: 12px 14px;
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.chippop.hidden { display: none; }
+.chippop h4 {
+  margin: 0 0 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+/* One row per window: what it is and when it rolls over on the left, the
+   reading on the right. The reset sits under the name rather than beside it
+   so neither ever wraps mid-phrase — "This / week 83% resets Sun" is how the
+   first draft read at 320px. */
+.chippop .prow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 5px 0;
+}
+.chippop .prow + .prow { border-top: 1px solid var(--hairline); }
+.chippop .pname { display: flex; flex-direction: column; color: var(--ink-2); }
+.chippop .pwhen { color: var(--ink-3); font-size: 12px; }
+.chippop .pval {
+  flex: none;
+  font-weight: 700;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+.chippop .pnote {
+  margin: 8px 0 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--hairline);
+  color: var(--ink-3);
+  font-size: 12px;
+}
+.chippop .pnote b { color: var(--ink-2); font-weight: 600; }
+
 /* knowledge (memory) modal */
 .klist { display: flex; flex-direction: column; gap: 7px; margin-top: 4px; }
 .kempty { font-size: 13px; color: var(--ink-3); padding: 6px 2px; }
@@ -1221,6 +1278,7 @@ body.modal-open {
    phone bar is two rows and a trouble chip can make it three. */
 #viewTerminal.active {
   display: block;
+  position: relative;
   height: calc(100vh - var(--bar-h));
   height: calc(100dvh - var(--bar-h));
   margin: -18px -20px -20px;
@@ -1234,21 +1292,76 @@ body.modal-open {
   background: #1a1613;
 }
 
+/* Immersive terminal — the bar folds away and the terminal takes the room.
+   Two things fold it: pressing ⤢, and the software keyboard coming up (the
+   ttyd frame is the only thing that can see that, so it says so). --bar-h
+   goes to zero with it, which is what makes the frame grow; the resize
+   propagates to ttyd, which re-fits xterm, which SIGWINCHes the PTY, so
+   the shell reflows to the new height rather than scrolling inside a box
+   the wrong size. */
+body.term-immersive .topbar { display: none; }
+body.term-immersive { --bar-h: 0px; }
+
+/* One button, both directions. It sits over the terminal because the way
+   back from a hidden bar cannot live in the bar. Dimmed until touched: it
+   is over someone's output, and output is what they came for. */
+.termfab {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  z-index: 25;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid rgba(232, 221, 212, 0.18);
+  border-radius: 11px;
+  background: rgba(26, 22, 19, 0.72);
+  color: #e8ddd4;
+  cursor: pointer;
+  opacity: 0.42;
+  -webkit-tap-highlight-color: transparent;
+  transition: opacity .15s ease, background .15s ease;
+}
+#viewTerminal.active .termfab { display: inline-flex; }
+.termfab:hover, .termfab:focus-visible { opacity: 1; background: rgba(26, 22, 19, 0.95); }
+.termfab .ico { width: 18px; height: 18px; }
+/* Pressed = the bar is gone, so the button is the only way back and stops
+   hiding. The glyph flips to the inward arrows of "come back out". */
+.termfab[aria-pressed="true"] { opacity: 0.9; }
+.termfab .ico-out { display: none; }
+.termfab[aria-pressed="true"] .ico-in { display: none; }
+.termfab[aria-pressed="true"] .ico-out { display: block; }
+/* While the keyboard has taken the bar, the button would be one more thing
+   over a screen that has almost nothing left — and closing the keyboard
+   brings the bar back on its own. */
+body.term-kb #viewTerminal.active .termfab { display: none; }
+
 .docsnav { top: calc(var(--bar-h) + 12px); }
 
-/* The bar never wraps text away to fit. What changes with width is the
-   layout. Three bands, and the widths are what the content measures rather
-   than round numbers:
+/* The bar never wraps text away to fit, and it never shrinks its own
+   controls to fit either. What changes with width is the layout, and there
+   are two layouts:
 
-     >=1240   one row, tabs labelled            needs 1204px (paused)
-     960-1239 one row, tabs icon-only           needs  914px (paused)
-     390-959  two rows, tabs on their own strip  fits from 390px
-     <390     the same, without the wordmark     fits from 320px
+     >=1240   one row, tabs labelled             needs 1204px (paused)
+     390-1239 two rows, tabs on their own strip   fits from 390px
+     <390     the same, without the wordmark      fits from 320px
+
+   There used to be a third band — 960 to 1239, one row with the tab labels
+   deleted and the tabs shrunk to bare glyphs. That is the width a laptop
+   with the Home Assistant sidebar open actually renders at, so the shape
+   most people saw was the compromise: five unlabelled icons, smaller than
+   at any other width, for no reason they could see. A bar that changes size
+   as you widen the window reads as a bug even when it is deliberate. The
+   labels now leave at exactly the width the row can no longer hold them,
+   and what they leave for is the two-row bar, where they are still there.
 
    Measured by tests/manual/measure-topbar.mjs across the three states the
    bar can be in (running, paused, a failed login) — none is a superset of
    the others, and the two trouble states are the ones that put a second
-   chip in the row. Below 960 they simply take a third line rather than
+   chip in the row. Below 1240 they simply take a third line rather than
    costing anyone their tab labels. */
 
 /* Nothing in the bar may shrink; only the spacer flexes. A shrinking chip
@@ -1259,20 +1372,11 @@ body.modal-open {
 .topbar .spacer { flex: 1; min-width: 0; }
 
 @media (max-width: 1239px) {
-  /* Labels leave the tabs before the tabs leave the row: five names cost
-     ~290px more than five icons, which is more than the whole right-hand end
-     of the bar. Every tab keeps its name in a tooltip and its aria-label
-     until the phone layout gives it one for real. */
-  .viewtab span:not(.badge) { display: none; }
-  .viewtab { padding: 0 12px; }
-  .topbar { gap: 6px; }
-}
-
-@media (max-width: 959px) {
-  /* The phone bar. Two rows, because one row cannot hold five thumb-sized
-     targets and a labelled status pill at 320px — and dropping the labels to
-     make it fit is what made the bar unreadable on the only device where
-     hovering isn't possible.
+  /* The two-row bar. One row cannot hold five thumb-sized targets and a
+     labelled status pill at 320px — and dropping the labels to make it fit
+     is what made the bar unreadable on the only device where hovering isn't
+     possible, and what made a 1280px window show smaller tabs than a 1400px
+     one.
 
      Row one is status and actions. Row two is the tabs, full width, each an
      equal share with its name under the icon. Chips wrap onto their own line
@@ -1288,16 +1392,23 @@ body.modal-open {
     padding: 4px 10px 0;
   }
 
+  /* Centred, not stretched. Five equal shares of a phone is a thumb-sized
+     tab; five equal shares of a 1200px window is a 240px target with a 20px
+     glyph adrift in it, which reads as a layout that lost its content. The
+     tabs take what they need up to a cap and sit in the middle of the strip
+     once the strip is wider than they are. */
   .viewtabs {
     order: 9;
     width: 100%;
     margin-left: 0;
     gap: 2px;
+    justify-content: center;
   }
 
   .viewtab {
     flex: 1;
     min-width: 0;
+    max-width: 168px;
     flex-direction: column;
     justify-content: center;
     gap: 3px;
@@ -1339,6 +1450,17 @@ body.modal-open {
   .topbar .chip { height: 40px; padding: 0 12px; }
   #viewTerminal.active { margin: -12px -12px -14px; }
   .docsnav { position: static; }
+}
+
+/* Same two-row bar, read from further away. Below 600px the label under the
+   icon is sized to survive a 320px screen — five names across a phone. Above
+   it there is no such pressure, so the tab is typeset like the rest of the
+   panel instead of like a phone's tab bar. The shape does not change; only
+   the type does. */
+@media (min-width: 600px) and (max-width: 1239px) {
+  :root { --bar-h: 109px; }
+  .viewtab { height: 56px; font-size: 0.8rem; gap: 4px; }
+  .viewtab .ico { width: 22px; height: 22px; }
 }
 
 @media (max-width: 389px) {

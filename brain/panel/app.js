@@ -103,6 +103,12 @@ window.addEventListener("message", (ev) => {
 
 // ------------------------------------------------------------------ auth UI
 
+// Which chip the disclosure popover currently belongs to — also the "is it
+// open" flag, so a re-render can refresh it in place instead of leaving a
+// stale reading on screen under a live chip. Declared up here because the
+// renderers below read it.
+let chipPopFor = null;
+
 function renderAuth() {
   const s = state.status;
   const chip = $("#authChip");
@@ -167,60 +173,156 @@ function fmtDayClock(epoch) {
 // number sits behind its own word, because "19% · 100%" is two readings with
 // nothing on screen saying which window either belongs to.
 //
-// The hover carries the reset times and nothing else. It used to also
-// explain the budget and say "tap for settings", which is three facts deep
-// in a tooltip when only one of them is a thing you can't already see.
-// Click opens ⚙; the dot goes warning-coloured once the budget is reached.
+// The reset times are behind a press, not a hover. They were in a `title`,
+// which on a phone is a fact that exists and cannot be read — and the phone
+// is where this pill is most often the only thing on screen worth reading.
+// The dot goes warning-coloured once the budget is reached.
 function renderUsageChip() {
   const s = state.status;
   const chip = $("#usageChip");
   const u = s && s.authenticated && s.usage;
   if (!u || u.used_percent == null) {
     chip.classList.add("hidden");
+    if (chipPopFor === chip) closeChipPop();
     return;
   }
   const hasWeek = u.week_percent != null;
-  const reset = u.resets_at ? fmtClock(u.resets_at) : "";
-  const weekReset = u.week_resets_at ? fmtDayClock(u.week_resets_at) : "";
   $("#usageChipPct").textContent = `${Math.round(u.used_percent)}%`;
   $("#usageChipWeekPct").textContent = hasWeek ? `${Math.round(u.week_percent)}%` : "";
   $("#usageChipWeek").classList.toggle("hidden", !hasWeek);
   chip.classList.toggle("ok", !u.blocked);
   chip.classList.toggle("warn", !!u.blocked);
-
-  // Reset times only — one line per window, and a window with no known reset
-  // simply isn't listed rather than saying so at length.
-  const lines = [];
-  if (reset) lines.push(`Session resets ${reset}`);
-  if (hasWeek && weekReset) lines.push(`Week resets ${weekReset}`);
-  chip.title = lines.join("\n");
+  chip.removeAttribute("title");
   chip.setAttribute("aria-label",
     `Claude usage — session ${Math.round(u.used_percent)}%`
     + (hasWeek ? `, week ${Math.round(u.week_percent)}%` : "")
-    + (lines.length ? ". " + lines.join(". ") : ""));
+    + ". Press for reset times.");
   chip.classList.remove("hidden");
+  // Keep an open disclosure honest: usage polls every few seconds.
+  if (chipPopFor === chip) fillUsagePop();
 }
 
-// Topbar chip that says WHY nothing is auto-generating (click opens ⚙)
+// Both windows, each with its number and when it rolls over — the two facts
+// the pill itself has no room for. A window with no known reset is listed
+// with its reading and no time rather than left out: the reading is real
+// either way, and a missing row reads as a missing window.
+function fillUsagePop() {
+  const u = (state.status && state.status.usage) || {};
+  const rows = [];
+  const row = (name, pct, when) =>
+    `<div class="prow"><span class="pname">${esc(name)}`
+    + (when ? `<span class="pwhen">${esc(when)}</span>` : "")
+    + `</span><span class="pval">${Math.round(pct)}%</span></div>`;
+  rows.push(row("Session · 5 hours", u.used_percent || 0,
+    u.resets_at ? `resets ${fmtClock(u.resets_at)}` : ""));
+  if (u.week_percent != null) {
+    rows.push(row("This week", u.week_percent,
+      u.week_resets_at ? `resets ${fmtDayClock(u.week_resets_at)}` : ""));
+  }
+  // The budget only ever throttles brAIn's own scheduled work, so it belongs
+  // here beside the number it is measured against — not in a separate chip.
+  if (u.budget_percent != null) {
+    rows.push(`<p class="pnote">Automatic insights pause once the session `
+      + `window passes <b>${Math.round(u.budget_percent)}%</b>, leaving the rest `
+      + `of your Claude account to you. Asking a question by hand always runs.</p>`);
+  }
+  setChipPop($("#usageChip"), "Claude usage", rows.join(""));
+}
+
+// Topbar chip that says WHY nothing is auto-generating — and undoes it.
+// There are exactly two reasons, and they take different presses: a switch
+// somebody turned off is turned back on, and a budget that has been reached
+// is explained, because no press can un-spend it.
 function renderPausedChip() {
   const s = state.status;
   const chip = $("#pausedChip");
   const text = $("#pausedChipText");
   let label = "";
+  let mode = "";
   if (s && s.authenticated) {
     if (s.settings && s.settings.auto_enabled === false) {
       label = "Auto insights off";
-      chip.title = "Automatic generation is switched off in Settings";
+      mode = "off";
+      chip.title = "Turn automatic insights back on";
     } else if (s.usage && s.usage.blocked) {
       label = "Usage budget reached";
-      chip.title = `Session usage ${s.usage.used_percent}% ≥ budget `
-        + `${s.usage.budget_percent}% — auto-refresh paused until the 5-hour window rolls over`;
+      mode = "budget";
+      chip.title = "";
     }
   }
   text.textContent = label;
-  if (label) chip.setAttribute("aria-label", label);
+  chip.dataset.mode = mode;
+  if (label) {
+    chip.setAttribute("aria-label", mode === "off"
+      ? "Automatic insights are off — press to turn them on"
+      : "Usage budget reached — press for detail");
+  }
   chip.classList.toggle("hidden", !label);
+  if (!label && chipPopFor === chip) closeChipPop();
+  else if (mode === "budget" && chipPopFor === chip) fillPausedPop();
 }
+
+function fillPausedPop() {
+  const u = (state.status && state.status.usage) || {};
+  const body =
+    `<div class="prow"><span class="pname">Session used</span>`
+    + `<span class="pval">${Math.round(u.used_percent || 0)}%</span></div>`
+    + `<div class="prow"><span class="pname">Your budget</span>`
+    + `<span class="pval">${Math.round(u.budget_percent || 0)}%</span></div>`
+    + `<p class="pnote">Scheduled cards are paused`
+    + (u.resets_at ? ` until the 5-hour window rolls over at <b>${esc(fmtClock(u.resets_at))}</b>` : "")
+    + `. Questions you ask yourself still run. The budget is in `
+    + `<b>⚙ Settings</b> if it is set too tight.</p>`;
+  setChipPop($("#pausedChip"), "Automatic insights paused", body);
+}
+
+// ------------------------------------------------------- chip disclosures
+
+function setChipPop(anchor, title, bodyHtml) {
+  const pop = $("#chipPop");
+  $("#chipPopTitle").textContent = title;
+  $("#chipPopBody").innerHTML = bodyHtml;
+  pop.classList.remove("hidden");
+  chipPopFor = anchor;
+  anchor.setAttribute("aria-expanded", "true");
+  positionChipPop();
+}
+
+// Under the chip and right-aligned with it, then pulled back inside the
+// viewport — the chips live at the right-hand end of the bar, and on a phone
+// that end is the screen edge.
+function positionChipPop() {
+  if (!chipPopFor) return;
+  const pop = $("#chipPop");
+  const a = chipPopFor.getBoundingClientRect();
+  const w = pop.offsetWidth;
+  const left = Math.max(8, Math.min(a.right - w, window.innerWidth - w - 8));
+  pop.style.left = Math.round(left) + "px";
+  pop.style.top = Math.round(a.bottom + 6) + "px";
+}
+
+function closeChipPop() {
+  if (!chipPopFor) return;
+  chipPopFor.setAttribute("aria-expanded", "false");
+  chipPopFor = null;
+  $("#chipPop").classList.add("hidden");
+}
+
+// A press on the chip toggles its own disclosure; a press anywhere else
+// dismisses it. Nothing here traps focus or locks the page — it is a label
+// that got too long, not a dialog.
+function toggleChipPop(anchor, fill) {
+  if (chipPopFor === anchor) closeChipPop();
+  else { closeChipPop(); fill(); }
+}
+
+document.addEventListener("click", (ev) => {
+  if (!chipPopFor) return;
+  if (ev.target.closest("#chipPop") || ev.target.closest(".chip.clickable")) return;
+  closeChipPop();
+});
+window.addEventListener("resize", () => positionChipPop());
+window.addEventListener("scroll", () => closeChipPop(), true);
 
 function bindSetup() {
   document.querySelectorAll(".setup .tab").forEach((tab) => {
@@ -1026,6 +1128,7 @@ $("#modal").addEventListener("click", (ev) => {
 });
 document.addEventListener("keydown", (ev) => {
   if (ev.key === "Escape") {
+    closeChipPop();
     document.querySelectorAll(".modal.open").forEach((m) => m.classList.remove("open"));
     syncModalLock();
   }
@@ -1386,7 +1489,10 @@ async function refreshOpenSettings() {
   } catch (e) { /* transient — the next tick tries again */ }
 }
 
-async function saveSettings(fields) {
+// `note` is what to say when the save came from somewhere that isn't the
+// Settings dialog — "Saved" is only meaningful next to the field you just
+// changed, and the topbar chip is nowhere near one.
+async function saveSettings(fields, note) {
   try {
     const data = await api("api/settings", {
       method: "PUT", body: JSON.stringify(fields) });
@@ -1397,15 +1503,32 @@ async function saveSettings(fields) {
     }
     renderUsageChip();
     renderPausedChip();
-    toast("Saved");
+    toast(note || "Saved");
   } catch (e) {
     toast(e.message);
   }
 }
 
 $("#settingsBtn").addEventListener("click", openSettings);
-$("#usageChip").addEventListener("click", openSettings);
-$("#pausedChip").addEventListener("click", openSettings);
+
+// The pill answers the question it raises: two readings, and when each one
+// starts over. It used to open Settings, where neither number appears.
+$("#usageChip").addEventListener("click", () =>
+  toggleChipPop($("#usageChip"), fillUsagePop));
+
+// The chip undoes what it reports. "Auto insights off" is a switch, so
+// pressing it is the switch — one press, no dialog, and the chip goes away
+// because the thing it was reporting is no longer true. A budget that has
+// been reached is not a switch, so that one explains itself instead.
+$("#pausedChip").addEventListener("click", async () => {
+  if ($("#pausedChip").dataset.mode !== "off") {
+    toggleChipPop($("#pausedChip"), fillPausedPop);
+    return;
+  }
+  closeChipPop();
+  await saveSettings({ auto_enabled: true },
+    "Automatic insights on — recurring cards will refresh again");
+});
 $("#setEnabled").addEventListener("change", () =>
   saveSettings({ auto_enabled: $("#setEnabled").checked }));
 $("#setPlan").addEventListener("change", () =>
@@ -2382,7 +2505,12 @@ function switchView(name) {
     const frame = $("#termFrame");
     // Lazy: don't start a shell session for someone who never opens the tab.
     if (frame.getAttribute("src") === "about:blank") frame.src = "terminal/";
+  } else {
+    // Leaving the tab: whatever the keyboard was doing over there, the bar
+    // belongs to whichever tab is in front now.
+    termChrome.keyboard = false;
   }
+  applyTermChrome();
   if (name === "memory") renderKnowledge();
   if (name !== "memory") refreshMemoryBadge();
   if (name === "docs") renderDocs();
@@ -2433,14 +2561,79 @@ $("#kAddForm").addEventListener("submit", async (ev) => {
 // is two rows that become three if a trouble chip joins the usage pill. So
 // the height is measured rather than assumed: --bar-h is the CSS fallback
 // for each layout, and this keeps it exact at whatever the bar actually is.
+function syncBarHeight() {
+  const bar = document.querySelector(".topbar");
+  if (!bar) return;
+  // Hidden means zero, and getBoundingClientRect on a display:none element
+  // already says so — but a ResizeObserver does not fire for it, which is
+  // why this is callable rather than only observed.
+  document.documentElement.style.setProperty(
+    "--bar-h", Math.round(bar.getBoundingClientRect().height) + "px");
+}
+
 (function trackBarHeight() {
   const bar = document.querySelector(".topbar");
   if (!bar || typeof ResizeObserver === "undefined") return;
-  new ResizeObserver(() => {
-    document.documentElement.style.setProperty(
-      "--bar-h", Math.round(bar.getBoundingClientRect().height) + "px");
-  }).observe(bar);
+  new ResizeObserver(syncBarHeight).observe(bar);
 })();
+
+// ------------------------------------------------- immersive terminal
+
+// Two independent reasons the bar folds away, and they must not clobber one
+// another: `pinned` is the ⤢ press and survives a reload; `keyboard` is the
+// software keyboard being up right now. Closing the keyboard restores the
+// bar unless ⤢ is holding it down.
+// The panel runs inside Home Assistant's ingress iframe, and a browser is
+// allowed to refuse an iframe its storage (Safari does, under some privacy
+// settings). Reading it must therefore never throw: an unremembered
+// preference is a small loss, and a script that dies here takes every
+// handler declared after it with it.
+function prefGet(key) {
+  try { return localStorage.getItem(key); } catch (e) { return null; }
+}
+function prefSet(key, value) {
+  try { localStorage.setItem(key, value); } catch (e) { /* not remembered */ }
+}
+
+const termChrome = {
+  pinned: prefGet("brain.termFull") === "1",
+  keyboard: false,
+};
+
+function applyTermChrome() {
+  const onTerminal = currentView === "terminal";
+  const pinned = onTerminal && termChrome.pinned;
+  const kb = onTerminal && termChrome.keyboard;
+  document.body.classList.toggle("term-immersive", pinned || kb);
+  document.body.classList.toggle("term-kb", kb);
+  const btn = $("#termExpand");
+  if (btn) {
+    btn.setAttribute("aria-pressed", pinned ? "true" : "false");
+    const label = pinned ? "Show the brAIn bar" : "Full-screen terminal";
+    btn.setAttribute("aria-label", label);
+    btn.dataset.tip = label;
+  }
+  syncBarHeight();
+}
+
+$("#termExpand").addEventListener("click", () => {
+  termChrome.pinned = !termChrome.pinned;
+  prefSet("brain.termFull", termChrome.pinned ? "1" : "0");
+  applyTermChrome();
+});
+
+// The ttyd frame is the only thing in the stack that can tell whether the
+// software keyboard is up: on iOS the keyboard doesn't resize an iframe's
+// visual viewport, and the frame already does the awkward work of finding
+// out (it has to, to keep its own toolbar above the keys). It reports the
+// answer here rather than us guessing it a second time, worse.
+window.addEventListener("message", (ev) => {
+  const d = ev.data;
+  if (!d || d.type !== "brain-keyboard") return;
+  if (ev.source !== $("#termFrame").contentWindow) return;
+  termChrome.keyboard = !!d.open;
+  applyTermChrome();
+});
 
 // -------------------------------------------------- dashboard card modal
 
