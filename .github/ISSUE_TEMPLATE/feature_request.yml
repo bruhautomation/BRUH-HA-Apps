@@ -7,8 +7,8 @@ body:
     attributes:
       label: Which add-on?
       options:
-        - BRUH Claude Terminal
-        - BRUH Minecraft Server
+        - brAIn
+        - BRUH Minecraft
         - Other / unsure
     validations:
       required: true

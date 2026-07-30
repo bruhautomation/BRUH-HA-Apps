@@ -7,8 +7,7 @@ body:
     attributes:
       label: Which add-on?
       options:
-        - BRUH Terminal
-        - BRUH Insights
+        - brAIn
         - BRUH Minecraft
         - Other / unsure
     validations:
@@ -19,7 +18,7 @@ body:
     attributes:
       label: Add-on version
       description: Find this in Settings > Add-ons > (the add-on) > Info.
-      placeholder: "3.3.2"
+      placeholder: "1.9.0"
     validations:
       required: true
 

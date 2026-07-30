@@ -1,59 +1,277 @@
 # brAIn
 
-Your home's brain: a Claude Code terminal, an AI insights dashboard, and one shared
-memory — in one add-on, behind one sidebar panel, on one Claude login.
+**Give your smart home a mind.**
 
+brAIn puts Claude inside Home Assistant with full run of the place — every entity,
+every device, every area, floor, label, dashboard, helper, automation and add-on.
+Not a chatbot bolted onto a sidebar: an operator that reads your history, edits your
+configuration, fixes what's broken, remembers what you tell it, and answers when you
+speak to it.
+
+One add-on. One panel. One Claude login.
+
+---
+
+- [What it can do](#what-it-can-do)
+  - [It runs Home Assistant](#it-runs-home-assistant)
+  - [It finds what's broken — and fixes it](#it-finds-whats-broken--and-fixes-it)
+  - [It explains your house to you](#it-explains-your-house-to-you)
+  - [It remembers](#it-remembers)
+  - [It answers when you talk to it](#it-answers-when-you-talk-to-it)
+  - [It has a full terminal](#it-has-a-full-terminal)
+  - [It works while you're asleep](#it-works-while-youre-asleep)
+  - [Everything it does can be undone](#everything-it-does-can-be-undone)
 - [Setup](#setup)
 - [The panel](#the-panel)
-- [Configuration options](#configuration-options)
 - [The CLI](#the-cli)
-- [Memory and learning](#memory-and-learning)
-- [Undo and backups](#undo-and-backups)
-- [The Home Assistant integration](#the-home-assistant-integration)
+- [Configuration options](#configuration-options)
+- [What it costs](#what-it-costs)
+- [What it will not do](#what-it-will-not-do)
 - [Ports](#ports)
+
+---
+
+## What it can do
+
+### It runs Home Assistant
+
+Most AI integrations can turn on a light. brAIn administers the installation.
+
+It reaches Home Assistant three ways at once — a **native MCP server** (36 tools) for
+reading and controlling, **65 registry-management services** for the parts of Home
+Assistant that normally only exist behind the Settings UI, and a **real shell** in
+`/config` for everything that is still a YAML file.
+
+**Organisation.** Create, rename and delete **areas**, **floors** and **labels**; set
+their icons and aliases; move devices and entities between them; put areas on floors.
+Ask it to reorganise a house that grew by accident — "every light in the basement
+should be in a Basement area under a Lower Floor" — and it does the whole sweep.
+
+**Devices and entities.** Rename either. Change an `entity_id`. Set icons and voice
+aliases. Hide, unhide, enable and disable. Find references to entities and devices
+that no longer exist, and clean them up — dry-run by default, so you see the list
+before anything goes.
+
+**Integrations.** Reload one without restarting Home Assistant. Enable, disable, or
+remove one entirely.
+
+**Helpers, zones, people, users.** Create and delete input helpers, timers, counters
+and schedules. Draw a zone or edit its radius. Add a person, attach their device
+trackers. Create a user, disable one, remove one.
+
+**Dashboards.** List them, read them, create them, rewrite them, restore a previous
+version, reset one to defaults, and manage dashboard resources. brAIn can build you a
+dashboard from a sentence describing what you want on it.
+
+**Automations, scripts and scenes.** It reads and edits the YAML directly, validates
+it, reloads the domain, and then reads the **traces** to see whether the thing
+actually fired and why it didn't. That last part is what turns "write me an
+automation" from a party trick into something that works on the second try.
+
+**The house's own record.** History and long-term statistics, the logbook, the error
+log, the Supervisor's view of your add-ons, weather forecasts, camera snapshots
+(it *sees* the image), rendered templates, and every service any integration exposes.
+
+**Add-ons.** List, start, stop, restart and read the logs of your other add-ons.
+
+If it exists in Home Assistant, brAIn can look at it, and — with a handful of
+deliberate exceptions listed [below](#what-it-will-not-do) — change it.
+
+> **Nothing is create-only.** Every attribute a `create_*` service accepts has a
+> service that changes it afterwards, and everything that can be created can be
+> renamed and deleted. A test asserts that, because a tool that can make a mess and
+> not clean it up is worse than no tool.
+
+### It finds what's broken — and fixes it
+
+A **finding** is something wrong with your house: a battery about to die, a sensor
+that quietly stopped reporting three weeks ago, a device stuck `unavailable`, an
+automation whose trigger can never fire.
+
+brAIn files findings on its own, from scheduled analysis and from study sessions.
+Each one gets a severity, a plain-English explanation, and two buttons:
+
+- **Fix it** — brAIn makes the change and reports back what it did. This is the *only*
+  place the add-on runs Claude with tools on its own initiative, it is bounded to one
+  finding, and it only ever happens because you pressed the button.
+- **Not a problem** — dismissed for good. Dismissed findings are injected into every
+  future analysis, so the same non-problem is never raised at you twice. The garage
+  fridge that runs 24/7 gets flagged once.
+
+### It explains your house to you
+
+The **Insights** dashboard is a set of cards, each one a small piece of analysis with
+a real interactive visualisation — not a paragraph of text with a number in it.
+
+There are **no default cards**, deliberately. A generic "Energy" card about a home
+brAIn has never looked at says nothing useful and costs tokens every time it runs.
+Instead the first run studies *your* house — how it's named, when it's occupied, what
+it uses, how its devices behave — and proposes cards grounded in what it found, each
+with a one-line reason.
+
+- **Ask anything.** Type a question and get a card back: "why is the upstairs cold in
+  the morning", "which of my devices are costing the most", "did anyone open the back
+  door while we were out". Keep the ones worth having weekly with **＋ Make recurring**.
+- **Put them on your dashboard.** Any card gives you ready-to-paste YAML for a Webpage
+  card, so an insight can live on your own dashboard next to everything else.
+- **Tags and filters.** Cards carry tags brAIn assigns; the chips at the top filter by
+  them, and you can edit any card's tags.
+- **Feedback that sticks.** Tell a card what to do differently — "ignore the guest
+  room", "show costs in dollars" — and the next run obeys.
+- **Schedules you control.** Per-card, either an interval or fixed times of day.
+
+### It remembers
+
+Everything else here is a feature. This is the part that makes brAIn get *better*.
+
+brAIn keeps one plain-markdown document of durable facts about your home. Not a chat
+history — a curated document: your nicknames for rooms, which devices are meant to
+behave oddly, when your household actually wakes up, what you've corrected it on.
+
+Facts arrive from voice conversations (when you state a preference, it writes it
+down), from insight runs, from study sessions, from the CLI, and from a service any
+automation can call. A background consolidator folds them into the document, and
+**you can edit the document yourself** — your edits are the source of truth.
+
+Every part of brAIn reads the same memory. Tell the voice assistant something and the
+Insights cards know it.
+
+It also keeps a short list of **hypotheses** — things it thinks might be true and
+isn't sure about. Never more than three waiting on you, each expiring in a fortnight.
+Answer yes and it becomes a plain memory line; answer no and it stops guessing that.
+It never interrogates you with a questionnaire.
+
+**Study sessions** send it off to investigate: `brain learn energy`, or just type
+"learn about the upstairs heating" in the ask bar. It digs through the registry,
+history and long-term statistics for minutes at a time, and what it finds lands in
+memory and in your findings list.
+
+### It answers when you talk to it
+
+brAIn registers as a **conversation agent**, so you can pick it in Settings → Voice
+Assistants and talk to it from any Assist pipeline, satellite or the app.
+
+- **Fast.** A pool of pre-warmed Claude workers answers in a few seconds rather than
+  cold-starting a CLI per request, and an area→entity map is baked into the prompt so
+  most commands skip lookup turns entirely.
+- **It knows your house.** The same memory, spliced into every voice prompt. "Turn on
+  the beacon" works if you once told it what the beacon is.
+- **It follows a conversation.** Follow-up turns resume the same session.
+- **Its reach is yours to set.** By default voice can only touch Home Assistant —
+  states, services, the registries. One setting widens it to the full toolset, shell
+  and file edits included.
+
+### It has a full terminal
+
+The **Terminal** tab is the real Claude Code CLI, in your browser, running as a
+non-root user with your `/config` in front of it. Everything above, plus everything a
+capable engineer with a shell can do: read logs, edit YAML, write scripts, install
+packages, use git, take the long way round a hard problem.
+
+- **Native Home Assistant access** through the same MCP server the rest of brAIn uses.
+- **`/config/CLAUDE.md` written for you** at startup, describing your actual
+  installation, so a fresh session already knows your house.
+- **Built for a phone**, not merely tolerable on one: a key toolbar that stays above
+  the software keyboard, working copy/paste, swipe-scroll, an iOS dictation fix, and
+  a top bar that folds away while you're typing so the terminal gets the screen.
+- **Sessions survive.** tmux underneath, so a dropped connection doesn't kill your
+  work, and the environment persists across restarts.
+
+### It works while you're asleep
+
+- Recurring insight cards regenerate on their own schedule.
+- Memory consolidates in the background.
+- Automations can hand brAIn work: `brain.run_task` gives it a job and lets it use
+  tools, `brain.send_prompt` asks it a question, `brain.run_insight` regenerates a
+  card, `brain.study` sends it off to research something, `brain.add_memory` teaches
+  it a fact. Wire them to any trigger you like.
+- Insight jobs render to `sensor.<name>_insight` with the markdown and ready-to-paste
+  card YAML as attributes, so a report can drive a template, a notification, or a
+  dashboard.
+
+### Everything it does can be undone
+
+Before Claude writes to any file under `/config`, brAIn snapshots the previous
+contents. `brain undo` lists what changed and puts any of it back — one edit, or
+everything from today. `secrets.yaml` is never snapshotted.
+
+That covers Claude's edits. For the house as a whole, use Home Assistant's own
+backups: they're whole-system and restorable, and brAIn deliberately does not
+duplicate them (see [What it will not do](#what-it-will-not-do)).
+
+---
 
 ## Setup
 
-1. Install the add-on and start it.
-2. Open the panel from the sidebar and authenticate Claude (a subscription login or an
-   API key — the panel walks you through it). This is the **only** login; the terminal,
-   insight generation, voice, and memory consolidation all share it.
-3. Home Assistant will offer to set up the **brAIn** integration via discovery. Accept
-   it — that's what provides the services, sensors, and the voice assistant.
-4. Press **Start learning**. A fresh install has **no cards**: brAIn studies your home
-   first, then proposes cards grounded in what it found. See below.
+1. **Install and start the add-on.**
+2. **Open the panel** from the sidebar and connect your Claude account. Easiest route:
+   open the **Terminal** tab, run `claude`, and sign in there — the rest of brAIn
+   picks that login up. The panel also offers a guided sign-in and a paste-a-token
+   box. This is the **only** login; terminal, insights, voice, findings and memory all
+   share it.
+3. **Accept the integration.** Home Assistant offers to set up **brAIn** via
+   discovery. That's what provides the services, the sensors and the voice assistant.
+4. **Press Start learning.** brAIn studies your home for a few minutes in the
+   background, then proposes the cards this particular house should have. You pick
+   which to keep.
 
-### First run
+A **Claude Pro or Max subscription** is the cheapest way to run brAIn — it uses the
+plan you already pay for rather than API credits. An API key works too.
 
-There are no default cards, deliberately. A generic "Energy" or "Climate" card about a
-home brAIn has never looked at says nothing useful and costs tokens on every run.
-
-Instead the first run studies the house — naming and areas, occupancy rhythms, energy,
-climate, device reliability — and then proposes a handful of cards specific to it, each
-with a one-line reason citing what it found. You choose which to keep, and can add, edit
-or remove cards at any time afterwards.
-
-It takes a few minutes and runs in the background; the panel can be closed and reopened.
-
-**If your home is too sparse to learn from**, brAIn says what's missing rather than
-inventing generic cards. Add more entities, let history accumulate, and run it again.
+> **If your home is too sparse to learn from**, brAIn says what's missing rather than
+> inventing generic cards. Add entities, let some history accumulate, run it again.
 
 ## The panel
 
-One ingress panel with four faces:
+One ingress panel, five tabs.
 
-- **Insights** — generated cards about your home. Ask a question and get an answer card;
-  keep the ones you like as recurring cards, or drop any of them on a dashboard. Say
-  "learn about…" in the same bar and it runs a study session instead.
-- **Findings** — what brAIn thinks is broken, and what it did about it. Each one is
-  either fixed (brAIn makes the change and reports back) or dismissed for good.
-- **Terminal** — full Claude Code, reverse-proxied through the panel at `/terminal/`.
-- **Memory** — what brAIn knows about your house, editable.
+| Tab | What's there |
+| --- | --- |
+| **Insights** | Your cards, and the ask bar that makes new ones. A question becomes a card; a line starting "learn about…" starts a study session instead. |
+| **Findings** | What brAIn thinks is broken, with **Fix it** and **Not a problem**. A count on the tab means something is waiting on you. |
+| **Terminal** | Full Claude Code, served through the panel — no second sidebar entry, no second login. Press ⤢ to give it the whole screen. |
+| **Memory** | The memory document, editable, plus the queue behind it and any hypotheses waiting on a yes/no. |
+| **Docs** | This guide, in the panel. |
 
-`enable_terminal` and `enable_insights` turn either face off; the panel itself always
-runs, because it is the ingress target.
+`enable_terminal` and `enable_insights` switch either face off; the panel itself
+always runs, because it is the ingress target.
+
+## The CLI
+
+Two dispatchers, split by what they act on. brAIn's own faculties are under `brain`;
+anything that acts on Home Assistant is under `ha`.
+
+```bash
+brain memory add "We call the office lamp the beacon"
+brain memory list                  # what it knows
+brain memory edit                  # open the document in $EDITOR
+brain memory log                   # what it learned recently
+brain memory hypotheses            # pending guesses awaiting a yes/no
+brain learn energy                 # study a topic
+brain ask "why is the garage cold" # same engine as the Ask card
+brain undo                         # review and revert Claude's edits
+brain doctor                       # end-to-end diagnostic
+
+ha log                             # tail the Home Assistant log
+ha reload automations
+ha check configuration.yaml
+ha context                         # regenerate /config/CLAUDE.md
+ha entity list light
+ha service call light.turn_on
+ha addon list
+ha notify "dishwasher finished"
+```
+
+Run `brain help` or `ha help` for the full list.
+
+> If some other `ha` command is ever present on `PATH` inside the container, brAIn
+> installs its own as `hass` instead rather than shadowing it. The startup log says so
+> when this happens.
 
 ## Configuration options
+
+Everything below is also editable from the panel's Settings dialog, which writes back
+through the Supervisor — both screens always show the same value.
 
 ### Faces
 
@@ -111,9 +329,6 @@ runs, because it is the ingress target.
 | `model` | string | `""` | Override the Claude model. Empty uses the default. |
 | `generation_timeout_minutes` | 2–30 | `8` | Per-generation timeout. |
 
-These are also editable from the panel's Settings dialog, which writes back here through
-the Supervisor — both screens always show the same value.
-
 ### Undo and access
 
 | Option | Type | Default | Description |
@@ -129,109 +344,43 @@ the Supervisor — both screens always show the same value.
 | `persistent_pip_packages` | list | `[]` | Python packages reinstalled on every start. |
 | `log_level` | enum | `info` | Add-on log verbosity. |
 
-## The CLI
+## What it costs
 
-Two dispatchers, split by what they act on. brAIn's own faculties are under `brain`;
-anything that acts on Home Assistant is under `ha`.
+brAIn runs on **your** Claude account, so it costs whatever your plan costs and
+nothing more. There is no brAIn subscription and no middleman.
 
-```bash
-brain memory add "We call the office lamp the beacon"
-brain memory list                  # what it knows
-brain memory edit                  # open the document in $EDITOR
-brain memory log                   # what it learned recently
-brain memory hypotheses            # pending guesses awaiting a yes/no
-brain learn energy                 # study a topic
-brain ask "why is the garage cold" # same engine as the Ask card
-brain undo                         # review and revert Claude's edits
-brain doctor                       # end-to-end diagnostic
+To keep it from eating the plan you also use for your own work:
 
-ha log
-ha reload automations
-ha check configuration.yaml
-ha context
-ha entity list light
-ha service call light.turn_on
-ha addon list
-ha notify "dishwasher finished"
-```
+- The top bar shows both usage windows — the **5-hour session** and the **week** —
+  live. Press the pill for when each one resets.
+- A **budget** (Settings) caps how much of the session window automatic work may
+  spend. Past it, scheduled cards pause and say so in the bar; anything you ask for by
+  hand still runs.
+- Usage is also exposed as Home Assistant sensors, so you can chart it or alert on it.
+- Fixed daily times ("07:00, 19:00") cost far fewer tokens than a short refresh
+  interval, and cards you never look at can simply be deleted.
 
-Run `brain help` or `ha help` for the full list.
+## What it will not do
 
-> If some other `ha` command is ever present on `PATH` inside the container, brAIn
-> installs its own as `hass` instead rather than shadowing it. The startup log says so
-> when this happens.
+An honest list, because a tool that can edit your house should be clear about its
+edges.
 
-## Memory and learning
-
-brAIn keeps a small, durable document about your home under `/config/.brain/memory/`.
-
-| File | What it is |
-| --- | --- |
-| `memory.md` | The canonical document — preferences, nicknames, household patterns, device notes. **User-editable.** Capped at `memory_max_kb`. |
-| `voice.md` | A ≤2 KB distillate spliced into voice prompts. Derived; don't edit. |
-| `inbox/` | Candidate facts awaiting consolidation. |
-
-Facts arrive from voice conversations (Claude calls a `remember_fact` tool when you
-state a preference or correction), from insight runs, from study sessions, from
-`brain memory add`, and from the `brain.add_memory` service. A background consolidator
-folds the inbox into the document daily — or early once more than 20 facts are waiting,
-or immediately when you press **⇪ File into memory now** on the Memory tab.
-
-The document is plain markdown. Edit it freely — your edits are the source of truth, and
-the consolidator preserves them.
-
-## Findings
-
-A finding is something **broken**: a dead battery, a sensor that stopped reporting, a
-device stuck unavailable, an automation that can never fire. Insight runs and study
-sessions file them into `/data/findings.json`; study sessions hand theirs over through
-`/config/.brain/findings/inbox/`, the same way facts reach the memory inbox.
-
-Pressing **Fix it** is the only place the add-on runs Claude *with tools* on its own
-initiative — everywhere else insight generation is pure analysis over a data snapshot
-with `--disallowedTools "*"`. A fix run is bounded to one finding, capped by
-`BRAIN_FIX_MAX_TURNS` (30) and `BRAIN_FIX_TIMEOUT` (900s), runs under the same
-`/config/.claude/settings.local.json` permissions as the Assist and Automation
-listeners, and is snapshotted by the same `PreToolUse` hook — so `brain undo` restores a
-file a fix got wrong. It never deletes anything it didn't create, never restarts Home
-Assistant, and never runs on a schedule.
-
-**Dismissing** a finding is durable: dismissed findings are injected into every future
-analysis so the same non-problem is never raised twice.
-
-## Undo and backups
-
-**brAIn does not back up your configuration.** Use Home Assistant's own backups; they're
-whole-system and restorable, and duplicating them inside `/config` only made the backups
-bigger.
-
-What brAIn keeps is an **edit journal**. Before Claude writes to any file under
-`/config`, the previous contents are snapshotted to `/data/.brain/edits/`:
-
-```bash
-brain undo                # list recent edits, newest first
-brain undo 3              # revert edit #3
-brain undo --all-today    # revert everything Claude changed today
-```
-
-Snapshots are pruned after `edit_journal_days` and capped by total size. `secrets.yaml`
-is never snapshotted.
-
-If you previously ran BRUH Terminal, its `/config/.git` directory is left exactly as it
-is — brAIn never touches it. Delete it yourself if you don't want it.
-
-## The Home Assistant integration
-
-Deployed automatically to `/config/custom_components/brain/` at startup.
-
-- A **conversation agent** named brAIn, for Settings → Voice Assistants.
-- Services: `brain.send_prompt`, `brain.run_task`, `brain.run_insight`,
-  `brain.add_memory`, `brain.clear_conversation`.
-- **BRUH Power Tools**: 65 admin-gated registry-management services under `brain.*`
-  (areas, floors, labels, entities, devices, integrations, helpers, zones, persons,
-  blueprints, statistics, users, dashboards, repair issues), adapted from
-  [Spook](https://github.com/frenck/spook) (MIT).
-- Usage-limit sensors reflecting real Anthropic account utilisation.
+- **It does not back up your configuration.** Home Assistant's own backups are
+  whole-system and restorable; duplicating them inside `/config` only made the backups
+  bigger. brAIn keeps an edit journal of its own changes instead.
+- **It never touches an existing `/config/.git`.** If you version your config
+  yourself, that's yours.
+- **It does not run with tools on a schedule.** Scheduled insight generation is pure
+  analysis over a data snapshot, with every tool disabled. The one exception is the
+  Findings **Fix it** button, which runs only because you pressed it.
+- **It does not restart Home Assistant by itself**, and a fix never deletes anything
+  it didn't create.
+- **Voice is limited to Home Assistant by default.** Widening it to Bash and file
+  editing is a setting you turn on deliberately.
+- **The registry services are admin-gated**, and destructive sweeps (orphan cleanup)
+  are dry-run by default.
+- **It is not affiliated with Anthropic or the Open Home Foundation.** It runs the
+  official Claude Code CLI under your own account.
 
 ## Ports
 
@@ -240,3 +389,20 @@ Deployed automatically to `/config/custom_components/brain/` at startup.
 | 8099 | The ingress panel. Also reverse-proxies `/terminal/`. | Internal; ingress handles it. |
 | 7681 | ttyd, direct access. | Optional — handy for a kiosk or a bookmarked full-screen terminal. |
 | 8098 | The assist worker pool's internal API. | Internal only. |
+
+## Where things live
+
+| Path | What |
+| --- | --- |
+| `/config/.brain/memory/memory.md` | The memory document. Yours to edit. |
+| `/config/.brain/memory/voice.md` | A ≤2 KB distillate spliced into voice prompts. Derived; don't edit. |
+| `/config/.brain/memory/inbox/` | Candidate facts awaiting consolidation. |
+| `/config/.brain/findings/inbox/` | Problems study sessions found, awaiting filing. |
+| `/config/CLAUDE.md` | The generated description of your installation. |
+| `/config/custom_components/brain/` | The Home Assistant integration, deployed at startup. |
+| `/data/findings.json` | The findings list and its history. |
+| `/data/.brain/edits/` | The edit journal `brain undo` restores from. |
+
+## License
+
+MIT. BRUH Power Tools is adapted from [Spook](https://github.com/frenck/spook) (MIT).

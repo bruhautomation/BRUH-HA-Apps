@@ -2,6 +2,65 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.10.0
+
+### The bar is one size now
+
+Between roughly 960 and 1240 pixels the top bar had a third shape: one row,
+tab labels deleted, tabs shrunk to bare glyphs. That is the width a laptop
+with the Home Assistant sidebar open actually renders at — so the
+compromise was the shape most people saw, and widening the window made the
+tabs *grow*, which reads as a bug whatever the intent.
+
+Gone. There are two shapes and no third: one labelled row at 1240px and up,
+and the two-row bar below it, with all five tabs still named. The tabs stop
+growing at 168px and centre themselves, so five equal shares of a wide
+window isn't five oversized targets with a small glyph adrift in each.
+
+### Every control in the bar does its own job
+
+Three of them opened Settings, so a bar that reported three different things
+answered all of them with the same dialog.
+
+- **The usage pill opens its own numbers.** Press it and you get both
+  windows with when each one resets, and what the budget actually gates.
+  It's a press rather than a hover because the reset times used to live in a
+  tooltip — a fact that exists and cannot be read on a phone, which is where
+  that pill is most often the only thing worth reading.
+- **"Auto insights off" is now the switch.** One press turns them back on
+  and the chip goes away, because the thing it was reporting is no longer
+  true. A usage budget that has been reached isn't a switch, so that one
+  explains itself instead — what you've spent, what the budget is, and when
+  the window rolls over.
+- **⚙ is the one route to Settings.**
+
+### The terminal gets the screen back on a phone
+
+With the keyboard up, the terminal was getting about a third of the display:
+Home Assistant's header, then brAIn's two rows, then the tab strip, then the
+keys.
+
+The bar now folds away while you're typing and comes back when you dismiss
+the keyboard — the ttyd frame is the only thing in the stack that can see an
+iOS keyboard from inside an iframe, and it already had to work that out for
+its own toolbar, so it reports it rather than the panel guessing a second
+time, worse. **⤢** over the terminal folds the bar away for good, and the
+same button brings it back.
+
+tmux also drops its status line below 90 columns. One row out of about
+twenty, spent on the session name and the date.
+
+### The documentation says what brAIn actually is
+
+Rewritten around the whole capability rather than around three components:
+brAIn administers Home Assistant — every entity, device, area, floor, label,
+dashboard, helper, automation and add-on — and the docs now say so, with the
+36 native tools, the 65 registry services and the shell all in one page. A
+new **What brAIn can do** section opens the in-panel guide.
+
+References to the two add-ons brAIn replaced are gone from the
+documentation. They meant nothing to anyone arriving now.
+
 ## 1.9.0
 
 ### A top bar you can actually hit
