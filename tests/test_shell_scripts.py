@@ -339,6 +339,20 @@ class TestTmuxConf(unittest.TestCase):
         """tmux.conf should have increased scroll buffer."""
         self.assertIn("history-limit", self.content)
 
+    def test_the_status_line_stands_down_on_a_narrow_client(self):
+        """One row of twenty, spent on the session name and the date, on the
+        screen with the fewest rows to spare. It goes on attach and on every
+        resize, and comes back when the width does.
+
+        The width test is a shell `[` on purpose: tmux does not expand a
+        nested `#{client_width}` inside its own `#{<:a,b}` comparison, so
+        that form answers "narrower" at every width."""
+        for hook in ("client-attached", "client-resized"):
+            self.assertIn(f"set-hook -g {hook}", self.content)
+        self.assertIn("[ #{client_width} -lt 90 ]", self.content)
+        self.assertIn("tmux set -g status off", self.content)
+        self.assertIn("tmux set -g status on", self.content)
+
 
 class TestHealthCheck(unittest.TestCase):
     """Test health-check.sh."""

@@ -10,14 +10,101 @@
 
 window.BRAIN_DOCS = [
   {
+    id: "what",
+    icon: "🏠",
+    title: "What brAIn can do",
+    body: `
+# What brAIn can do
+
+brAIn puts Claude inside Home Assistant with **full run of the place** — every entity,
+every device, every area, floor, label, dashboard, helper, automation and add-on. It
+reads your history, edits your configuration, fixes what's broken, remembers what you
+tell it, and answers when you speak to it.
+
+One add-on, one panel, one Claude login, running on **your** Claude subscription.
+
+## It runs Home Assistant
+
+Most AI integrations can turn on a light. brAIn administers the installation. It
+reaches Home Assistant three ways at once — **36 native tools** for reading and
+controlling, **65 registry-management services** for the parts of Home Assistant that
+normally only exist behind the Settings UI, and a **real shell** in \`/config\` for
+everything that is still a YAML file.
+
+- **Organisation** — create, rename and delete areas, floors and labels; set icons and
+  voice aliases; move devices and entities between them; put areas on floors. Ask it to
+  reorganise a house that grew by accident and it does the whole sweep.
+- **Devices and entities** — rename either, change an \`entity_id\`, hide, unhide,
+  enable, disable. Find references to things that no longer exist and clean them up —
+  dry-run first, so you see the list before anything goes.
+- **Integrations** — reload one without restarting Home Assistant; enable, disable or
+  remove one entirely.
+- **Helpers, zones, people, users** — create and delete input helpers, timers, counters
+  and schedules; draw a zone; add a person and attach their device trackers; create,
+  disable or remove a user.
+- **Dashboards** — read, create, rewrite, restore a previous version, reset to
+  defaults, manage resources. It can build a dashboard from a sentence.
+- **Automations, scripts and scenes** — it edits the YAML, validates it, reloads the
+  domain, and then reads the **traces** to see whether the thing actually fired and why
+  it didn't. That last part is what makes "write me an automation" work on the second
+  try instead of never.
+- **The house's own record** — history and long-term statistics, the logbook, the error
+  log, your other add-ons, weather forecasts, camera snapshots it can actually *see*,
+  rendered templates, and every service any integration exposes.
+
+**Nothing is create-only.** Everything that can be created can be renamed and deleted,
+and every attribute a \`create_\` service accepts has a service that changes it later.
+
+## It finds what's broken
+
+A **finding** is something wrong with your house — a dying battery, a sensor that
+quietly stopped reporting three weeks ago, a device stuck unavailable, an automation
+whose trigger can never fire. brAIn files them on its own, and each one gets **Fix it**
+(it makes the change and reports back) or **Not a problem** (dismissed for good, and
+never raised at you again).
+
+## It explains your house
+
+Insight cards with real interactive visualisations, chosen for **your** home rather
+than shipped as defaults. Ask anything and get a card back; keep the good ones as
+recurring, or put any of them on your own dashboard.
+
+## It remembers
+
+One editable document of durable facts about your home — your nicknames, your
+household's rhythms, the devices that are meant to behave oddly. Learned from
+conversations, insight runs and study sessions, and read by **every** part of brAIn.
+Tell the voice assistant something and the cards know it.
+
+## It talks
+
+Pick brAIn in **Settings → Voice assistants** and talk to it from any Assist pipeline,
+satellite or the app. Answers land in a few seconds from a pool of pre-warmed workers,
+with your memory and an area map already in the prompt.
+
+## It has a terminal, in two shapes
+
+The real Claude Code CLI in your browser, running with your \`/config\` in front of it.
+**Chat** renders it as a conversation — text that reflows to your screen, tool calls
+folded into a line each, a normal text box — and **Classic** is a true terminal for
+anything that draws its own screen. Same session, same permissions, one button between
+them. Press **⤢** to give either the whole screen.
+
+## It can be undone
+
+Before Claude writes to any file under \`/config\`, the previous version is snapshotted.
+\`brain undo\` puts it back — one edit, or everything from today.
+`,
+  },
+
+  {
     id: "start",
     icon: "🚀",
     title: "Getting started",
     body: `
 # Getting started
 
-brAIn is three things sharing one brain: a **Claude Code terminal**, an **AI insights
-dashboard**, and a **memory** of your home that both of them read and write.
+Four steps, and the longest one runs in the background while you do something else.
 
 ## 1. Sign in once
 
@@ -109,6 +196,26 @@ services, check history, edit YAML, reload config.
 
 It's the same terminal the add-on runs, served through this panel, so there's no second
 sidebar entry and no second login.
+
+**It has two faces**, and the button in the corner switches between them (so does
+⚙ Settings). Both run the same Claude Code, on the same login, in the same \`/config\`,
+with the same permissions — the difference is entirely how you see it.
+
+**Chat** is the default. Claude Code's output rendered as a conversation: text that
+reflows to your screen, code blocks that scroll inside their own box, tool calls folded
+into one line each (tap for the arguments and the result), reasoning behind a "Thinking"
+line, and a real text box so dictation and autocorrect behave. **⏹** stops an answer
+in progress and **＋** starts a new chat. It survives a reload, a locked phone, and the
+add-on restarting.
+
+**Classic** is a true terminal — ttyd over tmux. Use it for anything that draws its own
+screen (a TUI, \`htop\`, an installer), for running shell commands yourself, or just
+because you prefer it.
+
+**On a small screen it takes the room it needs.** The bar above folds away by itself
+while the keyboard is up and comes back when you dismiss it; **⤢** in the corner folds
+it away for good, and the same button brings it back. tmux drops its status line on a
+narrow terminal too — one row of about twenty, spent on the date.
 
 ## Memory
 
@@ -374,8 +481,8 @@ restores the file exactly as it was immediately before that edit.
 - Pruned on \`edit_journal_days\` (default 14) and capped by size.
 - \`secrets.yaml\` is never snapshotted.
 
-> Upgrading from BRUH Terminal? Its old \`/config/.git\` is left exactly as it is — brAIn
-> never touches it. Delete it yourself if you don't want it.
+> If something else already keeps a \`/config/.git\`, brAIn leaves it exactly as it is —
+> your version control is yours.
 `,
   },
 

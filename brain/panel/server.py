@@ -91,6 +91,7 @@ from aiohttp import web
 import addon_options
 import card_tags
 import categories as cat_mod
+import chat_session
 import engine
 import feedback_store
 import findings_store
@@ -2109,6 +2110,89 @@ async def h_health(request: web.Request) -> web.Response:
 
 
 # ---------------------------------------------------------------------------
+# The chat terminal
+#
+# Same Claude Code, same credential, same /config working directory and
+# therefore the same settings.local.json permissions as the listeners — what
+# differs is only that its output is rendered as DOM instead of drawn into a
+# character grid. See chat_session.py.
+# ---------------------------------------------------------------------------
+
+def _chat() -> "chat_session.ChatSession":
+    session = chat_session.session()
+    # Resolved per call rather than at startup: the model is editable from
+    # ⚙ Settings and from the Configuration tab, and a chat session started
+    # before an edit should not keep the old one for as long as it lives.
+    session.model = eff_model()
+    return session
+
+
+async def h_chat_stream(request: web.Request) -> web.StreamResponse:
+    """Server-sent events: a snapshot, then everything as it happens.
+
+    The snapshot is the first frame rather than a separate GET so there is
+    no window between "what the transcript was" and "what happened next" —
+    a reconnect that has to stitch two requests together is a reconnect that
+    drops an event eventually.
+    """
+    session = _chat()
+    resp = web.StreamResponse(headers={
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache, no-transform",
+        # Ingress puts nginx in front of us; without this it buffers the
+        # stream and the page sits blank until the turn is over.
+        "X-Accel-Buffering": "no",
+    })
+    await resp.prepare(request)
+    queue = session.subscribe()
+
+    async def send(payload: dict) -> None:
+        await resp.write(b"data: " + json.dumps(payload).encode() + b"\n\n")
+
+    try:
+        await send(session.snapshot())
+        while True:
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=20)
+            except asyncio.TimeoutError:
+                # A comment frame: proves the connection to both ends and
+                # keeps any intermediary from reaping an idle stream.
+                await resp.write(b": ping\n\n")
+                continue
+            await send(event)
+    except (ConnectionResetError, asyncio.CancelledError):
+        pass
+    finally:
+        session.unsubscribe(queue)
+    return resp
+
+
+async def h_chat_send(request: web.Request) -> web.Response:
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise web.HTTPBadRequest(text="expected an object")
+    try:
+        return web.json_response(await _chat().send(body.get("text") or ""))
+    except ValueError as exc:
+        raise web.HTTPBadRequest(reason=str(exc))
+    except RuntimeError as exc:
+        raise web.HTTPConflict(reason=str(exc))
+
+
+async def h_chat_stop(request: web.Request) -> web.Response:
+    return web.json_response(await _chat().interrupt())
+
+
+async def h_chat_new(request: web.Request) -> web.Response:
+    return web.json_response(await _chat().reset())
+
+
+async def h_chat_state(request: web.Request) -> web.Response:
+    """The snapshot on its own, for a client whose stream is not up yet."""
+    return web.json_response(_chat().snapshot())
+
+
+# ---------------------------------------------------------------------------
 # App wiring
 # ---------------------------------------------------------------------------
 
@@ -2174,6 +2258,11 @@ def make_app() -> web.Application:
     app.router.add_get("/api/auth/setup/status", h_setup_status)
     app.router.add_post("/api/auth/setup/cancel", h_setup_cancel)
     app.router.add_get("/api/health", h_health)
+    app.router.add_get("/api/chat/stream", h_chat_stream)
+    app.router.add_get("/api/chat/state", h_chat_state)
+    app.router.add_post("/api/chat/send", h_chat_send)
+    app.router.add_post("/api/chat/stop", h_chat_stop)
+    app.router.add_post("/api/chat/new", h_chat_new)
 
     # The terminal tab: /terminal/ is reverse-proxied through to ttyd
     # so the whole add-on lives behind one ingress port.
@@ -2197,7 +2286,14 @@ def make_app() -> web.Application:
         if engine.get_auth():
             asyncio.create_task(_check_auth_bg())
 
+    async def on_cleanup(app: web.Application) -> None:
+        # The chat session is a child process of ours; leaving it running
+        # after the panel goes down orphans a Claude that nothing will ever
+        # read from again.
+        await chat_session.session().stop()
+
     app.on_startup.append(on_startup)
+    app.on_cleanup.append(on_cleanup)
     return app
 
 

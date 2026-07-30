@@ -277,20 +277,38 @@ class TestTopbarLayout(unittest.TestCase):
             self.assertNotIn("reset", m.group(1),
                              "reset times belong in the hover, not the bar")
 
-    def test_usage_hover_is_only_the_reset_times(self):
-        """The tooltip used to carry the two windows, the budget threshold
-        and 'tap for settings' — three of which are visible on screen or
-        obvious from the cursor. What isn't visible anywhere is when each
-        window rolls over, so that is all the hover says."""
-        import re
+    def test_the_reset_times_are_behind_a_press_not_a_hover(self):
+        """When each usage window rolls over is the one fact the pill has no
+        room for — and it lived in a `title`, which on a phone is a fact that
+        exists and cannot be read. Pressing the pill opens it in place."""
         body = self.js[self.js.index("function renderUsageChip()"):]
         body = body[:body.index("\n}\n")]
-        self.assertIn('lines.push(`Session resets ${reset}`)', body)
-        self.assertIn('lines.push(`Week resets ${weekReset}`)', body)
-        self.assertIn('chip.title = lines.join("\\n")', body)
-        self.assertNotIn("budget_percent", body,
-                         "the budget threshold is a settings fact, not a hover")
-        self.assertNotIn("Tap for settings", body)
+        self.assertIn("chip.removeAttribute(\"title\")", body)
+        self.assertNotIn("chip.title =", body)
+        fill = self.js[self.js.index("function fillUsagePop()"):]
+        fill = fill[:fill.index("\n}\n")]
+        self.assertIn("resets_at", fill)
+        self.assertIn("week_resets_at", fill)
+        self.assertIn('id="chipPop"', self.html)
+
+    def test_every_control_in_the_bar_does_its_own_job(self):
+        """Three controls all opened Settings, so a bar that reported three
+        different things answered all of them with the same dialog. The pill
+        opens its own reset times, the paused chip switches automatic
+        insights back on, and ⚙ is the one route to Settings."""
+        import re
+        handlers = dict(re.findall(
+            r'\$\("#(\w+)"\)\.addEventListener\("click", (.{0,90})', self.js,
+            re.S))
+        self.assertIn("openSettings", handlers.get("settingsBtn", ""))
+        self.assertNotIn("openSettings", handlers.get("usageChip", ""))
+        self.assertNotIn("openSettings", handlers.get("pausedChip", ""))
+        self.assertIn("toggleChipPop", handlers.get("usageChip", ""))
+        # The paused chip's press is the switch itself, not a trip to a
+        # dialog that holds the switch.
+        press = self.js[self.js.index('$("#pausedChip").addEventListener'):]
+        press = press[:press.index("\n});")]
+        self.assertIn("auto_enabled: true", press)
 
     def test_collapsed_chips_keep_their_meaning(self):
         """Sighted users read the words; a screen reader reads the label."""
@@ -320,24 +338,35 @@ class TestTopbarLayout(unittest.TestCase):
         and fails on any overflow. This pins that the staging exists at all
         and reads downward."""
         widths = [w for w, _ in self._bands()]
-        self.assertGreaterEqual(len(widths), 3, "the bar needs staged bands")
+        self.assertGreaterEqual(len(widths), 2, "the bar needs staged bands")
         self.assertEqual(widths, sorted(widths, reverse=True),
                          "bands must narrow monotonically")
 
-    def test_tab_labels_come_back_on_the_phone_strip(self):
-        """Labels drop out of the single row because five names cost more
-        than the whole right-hand end of the bar. They are not gone for
-        good: the phone layout stacks each name under its icon, which is the
-        width where an unlabelled glyph row was hardest to read."""
-        self.assertIn(".viewtab span:not(.badge) { display: none; }", self.css)
+    def test_no_width_gets_a_row_of_bare_glyphs(self):
+        """There used to be a middle band — one row, tab labels deleted,
+        tabs shrunk to icons — and it covered 960 to 1239px, which is what a
+        laptop with the HA sidebar open actually renders. So the compromise
+        shape was the one most people saw, and widening the window made the
+        tabs grow, which reads as a bug. Labels now leave only when the
+        single row does, and the two-row bar keeps them."""
+        self.assertNotIn(".viewtab span:not(.badge) { display: none; }", self.css)
         phone = next((css for _, css in self._bands()
                       if "flex-wrap: wrap" in css), None)
-        self.assertIsNotNone(phone, "no band turns the bar into the phone shape")
+        self.assertIsNotNone(phone, "no band turns the bar into the two-row shape")
         self.assertIn("flex-direction: column", phone)
         self.assertIn(".viewtab span:not(.badge) {", phone)
         self.assertIn("width: 100%", phone, "the tabs need a strip of their own")
         for view in ("insights", "findings", "terminal", "memory", "docs"):
             self.assertIn(f'data-view="{view}"', self.html)
+
+    def test_the_two_row_tabs_stop_growing_with_the_window(self):
+        """Five equal shares of a phone is a thumb-sized tab; five equal
+        shares of 1200px is a 240px target with a 20px glyph adrift in it.
+        The tabs cap and centre instead."""
+        phone = next((css for _, css in self._bands()
+                      if "flex-wrap: wrap" in css), None)
+        self.assertIn("justify-content: center", phone)
+        self.assertRegex(phone, r"max-width: \d+px;")
 
     def test_badges_survive_the_phone_layout_as_a_corner_count(self):
         """A badge you can't see is a decision nobody makes. Stacked tabs
@@ -358,7 +387,25 @@ class TestTopbarLayout(unittest.TestCase):
         self.assertIn("--bar-h", self.css)
         self.assertIn("height: calc(100dvh - var(--bar-h))", self.css)
         self.assertIn("trackBarHeight", self.js)
-        self.assertIn('setProperty(\n      "--bar-h"', self.js)
+        self.assertIn('"--bar-h", Math.round(bar.getBoundingClientRect()', self.js)
+
+    def test_the_terminal_can_fold_the_bar_away(self):
+        """A phone with the keyboard up gave the terminal about a third of
+        the screen: HA's header, our two rows, the tab strip, the keyboard.
+        The bar folds — on ⤢, and by itself while the keyboard is up, which
+        only the ttyd frame can see and so is where it is reported from."""
+        self.assertIn("body.term-immersive .topbar { display: none; }", self.css)
+        self.assertIn("body.term-immersive { --bar-h: 0px; }", self.css)
+        self.assertIn('id="termExpand"', self.html)
+        self.assertIn("brain-keyboard", self.js)
+        inject = (ADDON_DIR / "ttyd-assets" / "inject.html").read_text()
+        self.assertIn("brain-keyboard", inject)
+        self.assertIn("function reportKeyboard(", inject)
+        # A press of ⤢ outlives a reload; the keyboard's fold does not. And
+        # it goes through prefSet, because a browser may refuse an iframe its
+        # storage — a throw there would take out every handler bound below.
+        self.assertIn('prefSet("brain.termFull"', self.js)
+        self.assertIn("try { return localStorage.getItem(key); }", self.js)
 
 
 class TestHypothesisIdentity(unittest.TestCase):
@@ -398,6 +445,84 @@ class TestHypothesisIdentity(unittest.TestCase):
         by_text = {e["text"]: e["status"] for e in self.mod.list_all()}
         self.assertEqual(by_text["claim 2"], "rejected")
         self.assertEqual(by_text["claim 0"], "open")
+
+
+class TestChatTerminalPanel(unittest.TestCase):
+    """The chat terminal's half of the Terminal tab. The session itself is
+    covered by tests/test_chat_terminal.py; this is the markup and the
+    handlers, which is where "the tab is blank" comes from."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.html = (PANEL / "index.html").read_text()
+        cls.js = (PANEL / "app.js").read_text()
+        cls.css = (PANEL / "style.css").read_text()
+
+    def test_both_faces_live_in_the_terminal_tab(self):
+        """One tab, two renderings of the same session — not a sixth tab."""
+        self.assertIn('id="termChat"', self.html)
+        self.assertIn('id="termFrame"', self.html)
+        self.assertIn("body:not(.term-classic) #viewTerminal.active .chat", self.css)
+        self.assertIn("body:not(.term-classic) #viewTerminal.active #termFrame",
+                      self.css)
+
+    def test_the_composer_is_a_real_textarea(self):
+        """The whole point: dictation, autocorrect, selection and the system
+        keyboard all behave, because there is no hidden xterm helper element
+        for them to fight with. And 16px, because anything smaller makes iOS
+        zoom the page on focus."""
+        self.assertIn('<textarea id="chatInput"', self.html)
+        self.assertRegex(self.css, r"\.chatbar textarea \{[^}]*font-size: 16px")
+
+    def test_code_blocks_scroll_inside_themselves(self):
+        """The one thing that genuinely wants a character grid keeps one —
+        without making the page scroll sideways to give it."""
+        import re
+        block = re.search(r"\.msg\.bot pre, \.chat pre \{(.*?)\}", self.css, re.S)
+        self.assertIsNotNone(block, "no code-block rule")
+        self.assertIn("overflow-x: auto", block.group(1))
+
+    def test_model_output_is_escaped_before_it_is_rendered(self):
+        """Chat content is the one thing in this panel that is neither
+        authored by us nor typed by the user, so it is exactly where a lazy
+        innerHTML becomes an injection vector."""
+        self.assertIn("node.innerHTML = renderMarkdown(", self.js)
+        self.assertIn("function esc(s)", self.js)
+        # renderMarkdown escapes first — pinned by the docs tests too, but
+        # this is the caller that makes it load-bearing.
+        self.assertIn("inlineMd(s)", self.js)
+
+    def test_tool_calls_collapse_to_one_line(self):
+        """Twenty lines of JSON per call is what made the grid terminal
+        unreadable; the name and what it was aimed at is what a reader
+        scanning back actually wants."""
+        self.assertIn("function chatToolNode(", self.js)
+        self.assertIn('el("span", "tsum"', self.js)
+        self.assertIn(".toolcall > summary", self.css)
+        # A failure opens itself: it is the reason the next thing Claude
+        # says will look strange.
+        self.assertIn("if (!ev.ok) box.open = true;", self.js)
+
+    def test_the_stream_is_dropped_when_the_tab_is_not_in_front(self):
+        """An open SSE for a tab nobody is looking at holds a connection and
+        a subscriber for nothing."""
+        self.assertIn("function chatDisconnect()", self.js)
+        self.assertIn("chatDisconnect();", self.js)
+
+    def test_the_mode_is_a_setting_not_a_browser_preference(self):
+        """It is a property of this brAIn, not of the device that happened
+        to open it — and ⚙ Settings is where someone goes looking for it
+        after switching by accident."""
+        self.assertIn('id="setTerminalUi"', self.html)
+        self.assertIn("terminal_ui", self.js)
+        store = (PANEL / "settings_store.py").read_text()
+        self.assertIn('TERMINAL_UIS = ("chat", "classic")', store)
+        self.assertIn('"terminal_ui": "chat"', store)
+
+    def test_the_switch_is_also_where_the_terminal_is(self):
+        """Nobody goes to Settings to change what they are looking at."""
+        self.assertIn('id="termMode"', self.html)
+        self.assertIn('$("#termMode").addEventListener("click"', self.js)
 
 
 class TestDocsTab(unittest.TestCase):

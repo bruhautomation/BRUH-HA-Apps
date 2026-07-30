@@ -31,7 +31,7 @@ import time
 
 import aiohttp
 
-log = logging.getLogger("bruh-insights")
+log = logging.getLogger("brain.options")
 
 SUPERVISOR_URL = os.environ.get("SUPERVISOR_URL", "http://supervisor")
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")

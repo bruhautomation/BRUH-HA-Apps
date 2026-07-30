@@ -963,6 +963,24 @@
       return 0;
     }
 
+    // Tell the brAIn panel when the keyboard comes up, so it can fold its
+    // own top bar away and give those ~100-150px to the terminal. We are
+    // the only frame in the stack that can know: on iOS the keyboard does
+    // not resize an iframe's visual viewport, and all the awkward
+    // measurement above already had to be done for our own toolbar. Sent
+    // only on a change, and harmlessly ignored when the parent is anything
+    // else (a direct :7681 tab, a kiosk).
+    var lastKbSent = null;
+    function reportKeyboard(open) {
+      if (open === lastKbSent) return;
+      lastKbSent = open;
+      try {
+        if (window.parent && window.parent !== window) {
+          window.parent.postMessage({ type: 'brain-keyboard', open: open }, '*');
+        }
+      } catch (_e) { /* cross-origin parent — nothing to tell */ }
+    }
+
     function syncBarToKeyboard() {
       var gap = computeGap();
       if (gap > 0) {
@@ -975,6 +993,11 @@
         bar.style.paddingBottom = '';
       }
       syncHeight(gap);
+      // A gap is proof of a keyboard; so is a WebView that shrank itself
+      // for one (that path reports gap 0 by design — the layout is already
+      // correct — so asking `gap > 0` alone would miss the HA Companion
+      // app entirely). Both need the textarea focused to count.
+      reportKeyboard(taFocused && (gap > 0 || viewportShrunkForKeyboard()));
     }
     syncBarToKeyboard();
     window.addEventListener('resize', syncBarToKeyboard);

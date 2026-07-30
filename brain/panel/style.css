@@ -637,6 +637,63 @@ body.modal-open {
   bottom: calc(100% + 7px);
 }
 
+/* chip disclosure — what a status chip says when pressed.
+   A popover rather than a tooltip, because the thing it explains (when a
+   usage window rolls over) is a fact you go looking for, and looking for it
+   on a phone means pressing something. Fixed-position so it is anchored to
+   the chip as rendered rather than to a scrolled box, and measured in JS. */
+.chippop {
+  position: fixed;
+  z-index: 80;
+  width: max-content;
+  max-width: min(320px, calc(100vw - 16px));
+  padding: 12px 14px;
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.chippop.hidden { display: none; }
+.chippop h4 {
+  margin: 0 0 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+/* One row per window: what it is and when it rolls over on the left, the
+   reading on the right. The reset sits under the name rather than beside it
+   so neither ever wraps mid-phrase — "This / week 83% resets Sun" is how the
+   first draft read at 320px. */
+.chippop .prow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 5px 0;
+}
+.chippop .prow + .prow { border-top: 1px solid var(--hairline); }
+.chippop .pname { display: flex; flex-direction: column; color: var(--ink-2); }
+.chippop .pwhen { color: var(--ink-3); font-size: 12px; }
+.chippop .pval {
+  flex: none;
+  font-weight: 700;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+.chippop .pnote {
+  margin: 8px 0 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--hairline);
+  color: var(--ink-3);
+  font-size: 12px;
+}
+.chippop .pnote b { color: var(--ink-2); font-weight: 600; }
+
 /* knowledge (memory) modal */
 .klist { display: flex; flex-direction: column; gap: 7px; margin-top: 4px; }
 .kempty { font-size: 13px; color: var(--ink-3); padding: 6px 2px; }
@@ -1221,6 +1278,7 @@ body.modal-open {
    phone bar is two rows and a trouble chip can make it three. */
 #viewTerminal.active {
   display: block;
+  position: relative;
   height: calc(100vh - var(--bar-h));
   height: calc(100dvh - var(--bar-h));
   margin: -18px -20px -20px;
@@ -1234,21 +1292,417 @@ body.modal-open {
   background: #1a1613;
 }
 
+/* Immersive terminal — the bar folds away and the terminal takes the room.
+   Two things fold it: pressing ⤢, and the software keyboard coming up (the
+   ttyd frame is the only thing that can see that, so it says so). --bar-h
+   goes to zero with it, which is what makes the frame grow; the resize
+   propagates to ttyd, which re-fits xterm, which SIGWINCHes the PTY, so
+   the shell reflows to the new height rather than scrolling inside a box
+   the wrong size. */
+body.term-immersive .topbar { display: none; }
+body.term-immersive { --bar-h: 0px; }
+
+/* ---------------------------------------------------------- chat terminal
+   Claude Code rendered as messages rather than drawn into a character grid.
+   The grid is the reason the classic terminal is unreadable on a phone: it
+   cannot reflow, so at ~40 columns a sentence breaks mid-word and a tool
+   call spends twenty lines saying what a chip says in one. Everything here
+   is ordinary DOM, so the text wraps to whatever screen it is on, and the
+   one thing that genuinely wants a grid — a code block — keeps one inside
+   its own scroller without making the page scroll sideways. */
+.chat {
+  display: none;
+  flex-direction: column;
+  height: 100%;
+  background: var(--plane);
+}
+body:not(.term-classic) #viewTerminal.active .chat { display: flex; }
+body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
+
+.chatlog {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  /* The top padding is the height of the floating buttons: content scrolling
+     under them later is ordinary, but the FIRST message sitting under them
+     permanently is not — and the first message is right-aligned, which is
+     exactly where they are. */
+  padding: 56px 16px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.chatlog:empty { display: none; }
+
+/* A message, not a bubble — an answer that can be a page of markdown is not
+   a speech balloon. Only what the person typed gets a container, because
+   that is the thing you scan back for. */
+.msg { max-width: 760px; width: 100%; align-self: center; }
+.msg.user {
+  align-self: center;
+  display: flex;
+  justify-content: flex-end;
+}
+.msg.user .bubble {
+  max-width: 85%;
+  padding: 9px 14px;
+  border-radius: 16px 16px 4px 16px;
+  background: var(--surface-2);
+  color: var(--ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.msg.bot { color: var(--ink); overflow-wrap: break-word; }
+.msg.bot > *:first-child { margin-top: 0; }
+.msg.bot > *:last-child { margin-bottom: 0; }
+.msg.bot p { margin: 0 0 10px; }
+.msg.bot h1, .msg.bot h2, .msg.bot h3, .msg.bot h4 {
+  margin: 16px 0 8px;
+  font-size: 1.02rem;
+  font-weight: 700;
+}
+.msg.bot ul, .msg.bot ol { margin: 0 0 10px; padding-left: 22px; }
+.msg.bot li { margin: 3px 0; }
+.msg.bot code {
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--surface-2);
+  font-size: 0.88em;
+}
+/* The one place a grid is right, and it keeps one — in its own scroller, so
+   a 200-column log line never makes the page itself scroll sideways. */
+.msg.bot pre, .chat pre {
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--surface);
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.msg.bot pre code, .chat pre code {
+  padding: 0;
+  background: none;
+  font-size: 12.5px;
+  line-height: 1.5;
+  white-space: pre;
+}
+.msg.bot blockquote {
+  margin: 0 0 10px;
+  padding-left: 12px;
+  border-left: 3px solid var(--hairline);
+  color: var(--ink-2);
+}
+.msg.bot table { border-collapse: collapse; font-size: 13px; }
+.msg.bot th, .msg.bot td {
+  padding: 5px 10px;
+  border: 1px solid var(--hairline);
+  text-align: left;
+}
+.msg.bot .doctablewrap { overflow-x: auto; margin-bottom: 10px; }
+
+/* A tool call is one line until you want more of it. In the grid terminal
+   this was twenty lines of JSON you scrolled past; the name and the thing it
+   was aimed at are the whole of what a reader scanning back is looking for. */
+.toolcall, .think {
+  max-width: 760px;
+  width: 100%;
+  align-self: center;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--surface);
+  font-size: 13px;
+}
+.toolcall > summary, .think > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 12px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--ink-2);
+}
+.toolcall > summary::-webkit-details-marker,
+.think > summary::-webkit-details-marker { display: none; }
+/* Something has to say these open, and the native marker is inconsistent
+   across browsers and unstyleable in one of them. */
+.toolcall > summary::after, .think > summary::after {
+  content: "";
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin-left: auto;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  opacity: .55;
+  transform: rotate(45deg) translate(-2px, -2px);
+  transition: transform .15s ease;
+}
+.toolcall[open] > summary::after, .think[open] > summary::after {
+  transform: rotate(-135deg) translate(-2px, -2px);
+}
+.toolcall .tname { font-weight: 600; color: var(--ink); }
+.toolcall .tsum {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.toolcall .tdot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--ink-3);
+}
+.toolcall.running .tdot { background: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
+.toolcall.ok .tdot { background: var(--good); }
+.toolcall.bad .tdot { background: var(--critical); }
+.toolcall .tbody, .think .tbody { padding: 0 12px 10px; }
+.toolcall .tlabel {
+  margin: 6px 0 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.think { background: none; border-style: dashed; }
+.think > summary { font-style: italic; }
+.think .tbody { color: var(--ink-2); font-style: italic; }
+
+.chatnotice {
+  max-width: 760px;
+  width: 100%;
+  align-self: center;
+  padding: 9px 12px;
+  border: 1px solid var(--hairline);
+  border-left: 3px solid var(--warning);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.chatnotice.error { border-left-color: var(--critical); }
+
+/* The run's own footnote — how long it took and what it cost. Small, muted,
+   and never in the way of the answer above it. */
+.chatstat {
+  max-width: 760px;
+  width: 100%;
+  align-self: center;
+  margin-top: -6px;
+  font-size: 11.5px;
+  color: var(--ink-3);
+}
+
+/* "Working" while nothing is on screen yet. Three dots, because the honest
+   answer to "what is it doing" before the first token is "we don't know". */
+.chatwork {
+  max-width: 760px;
+  width: 100%;
+  align-self: center;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--ink-3);
+  font-size: 13px;
+}
+.chatwork i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+.chatwork i:nth-child(2) { animation-delay: .18s; }
+.chatwork i:nth-child(3) { animation-delay: .36s; }
+
+@keyframes pulse { 0%, 100% { opacity: .28; } 50% { opacity: 1; } }
+
+.chatempty {
+  margin: auto;
+  padding: 24px 18px;
+  max-width: 560px;
+  text-align: center;
+  color: var(--ink-2);
+}
+.chatempty h3 { margin: 0 0 8px; font-size: 1.1rem; color: var(--ink); }
+.chatempty p { margin: 0 0 16px; font-size: 14px; }
+.chatseeds { display: flex; flex-direction: column; gap: 8px; }
+.chatseeds .seed {
+  padding: 10px 14px;
+  min-height: 44px;
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.chatseeds .seed:hover { color: var(--ink); border-color: var(--accent); }
+
+.chaterr {
+  margin: 0 16px 8px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--critical) 16%, transparent);
+  color: var(--ink);
+  font-size: 13px;
+}
+
+/* The composer. A real textarea, which is the whole point: dictation,
+   autocorrect, selection and the system keyboard all behave, because there
+   is no hidden xterm helper element for them to fight with. */
+.chatbar {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--hairline);
+  background: var(--plane);
+}
+.chatbar textarea {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  max-height: 40vh;
+  padding: 11px 14px;
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 16px;   /* iOS zooms the page for anything smaller */
+  line-height: 1.4;
+  resize: none;
+  overflow-y: auto;
+}
+.chatbar textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.chatsend {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.chatsend:disabled { opacity: .4; cursor: default; }
+.chatsend.stop { background: var(--surface-2); color: var(--ink); }
+.chatsend .ico { width: 20px; height: 20px; }
+
+/* One column of buttons over the terminal, because the way back from a
+   hidden bar cannot live in the bar. Dimmed until touched: they are over
+   someone's output, and output is what they came for. */
+.termfabs {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  z-index: 25;
+  display: none;
+  gap: 6px;
+}
+#viewTerminal.active .termfabs { display: flex; }
+/* While the keyboard has taken the bar, these would be one more thing over
+   a screen that has almost nothing left — and closing the keyboard brings
+   the bar back on its own. */
+body.term-kb #viewTerminal.active .termfabs { display: none; }
+/* In chat mode the buttons sit over a scrolling document rather than a
+   fixed grid, so they pin to the viewport corner of the log instead. */
+body:not(.term-classic) .termfabs { top: 6px; right: 8px; }
+
+.termfab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid rgba(232, 221, 212, 0.18);
+  border-radius: 11px;
+  background: rgba(26, 22, 19, 0.72);
+  color: #e8ddd4;
+  cursor: pointer;
+  opacity: 0.42;
+  -webkit-tap-highlight-color: transparent;
+  transition: opacity .15s ease, background .15s ease;
+}
+.termfab:hover, .termfab:focus-visible { opacity: 1; background: rgba(26, 22, 19, 0.95); }
+.termfab .ico { width: 18px; height: 18px; }
+/* Pressed = the bar is gone, so the button is the only way back and stops
+   hiding. The glyph flips to the inward arrows of "come back out". */
+.termfab[aria-pressed="true"] { opacity: 0.9; }
+.termfab .ico-out { display: none; }
+.termfab[aria-pressed="true"] .ico-in { display: none; }
+.termfab[aria-pressed="true"] .ico-out { display: block; }
+
+/* The dark chrome of these buttons is right over the classic terminal, whose
+   background is the same brown at every theme. Over the chat log they would
+   be a dark square on a light page, so there they follow the panel. */
+body:not(.term-classic) .termfab {
+  border-color: var(--hairline);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  color: var(--ink-2);
+  opacity: 0.6;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+body:not(.term-classic) .termfab:hover,
+body:not(.term-classic) .termfab:focus-visible {
+  opacity: 1;
+  background: var(--surface);
+  color: var(--ink);
+}
+
+/* "New chat" belongs to the chat, and the mode button says which way it is
+   about to go — outward arrows for "become the grid", a speech bubble for
+   "come back to messages". */
+body.term-classic #chatNew { display: none; }
+#termMode .ico-out { display: none; }
+body.term-classic #termMode .ico-in { display: none; }
+body.term-classic #termMode .ico-out { display: block; }
+
 .docsnav { top: calc(var(--bar-h) + 12px); }
 
-/* The bar never wraps text away to fit. What changes with width is the
-   layout. Three bands, and the widths are what the content measures rather
-   than round numbers:
+/* The bar never wraps text away to fit, and it never shrinks its own
+   controls to fit either. What changes with width is the layout, and there
+   are two layouts:
 
-     >=1240   one row, tabs labelled            needs 1204px (paused)
-     960-1239 one row, tabs icon-only           needs  914px (paused)
-     390-959  two rows, tabs on their own strip  fits from 390px
-     <390     the same, without the wordmark     fits from 320px
+     >=1240   one row, tabs labelled             needs 1204px (paused)
+     390-1239 two rows, tabs on their own strip   fits from 390px
+     <390     the same, without the wordmark      fits from 320px
+
+   There used to be a third band — 960 to 1239, one row with the tab labels
+   deleted and the tabs shrunk to bare glyphs. That is the width a laptop
+   with the Home Assistant sidebar open actually renders at, so the shape
+   most people saw was the compromise: five unlabelled icons, smaller than
+   at any other width, for no reason they could see. A bar that changes size
+   as you widen the window reads as a bug even when it is deliberate. The
+   labels now leave at exactly the width the row can no longer hold them,
+   and what they leave for is the two-row bar, where they are still there.
 
    Measured by tests/manual/measure-topbar.mjs across the three states the
    bar can be in (running, paused, a failed login) — none is a superset of
    the others, and the two trouble states are the ones that put a second
-   chip in the row. Below 960 they simply take a third line rather than
+   chip in the row. Below 1240 they simply take a third line rather than
    costing anyone their tab labels. */
 
 /* Nothing in the bar may shrink; only the spacer flexes. A shrinking chip
@@ -1259,20 +1713,11 @@ body.modal-open {
 .topbar .spacer { flex: 1; min-width: 0; }
 
 @media (max-width: 1239px) {
-  /* Labels leave the tabs before the tabs leave the row: five names cost
-     ~290px more than five icons, which is more than the whole right-hand end
-     of the bar. Every tab keeps its name in a tooltip and its aria-label
-     until the phone layout gives it one for real. */
-  .viewtab span:not(.badge) { display: none; }
-  .viewtab { padding: 0 12px; }
-  .topbar { gap: 6px; }
-}
-
-@media (max-width: 959px) {
-  /* The phone bar. Two rows, because one row cannot hold five thumb-sized
-     targets and a labelled status pill at 320px — and dropping the labels to
-     make it fit is what made the bar unreadable on the only device where
-     hovering isn't possible.
+  /* The two-row bar. One row cannot hold five thumb-sized targets and a
+     labelled status pill at 320px — and dropping the labels to make it fit
+     is what made the bar unreadable on the only device where hovering isn't
+     possible, and what made a 1280px window show smaller tabs than a 1400px
+     one.
 
      Row one is status and actions. Row two is the tabs, full width, each an
      equal share with its name under the icon. Chips wrap onto their own line
@@ -1288,16 +1733,23 @@ body.modal-open {
     padding: 4px 10px 0;
   }
 
+  /* Centred, not stretched. Five equal shares of a phone is a thumb-sized
+     tab; five equal shares of a 1200px window is a 240px target with a 20px
+     glyph adrift in it, which reads as a layout that lost its content. The
+     tabs take what they need up to a cap and sit in the middle of the strip
+     once the strip is wider than they are. */
   .viewtabs {
     order: 9;
     width: 100%;
     margin-left: 0;
     gap: 2px;
+    justify-content: center;
   }
 
   .viewtab {
     flex: 1;
     min-width: 0;
+    max-width: 168px;
     flex-direction: column;
     justify-content: center;
     gap: 3px;
@@ -1339,6 +1791,17 @@ body.modal-open {
   .topbar .chip { height: 40px; padding: 0 12px; }
   #viewTerminal.active { margin: -12px -12px -14px; }
   .docsnav { position: static; }
+}
+
+/* Same two-row bar, read from further away. Below 600px the label under the
+   icon is sized to survive a 320px screen — five names across a phone. Above
+   it there is no such pressure, so the tab is typeset like the rest of the
+   panel instead of like a phone's tab bar. The shape does not change; only
+   the type does. */
+@media (min-width: 600px) and (max-width: 1239px) {
+  :root { --bar-h: 109px; }
+  .viewtab { height: 56px; font-size: 0.8rem; gap: 4px; }
+  .viewtab .ico { width: 22px; height: 22px; }
 }
 
 @media (max-width: 389px) {

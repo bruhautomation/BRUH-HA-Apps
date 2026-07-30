@@ -27,7 +27,13 @@ BRUH Terminal (`bruh-claude-terminal/`) and BRUH Insights (`bruh-insights/`) wer
 
 Shared brand sources live in `branding/` (SVGs plus `render.mjs`, which regenerates every PNG in the repo) and `brands/` (home-assistant/brands submission assets); cross-add-on tests live in `tests/`. The brAIn mark is a gable that doubles as the `A` in the wordmark, lifted from the parent BRUH logo — never redraw it, and never recolour the roof away from azure. The panel's top bar carries the full wordmark inline, split into `.wm-ink` / `.wm-roof` / `.wm-ai` / `.wm-signal` so one file serves a light and a dark bar.
 
-**The top bar has two shapes and no third.** At ≥960px it is one 56px row; below that it is the phone bar — status and actions on top, the five tabs on a full-width strip beneath with each name under its icon. Nothing in it may shrink (`.topbar > * { flex: none }`), so a fit is binary and an overflow is something a test can see. **Nothing hides its own words to fit, either**: the bar used to hold one 48px row at every width by deleting text, which on a phone left five unlabelled glyphs and a bare amber chip whose only copy was in a `title` — on the one device that cannot hover. What gives way now is the row, not the label. Every target is ≥44px (chips ≥40px); adding anything to the bar moves the measured widths, so re-run `node tests/manual/measure-topbar.mjs` (Playwright; `CHROMIUM_PATH` if the browser isn't where it expects) and take the breakpoints from what it reports rather than guessing. It measures three bar states per width (running / paused / failed login) because none is a superset of the others, and it fails on any target under the floor as well as on overflow. Panel heights come from `--bar-h`, which the panel remeasures at runtime — the phone bar is two rows and becomes three when a trouble chip joins the usage pill. **A status chip that is permanently green does not belong there** — the auth chip renders only for trouble, and the space it used to hold pays for the usage pill's second number (`Session x% · Week y%`, each labelled in the bar, with the reset times — and only the reset times — in the hover).
+**The top bar has two shapes and no third.** At ≥1240px it is one 56px row; below that it is the two-row bar — status and actions on top, the five tabs on a full-width strip beneath with each name under its icon. There was briefly a third band (960–1239px: one row, labels deleted, tabs shrunk to glyphs) and it was the worst possible one to have, because it is what a laptop with the HA sidebar open renders at — the compromise shape was the one most people saw, and widening the window made the tabs grow. **No width gets a row of bare glyphs.** Nothing in the bar may shrink (`.topbar > * { flex: none }`), so a fit is binary and an overflow is something a test can see; nothing hides its own words to fit, either. What gives way is the row, not the label. Tabs cap at 168px and centre so a 1200px strip isn't five 240px targets around a 20px glyph. Every target is ≥44px (chips ≥40px); adding anything to the bar moves the measured widths, so re-run `node tests/manual/measure-topbar.mjs` (Playwright; `CHROMIUM_PATH` if the browser isn't where it expects) and take the breakpoints from what it reports rather than guessing. It measures three bar states per width (running / paused / failed login) because none is a superset of the others, and it fails on any target under the floor as well as on overflow. Panel heights come from `--bar-h`, which the panel remeasures at runtime. **A status chip that is permanently green does not belong there** — the auth chip renders only for trouble, and the space it used to hold pays for the usage pill's second number (`Session x% · Week y%`, each labelled in the bar).
+
+**Every control in the bar does its own job.** Three of them used to open Settings, so a bar reporting three different things answered all of them with one dialog. The usage pill opens a disclosure popover (`#chipPop`) with both windows, their resets and what the budget gates — a *press*, never a hover, because a `title` is unreadable on the device where that pill matters most. The paused chip undoes what it reports: `data-mode="off"` presses straight through to `saveSettings({auto_enabled: true})`, while a reached budget explains itself instead (nothing can un-spend it). ⚙ is the only route to Settings. Storage access goes through `prefGet`/`prefSet` — a browser may refuse an iframe its `localStorage`, and a throw at the top level takes out every handler declared below it.
+
+**The Terminal tab has two faces and one session.** `terminal_ui` (`settings_store`, default `chat`) picks between the chat renderer and ttyd; `body.term-classic` is the switch, and `#termMode` on the tab flips it as well as ⚙. Chat drives the *same* Claude Code — `chat_session.py` runs one long-lived `claude -p --input-format stream-json --output-format stream-json` in `/config`, so it inherits the same `settings.local.json` permissions as the listeners and the fixer. **Everything that knows the CLI's wire shape lives in `_normalise`**; the panel only ever sees `text`/`text_delta`/`thinking`/`tool`/`tool_result`/`notice`/`result`/`state`, and an unrecognised event is dropped rather than rendered raw. Deltas and run stats carry `_keep: False` because the `assistant` event that follows repeats the same text whole — keeping both doubles every answer on the next reload. The transcript (`/data/chat_transcript.json`, capped) is *ours*; Claude Code owns the real conversation and resumes it by `session_id`, so losing the file costs a scrollback and never context. Stopping asks with a `control_request` and kills-then-`--resume`s if nothing answers within `INTERRUPT_GRACE` — an older CLI ignores the request silently, which is indistinguishable from thinking. One SSE stream per viewer, opened only while the tab is in front; the first frame is the snapshot, so no client has to stitch "what it was" onto "what happened next".
+
+**The terminal folds the bar away.** `body.term-immersive` hides `.topbar` and zeroes `--bar-h`; `body.term-kb` marks the automatic case. Two independent reasons, tracked separately in `termChrome` so neither clobbers the other: ⤢ (`#termExpand`, remembered in `localStorage`) and the software keyboard being up right now. Only the ttyd frame can detect that keyboard — iOS does not resize an iframe's visual viewport, and `inject.html` already does the measuring for its own toolbar — so it posts `{type: "brain-keyboard"}` up and the panel accepts it only from `#termFrame.contentWindow`. tmux drops its status line under 90 columns via `client-attached`/`client-resized` hooks; the width test is a shell `[` because tmux does not expand a nested `#{client_width}` inside its own `#{<:a,b}`, which silently answers "narrower" at every width.
 
 ## Repository Structure
 
@@ -39,14 +45,22 @@ BRUH-HA-Apps/
 │   ├── build.yaml               # Multi-arch build config
 │   ├── Dockerfile               # Container build definition
 │   ├── run.sh                   # Main startup/entrypoint script
+│   ├── panel/                   # The ingress panel: aiohttp server + the UI
+│   │   ├── server.py            # Routes, scheduler, the chat terminal's API
+│   │   ├── chat_session.py      # One live `claude` stream-json session, as events
+│   │   ├── engine.py            # How Claude is invoked (argv, env, credential)
+│   │   ├── app.js / style.css / index.html / docs.js  # The whole UI
+│   │   └── *_store.py           # settings, findings, knowledge, prompts, usage
 │   ├── ha-mcp-server/           # MCP server for HA API access
 │   │   └── ha_mcp_server.py     # Python MCP server (stdio-based)
 │   ├── scripts/                 # Shell scripts and tools
 │   │   ├── ha-reload.sh         # Config reload CLI tool
 │   │   ├── ha-log.sh            # Log viewer CLI tool
 │   │   ├── ha-context-gen.sh    # CLAUDE.md context generator
-│   │   ├── ha-backup.sh         # Manual backup tool
-│   │   ├── ha-backup-watcher.sh # Background auto-backup daemon
+│   │   ├── brain.sh / ha.sh     # The two CLI dispatchers everything else hangs off
+│   │   ├── brain-memory.sh / brain-ask.sh / brain-undo.sh  # brain subcommands
+│   │   ├── brain-edit-snapshot.py    # PreToolUse hook: snapshot before Claude edits
+│   │   ├── brain-memory-consolidate.sh / brain-study-watcher.sh  # background passes
 │   │   ├── ha-addon.sh / ha-entity.sh / ha-service.sh / ha-notify.sh / ha-share.sh  # HA helper CLIs
 │   │   ├── ha-yaml-check.sh     # YAML validation CLI
 │   │   ├── brain-learn.sh       # Study session: facts → memory inbox, problems → findings inbox
@@ -66,7 +80,7 @@ BRUH-HA-Apps/
 │   │   ├── assist-listener.sh   # Classic conversation listener (assist_fast_mode: false)
 │   │   └── automation-listener.sh # Task request file watcher
 │   └── custom_components/       # HA custom integration (deployed at runtime)
-│       └── bruh_claude/
+│       └── brain/
 │           ├── __init__.py      # Integration setup + service registration
 │           ├── manifest.json    # HA integration metadata
 │           ├── config_flow.py   # UI config flow
@@ -94,32 +108,33 @@ BRUH-HA-Apps/
 - Tools are registered via `TOOL_IMPLEMENTATIONS` (name → function name, late-bound) with argument contracts derived from each tool's inputSchema; add a tool = function + schema in `TOOLS` + one mapping line
 
 ### Startup Flow (`run.sh`)
-1. Health check
-2. Environment initialization (`/data` for persistence)
-3. Non-root user setup (`claude` UID 1000, `claude-run` wrapper, shell profile)
-4. Tool installation
-5. CLI tools setup (ha-reload, ha-log, ha-backup, etc.)
-6. Persistent packages
-7. Auto-backup (git init + background watcher)
-8. Context generation (CLAUDE.md)
-9. Broken plugin cleanup (removes stale `claude-homeassistant-plugins` entries)
-10. MCP server configuration (writes `.mcp.json` with proper ownership)
-11. Custom integration deployment to `/config/custom_components/bruh_claude/`
-12. Usage-limits tracker (background daemon querying the Anthropic usage endpoint)
-13. Optional: Assist + Automation integrations
-14. ttyd web terminal launch (with the mobile UI spliced in via `build-mobile-index.py`)
+The order is `main()` at the bottom of `run.sh`; the panel is last because it
+is the foreground process.
 
-### Custom Integration (`custom_components/bruh_claude/`)
-- Deployed automatically to `/config/custom_components/` by the add-on at startup
-- Registers a `ConversationEntity` so "BRUH Claude" appears in Settings > Voice Assistants
-- Provides `bruh_claude.send_prompt`, `bruh_claude.run_task`, `bruh_claude.run_insight`, and `bruh_claude.clear_conversation` services
-- BRUH Power Tools (`power_tools.py`): 65 admin-gated registry-management services under `bruh_claude.*` (areas, floors, labels, entities, devices, integrations, helpers, zones, persons, blueprints, statistics, users, diagnostics, dashboards, repair issues), adapted from [Spook](https://github.com/frenck/spook) (MIT) with validation-first handlers, response data on creation services, and dry-run-by-default orphan cleanup (entities *and* devices); catalog metadata generated in `services.yaml`/`strings.json`/`translations/en.json`/`icons.json`, consistency enforced by `tests/test_power_tools.py`. **Nothing is create-only**: every attribute a `create_*` accepts has a service that changes it later, and every registry object that can be created can be renamed and deleted — `tests/test_power_tools.py` asserts the `rename_*`/`delete_*` families are complete. An `update_*` writes only the fields the caller named (`_partial_update`); filling the rest from `call.data.get()` blanks them
+1. Health check
+2. Environment initialization (`/data` for persistence), Claude Code update
+3. Non-root user setup (`claude` UID 1000, `claude-run` wrapper, shell profile)
+4. Tool installation, then the `brain` / `ha` CLI dispatchers, then persistent packages
+5. Context generation (`/config/CLAUDE.md`)
+6. Broken plugin cleanup (removes stale `claude-homeassistant-plugins` entries)
+7. MCP server configuration (writes `.mcp.json` with proper ownership) + watchdog
+8. Assist scoping, then custom integration deployment to `/config/custom_components/brain/`
+9. Background daemons: usage-limits tracker, memory consolidator, study watcher
+10. Optional: Assist + Automation integrations
+11. ttyd web terminal launch (with the mobile UI spliced in via `build-mobile-index.py`)
+12. The panel — the foreground process, and the ingress target
+
+### Custom Integration (`custom_components/brain/`)
+- Deployed automatically to `/config/custom_components/brain/` by the add-on at startup
+- Registers a `ConversationEntity` so "brAIn" appears in Settings > Voice Assistants
+- Provides `brain.send_prompt`, `brain.run_task`, `brain.run_insight`, `brain.add_memory`, `brain.study`, and `brain.clear_conversation` services
+- BRUH Power Tools (`power_tools.py`): 65 admin-gated registry-management services under `brain.*` (areas, floors, labels, entities, devices, integrations, helpers, zones, persons, blueprints, statistics, users, diagnostics, dashboards, repair issues), adapted from [Spook](https://github.com/frenck/spook) (MIT) with validation-first handlers, response data on creation services, and dry-run-by-default orphan cleanup (entities *and* devices); catalog metadata generated in `services.yaml`/`strings.json`/`translations/en.json`/`icons.json`, consistency enforced by `tests/test_power_tools.py`. **Nothing is create-only**: every attribute a `create_*` accepts has a service that changes it later, and every registry object that can be created can be renamed and deleted — `tests/test_power_tools.py` asserts the `rename_*`/`delete_*` families are complete. An `update_*` writes only the fields the caller named (`_partial_update`); filling the rest from `call.data.get()` blanks them
 - Insight jobs (config entries of type `insight`): scheduled Claude reports rendered to `sensor.<job>_insight` (markdown attribute + ready-to-paste `card_yaml`); prompts support HA templating
-- 3.0 transport: worker pool serves an internal HTTP API (:8099, token on the shared volume); integration streams deltas into the chat log (SSE) and falls back to file IPC; `binary_sensor` reports pool health
-- Usage-limit sensors reading from `/config/.bruh_claude/usage_limits.json` (real Anthropic account utilization; requires OAuth/subscription login)
-- Communicates with the add-on via shared files in `/config/.bruh_claude/`
+- 3.0 transport: worker pool serves an internal HTTP API (:8098, token on the shared volume); integration streams deltas into the chat log (SSE) and falls back to file IPC; `binary_sensor` reports pool health
+- Usage-limit sensors reading from `/config/.brain/usage_limits.json` (real Anthropic account utilization; requires OAuth/subscription login)
+- Communicates with the add-on via shared files in `/config/.brain/`
 - Request/response flow: integration writes JSON (unique per-request file id) → add-on processes → add-on writes JSON response named after the request id
-- Conversation continuity: the assist listener maps `conversation_id` → Claude session uuid in `/config/.bruh_claude/sessions/` and resumes the session on follow-up turns (`--session-id` / `--resume`); falls back to replaying recent history when resume isn't possible
+- Conversation continuity: the assist listener maps `conversation_id` → Claude session uuid in `/config/.brain/sessions/` and resumes the session on follow-up turns (`--session-id` / `--resume`); falls back to replaying recent history when resume isn't possible
 
 ### Permissions Architecture
 - **Interactive terminal**: `dangerously_skip_permissions` config option (default: **off**)

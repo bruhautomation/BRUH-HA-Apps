@@ -1,11 +1,13 @@
 // Render the brAIn topbar across viewport widths and assert, per width, that
 // it lays out as intended and that everything in it is big enough to hit.
 //
-// Two shapes, not five. At >=960px the bar is a single 56px row. Below that
-// it is the phone bar: status and actions on top, the tabs on a full-width
-// strip of their own underneath. So the check is no longer "always one row"
-// — it is "the shape this width is supposed to have, with nothing spilling
-// out of it and no target under 44px".
+// Two shapes, not five. At >=1240px the bar is a single 56px row with every
+// tab named. Below that it is the two-row bar: status and actions on top,
+// the tabs on a full-width strip of their own underneath, still named. So
+// the check is no longer "always one row" — it is "the shape this width is
+// supposed to have, with nothing spilling out of it and no target under
+// 44px". Either way all five tabs carry their names: no width gets a row of
+// bare glyphs.
 //
 // Every child of the bar is `flex: none` except the spacer, so items cannot
 // silently compress to fake a fit: the bar either holds its content or it
@@ -31,12 +33,15 @@ import fs from 'node:fs';
 const PANEL = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../../brain/panel');
 const OUT = process.env.TOPBAR_SHOT_DIR || '';
 
-// The width at which the tabs leave the row for a strip of their own, the
-// width at which tab labels drop out of the single row, and the smallest a
-// touch target is allowed to be. All three are also in style.css; if they
-// move, they move in both places.
-const PHONE_MAX = 959;
-const LABELS_MIN = 1240;
+// The width at which the tabs leave the row for a strip of their own, and
+// the smallest a touch target is allowed to be. Both are also in style.css;
+// if they move, they move in both places.
+//
+// There is one width here, not two. The bar used to have a middle band —
+// one row with the tab labels deleted — which is the shape a laptop with
+// the HA sidebar open actually rendered, so the compromise was what most
+// people saw. Labels now leave only when the whole row does.
+const PHONE_MAX = 1239;
 // Tabs and icon buttons are 44px, the smallest a target has any business
 // being on a touchscreen. Chips are pills of text and sit at 40 — still a
 // real target, just not a square one.
@@ -47,7 +52,7 @@ const WIDTHS = [
   320, 340, 360, 375, 379, 380, 390, 400, 414, 428, 480, 500, 540, 600, 640, 700, 720,
   768, 800, 900, 959, 960, 1000, 1024, 1100, 1199, 1200, 1239, 1240, 1280, 1440, 1920,
 ];
-const KEEP_SHOTS = new Set([320, 390, 480, 800, 1280]);
+const KEEP_SHOTS = new Set([320, 390, 480, 800, 1100, 1280]);
 
 function seed(mode) {
   const $ = (s) => document.querySelector(s);
@@ -151,8 +156,7 @@ function probe(floors) {
       // and a third row only when a trouble chip joins the usage pill.
       const shape = phone
         ? m.rows >= 2 && m.rows <= (mode === 'running' ? 2 : 3) && m.labelled === 5
-        : m.rows === 1 && m.height === 56
-          && m.labelled === (width >= LABELS_MIN ? 5 : 0);
+        : m.rows === 1 && m.height === 56 && m.labelled === 5;
       const touch = !!m.smallest && m.undersized.length === 0;
       rows.push({ width, mode, ...m, phone, shape, touch, overflow });
 

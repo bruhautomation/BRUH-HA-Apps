@@ -10,31 +10,16 @@ Full documentation for every add-on lives at **[bruhautomation.com](https://bruh
 
 ### [brAIn](brain/)
 
-Your home's brain — a Claude Code terminal, an AI insights dashboard, and one shared memory that learns your house over time, in a single add-on behind one sidebar panel and one Claude login.
+**Give your smart home a mind.** Claude inside Home Assistant with full run of the place — every entity, every device, every area, floor, label, dashboard, helper, automation and add-on. One add-on, one sidebar panel, one Claude login, running on your own Claude subscription.
 
-**Terminal**
-
-- **Native HA API access** via a built-in MCP server — entity control, camera vision, history & statistics, automation traces, logs
-- **Fast voice assistant** — pre-warmed workers (~3-5s commands), streaming TTS, conversation memory, area-aware control
-- **Auto-generated context** — `CLAUDE.md` describes your installation on startup
-- **Two-command CLI** — `brain` for memory, learning and undo; `ha` for `ha log`, `ha reload`, `ha entity`, and the rest
-- **Undo for Claude's edits** — every file Claude writes under `/config` is snapshotted first; `brain undo` puts it back
-- **Persistent environment** — packages survive restarts; tmux multi-session; mobile UI
-- **Usage limit sensors** — your Anthropic session/weekly utilisation as HA sensors
-
-**Insights**
-
-- **Nine built-in categories** — Overview, Energy, Climate, Lighting, Security, Presence, Media, Device Health, Automations
-- **Ask anything** — free-form questions become bespoke insight cards; one click makes them recurring
-- **Dashboard cards** — embed any insight on an HA dashboard via token-protected Webpage cards
-- **Sandboxed rendering** — visualisations run in sandboxed iframes
-
-**Memory**
-
-- **One document** of durable facts about your home, shared by the terminal, voice, and every insight run
-- **Guesses, not questionnaires** — brAIn proposes what it believes and you confirm or reject; never more than three waiting on you
-- **Study sessions** — `brain learn energy` sends it off to investigate a topic and write down what it finds
-- **A change log with undo** — see exactly what it learned this week, and revert any single line
+- **It runs Home Assistant** — 36 native tools for reading and controlling, 65 registry-management services for the parts that normally live behind the Settings UI, and a real shell in `/config` for everything that's still YAML. Create, rename, move, disable and delete areas, floors, labels, devices, entities, integrations, helpers, zones, people, users and dashboards
+- **It finds what's broken** — dead batteries, sensors that stopped reporting, devices stuck unavailable, automations that can never fire. **Fix it** makes the change; **Not a problem** means it never asks again
+- **It explains your house** — insight cards with real interactive visualisations, proposed for *your* home rather than shipped as defaults. Ask anything and get a card back; keep the good ones as recurring, or drop any of them on a dashboard
+- **It remembers** — one editable document of durable facts about your home, learned from conversations, insight runs and study sessions, and read by every part of brAIn
+- **It talks** — a conversation agent for Assist, answering in seconds from pre-warmed workers, area-aware and memory-aware
+- **It has a terminal** — the real Claude Code CLI in your browser, in two shapes: **Chat** renders it as a conversation that reflows to a phone, **Classic** is ttyd + tmux for anything that draws its own screen
+- **It can be undone** — every file Claude writes under `/config` is snapshotted first; `brain undo` puts it back
+- **It shows what it costs** — your Anthropic session and weekly usage in the bar and as HA sensors, with a budget that pauses automatic work before it eats your plan
 
 ### [BRUH Minecraft](bruh-minecraft-server/)
 
@@ -57,7 +42,7 @@ https://github.com/bruhautomation/BRUH-HA-Apps
 
 ## Disclaimer
 
-BRUH Automation and these add-ons are independent projects, **not affiliated with, endorsed by, or sponsored by Anthropic, Home Assistant / Nabu Casa, Mojang, or Microsoft**. "Claude" and "Claude Code" are trademarks of Anthropic, PBC; "Minecraft" is a trademark of Mojang Synergies AB; "Home Assistant" is a trademark of the Open Home Foundation. The BRUH Terminal and BRUH Insights add-ons run the official Claude Code CLI under **your own** Anthropic account — your use of Claude through them is governed by [Anthropic's terms](https://www.anthropic.com/legal/consumer-terms). The BRUH Minecraft add-on downloads server software from official upstream sources at runtime and requires you to accept the [Minecraft EULA](https://www.minecraft.net/eula) yourself.
+BRUH Automation and these add-ons are independent projects, **not affiliated with, endorsed by, or sponsored by Anthropic, Home Assistant / Nabu Casa, Mojang, or Microsoft**. "Claude" and "Claude Code" are trademarks of Anthropic, PBC; "Minecraft" is a trademark of Mojang Synergies AB; "Home Assistant" is a trademark of the Open Home Foundation. The brAIn add-on runs the official Claude Code CLI under **your own** Anthropic account — your use of Claude through it is governed by [Anthropic's terms](https://www.anthropic.com/legal/consumer-terms). The BRUH Minecraft add-on downloads server software from official upstream sources at runtime and requires you to accept the [Minecraft EULA](https://www.minecraft.net/eula) yourself.
 
 ## License
 
