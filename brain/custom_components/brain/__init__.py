@@ -8,7 +8,7 @@ Provides:
 - brain.clear_conversation   — clear a persistent conversation session
 - brain.add_memory           — queue a fact for the home memory store
 - brain.answer_question      — answer an open memory question
-- BRUH Power Tools                 — 56 registry-management admin services
+- BRUH Power Tools                 — 65 registry-management admin services
   (areas, floors, labels, entities, devices, integrations, helpers, zones,
   persons, blueprints, statistics, users, diagnostics, dashboards, repairs)
   — see power_tools.py

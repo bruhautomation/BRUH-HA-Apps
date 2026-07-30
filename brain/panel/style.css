@@ -658,18 +658,6 @@ body.modal-open {
 
 /* Discoveries that have already been filed. Folded shut by default: they are
    the record of what the document was built from, not work to be done. */
-.kfiled { margin-top: 10px; }
-.kfiled > summary {
-  cursor: pointer;
-  font-size: 12px;
-  color: var(--ink-3);
-  padding: 4px 2px;
-  list-style: none;
-}
-.kfiled > summary::-webkit-details-marker { display: none; }
-.kfiled > summary::before { content: "▸ "; }
-.kfiled[open] > summary::before { content: "▾ "; }
-.kfiled > summary:hover { color: var(--ink-2); }
 
 /* home memory file: rendered-markdown view + raw editor */
 .kmemrow { margin: 6px 0; align-items: center; }
@@ -1054,13 +1042,26 @@ body.modal-open {
 
 
 /* --------------------------------------------------------------- chrome
-   One 48px bar carries the mark, the tabs, status and actions. It used to
-   be two stacked bars plus a row of labelled buttons, which on the
-   terminal — where every pixel is a line of output — cost real content.
+   One bar carries the mark, the tabs, status and actions. It used to be two
+   stacked bars plus a row of labelled buttons, which on the terminal — where
+   every pixel is a line of output — cost real content.
+
+   The bar has two shapes, not five. On a pointer-sized screen it is a single
+   56px row. On a phone it becomes two rows: status and actions stay on top,
+   and the tabs drop to a full-width strip beneath them where each one is a
+   thumb-sized target with its name under the icon.
+
+   That replaces the old approach, which kept one 48px row at every width by
+   deleting text until it fit — tab labels first, then chip words, until a
+   phone showed five unlabelled glyphs and a bare amber dot. Hover is not a
+   gesture a phone has, so a title attribute was not a fallback; it was the
+   only copy, on the one device that could not read it.
 
    Icons are inline strokes inheriting currentColor, so they follow tab
    state instead of competing with it. Azure is the only colour in the
    chrome and it only ever marks what is active. */
+
+:root { --bar-h: 56px; }
 
 .topbar {
   position: sticky;
@@ -1068,8 +1069,8 @@ body.modal-open {
   z-index: 30;
   display: flex;
   align-items: center;
-  gap: 6px;
-  height: 48px;
+  gap: 8px;
+  height: var(--bar-h);
   padding: 0 12px;
   background: color-mix(in srgb, var(--plane) 88%, transparent);
   backdrop-filter: blur(12px);
@@ -1086,7 +1087,7 @@ body.modal-open {
    azure, and the "AI" and the signal motif are always the same colour as
    each other — Sky on dark grounds, Azure on light, per the kit.
 
-   It sits at 34px in a 48px bar, which is 49px wide — below the kit's 132px
+   It sits at 34px in a 56px bar, which is 49px wide — below the kit's 132px
    minimum for the wordmark. That minimum is written for print and for
    grounds where the mark is the only thing present; here it sits beside its
    own product name in Home Assistant's panel header, so recognition doesn't
@@ -1111,8 +1112,8 @@ body.modal-open {
 .wm-signal { stroke: var(--wm-ai); }
 
 .ico {
-  width: 17px;
-  height: 17px;
+  width: 18px;
+  height: 18px;
   flex: none;
   fill: none;
   stroke: currentColor;
@@ -1121,25 +1122,31 @@ body.modal-open {
   stroke-linejoin: round;
 }
 
-.viewtabs { display: flex; gap: 2px; margin-left: 6px; min-width: 0; }
+.viewtabs { display: flex; align-items: center; gap: 2px; margin-left: 8px; min-width: 0; }
 
+/* 44px tall, which is the smallest a target has any business being on a
+   touchscreen — the tabs used to be 32px, sized for a mouse on a bar that
+   spends half its life on a phone. */
 .viewtab {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 7px;
+  justify-content: center;
+  gap: 8px;
   appearance: none;
   border: 0;
   background: none;
   color: var(--ink-3);
   font: inherit;
   font-weight: 500;
-  font-size: 0.875rem;
-  height: 32px;
-  padding: 0 11px;
-  border-radius: 8px;
+  font-size: 0.9rem;
+  height: 44px;
+  min-width: 44px;
+  padding: 0 14px;
+  border-radius: 10px;
   cursor: pointer;
   white-space: nowrap;
+  -webkit-tap-highlight-color: transparent;
   transition: color .14s ease, background .14s ease;
 }
 
@@ -1154,30 +1161,31 @@ body.modal-open {
 }
 
 .viewtab .badge {
-  min-width: 16px;
-  height: 16px;
-  padding: 0 4px;
-  border-radius: 8px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
   background: var(--accent);
   color: #fff;
-  font-size: 0.68rem;
+  font-size: 0.7rem;
   font-weight: 700;
-  line-height: 16px;
+  line-height: 18px;
   text-align: center;
 }
 
-/* Icon-only actions — labels were noise beside four tabs. */
+/* Icon-only actions — labels were noise beside five tabs. */
 .btn.icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 40px;
+  height: 40px;
   padding: 0;
-  border-radius: 8px;
+  border-radius: 10px;
   color: var(--ink-3);
   background: none;
   border: 0;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .btn.icon:hover {
@@ -1185,24 +1193,36 @@ body.modal-open {
   background: color-mix(in srgb, var(--ink) 8%, transparent);
 }
 
-.topbar .chip { height: 26px; font-size: 0.8rem; padding: 0 9px; }
+/* In the bar they're primary controls, so they get a full 44px square —
+   the same target as a tab, not the 40px an icon inside a dialog gets. */
+.topbar .btn.icon { width: 44px; height: 44px; }
 
-/* The usage chip is a dot and two labelled numbers — session, then week — so
-   a phone can keep both numbers and drop the words. Zero flex gap and manual
-   spacing, or the gap lands between "19%" and "session" and detaches each
-   number from the word it belongs to. */
-#usageChip { gap: 0; }
-#usageChip .dot { margin-right: 7px; }
-#usageChipText { margin-left: 0.32em; }
-#usageChip .uweek { margin-left: 0.45em; color: var(--ink-2); }
+/* 40px: a chip in this bar is a button (both clickables open ⚙), so it is
+   sized to be pressed rather than to be small. */
+.topbar .chip { height: 40px; font-size: 0.8rem; padding: 0 14px; border-radius: 999px; }
+.topbar .chip.clickable { font-size: 0.8rem; }
+
+/* Two windows, each labelled. "19% · 100%" was two unexplained numbers with
+   a dot between them — the first is the 5-hour session that gates automatic
+   runs and the second is the week, and nothing on screen said so. The label
+   is not decoration here; it is the only thing that makes the number mean
+   anything. Reset times are in the hover, which is where a figure that
+   changes once per window belongs. */
+#usageChip { gap: 8px; }
+#usageChip .uwin { display: inline-flex; align-items: baseline; gap: 5px; }
+#usageChip .uwin + .uwin { padding-left: 8px; border-left: 1px solid var(--hairline); }
+#usageChip .ulab { color: var(--ink-3); font-weight: 500; }
 
 .view { display: none; }
 .view.active { display: block; }
 
-/* The terminal gets everything below the single bar. */
+/* The terminal gets everything below the bar, whatever height the bar is at
+   this width — it is measured into --bar-h rather than assumed, because the
+   phone bar is two rows and a trouble chip can make it three. */
 #viewTerminal.active {
   display: block;
-  height: calc(100vh - 48px);
+  height: calc(100vh - var(--bar-h));
+  height: calc(100dvh - var(--bar-h));
   margin: -18px -20px -20px;
 }
 
@@ -1214,14 +1234,22 @@ body.modal-open {
   background: #1a1613;
 }
 
-.docsnav { top: 60px; }
+.docsnav { top: calc(var(--bar-h) + 12px); }
 
-/* The bar is one row at every width, deliberately: it never wraps, and
-   nothing in it is allowed to grow. What gives way as the screen narrows is
-   text, in the order we'd miss it least — tab labels, then the wordmark,
-   then the words inside the status chips. The dots and the usage number
-   survive to the end because they are the only parts that change. */
-.topbar { flex-wrap: nowrap; }
+/* The bar never wraps text away to fit. What changes with width is the
+   layout. Three bands, and the widths are what the content measures rather
+   than round numbers:
+
+     >=1240   one row, tabs labelled            needs 1204px (paused)
+     960-1239 one row, tabs icon-only           needs  914px (paused)
+     390-959  two rows, tabs on their own strip  fits from 390px
+     <390     the same, without the wordmark     fits from 320px
+
+   Measured by tests/manual/measure-topbar.mjs across the three states the
+   bar can be in (running, paused, a failed login) — none is a superset of
+   the others, and the two trouble states are the ones that put a second
+   chip in the row. Below 960 they simply take a third line rather than
+   costing anyone their tab labels. */
 
 /* Nothing in the bar may shrink; only the spacer flexes. A shrinking chip
    compresses its own nowrap text and reads as a rendering glitch rather than
@@ -1230,93 +1258,97 @@ body.modal-open {
 .topbar > * { flex: none; }
 .topbar .spacer { flex: 1; min-width: 0; }
 
-/* The bar sheds text in five measured steps. The widths below are what the
-   content actually needs — measured by tests/manual/measure-topbar.mjs across
-   the three states the bar can be in (running, paused, and a failed login),
-   with a count on both tab badges — so each step starts before the previous
-   layout runs out of room:
-
-     everything                        1090px  →  shown at ≥1100
-     minus the chip sentences           860px  →  shown at  ≥870
-     minus tab labels, smaller mark     513px  →  shown at  ≥520
-     minus badge counts (dots only)     442px  →  shown at  ≥450
-     minus the weekly number, and
-       usage when a trouble chip is up  369px  →  shown at  ≥410
-     minus the wordmark                 315px  →  the floor
-
-   Every band moved outward again in 1.8.0: the usage chip now carries two
-   numbers instead of one and costs 42px more, and the paused chip is measured
-   rather than assumed away. What paid for it is the healthy auth chip, which
-   no longer exists at any width — a green "Claude · subscription" was a label
-   for a state that never changes, and it cost 165px of the top band. */
-
-@media (max-width: 1099px) {
-  /* "Usage budget reached" and "19% session · 100% week" cost ~230px between
-     them — more than three tabs. The coloured dots already carry the states
-     and the usage chip keeps both numbers, which is the part anyone actually
-     reads; every chip keeps its full sentence in title/aria-label. */
-  .topbar .chipwords { display: none; }
-  .topbar .chip { padding: 0 8px; gap: 5px; }
-}
-
-@media (max-width: 869px) {
-  /* Labels go, icons stay — five tabs still fit on a phone. */
+@media (max-width: 1239px) {
+  /* Labels leave the tabs before the tabs leave the row: five names cost
+     ~290px more than five icons, which is more than the whole right-hand end
+     of the bar. Every tab keeps its name in a tooltip and its aria-label
+     until the phone layout gives it one for real. */
   .viewtab span:not(.badge) { display: none; }
-  .viewtab { padding: 0 9px; }
-  .topbar { padding: 0 8px; gap: 4px; }
-  #viewTerminal.active { height: calc(100vh - 48px); margin: -12px -12px -14px; }
-  .docsnav { position: static; }
-
-  /* The wordmark shrinks rather than going: Home Assistant's own panel header
-     says "brAIn" above this bar, but a header with no mark at all reads as a
-     stray toolbar rather than as this add-on. At 26px it costs 37px. */
-  .wordmark { height: 26px; }
-
-  .topbar .chip { padding: 0 7px; }
-  .topbar .chip:not(#usageChip) { padding: 0 6px; }
-  .btn.icon { width: 30px; height: 30px; }
-  .viewtabs { margin-left: 2px; }
+  .viewtab { padding: 0 12px; }
+  .topbar { gap: 6px; }
 }
 
-@media (max-width: 519px) {
-  /* Badges collapse to a dot. The count is a nicety; that there is anything
-     at all is the whole signal, and two numbered badges cost 46px here. The
-     tab's aria-label still carries the number to a screen reader. */
-  .viewtab .badge {
-    min-width: 7px;
-    width: 7px;
-    height: 7px;
-    padding: 0;
-    border-radius: 50%;
-    font-size: 0;
-    overflow: hidden;
+@media (max-width: 959px) {
+  /* The phone bar. Two rows, because one row cannot hold five thumb-sized
+     targets and a labelled status pill at 320px — and dropping the labels to
+     make it fit is what made the bar unreadable on the only device where
+     hovering isn't possible.
+
+     Row one is status and actions. Row two is the tabs, full width, each an
+     equal share with its name under the icon. Chips wrap onto their own line
+     rather than truncate if a trouble chip joins the usage pill. */
+  :root { --bar-h: 105px; }
+
+  .topbar {
+    flex-wrap: wrap;
+    height: auto;
+    min-height: var(--bar-h);
+    align-content: center;
+    row-gap: 4px;
+    padding: 4px 10px 0;
   }
-  .viewtab { padding: 0 6px; gap: 4px; }
-  .btn.icon { width: 28px; height: 28px; }
-  .topbar { padding: 0 6px; gap: 3px; }
+
+  .viewtabs {
+    order: 9;
+    width: 100%;
+    margin-left: 0;
+    gap: 2px;
+  }
+
+  .viewtab {
+    flex: 1;
+    min-width: 0;
+    flex-direction: column;
+    justify-content: center;
+    gap: 3px;
+    height: 52px;
+    padding: 0 2px;
+    border-radius: 12px 12px 0 0;
+    font-size: 0.66rem;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+  }
+
+  /* The names come back — this is the width where an unlabelled glyph row
+     was hardest to read, and stacking buys the space to fix it. */
+  .viewtab span:not(.badge) {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+  }
+
+  .viewtab .ico { width: 20px; height: 20px; }
+
+  /* Stacked, the badge can't sit in the row — it pins to the icon's corner,
+     which is where a count belongs on a touch tab anyway. */
+  .viewtab .badge {
+    position: absolute;
+    top: 4px;
+    left: 50%;
+    margin-left: 4px;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    border-radius: 8px;
+    font-size: 0.64rem;
+    line-height: 16px;
+  }
+
+  .wordmark { height: 28px; }
+  .topbar .chip { height: 40px; padding: 0 12px; }
+  #viewTerminal.active { margin: -12px -12px -14px; }
+  .docsnav { position: static; }
 }
 
-@media (max-width: 449px) {
-  /* Two usage numbers stop fitting here. The session is the one that gates
-     automatic runs, so it is the one that stays; the week is a line in the
-     ⚙ dialog on a screen this size. */
-  #usageChip .uweek { display: none; }
-
-  /* And there is room for exactly one status chip, so trouble outranks a
-     reading: a login that isn't working, or a generator that has stopped,
-     is something to act on — usage is just a number that will still be there
-     afterwards. Both trouble chips keep their own dot and colour. */
-  .topbar:has(#authChip:not(.hidden)) #usageChip,
-  .topbar:has(#pausedChip:not(.hidden)) #usageChip { display: none; }
-}
-
-@media (max-width: 409px) {
-  /* The floor. Home Assistant's own panel header says "brAIn" directly above
-     this bar, so at 320–409px the wordmark is duplication that costs a tab
-     icon. It is the last thing to go, and the only thing below it is nothing. */
+@media (max-width: 389px) {
+  /* The floor. The wordmark goes — Home Assistant's own panel header says
+     "brAIn" directly above this bar, so it is duplication, and it is the one
+     thing here that isn't a control or a reading. */
   .wordmark { display: none; }
-  .viewtab { padding: 0 5px; }
-  .topbar { gap: 2px; }
+  .topbar { padding: 4px 6px 0; gap: 4px; }
+  .topbar .chip { padding: 0 9px; }
+  .viewtab { font-size: 0.62rem; }
 }
 
 /* ------------------------------------------------------------- findings

@@ -5,17 +5,21 @@ Claude (and any automation, script, or Assist pipeline) can reorganize a
 Home Assistant instance through supervised, validated service calls
 instead of editing `/config/.storage` files by hand:
 
-- Areas:        create, delete, rename, set aliases, assign devices/entities
-- Floors:       create, delete, rename, assign areas
-- Labels:       create, delete, apply/remove on entities, devices, areas
+- Areas:        create, delete, rename, set aliases, set icon,
+                assign devices/entities
+- Floors:       create, delete, rename, update (icon/level/aliases),
+                assign areas
+- Labels:       create, delete, rename, update (icon/colour/description),
+                apply/remove on entities, devices, areas
 - Entities:     rename, change entity_id, enable/disable, hide/unhide,
                 voice aliases, icon overrides, orphan cleanup (dry-run default)
-- Devices:      rename, enable/disable (cascades to lonely parent devices)
-- Integrations: enable/disable/reload config entries
+- Devices:      rename, enable/disable (cascades to lonely parent devices),
+                delete, orphan cleanup (dry-run default)
+- Integrations: enable/disable/reload/delete config entries
 - Helpers:      create/delete any storage-backed helper (input_*, counter,
                 timer, schedule)
 - Zones:        create, update, delete
-- Persons:      create/delete, attach/detach device trackers
+- Persons:      create/delete/rename, attach/detach device trackers
 - Blueprints:   import automation/script blueprints from a URL
 - Statistics:   import/backfill long-term statistics (recorder)
 - Users:        create/delete/enable/disable (owner accounts are protected)
@@ -44,6 +48,11 @@ released under the MIT License. Changes from Spook:
   `reset_dashboard_config` is the sanctioned undo
 - label application is consolidated into two multi-target services
   (`add_label` / `remove_label`) instead of six single-target ones
+- nothing is create-only: every attribute a create service accepts has a
+  service that can change it afterwards, and every registry object that
+  can be created can be renamed and deleted
+- `update_*` services only write the fields the caller actually named, so
+  changing a colour doesn't blank a description
 """
 
 from __future__ import annotations
@@ -220,6 +229,12 @@ async def _set_area_aliases(hass: HomeAssistant, call: ServiceCall) -> None:
     )
 
 
+async def _set_area_icon(hass: HomeAssistant, call: ServiceCall) -> None:
+    """Set (or, with icon omitted, clear) an area's icon."""
+    _ensure_area(hass, call.data["area_id"])
+    ar.async_get(hass).async_update(call.data["area_id"], icon=call.data.get("icon"))
+
+
 async def _add_device_to_area(hass: HomeAssistant, call: ServiceCall) -> None:
     _ensure_area(hass, call.data["area_id"])
     for device_id in call.data["device_id"]:
@@ -295,6 +310,35 @@ async def _rename_floor(hass: HomeAssistant, call: ServiceCall) -> None:
     fr.async_get(hass).async_update(call.data["floor_id"], name=call.data["name"])
 
 
+def _partial_update(call: ServiceCall, fields: tuple[str, ...]) -> dict:
+    """The subset of `fields` this call actually named.
+
+    An update service that fills in every field from call.data.get() wipes
+    whatever the caller didn't mention — so only keys that are present are
+    passed through, and passing none at all is an error rather than a
+    silent no-op.
+    """
+    changes = {f: call.data[f] for f in fields if f in call.data}
+    if not changes:
+        raise ServiceValidationError(
+            "Nothing to update — give at least one of: " + ", ".join(fields)
+        )
+    return changes
+
+
+async def _update_floor(hass: HomeAssistant, call: ServiceCall) -> None:
+    """Change a floor's icon, level or aliases (name is rename_floor).
+
+    Everything create_floor accepts was write-once until now: there was no
+    way to give an existing floor an icon, or to correct its level.
+    """
+    _ensure_floor(hass, call.data["floor_id"])
+    changes = _partial_update(call, ("icon", "level", "aliases"))
+    if "aliases" in changes:
+        changes["aliases"] = set(changes["aliases"])
+    fr.async_get(hass).async_update(call.data["floor_id"], **changes)
+
+
 async def _add_area_to_floor(hass: HomeAssistant, call: ServiceCall) -> None:
     _ensure_floor(hass, call.data["floor_id"])
     for area_id in call.data["area_id"]:
@@ -326,6 +370,26 @@ async def _create_label(hass: HomeAssistant, call: ServiceCall) -> dict | None:
         icon=call.data.get("icon"),
     )
     return {"label_id": entry.label_id}
+
+
+async def _rename_label(hass: HomeAssistant, call: ServiceCall) -> None:
+    """Rename a label, the same way areas, floors, devices and entities do."""
+    _ensure_label(hass, call.data["label_id"])
+    lr.async_get(hass).async_update(call.data["label_id"], name=call.data["name"])
+
+
+async def _update_label(hass: HomeAssistant, call: ServiceCall) -> None:
+    """Change a label's icon, colour or description (name is rename_label).
+
+    A label was create-only: everything you set when you made it was fixed
+    for the life of the label, which for the colour — the thing a label is
+    mostly for — is the one attribute people want to change.
+    """
+    _ensure_label(hass, call.data["label_id"])
+    lr.async_get(hass).async_update(
+        call.data["label_id"],
+        **_partial_update(call, ("icon", "color", "description")),
+    )
 
 
 async def _delete_label(hass: HomeAssistant, call: ServiceCall) -> dict | None:
@@ -614,6 +678,104 @@ async def _enable_device(hass: HomeAssistant, call: ServiceCall) -> None:
         _enable_device_and_parents(registry, device_id)
 
 
+def _device_summary(hass: HomeAssistant, device_id: str) -> dict:
+    """What deleting this device would take with it."""
+    registry = dr.async_get(hass)
+    device = registry.async_get(device_id)
+    entities = sorted(
+        e.entity_id
+        for e in er.async_entries_for_device(
+            er.async_get(hass), device_id, include_disabled_entities=True
+        )
+    )
+    live = sorted(
+        entry_id
+        for entry_id in (device.config_entries if device else set())
+        if hass.config_entries.async_get_entry(entry_id) is not None
+    )
+    return {
+        "device_id": device_id,
+        "name": (device.name_by_user or device.name) if device else None,
+        "entities_removed": entities,
+        "children": sorted(
+            d.id for d in registry.devices.values() if d.via_device_id == device_id
+        ),
+        # A device its integration still provides comes straight back on the
+        # next reload. Saying which entries own it is the difference between
+        # "this didn't work" and "this device isn't stale".
+        "live_config_entries": live,
+    }
+
+
+async def _delete_device(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    """Remove devices from the registry, with their entities.
+
+    dry_run previews what goes. A device still provided by a loaded
+    integration will be recreated the next time that integration sets up —
+    the preview reports the config entries that would do it, so a delete
+    that won't stick is visible before it is made rather than after.
+    """
+    for device_id in call.data["device_id"]:
+        _ensure_device(hass, device_id)
+    devices = [_device_summary(hass, d) for d in call.data["device_id"]]
+    result = {"dry_run": _dry_run(call), "count": len(devices), "devices": devices}
+    if _dry_run(call):
+        return result
+    registry = dr.async_get(hass)
+    for device_id in call.data["device_id"]:
+        registry.async_remove_device(device_id)
+    return result
+
+
+def _orphaned_devices(hass: HomeAssistant) -> list[str]:
+    """Devices no loaded config entry claims any more.
+
+    Two ways to be orphaned: no config entries at all, or config entries
+    that have themselves been removed. Both leave a device in the registry
+    that nothing will ever update again.
+    """
+    return sorted(
+        device.id
+        for device in dr.async_get(hass).devices.values()
+        if not any(
+            hass.config_entries.async_get_entry(entry_id) is not None
+            for entry_id in device.config_entries
+        )
+    )
+
+
+async def _delete_orphaned_devices(
+    hass: HomeAssistant, call: ServiceCall
+) -> dict | None:
+    """Remove devices whose integration is gone. Dry run by default.
+
+    The device counterpart of delete_orphaned_entities, and it defaults the
+    same way: nothing is removed unless dry_run is explicitly false. An
+    optional device_id list scopes it, and every requested device is
+    re-checked — anything a live config entry still claims is reported
+    under skipped_not_orphaned rather than deleted.
+    """
+    dry_run = call.data.get("dry_run", True)
+    orphaned = _orphaned_devices(hass)
+    requested = call.data.get("device_id")
+    skipped: list[str] = []
+    if requested:
+        requested_set = set(requested)
+        skipped = sorted(requested_set - set(orphaned))
+        targets = [d for d in orphaned if d in requested_set]
+    else:
+        targets = orphaned
+    devices = [_device_summary(hass, d) for d in targets]
+    if not dry_run:
+        registry = dr.async_get(hass)
+        for device_id in targets:
+            registry.async_remove_device(device_id)
+    result = {"dry_run": dry_run, "count": len(targets), "devices": devices}
+    if requested:
+        result["skipped_not_orphaned"] = skipped
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Integrations (config entries)
 # ---------------------------------------------------------------------------
@@ -660,6 +822,40 @@ async def _reload_integration(hass: HomeAssistant, call: ServiceCall) -> None:
         _ensure_config_entry(hass, entry_id)
     for entry_id in call.data["config_entry_id"]:
         await hass.config_entries.async_reload(entry_id)
+
+
+async def _delete_integration(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    """Remove config entries entirely — the devices and entities go too.
+
+    Disable is reversible and this is not, so it previews the same way the
+    other destructive tools do: what would be removed, and how much of the
+    registry goes with it.
+    """
+    registry = er.async_get(hass)
+    entries = []
+    for entry_id in call.data["config_entry_id"]:
+        _ensure_config_entry(hass, entry_id)
+        entry = hass.config_entries.async_get_entry(entry_id)
+        entries.append({
+            "config_entry_id": entry_id,
+            "domain": entry.domain,
+            "title": entry.title,
+            "entities_removed": len(
+                er.async_entries_for_config_entry(registry, entry_id)
+            ),
+            "devices_removed": len(
+                dr.async_entries_for_config_entry(dr.async_get(hass), entry_id)
+            ),
+        })
+    result = {"dry_run": _dry_run(call), "integrations": entries}
+    if _dry_run(call):
+        return result
+    for entry_id in call.data["config_entry_id"]:
+        outcome = await hass.config_entries.async_remove(entry_id)
+        for e in entries:
+            if e["config_entry_id"] == entry_id:
+                e["require_restart"] = bool(outcome.get("require_restart"))
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -885,6 +1081,23 @@ async def _remove_device_tracker_from_person(
     hass: HomeAssistant, call: ServiceCall
 ) -> None:
     await _person_trackers(hass, call, add=False)
+
+
+async def _rename_person(hass: HomeAssistant, call: ServiceCall) -> None:
+    """Rename a person. YAML-defined people are not editable, same as
+    delete_person — say so rather than failing inside the collection."""
+    collection, entity_component = _person_parts(hass)
+    entity = entity_component.get_entity(call.data["entity_id"])
+    if entity is None:
+        raise ServiceValidationError(f"Person not found: {call.data['entity_id']}")
+    if not entity.editable or "id" not in entity._config:  # noqa: SLF001
+        raise ServiceValidationError(
+            f"This person is not editable (YAML-defined): {call.data['entity_id']}"
+        )
+    await collection.async_update_item(
+        entity._config["id"],  # noqa: SLF001
+        {"name": call.data["name"]},
+    )
 
 
 async def _create_person(hass: HomeAssistant, call: ServiceCall) -> dict | None:
@@ -1792,6 +2005,10 @@ POWER_TOOLS: tuple[PowerTool, ...] = (
         vol.Required("area_id"): cv.string,
         vol.Required("aliases"): _STR_LIST,
     }),
+    PowerTool("set_area_icon", _set_area_icon, {
+        vol.Required("area_id"): cv.string,
+        vol.Optional("icon"): cv.icon,
+    }),
     PowerTool("add_device_to_area", _add_device_to_area, {
         vol.Required("area_id"): cv.string,
         vol.Required("device_id"): _STR_LIST,
@@ -1821,6 +2038,12 @@ POWER_TOOLS: tuple[PowerTool, ...] = (
         vol.Required("floor_id"): cv.string,
         vol.Required("name"): cv.string,
     }),
+    PowerTool("update_floor", _update_floor, {
+        vol.Required("floor_id"): cv.string,
+        vol.Optional("icon"): vol.Any(None, cv.icon),
+        vol.Optional("level"): vol.Any(None, vol.Coerce(int)),
+        vol.Optional("aliases"): _STR_LIST,
+    }),
     PowerTool("add_area_to_floor", _add_area_to_floor, {
         vol.Required("floor_id"): cv.string,
         vol.Required("area_id"): _STR_LIST,
@@ -1835,6 +2058,16 @@ POWER_TOOLS: tuple[PowerTool, ...] = (
         vol.Optional("color"): vol.Any(cv.color_hex, vol.In(LABEL_THEME_COLORS)),
         vol.Optional("description"): cv.string,
     }, has_response=True),
+    PowerTool("rename_label", _rename_label, {
+        vol.Required("label_id"): cv.string,
+        vol.Required("name"): cv.string,
+    }),
+    PowerTool("update_label", _update_label, {
+        vol.Required("label_id"): cv.string,
+        vol.Optional("icon"): vol.Any(None, cv.icon),
+        vol.Optional("color"): vol.Any(None, cv.color_hex, vol.In(LABEL_THEME_COLORS)),
+        vol.Optional("description"): vol.Any(None, cv.string),
+    }),
     PowerTool("delete_label", _delete_label, {
         vol.Required("label_id"): cv.string,
         vol.Optional("dry_run", default=False): cv.boolean,
@@ -1896,6 +2129,14 @@ POWER_TOOLS: tuple[PowerTool, ...] = (
     PowerTool("disable_device", _disable_device, {
         vol.Required("device_id"): _STR_LIST,
     }),
+    PowerTool("delete_device", _delete_device, {
+        vol.Required("device_id"): _STR_LIST,
+        vol.Optional("dry_run", default=False): cv.boolean,
+    }, has_response=True),
+    PowerTool("delete_orphaned_devices", _delete_orphaned_devices, {
+        vol.Optional("dry_run", default=True): cv.boolean,
+        vol.Optional("device_id"): _STR_LIST,
+    }, has_response=True),
     # Integrations
     PowerTool("enable_integration", _enable_integration, {
         vol.Required("config_entry_id"): _STR_LIST,
@@ -1907,6 +2148,10 @@ POWER_TOOLS: tuple[PowerTool, ...] = (
     PowerTool("reload_integration", _reload_integration, {
         vol.Required("config_entry_id"): _STR_LIST,
     }),
+    PowerTool("delete_integration", _delete_integration, {
+        vol.Required("config_entry_id"): _STR_LIST,
+        vol.Optional("dry_run", default=False): cv.boolean,
+    }, has_response=True),
     # Helpers
     PowerTool("create_helper", _create_helper, {
         vol.Required("helper_type"): vol.In(HELPER_DOMAINS),
@@ -1949,6 +2194,10 @@ POWER_TOOLS: tuple[PowerTool, ...] = (
         vol.Required("entity_id"): cv.entity_id,
         vol.Optional("dry_run", default=False): cv.boolean,
     }, has_response=True),
+    PowerTool("rename_person", _rename_person, {
+        vol.Required("entity_id"): cv.entity_id,
+        vol.Required("name"): cv.string,
+    }),
     PowerTool("add_device_tracker_to_person", _add_device_tracker_to_person, {
         vol.Required("entity_id"): cv.entity_id,
         vol.Required("device_tracker"): _ENTITY_LIST,

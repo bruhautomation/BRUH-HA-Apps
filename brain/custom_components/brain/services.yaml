@@ -234,6 +234,21 @@ set_area_aliases:
         text:
           multiple: true
       required: true
+set_area_icon:
+  name: Set area icon
+  description: Set or clear the icon shown for an area. Omit the icon to clear it.
+  fields:
+    area_id:
+      name: Area
+      description: The area to update.
+      selector:
+        area: {}
+      required: true
+    icon:
+      name: Icon
+      description: The new icon, e.g. mdi:sofa. Leave empty to clear the icon.
+      selector:
+        icon: {}
 add_device_to_area:
   name: Add device to area
   description: Assign one or more devices to an area.
@@ -353,6 +368,36 @@ rename_floor:
       selector:
         text: {}
       required: true
+update_floor:
+  name: Update floor
+  description: Change a floor's icon, level or aliases. Use rename_floor for the name. Give at least
+    one field — anything you omit is left as it is.
+  fields:
+    floor_id:
+      name: Floor
+      description: The floor to update.
+      selector:
+        floor: {}
+      required: true
+    icon:
+      name: Icon
+      description: The new icon, e.g. mdi:home-floor-2.
+      selector:
+        icon: {}
+    level:
+      name: Level
+      description: The storey number — 0 for the ground floor, negative for a basement.
+      selector:
+        number:
+          min: -10
+          max: 20
+          mode: box
+    aliases:
+      name: Aliases
+      description: The full new list of aliases (used by voice assistants).
+      selector:
+        text:
+          multiple: true
 add_area_to_floor:
   name: Add area to floor
   description: Place one or more areas on a floor.
@@ -410,6 +455,48 @@ create_label:
       selector:
         text:
           multiline: true
+rename_label:
+  name: Rename label
+  description: Rename an existing label. Everything carrying it keeps it.
+  fields:
+    label_id:
+      name: Label
+      description: The label to rename.
+      selector:
+        label: {}
+      required: true
+    name:
+      name: Name
+      description: The new name.
+      selector:
+        text: {}
+      required: true
+update_label:
+  name: Update label
+  description: Change a label's icon, colour or description. Use rename_label for the name. Give at
+    least one field — anything you omit is left as it is.
+  fields:
+    label_id:
+      name: Label
+      description: The label to update.
+      selector:
+        label: {}
+      required: true
+    icon:
+      name: Icon
+      description: The new icon, e.g. mdi:lightbulb.
+      selector:
+        icon: {}
+    color:
+      name: Color
+      description: A theme colour name (primary, red, green, ...) or a hex colour.
+      selector:
+        text: {}
+    description:
+      name: Description
+      description: What the label is for.
+      selector:
+        text: {}
 delete_label:
   name: Delete label
   description: Delete a label. It is removed from everything it was applied to. Set dry_run to preview
@@ -632,6 +719,45 @@ disable_device:
         device:
           multiple: true
       required: true
+delete_device:
+  name: Delete device
+  description: Remove one or more devices from the registry, along with their entities. A device its
+    integration still provides is recreated on the next reload — the response lists the config entries
+    that would do that. Set dry_run to preview what would be removed.
+  fields:
+    device_id:
+      name: Devices
+      description: Devices to delete.
+      selector:
+        device:
+          multiple: true
+      required: true
+    dry_run:
+      name: Dry run
+      description: When on, only report what would be removed — nothing is deleted.
+      selector:
+        boolean: {}
+      default: false
+delete_orphaned_devices:
+  name: Delete orphaned devices
+  description: Remove devices no loaded integration claims any more — either they have no config entry
+    at all, or the config entry itself is gone. Runs as a dry run by default and returns the list of
+    affected devices as response data.
+  fields:
+    dry_run:
+      name: Dry run
+      description: When on (default), only report what would be removed.
+      selector:
+        boolean: {}
+      default: true
+    device_id:
+      name: Devices
+      description: Restrict the cleanup to these devices. Each one is re-checked; anything a live
+        config entry still claims is skipped and reported, never deleted. Omit to target every
+        orphaned device.
+      selector:
+        device:
+          multiple: true
 enable_integration:
   name: Enable integration
   description: Enable one or more disabled integration config entries.
@@ -669,6 +795,23 @@ reload_integration:
       selector:
         config_entry: {}
       required: true
+delete_integration:
+  name: Delete integration
+  description: Remove one or more integration config entries completely, along with their devices and
+    entities. This is not reversible — disable_integration is. Set dry_run to preview what would go.
+  fields:
+    config_entry_id:
+      name: Integration
+      description: The config entry to remove.
+      selector:
+        config_entry: {}
+      required: true
+    dry_run:
+      name: Dry run
+      description: When on, only report what would be removed — nothing is deleted.
+      selector:
+        boolean: {}
+      default: false
 create_zone:
   name: Create zone
   description: Create a new zone for location tracking.
@@ -739,6 +882,25 @@ delete_zone:
       description: When on, only report what would change — nothing is modified.
       selector: *id001
       default: false
+rename_person:
+  name: Rename person
+  description: Rename a person. Only people created in the UI can be renamed; YAML-defined ones are
+    not editable.
+  fields:
+    entity_id:
+      name: Person
+      description: The person entity.
+      selector:
+        entity:
+          filter:
+            domain: person
+      required: true
+    name:
+      name: Name
+      description: The new name.
+      selector:
+        text: {}
+      required: true
 add_device_tracker_to_person:
   name: Add device tracker to person
   description: Attach one or more device trackers to a person for presence detection.

@@ -62,19 +62,20 @@
 
   <div class="spacer"></div>
 
-  <!-- Status chips collapse to their dot (and, for usage, the numbers) on a
-       phone. The dot already carries the state; the words are what make the
-       bar wrap, and every chip keeps its full text in title/aria-label.
+  <!-- Every chip carries its own word at every width. A chip collapsed to a
+       bare coloured dot is a state nobody can read: it says something is
+       going on without saying what, and hovering isn't a gesture a phone
+       has. What gives way on a narrow screen is the row, not the label —
+       the tabs drop to a second line and the chips keep their text.
 
        The auth chip only appears when there is something wrong — a green
        "Claude · subscription" was a permanent label for a state that never
-       changes, taking bar width from the two numbers that do. Usage carries
-       both windows: the 5-hour session that gates automatic runs, and the
-       weekly one that actually ends your week. Reset times live in the
-       hover, not in the bar. -->
-  <span id="authChip" class="chip hidden"><span class="dot"></span><span id="authChipText" class="chipwords">Checking…</span></span>
-  <button id="usageChip" class="chip clickable hidden"><span class="dot"></span><span id="usageChipPct"></span><span id="usageChipText" class="chipwords"></span><span id="usageChipWeek" class="uweek hidden">·&nbsp;<span id="usageChipWeekPct"></span><span class="chipwords">&nbsp;week</span></span></button>
-  <button id="pausedChip" class="chip clickable warn hidden"><span class="dot"></span><span id="pausedChipText" class="chipwords"></span></button>
+       changes. Usage carries both windows, each behind its own word: the
+       5-hour session that gates automatic runs, and the weekly one that
+       actually ends your week. Reset times live in the hover. -->
+  <span id="authChip" class="chip hidden"><span class="dot"></span><span id="authChipText">Checking…</span></span>
+  <button id="usageChip" class="chip clickable hidden"><span class="dot"></span><span class="uwin"><span class="ulab">Session</span><span id="usageChipPct"></span></span><span id="usageChipWeek" class="uwin hidden"><span class="ulab">Week</span><span id="usageChipWeekPct"></span></span></button>
+  <button id="pausedChip" class="chip clickable warn hidden"><span class="dot"></span><span id="pausedChipText"></span></button>
 
   <button id="refreshAll" class="btn icon hidden" data-tip="Refresh all">
     <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M20 11a8 8 0 1 0-.6 4M20 5v6h-6"/></svg>
@@ -530,54 +531,39 @@
       <button id="kClose" class="btn icon" data-tip="Close" aria-label="Close">✕</button>
     </header>
     <div class="edit-body ksplit">
+      <!-- This column is a queue, so it reads like one: two headings, two
+           lists, one button. Every paragraph that explained the model rather
+           than the list under it is in the Docs tab instead — the lists are
+           short and self-evident, and the prose was longer than the content
+           it introduced. -->
       <div class="kcol">
-        <p class="hint"><b>The document on the right is the memory</b> — the one thing every
-          part of brAIn reads. This column is the working queue behind it: what brAIn is
-          currently unsure about, and what it has announced so it never announces the same
-          thing twice.</p>
-
         <label>Waiting on you</label>
-        <p class="hint">Things brAIn believes but hasn't confirmed — two taps to settle.
-          Never more than three at once, and they expire after a fortnight. <b>Yes</b> files
-          it into the document as a plain fact; <b>No</b> records a dead end it won't
-          revisit.</p>
+        <p class="hint tight">Guesses brAIn wants confirmed. <b>Yes</b> files it as a fact,
+          <b>No</b> drops it for good.</p>
         <div id="kOpenQs" class="klist"></div>
 
         <label>Waiting to be filed</label>
-        <p class="hint">Discovered during insight runs and study sessions, and queued for the
-          document. Filing empties this list — what was in it is then part of the memory on
-          the right. Delete anything wrong and brAIn is asked to drop it from the document
-          too.</p>
         <!-- Consolidation is normally daily (or early past 20 pending facts).
              That is the right cadence for a background daemon and the wrong
              one for someone who has just taught it something and wants to see
              it land. Same pass, same checks — pressed by hand. -->
         <div class="row kmemrow">
-          <button id="kConsolidate" class="btn small">⇪ File into memory now</button>
+          <button id="kConsolidate" class="btn small"
+                  title="Merge everything queued into the memory document — a few seconds, and one small Claude call">⇪ File into memory now</button>
           <span id="kPending" class="kpending"></span>
         </div>
-        <p class="hint tight">Merges everything queued into the document below, deduping
-          and resolving contradictions. Takes a few seconds and costs a small Claude call.</p>
         <div id="kFacts" class="klist"></div>
-
-        <!-- Filed discoveries are history, not a queue — folded away so the
-             list above is only what is genuinely still waiting. They stay
-             reachable because ✕ here is the one-click way to make brAIn
-             forget something it has already written down. -->
-        <details id="kFiledWrap" class="kfiled hidden">
-          <summary id="kFiledSum"></summary>
-          <div id="kFiled" class="klist"></div>
-        </details>
-
+        <!-- Filed discoveries are not shown at all. Once something is in the
+             document it IS the document, and a second copy of it under
+             "already in memory" made a drained queue look like it had never
+             emptied. The ledger still holds them so nothing is re-announced;
+             it just isn't a list anyone has to read. -->
       </div>
 
       <div id="kMemWrap" class="kcol kmemcol">
         <label>Home memory</label>
-        <p class="hint">The one thing that is "memory": preferences, nicknames, patterns,
-          device notes. Everything brAIn does reads it — insight runs, voice, and the
-          terminal alike — and <code>brain memory</code> shows the same document there.
-          Teach it a fact and it is queued for the next consolidation, or edit the
-          markdown yourself.</p>
+        <p class="hint tight">Everything brAIn knows about the house. Insight runs, voice
+          and the terminal all read this.</p>
         <form id="kAddForm" class="kadd">
           <input id="kAddInput" type="text" maxlength="500" autocomplete="off"
                  placeholder="Teach it something — “The garage fridge is supposed to run 24/7”">
