@@ -1,4 +1,4 @@
-"""Insight category definitions and prompt construction for BRain.
+"""Insight category definitions and prompt construction for brAIn.
 
 Each category declares which slices of Home Assistant data it wants (domains,
 device classes, whether it needs history / long-term statistics) and the
@@ -191,7 +191,7 @@ def get_category(cat_id: str) -> dict | None:
 # one hue light→dark for magnitude, blue↔red for polarity, reserved status
 # colors, one axis per chart, thin marks, legends for ≥2 series.
 
-SYSTEM_PROMPT = """You are BRain, the AI analyst inside a Home Assistant add-on. You receive a JSON snapshot of the user's smart home and produce ONE insight card: a handful of sharp, specific data points plus one compact self-contained visualization.
+SYSTEM_PROMPT = """You are brAIn, the AI analyst inside a Home Assistant add-on. You receive a JSON snapshot of the user's smart home and produce ONE insight card: a handful of sharp, specific data points plus one compact self-contained visualization.
 
 You have NO tools available. Never attempt to use tools. Respond with a single JSON object and absolutely nothing else — no markdown fences, no prose before or after.
 

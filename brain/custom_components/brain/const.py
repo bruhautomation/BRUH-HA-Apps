@@ -1,4 +1,4 @@
-"""Constants for the BRain integration."""
+"""Constants for the brAIn integration."""
 
 DOMAIN = "brain"
 
@@ -14,7 +14,7 @@ DEFAULT_TIMEOUT = 120
 # config edits). Must stay >= the add-on listener's BRAIN_AUTOMATION_TIMEOUT
 # default (300s) or results land after the bridge stops waiting.
 DEFAULT_TASK_TIMEOUT = 300
-DEFAULT_NAME = "BRain"
+DEFAULT_NAME = "brAIn"
 DEFAULT_SYSTEM_PROMPT = ""
 # Haiku keeps voice interactions snappy; device control rarely needs a
 # bigger model. Users can pick another model per agent in the options flow.

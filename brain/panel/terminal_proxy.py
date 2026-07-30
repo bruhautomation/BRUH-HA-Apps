@@ -1,6 +1,6 @@
 """Reverse-proxy the ttyd web terminal under /terminal/.
 
-BRain publishes a single ingress port. The panel owns it, so the terminal
+brAIn publishes a single ingress port. The panel owns it, so the terminal
 has to be reachable *through* the panel rather than beside it — that is
 what makes Terminal a tab instead of a second add-on.
 

@@ -1,4 +1,4 @@
-/* BRain — panel logic.
+/* brAIn — panel logic.
    All URLs are relative: the HA Supervisor proxies us under
    /api/hassio_ingress/<token>/, so absolute paths would escape the ingress. */
 "use strict";
@@ -109,6 +109,10 @@ function renderAuth() {
   const text = $("#authChipText");
   chip.classList.remove("ok", "warn", "bad", "busy");
   if (!s) return;
+  // A working login is not news. The chip is here to say something is wrong
+  // (or being checked) — once it's fine it goes away and gives the bar back
+  // to usage, where the numbers actually move.
+  let settled = false;
   if (!s.authenticated) {
     text.textContent = "Not connected";
     chip.classList.add("warn");
@@ -121,15 +125,14 @@ function renderAuth() {
     text.textContent = "Claude auth failed";
     chip.classList.add("bad");
     chip.title = s.auth_check.error || "Claude auth failed";
-  } else if (s.auth_source === "shared") {
-    text.textContent = "Claude · shared login";
-    chip.classList.add("ok");
-    chip.title = "Using BRain's shared login";
   } else {
-    text.textContent = s.auth_type === "api_key" ? "Claude · API key" : "Claude · subscription";
+    settled = true;
+    text.textContent = s.auth_source === "shared" ? "Claude · shared login"
+      : s.auth_type === "api_key" ? "Claude · API key" : "Claude · subscription";
     chip.classList.add("ok");
     chip.title = text.textContent;
   }
+  chip.classList.toggle("hidden", settled);
   // The words are hidden on a phone, so the state has to survive without them.
   chip.setAttribute("aria-label", text.textContent);
   // Three states, not two: not connected → connect; connected but never
@@ -150,8 +153,20 @@ function fmtClock(epoch) {
     d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
-// Topbar chip: current 5-hour-session usage + when the window resets
-// (click opens ⚙). Dot goes warning-colored once the budget is reached.
+// A weekly reset is days away, so a bare clock time is ambiguous — say which
+// day. Same short form the cards use for dates.
+function fmtDayClock(epoch) {
+  const d = new Date(epoch * 1000);
+  if (isNaN(d.getTime())) return "";
+  return d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })
+    + " " + fmtClock(epoch);
+}
+
+// Topbar chip: both usage windows — the 5-hour session that gates automatic
+// runs, and the weekly one that a Claude plan really runs you out of. The
+// reset times are in the hover rather than the bar, because they change once
+// per window while the numbers change all day. Click opens ⚙; the dot goes
+// warning-coloured once the session budget is reached.
 function renderUsageChip() {
   const s = state.status;
   const chip = $("#usageChip");
@@ -160,18 +175,37 @@ function renderUsageChip() {
     chip.classList.add("hidden");
     return;
   }
-  // Split so a phone can keep the number and drop the sentence around it.
+  const hasWeek = u.week_percent != null;
   const reset = u.resets_at ? fmtClock(u.resets_at) : "";
+  const weekReset = u.week_resets_at ? fmtDayClock(u.week_resets_at) : "";
+  // Split so a phone can keep the numbers and drop the words around them.
   $("#usageChipPct").textContent = `${Math.round(u.used_percent)}%`;
-  $("#usageChipText").textContent = reset ? `used · resets ${reset}` : "used";
+  $("#usageChipText").textContent = hasWeek ? "session" : "used";
+  $("#usageChipWeekPct").textContent = hasWeek ? `${Math.round(u.week_percent)}%` : "";
+  $("#usageChipWeek").classList.toggle("hidden", !hasWeek);
   chip.classList.toggle("ok", !u.blocked);
   chip.classList.toggle("warn", !!u.blocked);
-  chip.title = (u.source === "account"
-    ? `Your Anthropic account's 5-hour session: ${u.used_percent}% used`
-    : `≈${u.used_percent}% of a ${u.plan_label} session used by Insights (estimate)`)
-    + ` — budget ${u.budget_percent}%`
-    + (reset ? `, window resets at ${reset}` : "")
-    + ". Tap for settings.";
+
+  // The hover is where the reset times live, so it is written as lines rather
+  // than one sentence — two windows and a budget don't fit in a clause.
+  const windows = [u.source === "account"
+    ? `5-hour session: ${u.used_percent}% used`
+      + (reset ? ` · resets ${reset}` : "")
+    : `5-hour session: ≈${u.used_percent}% of a ${u.plan_label} session used by `
+      + `Insights (estimate)` + (reset ? ` · resets ${reset}` : "")];
+  if (hasWeek) {
+    windows.push(`This week: ${u.week_percent}% used`
+      + (weekReset ? ` · resets ${weekReset}` : ""));
+  } else {
+    // Say why rather than silently showing one number: the weekly figure only
+    // exists as an account reading, so its absence is a fact about the login.
+    windows.push("This week: not available — the weekly figure comes from your "
+      + "Anthropic account, which needs a subscription login (not an API key).");
+  }
+  chip.title = windows.concat(
+    `Insights pauses automatic runs at ${u.budget_percent}% of the session.`,
+    "Tap for settings.").join("\n");
+  chip.setAttribute("aria-label", "Claude usage — " + windows.join("; "));
   chip.classList.remove("hidden");
 }
 
@@ -902,7 +936,7 @@ async function generate(categoryOrId, question) {
       toast(res.learning
         ? `Studying ${res.learning} — it runs in the background; what it finds `
           + "lands in Memory and Findings"
-        : "Studying whatever BRain knows least about — check Memory shortly");
+        : "Studying whatever brAIn knows least about — check Memory shortly");
       return;
     }
     await refreshStatus();
@@ -913,13 +947,13 @@ async function generate(categoryOrId, question) {
 }
 
 // One ✕ for every kind of card, and it means the same thing for all of them:
-// gone. BRain proposes the cards a given home should have, so the way to get
+// gone. brAIn proposes the cards a given home should have, so the way to get
 // one back is to ask for it again — not to fish it out of a graveyard.
 async function deleteCard(id, catInfo, name) {
   const label = name || (catInfo && catInfo.title) || "this card";
   if (!window.confirm(
     `Delete “${label}” and its history? This can't be undone — ask for it `
-    + "again any time and BRain will build it fresh.")) return;
+    + "again any time and brAIn will build it fresh.")) return;
   try {
     await api(`api/card/${id}`, { method: "DELETE" });
     delete state.viewing[id];
@@ -1255,12 +1289,17 @@ function renderUsageMeter(usage, budgetPct) {
     ? `${Math.round(usage.window_tokens / 1000)}k` : String(usage.window_tokens || 0);
   const reset = usage.resets_at
     ? ` Session resets at ${fmtClock(usage.resets_at)}.` : "";
+  // The weekly window isn't budgeted against, but it is the one that ends a
+  // Claude plan's week — so it is stated wherever the session is.
+  const week = usage.week_percent == null ? ""
+    : ` Your week is ${usage.week_percent}% used`
+      + (usage.week_resets_at ? `, resetting ${fmtDayClock(usage.week_resets_at)}.` : ".");
   $("#usageText").textContent = (usage.source === "account"
     ? `${usage.used_percent}% of your account's 5-hour session used (live from Anthropic — `
       + `all Claude use counts, not just Insights). Budget mark at ${budgetPct}%.`
     : `≈${spent} tokens spent by Insights in the last 5 h — about ${usage.used_percent}% of a `
-      + `${usage.plan_label} session (rough estimate; install BRain for live account `
-      + `usage). Budget mark at ${budgetPct}%.`) + reset;
+      + `${usage.plan_label} session (rough estimate; sign in with your Claude subscription `
+      + `for live account usage). Budget mark at ${budgetPct}%.`) + reset + week;
 }
 
 // Generation-defaults fields: ⚙ number input id → settings key. These are
@@ -1494,12 +1533,12 @@ $("#fbModal").addEventListener("click", (ev) => {
 
 // ---------------------------------------------------------------- findings
 // The work list. Memory is what is TRUE of this home, a hypothesis is what
-// BRain might have wrong about it, and a finding is what is BROKEN in it.
+// brAIn might have wrong about it, and a finding is what is BROKEN in it.
 // Two ways out and no third: fix it, or say it isn't a problem here.
 
 const FIND_STATUS = {
   open:      { label: "Needs a decision", cls: "open" },
-  fixing:    { label: "BRain is fixing it…", cls: "fixing" },
+  fixing:    { label: "brAIn is fixing it…", cls: "fixing" },
   fixed:     { label: "Fixed", cls: "fixed" },
   failed:    { label: "Couldn't fix it", cls: "failed" },
   needs_you: { label: "Needs you", cls: "needsyou" },
@@ -1589,7 +1628,7 @@ function makeFinding(f) {
   } else if (f.fix) {
     const box = el("div", "findfix");
     box.appendChild(el("span", "findfixlabel", f.fixable
-      ? "BRain would" : "You'd need to"));
+      ? "brAIn would" : "You'd need to"));
     box.appendChild(el("span", null, f.fix));
     card.appendChild(box);
   }
@@ -1611,25 +1650,25 @@ function makeFinding(f) {
     tip(forget, "Forget this finding entirely — it can be reported again");
     forget.addEventListener("click", () => {
       if (!window.confirm(
-        `Forget “${f.text}”? Unlike dismissing it, BRain may report it again.`)) return;
+        `Forget “${f.text}”? Unlike dismissing it, brAIn may report it again.`)) return;
       findAction(f, "forget", "Forgotten", btns);
     });
   } else {
     if (f.fixable) {
       const fix = add(el("button", "btn small primary",
         f.status === "failed" ? "✦  Try again" : "✦  Fix it"));
-      tip(fix, "Let BRain make the change in Home Assistant, then report back");
+      tip(fix, "Let brAIn make the change in Home Assistant, then report back");
       fix.addEventListener("click", () => findAction(
-        f, "fix", "On it — BRain is making the change", btns));
+        f, "fix", "On it — brAIn is making the change", btns));
     }
     const done = add(el("button", "btn small", "✓  I did it"));
     tip(done, "You handled it yourself — mark it resolved");
     done.addEventListener("click", () =>
       findAction(f, "done", "Marked done", btns));
     const ignore = add(el("button", "btn small ghost", "Not a problem"));
-    tip(ignore, "Dismiss it — BRain will never raise this again");
+    tip(ignore, "Dismiss it — brAIn will never raise this again");
     ignore.addEventListener("click", () => findAction(
-      f, "ignore", "Dismissed — BRain won't raise it again", btns));
+      f, "ignore", "Dismissed — brAIn won't raise it again", btns));
   }
   card.appendChild(actions);
   return card;
@@ -1658,7 +1697,7 @@ function renderFindings() {
   const shown = state.findings.filter(active.match);
   if (!shown.length) {
     list.appendChild(el("div", "findempty", state.findFilter === "live"
-      ? "Nothing's broken that BRain can see. Findings appear here as insight "
+      ? "Nothing's broken that brAIn can see. Findings appear here as insight "
         + "runs and study sessions turn them up."
       : "Nothing here yet."));
     return;
@@ -1669,11 +1708,40 @@ function renderFindings() {
 // ------------------------------------------------------- knowledge modal
 // The viewer for everything the analyst has learned: open questions (answer
 // or dismiss), learned facts (add/remove), answered Q&A, and the shared
-// memory.md the BRain maintains.
+// memory.md the brAIn maintains.
 
 function kSourceLabel(src) {
   return { insights: "discovered", homeowner: "your answer",
     feedback: "feedback", user: "added by you" }[src] || src;
+}
+
+// One discovery row. Identical whether it is still queued or already filed —
+// what differs is which list it lands in, so the ✕ works in both.
+function makeFactRow(f) {
+  const row = el("div", "fbitem");
+  const txt = el("div", "txt");
+  txt.appendChild(el("div", null, f.text));
+  const when = new Date(f.ts * 1000);
+  txt.appendChild(el("div", "when",
+    `${kSourceLabel(f.source)}${f.category ? " · " + f.category : ""}` +
+    (isNaN(when.getTime()) ? "" :
+      " · " + when.toLocaleDateString([], { month: "short", day: "numeric" }))));
+  row.appendChild(txt);
+  const del = el("button", "btn icon", "✕");
+  tip(del, "Forget this fact — it's also removed from the memory file");
+  del.addEventListener("click", async () => {
+    try {
+      const res = await api(`api/knowledge/fact/${f.ts}`, { method: "DELETE" });
+      if (res.removing) {
+        toast("Forgotten — removing it from the memory file too…");
+        $("#kMemMerging").classList.remove("hidden");
+        pollMemoryMerge();
+      }
+      renderKnowledge();
+    } catch (e) { toast(e.message); }
+  });
+  row.appendChild(del);
+  return row;
 }
 
 async function renderKnowledge() {
@@ -1693,7 +1761,7 @@ async function renderKnowledge() {
   const open = data.hypotheses || [];
   if (!open.length) {
     openBoxEl.appendChild(el("div", "kempty",
-      "Nothing waiting on you — BRain isn't unsure about anything right now."));
+      "Nothing waiting on you — brAIn isn't unsure about anything right now."));
   }
   open.slice().reverse().forEach((h) => {
     const row = el("div", "qrow");
@@ -1730,41 +1798,30 @@ async function renderKnowledge() {
     openBoxEl.appendChild(row);
   });
 
-  // learned facts
+  // Discoveries, split by whether they have reached the document yet. The
+  // top list is a queue and has to drain — leaving filed facts in it made
+  // "File into memory now" look like it had done nothing.
+  const facts = data.facts || [];
+  const queued = facts.filter((f) => !f.filed);
+  const filed = facts.filter((f) => f.filed);
+
   const factsEl = $("#kFacts");
   factsEl.textContent = "";
-  const facts = data.facts || [];
-  if (!facts.length) {
-    factsEl.appendChild(el("div", "kempty",
-      "Nothing learned yet — facts appear here as insights discover them. "
-      + "(Facts you teach live in the memory file instead.)"));
+  if (!queued.length) {
+    factsEl.appendChild(el("div", "kempty", filed.length
+      ? "Nothing waiting — everything discovered so far is in the document."
+      : "Nothing discovered yet — facts appear here as insight runs and study "
+        + "sessions turn them up. (Facts you teach are queued straight for the "
+        + "document.)"));
   }
-  facts.slice().reverse().forEach((f) => {
-    const row = el("div", "fbitem");
-    const txt = el("div", "txt");
-    txt.appendChild(el("div", null, f.text));
-    const when = new Date(f.ts * 1000);
-    txt.appendChild(el("div", "when",
-      `${kSourceLabel(f.source)}${f.category ? " · " + f.category : ""}` +
-      (isNaN(when.getTime()) ? "" :
-        " · " + when.toLocaleDateString([], { month: "short", day: "numeric" }))));
-    row.appendChild(txt);
-    const del = el("button", "btn icon", "✕");
-    tip(del, "Forget this fact — it's also removed from the memory file");
-    del.addEventListener("click", async () => {
-      try {
-        const res = await api(`api/knowledge/fact/${f.ts}`, { method: "DELETE" });
-        if (res.removing) {
-          toast("Forgotten — removing it from the memory file too…");
-          $("#kMemMerging").classList.remove("hidden");
-          pollMemoryMerge();
-        }
-        renderKnowledge();
-      } catch (e) { toast(e.message); }
-    });
-    row.appendChild(del);
-    factsEl.appendChild(row);
-  });
+  queued.slice().reverse().forEach((f) => factsEl.appendChild(makeFactRow(f)));
+
+  const filedEl = $("#kFiled");
+  filedEl.textContent = "";
+  $("#kFiledWrap").classList.toggle("hidden", !filed.length);
+  $("#kFiledSum").textContent =
+    `Already in memory — ${filed.length} discover${filed.length === 1 ? "y" : "ies"}`;
+  filed.slice().reverse().forEach((f) => filedEl.appendChild(makeFactRow(f)));
 
   // "Answered questions" is gone with the model it belonged to: a
   // confirmed guess becomes a plain memory line and its record is
@@ -2163,7 +2220,7 @@ $("#docsSearch").addEventListener("input", (ev) => {
 });
 
 // ----------------------------------------------------------- onboarding
-// A fresh install has no cards. BRain studies the home first, then
+// A fresh install has no cards. brAIn studies the home first, then
 // proposes cards grounded in what it found — a generic card about a house
 // it has never looked at is noise on every run, so there is deliberately
 // no canned fallback.
@@ -2217,7 +2274,7 @@ function renderOnboarding() {
 
   if (obState.sparse) {
     $("#obSparseText").textContent = obState.missing
-      || "There isn't enough here yet for BRain to suggest anything useful.";
+      || "There isn't enough here yet for brAIn to suggest anything useful.";
   }
 
   const list = $("#obList");

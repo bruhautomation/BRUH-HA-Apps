@@ -5,7 +5,7 @@ build_from:
   amd64: ghcr.io/home-assistant/amd64-base:3.24
 
 labels:
-  org.opencontainers.image.title: "Home Assistant App: BRain"
+  org.opencontainers.image.title: "Home Assistant App: brAIn"
   org.opencontainers.image.description: "Your home's brain — terminal, insights, and one shared memory"
   org.opencontainers.image.source: "https://github.com/bruhautomation/BRUH-HA-Apps"
   org.opencontainers.image.licenses: "MIT"

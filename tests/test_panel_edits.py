@@ -122,7 +122,7 @@ class PanelCase(unittest.TestCase):
             feedback_store.FEEDBACK_FILE, user_categories.USER_CATS_FILE,
             knowledge_store.KNOWLEDGE_FILE, onboarding.STUDY_REQUESTS_DIR,
             engine.run_claude, self.server.CARD_TOKEN_FILE,
-            self.server.WWW_CARD_DIR,
+            self.server.WWW_CARD_DIR, self.server.MEMORY_MARKER_FILE,
         )
         card_tags.TAGS_FILE = tmp / "card_tags.json"
         findings_store.FINDINGS_FILE = tmp / "findings.json"
@@ -130,6 +130,7 @@ class PanelCase(unittest.TestCase):
         self.server.INSIGHTS_DIR = tmp
         self.server.MEMORY_INBOX_DIR = tmp / "memory-inbox"
         self.server.SHARED_MEMORY_FILE = tmp / "memory.md"
+        self.server.MEMORY_MARKER_FILE = tmp / ".last_consolidated"
         prompt_store.OVERRIDES_FILE = os.path.join(self.tmp.name, "o", "ov.json")
         feedback_store.FEEDBACK_FILE = os.path.join(self.tmp.name, "fb.json")
         user_categories.USER_CATS_FILE = os.path.join(self.tmp.name, "uc.json")
@@ -158,7 +159,7 @@ class PanelCase(unittest.TestCase):
          feedback_store.FEEDBACK_FILE, user_categories.USER_CATS_FILE,
          knowledge_store.KNOWLEDGE_FILE, onboarding.STUDY_REQUESTS_DIR,
          engine.run_claude, self.server.CARD_TOKEN_FILE,
-         self.server.WWW_CARD_DIR) = self._olds
+         self.server.WWW_CARD_DIR, self.server.MEMORY_MARKER_FILE) = self._olds
         self.server.JOBS.clear()
         self.tmp.cleanup()
 
@@ -288,6 +289,65 @@ class TestAskBarLearns(PanelCase):
         self.assertEqual(list(onboarding.STUDY_REQUESTS_DIR.glob("*.json")), [])
 
 
+class TestDiscoveriesDrain(PanelCase):
+    """The Memory tab's discovery list is a queue, and a queue has to drain.
+
+    It didn't: the facts ledger is a dedup index, so every discovery stayed on
+    the list forever and filing them into the document changed nothing you
+    could see. Nothing may be deleted from the ledger (that is what stops the
+    analyst re-announcing), so what the panel needs is to know which entries
+    have already been folded in — and the consolidator's own marker file
+    already says, for the daemon and the CLI as much as for the button."""
+
+    def test_a_discovery_is_queued_until_the_consolidator_has_run(self):
+        knowledge_store.add_fact("The hall sensor drops at 2 AM.")
+
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                facts = (await (await client.get("/api/knowledge")).json())["facts"]
+                self.assertEqual([f["filed"] for f in facts], [False])
+            finally:
+                await client.close()
+
+        asyncio.run(run())
+
+    def test_consolidating_moves_older_discoveries_out_of_the_queue(self):
+        old, _ = knowledge_store.add_fact("Filed before the pass.")
+        self.server.MEMORY_MARKER_FILE.parent.mkdir(parents=True, exist_ok=True)
+        self.server.MEMORY_MARKER_FILE.touch()
+        os.utime(self.server.MEMORY_MARKER_FILE, (old["ts"] + 5, old["ts"] + 5))
+        fresh, _ = knowledge_store.add_fact("Discovered after it.")
+        # add_fact stamps with time.time(); force the ordering the names claim
+        data = json.loads(Path(knowledge_store.KNOWLEDGE_FILE).read_text())
+        data["facts"][1]["ts"] = old["ts"] + 10
+        Path(knowledge_store.KNOWLEDGE_FILE).write_text(json.dumps(data))
+
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                facts = (await (await client.get("/api/knowledge")).json())["facts"]
+                by_text = {f["text"]: f["filed"] for f in facts}
+                self.assertTrue(by_text["Filed before the pass."])
+                self.assertFalse(by_text["Discovered after it."])
+            finally:
+                await client.close()
+
+        asyncio.run(run())
+
+    def test_a_filed_discovery_is_still_there_to_be_forgotten(self):
+        """Filed ones leave the queue, not the panel: ✕ is the only one-click
+        way to make brAIn drop something it has already written down."""
+        entry, _ = knowledge_store.add_fact("Wrong about the garage.")
+        self.server.MEMORY_MARKER_FILE.parent.mkdir(parents=True, exist_ok=True)
+        self.server.MEMORY_MARKER_FILE.touch()
+        facts = self.server._facts_with_filing()
+        self.assertEqual([f["filed"] for f in facts], [True])
+        self.assertEqual(facts[0]["ts"], entry["ts"])
+
+
 class TestManualConsolidation(PanelCase):
     def _queue(self, n):
         self.server.MEMORY_INBOX_DIR.mkdir(parents=True, exist_ok=True)
@@ -363,6 +423,71 @@ class TestManualConsolidation(PanelCase):
 
         asyncio.run(run())
         self.assertEqual(self.server._inbox_pending(), 2)
+
+    def test_a_pass_that_leaves_the_queue_alone_is_not_a_filing(self):
+        """The symptom that started this: press the button, get "filed 2
+        things", and watch the count stay at 2. The consolidator exits 0 in
+        cases that file nothing (the lock is held, or it decided not to write),
+        so the count either side of the pass is what we report on."""
+        script = Path(self.tmp.name) / "noop.sh"
+        script.write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
+        script.chmod(0o755)
+        self.server.CONSOLIDATE_SCRIPT = str(script)
+        self._queue(2)
+
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                resp = await client.post("/api/memory/consolidate")
+                self.assertEqual(resp.status, 502)
+                self.assertIn("didn't move", await resp.text())
+            finally:
+                await client.close()
+
+        asyncio.run(run())
+        self.assertEqual(self.server._inbox_pending(), 2)
+
+    def test_a_partial_pass_reports_what_it_actually_filed(self):
+        script = Path(self.tmp.name) / "partial.sh"
+        script.write_text(
+            f'#!/bin/bash\nprintf \'{{"fact":"kept"}}\\n\' '
+            f'> {self.server.MEMORY_INBOX_DIR}/1-panel.jsonl\n', encoding="utf-8")
+        script.chmod(0o755)
+        self.server.CONSOLIDATE_SCRIPT = str(script)
+        self._queue(3)
+
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                body = await (await client.post("/api/memory/consolidate")).json()
+                self.assertEqual(body["consolidated"], 2)
+                self.assertEqual(body["inbox_pending"], 1)
+            finally:
+                await client.close()
+
+        asyncio.run(run())
+
+    def test_a_busy_lock_is_reported_as_busy_not_as_filed(self):
+        script = Path(self.tmp.name) / "busy.sh"
+        script.write_text(
+            f"#!/bin/bash\nexit {self.server.CONSOLIDATE_BUSY_RC}\n", encoding="utf-8")
+        script.chmod(0o755)
+        self.server.CONSOLIDATE_SCRIPT = str(script)
+        self._queue(2)
+
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                resp = await client.post("/api/memory/consolidate")
+                self.assertEqual(resp.status, 502)
+                self.assertIn("already running", await resp.text())
+            finally:
+                await client.close()
+
+        asyncio.run(run())
 
     def test_a_missing_script_is_reported_not_crashed(self):
         self.server.CONSOLIDATE_SCRIPT = "/nope/does-not-exist.sh"

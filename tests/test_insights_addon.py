@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for the BRain add-on.
+"""Tests for the brAIn add-on.
 
 Covers:
 - config.yaml / build.yaml / Dockerfile validity and cross-file consistency
@@ -526,7 +526,7 @@ class TestPanelServer(unittest.TestCase):
                 resp = await client.get("/")
                 self.assertEqual(resp.status, 200)
                 text = await resp.text()
-                self.assertIn("BRain", text)
+                self.assertIn("brAIn", text)
                 self.assertNotIn("{{VERSION}}", text)
 
                 resp = await client.get("/api/health")
@@ -550,7 +550,7 @@ class TestPanelServer(unittest.TestCase):
 
 
 class TestSharedAuth(unittest.TestCase):
-    """Shared-credential fallback (written by the BRain add-on)."""
+    """Shared-credential fallback (written by the brAIn add-on)."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -735,7 +735,7 @@ class TestPromptStore(unittest.TestCase):
             ids, [c["id"] for c in categories.CATEGORIES if c["id"] != "energy"])
 
     def test_there_is_no_restore_list(self):
-        """Hiding is the mechanism, not an offer. BRain proposes the cards a
+        """Hiding is the mechanism, not an offer. brAIn proposes the cards a
         given home should have; keeping a graveyard of shipped ones to
         resurrect is the opposite of that idea, so the listing that fed the
         ⚙ dialog's restore list is gone rather than merely unused."""

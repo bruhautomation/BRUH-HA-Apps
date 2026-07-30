@@ -1,4 +1,4 @@
-"""System health binary sensor for BRain.
+"""System health binary sensor for brAIn.
 
 Reports whether the add-on's assist channel is alive. Primary source is the
 worker pool's /health endpoint (fast mode); falls back to the heartbeat file
@@ -67,7 +67,7 @@ class BruhClaudeHealthSensor(BinarySensorEntity):
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
     _attr_device_info = DeviceInfo(
         identifiers={(DOMAIN, "system_health")},
-        name="BRain System",
+        name="brAIn System",
         manufacturer="BRUH Automation",
         model="Claude Terminal",
     )
@@ -131,7 +131,7 @@ class BruhClaudeHealthSensor(BinarySensorEntity):
 
 
 class BrainWantsInputSensor(BinarySensorEntity):
-    """On when BRain has a guess waiting on a yes/no.
+    """On when brAIn has a guess waiting on a yes/no.
 
     This exists to be *automatable*. A guess sitting in a panel nobody has
     open is a guess that expires unanswered; a binary sensor can push it to
@@ -144,7 +144,7 @@ class BrainWantsInputSensor(BinarySensorEntity):
     _attr_icon = "mdi:comment-question-outline"
     _attr_device_info = DeviceInfo(
         identifiers={(DOMAIN, "brain_memory")},
-        name="BRain memory",
+        name="brAIn memory",
         manufacturer="BRUH Automation",
         model="Home memory",
     )

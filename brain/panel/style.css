@@ -1,4 +1,4 @@
-/* BRain — panel stylesheet
+/* brAIn — panel stylesheet
    Dark-first, BRUH Automation brand tokens (azure/sky/navy/slate).
    Light mode via prefers-color-scheme. */
 
@@ -656,6 +656,21 @@ body.modal-open {
 .kadd input:focus { border-color: var(--accent); }
 .fbitem .kans { color: var(--ink-2); margin-top: 2px; }
 
+/* Discoveries that have already been filed. Folded shut by default: they are
+   the record of what the document was built from, not work to be done. */
+.kfiled { margin-top: 10px; }
+.kfiled > summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--ink-3);
+  padding: 4px 2px;
+  list-style: none;
+}
+.kfiled > summary::-webkit-details-marker { display: none; }
+.kfiled > summary::before { content: "▸ "; }
+.kfiled[open] > summary::before { content: "▾ "; }
+.kfiled > summary:hover { color: var(--ink-2); }
+
 /* home memory file: rendered-markdown view + raw editor */
 .kmemrow { margin: 6px 0; align-items: center; }
 .kmd {
@@ -1172,13 +1187,14 @@ body.modal-open {
 
 .topbar .chip { height: 26px; font-size: 0.8rem; padding: 0 9px; }
 
-/* The usage chip is three parts — dot, number, sentence — so a phone can keep
-   the number and drop the sentence. Space them as if they were two, or the
-   flex gap lands between "19%" and "used" and detaches the number from the
-   words it belongs to. */
+/* The usage chip is a dot and two labelled numbers — session, then week — so
+   a phone can keep both numbers and drop the words. Zero flex gap and manual
+   spacing, or the gap lands between "19%" and "session" and detaches each
+   number from the word it belongs to. */
 #usageChip { gap: 0; }
 #usageChip .dot { margin-right: 7px; }
 #usageChipText { margin-left: 0.32em; }
+#usageChip .uweek { margin-left: 0.45em; color: var(--ink-2); }
 
 .view { display: none; }
 .view.active { display: block; }
@@ -1214,34 +1230,36 @@ body.modal-open {
 .topbar > * { flex: none; }
 .topbar .spacer { flex: 1; min-width: 0; }
 
-/* The bar sheds text in four measured steps. The widths below are what the
-   content actually needs — measured by tests/manual/measure-topbar.mjs at the
-   busiest the bar ever gets (subscription chip, usage chip with a reset time,
-   and a count on both tab badges) — so each step starts before the previous
+/* The bar sheds text in five measured steps. The widths below are what the
+   content actually needs — measured by tests/manual/measure-topbar.mjs across
+   the three states the bar can be in (running, paused, and a failed login),
+   with a count on both tab badges — so each step starts before the previous
    layout runs out of room:
 
-     everything                        1099px  →  shown at ≥1100
-     minus the chip sentences           804px  →  shown at  ≥805
-     minus tab labels, smaller mark     462px  →  shown at  ≥470
-     minus the healthy auth chip,
-       badges collapsed to dots         345px  →  shown at  ≥401
-     minus the wordmark                 304px  →  the floor
+     everything                        1090px  →  shown at ≥1100
+     minus the chip sentences           860px  →  shown at  ≥870
+     minus tab labels, smaller mark     513px  →  shown at  ≥520
+     minus badge counts (dots only)     442px  →  shown at  ≥450
+     minus the weekly number, and
+       usage when a trouble chip is up  369px  →  shown at  ≥410
+     minus the wordmark                 315px  →  the floor
 
-   Every band moved outward in 1.7.0: a fifth tab costs ~104px with its label
-   and ~31px without, and the two tab badges cost 23px each when they carry a
-   number. Both are worth their space — a badge you can't see is a decision
-   nobody makes — but they have to be paid for somewhere. */
+   Every band moved outward again in 1.8.0: the usage chip now carries two
+   numbers instead of one and costs 42px more, and the paused chip is measured
+   rather than assumed away. What paid for it is the healthy auth chip, which
+   no longer exists at any width — a green "Claude · subscription" was a label
+   for a state that never changes, and it cost 165px of the top band. */
 
 @media (max-width: 1099px) {
-  /* "Claude · subscription" and "used · resets 8:00 AM" cost 287px between
-     them — more than the four tabs. The coloured dot already carries the auth
-     state and the usage chip keeps its number, which is the part anyone
-     actually reads; both keep the full sentence in title/aria-label. */
+  /* "Usage budget reached" and "19% session · 100% week" cost ~230px between
+     them — more than three tabs. The coloured dots already carry the states
+     and the usage chip keeps both numbers, which is the part anyone actually
+     reads; every chip keeps its full sentence in title/aria-label. */
   .topbar .chipwords { display: none; }
   .topbar .chip { padding: 0 8px; gap: 5px; }
 }
 
-@media (max-width: 804px) {
+@media (max-width: 869px) {
   /* Labels go, icons stay — five tabs still fit on a phone. */
   .viewtab span:not(.badge) { display: none; }
   .viewtab { padding: 0 9px; }
@@ -1250,7 +1268,7 @@ body.modal-open {
   .docsnav { position: static; }
 
   /* The wordmark shrinks rather than going: Home Assistant's own panel header
-     says "BRain" above this bar, but a header with no mark at all reads as a
+     says "brAIn" above this bar, but a header with no mark at all reads as a
      stray toolbar rather than as this add-on. At 26px it costs 37px. */
   .wordmark { height: 26px; }
 
@@ -1260,12 +1278,7 @@ body.modal-open {
   .viewtabs { margin-left: 2px; }
 }
 
-@media (max-width: 469px) {
-  /* The healthy auth chip goes: a green dot means "nothing to tell you", and
-     on a small screen that is the one thing worth trading for the tabs.
-     Trouble — checking, failed, not connected — still shows. */
-  #authChip.ok { display: none; }
-
+@media (max-width: 519px) {
   /* Badges collapse to a dot. The count is a nicety; that there is anything
      at all is the whole signal, and two numbered badges cost 46px here. The
      tab's aria-label still carries the number to a screen reader. */
@@ -1283,9 +1296,23 @@ body.modal-open {
   .topbar { padding: 0 6px; gap: 3px; }
 }
 
-@media (max-width: 400px) {
-  /* The floor. Home Assistant's own panel header says "BRain" directly above
-     this bar, so at 320–400px the wordmark is duplication that costs a tab
+@media (max-width: 449px) {
+  /* Two usage numbers stop fitting here. The session is the one that gates
+     automatic runs, so it is the one that stays; the week is a line in the
+     ⚙ dialog on a screen this size. */
+  #usageChip .uweek { display: none; }
+
+  /* And there is room for exactly one status chip, so trouble outranks a
+     reading: a login that isn't working, or a generator that has stopped,
+     is something to act on — usage is just a number that will still be there
+     afterwards. Both trouble chips keep their own dot and colour. */
+  .topbar:has(#authChip:not(.hidden)) #usageChip,
+  .topbar:has(#pausedChip:not(.hidden)) #usageChip { display: none; }
+}
+
+@media (max-width: 409px) {
+  /* The floor. Home Assistant's own panel header says "brAIn" directly above
+     this bar, so at 320–409px the wordmark is duplication that costs a tab
      icon. It is the last thing to go, and the only thing below it is nothing. */
   .wordmark { display: none; }
   .viewtab { padding: 0 5px; }
@@ -1334,7 +1361,7 @@ body.modal-open {
 .finding.sev-serious { border-left-color: var(--serious); }
 .finding.sev-critical { border-left-color: var(--critical); }
 /* Settled findings step back without disappearing — the archive is how you
-   check what BRain changed in your house last week. */
+   check what brAIn changed in your house last week. */
 .finding.st-fixed, .finding.st-ignored { opacity: 0.72; border-left-color: var(--hairline); }
 
 .findtitle { margin: 3px 0 0; font-size: 15.5px; line-height: 1.35; }
@@ -1464,7 +1491,7 @@ body.modal-open {
 .kpending { font-size: 12px; color: var(--ink-3); }
 
 /* ----------------------------------------------------------- onboarding
-   The first-run flow. A fresh install has no cards: BRain studies the home
+   The first-run flow. A fresh install has no cards: brAIn studies the home
    and then proposes cards grounded in what it found. */
 
 .obsteps {

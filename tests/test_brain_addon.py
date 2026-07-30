@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Tests for the BRain add-on: the merged Terminal + Insights add-on.
+"""Tests for the brAIn add-on: the merged Terminal + Insights add-on.
 
-Covers what is genuinely new in BRain rather than re-testing the code it
+Covers what is genuinely new in brAIn rather than re-testing the code it
 inherited:
 
 - the merged manifest (one ingress port, both faces switchable, no
@@ -39,7 +39,7 @@ class TestBrainManifest(unittest.TestCase):
         cls.config = yaml.safe_load((ADDON_DIR / "config.yaml").read_text())
 
     def test_identity(self):
-        self.assertEqual(self.config["name"], "BRain")
+        self.assertEqual(self.config["name"], "brAIn")
         self.assertEqual(self.config["slug"], "brain")
 
     def test_ingress_is_the_panel_not_ttyd(self):
@@ -132,7 +132,7 @@ class TestPanelBranding(unittest.TestCase):
         live text — and it can't be checked by reading the text either, so
         this pins the pieces the lockup is made of."""
         self.assertIn('class="wordmark"', self.html)
-        self.assertIn('aria-label="BRain"', self.html)
+        self.assertIn('aria-label="brAIn"', self.html)
         # BR ligature, gable-A, and the N's diagonal: if any goes, the mark
         # silently degrades into something that isn't the logo.
         for part in ("M159.55,176c0-23.95",          # BR ligature
@@ -190,7 +190,7 @@ class TestPanelBranding(unittest.TestCase):
         """Hints inherited from the standalone add-ons told you to go run a
         command in the *other* add-on. Now that there is only one, that
         advice points at the thing you are already looking at."""
-        for stale in ("BRain add-on? Run", "if <b>BRain</b> is installed"):
+        for stale in ("brAIn add-on? Run", "if <b>brAIn</b> is installed"):
             self.assertNotIn(stale, self.html)
 
     def test_no_retired_cli_names_in_the_ui(self):
@@ -276,17 +276,26 @@ class TestTopbarFitsOneRow(unittest.TestCase):
         carrying the state to a screen reader or a hover."""
         self.assertIn('chip.setAttribute("aria-label"', self.js)
 
+    # The staged bands, newest measurement first. Sliced out of the CSS rather
+    # than listed here: the widths move whenever anything joins the bar, and a
+    # test that hardcodes them only ever says "someone changed the numbers".
+    def _bands(self):
+        import re
+        tail = self.css[self.css.index("The bar sheds text in five measured steps"):]
+        parts = re.split(r"@media \(max-width: (\d+)px\) \{", tail)
+        return [(int(parts[i]), parts[i + 1]) for i in range(1, len(parts) - 1, 2)]
+
     def test_the_bar_sheds_text_in_stages(self):
-        """One breakpoint could not work: the full bar needs 1099px and the
-        phone bar 304px, so a single cut leaves one band badly overflowing.
+        """One breakpoint could not work: the full bar needs ~1090px and the
+        phone bar ~315px, so a single cut leaves one band badly overflowing.
 
         The exact widths are measured by tests/manual/measure-topbar.mjs,
-        which renders the bar and fails on any overflow. This pins that the
-        staging exists at all — the widths moved outward in 1.7.0 when a
-        fifth tab and a second badge arrived."""
-        for width in ("max-width: 1099px", "max-width: 804px",
-                      "max-width: 469px", "max-width: 400px"):
-            self.assertIn(f"@media ({width})", self.css)
+        which renders all three bar states and fails on any overflow. This
+        pins that the staging exists at all and reads downward."""
+        widths = [w for w, _ in self._bands()]
+        self.assertGreaterEqual(len(widths), 4, "the bar needs staged bands")
+        self.assertEqual(widths, sorted(widths, reverse=True),
+                         "bands must narrow monotonically")
 
     def test_tab_labels_go_before_the_tabs_do(self):
         """All five tabs survive to the narrowest band; only their labels go."""
@@ -298,11 +307,38 @@ class TestTopbarFitsOneRow(unittest.TestCase):
         """A badge you can't see is a decision nobody makes. Two numbered
         badges cost 46px, which is what pushed the 320px floor over — so at
         the narrowest they collapse to a dot rather than disappearing."""
-        narrow = self.css[self.css.index("@media (max-width: 469px)"):]
-        narrow = narrow[:narrow.index("@media (max-width: 400px)")]
-        self.assertIn(".viewtab .badge {", narrow)
-        self.assertIn("border-radius: 50%", narrow)
-        self.assertNotIn("display: none", narrow.split(".viewtab .badge {")[1][:300])
+        band = next((css for _, css in self._bands() if ".viewtab .badge {" in css), None)
+        self.assertIsNotNone(band, "no band collapses the tab badges")
+        self.assertIn("border-radius: 50%", band)
+        self.assertNotIn("display: none", band.split(".viewtab .badge {")[1][:300])
+
+    def test_the_healthy_auth_chip_does_not_exist_at_any_width(self):
+        """"Claude · subscription" was a permanent green label for a state
+        that never changes, and it cost 165px of the widest band. The chip is
+        now only rendered when there is trouble — checking, failed, or not
+        connected — so nothing has to make room for the settled case."""
+        self.assertIn('id="authChip" class="chip hidden"', self.html)
+        self.assertIn('chip.classList.toggle("hidden", settled)', self.js)
+
+    def test_usage_carries_both_windows_and_neither_reset_time(self):
+        """The session gates automatic runs; the week is what actually ends a
+        Claude plan's week. Both numbers are in the bar. The reset times are
+        not: they change once per window while the numbers change all day, and
+        "resets 8:00 AM" cost more bar width than a whole tab."""
+        self.assertIn('id="usageChipWeekPct"', self.html)
+        import re
+        setters = {}
+        for span in ("usageChipText", "usageChipPct", "usageChipWeekPct"):
+            m = re.search(r'\$\("#%s"\)\.textContent = (.+);' % span, self.js)
+            self.assertIsNotNone(m, f"{span} is never set")
+            setters[span] = m.group(1)
+            self.assertNotIn("reset", m.group(1),
+                             "reset times belong in the hover, not the bar")
+        self.assertIn("week_percent", setters["usageChipWeekPct"],
+                      "the week span shows something other than the weekly number")
+        # …and the hover is where they went.
+        self.assertIn("resets ${reset}", self.js)
+        self.assertIn("resets ${weekReset}", self.js)
 
 
 class TestHypothesisIdentity(unittest.TestCase):

@@ -1,6 +1,6 @@
 {
   "domain": "brain",
-  "name": "BRain",
+  "name": "brAIn",
   "after_dependencies": ["hassio"],
   "codeowners": ["@bruhautomation"],
   "config_flow": true,
@@ -8,5 +8,5 @@
   "documentation": "https://github.com/bruhautomation/BRUH-HA-Apps/tree/main/brain",
   "integration_type": "service",
   "iot_class": "local_polling",
-  "version": "1.7.0"
+  "version": "1.8.0"
 }

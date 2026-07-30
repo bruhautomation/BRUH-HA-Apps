@@ -94,7 +94,7 @@ jobs:
           failure-threshold: error
 
 
-      - name: Lint BRain Dockerfile
+      - name: Lint brAIn Dockerfile
         uses: hadolint/hadolint-action@v3.3.0
         with:
           dockerfile: brain/Dockerfile
@@ -107,14 +107,14 @@ jobs:
       - uses: actions/checkout@v7
 
 
-      - name: Check BRain version parity
+      - name: Check brAIn version parity
         run: |
           addon_version=$(grep -E '^version:' brain/config.yaml | head -1 | sed 's/.*"\([^"]*\)".*/\1/')
           manifest_version=$(python3 -c 'import json; print(json.load(open("brain/custom_components/brain/manifest.json"))["version"])')
           echo "add-on:         $addon_version"
           echo "HA integration: $manifest_version"
           if [ "$addon_version" != "$manifest_version" ]; then
-            echo "::error::BRain add-on ($addon_version) and integration manifest ($manifest_version) versions disagree"
+            echo "::error::brAIn add-on ($addon_version) and integration manifest ($manifest_version) versions disagree"
             exit 1
           fi
 
@@ -139,7 +139,7 @@ jobs:
       # BRUH Insights has no companion HA integration, so no manifest
       # parity check — just the changelog/version consistency.
 
-      - name: Check BRain changelog matches shipped version
+      - name: Check brAIn changelog matches shipped version
         run: .github/scripts/check-changelog-version.sh brain
 
   version-bump:
@@ -162,5 +162,5 @@ jobs:
         run: .github/scripts/check-version-bump.sh "origin/${{ github.base_ref }}" bruh-minecraft-server
 
 
-      - name: Verify BRain version bumped if files changed
+      - name: Verify brAIn version bumped if files changed
         run: .github/scripts/check-version-bump.sh "origin/${{ github.base_ref }}" brain

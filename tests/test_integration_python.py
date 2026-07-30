@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Tests for the BRain custom Home Assistant integration Python files.
+Tests for the brAIn custom Home Assistant integration Python files.
 
 Tests cover:
 - __init__.py: service registration patterns, schema validation

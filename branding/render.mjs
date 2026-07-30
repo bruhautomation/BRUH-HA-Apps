@@ -1,4 +1,4 @@
-// Rasterise the BRain brand SVGs into every PNG this repo ships.
+// Rasterise the brAIn brand SVGs into every PNG this repo ships.
 //
 // The SVGs in branding/icons/ are the source of truth; every PNG below is
 // derived, so regenerate rather than hand-edit. Run after changing any of

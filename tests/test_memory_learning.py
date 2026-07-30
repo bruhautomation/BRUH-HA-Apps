@@ -27,6 +27,7 @@ import ast
 import importlib.util
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -313,6 +314,57 @@ def test_consolidate_empty_inbox_is_a_noop(tmp_path):
     result = run_consolidator(memory_dir, fake)
     assert result.returncode == 0, result.stdout + result.stderr
     assert not (memory_dir / "voice.md").exists()
+
+
+def test_a_successful_pass_stamps_the_marker(tmp_path):
+    """The marker's mtime is how the panel tells a queued discovery from a
+    filed one, so a pass that files facts has to move it."""
+    memory_dir = tmp_path / "memory"
+    seed_inbox(memory_dir)
+    fake = write_fake_consolidation_claude(
+        tmp_path, FAKE_MERGED_MEMORY + "-----VOICE-----\n" + FAKE_VOICE)
+    assert run_consolidator(memory_dir, fake).returncode == 0
+    assert (memory_dir / ".last_consolidated").exists()
+
+
+def test_a_failed_pass_does_not_stamp_the_marker(tmp_path):
+    """…and a pass that keeps the facts must NOT move it, or the panel would
+    fold away discoveries that are still queued."""
+    memory_dir = tmp_path / "memory"
+    seed_inbox(memory_dir)
+    fake = write_fake_consolidation_claude(tmp_path, "garbage output\n")
+    assert run_consolidator(memory_dir, fake).returncode != 0
+    assert not (memory_dir / ".last_consolidated").exists()
+
+
+def test_a_held_lock_exits_busy_rather_than_claiming_success(tmp_path):
+    """Skipping because someone else holds the lock used to exit 0, which let
+    the panel report facts as filed while they sat in the queue untouched."""
+    if shutil.which("flock") is None:
+        pytest.skip("no flock in this image")
+    memory_dir = tmp_path / "memory"
+    seed_inbox(memory_dir)
+    fake = write_fake_consolidation_claude(
+        tmp_path, FAKE_MERGED_MEMORY + "-----VOICE-----\n" + FAKE_VOICE)
+    memory_dir.mkdir(parents=True, exist_ok=True)
+    lock = memory_dir / ".consolidate.lock"
+    lock.touch()
+    holder = subprocess.Popen(["flock", str(lock), "sleep", "10"])
+    try:
+        # wait for the holder to actually own it before racing it
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            probe = subprocess.run(["flock", "-n", str(lock), "true"], check=False)
+            if probe.returncode != 0:
+                break
+            time.sleep(0.05)
+        result = run_consolidator(memory_dir, fake, BRAIN_MEMORY_LOCK_WAIT="1")
+    finally:
+        holder.kill()
+        holder.wait()
+    assert result.returncode == 75, result.stdout + result.stderr
+    assert "already running" in result.stdout + result.stderr
+    assert len(inbox_lines(memory_dir)) == 1  # still pending
 
 
 # ---------------------------------------------------------------------------

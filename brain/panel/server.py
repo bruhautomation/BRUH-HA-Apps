@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-BRain ingress panel — aiohttp API + static asset server.
+brAIn ingress panel — aiohttp API + static asset server.
 
 Routes
 ------
@@ -27,7 +27,7 @@ PUT  /api/insight/{id}       — rename an ad-hoc Ask card {name, icon}
 DELETE /api/card/{id}        — delete ANY card (shipped / user / ad-hoc): the
                                one the ✕ button calls
 PUT  /api/card/{id}/tags     — replace a card's visible tags {tags: [...]}
-GET  /api/findings           — the work list: what BRain thinks is broken
+GET  /api/findings           — the work list: what brAIn thinks is broken
 POST /api/finding/{ts}/fix   — go fix it (the one tool-enabled Claude run)
 POST /api/finding/{ts}/ignore — not a problem here; never raise it again
 POST /api/finding/{ts}/done  — you fixed it yourself
@@ -124,6 +124,14 @@ MEMORY_INBOX_DIR = Path(os.environ.get(
 SHARED_MEMORY_FILE = Path(os.environ.get(
     "BRAIN_MEMORY_FILE", "/config/.brain/memory/memory.md"))
 MAX_MEMORY_CHARS = 100_000
+# Touched by the consolidator at the end of every successful pass (including
+# a pass that found the inbox already empty). Its mtime is therefore the line
+# between "discovered, still queued" and "discovered, now in the document" —
+# which is what lets the Memory tab's discovery list drain without the panel
+# having to track filing itself, and without caring whether the pass was run
+# by the daemon, the CLI, or the button.
+MEMORY_MARKER_FILE = Path(os.environ.get(
+    "BRAIN_MEMORY_MARKER", "/config/.brain/memory/.last_consolidated"))
 
 # Same skeleton `brain memory` starts from, so the CLI and the panel
 # agree on the document's shape.
@@ -154,6 +162,10 @@ TIMEOUT_S = int(float(os.environ.get("BRAIN_TIMEOUT_MIN", "8") or 8) * 60)
 CONSOLIDATE_SCRIPT = os.environ.get(
     "BRAIN_CONSOLIDATE_SCRIPT", "/opt/scripts/brain-memory-consolidate.sh")
 CONSOLIDATE_TIMEOUT_S = int(os.environ.get("BRAIN_CONSOLIDATE_TIMEOUT", "300"))
+# The consolidator's "someone else holds the lock" exit code. It is not a
+# failure of the pass, but it is not a filing either — reporting it as
+# success is what made the button claim it had filed facts it hadn't.
+CONSOLIDATE_BUSY_RC = 75
 
 # One "Fix it" run. Wall-clock is the real guard, not turns: an agentic run
 # that gets truncated mid-edit leaves the house half-changed.
@@ -319,7 +331,7 @@ def _history_dir(insight_id: str) -> Path:
 def all_categories() -> list[dict]:
     """The cards this home actually has, in creation order.
 
-    Empty until onboarding finishes. A fresh install ships NO cards: BRain
+    Empty until onboarding finishes. A fresh install ships NO cards: brAIn
     studies the home first and then proposes cards grounded in what it
     found, because a generic card about a house it has never looked at is
     noise on every run.
@@ -439,7 +451,7 @@ def _prune_history(hdir: Path) -> None:
 async def _call_ha_service(service: str, data: dict) -> bool:
     """Call a brain.<service> HA service; False when it isn't there.
 
-    The integration ships with the BRain add-on and may simply not
+    The integration ships with the brAIn add-on and may simply not
     be installed — every failure here is expected and non-fatal.
     """
     try:
@@ -665,10 +677,10 @@ async def _run_fix(job_id: str) -> None:
         findings_store.set_status(ts, status, result=fixer.result_text(parsed),
                                   changed=parsed["changed"])
         # A change to the house is durable knowledge about it — the next
-        # analysis must not rediscover a problem BRain itself resolved.
+        # analysis must not rediscover a problem brAIn itself resolved.
         if status == "fixed" and parsed["changed"]:
             await _submit_memory(
-                f"BRain fixed this on {time.strftime('%Y-%m-%d')}: "
+                f"brAIn fixed this on {time.strftime('%Y-%m-%d')}: "
                 f"{finding['text']} — {'; '.join(parsed['changed'])}",
                 source="fix")
         # Anything it noticed on the way in becomes its own finding rather
@@ -1077,7 +1089,7 @@ async def h_delete_card(request: web.Request) -> web.Response:
     Deleted means deleted. A shipped card's definition lives in the code and
     can't be erased, so it is marked hidden — but that is an implementation
     detail, not an offer: the panel no longer keeps a graveyard of removed
-    cards to restore from. Every home gets the cards BRain proposed for
+    cards to restore from. Every home gets the cards brAIn proposed for
     *that* home, and the way to get one back is to ask for it again.
     """
     card_id = request.match_info["id"]
@@ -1408,7 +1420,7 @@ async def h_card_info(request: web.Request) -> web.Response:
     })
 
 
-# -- findings: what's broken, and what BRain did about it -------------------
+# -- findings: what's broken, and what brAIn did about it -------------------
 
 def _finding_ts(request: web.Request) -> int:
     try:
@@ -1735,10 +1747,39 @@ def _inbox_pending() -> int:
     return total
 
 
+def _last_consolidated() -> int:
+    """When the consolidator last completed a pass (epoch seconds, 0 = never).
+
+    The panel does not track which discoveries have been filed — the marker
+    the consolidator touches already says it, for every caller of the
+    consolidator rather than just the button.
+    """
+    try:
+        return int(MEMORY_MARKER_FILE.stat().st_mtime)
+    except OSError:
+        return 0
+
+
+def _facts_with_filing() -> list[dict]:
+    """Discovered facts, each flagged with whether it is in the document yet.
+
+    A fact is queued to the memory inbox the moment it is discovered, so any
+    fact older than the last consolidation has been folded into memory.md.
+    Filed ones stop being a queue and become history — the Memory tab shows
+    them separately, so the list above the button is only what is actually
+    still waiting.
+    """
+    cutoff = _last_consolidated()
+    facts = knowledge_store.list_facts()
+    for f in facts:
+        f["filed"] = bool(cutoff) and f["ts"] <= cutoff
+    return facts
+
+
 async def h_knowledge(request: web.Request) -> web.Response:
     """Everything the analyst has learned, in one payload for the panel."""
     return web.json_response({
-        "facts": knowledge_store.list_facts(),
+        "facts": await asyncio.to_thread(_facts_with_filing),
         "questions": knowledge_store.list_questions(),
         "hypotheses": hypotheses.list_all("open"),
         "hypothesis_budget": hypotheses.budget(),
@@ -1768,6 +1809,9 @@ def _consolidate_now() -> tuple[bool, str]:
         return False, f"consolidation passed its {CONSOLIDATE_TIMEOUT_S}s limit"
     except OSError as exc:
         return False, f"could not run the consolidator: {exc}"
+    if proc.returncode == CONSOLIDATE_BUSY_RC:
+        return False, ("another consolidation is already running — "
+                       "give it a moment and press it again")
     if proc.returncode != 0:
         tail = (proc.stdout or proc.stderr or "").strip().splitlines()
         return False, (tail[-1][:300] if tail else
@@ -1776,20 +1820,32 @@ def _consolidate_now() -> tuple[bool, str]:
 
 
 async def h_memory_consolidate(request: web.Request) -> web.Response:
-    """Fold the inbox into memory.md now, rather than at the next pass."""
-    pending = await asyncio.to_thread(_inbox_pending)
+    """Fold the inbox into memory.md now, rather than at the next pass.
+
+    What we report is what the queue actually did, not what we asked it to
+    do: the consolidator leaves the inbox pending on every failure it can
+    detect, and some of those failures still exit 0. Counting the queue
+    either side of the pass is the only honest measure of "filed".
+    """
+    before = await asyncio.to_thread(_inbox_pending)
     MEMORY_STATE.update(merging=True, error="")
     try:
         ok, error = await asyncio.to_thread(_consolidate_now)
     finally:
         MEMORY_STATE.update(merging=False)
+    after = await asyncio.to_thread(_inbox_pending)
+    drained = max(0, before - after)
+    if ok and before and not drained:
+        ok, error = False, (
+            "the consolidator finished but the queue didn't move — see the "
+            "add-on log's [brain-memory] lines for why it kept the facts")
     MEMORY_STATE.update(error="" if ok else error)
     if not ok:
         raise web.HTTPBadGateway(text=error or "consolidation failed")
     return web.json_response({
-        "consolidated": pending,
+        "consolidated": drained,
         "shared_memory": await asyncio.to_thread(_read_shared_memory),
-        "inbox_pending": await asyncio.to_thread(_inbox_pending),
+        "inbox_pending": after,
     })
 
 
@@ -2129,7 +2185,7 @@ def make_app() -> web.Application:
         # one that is genuinely still running.
         orphaned = await asyncio.to_thread(
             findings_store.reconcile_running,
-            "BRain restarted while this fix was running, so it could not "
+            "brAIn restarted while this fix was running, so it could not "
             "report what it did. Check the entity before trying again.")
         if orphaned:
             log.warning("%d fix run(s) were interrupted by a restart", orphaned)

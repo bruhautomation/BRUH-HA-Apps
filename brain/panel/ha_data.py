@@ -1,4 +1,4 @@
-"""Home Assistant data collection for BRain.
+"""Home Assistant data collection for brAIn.
 
 Talks to HA Core through the Supervisor proxy (REST + WebSocket) using
 SUPERVISOR_TOKEN, then slims everything down to a compact JSON bundle that

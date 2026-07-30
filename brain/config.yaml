@@ -1,7 +1,7 @@
 ---
-name: "BRain"
+name: "brAIn"
 description: "Your home's brain — a Claude Code terminal, an AI insights dashboard, and one shared memory that learns your house over time"
-version: "1.7.0"
+version: "1.8.0"
 slug: "brain"
 init: false
 
@@ -26,7 +26,7 @@ ingress_port: 8099
 # artwork here — so it can only rhyme with the mark, which is a gable with a
 # window. A snowflake head was chosen when the mark was a neural mesh.
 panel_icon: mdi:home-analytics
-panel_title: "BRain"
+panel_title: "brAIn"
 panel_admin: true
 
 ports:

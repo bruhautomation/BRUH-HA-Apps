@@ -1,7 +1,7 @@
 """First-run flow: learn the home, then propose cards worth having.
 
-BRain used to ship nine cards — Energy, Climate, Lighting and so on — all
-enabled from the moment you installed it. They generated before BRain knew
+brAIn used to ship nine cards — Energy, Climate, Lighting and so on — all
+enabled from the moment you installed it. They generated before brAIn knew
 anything about the house, so they said generic things about a home it had
 never looked at, and most of them were never read.
 

@@ -1,6 +1,6 @@
 #!/usr/bin/with-contenv bashio
 
-# BRain - Health check script
+# brAIn - Health check script
 # Validates environment and provides diagnostic information
 
 check_system_resources() {
@@ -285,7 +285,7 @@ check_network_connectivity() {
 
 run_diagnostics() {
     bashio::log.info "========================================="
-    bashio::log.info "BRain Health Check"
+    bashio::log.info "brAIn Health Check"
     bashio::log.info "========================================="
 
     local errors=0

@@ -1,4 +1,4 @@
-# BRain
+# brAIn
 
 Your home's brain: a Claude Code terminal, an AI insights dashboard, and one shared
 memory — in one add-on, behind one sidebar panel, on one Claude login.
@@ -18,15 +18,15 @@ memory — in one add-on, behind one sidebar panel, on one Claude login.
 2. Open the panel from the sidebar and authenticate Claude (a subscription login or an
    API key — the panel walks you through it). This is the **only** login; the terminal,
    insight generation, voice, and memory consolidation all share it.
-3. Home Assistant will offer to set up the **BRain** integration via discovery. Accept
+3. Home Assistant will offer to set up the **brAIn** integration via discovery. Accept
    it — that's what provides the services, sensors, and the voice assistant.
-4. Press **Start learning**. A fresh install has **no cards**: BRain studies your home
+4. Press **Start learning**. A fresh install has **no cards**: brAIn studies your home
    first, then proposes cards grounded in what it found. See below.
 
 ### First run
 
 There are no default cards, deliberately. A generic "Energy" or "Climate" card about a
-home BRain has never looked at says nothing useful and costs tokens on every run.
+home brAIn has never looked at says nothing useful and costs tokens on every run.
 
 Instead the first run studies the house — naming and areas, occupancy rhythms, energy,
 climate, device reliability — and then proposes a handful of cards specific to it, each
@@ -35,7 +35,7 @@ or remove cards at any time afterwards.
 
 It takes a few minutes and runs in the background; the panel can be closed and reopened.
 
-**If your home is too sparse to learn from**, BRain says what's missing rather than
+**If your home is too sparse to learn from**, brAIn says what's missing rather than
 inventing generic cards. Add more entities, let history accumulate, and run it again.
 
 ## The panel
@@ -45,10 +45,10 @@ One ingress panel with four faces:
 - **Insights** — generated cards about your home. Ask a question and get an answer card;
   keep the ones you like as recurring cards, or drop any of them on a dashboard. Say
   "learn about…" in the same bar and it runs a study session instead.
-- **Findings** — what BRain thinks is broken, and what it did about it. Each one is
-  either fixed (BRain makes the change and reports back) or dismissed for good.
+- **Findings** — what brAIn thinks is broken, and what it did about it. Each one is
+  either fixed (brAIn makes the change and reports back) or dismissed for good.
 - **Terminal** — full Claude Code, reverse-proxied through the panel at `/terminal/`.
-- **Memory** — what BRain knows about your house, editable.
+- **Memory** — what brAIn knows about your house, editable.
 
 `enable_terminal` and `enable_insights` turn either face off; the panel itself always
 runs, because it is the ingress target.
@@ -76,7 +76,7 @@ runs, because it is the ingress target.
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| `enable_assist_integration` | bool | `true` | Register BRain as a conversation agent for Assist. |
+| `enable_assist_integration` | bool | `true` | Register brAIn as a conversation agent for Assist. |
 | `enable_automation_integration` | bool | `true` | Watch for task requests from automations. |
 | `assist_fast_mode` | bool | `true` | Serve voice from a pool of pre-warmed persistent workers instead of spawning a CLI per request. |
 | `assist_tool_access` | `mcp_only` \| `full` | `mcp_only` | Whether voice can only touch HA, or also run Bash and edit files. |
@@ -87,7 +87,7 @@ runs, because it is the ingress target.
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| `learning` | bool | `true` | Master switch for everything BRain learns: the consolidator, the end-of-conversation reflection pass, and study sessions. Turning it off leaves existing memory untouched. |
+| `learning` | bool | `true` | Master switch for everything brAIn learns: the consolidator, the end-of-conversation reflection pass, and study sessions. Turning it off leaves existing memory untouched. |
 | `memory_injection` | bool | `true` | Splice learned memory into voice prompts. |
 | `memory_max_kb` | 1–64 | `8` | Size cap for the memory document. |
 | `study_max_turns` | 0–500 | `60` | Turn cap for `brain learn`. **`0` removes the cap.** See the note below. |
@@ -131,7 +131,7 @@ the Supervisor — both screens always show the same value.
 
 ## The CLI
 
-Two dispatchers, split by what they act on. BRain's own faculties are under `brain`;
+Two dispatchers, split by what they act on. brAIn's own faculties are under `brain`;
 anything that acts on Home Assistant is under `ha`.
 
 ```bash
@@ -157,13 +157,13 @@ ha notify "dishwasher finished"
 
 Run `brain help` or `ha help` for the full list.
 
-> If some other `ha` command is ever present on `PATH` inside the container, BRain
+> If some other `ha` command is ever present on `PATH` inside the container, brAIn
 > installs its own as `hass` instead rather than shadowing it. The startup log says so
 > when this happens.
 
 ## Memory and learning
 
-BRain keeps a small, durable document about your home under `/config/.brain/memory/`.
+brAIn keeps a small, durable document about your home under `/config/.brain/memory/`.
 
 | File | What it is |
 | --- | --- |
@@ -201,11 +201,11 @@ analysis so the same non-problem is never raised twice.
 
 ## Undo and backups
 
-**BRain does not back up your configuration.** Use Home Assistant's own backups; they're
+**brAIn does not back up your configuration.** Use Home Assistant's own backups; they're
 whole-system and restorable, and duplicating them inside `/config` only made the backups
 bigger.
 
-What BRain keeps is an **edit journal**. Before Claude writes to any file under
+What brAIn keeps is an **edit journal**. Before Claude writes to any file under
 `/config`, the previous contents are snapshotted to `/data/.brain/edits/`:
 
 ```bash
@@ -218,13 +218,13 @@ Snapshots are pruned after `edit_journal_days` and capped by total size. `secret
 is never snapshotted.
 
 If you previously ran BRUH Terminal, its `/config/.git` directory is left exactly as it
-is — BRain never touches it. Delete it yourself if you don't want it.
+is — brAIn never touches it. Delete it yourself if you don't want it.
 
 ## The Home Assistant integration
 
 Deployed automatically to `/config/custom_components/brain/` at startup.
 
-- A **conversation agent** named BRain, for Settings → Voice Assistants.
+- A **conversation agent** named brAIn, for Settings → Voice Assistants.
 - Services: `brain.send_prompt`, `brain.run_task`, `brain.run_insight`,
   `brain.add_memory`, `brain.clear_conversation`.
 - **BRUH Power Tools**: 56 admin-gated registry-management services under `brain.*`

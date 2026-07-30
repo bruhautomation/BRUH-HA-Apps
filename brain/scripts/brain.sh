@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# brain — BRain's own faculties: memory, learning, and undo.
+# brain — brAIn's own faculties: memory, learning, and undo.
 #
 # Home Assistant operations live under the sibling `ha` command; the split
 # keeps "brain log" (which log?) from ever being a question someone has to
@@ -24,7 +24,7 @@ NC='\033[0m'
 
 usage() {
     cat << 'EOF'
-brain — BRain's own faculties
+brain — brAIn's own faculties
 
 Usage:
   brain memory <action>          Long-term home memory

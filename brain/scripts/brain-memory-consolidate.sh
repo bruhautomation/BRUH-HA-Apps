@@ -325,6 +325,11 @@ daemon_loop() {
 # files. "Only the consolidator writes memory.md" is the rule; this is what
 # makes it mean "only one consolidator".
 LOCK_FILE="$MEMORY_DIR/.consolidate.lock"
+# Skipped-because-busy is not a failed pass, but it is not a completed one
+# either: exiting 0 let the panel's "File into memory now" report facts as
+# filed while they sat untouched in the queue. Its own exit code lets the
+# caller tell "nothing to do" from "somebody else is doing it".
+LOCK_BUSY_RC=75
 
 with_lock() {
     mkdir -p "$MEMORY_DIR"
@@ -335,7 +340,7 @@ with_lock() {
     exec 9> "$LOCK_FILE"
     if ! flock -w "${BRAIN_MEMORY_LOCK_WAIT:-600}" 9; then
         log "another consolidation is already running — skipping this pass"
-        return 0
+        return "$LOCK_BUSY_RC"
     fi
     "$@"
 }

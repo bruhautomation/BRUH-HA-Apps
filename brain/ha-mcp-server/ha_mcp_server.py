@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Home Assistant MCP Server for BRain
+Home Assistant MCP Server for brAIn
 
 Provides Claude Code with real-time access to Home Assistant via the
 Model Context Protocol (MCP). This server exposes HA entity states,

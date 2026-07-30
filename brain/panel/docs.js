@@ -16,13 +16,13 @@ window.BRAIN_DOCS = [
     body: `
 # Getting started
 
-BRain is three things sharing one brain: a **Claude Code terminal**, an **AI insights
+brAIn is three things sharing one brain: a **Claude Code terminal**, an **AI insights
 dashboard**, and a **memory** of your home that both of them read and write.
 
 ## 1. Sign in once
 
 Open the **Insights** tab and connect your Claude account. A Claude **Pro** or **Max**
-subscription is the cheapest way to run BRain — it uses your existing plan rather than
+subscription is the cheapest way to run brAIn — it uses your existing plan rather than
 API credits.
 
 Three ways in, in order of least effort:
@@ -35,7 +35,7 @@ Whichever you use, one sign-in covers the terminal, insights, voice, and memory.
 
 ## 2. Let it learn your home
 
-There are no cards yet, and that's deliberate. BRain studies your house first — how it's
+There are no cards yet, and that's deliberate. brAIn studies your house first — how it's
 named, when it's occupied, what it uses, how its devices behave — and only then proposes
 cards. A generic "Energy" card about a home it has never looked at says nothing useful.
 
@@ -43,7 +43,7 @@ Press **Start learning**. It takes a few minutes and runs in the background, so 
 close the tab. When it's done you get a handful of suggestions specific to your home, and
 you pick which to keep.
 
-If your home is too new or too sparse to learn much from, BRain says so rather than
+If your home is too new or too sparse to learn much from, brAIn says so rather than
 inventing generic cards. Add more entities, let some history build up, and try again.
 
 ## 3. Teach it something
@@ -52,12 +52,12 @@ Open **Memory** and tell it one thing that isn't in the data:
 
 > The garage fridge is meant to run 24/7 — it's not a fault.
 
-That single fact stops it flagging the same false alarm every week. Memory is where BRain
+That single fact stops it flagging the same false alarm every week. Memory is where brAIn
 gets genuinely useful over time.
 
 ## 4. Give it a voice
 
-Settings → **Voice assistants** → pick **BRain** as the conversation agent. It answers
+Settings → **Voice assistants** → pick **brAIn** as the conversation agent. It answers
 about your home and controls it, using the same memory.
 `,
   },
@@ -73,15 +73,15 @@ about your home and controls it, using the same memory.
 
 Claude analyses your Home Assistant data and writes interactive cards.
 
-- **Cards chosen for your home.** A fresh install ships **none**. BRain studies the house
+- **Cards chosen for your home.** A fresh install ships **none**. brAIn studies the house
   first, then proposes cards grounded in what it actually found — you pick which to keep.
-  Delete one you don't want with ✕; ask for it again whenever you like and BRain builds it
+  Delete one you don't want with ✕; ask for it again whenever you like and brAIn builds it
   fresh, for the house it now knows.
 - **The ask bar makes cards.** Every question you ask becomes a card. If the answer is
   worth having every week, press **＋ Make recurring** on it and the question becomes a
   scheduled insight. There is no separate "new insight" dialog — asking *is* the way in.
 - **The ask bar also learns.** Start a line with **"learn about…"** or **"study…"** and
-  BRain runs a study session instead of drawing a card: it digs through the registry,
+  brAIn runs a study session instead of drawing a card: it digs through the registry,
   history and long-term statistics for that corner of the house, and what it finds lands
   in **Memory** and **Findings**. It runs for minutes in the background.
 - **Tags are yours.** Each card carries a few \`#tags\` — the chips at the top of the
@@ -99,7 +99,7 @@ fewer tokens than a short interval.
 
 ## Findings
 
-Things BRain thinks are **broken**, and what it did about them. See **Findings** in this
+Things brAIn thinks are **broken**, and what it did about them. See **Findings** in this
 guide. A number on the tab means something is waiting on your decision.
 
 ## Terminal
@@ -112,8 +112,8 @@ sidebar entry and no second login.
 
 ## Memory
 
-What BRain knows about your home, and the queue behind it. See **Memory** in this guide.
-A number on the tab means BRain has a guess waiting on a yes/no.
+What brAIn knows about your home, and the queue behind it. See **Memory** in this guide.
+A number on the tab means brAIn has a guess waiting on a yes/no.
 
 ## Docs
 
@@ -133,7 +133,7 @@ Three things sound similar and are not:
 | | Question it answers | How it ends |
 | --- | --- | --- |
 | **Memory** | What is *true* of this home? | It's a document; it just gets better |
-| **Guesses** | What might BRain have *wrong*? | Yes or No, once |
+| **Guesses** | What might brAIn have *wrong*? | Yes or No, once |
 | **Findings** | What is *broken* in this home? | Fixed, or dismissed |
 
 A finding is a work list item. A dead battery. A sensor that hasn't changed value in six
@@ -141,7 +141,7 @@ days. A device stuck unavailable. An automation whose trigger entity was renamed
 can never fire again. Something is wrong and somebody has to do something about it.
 
 Findings come from insight runs and from study sessions — the same passes that fill
-memory. BRain only reports a problem **once**: the same finding in different words is
+memory. brAIn only reports a problem **once**: the same finding in different words is
 recognised and dropped.
 
 ## The two ways out
@@ -160,28 +160,28 @@ It is bounded on purpose:
 - **It never restarts Home Assistant.** Reloading one config domain is fine; a restart is
   your call.
 - **It never touches secrets** or credentials.
-- **Nothing runs until you press it.** BRain will not change your house on a schedule.
+- **Nothing runs until you press it.** brAIn will not change your house on a schedule.
 
 Every change it makes is snapshotted first by the same hook the terminal uses, so
 \`brain undo\` puts a file back if a fix goes wrong.
 
 **Not a problem** dismisses it, permanently. This is the important one: the dismissal is
-fed back into every future analysis, so BRain stops raising it rather than raising it
+fed back into every future analysis, so brAIn stops raising it rather than raising it
 again next week for you to dismiss again. If the garage freezer is *supposed* to sit at
 -30°C, one press ends that conversation for good.
 
 **✓ I did it** is for anything with hands in it — replacing a battery, re-pairing a
-device. BRain marks findings like these **needs you** rather than offering to fix them,
+device. brAIn marks findings like these **needs you** rather than offering to fix them,
 because inventing a software substitute for a dead battery is worse than saying so.
 
 ## After a fix
 
 Fixed and dismissed findings don't vanish — switch the filter at the top of the tab to see
-them. That archive is how you check what BRain changed in your house last week, and
+them. That archive is how you check what brAIn changed in your house last week, and
 **Put it back on the list** reopens anything that turned out not to be fixed.
 
 Successful fixes are also written into memory, so a later analysis doesn't rediscover a
-problem BRain resolved itself.
+problem brAIn resolved itself.
 `,
   },
 
@@ -198,14 +198,14 @@ One rule governs the whole design:
 > or an audit trail.
 
 That is what keeps it readable. You can open the document, read it top to bottom, and
-know exactly what BRain believes about your house.
+know exactly what brAIn believes about your house.
 
 ## The document
 
 Preferences, entity nicknames, household patterns, device notes. Plain markdown, and
 **yours to edit** — your edits are the source of truth.
 
-Every part of BRain reads it: insight runs, voice conversations, study sessions, and the
+Every part of brAIn reads it: insight runs, voice conversations, study sessions, and the
 terminal (\`brain memory list\`).
 
 ## How facts get in
@@ -227,19 +227,24 @@ fighting over the file.
 
 The consolidator runs **daily**, and early once more than 20 things are waiting. That's
 the right cadence for a background job and the wrong one for someone who has just taught
-BRain something and wants to see it land.
+brAIn something and wants to see it land.
 
 **⇪ File into memory now** runs the same pass immediately: it merges everything queued
 into the document, dedupes, and resolves contradictions newest-wins. It says how much is
 waiting before you press it, and costs one small Claude call. Same script, same safety
 checks — the consolidator stays the only writer either way.
 
+Filing empties **Waiting to be filed**; what was in it moves into the collapsed
+*Already in memory* group underneath, where ✕ still works if brAIn wrote down something
+wrong. If the pass keeps the facts instead — it does that rather than write a document it
+isn't happy with — it says so, and the queue stays where it was.
+
 Manual edits are rewritten by a consolidation, so if you have unsaved edits in the
 markdown editor below it asks before filing.
 
 ## Guesses, not questionnaires
 
-BRain proposes things it believes and asks you to confirm:
+brAIn proposes things it believes and asks you to confirm:
 
 > The garage fridge is meant to run 24/7 — right?
 
@@ -288,7 +293,7 @@ on the Insights tab and it runs the same session.
     body: `
 # Command line
 
-Two commands, split by what they act on. \`brain\` is BRain's own faculties; \`ha\` is
+Two commands, split by what they act on. \`brain\` is brAIn's own faculties; \`ha\` is
 Home Assistant operations. That split is why there's no ambiguity about what
 \`ha log\` means.
 
@@ -332,7 +337,7 @@ ha share push <file>
 ha login                  # share this login with other BRUH add-ons
 \`\`\`
 
-> If some other \`ha\` command is ever present in the container, BRain installs its own as
+> If some other \`ha\` command is ever present in the container, brAIn installs its own as
 > \`hass\` instead rather than shadowing it. The startup log says so when that happens.
 `,
   },
@@ -344,7 +349,7 @@ ha login                  # share this login with other BRUH add-ons
     body: `
 # Undo & backups
 
-## BRain does not back up your configuration
+## brAIn does not back up your configuration
 
 Use Home Assistant's own backups — they're whole-system and restorable, and they already
 work. Earlier versions kept a git repo inside \`/config\`, which duplicated those backups
@@ -368,7 +373,7 @@ restores the file exactly as it was immediately before that edit.
 - Pruned on \`edit_journal_days\` (default 14) and capped by size.
 - \`secrets.yaml\` is never snapshotted.
 
-> Upgrading from BRUH Terminal? Its old \`/config/.git\` is left exactly as it is — BRain
+> Upgrading from BRUH Terminal? Its old \`/config/.git\` is left exactly as it is — brAIn
 > never touches it. Delete it yourself if you don't want it.
 `,
   },
@@ -382,7 +387,7 @@ restores the file exactly as it was immediately before that edit.
 
 ## Voice
 
-Settings → **Voice assistants** → set the conversation agent to **BRain**.
+Settings → **Voice assistants** → set the conversation agent to **brAIn**.
 
 By default voice runs on a pool of pre-warmed workers, so commands land in a few seconds
 rather than waiting for a cold CLI start. The area→entity map is cached, so most commands
@@ -405,10 +410,10 @@ Leave it on \`mcp_only\` unless you specifically want voice editing your config.
 
 ## Watching it learn
 
-Learning is a markdown file on disk, which is invisible to everything outside BRain. So it
+Learning is a markdown file on disk, which is invisible to everything outside brAIn. So it
 also surfaces where you already look:
 
-- **The logbook.** Every new fact fires a \`brain_learned\` event, so "BRain learned: the
+- **The logbook.** Every new fact fires a \`brain_learned\` event, so "brAIn learned: the
   hallway sensor drops offline around 2am" appears in your home's timeline next to lights
   and doors.
 - **\`sensor.brain_facts_learned\`** — how much it knows.
@@ -447,10 +452,10 @@ mid-flight. **\`/memory\`** shows what it knows and anything waiting on you.
 
 ## Watching it learn
 
-Learning is a markdown file on disk, which is invisible to everything outside BRain. So it
+Learning is a markdown file on disk, which is invisible to everything outside brAIn. So it
 also surfaces where you already look:
 
-- **The logbook.** Every new fact fires a \`brain_learned\` event, so "BRain learned: the
+- **The logbook.** Every new fact fires a \`brain_learned\` event, so "brAIn learned: the
   hallway sensor drops offline around 2am" appears in your home's timeline next to lights
   and doors.
 - **\`sensor.brain_facts_learned\`** — how much it knows.
@@ -515,13 +520,21 @@ from [Spook](https://github.com/frenck/spook).
 
 ## Keeping token use sane
 
-BRain runs on your Claude subscription, and a subscription has a usage window. The
+brAIn runs on your Claude subscription, and a subscription has a usage window. The
 defaults are deliberately modest, and ⚙ **Settings** is where you tune them.
 
 **The usage budget** is the important one. Your plan refills every 5 hours; the budget
-caps what share of that window BRain's *automatic* runs may consume. Hit the cap and
+caps what share of that window brAIn's *automatic* runs may consume. Hit the cap and
 background generation pauses until the window rolls over. **Manual clicks are never
 blocked** — pressing Generate always works.
+
+The pill in the top bar reads \`19% session · 64% week\`: the 5-hour window the budget
+is set against, and the seven-day window that is usually what actually ends your week.
+Hover it for both reset times. Nothing is budgeted against the weekly number — it is
+there because a session that looks fine tells you nothing about a week that doesn't.
+Both come from your Anthropic account when you signed in with a subscription; with an
+API key there is no account usage to read, so the session figure falls back to an
+estimate of brAIn's own spending and the weekly one isn't shown.
 
 Biggest levers, in order:
 
@@ -604,7 +617,7 @@ Don't fight it in the prompt — use **💬 Feedback** on the card. That's remem
 applied to every future run of that card.
 
 If it's wrong about a *fact* rather than a presentation choice, fix it in **Memory**.
-Delete the wrong line and BRain is asked to drop it from the document too.
+Delete the wrong line and brAIn is asked to drop it from the document too.
 
 ## It keeps flagging something that's fine
 

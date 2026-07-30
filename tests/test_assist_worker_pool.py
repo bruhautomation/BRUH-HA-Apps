@@ -164,7 +164,7 @@ def test_auth_error_recycles_pool_and_gives_guidance(tmp_path, monkeypatch):
         pool.handle(req)
         resp = read_response(mod, req["id"])
         assert "OAuth session expired" not in resp
-        assert "/login" in resp and "BRain" in resp
+        assert "/login" in resp and "brAIn" in resp
         assert "convA" not in pool.workers, "broken worker must be dropped"
     finally:
         shutdown(pool)

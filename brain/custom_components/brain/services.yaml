@@ -90,7 +90,7 @@ run_insight:
 study:
   name: Study the home
   description: >-
-    Send BRain off to investigate one topic and write down what it finds. It reads the
+    Send brAIn off to investigate one topic and write down what it finds. It reads the
     registries, live state, history and long-term statistics, then files durable facts
     into memory and leaves at most a few guesses for you to confirm. Returns immediately —
     a session runs for minutes, and its results arrive in memory, not in a response.

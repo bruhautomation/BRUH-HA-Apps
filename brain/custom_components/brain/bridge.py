@@ -1,4 +1,4 @@
-"""File-based bridge for communicating with the BRain add-on.
+"""File-based bridge for communicating with the brAIn add-on.
 
 The add-on and this integration share /config/.brain/ for IPC:
   - requests/   : conversation requests  (integration -> add-on)

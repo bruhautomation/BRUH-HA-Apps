@@ -1,4 +1,4 @@
-"""The hypothesis queue — things BRain believes but hasn't had confirmed.
+"""The hypothesis queue — things brAIn believes but hasn't had confirmed.
 
 This is the replacement for the open-ended question list. The difference
 that matters is not the wording but the lifecycle: a question sat open

@@ -1,4 +1,4 @@
-"""Conversation agent for BRain.
+"""Conversation agent for brAIn.
 
 Registers a ConversationEntity for each config entry so that multiple
 personality agents can appear under Settings > Voice Assistants.
@@ -52,7 +52,7 @@ async def async_setup_entry(
     config_entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up the BRain conversation entity."""
+    """Set up the brAIn conversation entity."""
     bridge = hass.data[DOMAIN][config_entry.entry_id]
     async_add_entities([BruhClaudeConversationEntity(config_entry, bridge)])
 
@@ -180,7 +180,7 @@ class BruhClaudeConversationEntity(ConversationEntity):
             except TimeoutError:
                 response_text = (
                     "Sorry, Claude didn't respond in time. "
-                    "Make sure the BRain app is running."
+                    "Make sure the brAIn app is running."
                 )
             except asyncio.CancelledError:
                 raise
@@ -222,7 +222,7 @@ class BruhClaudeConversationEntity(ConversationEntity):
         except TimeoutError:
             response_text = (
                 "Sorry, Claude didn't respond in time. "
-                "Make sure the BRain app is running."
+                "Make sure the brAIn app is running."
             )
         except asyncio.CancelledError:
             # HA cancelled the pipeline (dialog closed, voice timeout).

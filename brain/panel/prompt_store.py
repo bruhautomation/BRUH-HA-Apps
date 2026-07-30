@@ -1,4 +1,4 @@
-"""Per-category prompt overrides for BRain.
+"""Per-category prompt overrides for brAIn.
 
 Users can rename a shipped category, give it a different icon, rewrite its
 analysis focus, disable it, remove its card entirely, or give it its own
@@ -15,7 +15,7 @@ daily run times) takes precedence over refresh_hours for that category.
 ``hidden`` is how a shipped card gets "deleted": the definition can't go
 away (it ships in the code), so the card is dropped from the dashboard and
 the scheduler and everything it stored is erased. That is the whole of it —
-there is no restore list. BRain proposes the cards a given home should have;
+there is no restore list. brAIn proposes the cards a given home should have;
 a graveyard of shipped ones to resurrect is the opposite of that idea.
 
 This module deliberately avoids aiohttp so the test suite can import it

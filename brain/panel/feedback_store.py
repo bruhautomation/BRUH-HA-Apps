@@ -1,4 +1,4 @@
-"""Per-insight homeowner feedback for BRain.
+"""Per-insight homeowner feedback for brAIn.
 
 Feedback given on a generated card ("too much detail", "ignore the guest
 room sensor", "show cost in dollars") is stored per category — shipped or

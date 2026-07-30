@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>BRain</title>
+<title>brAIn</title>
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="style.css?v={{VERSION}}">
 </head>
@@ -16,7 +16,7 @@
        theme's ink, the roof is always azure (never recoloured), and the "AI"
        and the signal motif always match each other. The window in the roof
        is a knockout (fill-rule evenodd), so it shows the bar through. -->
-  <svg class="wordmark" viewBox="0 0 496 342" role="img" aria-label="BRain">
+  <svg class="wordmark" viewBox="0 0 496 342" role="img" aria-label="brAIn">
     <path class="wm-ink" fill-rule="evenodd" d="M159.55,176c0-23.95-12.76-43.53-32.59-55,19.83-11.43,32.59-31.09,32.59-55,0-38.69-33.29-66-75.87-66H4A4,4,0,0,0,0,4V331a4,4,0,0,0,4,4H19a4,4,0,0,0,4-4V245.83A3.84,3.84,0,0,1,26.83,242H92.4a3.93,3.93,0,0,1,3.22,1.69l41,89.62a3.9,3.9,0,0,0,3.21,1.69h19.27a4,4,0,0,0,3.28-6.29L121.81,242.6c-1.57-2.24-.18-4.71,2.17-6.13C141.54,225.88,159.55,206.48,159.55,176ZM23,26a4,4,0,0,1,4-4H79.36C113.11,22,136,38.27,136,66s-22.9,44-56.65,44H27a4,4,0,0,1-4-4ZM79.36,220H23V136a4,4,0,0,1,4-4H79.36c33.75,0,56.65,16.27,56.65,44S113.11,220,79.36,220Z"/>
     <g transform="translate(186 184) scale(1.1306) translate(-188.83 -175.5)">
       <path class="wm-roof" fill-rule="evenodd" d="M293.5,21.6V70.83S189.86,174.05,188.83,175.5H450.09Zm-1,110.9h-10v-10h10Zm0-12h-10v-10h10Zm12,12h-10v-10h10Zm-10-12v-10h10v10Z"/>
@@ -62,11 +62,18 @@
 
   <div class="spacer"></div>
 
-  <!-- Status chips collapse to their dot (and, for usage, the number) on a
+  <!-- Status chips collapse to their dot (and, for usage, the numbers) on a
        phone. The dot already carries the state; the words are what make the
-       bar wrap, and every chip keeps its full text in title/aria-label. -->
-  <span id="authChip" class="chip"><span class="dot"></span><span id="authChipText" class="chipwords">Checking…</span></span>
-  <button id="usageChip" class="chip clickable hidden"><span class="dot"></span><span id="usageChipPct"></span><span id="usageChipText" class="chipwords"></span></button>
+       bar wrap, and every chip keeps its full text in title/aria-label.
+
+       The auth chip only appears when there is something wrong — a green
+       "Claude · subscription" was a permanent label for a state that never
+       changes, taking bar width from the two numbers that do. Usage carries
+       both windows: the 5-hour session that gates automatic runs, and the
+       weekly one that actually ends your week. Reset times live in the
+       hover, not in the bar. -->
+  <span id="authChip" class="chip hidden"><span class="dot"></span><span id="authChipText" class="chipwords">Checking…</span></span>
+  <button id="usageChip" class="chip clickable hidden"><span class="dot"></span><span id="usageChipPct"></span><span id="usageChipText" class="chipwords"></span><span id="usageChipWeek" class="uweek hidden">·&nbsp;<span id="usageChipWeekPct"></span><span class="chipwords">&nbsp;week</span></span></button>
   <button id="pausedChip" class="chip clickable warn hidden"><span class="dot"></span><span id="pausedChipText" class="chipwords"></span></button>
 
   <button id="refreshAll" class="btn icon hidden" data-tip="Refresh all">
@@ -84,11 +91,11 @@
   <!-- Connect / setup screen (shown when no credential is stored) -->
   <section id="setup" class="setup hidden">
     <h2>Connect your Claude account&nbsp;✨</h2>
-    <p class="sub">BRain uses your Claude subscription (Pro or Max) to analyze your home and
+    <p class="sub">brAIn uses your Claude subscription (Pro or Max) to analyze your home and
       generate live interactive visualizations. Connect once — the credential is stored only inside
       this add-on.</p>
     <p class="hint">Tip: you can also sign in from the <b>Terminal</b> tab — run
-      <code>claude</code> there once and BRain picks the login up automatically.</p>
+      <code>claude</code> there once and brAIn picks the login up automatically.</p>
 
     <div class="tabs">
       <button class="btn small tab active" data-pane="guided">Guided sign-in</button>
@@ -124,7 +131,7 @@
 
     <div class="pane" data-pane="paste">
       <p class="hint">Simpler: open the <b>Terminal</b> tab and run <code>claude</code>
-        once — BRain picks that login up automatically, no pasting. Otherwise run
+        once — brAIn picks that login up automatically, no pasting. Otherwise run
         <code>claude setup-token</code> anywhere Claude Code is installed and paste the resulting
         <code>sk-ant-oat…</code> token here. It uses your subscription, not API credits.</p>
       <label for="pasteToken">Long-lived token</label>
@@ -145,7 +152,7 @@
   <!-- First run: learn the home, then propose cards worth having. A fresh
        install ships no cards at all — see onboarding.py. -->
   <section id="onboard" class="setup hidden">
-    <h2 id="obTitle">Let BRain get to know your home</h2>
+    <h2 id="obTitle">Let brAIn get to know your home</h2>
     <p class="sub" id="obLead">Before it suggests anything, it studies your house —
       how it's named, when it's occupied, what it uses, how it behaves. Then it proposes
       cards that are actually about <i>your</i> home rather than a generic one.</p>
@@ -178,7 +185,7 @@
 
     <div id="obSparse" class="hidden">
       <div class="flowerr" id="obSparseText"></div>
-      <p class="hint">Generic cards about a home BRain hasn't been able to read would just be
+      <p class="hint">Generic cards about a home brAIn hasn't been able to read would just be
         noise on every run, so it won't invent any. Add more entities or let history build up,
         then try again.</p>
       <div class="row">
@@ -196,12 +203,12 @@
          place either is discoverable. -->
     <form id="askForm" class="askbar">
       <input id="askInput" type="text" maxlength="500" autocomplete="off"
-             placeholder="Ask a question — “Which rooms are coldest at night?” — or say “learn about my energy use” to send BRain off studying">
+             placeholder="Ask a question — “Which rooms are coldest at night?” — or say “learn about my energy use” to send brAIn off studying">
       <button class="btn primary" type="submit">Ask&nbsp;✨</button>
     </form>
     <p class="askhint">Every answer becomes a card. If it's worth having every
       week, press <b>＋ Make recurring</b> on it and it becomes a scheduled
-      insight. Say <b>“learn about…”</b> and BRain studies that corner of the
+      insight. Say <b>“learn about…”</b> and brAIn studies that corner of the
       house instead — what it finds lands in <b>Memory</b> and <b>Findings</b>.</p>
 
     <div id="filters" class="filters"></div>
@@ -216,10 +223,10 @@
   <section class="findwrap">
     <div class="findhead">
       <div>
-        <h2>What BRain thinks is broken</h2>
+        <h2>What brAIn thinks is broken</h2>
         <p class="sub">Problems found while analysing your home — a dead battery, a
           sensor that stopped reporting, an automation that can never fire. Send
-          BRain to fix it, or tell it this isn't a problem here and it will never
+          brAIn to fix it, or tell it this isn't a problem here and it will never
           raise it again.</p>
       </div>
       <div class="findfilters" id="findFilters"></div>
@@ -525,21 +532,22 @@
     <div class="edit-body ksplit">
       <div class="kcol">
         <p class="hint"><b>The document on the right is the memory</b> — the one thing every
-          part of BRain reads. This column is the working queue behind it: what BRain is
+          part of brAIn reads. This column is the working queue behind it: what brAIn is
           currently unsure about, and what it has announced so it never announces the same
           thing twice.</p>
 
         <label>Waiting on you</label>
-        <p class="hint">Things BRain believes but hasn't confirmed — two taps to settle.
+        <p class="hint">Things brAIn believes but hasn't confirmed — two taps to settle.
           Never more than three at once, and they expire after a fortnight. <b>Yes</b> files
           it into the document as a plain fact; <b>No</b> records a dead end it won't
           revisit.</p>
         <div id="kOpenQs" class="klist"></div>
 
-        <label>Recently discovered</label>
-        <p class="hint">Found during insight runs and study sessions. Each one is queued into
-          the document at the next consolidation. Delete anything wrong and BRain is asked to
-          drop it from the document too.</p>
+        <label>Waiting to be filed</label>
+        <p class="hint">Discovered during insight runs and study sessions, and queued for the
+          document. Filing empties this list — what was in it is then part of the memory on
+          the right. Delete anything wrong and brAIn is asked to drop it from the document
+          too.</p>
         <!-- Consolidation is normally daily (or early past 20 pending facts).
              That is the right cadence for a background daemon and the wrong
              one for someone who has just taught it something and wants to see
@@ -552,12 +560,21 @@
           and resolving contradictions. Takes a few seconds and costs a small Claude call.</p>
         <div id="kFacts" class="klist"></div>
 
+        <!-- Filed discoveries are history, not a queue — folded away so the
+             list above is only what is genuinely still waiting. They stay
+             reachable because ✕ here is the one-click way to make brAIn
+             forget something it has already written down. -->
+        <details id="kFiledWrap" class="kfiled hidden">
+          <summary id="kFiledSum"></summary>
+          <div id="kFiled" class="klist"></div>
+        </details>
+
       </div>
 
       <div id="kMemWrap" class="kcol kmemcol">
         <label>Home memory</label>
         <p class="hint">The one thing that is "memory": preferences, nicknames, patterns,
-          device notes. Everything BRain does reads it — insight runs, voice, and the
+          device notes. Everything brAIn does reads it — insight runs, voice, and the
           terminal alike — and <code>brain memory</code> shows the same document there.
           Teach it a fact and it is queued for the next consolidation, or edit the
           markdown yourself.</p>

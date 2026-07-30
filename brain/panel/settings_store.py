@@ -1,4 +1,4 @@
-"""Global runtime settings for BRain.
+"""Global runtime settings for brAIn.
 
 One JSON file (atomic tmp+replace, like insight storage) holds the settings
 the panel's ⚙ dialog edits at runtime — no add-on restart needed:
@@ -55,7 +55,7 @@ OPTION_RANGES = {
 MAX_MODEL_CHARS = 100
 
 DEFAULTS = {
-    # A fresh install has no cards and no schedule. BRain studies the home
+    # A fresh install has no cards and no schedule. brAIn studies the home
     # first, then proposes cards grounded in what it actually found — a
     # generic "Climate" card on an unknown house says nothing useful.
     "onboarded": False,

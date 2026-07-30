@@ -1,4 +1,4 @@
-"""Anthropic usage limit sensors for BRain.
+"""Anthropic usage limit sensors for brAIn.
 
 Reads real Anthropic account usage limits from usage-limits-tracker.py,
 then exposes them as Home Assistant sensors.
@@ -44,7 +44,7 @@ USAGE_LIMITS_FILENAME = "usage_limits.json"
 # Device that groups Anthropic usage limit sensors together.
 USAGE_DEVICE_INFO = DeviceInfo(
     identifiers={(DOMAIN, "usage_limits")},
-    name="BRain Usage Limits",
+    name="brAIn Usage Limits",
     manufacturer="BRUH Automation",
     model="Claude Terminal",
 )
@@ -74,7 +74,7 @@ async def async_setup_entry(
     config_entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up BRain sensors (once, not per conversation)."""
+    """Set up brAIn sensors (once, not per conversation)."""
     from . import entry_type, load_insight_payload  # local import: avoid cycle
 
     if entry_type(config_entry) == ENTRY_TYPE_INSIGHT:
@@ -111,7 +111,7 @@ async def async_setup_entry(
             )
         )
 
-    # What BRain knows, and when it last learned something.
+    # What brAIn knows, and when it last learned something.
     entities.append(BrainFactsSensor(config_entry))
     entities.append(BrainLastLearnedSensor(config_entry))
 
@@ -335,14 +335,14 @@ class BruhClaudeInsightSensor(SensorEntity):
 
 MEMORY_DEVICE_INFO = DeviceInfo(
     identifiers={(DOMAIN, "brain_memory")},
-    name="BRain memory",
+    name="brAIn memory",
     manufacturer="BRUH Automation",
     model="Home memory",
 )
 
 
 class BrainFactsSensor(SensorEntity):
-    """How much BRain currently knows about this home.
+    """How much brAIn currently knows about this home.
 
     Counted from the change log rather than by parsing the document, so a
     hand-edited memory file can never make the number disagree with the
@@ -371,7 +371,7 @@ class BrainFactsSensor(SensorEntity):
 
 
 class BrainLastLearnedSensor(SensorEntity):
-    """When BRain last learned something, with what it was."""
+    """When brAIn last learned something, with what it was."""
 
     _attr_has_entity_name = True
     _attr_should_poll = True

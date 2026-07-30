@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Security-focused tests for the BRain add-on.
+Security-focused tests for the brAIn add-on.
 
 Tests cover:
 - No hardcoded tokens or secrets in any file
