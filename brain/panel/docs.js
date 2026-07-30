@@ -234,10 +234,11 @@ into the document, dedupes, and resolves contradictions newest-wins. It says how
 waiting before you press it, and costs one small Claude call. Same script, same safety
 checks — the consolidator stays the only writer either way.
 
-Filing empties **Waiting to be filed**; what was in it moves into the collapsed
-*Already in memory* group underneath, where ✕ still works if brAIn wrote down something
-wrong. If the pass keeps the facts instead — it does that rather than write a document it
-isn't happy with — it says so, and the queue stays where it was.
+Filing empties **Waiting to be filed**, and what was in it is then part of the memory
+document beside it. It is not listed twice: once a discovery is in the document, the
+document is where you read it, and where you edit or delete it. If the pass keeps the
+facts instead — it does that rather than write a document it isn't happy with — it says
+so, and the queue stays where it was.
 
 Manual edits are rewritten by a consolidation, so if you have unsaved edits in the
 markdown editor below it asks before filing.
@@ -505,9 +506,11 @@ data:
 Other services: \`brain.send_prompt\`, \`brain.run_insight\`, \`brain.add_memory\`,
 \`brain.clear_conversation\`.
 
-**BRUH Power Tools** adds 56 admin-gated registry services under \`brain.*\` — areas,
-floors, labels, entities, devices, helpers, zones, persons, dashboards and more. Adapted
-from [Spook](https://github.com/frenck/spook).
+**BRUH Power Tools** adds 65 admin-gated registry services under \`brain.*\` — areas,
+floors, labels, entities, devices, helpers, zones, persons, dashboards and more. Every
+registry object it can create it can also rename, change and delete; the destructive
+ones take \`dry_run\` and tell you the blast radius first. Adapted from
+[Spook](https://github.com/frenck/spook).
 `,
   },
 
@@ -528,9 +531,9 @@ caps what share of that window brAIn's *automatic* runs may consume. Hit the cap
 background generation pauses until the window rolls over. **Manual clicks are never
 blocked** — pressing Generate always works.
 
-The pill in the top bar reads \`19% session · 64% week\`: the 5-hour window the budget
+The pill in the top bar reads \`Session 19% · Week 64%\`: the 5-hour window the budget
 is set against, and the seven-day window that is usually what actually ends your week.
-Hover it for both reset times. Nothing is budgeted against the weekly number — it is
+Hover it and it tells you when each one resets — that and nothing else. Nothing is budgeted against the weekly number — it is
 there because a session that looks fine tells you nothing about a week that doesn't.
 Both come from your Anthropic account when you signed in with a subscription; with an
 API key there is no account usage to read, so the session figure falls back to an

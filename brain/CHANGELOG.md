@@ -2,6 +2,73 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.9.0
+
+### A top bar you can actually hit
+
+The bar was a fixed 48px row at every width, and it stayed one row by deleting
+text until it fit — tab labels first, then the words inside the status chips.
+On a phone that left five unlabelled glyphs and a bare amber dot, with the only
+explanation in a hover, on the one device that cannot hover.
+
+It now has two shapes. On a desktop it is a single 56px row. On a phone the
+tabs move to a full-width strip of their own with **each name under its icon**,
+and every target — tab, button, status pill — is at least 44px. Nothing hides
+its words to fit any more; what gives way is the row.
+
+The measurement script behind it (`tests/manual/measure-topbar.mjs`) now fails
+on a target under 44px as well as on an overflow, across all three bar states.
+
+### The usage pill says which number is which
+
+It read `19% · 100%`: two percentages, a dot between them, and nothing saying
+that the first is your 5-hour session and the second is your week. It now reads
+**Session 19% · Week 100%**, labelled in the bar itself.
+
+The **amber dot beside it is gone** — that was the "auto insights off" /
+"budget reached" chip with its words hidden, which is a warning that declines
+to say what is wrong. It keeps its words at every width now.
+
+Hovering the pill gives you **the reset times, and nothing else**. It used to
+also recite both percentages you can already see, the budget threshold, and
+"tap for settings" — four facts in a tooltip, three of them already on screen.
+
+### The Memory tab stops repeating itself
+
+**Already in memory — 23 discoveries** is gone. Once a discovery is filed it is
+part of the memory document on the right, and that is where you read it, edit
+it, or take it out. Listing it a second time underneath the queue meant a
+drained queue never looked drained. Nothing was deleted: the dedup ledger still
+holds every announced fact, so brAIn still can't tell you the same thing twice.
+
+The instructions came down with it. Four explanatory paragraphs introduced
+lists that were shorter than the paragraphs; what is left is two headings, two
+lists and a button. The long version is still in the **Docs** tab.
+
+### Power Tools: nothing is create-only any more
+
+Nine new admin services, closing every gap where you could create something and
+then never change or remove it:
+
+- **`rename_label`** and **`update_label`** — a label was create-only. Its
+  colour, the thing a label is mostly for, could not be changed after the fact.
+- **`delete_device`** — devices could be renamed and disabled but never
+  removed. `dry_run` previews the entities that go with it, and names the
+  config entries that would recreate it, so a delete that won't stick is
+  visible before you make it rather than after.
+- **`delete_orphaned_devices`** — the device counterpart of the entity
+  cleanup, dry-run by default, for devices whose integration is gone.
+- **`delete_integration`** — removing a config entry, with its devices and
+  entities. Disable was reversible and there was no delete at all.
+- **`set_area_icon`**, **`update_floor`** — an area's icon and a floor's
+  icon, level and aliases could be set at creation and never afterwards.
+- **`rename_person`** — for the same reason as all the others.
+
+`update_*` services write only the fields you actually name, so changing a
+label's colour doesn't blank its description. That is now a test, along with
+the rule these services came from: every registry object brAIn can create, it
+can also rename and delete.
+
 ## 1.8.0
 
 ### It's brAIn

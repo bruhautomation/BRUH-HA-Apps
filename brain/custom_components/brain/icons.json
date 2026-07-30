@@ -47,6 +47,9 @@
     "set_area_aliases": {
       "service": "mdi:texture-box"
     },
+    "set_area_icon": {
+      "service": "mdi:texture-box"
+    },
     "add_device_to_area": {
       "service": "mdi:texture-box"
     },
@@ -68,6 +71,9 @@
     "rename_floor": {
       "service": "mdi:home-floor-1"
     },
+    "update_floor": {
+      "service": "mdi:home-floor-1"
+    },
     "add_area_to_floor": {
       "service": "mdi:home-floor-1"
     },
@@ -75,6 +81,12 @@
       "service": "mdi:home-floor-1"
     },
     "create_label": {
+      "service": "mdi:label"
+    },
+    "rename_label": {
+      "service": "mdi:label"
+    },
+    "update_label": {
       "service": "mdi:label"
     },
     "delete_label": {
@@ -116,6 +128,12 @@
     "disable_device": {
       "service": "mdi:devices"
     },
+    "delete_device": {
+      "service": "mdi:delete-forever"
+    },
+    "delete_orphaned_devices": {
+      "service": "mdi:ghost-off"
+    },
     "enable_integration": {
       "service": "mdi:puzzle"
     },
@@ -125,11 +143,17 @@
     "reload_integration": {
       "service": "mdi:puzzle-edit"
     },
+    "delete_integration": {
+      "service": "mdi:puzzle-remove"
+    },
     "create_zone": {
       "service": "mdi:map-marker-plus"
     },
     "delete_zone": {
       "service": "mdi:map-marker-remove"
+    },
+    "rename_person": {
+      "service": "mdi:account-edit"
     },
     "add_device_tracker_to_person": {
       "service": "mdi:account-arrow-right"

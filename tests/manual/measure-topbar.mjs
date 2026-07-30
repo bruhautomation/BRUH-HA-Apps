@@ -1,14 +1,21 @@
 // Render the brAIn topbar across viewport widths and assert, per width, that
-// it stays a single 48px row with nothing overflowing.
+// it lays out as intended and that everything in it is big enough to hit.
+//
+// Two shapes, not five. At >=960px the bar is a single 56px row. Below that
+// it is the phone bar: status and actions on top, the tabs on a full-width
+// strip of their own underneath. So the check is no longer "always one row"
+// — it is "the shape this width is supposed to have, with nothing spilling
+// out of it and no target under 44px".
 //
 // Every child of the bar is `flex: none` except the spacer, so items cannot
-// silently compress to fake a fit: the bar either holds its content or
-// scrollWidth exceeds clientWidth. That makes one cheap check exact.
+// silently compress to fake a fit: the bar either holds its content or it
+// wraps. Above the phone breakpoint wrapping is the failure; below it,
+// wrapping is the layout, and overflow is the failure.
 //
 // The panel's JS needs a live backend, so we skip it and set the header by
 // hand. Three states are checked at every width. None is a superset of the
-// others, because the floor band drops the usage chip in exactly the two
-// states that put a chip beside it:
+// others, because the trouble states put a second chip beside the usage pill
+// and that is what decides whether the phone bar runs to a third row:
 //
 //   running   healthy login (no auth chip at all), both usage numbers, and a
 //             count on both tab badges
@@ -24,19 +31,29 @@ import fs from 'node:fs';
 const PANEL = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../../brain/panel');
 const OUT = process.env.TOPBAR_SHOT_DIR || '';
 
+// The width at which the tabs leave the row for a strip of their own, the
+// width at which tab labels drop out of the single row, and the smallest a
+// touch target is allowed to be. All three are also in style.css; if they
+// move, they move in both places.
+const PHONE_MAX = 959;
+const LABELS_MIN = 1240;
+// Tabs and icon buttons are 44px, the smallest a target has any business
+// being on a touchscreen. Chips are pills of text and sit at 40 — still a
+// real target, just not a square one.
+const MIN_TOUCH = 44;
+const MIN_CHIP = 40;
+
 const WIDTHS = [
-  320, 360, 390, 400, 409, 410, 414, 428, 441, 449, 450, 469, 480, 500, 519,
-  520, 540, 600, 700, 760, 780, 800, 804, 840, 869, 870, 880, 900, 1000, 1023,
-  1089, 1099, 1100, 1200, 1440,
+  320, 340, 360, 375, 379, 380, 390, 400, 414, 428, 480, 500, 540, 600, 640, 700, 720,
+  768, 800, 900, 959, 960, 1000, 1024, 1100, 1199, 1200, 1239, 1240, 1280, 1440, 1920,
 ];
-const KEEP_SHOTS = new Set([320, 390, 480, 780, 1200]);
+const KEEP_SHOTS = new Set([320, 390, 480, 800, 1280]);
 
 function seed(mode) {
   const $ = (s) => document.querySelector(s);
   $('#usageChip').classList.remove('hidden');
   $('#usageChip').classList.add('ok');
   $('#usageChipPct').textContent = '19%';
-  $('#usageChipText').textContent = 'session';
   $('#usageChipWeek').classList.remove('hidden');
   $('#usageChipWeekPct').textContent = '100%';
   ['#refreshAll', '#settingsBtn'].forEach((s) => $(s).classList.remove('hidden'));
@@ -55,11 +72,10 @@ function seed(mode) {
     $('#pausedChip').classList.remove('hidden');
     $('#pausedChipText').textContent = 'Usage budget reached';
   }
-  // 'running' is neither: healthy, generating, usage only. It is not a subset
-  // of the other two — at the floor they drop the usage chip and it doesn't.
+  // 'running' is neither: healthy, generating, usage only.
 }
 
-function probe() {
+function probe(floors) {
   const bar = document.querySelector('.topbar');
   const br = bar.getBoundingClientRect();
   const kids = [...bar.children]
@@ -67,22 +83,47 @@ function probe() {
     .map((el) => el.getBoundingClientRect())
     .filter((r) => r.width > 0);
 
-  // A wrap means two items sit on separate lines. Differing tops alone just
-  // means items of different heights are centred against each other.
-  let lines = 1;
+  // A row break means two items sit on separate lines. Differing tops alone
+  // just means items of different heights are centred against each other.
+  let rows = 1;
   const sorted = [...kids].sort((a, b) => a.top - b.top);
   for (let i = 1; i < sorted.length; i++) {
-    if (sorted[i].top >= sorted[i - 1].bottom - 0.5) lines++;
+    if (sorted[i].top >= sorted[i - 1].bottom - 0.5) rows++;
   }
+
+  // Everything you can press, measured as rendered.
+  const targets = [...bar.querySelectorAll('.viewtab, .btn.icon, .chip.clickable')]
+    .filter((el) => getComputedStyle(el).display !== 'none')
+    .map((el) => {
+      const r = el.getBoundingClientRect();
+      return {
+        w: Math.round(r.width),
+        h: Math.round(r.height),
+        id: el.id || el.dataset.view || 'target',
+        min: el.classList.contains('chip') ? floors.chip : floors.touch,
+      };
+    })
+    .filter((t) => t.w > 0);
+
+  // Tab labels are the point of the phone strip — check they actually render
+  // rather than merely being un-hidden.
+  const labelled = [...bar.querySelectorAll('.viewtab span:not(.badge)')]
+    .filter((el) => getComputedStyle(el).display !== 'none').length;
 
   return {
     height: Math.round(br.height),
-    lines,
+    rows,
     escaped: kids.some((r) => r.bottom > br.bottom + 0.5 || r.top < br.top - 0.5),
     barScrollW: bar.scrollWidth,
     barClientW: bar.clientWidth,
-    slack: Math.round(bar.querySelector('.spacer').getBoundingClientRect().width),
     docScrollW: document.documentElement.scrollWidth,
+    labelled,
+    // "Smallest" means furthest below its own floor, not fewest pixels — a
+    // 40px chip is fine and a 40px tab is not.
+    undersized: targets.filter((t) => Math.min(t.w, t.h) < t.min)
+      .map((t) => `${t.id} ${t.w}x${t.h}<${t.min}`),
+    smallest: targets.reduce(
+      (a, t) => (Math.min(t.w, t.h) < Math.min(a.w, a.h) ? t : a), targets[0]),
   };
 }
 
@@ -102,9 +143,18 @@ function probe() {
       await page.addStyleTag({ path: path.join(PANEL, 'style.css') });
       await page.evaluate(seed, mode);
 
-      const m = await page.evaluate(probe);
+      const m = await page.evaluate(probe, { touch: MIN_TOUCH, chip: MIN_CHIP });
+      const phone = width <= PHONE_MAX;
       const overflow = m.barScrollW > m.barClientW || m.escaped || m.docScrollW > width;
-      rows.push({ width, mode, ...m, oneRow: m.lines === 1, h48: m.height === 48, overflow });
+      // Above the breakpoint: one 56px row, labels on only where they fit.
+      // Below it: the tabs on a row of their own with their names showing,
+      // and a third row only when a trouble chip joins the usage pill.
+      const shape = phone
+        ? m.rows >= 2 && m.rows <= (mode === 'running' ? 2 : 3) && m.labelled === 5
+        : m.rows === 1 && m.height === 56
+          && m.labelled === (width >= LABELS_MIN ? 5 : 0);
+      const touch = !!m.smallest && m.undersized.length === 0;
+      rows.push({ width, mode, ...m, phone, shape, touch, overflow });
 
       if (OUT && mode === 'running' && KEEP_SHOTS.has(width)) {
         await page.locator('.topbar').screenshot({ path: path.join(OUT, `bar-${width}.png`) });
@@ -112,25 +162,26 @@ function probe() {
     }
   }
 
-  console.log('width  state    height  lines  scrollW/clientW  slack  verdict');
+  console.log('width  state     height  rows  scrollW/clientW  smallest target    verdict');
   let bad = 0;
   for (const r of rows) {
-    const ok = r.oneRow && r.h48 && !r.overflow;
+    const ok = r.shape && r.touch && !r.overflow;
     if (!ok) bad++;
+    const t = r.smallest ? `${r.smallest.id} ${r.smallest.w}x${r.smallest.h}` : '—';
     console.log(
-      String(r.width).padStart(5),
-      r.mode.padEnd(8),
-      String(r.height).padStart(6),
-      String(r.lines).padStart(6),
-      `     ${String(r.barScrollW).padStart(4)}/${String(r.barClientW).padStart(4)}`,
-      String(r.slack).padStart(7),
-      '  ' + (ok ? 'OK' : 'FAIL'
-        + (r.oneRow ? '' : ' wrapped')
-        + (r.h48 ? '' : ` height=${r.height}`)
-        + (r.overflow ? ` overflow by ${r.barScrollW - r.barClientW}px` : '')),
-    );
+      `${String(r.width).padStart(5)}  ${r.mode.padEnd(8)} ${String(r.height).padStart(6)} `
+      + `${String(r.rows).padStart(5)}  ${String(r.barScrollW).padStart(6)}/`
+      + `${String(r.barClientW).padEnd(6)}   ${t.padEnd(18)} `
+      + (ok ? 'ok' : [!r.shape && `SHAPE rows=${r.rows} h=${r.height} labels=${r.labelled}`,
+                      !r.touch && `TOUCH ${r.undersized.join(', ') || 'no targets'}`,
+                      r.overflow && `OVERFLOW +${r.barScrollW - r.barClientW}px`]
+        .filter(Boolean).join(' ')));
   }
-  console.log(bad ? `\n${bad} case(s) failed` : '\nall widths: one row, 48px, no overflow');
+  console.log(bad
+    ? `\n${bad}/${rows.length} case(s) failed`
+    : `\nall ${rows.length} cases: right shape, no overflow, `
+      + `every tab and button >=${MIN_TOUCH}px and every chip >=${MIN_CHIP}px`);
+
   await browser.close();
   process.exit(bad ? 1 : 0);
 })();

@@ -163,10 +163,14 @@ function fmtDayClock(epoch) {
 }
 
 // Topbar chip: both usage windows — the 5-hour session that gates automatic
-// runs, and the weekly one that a Claude plan really runs you out of. The
-// reset times are in the hover rather than the bar, because they change once
-// per window while the numbers change all day. Click opens ⚙; the dot goes
-// warning-coloured once the session budget is reached.
+// runs, and the weekly one that a Claude plan really runs you out of. Each
+// number sits behind its own word, because "19% · 100%" is two readings with
+// nothing on screen saying which window either belongs to.
+//
+// The hover carries the reset times and nothing else. It used to also
+// explain the budget and say "tap for settings", which is three facts deep
+// in a tooltip when only one of them is a thing you can't already see.
+// Click opens ⚙; the dot goes warning-coloured once the budget is reached.
 function renderUsageChip() {
   const s = state.status;
   const chip = $("#usageChip");
@@ -178,34 +182,22 @@ function renderUsageChip() {
   const hasWeek = u.week_percent != null;
   const reset = u.resets_at ? fmtClock(u.resets_at) : "";
   const weekReset = u.week_resets_at ? fmtDayClock(u.week_resets_at) : "";
-  // Split so a phone can keep the numbers and drop the words around them.
   $("#usageChipPct").textContent = `${Math.round(u.used_percent)}%`;
-  $("#usageChipText").textContent = hasWeek ? "session" : "used";
   $("#usageChipWeekPct").textContent = hasWeek ? `${Math.round(u.week_percent)}%` : "";
   $("#usageChipWeek").classList.toggle("hidden", !hasWeek);
   chip.classList.toggle("ok", !u.blocked);
   chip.classList.toggle("warn", !!u.blocked);
 
-  // The hover is where the reset times live, so it is written as lines rather
-  // than one sentence — two windows and a budget don't fit in a clause.
-  const windows = [u.source === "account"
-    ? `5-hour session: ${u.used_percent}% used`
-      + (reset ? ` · resets ${reset}` : "")
-    : `5-hour session: ≈${u.used_percent}% of a ${u.plan_label} session used by `
-      + `Insights (estimate)` + (reset ? ` · resets ${reset}` : "")];
-  if (hasWeek) {
-    windows.push(`This week: ${u.week_percent}% used`
-      + (weekReset ? ` · resets ${weekReset}` : ""));
-  } else {
-    // Say why rather than silently showing one number: the weekly figure only
-    // exists as an account reading, so its absence is a fact about the login.
-    windows.push("This week: not available — the weekly figure comes from your "
-      + "Anthropic account, which needs a subscription login (not an API key).");
-  }
-  chip.title = windows.concat(
-    `Insights pauses automatic runs at ${u.budget_percent}% of the session.`,
-    "Tap for settings.").join("\n");
-  chip.setAttribute("aria-label", "Claude usage — " + windows.join("; "));
+  // Reset times only — one line per window, and a window with no known reset
+  // simply isn't listed rather than saying so at length.
+  const lines = [];
+  if (reset) lines.push(`Session resets ${reset}`);
+  if (hasWeek && weekReset) lines.push(`Week resets ${weekReset}`);
+  chip.title = lines.join("\n");
+  chip.setAttribute("aria-label",
+    `Claude usage — session ${Math.round(u.used_percent)}%`
+    + (hasWeek ? `, week ${Math.round(u.week_percent)}%` : "")
+    + (lines.length ? ". " + lines.join(". ") : ""));
   chip.classList.remove("hidden");
 }
 
@@ -1715,8 +1707,9 @@ function kSourceLabel(src) {
     feedback: "feedback", user: "added by you" }[src] || src;
 }
 
-// One discovery row. Identical whether it is still queued or already filed —
-// what differs is which list it lands in, so the ✕ works in both.
+// One discovery still waiting for the document. ✕ drops it from the queue,
+// and asks the consolidator to take it out of the document too in case an
+// earlier pass already wrote it down.
 function makeFactRow(f) {
   const row = el("div", "fbitem");
   const txt = el("div", "txt");
@@ -1760,8 +1753,7 @@ async function renderKnowledge() {
   openBoxEl.textContent = "";
   const open = data.hypotheses || [];
   if (!open.length) {
-    openBoxEl.appendChild(el("div", "kempty",
-      "Nothing waiting on you — brAIn isn't unsure about anything right now."));
+    openBoxEl.appendChild(el("div", "kempty", "Nothing to confirm right now."));
   }
   open.slice().reverse().forEach((h) => {
     const row = el("div", "qrow");
@@ -1798,30 +1790,20 @@ async function renderKnowledge() {
     openBoxEl.appendChild(row);
   });
 
-  // Discoveries, split by whether they have reached the document yet. The
-  // top list is a queue and has to drain — leaving filed facts in it made
-  // "File into memory now" look like it had done nothing.
-  const facts = data.facts || [];
-  const queued = facts.filter((f) => !f.filed);
-  const filed = facts.filter((f) => f.filed);
+  // Discoveries still waiting for the document. Filed ones are not listed
+  // anywhere: they are in the memory document on the right, which is the
+  // whole point of filing them, and showing them a second time under
+  // "already in memory" left a permanent 23-item list beside a queue that
+  // was supposed to read as empty.
+  const queued = (data.facts || []).filter((f) => !f.filed);
 
   const factsEl = $("#kFacts");
   factsEl.textContent = "";
   if (!queued.length) {
-    factsEl.appendChild(el("div", "kempty", filed.length
-      ? "Nothing waiting — everything discovered so far is in the document."
-      : "Nothing discovered yet — facts appear here as insight runs and study "
-        + "sessions turn them up. (Facts you teach are queued straight for the "
-        + "document.)"));
+    factsEl.appendChild(el("div", "kempty",
+      "Nothing waiting — it's all in the memory document."));
   }
   queued.slice().reverse().forEach((f) => factsEl.appendChild(makeFactRow(f)));
-
-  const filedEl = $("#kFiled");
-  filedEl.textContent = "";
-  $("#kFiledWrap").classList.toggle("hidden", !filed.length);
-  $("#kFiledSum").textContent =
-    `Already in memory — ${filed.length} discover${filed.length === 1 ? "y" : "ies"}`;
-  filed.slice().reverse().forEach((f) => filedEl.appendChild(makeFactRow(f)));
 
   // "Answered questions" is gone with the model it belonged to: a
   // confirmed guess becomes a plain memory line and its record is
@@ -2445,6 +2427,19 @@ $("#kAddForm").addEventListener("submit", async (ev) => {
   const body = modal.querySelector(".edit-body");
   if (body) host.appendChild(body);
   modal.remove();
+})();
+
+// The terminal is sized as "the viewport minus the bar", and the phone bar
+// is two rows that become three if a trouble chip joins the usage pill. So
+// the height is measured rather than assumed: --bar-h is the CSS fallback
+// for each layout, and this keeps it exact at whatever the bar actually is.
+(function trackBarHeight() {
+  const bar = document.querySelector(".topbar");
+  if (!bar || typeof ResizeObserver === "undefined") return;
+  new ResizeObserver(() => {
+    document.documentElement.style.setProperty(
+      "--bar-h", Math.round(bar.getBoundingClientRect().height) + "px");
+  }).observe(bar);
 })();
 
 // -------------------------------------------------- dashboard card modal

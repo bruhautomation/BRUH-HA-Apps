@@ -87,8 +87,28 @@ class TestPowerToolCatalog(unittest.TestCase):
             "add_dashboard_resource", "remove_dashboard_resource",
             "create_person", "delete_person",
             "create_user", "delete_user",
+            # Every registry object you can create, you can also change and
+            # remove. Labels were create-only, and a device could be renamed
+            # and disabled but never deleted.
+            "rename_label", "update_label", "set_area_icon", "update_floor",
+            "delete_device", "delete_orphaned_devices", "delete_integration",
+            "rename_person",
         ):
             self.assertIn(expected, services)
+
+    def test_everything_creatable_is_also_renamable(self):
+        """A registry object you can name at creation and never rename again
+        is a typo you live with. Areas, floors, labels, devices, entities and
+        people all take the same verb."""
+        services = set(self.services)
+        for thing in ("area", "floor", "label", "device", "entity", "person"):
+            self.assertIn(f"rename_{thing}", services)
+
+    def test_registries_have_a_delete_for_everything_they_create(self):
+        services = set(self.services)
+        for thing in ("area", "floor", "label", "device", "zone", "person",
+                      "helper", "user", "dashboard"):
+            self.assertIn(f"delete_{thing}", services)
 
     def test_every_service_in_services_yaml(self):
         for service in self.services:
@@ -170,6 +190,37 @@ class TestPowerToolsModuleShape(unittest.TestCase):
         self.assertIn('requested = call.data.get("entity_id")', self.source)
         self.assertIn("skipped = sorted(requested_set - set(orphaned))", self.source)
         self.assertIn('result["skipped_not_orphaned"] = skipped', self.source)
+
+    def test_partial_updates_never_blank_unnamed_fields(self):
+        """An update handler that reads every field with call.data.get()
+        wipes whatever the caller didn't mention — icon and description come
+        back as None. Only keys actually present may be passed through, and
+        naming none of them is an error rather than a silent no-op."""
+        self.assertIn("def _partial_update", self.source)
+        self.assertIn("changes = {f: call.data[f] for f in fields if f in call.data}",
+                      self.source)
+        self.assertIn("Nothing to update", self.source)
+        for handler in ("_update_floor", "_update_label"):
+            body = self.source[self.source.index(f"async def {handler}("):]
+            body = body[:body.index("\n\nasync def ")]
+            self.assertIn("_partial_update(call", body, handler)
+
+    def test_device_deletion_reports_what_would_come_back(self):
+        """Deleting a device a live integration still provides looks like it
+        failed: the device reappears on the next reload. The preview names
+        the config entries that would recreate it, so that is visible before
+        the delete rather than after."""
+        self.assertIn('"live_config_entries": live', self.source)
+        self.assertIn("hass.config_entries.async_get_entry(entry_id) is not None",
+                      self.source)
+
+    def test_orphan_device_cleanup_defaults_to_dry_run(self):
+        """Same default as the entity cleanup it mirrors — a bulk delete
+        that runs on the first call is a bulk delete nobody previewed."""
+        body = self.source[self.source.index("async def _delete_orphaned_devices("):]
+        body = body[:body.index("\n\n\n")]
+        self.assertIn('dry_run = call.data.get("dry_run", True)', body)
+        self.assertIn('result["skipped_not_orphaned"] = skipped', body)
 
     def test_spook_attribution_present(self):
         """Vendored MIT code keeps its attribution."""

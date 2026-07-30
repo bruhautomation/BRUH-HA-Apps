@@ -213,18 +213,19 @@ class TestPanelBranding(unittest.TestCase):
         self.assertEqual(self.html.count('id="kAddForm"'), 1)
 
 
-class TestTopbarFitsOneRow(unittest.TestCase):
-    """The bar is one 48px row at every width, and the way it stays one row
-    is by shedding text — never by wrapping.
+class TestTopbarLayout(unittest.TestCase):
+    """The bar has two shapes: one 56px row on a pointer-sized screen, and a
+    two-row phone bar with the tabs on a strip of their own.
 
-    It wrapped in 1.5.0 because a rule left over from the old two-bar chrome
-    still said `flex-wrap: wrap`, and because the single breakpoint at 780px
-    asked a 995px-wide layout to fit an 800px window. Both are cheap to
-    assert and expensive to notice by eye: the wrap only shows up on a phone,
-    which is not where anyone develops.
+    It used to have one shape and five breakpoints, holding a 48px row at
+    every width by deleting text until it fit — tab labels first, then the
+    words inside the status chips. On a phone that left five unlabelled
+    glyphs and a bare amber dot, with the only copy in a title attribute, on
+    the one device that cannot hover to read it.
 
-    Pixel fitting itself is verified by rendering the bar in a browser; this
-    pins the structure that fitting depends on."""
+    Pixel fitting is verified by rendering the bar in a browser
+    (tests/manual/measure-topbar.mjs, which also fails any target under
+    44px); this pins the structure that the fitting depends on."""
 
     @classmethod
     def setUpClass(cls):
@@ -232,85 +233,68 @@ class TestTopbarFitsOneRow(unittest.TestCase):
         cls.css = (PANEL / "style.css").read_text()
         cls.js = (PANEL / "app.js").read_text()
 
-    def test_topbar_never_wraps(self):
-        """The regression itself. A wrapped bar pushes its second row outside
-        its own 48px box, which is what the screenshot showed."""
-        import re
-        for block in re.findall(r"\.topbar\s*\{[^}]*\}", self.css):
-            self.assertNotIn(
-                "flex-wrap: wrap", block,
-                "the topbar is fixed-height; wrapping overflows it",
-            )
-        self.assertIn("flex-wrap: nowrap", self.css)
-
     def test_nothing_in_the_bar_may_shrink(self):
         """A shrinking chip compresses its own nowrap text and reads as a
-        rendering glitch rather than as 'too narrow' — it fails invisibly."""
+        rendering glitch rather than as 'too narrow' — it fails invisibly.
+        Refusing to shrink is what makes an overflow visible to the browser
+        test instead of silently ugly."""
         self.assertIn(".topbar > * { flex: none; }", self.css)
 
-    def test_chip_words_are_separable_from_their_dots(self):
-        """Collapsing a chip to its dot needs the words in their own element;
-        otherwise the only lever is rewriting the string in JS per width."""
-        self.assertIn('id="authChipText" class="chipwords"', self.html)
-        self.assertIn('id="pausedChipText" class="chipwords"', self.html)
-        self.assertIn(".topbar .chipwords { display: none; }", self.css)
-
-    def test_usage_chip_keeps_its_number_when_the_words_go(self):
-        """The percentage is the part that changes and the part anyone reads,
-        so it lives outside the collapsible span."""
-        self.assertIn('id="usageChipPct"', self.html)
-        self.assertIn('id="usageChipText" class="chipwords"', self.html)
-        self.assertIn(
-            '$("#usageChipPct").textContent = `${Math.round(u.used_percent)}%`',
-            self.js,
-        )
-        # The sentence must not carry the number, or hiding it hides the
-        # number too — which is the whole point of the split.
+    def test_touch_targets_are_at_least_44px(self):
+        """32px tabs and 26px chips were mouse sizes on a bar that spends
+        half its life on a phone. 44px is the floor for a tab or a button;
+        chips are text pills and sit at 40."""
         import re
-        words = re.search(r'\$\("#usageChipText"\)\.textContent = (.+);', self.js)
-        self.assertIsNotNone(words, "usage chip words are never set")
-        self.assertNotIn("used_percent", words.group(1))
+        tab = re.search(r"\n\.viewtab \{(.*?)\n\}", self.css, re.S)
+        self.assertIsNotNone(tab, "no .viewtab rule")
+        self.assertIn("height: 44px", tab.group(1))
+        self.assertIn("min-width: 44px", tab.group(1))
+        self.assertIn(".topbar .btn.icon { width: 44px; height: 44px; }", self.css)
+        self.assertRegex(self.css, r"\.topbar \.chip \{ height: 40px")
+
+    def test_chips_never_collapse_to_a_bare_dot(self):
+        """An amber dot with no word beside it says something is going on
+        without saying what — and it appeared at exactly the widths where
+        hovering for the title text isn't possible. Nothing may hide a chip's
+        words; what gives way instead is the row."""
+        self.assertNotIn(".chipwords", self.css)
+        self.assertNotIn("chipwords", self.html)
+        for chip_text in ("authChipText", "pausedChipText"):
+            self.assertIn(f'id="{chip_text}"', self.html)
+
+    def test_usage_numbers_are_labelled_in_the_bar(self):
+        """'19% · 100%' is two readings with nothing saying which window
+        either belongs to. The label sits next to the number, in the bar —
+        not in a tooltip."""
+        self.assertIn('<span class="ulab">Session</span>', self.html)
+        self.assertIn('<span class="ulab">Week</span>', self.html)
+        self.assertIn('id="usageChipPct"', self.html)
+        self.assertIn('id="usageChipWeekPct"', self.html)
+        import re
+        for span in ("usageChipPct", "usageChipWeekPct"):
+            m = re.search(r'\$\("#%s"\)\.textContent = (.+);' % span, self.js)
+            self.assertIsNotNone(m, f"{span} is never set")
+            self.assertNotIn("reset", m.group(1),
+                             "reset times belong in the hover, not the bar")
+
+    def test_usage_hover_is_only_the_reset_times(self):
+        """The tooltip used to carry the two windows, the budget threshold
+        and 'tap for settings' — three of which are visible on screen or
+        obvious from the cursor. What isn't visible anywhere is when each
+        window rolls over, so that is all the hover says."""
+        import re
+        body = self.js[self.js.index("function renderUsageChip()"):]
+        body = body[:body.index("\n}\n")]
+        self.assertIn('lines.push(`Session resets ${reset}`)', body)
+        self.assertIn('lines.push(`Week resets ${weekReset}`)', body)
+        self.assertIn('chip.title = lines.join("\\n")', body)
+        self.assertNotIn("budget_percent", body,
+                         "the budget threshold is a settings fact, not a hover")
+        self.assertNotIn("Tap for settings", body)
 
     def test_collapsed_chips_keep_their_meaning(self):
-        """With the words hidden, title/aria-label are the only thing left
-        carrying the state to a screen reader or a hover."""
+        """Sighted users read the words; a screen reader reads the label."""
         self.assertIn('chip.setAttribute("aria-label"', self.js)
-
-    # The staged bands, newest measurement first. Sliced out of the CSS rather
-    # than listed here: the widths move whenever anything joins the bar, and a
-    # test that hardcodes them only ever says "someone changed the numbers".
-    def _bands(self):
-        import re
-        tail = self.css[self.css.index("The bar sheds text in five measured steps"):]
-        parts = re.split(r"@media \(max-width: (\d+)px\) \{", tail)
-        return [(int(parts[i]), parts[i + 1]) for i in range(1, len(parts) - 1, 2)]
-
-    def test_the_bar_sheds_text_in_stages(self):
-        """One breakpoint could not work: the full bar needs ~1090px and the
-        phone bar ~315px, so a single cut leaves one band badly overflowing.
-
-        The exact widths are measured by tests/manual/measure-topbar.mjs,
-        which renders all three bar states and fails on any overflow. This
-        pins that the staging exists at all and reads downward."""
-        widths = [w for w, _ in self._bands()]
-        self.assertGreaterEqual(len(widths), 4, "the bar needs staged bands")
-        self.assertEqual(widths, sorted(widths, reverse=True),
-                         "bands must narrow monotonically")
-
-    def test_tab_labels_go_before_the_tabs_do(self):
-        """All five tabs survive to the narrowest band; only their labels go."""
-        self.assertIn(".viewtab span:not(.badge) { display: none; }", self.css)
-        for view in ("insights", "findings", "terminal", "memory", "docs"):
-            self.assertIn(f'data-view="{view}"', self.html)
-
-    def test_badges_survive_to_the_floor_as_dots(self):
-        """A badge you can't see is a decision nobody makes. Two numbered
-        badges cost 46px, which is what pushed the 320px floor over — so at
-        the narrowest they collapse to a dot rather than disappearing."""
-        band = next((css for _, css in self._bands() if ".viewtab .badge {" in css), None)
-        self.assertIsNotNone(band, "no band collapses the tab badges")
-        self.assertIn("border-radius: 50%", band)
-        self.assertNotIn("display: none", band.split(".viewtab .badge {")[1][:300])
 
     def test_the_healthy_auth_chip_does_not_exist_at_any_width(self):
         """"Claude · subscription" was a permanent green label for a state
@@ -320,25 +304,61 @@ class TestTopbarFitsOneRow(unittest.TestCase):
         self.assertIn('id="authChip" class="chip hidden"', self.html)
         self.assertIn('chip.classList.toggle("hidden", settled)', self.js)
 
-    def test_usage_carries_both_windows_and_neither_reset_time(self):
-        """The session gates automatic runs; the week is what actually ends a
-        Claude plan's week. Both numbers are in the bar. The reset times are
-        not: they change once per window while the numbers change all day, and
-        "resets 8:00 AM" cost more bar width than a whole tab."""
-        self.assertIn('id="usageChipWeekPct"', self.html)
+    # The staged bands, widest first. Sliced out of the CSS rather than
+    # listed here: the widths move whenever anything joins the bar, and a
+    # test that hardcodes them only ever says "someone changed the numbers".
+    def _bands(self):
         import re
-        setters = {}
-        for span in ("usageChipText", "usageChipPct", "usageChipWeekPct"):
-            m = re.search(r'\$\("#%s"\)\.textContent = (.+);' % span, self.js)
-            self.assertIsNotNone(m, f"{span} is never set")
-            setters[span] = m.group(1)
-            self.assertNotIn("reset", m.group(1),
-                             "reset times belong in the hover, not the bar")
-        self.assertIn("week_percent", setters["usageChipWeekPct"],
-                      "the week span shows something other than the weekly number")
-        # …and the hover is where they went.
-        self.assertIn("resets ${reset}", self.js)
-        self.assertIn("resets ${weekReset}", self.js)
+        tail = self.css[self.css.index("The bar never wraps text away to fit"):]
+        parts = re.split(r"@media \(max-width: (\d+)px\) \{", tail)
+        return [(int(parts[i]), parts[i + 1]) for i in range(1, len(parts) - 1, 2)]
+
+    def test_the_bar_changes_layout_in_stages(self):
+        """One breakpoint could not work: the labelled row needs ~1200px and
+        the phone bar fits 320. The exact widths are measured by
+        tests/manual/measure-topbar.mjs, which renders all three bar states
+        and fails on any overflow. This pins that the staging exists at all
+        and reads downward."""
+        widths = [w for w, _ in self._bands()]
+        self.assertGreaterEqual(len(widths), 3, "the bar needs staged bands")
+        self.assertEqual(widths, sorted(widths, reverse=True),
+                         "bands must narrow monotonically")
+
+    def test_tab_labels_come_back_on_the_phone_strip(self):
+        """Labels drop out of the single row because five names cost more
+        than the whole right-hand end of the bar. They are not gone for
+        good: the phone layout stacks each name under its icon, which is the
+        width where an unlabelled glyph row was hardest to read."""
+        self.assertIn(".viewtab span:not(.badge) { display: none; }", self.css)
+        phone = next((css for _, css in self._bands()
+                      if "flex-wrap: wrap" in css), None)
+        self.assertIsNotNone(phone, "no band turns the bar into the phone shape")
+        self.assertIn("flex-direction: column", phone)
+        self.assertIn(".viewtab span:not(.badge) {", phone)
+        self.assertIn("width: 100%", phone, "the tabs need a strip of their own")
+        for view in ("insights", "findings", "terminal", "memory", "docs"):
+            self.assertIn(f'data-view="{view}"', self.html)
+
+    def test_badges_survive_the_phone_layout_as_a_corner_count(self):
+        """A badge you can't see is a decision nobody makes. Stacked tabs
+        can't hold it in the row, so it pins to the icon's corner rather
+        than disappearing or collapsing to an unreadable dot."""
+        phone = next((css for _, css in self._bands()
+                      if "flex-wrap: wrap" in css), None)
+        badge = phone.split(".viewtab .badge {")[1][:300]
+        self.assertIn("position: absolute", badge)
+        self.assertNotIn("display: none", badge)
+        self.assertNotIn("font-size: 0;", badge, "a badge with no text is a dot")
+
+    def test_the_terminal_is_sized_from_a_measured_bar(self):
+        """The phone bar is two rows and goes to three when a trouble chip
+        joins the usage pill, so 'viewport minus 48px' is wrong at three
+        different heights. --bar-h is a per-layout fallback that the panel
+        overwrites with what the bar actually measures."""
+        self.assertIn("--bar-h", self.css)
+        self.assertIn("height: calc(100dvh - var(--bar-h))", self.css)
+        self.assertIn("trackBarHeight", self.js)
+        self.assertIn('setProperty(\n      "--bar-h"', self.js)
 
 
 class TestHypothesisIdentity(unittest.TestCase):

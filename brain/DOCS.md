@@ -227,7 +227,7 @@ Deployed automatically to `/config/custom_components/brain/` at startup.
 - A **conversation agent** named brAIn, for Settings → Voice Assistants.
 - Services: `brain.send_prompt`, `brain.run_task`, `brain.run_insight`,
   `brain.add_memory`, `brain.clear_conversation`.
-- **BRUH Power Tools**: 56 admin-gated registry-management services under `brain.*`
+- **BRUH Power Tools**: 65 admin-gated registry-management services under `brain.*`
   (areas, floors, labels, entities, devices, integrations, helpers, zones, persons,
   blueprints, statistics, users, dashboards, repair issues), adapted from
   [Spook](https://github.com/frenck/spook) (MIT).
