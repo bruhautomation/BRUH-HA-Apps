@@ -266,12 +266,53 @@
      because a button in the bar cannot be the way back to a bar that is
      gone. It is the same button both ways round. -->
 <div id="viewTerminal" class="view">
+  <!-- Two faces on the same Claude Code, and the same credential, working
+       directory and permissions behind both. Chat renders the CLI's
+       stream-json output as DOM, so text reflows to the screen it is on;
+       classic is ttyd over tmux, which is a character grid and is the right
+       answer for anything that draws one (a TUI, htop, an installer). -->
+  <section id="termChat" class="chat">
+    <div id="chatLog" class="chatlog" role="log" aria-live="polite" aria-label="Conversation"></div>
+    <div id="chatEmpty" class="chatempty">
+      <h3>Ask brAIn anything about your house</h3>
+      <p>It has your entities, your history and your memory, and it can change
+         things — edit an automation, rename a device, build a dashboard.</p>
+      <div class="chatseeds">
+        <button class="seed">Why did the porch light not come on last night?</button>
+        <button class="seed">Which of my devices have stopped reporting?</button>
+        <button class="seed">Rename the switches in the garage to what they actually are</button>
+      </div>
+    </div>
+    <div id="chatErr" class="chaterr hidden"></div>
+    <form id="chatForm" class="chatbar">
+      <textarea id="chatInput" rows="1" enterkeyhint="send" autocomplete="off"
+                placeholder="Message brAIn…" aria-label="Message brAIn"></textarea>
+      <button type="submit" id="chatSend" class="chatsend" aria-label="Send">
+        <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg>
+      </button>
+      <button type="button" id="chatStop" class="chatsend stop hidden" aria-label="Stop">
+        <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2"/></svg>
+      </button>
+    </form>
+  </section>
+
   <iframe id="termFrame" title="Terminal" src="about:blank"></iframe>
-  <button id="termExpand" class="termfab" data-tip="Full-screen terminal"
-          aria-label="Full-screen terminal" aria-pressed="false">
-    <svg viewBox="0 0 24 24" class="ico ico-in" aria-hidden="true"><path d="M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5"/></svg>
-    <svg viewBox="0 0 24 24" class="ico ico-out" aria-hidden="true"><path d="M4 9h5V4M20 9h-5V4M4 15h5v5M20 15h-5v5"/></svg>
-  </button>
+
+  <div class="termfabs">
+    <button id="termMode" class="termfab" data-tip="Switch to the classic terminal"
+            aria-label="Switch to the classic terminal">
+      <svg viewBox="0 0 24 24" class="ico ico-in" aria-hidden="true"><path d="m5 8 4 4-4 4M13 16h6"/></svg>
+      <svg viewBox="0 0 24 24" class="ico ico-out" aria-hidden="true"><path d="M21 12a8 8 0 0 1-8 8H7l-4 3V12a8 8 0 0 1 8-8h2a8 8 0 0 1 8 8z"/></svg>
+    </button>
+    <button id="chatNew" class="termfab" data-tip="New chat" aria-label="New chat">
+      <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+    </button>
+    <button id="termExpand" class="termfab" data-tip="Full-screen terminal"
+            aria-label="Full-screen terminal" aria-pressed="false">
+      <svg viewBox="0 0 24 24" class="ico ico-in" aria-hidden="true"><path d="M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5"/></svg>
+      <svg viewBox="0 0 24 24" class="ico ico-out" aria-hidden="true"><path d="M4 9h5V4M20 9h-5V4M4 15h5v5M20 15h-5v5"/></svg>
+    </button>
+  </div>
 </div>
 
 <div id="viewMemory" class="view">
@@ -430,6 +471,19 @@
         <span class="subtext">Generate cards on their intervals and schedules. Turn off to pause
         all background generation — nothing runs (or spends tokens) until you turn it back on.
         Manual “Generate” and “Ask” always work.</span></span></label>
+
+      <label for="setTerminalUi">Terminal tab</label>
+      <select id="setTerminalUi" class="selin">
+        <option value="chat">Chat — Claude Code as messages</option>
+        <option value="classic">Classic — the full terminal (ttyd + tmux)</option>
+      </select>
+      <p class="hint">Both run the same Claude Code, with the same login, the same
+        <code>/config</code> and the same permissions — the difference is how you see it.
+        <b>Chat</b> reflows to the screen it's on, folds tool calls into one line each, and
+        gives you a normal text box (so dictation and autocorrect behave); it's the one to
+        use on a phone. <b>Classic</b> is a real terminal, which is what you want for
+        anything that draws its own screen — a TUI, <code>htop</code>, an installer — or for
+        running shell commands yourself. You can switch at any time from the Terminal tab.</p>
 
       <label for="setPlan">Your Claude subscription</label>
       <select id="setPlan" class="selin">

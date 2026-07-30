@@ -82,10 +82,13 @@ Pick brAIn in **Settings → Voice assistants** and talk to it from any Assist p
 satellite or the app. Answers land in a few seconds from a pool of pre-warmed workers,
 with your memory and an area map already in the prompt.
 
-## It has a terminal
+## It has a terminal, in two shapes
 
-The real Claude Code CLI in your browser, running with your \`/config\` in front of it —
-built for a phone as well as a desk. Press **⤢** to give it the whole screen.
+The real Claude Code CLI in your browser, running with your \`/config\` in front of it.
+**Chat** renders it as a conversation — text that reflows to your screen, tool calls
+folded into a line each, a normal text box — and **Classic** is a true terminal for
+anything that draws its own screen. Same session, same permissions, one button between
+them. Press **⤢** to give either the whole screen.
 
 ## It can be undone
 
@@ -193,6 +196,21 @@ services, check history, edit YAML, reload config.
 
 It's the same terminal the add-on runs, served through this panel, so there's no second
 sidebar entry and no second login.
+
+**It has two faces**, and the button in the corner switches between them (so does
+⚙ Settings). Both run the same Claude Code, on the same login, in the same \`/config\`,
+with the same permissions — the difference is entirely how you see it.
+
+**Chat** is the default. Claude Code's output rendered as a conversation: text that
+reflows to your screen, code blocks that scroll inside their own box, tool calls folded
+into one line each (tap for the arguments and the result), reasoning behind a "Thinking"
+line, and a real text box so dictation and autocorrect behave. **⏹** stops an answer
+in progress and **＋** starts a new chat. It survives a reload, a locked phone, and the
+add-on restarting.
+
+**Classic** is a true terminal — ttyd over tmux. Use it for anything that draws its own
+screen (a TUI, \`htop\`, an installer), for running shell commands yourself, or just
+because you prefer it.
 
 **On a small screen it takes the room it needs.** The bar above folds away by itself
 while the keyboard is up and comes back when you dismiss it; **⤢** in the corner folds

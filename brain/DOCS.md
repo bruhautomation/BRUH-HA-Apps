@@ -161,12 +161,35 @@ Assistants and talk to it from any Assist pipeline, satellite or the app.
   states, services, the registries. One setting widens it to the full toolset, shell
   and file edits included.
 
-### It has a full terminal
+### It has a full terminal — in two shapes
 
 The **Terminal** tab is the real Claude Code CLI, in your browser, running as a
 non-root user with your `/config` in front of it. Everything above, plus everything a
 capable engineer with a shell can do: read logs, edit YAML, write scripts, install
 packages, use git, take the long way round a hard problem.
+
+It has two faces, and you switch between them with the **⌨/💬 button on the tab
+itself** (or in ⚙ Settings). Both run the same Claude Code, on the same login, in the
+same `/config`, with the same permissions — what differs is only how you see it.
+
+**Chat** (the default) renders Claude Code's own output as a conversation:
+
+- **Text reflows** to whatever screen you're on. A terminal is a grid of fixed
+  columns; at the ~40 columns a phone has, that means sentences broken mid-word. This
+  is ordinary text, so it wraps like text.
+- **Code blocks keep the grid** — inside their own horizontal scroller, so a
+  200-column log line never makes the whole page slide sideways.
+- **Tool calls collapse to one line each.** `Read /config/automations.yaml`, with a
+  dot that goes green or red; tap it for the arguments and the full result. In the
+  grid terminal each of those was twenty lines you scrolled past.
+- **Reasoning folds away** behind a "Thinking" line you can open.
+- **The input is a real text box**, so dictation, autocorrect and selection behave.
+- **⏹ stops a running answer**, and **＋ starts a new chat**. The conversation
+  survives a page reload, a phone locking, and the add-on restarting.
+
+**Classic** is ttyd over tmux — a true terminal. Use it for anything that draws its
+own screen (a TUI, `htop`, an installer), for running shell commands yourself, or
+simply because you prefer it.
 
 - **Native Home Assistant access** through the same MCP server the rest of brAIn uses.
 - **`/config/CLAUDE.md` written for you** at startup, describing your actual
@@ -229,7 +252,7 @@ One ingress panel, five tabs.
 | --- | --- |
 | **Insights** | Your cards, and the ask bar that makes new ones. A question becomes a card; a line starting "learn about…" starts a study session instead. |
 | **Findings** | What brAIn thinks is broken, with **Fix it** and **Not a problem**. A count on the tab means something is waiting on you. |
-| **Terminal** | Full Claude Code, served through the panel — no second sidebar entry, no second login. Press ⤢ to give it the whole screen. |
+| **Terminal** | Full Claude Code, served through the panel — no second sidebar entry, no second login. Two faces: **Chat** (the default: the same session rendered as messages) and **Classic** (ttyd + tmux). Switch with the button on the tab, or in ⚙ Settings. Press ⤢ to give either the whole screen. |
 | **Memory** | The memory document, editable, plus the queue behind it and any hypotheses waiting on a yes/no. |
 | **Docs** | This guide, in the panel. |
 
@@ -281,6 +304,9 @@ through the Supervisor — both screens always show the same value.
 | `enable_insights` | bool | `true` | Run insight generation and show the Insights tab. |
 
 ### Terminal
+
+The **Chat / Classic** choice is not here — it lives in the panel's ⚙ Settings (and on
+the Terminal tab itself), because it changes nothing about how the add-on runs.
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -399,6 +425,7 @@ edges.
 | `/config/.brain/memory/inbox/` | Candidate facts awaiting consolidation. |
 | `/config/.brain/findings/inbox/` | Problems study sessions found, awaiting filing. |
 | `/config/CLAUDE.md` | The generated description of your installation. |
+| `/data/chat_transcript.json` | The chat terminal's scrollback. Losing it costs a scrollback, never context — Claude Code keeps the conversation itself. |
 | `/config/custom_components/brain/` | The Home Assistant integration, deployed at startup. |
 | `/data/findings.json` | The findings list and its history. |
 | `/data/.brain/edits/` | The edit journal `brain undo` restores from. |

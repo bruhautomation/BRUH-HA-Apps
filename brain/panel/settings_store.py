@@ -11,6 +11,10 @@ the panel's ⚙ dialog edits at runtime — no add-on restart needed:
                     real account utilization isn't available.
   budget_percent  — how much of each 5-hour session window Insights may
                     consume before auto-refresh pauses (5-100).
+  terminal_ui     — which face the Terminal tab wears: "chat" (Claude Code
+                    rendered as messages) or "classic" (ttyd + tmux, the
+                    character grid). Both drive the same CLI with the same
+                    permissions; the difference is entirely presentation.
 
 It can also hold the add-on's Configuration-tab options, but only as a
 FALLBACK: those six settings normally live in the add-on's own options via
@@ -43,6 +47,11 @@ SETTINGS_FILE = os.environ.get("BRAIN_SETTINGS_FILE", "/data/settings.json")
 
 PLANS = ("pro", "max5", "max20")
 
+# The Terminal tab's two faces. "chat" is the default because it is the
+# one that works on the device most people open the panel on; the grid is
+# still there, one press away, for everything a grid is actually for.
+TERMINAL_UIS = ("chat", "classic")
+
 # Runtime-overridable add-on options: name → allowed integer range.
 # None (or absent) = use the value from the add-on's Configuration tab.
 OPTION_RANGES = {
@@ -62,6 +71,7 @@ DEFAULTS = {
     "auto_enabled": True,
     "plan": "pro",
     "budget_percent": 25,
+    "terminal_ui": "chat",
     "refresh_hours": None,
     "history_days": None,
     "history_keep_runs": None,
@@ -90,6 +100,8 @@ def load() -> dict:
         out["auto_enabled"] = data["auto_enabled"]
     if data.get("plan") in PLANS:
         out["plan"] = data["plan"]
+    if data.get("terminal_ui") in TERMINAL_UIS:
+        out["terminal_ui"] = data["terminal_ui"]
     pct = data.get("budget_percent")
     if isinstance(pct, int) and not isinstance(pct, bool) and 5 <= pct <= 100:
         out["budget_percent"] = pct
@@ -168,6 +180,11 @@ def save(fields: dict) -> dict:
         elif key == "plan":
             if value not in PLANS:
                 raise ValueError(f"plan must be one of {', '.join(PLANS)}")
+            clean[key] = value
+        elif key == "terminal_ui":
+            if value not in TERMINAL_UIS:
+                raise ValueError(
+                    f"terminal_ui must be one of {', '.join(TERMINAL_UIS)}")
             clean[key] = value
         elif key == "budget_percent":
             if not isinstance(value, int) or isinstance(value, bool) \

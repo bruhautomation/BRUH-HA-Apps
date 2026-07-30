@@ -31,6 +31,8 @@ Shared brand sources live in `branding/` (SVGs plus `render.mjs`, which regenera
 
 **Every control in the bar does its own job.** Three of them used to open Settings, so a bar reporting three different things answered all of them with one dialog. The usage pill opens a disclosure popover (`#chipPop`) with both windows, their resets and what the budget gates — a *press*, never a hover, because a `title` is unreadable on the device where that pill matters most. The paused chip undoes what it reports: `data-mode="off"` presses straight through to `saveSettings({auto_enabled: true})`, while a reached budget explains itself instead (nothing can un-spend it). ⚙ is the only route to Settings. Storage access goes through `prefGet`/`prefSet` — a browser may refuse an iframe its `localStorage`, and a throw at the top level takes out every handler declared below it.
 
+**The Terminal tab has two faces and one session.** `terminal_ui` (`settings_store`, default `chat`) picks between the chat renderer and ttyd; `body.term-classic` is the switch, and `#termMode` on the tab flips it as well as ⚙. Chat drives the *same* Claude Code — `chat_session.py` runs one long-lived `claude -p --input-format stream-json --output-format stream-json` in `/config`, so it inherits the same `settings.local.json` permissions as the listeners and the fixer. **Everything that knows the CLI's wire shape lives in `_normalise`**; the panel only ever sees `text`/`text_delta`/`thinking`/`tool`/`tool_result`/`notice`/`result`/`state`, and an unrecognised event is dropped rather than rendered raw. Deltas and run stats carry `_keep: False` because the `assistant` event that follows repeats the same text whole — keeping both doubles every answer on the next reload. The transcript (`/data/chat_transcript.json`, capped) is *ours*; Claude Code owns the real conversation and resumes it by `session_id`, so losing the file costs a scrollback and never context. Stopping asks with a `control_request` and kills-then-`--resume`s if nothing answers within `INTERRUPT_GRACE` — an older CLI ignores the request silently, which is indistinguishable from thinking. One SSE stream per viewer, opened only while the tab is in front; the first frame is the snapshot, so no client has to stitch "what it was" onto "what happened next".
+
 **The terminal folds the bar away.** `body.term-immersive` hides `.topbar` and zeroes `--bar-h`; `body.term-kb` marks the automatic case. Two independent reasons, tracked separately in `termChrome` so neither clobbers the other: ⤢ (`#termExpand`, remembered in `localStorage`) and the software keyboard being up right now. Only the ttyd frame can detect that keyboard — iOS does not resize an iframe's visual viewport, and `inject.html` already does the measuring for its own toolbar — so it posts `{type: "brain-keyboard"}` up and the panel accepts it only from `#termFrame.contentWindow`. tmux drops its status line under 90 columns via `client-attached`/`client-resized` hooks; the width test is a shell `[` because tmux does not expand a nested `#{client_width}` inside its own `#{<:a,b}`, which silently answers "narrower" at every width.
 
 ## Repository Structure
@@ -43,6 +45,12 @@ BRUH-HA-Apps/
 │   ├── build.yaml               # Multi-arch build config
 │   ├── Dockerfile               # Container build definition
 │   ├── run.sh                   # Main startup/entrypoint script
+│   ├── panel/                   # The ingress panel: aiohttp server + the UI
+│   │   ├── server.py            # Routes, scheduler, the chat terminal's API
+│   │   ├── chat_session.py      # One live `claude` stream-json session, as events
+│   │   ├── engine.py            # How Claude is invoked (argv, env, credential)
+│   │   ├── app.js / style.css / index.html / docs.js  # The whole UI
+│   │   └── *_store.py           # settings, findings, knowledge, prompts, usage
 │   ├── ha-mcp-server/           # MCP server for HA API access
 │   │   └── ha_mcp_server.py     # Python MCP server (stdio-based)
 │   ├── scripts/                 # Shell scripts and tools

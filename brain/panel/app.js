@@ -151,6 +151,7 @@ function renderAuth() {
   $("#settingsBtn").classList.toggle("hidden", !s.authenticated);
   renderUsageChip();
   renderPausedChip();
+  syncTermMode();
 }
 
 function fmtClock(epoch) {
@@ -1452,6 +1453,7 @@ function renderModelField(data) {
 
 function renderSettingsForm(data) {
   $("#setEnabled").checked = data.settings.auto_enabled !== false;
+  $("#setTerminalUi").value = data.settings.terminal_ui || "chat";
   $("#setPlan").value = data.settings.plan || "pro";
   $("#setBudget").value = data.settings.budget_percent;
   $("#setBudgetVal").textContent = data.settings.budget_percent + "%";
@@ -1533,6 +1535,14 @@ $("#setEnabled").addEventListener("change", () =>
   saveSettings({ auto_enabled: $("#setEnabled").checked }));
 $("#setPlan").addEventListener("change", () =>
   saveSettings({ plan: $("#setPlan").value }));
+// Applied straight away rather than on the next status poll, so the Terminal
+// tab has already changed by the time the dialog is closed.
+$("#setTerminalUi").addEventListener("change", () => {
+  const mode = $("#setTerminalUi").value;
+  applyTermMode(mode);
+  if (state.status && state.status.settings) state.status.settings.terminal_ui = mode;
+  saveSettings({ terminal_ui: mode });
+});
 $("#setBudget").addEventListener("input", () => {
   $("#setBudgetVal").textContent = $("#setBudget").value + "%";
   $("#usageMark").style.left = Math.min(100, Number($("#setBudget").value)) + "%";
@@ -2502,13 +2512,20 @@ function switchView(name) {
     refreshFindings().then(renderFindings);
   }
   if (name === "terminal") {
-    const frame = $("#termFrame");
-    // Lazy: don't start a shell session for someone who never opens the tab.
-    if (frame.getAttribute("src") === "about:blank") frame.src = "terminal/";
+    if (chatState.session === "classic") {
+      const frame = $("#termFrame");
+      // Lazy: don't start a shell session for someone who never opens the tab.
+      if (frame.getAttribute("src") === "about:blank") frame.src = "terminal/";
+    } else {
+      chatConnect();
+    }
   } else {
     // Leaving the tab: whatever the keyboard was doing over there, the bar
-    // belongs to whichever tab is in front now.
+    // belongs to whichever tab is in front now. The chat stream goes too —
+    // an open SSE for a tab nobody is looking at holds a connection and a
+    // subscriber for nothing.
     termChrome.keyboard = false;
+    chatDisconnect();
   }
   applyTermChrome();
   if (name === "memory") renderKnowledge();
@@ -2577,6 +2594,341 @@ function syncBarHeight() {
   new ResizeObserver(syncBarHeight).observe(bar);
 })();
 
+// ---------------------------------------------------------- chat terminal
+//
+// The same Claude Code the classic tab runs, rendered as DOM instead of
+// drawn into a character grid. Everything that knows the CLI's wire format
+// lives in chat_session.py; what arrives here is a short list of event
+// types — user, text, text_delta, thinking, tool, tool_result, notice,
+// result, state, cleared — and this file only has to draw them.
+
+const chatState = {
+  es: null,          // EventSource, or null when the stream is down
+  live: null,        // the message node partial text is streaming into
+  liveText: "",
+  tools: new Map(),  // tool_use id -> its <details>, so a result can find it
+  working: null,     // the "…" placeholder shown before the first token
+  ready: false,      // has a snapshot been drawn
+  session: "chat",   // "chat" | "classic"
+  runState: "idle",
+};
+
+function chatLog() { return $("#chatLog"); }
+
+// Sticky-bottom, but only if you were already there — nothing is ruder than
+// yanking someone back down while they are reading what scrolled past.
+function chatAtBottom() {
+  const log = chatLog();
+  return log.scrollHeight - log.scrollTop - log.clientHeight < 90;
+}
+
+function chatScroll(force) {
+  const log = chatLog();
+  if (force || chatAtBottom()) log.scrollTop = log.scrollHeight;
+}
+
+function chatAppend(node, stick) {
+  const wasBottom = stick !== false && chatAtBottom();
+  chatLog().appendChild(node);
+  $("#chatEmpty").classList.toggle("hidden", chatLog().childElementCount > 0);
+  if (wasBottom) chatScroll(true);
+  return node;
+}
+
+// Thinking is generated BEFORE the text it precedes, but it only reaches us
+// in the assistant message that closes the turn — by which time the text has
+// already been streaming into a live node for several seconds. Appending it
+// would put the reasoning after the conclusion it led to, so it goes in
+// where it belongs instead. The transcript a reload repaints has it in the
+// right order already; this only fixes the live view.
+function chatInsertBeforeLive(node) {
+  const wasBottom = chatAtBottom();
+  if (chatState.live) chatLog().insertBefore(node, chatState.live);
+  else chatLog().appendChild(node);
+  $("#chatEmpty").classList.toggle("hidden", chatLog().childElementCount > 0);
+  if (wasBottom) chatScroll(true);
+  return node;
+}
+
+// The panel already has an escaping markdown renderer for the guide, and
+// this is exactly the content that needs one: it escapes first, so a model
+// that echoes a <script> back at you renders it as text.
+function chatMarkdown(text) {
+  const node = el("div", "msg bot");
+  node.innerHTML = renderMarkdown(String(text || ""));
+  return node;
+}
+
+function chatToolNode(ev) {
+  const box = el("details", "toolcall running");
+  const sum = el("summary");
+  sum.appendChild(el("span", "tdot"));
+  sum.appendChild(el("span", "tname", ev.name || "tool"));
+  sum.appendChild(el("span", "tsum", ev.summary || ""));
+  box.appendChild(sum);
+  const body = el("div", "tbody");
+  if (ev.input && ev.input !== "{}") {
+    body.appendChild(el("div", "tlabel", "Input"));
+    const pre = el("pre");
+    pre.appendChild(el("code", null, ev.input));
+    body.appendChild(pre);
+  }
+  box.appendChild(body);
+  return box;
+}
+
+function chatToolResult(ev) {
+  const box = chatState.tools.get(ev.id);
+  if (!box) return;
+  box.classList.remove("running");
+  box.classList.add(ev.ok ? "ok" : "bad");
+  const body = box.querySelector(".tbody");
+  body.appendChild(el("div", "tlabel", ev.ok ? "Result" : "Error"));
+  const pre = el("pre");
+  pre.appendChild(el("code", null, ev.text || "(no output)"));
+  body.appendChild(pre);
+  // A failure is the one case worth opening unasked — it is the reason the
+  // next thing Claude says will look strange.
+  if (!ev.ok) box.open = true;
+}
+
+function chatWorking(on) {
+  if (on && !chatState.working) {
+    const node = el("div", "chatwork");
+    node.append(el("i"), el("i"), el("i"));
+    chatState.working = chatAppend(node);
+  } else if (!on && chatState.working) {
+    chatState.working.remove();
+    chatState.working = null;
+  }
+}
+
+// Partial text streams into a live node; the assistant event that follows
+// carries the same block whole, and replaces it. That is why deltas are not
+// kept in the transcript — otherwise every answer would appear twice on the
+// next reload.
+function chatDelta(text) {
+  chatWorking(false);
+  if (!chatState.live) {
+    chatState.liveText = "";
+    chatState.live = chatAppend(el("div", "msg bot"));
+  }
+  chatState.liveText += text;
+  chatState.live.innerHTML = renderMarkdown(chatState.liveText);
+  chatScroll();
+}
+
+function chatSealLive(finalText) {
+  if (chatState.live) {
+    chatState.live.innerHTML = renderMarkdown(String(finalText || chatState.liveText));
+    chatState.live = null;
+    chatState.liveText = "";
+    chatScroll();
+    return true;
+  }
+  return false;
+}
+
+function chatRender(ev) {
+  switch (ev.type) {
+    case "user": {
+      const row = el("div", "msg user");
+      row.appendChild(el("div", "bubble", ev.text));
+      chatAppend(row, true);
+      chatScroll(true);
+      break;
+    }
+    case "text_delta":
+      chatDelta(ev.text);
+      break;
+    case "text":
+      chatWorking(false);
+      if (!chatSealLive(ev.text)) chatAppend(chatMarkdown(ev.text));
+      break;
+    case "thinking": {
+      chatWorking(false);
+      const box = el("details", "think");
+      box.appendChild(el("summary", null, "Thinking"));
+      const body = el("div", "tbody");
+      body.innerHTML = renderMarkdown(ev.text || "");
+      box.appendChild(body);
+      chatInsertBeforeLive(box);
+      break;
+    }
+    case "tool": {
+      chatWorking(false);
+      chatSealLive();
+      const node = chatAppend(chatToolNode(ev));
+      if (ev.id) chatState.tools.set(ev.id, node);
+      break;
+    }
+    case "tool_result":
+      chatToolResult(ev);
+      break;
+    case "notice":
+      chatWorking(false);
+      chatSealLive();
+      chatAppend(el("div", "chatnotice" + (ev.level === "error" ? " error" : ""),
+                    ev.text || ""));
+      break;
+    case "result": {
+      chatSealLive();
+      const bits = [];
+      if (ev.duration_ms) bits.push((ev.duration_ms / 1000).toFixed(1) + "s");
+      if (ev.turns) bits.push(ev.turns + (ev.turns === 1 ? " turn" : " turns"));
+      if (ev.cost_usd) bits.push("$" + Number(ev.cost_usd).toFixed(3));
+      if (bits.length) chatAppend(el("div", "chatstat", bits.join(" · ")));
+      break;
+    }
+    case "cleared":
+      chatReset();
+      break;
+    case "state":
+      chatSetState(ev.state, ev.error);
+      break;
+    default:
+      break;
+  }
+}
+
+function chatReset() {
+  chatLog().innerHTML = "";
+  chatState.live = null;
+  chatState.liveText = "";
+  chatState.working = null;
+  chatState.tools.clear();
+  $("#chatEmpty").classList.remove("hidden");
+}
+
+function chatSetState(runState, error) {
+  chatState.runState = runState;
+  const busy = runState === "busy";
+  $("#chatSend").classList.toggle("hidden", busy);
+  $("#chatStop").classList.toggle("hidden", !busy);
+  if (!busy) { chatSealLive(); chatWorking(false); }
+  const box = $("#chatErr");
+  box.textContent = error || "";
+  box.classList.toggle("hidden", !error);
+}
+
+// One stream, reopened on drop. EventSource retries by itself, but only
+// while the page believes the connection died — an ingress that closes it
+// cleanly looks like a finished response, so the close handler re-arms.
+function chatConnect() {
+  if (chatState.es) return;
+  let es;
+  try {
+    es = new EventSource("api/chat/stream");
+  } catch (e) {
+    return;
+  }
+  chatState.es = es;
+  es.onmessage = (msg) => {
+    let ev;
+    try { ev = JSON.parse(msg.data); } catch (e) { return; }
+    if (ev.type === "snapshot") {
+      chatReset();
+      (ev.events || []).forEach(chatRender);
+      chatSetState(ev.state, ev.error);
+      chatState.ready = true;
+      chatScroll(true);
+      return;
+    }
+    chatRender(ev);
+  };
+  es.onerror = () => {
+    es.close();
+    if (chatState.es === es) {
+      chatState.es = null;
+      // Only while the tab is still the one on screen: a closed stream for a
+      // tab nobody is looking at is a reconnect loop nobody asked for.
+      if (currentView === "terminal" && chatState.session === "chat") {
+        setTimeout(chatConnect, 2000);
+      }
+    }
+  };
+}
+
+function chatDisconnect() {
+  if (!chatState.es) return;
+  chatState.es.close();
+  chatState.es = null;
+}
+
+async function chatSend(text) {
+  text = (text || "").trim();
+  if (!text || chatState.runState === "busy") return;
+  const input = $("#chatInput");
+  input.value = "";
+  chatGrow();
+  chatWorking(true);
+  try {
+    await api("api/chat/send", { method: "POST", body: JSON.stringify({ text }) });
+  } catch (e) {
+    chatWorking(false);
+    // Put it back rather than losing what they typed.
+    input.value = text;
+    chatGrow();
+    toast(e.message);
+  }
+}
+
+// Grow with the text, up to the CSS cap. Reset first so deleting a line
+// shrinks it again.
+function chatGrow() {
+  const input = $("#chatInput");
+  input.style.height = "auto";
+  input.style.height = Math.min(input.scrollHeight, window.innerHeight * 0.4) + "px";
+}
+
+$("#chatForm").addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  chatSend($("#chatInput").value);
+});
+
+$("#chatInput").addEventListener("input", chatGrow);
+
+// Enter sends on a keyboard and breaks a line on a touchscreen. On a phone
+// the return key is where your thumb is and a two-line message is normal;
+// on a desktop, reaching for a button to send is the wrong ergonomics.
+$("#chatInput").addEventListener("keydown", (ev) => {
+  if (ev.key !== "Enter" || ev.shiftKey || ev.isComposing) return;
+  if (window.matchMedia && window.matchMedia("(pointer: coarse)").matches) return;
+  ev.preventDefault();
+  chatSend($("#chatInput").value);
+});
+
+// The panel cannot see an iOS keyboard open inside the ingress iframe, but
+// it knows when its own composer took focus — which on a touchscreen is the
+// same moment. Same fold as the classic terminal's, same way back.
+$("#chatInput").addEventListener("focus", () => {
+  if (window.matchMedia && window.matchMedia("(pointer: coarse)").matches) {
+    termChrome.keyboard = true;
+    applyTermChrome();
+  }
+});
+$("#chatInput").addEventListener("blur", () => {
+  if (termChrome.keyboard) {
+    termChrome.keyboard = false;
+    applyTermChrome();
+  }
+});
+
+$("#chatStop").addEventListener("click", async () => {
+  try { await api("api/chat/stop", { method: "POST" }); }
+  catch (e) { toast(e.message); }
+});
+
+$("#chatNew").addEventListener("click", async () => {
+  if (chatLog().childElementCount && !window.confirm(
+    "Start a new chat? This one is cleared and Claude forgets its context.")) return;
+  try { await api("api/chat/new", { method: "POST" }); }
+  catch (e) { toast(e.message); }
+});
+
+document.querySelectorAll(".chatseeds .seed").forEach((btn) =>
+  btn.addEventListener("click", () => chatSend(btn.textContent)));
+
 // ------------------------------------------------- immersive terminal
 
 // Two independent reasons the bar folds away, and they must not clobber one
@@ -2620,6 +2972,49 @@ $("#termExpand").addEventListener("click", () => {
   termChrome.pinned = !termChrome.pinned;
   prefSet("brain.termFull", termChrome.pinned ? "1" : "0");
   applyTermChrome();
+});
+
+// ------------------------------------------------- which terminal you get
+//
+// Two faces on one Claude Code. The setting is server-side rather than
+// per-browser because it is a property of this brAIn, not of the device
+// that happened to open it — and because ⚙ Settings is where someone will
+// go looking for it after switching by accident.
+
+function applyTermMode(mode) {
+  const classic = mode === "classic";
+  chatState.session = classic ? "classic" : "chat";
+  document.body.classList.toggle("term-classic", classic);
+  const btn = $("#termMode");
+  const label = classic ? "Switch to chat" : "Switch to the classic terminal";
+  btn.setAttribute("aria-label", label);
+  btn.dataset.tip = label;
+  const onTab = currentView === "terminal";
+  if (classic) {
+    chatDisconnect();
+    const frame = $("#termFrame");
+    // Lazy in both directions: no shell for someone who never opens the tab,
+    // and no stream for a chat nobody is looking at.
+    if (onTab && frame.getAttribute("src") === "about:blank") frame.src = "terminal/";
+  } else if (onTab) {
+    chatConnect();
+  }
+  const sel = $("#setTerminalUi");
+  if (sel) sel.value = classic ? "classic" : "chat";
+}
+
+function syncTermMode() {
+  const s = state.status;
+  const mode = (s && s.settings && s.settings.terminal_ui) || "chat";
+  if (mode !== chatState.session) applyTermMode(mode);
+}
+
+$("#termMode").addEventListener("click", () => {
+  const next = chatState.session === "classic" ? "chat" : "classic";
+  applyTermMode(next);
+  if (state.status && state.status.settings) state.status.settings.terminal_ui = next;
+  saveSettings({ terminal_ui: next },
+    next === "classic" ? "Classic terminal" : "Chat terminal");
 });
 
 // The ttyd frame is the only thing in the stack that can tell whether the

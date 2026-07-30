@@ -2,6 +2,48 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.11.0
+
+### The terminal stops being a window inside a window
+
+A terminal is a grid of fixed-width cells. On a phone that grid is about 40
+columns wide, and a grid cannot reflow — so sentences broke mid-word, a
+single tool call spent twenty lines saying what one line could say, and the
+whole thing sat inside ttyd inside tmux inside an iframe.
+
+The Terminal tab now has **two faces**, and a button on the tab switches
+between them (⚙ Settings has the same control). Both run the same Claude
+Code, on the same login, in the same `/config`, under the same permissions —
+the difference is entirely how you see it.
+
+**Chat** is the new default. Claude Code's own `stream-json` output rendered
+as ordinary DOM:
+
+- **Text reflows** to the screen it is on, because it is text and not a grid.
+- **Code blocks keep their grid** — inside their own horizontal scroller, so
+  a 200-column log line never makes the page slide sideways.
+- **Tool calls fold into one line each** — `Read /config/automations.yaml`
+  with a dot that goes green or red. Open one for the arguments and the full
+  result; a failed one opens itself, because it is the reason the next thing
+  Claude says will look strange.
+- **Reasoning folds away** behind a "Thinking" line.
+- **The composer is a real text box**, so dictation, autocorrect and
+  selection behave — there is no hidden xterm helper element to fight with,
+  and no iOS diff-fix needed because there is nothing to fix.
+- **⏹ stops an answer** and **＋ starts a new chat**. Stopping asks the CLI
+  politely first and kills it if it does not answer; either way the
+  conversation survives, because Claude Code is what persisted it.
+- The transcript survives a reload, a locked phone, and an add-on restart.
+
+**Classic** is the terminal exactly as it was — ttyd over tmux — and is the
+right answer for anything that draws its own screen: a TUI, `htop`, an
+installer, or running shell commands yourself.
+
+Nothing about what Claude may do changed. The chat session runs in `/config`
+under the same `settings.local.json` permissions as the Assist listener, the
+Automation listener and the Findings fixer, so there is still one answer to
+"what may Claude do here" rather than two.
+
 ## 1.10.0
 
 ### The bar is one size now

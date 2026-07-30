@@ -17,7 +17,7 @@ Full documentation for every add-on lives at **[bruhautomation.com](https://bruh
 - **It explains your house** — insight cards with real interactive visualisations, proposed for *your* home rather than shipped as defaults. Ask anything and get a card back; keep the good ones as recurring, or drop any of them on a dashboard
 - **It remembers** — one editable document of durable facts about your home, learned from conversations, insight runs and study sessions, and read by every part of brAIn
 - **It talks** — a conversation agent for Assist, answering in seconds from pre-warmed workers, area-aware and memory-aware
-- **It has a terminal** — the real Claude Code CLI in your browser, built for a phone as well as a desk
+- **It has a terminal** — the real Claude Code CLI in your browser, in two shapes: **Chat** renders it as a conversation that reflows to a phone, **Classic** is ttyd + tmux for anything that draws its own screen
 - **It can be undone** — every file Claude writes under `/config` is snapshotted first; `brain undo` puts it back
 - **It shows what it costs** — your Anthropic session and weekly usage in the bar and as HA sensors, with a budget that pauses automatic work before it eats your plan
 

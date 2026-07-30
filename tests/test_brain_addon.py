@@ -447,6 +447,84 @@ class TestHypothesisIdentity(unittest.TestCase):
         self.assertEqual(by_text["claim 0"], "open")
 
 
+class TestChatTerminalPanel(unittest.TestCase):
+    """The chat terminal's half of the Terminal tab. The session itself is
+    covered by tests/test_chat_terminal.py; this is the markup and the
+    handlers, which is where "the tab is blank" comes from."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.html = (PANEL / "index.html").read_text()
+        cls.js = (PANEL / "app.js").read_text()
+        cls.css = (PANEL / "style.css").read_text()
+
+    def test_both_faces_live_in_the_terminal_tab(self):
+        """One tab, two renderings of the same session — not a sixth tab."""
+        self.assertIn('id="termChat"', self.html)
+        self.assertIn('id="termFrame"', self.html)
+        self.assertIn("body:not(.term-classic) #viewTerminal.active .chat", self.css)
+        self.assertIn("body:not(.term-classic) #viewTerminal.active #termFrame",
+                      self.css)
+
+    def test_the_composer_is_a_real_textarea(self):
+        """The whole point: dictation, autocorrect, selection and the system
+        keyboard all behave, because there is no hidden xterm helper element
+        for them to fight with. And 16px, because anything smaller makes iOS
+        zoom the page on focus."""
+        self.assertIn('<textarea id="chatInput"', self.html)
+        self.assertRegex(self.css, r"\.chatbar textarea \{[^}]*font-size: 16px")
+
+    def test_code_blocks_scroll_inside_themselves(self):
+        """The one thing that genuinely wants a character grid keeps one —
+        without making the page scroll sideways to give it."""
+        import re
+        block = re.search(r"\.msg\.bot pre, \.chat pre \{(.*?)\}", self.css, re.S)
+        self.assertIsNotNone(block, "no code-block rule")
+        self.assertIn("overflow-x: auto", block.group(1))
+
+    def test_model_output_is_escaped_before_it_is_rendered(self):
+        """Chat content is the one thing in this panel that is neither
+        authored by us nor typed by the user, so it is exactly where a lazy
+        innerHTML becomes an injection vector."""
+        self.assertIn("node.innerHTML = renderMarkdown(", self.js)
+        self.assertIn("function esc(s)", self.js)
+        # renderMarkdown escapes first — pinned by the docs tests too, but
+        # this is the caller that makes it load-bearing.
+        self.assertIn("inlineMd(s)", self.js)
+
+    def test_tool_calls_collapse_to_one_line(self):
+        """Twenty lines of JSON per call is what made the grid terminal
+        unreadable; the name and what it was aimed at is what a reader
+        scanning back actually wants."""
+        self.assertIn("function chatToolNode(", self.js)
+        self.assertIn('el("span", "tsum"', self.js)
+        self.assertIn(".toolcall > summary", self.css)
+        # A failure opens itself: it is the reason the next thing Claude
+        # says will look strange.
+        self.assertIn("if (!ev.ok) box.open = true;", self.js)
+
+    def test_the_stream_is_dropped_when_the_tab_is_not_in_front(self):
+        """An open SSE for a tab nobody is looking at holds a connection and
+        a subscriber for nothing."""
+        self.assertIn("function chatDisconnect()", self.js)
+        self.assertIn("chatDisconnect();", self.js)
+
+    def test_the_mode_is_a_setting_not_a_browser_preference(self):
+        """It is a property of this brAIn, not of the device that happened
+        to open it — and ⚙ Settings is where someone goes looking for it
+        after switching by accident."""
+        self.assertIn('id="setTerminalUi"', self.html)
+        self.assertIn("terminal_ui", self.js)
+        store = (PANEL / "settings_store.py").read_text()
+        self.assertIn('TERMINAL_UIS = ("chat", "classic")', store)
+        self.assertIn('"terminal_ui": "chat"', store)
+
+    def test_the_switch_is_also_where_the_terminal_is(self):
+        """Nobody goes to Settings to change what they are looking at."""
+        self.assertIn('id="termMode"', self.html)
+        self.assertIn('$("#termMode").addEventListener("click"', self.js)
+
+
 class TestDocsTab(unittest.TestCase):
     """The guide's nav, search index and body all come from one source, so
     the thing worth testing is that the source is well-formed and that the
