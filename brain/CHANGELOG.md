@@ -2,6 +2,62 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.13.0
+
+### Findings end, instead of piling up
+
+"I did it" beside "Not a problem" looked like two ways to make a card go
+away, and both of them left it lying there under a filter forever. That is
+two problems in one: you couldn't tell which button to press, and pressing
+either one didn't actually finish anything.
+
+A finding now **ends**, and ending it deletes the row. Every ending does the
+same three things:
+
+* the answer goes into `memory.md` as a plain fact about your home
+* the wording is remembered, so the same problem is never reported at you
+  twice
+* the card is gone
+
+The two buttons say what each one *teaches brAIn*, which is the only
+difference that ever mattered:
+
+* **✓ I've fixed it** — it was a real problem and it's sorted now
+* **Not a problem here** — it was never a problem; this is normal in this
+  house
+
+An automated fix is the third ending, and it works differently on purpose:
+the card **stays** and turns green with what brAIn changed and which files
+it touched. It altered something in your house, and news you haven't read is
+not settled. **✓ Got it** clears it once you have — no second memory line,
+because the fix already wrote one when it made the change.
+
+The **Dismissed** and **Fixed** filters are gone. In their place, **Answered**
+is one line per ending — what it was, which answer you gave, when — with
+**Let brAIn raise it again** if you change your mind. That press stops the
+suppression and nothing more: nothing comes back on its own, the next
+analysis is simply free to find it, and if it has genuinely stopped
+happening, nothing does.
+
+Dismissals you made before this release are folded into the same record at
+startup, so nothing you had already waved off comes back.
+
+### Three fixes for things that only show up on a phone
+
+* **The floating buttons could vanish for good.** Raising the software
+  keyboard hid them — including ⤢, the way back out of a folded bar — and
+  they only returned when something happened to notice the keyboard had
+  gone. On iOS, that something frequently never fired, and the terminal was
+  left with no visible controls at all. They are never hidden now: the
+  escape hatch may not be behind the state it escapes from.
+* **The slash palette stopped filling in.** Typing past the end of the
+  filtered list left the highlight pointing at a row that no longer existed,
+  and Enter/Tab silently did nothing from then on. The highlight is clamped
+  at the moment it's used.
+* **Two scrollbars in one pane.** The page scrolled behind the terminal, and
+  the memory editor scrolled inside its own already-scrolling box. The
+  terminal tab locks the page behind it, and the editor is one scroller.
+
 ## 1.12.1
 
 ### Memory was never being consolidated at all

@@ -9,15 +9,27 @@ name means nothing to anyone.
 The lifecycle is deliberately short, because a list of problems nobody ever
 settles is just a second inbox:
 
-  open ──fix──▶ fixing ──▶ fixed        brAIn made the change
-                       ──▶ failed       it tried and couldn't
-                       ──▶ needs_you    only a human can (replace the battery)
-       ──ignore────────▶ ignored        not a problem — never raise it again
-       ──done──────────▶ fixed          you handled it yourself
+  open ──fix──▶ fixing ──▶ fixed       brAIn made the change; you haven't
+                       │               read what it did yet
+                       ├─▶ failed      it tried and couldn't
+                       └─▶ needs_you   only a human can (replace the battery)
+       ──"I've handled it"───▶ settled: you fixed it yourself
+       ──"Not a problem"─────▶ settled: it is normal in this home
+  fixed ──"Got it"────────────▶ settled: you have seen what brAIn changed
 
-`ignored` is the important one. It is never shown again *and* it is fed back
-into the analyst's prompt, so "stop telling me about the garage freezer"
-sticks across every future run rather than having to be re-dismissed weekly.
+**A finding leaves the list when a person ends it, and then it is gone.**
+Every ending is a press, and every press deletes the row — there is no
+archive of dismissed cards to scroll past, because a list of things nobody
+has to look at again is exactly the clutter this tab exists to avoid. Note
+that `fixed` is therefore still *live*: brAIn changing something in your
+house is news, and news you have not read is not settled.
+
+What survives an ending is the answer, not the row. It goes two places: a
+plain line in `memory.md` (this is now true of the home) and a normalised
+key in the settled ledger, which is what stops the analyst reporting the
+same thing at you next week. The ledger is an index, never a queue —
+nothing is swept out of it, because sweeping it is how a problem you
+already answered comes back.
 
 Two producers write here:
 
@@ -47,8 +59,15 @@ FINDINGS_FILE = Path(os.environ.get("BRAIN_FINDINGS_FILE", "/data/findings.json"
 # the shared volume, swept by whoever reads next.
 INBOX_DIR = Path(os.environ.get(
     "BRAIN_FINDINGS_INBOX", "/config/.brain/findings/inbox"))
+# The answers, kept after the rows are gone. Not the findings file, because
+# this one is an index that is never swept — see settle_and_clear.
+SETTLED_FILE = Path(os.environ.get(
+    "BRAIN_FINDINGS_SETTLED", "/data/findings-settled.json"))
 
 MAX_FINDINGS = 200
+# Far more than the list, because it is one short line each and losing the
+# oldest entry is how a problem you answered in spring comes back in autumn.
+MAX_SETTLED = 1000
 MAX_TEXT = 200
 MAX_DETAIL = 600
 MAX_FIX = 600
@@ -58,15 +77,18 @@ MAX_CHANGED = 8
 SEVERITIES = ("info", "warning", "serious", "critical")
 STATUSES = ("open", "fixing", "fixed", "failed", "needs_you", "ignored")
 # Statuses that still want the homeowner's attention on the Findings tab.
-LIVE_STATUSES = ("open", "fixing", "failed", "needs_you")
+# `fixed` is in here: an automated fix changed something in the house, and
+# that stays on the list until somebody has read what it did.
+LIVE_STATUSES = ("open", "fixing", "fixed", "failed", "needs_you")
 # ...and the subset the tab badge counts: a fix already running isn't a
 # decision anyone has to make.
-UNSETTLED_STATUSES = ("open", "failed", "needs_you")
+UNSETTLED_STATUSES = ("open", "fixed", "failed", "needs_you")
 
 # What goes back into the analyst's prompt. Ignored findings are the point of
 # the block — capped so it can never grow into a wall.
 PROMPT_OPEN = 12
 PROMPT_IGNORED = 20
+PROMPT_FIXED = 20
 
 _WS_RE = re.compile(r"\s+")
 _PUNCT_RE = re.compile(r"[^\w\s]")
@@ -244,6 +266,10 @@ def listing() -> dict:
                      if f["status"] in UNSETTLED_STATUSES
                      and not is_snoozed(f, now)]),
         "snoozed": len([f for f in shaped if is_snoozed(f, now)]),
+        # The answers, so the tab can show what it has stopped asking about.
+        # Same read, same reply: a second endpoint for it would be a second
+        # thing to keep in step with every button that settles something.
+        "settled": settled_listing(),
     }
 
 
@@ -272,13 +298,16 @@ def open_count() -> int:
 def is_known(text: str) -> bool:
     """True when this finding has been reported before in ANY status.
 
-    Includes settled ones on purpose: re-raising something you already
-    ignored is exactly the behaviour the ignore button is meant to buy off.
+    Reads the settled ledger as well as the list, because settling now
+    deletes the row: without the ledger, "you already dealt with this"
+    would last exactly as long as the card did.
     """
     key = normalize(text)
     if not key:
         return True
-    return any(normalize(f.get("text", "")) == key for f in _load())
+    if any(normalize(f.get("text", "")) == key for f in _load()):
+        return True
+    return any(e.get("key") == key for e in _load_settled())
 
 
 # ---------------------------------------------------------------------------
@@ -333,9 +362,15 @@ def add_many(objs: list[dict]) -> list[dict]:
 
     Returns only the ones that were new — already-known findings are dropped
     silently, in any status, which is what makes a dismissal permanent.
+
+    "Known" spans the settled ledger as well as the list. It has to: settling
+    now deletes the row, so deduping against the list alone would make every
+    ending behave like Forget, and the analyst would re-report next week the
+    thing you answered today.
     """
     items = _load()
     seen = {normalize(f.get("text", "")) for f in items}
+    seen |= {str(e.get("key") or "") for e in _load_settled()}
     used = {int(f.get("ts") or 0) for f in items}
     created = []
     for obj in objs:
@@ -354,7 +389,11 @@ def add_many(objs: list[dict]) -> list[dict]:
 
 def add(text: str, **fields) -> tuple[dict | None, bool]:
     """Record one finding. Returns (entry, created); an already-known finding
-    returns the existing entry untouched, whatever status it now holds."""
+    returns the existing entry untouched, whatever status it now holds.
+
+    A finding that was settled has no entry left to return, so it comes back
+    as (None, False): nothing to show, and nothing created.
+    """
     entry = coerce({"text": text, **fields})
     if entry is None:
         return None, False
@@ -406,6 +445,118 @@ def snooze(ts: int, until: int) -> dict | None:
     return None
 
 
+def settle_and_clear(ts: int, kind: str) -> dict | None:
+    """Finish with a finding: remember the answer, drop the row.
+
+    A settled finding used to sit in the list for good — the tab filled up
+    with things nobody had to look at again, and "dismissed" and "fixed"
+    read as two kinds of clutter rather than two different answers.
+
+    What has to survive is not the row, it is the ANSWER: that this was
+    dealt with, or that it is not a problem in this home. Both of those are
+    facts about the house, so they go where facts about the house go (the
+    caller writes them into memory), and the record kept here is the small
+    thing the analyst needs — a normalised key, so the same problem is never
+    reported at you twice.
+
+    That is the same shape as the facts ledger: an index, not a queue.
+    Nothing is deleted from it, because deleting is exactly how something
+    you already answered comes back.
+    """
+    if kind not in ("fixed", "ignored"):
+        raise ValueError(f"unknown settlement: {kind}")
+    items = _load()
+    settled = None
+    kept = []
+    for entry in items:
+        if int(entry.get("ts") or 0) == ts:
+            settled = _shape(entry)
+            continue
+        kept.append(entry)
+    if settled is None:
+        return None
+    _write(kept)
+    _remember_settled(settled, kind)
+    return settled
+
+
+def _remember_settled(shaped: dict, kind: str, when: int = 0) -> None:
+    ledger = _load_settled()
+    key = normalize(shaped["text"])
+    ledger = [e for e in ledger if e.get("key") != key]
+    ledger.append({
+        "key": key,
+        "text": shaped["text"],
+        "kind": kind,
+        "ts": when or int(time.time()),
+    })
+    _write_settled(ledger[-MAX_SETTLED:])
+
+
+def _load_settled() -> list[dict]:
+    try:
+        data = json.loads(SETTLED_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    items = data.get("settled") if isinstance(data, dict) else None
+    return [e for e in items if isinstance(e, dict)] if isinstance(items, list) else []
+
+
+def _write_settled(items: list[dict]) -> None:
+    SETTLED_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = SETTLED_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"settled": items}, ensure_ascii=False),
+                   encoding="utf-8")
+    tmp.replace(SETTLED_FILE)
+
+
+def settled_listing() -> list[dict]:
+    """What has been answered, newest first — for the Settled filter."""
+    return sorted(_load_settled(), key=lambda e: e.get("ts") or 0, reverse=True)
+
+
+def unsettle(key: str) -> bool:
+    """Put an answered problem back in play.
+
+    Drops it from the ledger, which is the one thing that ever removes an
+    entry — and it is a deliberate act by the person it was hidden from,
+    which is the only reason good enough.
+    """
+    ledger = _load_settled()
+    kept = [e for e in ledger if e.get("key") != key]
+    if len(kept) == len(ledger):
+        return False
+    _write_settled(kept)
+    return True
+
+
+def migrate_settled() -> int:
+    """Fold pre-ledger dismissals into the ledger and drop their rows.
+
+    Before the ledger, "Not a problem" left the card in the list forever
+    under a Dismissed filter. That filter is gone, so an upgrade would
+    otherwise strand every one of those answers somewhere nobody can see —
+    still suppressing the finding, with nothing on screen saying so. Run at
+    startup; idempotent, because after the first pass there are no rows in
+    that status left to move.
+
+    `fixed` rows are deliberately left alone: they are live now, and the
+    homeowner reads what brAIn changed and presses Got it.
+    """
+    items = _load()
+    kept, moved = [], []
+    for entry in items:
+        if entry.get("status") == "ignored":
+            moved.append(_shape(entry))
+            continue
+        kept.append(entry)
+    for shaped in moved:
+        _remember_settled(shaped, "ignored", when=shaped.get("settled_at") or 0)
+    if moved:
+        _write(kept)
+    return len(moved)
+
+
 def reconcile_running(reason: str) -> int:
     """Demote findings left mid-fix by a process that is no longer running.
 
@@ -442,13 +593,35 @@ def remove(ts: int) -> bool:
 def prompt_block() -> str:
     """What the analyst needs to know about findings before it reports more.
 
-    Two lists, both cheap and both load-bearing: what is already reported
-    (so three cards don't all raise the same dead battery) and what the
-    homeowner has explicitly waved off (so it stays waved off).
+    Three lists, all cheap and all load-bearing: what is already reported
+    (so three cards don't all raise the same dead battery), what the
+    homeowner has explicitly waved off (so it stays waved off), and what
+    they have already dealt with (so a finished job is not handed back).
+
+    The last two come from the settled ledger rather than the list, because
+    settling deletes the row — plus any legacy row still carrying a settled
+    status from before the ledger existed.
     """
     everything = list_all()
     live = [f for f in everything if f["status"] in LIVE_STATUSES][:PROMPT_OPEN]
-    ignored = [f for f in everything if f["status"] == "ignored"][:PROMPT_IGNORED]
+
+    def _settled(kind: str, limit: int) -> list[str]:
+        seen: set[str] = set()
+        out: list[str] = []
+        for text in ([e.get("text", "") for e in settled_listing()
+                      if e.get("kind") == kind]
+                     + [f["text"] for f in everything if f["status"] == kind]):
+            key = normalize(text)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            out.append(text)
+            if len(out) >= limit:
+                break
+        return out
+
+    ignored = _settled("ignored", PROMPT_IGNORED)
+    fixed = _settled("fixed", PROMPT_FIXED)
     parts: list[str] = []
     if live:
         parts.append(
@@ -458,5 +631,10 @@ def prompt_block() -> str:
         parts.append(
             "\nPROBLEMS THE HOMEOWNER DISMISSED — they are not problems in this "
             "home. Never raise them again, in any wording:")
-        parts += [f"- {f['text']}" for f in ignored]
+        parts += [f"- {t}" for t in ignored]
+    if fixed:
+        parts.append(
+            "\nPROBLEMS THE HOMEOWNER HAS ALREADY DEALT WITH — do not raise "
+            "them again unless the data shows they have come back:")
+        parts += [f"- {t}" for t in fixed]
     return "\n".join(parts)

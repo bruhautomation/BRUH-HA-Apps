@@ -678,7 +678,11 @@ class TestChatTerminalPanel(unittest.TestCase):
         self.assertIn("slash_commands", chat)
         # The palette owns Enter while it is open, or half-typing /model
         # sends "/mod" as a message.
-        self.assertIn("chatPickCmd((matches[chatState.cmdIndex].prefix", self.js)
+        self.assertIn("const pick = matches[Math.min(chatState.cmdIndex", self.js)
+        # ...and the index is clamped where it is USED, not only where the
+        # list is drawn: the list shrinks as you type, so reading past its
+        # end threw and killed the handler.
+        self.assertIn("if (pick) chatPickCmd(", self.js)
 
 
 class TestDocsTab(unittest.TestCase):

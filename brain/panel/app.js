@@ -22,6 +22,7 @@ const state = {
   status: null,
   insights: [],
   findings: [],
+  findingsSettled: [],   // the answers, after the cards they came from went
   findFilter: "live",
   filter: "all",
   editingTags: null, // card id whose tag row is in edit mode
@@ -1660,10 +1661,16 @@ $("#fbModal").addEventListener("click", (ev) => {
 const FIND_STATUS = {
   open:      { label: "Needs a decision", cls: "open" },
   fixing:    { label: "brAIn is fixing it…", cls: "fixing" },
-  fixed:     { label: "Fixed", cls: "fixed" },
+  fixed:     { label: "brAIn fixed it — have a look", cls: "fixed" },
   failed:    { label: "Couldn't fix it", cls: "failed" },
   needs_you: { label: "Needs you", cls: "needsyou" },
   ignored:   { label: "Dismissed", cls: "ignored" },
+};
+
+// What the settled ledger says, in the words of the press that made it.
+const SETTLED_KIND = {
+  fixed:   { label: "Dealt with", cls: "fixed" },
+  ignored: { label: "Not a problem here", cls: "ignored" },
 };
 
 const FIND_SEVERITY = {
@@ -1676,24 +1683,36 @@ const FIND_SEVERITY = {
 // out of "Needs you" and gets a chip of its own rather than vanishing. The
 // point of "remind me later" is that it comes back, and something you can't
 // find is not something that came back.
+// "fixed" is in the live list: brAIn changed something in the house, and
+// that is news until you have read it. The card's only button then is
+// "Got it", which ends it like every other ending does.
 const FIND_FILTERS = [
   { id: "live", label: "Needs you", match: (f) =>
-    ["open", "fixing", "failed", "needs_you"].includes(f.status)
+    ["open", "fixing", "fixed", "failed", "needs_you"].includes(f.status)
     && !findings_isSnoozed(f) },
   { id: "snoozed", label: "Later", match: (f) => findings_isSnoozed(f) },
-  { id: "fixed", label: "Fixed", match: (f) => f.status === "fixed" },
-  { id: "ignored", label: "Dismissed", match: (f) => f.status === "ignored" },
+  // Not a filter over the list — the rows are gone. It reads the ledger of
+  // answers instead, which is why it has a renderer of its own.
+  { id: "settled", label: "Answered", ledger: true },
   { id: "all", label: "Everything", match: () => true },
 ];
 
 async function refreshFindings() {
   try {
     const data = await api("api/findings");
-    state.findings = data.findings || [];
-    updateFindBadge(data.open);
+    takeFindings(data);
   } catch (e) {
     // transient — the tab keeps whatever it last showed rather than blanking
   }
+}
+
+// Every findings endpoint answers with the same {findings, open, settled},
+// so there is one place that unpacks it — the list and its ledger arriving
+// from the same read is what keeps a just-settled card from being in both.
+function takeFindings(data) {
+  state.findings = data.findings || [];
+  state.findingsSettled = data.settled || [];
+  updateFindBadge(data.open);
 }
 
 // The badge count always comes from the server (findings_store owns what
@@ -1715,8 +1734,7 @@ async function findAction(finding, verb, done, btns) {
     const data = await api(
       del ? `api/finding/${finding.ts}` : `api/finding/${finding.ts}/${verb}`,
       { method: del ? "DELETE" : "POST" });
-    state.findings = data.findings || [];
-    updateFindBadge(data.open);
+    takeFindings(data);
     renderFindings();
     toast(done);
     if (verb === "fix") { refreshStatus().catch(() => {}); fastPoll(); }
@@ -1754,8 +1772,7 @@ async function snoozeFinding(f, choice, btns) {
   try {
     const data = await api(`api/finding/${f.ts}/snooze`, {
       method: "POST", body: JSON.stringify({ for: choice }) });
-    state.findings = data.findings || [];
-    updateFindBadge(data.open);
+    takeFindings(data);
     renderFindings();
     if (chatState.finding && chatState.finding.ts === f.ts && choice !== "now") {
       setChatFinding(null);
@@ -1787,7 +1804,7 @@ function openSnoozePop(anchor, f, btns) {
 
 // Discuss: hand the finding to the chat and go there. The action bar that
 // appears above the composer is what makes it a discussion you can end
-// rather than a detour — Fix it, I did it and Remind me later are all one
+// rather than a detour — Fix it, I've fixed it and Remind me later are one
 // press away without coming back to this tab.
 async function discussFinding(f, btns) {
   btns.forEach((b) => { b.disabled = true; });
@@ -1847,17 +1864,20 @@ function makeFinding(f) {
     busy.appendChild(el("span", "orbit"));
     busy.appendChild(el("span", null, "Fixing it now — this can take a few minutes"));
     actions.appendChild(busy);
-  } else if (f.status === "fixed" || f.status === "ignored") {
+  } else if (f.status === "fixed") {
+    // brAIn already wrote what it changed into memory when it made the
+    // change, so this press is only "I have read it" — one button, because
+    // offering a decision on something already done is a decision about
+    // nothing.
+    const ok = add(el("button", "btn small primary", "✓  Got it"));
+    tip(ok, "Clear it off the list — what brAIn changed is already in memory");
+    ok.addEventListener("click", () => findAction(f, "ack", "Cleared", btns));
+  } else if (f.status === "ignored") {
+    // A row dismissed before the settled ledger existed, still on disk
+    // until startup moves it. Startup normally gets there first.
     const back = add(el("button", "btn small ghost", "Put it back on the list"));
     back.addEventListener("click", () =>
       findAction(f, "reopen", "Back on the list", btns));
-    const forget = add(el("button", "btn icon", "✕"));
-    tip(forget, "Forget this finding entirely — it can be reported again");
-    forget.addEventListener("click", () => {
-      if (!window.confirm(
-        `Forget “${f.text}”? Unlike dismissing it, brAIn may report it again.`)) return;
-      findAction(f, "forget", "Forgotten", btns);
-    });
   } else {
     if (f.fixable) {
       const fix = add(el("button", "btn small primary",
@@ -1874,10 +1894,15 @@ function makeFinding(f) {
     tip(talk, "Ask brAIn about this one in the chat, without changing anything");
     talk.addEventListener("click", () => discussFinding(f, btns));
 
-    const done = add(el("button", "btn small", "✓  I did it"));
-    tip(done, "You handled it yourself — mark it resolved");
+    // The two endings, in the words of what they mean rather than of what
+    // they do to a row. They are easy to confuse until you say what each
+    // one teaches brAIn: one says the problem is over, the other says it
+    // was never a problem here.
+    const done = add(el("button", "btn small", "✓  I've fixed it"));
+    tip(done, "It was a real problem and it's sorted now. brAIn writes that "
+      + "into memory and clears it off the list.");
     done.addEventListener("click", () =>
-      findAction(f, "done", "Marked done", btns));
+      findAction(f, "done", "Fixed — written into memory", btns));
 
     // Not a decision, so not next to the ones that are. Dismissing is
     // permanent and teaches the analyst never to raise it again; this just
@@ -1886,10 +1911,11 @@ function makeFinding(f) {
     tip(later, "Take it off the list for a while — it comes back, unchanged");
     later.addEventListener("click", (ev) => openSnoozePop(ev.currentTarget, f, btns));
 
-    const ignore = add(el("button", "btn small ghost", "Not a problem"));
-    tip(ignore, "Dismiss it — brAIn will never raise this again");
+    const ignore = add(el("button", "btn small ghost", "Not a problem here"));
+    tip(ignore, "It's normal in this house and never needed fixing. brAIn "
+      + "remembers that and won't raise it again, in any wording.");
     ignore.addEventListener("click", () => findAction(
-      f, "ignore", "Dismissed — brAIn won't raise it again", btns));
+      f, "ignore", "Noted — brAIn won't raise it again", btns));
   }
   if (findings_isSnoozed(f)) {
     const back = el("div", "findsnoozed");
@@ -1903,13 +1929,46 @@ function makeFinding(f) {
   return card;
 }
 
+// An answered problem, as one line. There is no card left to show — the
+// answer is the whole record — so it renders as a line and not as a
+// tombstone of the card it used to be.
+function makeSettled(entry) {
+  const kind = SETTLED_KIND[entry.kind] || SETTLED_KIND.fixed;
+  const row = el("article", `settledrow st-${kind.cls}`);
+  const head = el("div", "findmeta");
+  head.appendChild(el("span", "findstate", kind.label));
+  if (entry.ts) {
+    head.appendChild(el("span", "findsrc", new Date(entry.ts * 1000)
+      .toLocaleDateString([], { month: "short", day: "numeric" })));
+  }
+  row.appendChild(head);
+  row.appendChild(el("p", "settledtext", entry.text));
+  const again = el("button", "btn small ghost", "Let brAIn raise it again");
+  tip(again, "Stop suppressing it. Nothing comes back on its own — the next "
+    + "analysis is simply free to find it, if it's still there.");
+  again.addEventListener("click", async () => {
+    again.disabled = true;
+    try {
+      takeFindings(await api("api/findings/unsettle", {
+        method: "POST", body: JSON.stringify({ key: entry.key }) }));
+      renderFindings();
+      toast("brAIn can raise this again");
+    } catch (e) { toast(e.message); again.disabled = false; }
+  });
+  row.appendChild(again);
+  return row;
+}
+
+function findCount(f) {
+  return f.ledger ? (state.findingsSettled || []).length
+                  : state.findings.filter(f.match).length;
+}
+
 function renderFindings() {
   const chips = $("#findFilters");
   chips.textContent = "";
   const counts = {};
-  FIND_FILTERS.forEach((f) => {
-    counts[f.id] = state.findings.filter(f.match).length;
-  });
+  FIND_FILTERS.forEach((f) => { counts[f.id] = findCount(f); });
   FIND_FILTERS.forEach((f) => {
     // "Everything" always shows; the others only once they hold something,
     // so a home with nothing wrong isn't handed three empty filters.
@@ -1923,6 +1982,20 @@ function renderFindings() {
   const list = $("#findList");
   list.textContent = "";
   const active = FIND_FILTERS.find((f) => f.id === state.findFilter) || FIND_FILTERS[0];
+  if (active.ledger) {
+    const settled = state.findingsSettled || [];
+    if (!settled.length) {
+      list.appendChild(el("div", "findempty",
+        "Nothing answered yet. When you fix something or tell brAIn it isn't "
+        + "a problem, the card goes and the answer lands here — and in memory."));
+      return;
+    }
+    list.appendChild(el("p", "findnote",
+      "These are gone from the list on purpose. brAIn knows the answers and "
+      + "won't raise any of them again."));
+    settled.forEach((e) => list.appendChild(makeSettled(e)));
+    return;
+  }
   const shown = state.findings.filter(active.match);
   if (!shown.length) {
     list.appendChild(el("div", "findempty", state.findFilter === "live"
@@ -2625,6 +2698,9 @@ function switchView(name) {
   if (currentView === "memory" && memState.editing) setMemEditing(false);
 
   currentView = name;
+  // The terminal takes the viewport, so the page behind it stops scrolling
+  // — two scrollers stacked is why a swipe sometimes moved the wrong one.
+  document.body.classList.toggle("term-open", name === "terminal");
   document.querySelectorAll(".viewtab").forEach((b) =>
     b.classList.toggle("active", b.dataset.view === name));
   document.querySelectorAll(".view").forEach((v) =>
@@ -3082,8 +3158,14 @@ $("#chatInput").addEventListener("keydown", (ev) => {
     }
     if (ev.key === "Tab" || (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing)) {
       ev.preventDefault();
-      chatPickCmd((matches[chatState.cmdIndex].prefix || "")
-                  + matches[chatState.cmdIndex].name);
+      // Clamped HERE, not only where the list is drawn. This list is
+      // recomputed on every keystroke and shrinks as you type, so an index
+      // that was in range when the palette was painted can be past the end
+      // by the time you press Enter — and reading past the end threw, which
+      // killed this handler outright. The palette then neither picked nor
+      // sent, apparently at random, until the index came back into range.
+      const pick = matches[Math.min(chatState.cmdIndex, matches.length - 1)];
+      if (pick) chatPickCmd((pick.prefix || "") + pick.name);
       return;
     }
   }
@@ -3106,12 +3188,42 @@ $("#chatInput").addEventListener("focus", () => {
     applyTermChrome();
   }
 });
-$("#chatInput").addEventListener("blur", () => {
-  if (termChrome.keyboard) {
-    termChrome.keyboard = false;
-    applyTermChrome();
-  }
+$("#chatInput").addEventListener("blur", () => releaseChatKeyboard());
+
+// Blur is not reliable enough to be the only way out of this state. On iOS,
+// dismissing the keyboard with its own control leaves the textarea focused,
+// so blur never fires — and the flag stayed true for the rest of the
+// session, holding the bar folded. Anything that means "the composer is not
+// being typed into any more" clears it, and it is re-checked rather than
+// trusted.
+// No "is the composer still focused?" guard, deliberately: on iOS it still
+// is, which is the whole problem. Unfolding the bar a moment early costs a
+// row of screen; getting this wrong the other way costs every control on
+// the page, permanently.
+function releaseChatKeyboard() {
+  if (!termChrome.keyboard) return;
+  termChrome.keyboard = false;
+  applyTermChrome();
+}
+
+// Every route back to the page: switching app, rotating, coming back to the
+// tab, or touching anything that is not the composer.
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") releaseChatKeyboard();
 });
+window.addEventListener("pageshow", () => releaseChatKeyboard());
+document.addEventListener("touchend", (ev) => {
+  if (!ev.target.closest(".chatbar")) releaseChatKeyboard();
+}, true);
+if (window.visualViewport) {
+  // The keyboard closing gives the viewport its height back. On the
+  // platforms where this fires it is the most direct signal there is.
+  window.visualViewport.addEventListener("resize", () => {
+    if (window.visualViewport.height >= window.innerHeight - 40) {
+      releaseChatKeyboard();
+    }
+  });
+}
 
 $("#chatStop").addEventListener("click", async () => {
   try { await api("api/chat/stop", { method: "POST" }); }
@@ -3155,8 +3267,7 @@ async function restoreChatFinding() {
   if (f) { setChatFinding(f); return; }
   // The list may not be loaded yet on a cold start — fetch it once.
   try {
-    const data = await api("api/findings");
-    state.findings = data.findings || [];
+    takeFindings(await api("api/findings"));
     const found = state.findings.find((x) => String(x.ts) === ts);
     if (found) setChatFinding(found);
     else prefSet("brain.chatFinding", "");
@@ -3177,9 +3288,9 @@ $("#chatFindingClose").addEventListener("click", () => setChatFinding(null));
 $("#chatFindingFix").addEventListener("click", () =>
   chatFindingAction("fix", "On it — brAIn is making the change"));
 $("#chatFindingDone").addEventListener("click", () =>
-  chatFindingAction("done", "Marked done"));
+  chatFindingAction("done", "Fixed — written into memory"));
 $("#chatFindingIgnore").addEventListener("click", () =>
-  chatFindingAction("ignore", "Dismissed — brAIn won't raise it again"));
+  chatFindingAction("ignore", "Noted — brAIn won't raise it again"));
 $("#chatFindingLater").addEventListener("click", (ev) => {
   const f = chatState.finding;
   if (!f) return;

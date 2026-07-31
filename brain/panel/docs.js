@@ -293,14 +293,25 @@ It is bounded on purpose:
 Every change it makes is snapshotted first by the same hook the terminal uses, so
 \`brain undo\` puts a file back if a fix goes wrong.
 
-**Not a problem** dismisses it, permanently. This is the important one: the dismissal is
-fed back into every future analysis, so brAIn stops raising it rather than raising it
-again next week for you to dismiss again. If the garage freezer is *supposed* to sit at
--30°C, one press ends that conversation for good.
+### The two endings
 
-**✓ I did it** is for anything with hands in it — replacing a battery, re-pairing a
-device. brAIn marks findings like these **needs you** rather than offering to fix them,
-because inventing a software substitute for a dead battery is worse than saying so.
+They are easy to confuse until you say what each one *teaches brAIn*, which is the only
+difference that matters:
+
+**✓ I've fixed it** — it was a real problem and it is sorted now. For anything with hands
+in it: replacing a battery, re-pairing a device. brAIn marks findings like these **needs
+you** rather than offering to fix them, because inventing a software substitute for a
+dead battery is worse than saying so.
+
+**Not a problem here** — it was never a problem. It is normal in this house. If the
+garage freezer is *supposed* to sit at -30°C, one press ends that conversation for good:
+the answer is fed back into every future analysis, so brAIn stops raising it rather than
+raising it again next week for you to dismiss again.
+
+Both endings do the same three things. The answer goes into memory as a plain fact about
+your home, the wording is remembered so the same problem is never reported at you twice,
+and **the card is deleted**. There is no pile of dismissed cards to scroll past — a list
+of things nobody has to look at again is not a work list.
 
 **💬 Discuss** opens it as a conversation in the Terminal tab, with everything brAIn
 knows about it already in the question: the detail, the fix it had in mind, the entity,
@@ -309,9 +320,9 @@ problem *in your house* — and told not to change anything, because "explain th
 and "go change my house" are different permissions.
 
 The decisions come with you. While you are discussing a finding, a strip above the
-message box keeps **Fix it**, **I did it**, **Later** and **Not a problem** one press
-away, so agreeing to the fix at the end of the conversation doesn't mean coming back
-here to find the card again.
+message box keeps **Fix it**, **I've fixed it**, **Later** and **Not a problem here**
+one press away, so agreeing to the fix at the end of the conversation doesn't mean
+coming back here to find the card again.
 
 **⏰ Remind me later** is the answer for "yes, but not now" — an hour, tomorrow, next
 week, next month. It is not a decision and it does not settle anything: the finding
@@ -322,12 +333,17 @@ bring it back sooner.
 
 ## After a fix
 
-Fixed and dismissed findings don't vanish — switch the filter at the top of the tab to see
-them. That archive is how you check what brAIn changed in your house last week, and
-**Put it back on the list** reopens anything that turned out not to be fixed.
+When brAIn fixes something itself, the card **stays on the list** and turns green with
+what it changed and which files it touched. That is deliberate: it altered something in
+your house, and news you haven't read is not settled. **✓ Got it** clears it once you
+have. What it changed is already in memory by then, so the press only means "I've seen
+this".
 
-Successful fixes are also written into memory, so a later analysis doesn't rediscover a
-problem brAIn resolved itself.
+The **Answered** filter is the record of everything you have ended — one line each,
+saying whether you dealt with it or told brAIn it was never a problem. It is not an
+archive of cards; the cards are gone. If you change your mind, **Let brAIn raise it
+again** stops suppressing that one. Nothing comes back on its own — the next analysis is
+simply free to find it, and if it has genuinely stopped happening, nothing does.
 `,
   },
 
