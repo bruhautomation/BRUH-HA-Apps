@@ -9,6 +9,14 @@ tell it, and answers when you speak to it.
 
 One add-on. One panel. One Claude login. It runs on your own Claude subscription.
 
+**📖 Full documentation: [bruhautomation.com/brain](https://bruhautomation.com/brain/)** —
+install guide, every feature with worked examples, the service and tool reference, and the
+changelog. This page is the short version.
+
+![The brAIn Insights tab: an ask bar, tag filters, and insight cards — one answering "Why
+did the hallway light come on at 3 am?" with a trace timeline, one showing a month of
+electricity by device](../docs/images/panel-insights.webp)
+
 ## What it does
 
 | | |
@@ -19,6 +27,11 @@ One add-on. One panel. One Claude login. It runs on your own Claude subscription
 | **Remembers** | One editable document of durable facts about your home — nicknames, household rhythms, the devices that are meant to behave oddly. Learned from conversations, insight runs and study sessions, and read by every part of brAIn. |
 | **Talks** | A conversation agent for Assist, answering in a few seconds from a pool of pre-warmed workers, with your memory and an area map already in the prompt. |
 | **Has a terminal** | The real Claude Code CLI in your browser, in two shapes: **Chat** renders it as a conversation that reflows to a phone, **Classic** is a true terminal for anything that draws its own screen. Same session behind both. |
+
+![The brAIn Findings tab, headed "What brAIn thinks is broken", listing a dead back-door
+battery sensor, thirteen orphaned entities, and two loft sensors that never rejoined after a
+Zigbee channel change — each with Fix it, Discuss, I've fixed it, Remind me later and Not a
+problem here](../docs/images/panel-findings.webp)
 
 ## Try it in one line
 
@@ -39,6 +52,10 @@ build me a dashboard for the garage with the door, the freezer and the lights
 rename every "Sonoff Switch 3" to what it actually is
 why didn't the porch light automation fire last night?
 ```
+
+![The brAIn Terminal tab in chat mode, tracing a 3 am light through the logbook and an
+automation trace, then editing the automation, validating the YAML and reloading the
+domain](../docs/images/panel-terminal.webp)
 
 ## The CLI
 
@@ -69,8 +86,13 @@ whole-system, restorable, and already solved.
 
 ## Documentation
 
-[DOCS.md](DOCS.md) covers every capability and every option, and the same guide is in
-the panel's **Docs** tab.
+**[bruhautomation.com/brain](https://bruhautomation.com/brain/)** is the full
+documentation — a page per feature with worked examples, the configuration reference, and
+the changelog.
+
+Two offline copies ship with the add-on and say the same things: [DOCS.md](DOCS.md), which
+Home Assistant renders on the add-on's **Documentation** tab, and the panel's own **Docs**
+tab, which is searchable and works with no internet at all.
 
 ## License
 
