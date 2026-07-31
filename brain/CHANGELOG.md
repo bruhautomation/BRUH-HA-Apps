@@ -2,6 +2,78 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.14.0
+
+### Switching to chat brought a fraction of the conversation
+
+The measurement, on a real transcript: 1844 replay events, of which 1701
+were tool calls and their results — **92%**. The window that carries a
+conversation across is 400 events, and it was filled newest-first, so it
+carried **3 of the 17 things the person had said** and 24 of 126 replies.
+
+Switching faces showed you the last few minutes of tool chatter and almost
+none of the conversation, which is exactly what "not all the messages come
+over" looks like, because they hadn't.
+
+The budget is now spent on the conversation first — every word either party
+said, then the most recent tool calls with whatever is left. On that same
+transcript it now carries **17 of 17 and 128 of 128**. A call and its result
+are also kept or dropped together: half a pair renders as a spinner that
+never stops, or as nothing at all while still costing a slot.
+
+### The insight card gave its title away to its buttons
+
+The card head was one row: icon, category, title, and **six** icon buttons.
+The buttons don't shrink, so on a phone they took about 250px of a 390px
+card and left the words 120px — which the category (which wraps) spent on
+three lines while the title (which truncates) was cut to "Upstair…".
+Backwards: the eyebrow is the part you can afford to lose.
+
+- The title gets the row, and wraps to two lines instead of truncating.
+- The category is one line, and it is the one that gives way.
+- **⤢ Expand** stays on the card, because it is the only button that acts on
+  what is on screen rather than on the card's definition. Regenerate, Edit,
+  Give feedback, Add to dashboard and Delete moved into **⋯**, where each of
+  them has its name and a line saying what it does — which a row of six
+  unlabelled glyphs never had room for.
+
+Measured across seven widths by `tests/manual/measure-cardhead.mjs`, which
+fails on a truncated title, a category that wraps, an overflowing head, or
+any target under 40px.
+
+### Space back above the first card
+
+- **Tag filters were four rows.** Sixteen chips wrapping is most of a phone
+  screen spent on a filter, before the first card. They are one row that
+  scrolls now, with **✦ All** pinned to the left so clearing a filter is
+  always one press.
+- **The ask hint was a four-line paragraph** teaching three features. It is
+  one line naming the second verb; asking is what the placeholder already
+  invites, and "＋ Make recurring" is a button on the card it applies to.
+- **The top bar's ⟳ is gone.** It was an unlabelled circular arrow that read
+  like a page reload and in fact queued a Claude run for **every card you
+  have** — minutes of work and a real bite out of the usage the pill beside
+  it was reporting. Cards run on their own schedule, and **⋯ → Regenerate**
+  does one on demand.
+
+### The docs tab could be zoomed and left that way
+
+Not the docs — the search box. iOS Safari zooms the whole page in when you
+focus a text control whose font is under 16px, and does **not** zoom back
+out when you leave it; inside an ingress iframe that strands the panel at
+some arbitrary scale with the bar off screen. The docs search box was
+14.4px. So were most of the dialog inputs; the chat composer was 16px
+because somebody had already hit this once and fixed it in one place.
+
+Text controls are now 16px on touch devices, asked for once rather than per
+control, so anything added later is covered by having been added. Pointer
+devices keep the density they were designed at. Long paths in inline code
+also wrap now instead of pushing the column sideways.
+
+### The guide describes the buttons that exist
+
+It still taught six icons on a card and a Refresh all in the bar.
+
 ## 1.13.0
 
 ### Findings end, instead of piling up

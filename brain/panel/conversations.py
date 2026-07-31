@@ -48,6 +48,14 @@ TITLE_SCAN_LINES = 400
 # holds the whole thing. Newest N events, so a month-long session opens
 # instantly instead of pushing 10 MB into a browser.
 REPLAY_EVENTS = 400
+# What a conversation IS: the things a person said and the things Claude said
+# back. Tool calls are how it got there, and on a working session there are
+# roughly ten of them for every sentence — see _budget.
+SPEECH = ("user", "text", "thinking")
+# How far back to read before budgeting. Bounded so a 10 MB transcript can't
+# be held in memory whole on a Pi; comfortably more than REPLAY_EVENTS can
+# spend, so the budget is what decides what you see, not this.
+MAX_SCAN_EVENTS = 5000
 MAX_TEXT = 4000
 
 # Entries that are user-shaped but are not something a person typed.
@@ -225,11 +233,52 @@ def transcript(cwd: str, session_id: str, limit: int = REPLAY_EVENTS) -> list[di
                 except ValueError:
                     continue
                 events.extend(_replay(entry))
-                if len(events) > limit * 4:
-                    del events[:len(events) - limit * 2]
+                if len(events) > MAX_SCAN_EVENTS * 2:
+                    del events[:len(events) - MAX_SCAN_EVENTS]
     except OSError:
         return []
-    return events[-limit:]
+    return _budget(events, limit)
+
+
+def _budget(events: list[dict], limit: int = REPLAY_EVENTS) -> list[dict]:
+    """The newest ``limit`` events, spent on the conversation first.
+
+    A flat "newest N" looks obviously right and is badly wrong on a real
+    session. Measured against an actual transcript: 1844 events, of which
+    1701 were tool calls and their results — 92%. The 400-event window
+    carried **3 of the 17 things the person had said**, and 24 of 126
+    replies. Switching faces showed you the last few minutes of tool chatter
+    and almost none of the conversation, which reads exactly like "it didn't
+    all come over", because it hadn't.
+
+    So speech is kept first — it is the conversation, and it is small — and
+    whatever budget is left buys the most recent tool calls.
+    """
+    if len(events) <= limit:
+        return events
+    speech = [i for i, e in enumerate(events) if e["type"] in SPEECH]
+    keep = set(speech[-limit:])
+    room = limit - len(keep)
+    if room > 0:
+        rest = [i for i in range(len(events)) if i not in keep]
+        keep.update(rest[-room:])
+    return _pair_up([e for i, e in enumerate(events) if i in keep])
+
+
+def _pair_up(events: list[dict]) -> list[dict]:
+    """A tool call and its result, or neither.
+
+    Trimming by count cuts wherever the budget runs out, which lands between
+    a call and its result often enough to matter. Half a pair is not a
+    smaller version of the whole: a call with no result renders as a spinner
+    that never stops, and a result with no call renders as nothing at all
+    while still costing a slot.
+    """
+    done = {e.get("id") for e in events if e["type"] == "tool_result"}
+    called = {e.get("id") for e in events if e["type"] == "tool"}
+    return [e for e in events
+            if not (e["type"] == "tool" and e.get("id") not in done)
+            and not (e["type"] == "tool_result" and e.get("id") not in called)]
 
 
 def _replay(entry: dict) -> list[dict]:

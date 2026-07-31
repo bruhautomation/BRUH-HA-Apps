@@ -61,7 +61,10 @@ function seed(mode) {
   $('#usageChipPct').textContent = '19%';
   $('#usageChipWeek').classList.remove('hidden');
   $('#usageChipWeekPct').textContent = '100%';
-  ['#refreshAll', '#settingsBtn'].forEach((s) => $(s).classList.remove('hidden'));
+  // The bar's only button now. "Refresh all" used to sit beside it: an
+  // unlabelled circular arrow that queued a Claude run for every card, next
+  // to the pill reporting the usage those runs spend.
+  $('#settingsBtn').classList.remove('hidden');
   // Both tab badges carrying a count: the busiest the tabs ever get.
   ['#memBadge', '#findBadge'].forEach((s) => {
     $(s).textContent = '3';

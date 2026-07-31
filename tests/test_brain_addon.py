@@ -741,6 +741,32 @@ class TestDocsTab(unittest.TestCase):
                         "brain doctor", "ha reload", "ha check"):
             self.assertIn(current, self.docs, f"guide never mentions {current}")
 
+    def test_the_guide_teaches_the_buttons_that_are_actually_there(self):
+        """The guide named six icon buttons on a card. Five of them moved
+        behind ⋯ and the sixth (Refresh all, in the top bar) is gone, so the
+        guide was teaching a UI nobody had."""
+        self.assertNotIn("refreshAll", self.app)
+        self.assertNotIn("refreshAll", self.html)
+        self.assertIn("⋯ → Regenerate", self.docs)
+        self.assertIn("⋯ → Delete", self.docs)
+        self.assertIn("⋯ → Give feedback", self.docs)
+        self.assertIn("⋯ → Add to dashboard", self.docs)
+
+    def test_no_form_control_can_trigger_the_ios_zoom_trap(self):
+        """iOS Safari zooms the page in when a text control's font is under
+        16px, and does NOT zoom back out on blur — in an ingress iframe that
+        strands the panel at an arbitrary scale. The docs search box was the
+        one people found, but every dialog input had it too, so the floor is
+        set once for touch rather than per control."""
+        css = (PANEL / "style.css").read_text()
+        self.assertIn("@media (pointer: coarse)", css)
+        coarse = css.split("@media (pointer: coarse)", 1)[1]
+        # the block has to actually name the control types and set 16px
+        block = coarse[:coarse.index("}\n}") + 3]
+        for control in ('input[type="text"]', "textarea", "select"):
+            self.assertIn(control, block, f"{control} can still zoom")
+        self.assertIn("font-size: 16px", block)
+
     def test_core_panel_functions_all_survive(self):
         """A blunt edit to app.js can silently delete whole subsystems — the
         file still parses, and nothing fails until you open the tab. Pin the

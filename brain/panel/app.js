@@ -148,7 +148,6 @@ function renderAuth() {
   $("#setup").classList.toggle("hidden", s.authenticated);
   $("#onboard").classList.toggle("hidden", !s.authenticated || obState.onboarded);
   $("#dash").classList.toggle("hidden", !ready);
-  $("#refreshAll").classList.toggle("hidden", !ready);
   $("#settingsBtn").classList.toggle("hidden", !s.authenticated);
   renderUsageChip();
   renderPausedChip();
@@ -680,6 +679,30 @@ function makeHistoryControls(id, insight, view) {
 // catInfo is null for ad-hoc "Ask" cards and insight is null until the
 // answer lands, so an in-flight question has neither — `fallbackId` carries
 // the job id for that case.
+// Everything the card can do that isn't about what's on screen right now.
+// Same popover the rest of the panel uses, so it closes the same way and only
+// one is ever open — and each item gets its words, which is what six unlabelled
+// glyphs never had room for.
+function cardMenuButton(items) {
+  const btn = el("button", "btn icon", "⋯");
+  tip(btn, "More");
+  btn.addEventListener("click", () => {
+    if (chipPopFor === btn) { closeChipPop(); return; }
+    const rows = items.map(([icon, label, hint], i) =>
+      `<button class="cardmenuitem" data-i="${i}">`
+      + `<span class="cmicon">${esc(icon)}</span>`
+      + `<span class="cmtext"><b>${esc(label)}</b>`
+      + `<small>${esc(hint)}</small></span></button>`).join("");
+    setChipPop(btn, "", `<div class="cardmenu">${rows}</div>`);
+    $("#chipPop").querySelectorAll(".cardmenuitem").forEach((row) =>
+      row.addEventListener("click", () => {
+        closeChipPop();
+        items[Number(row.dataset.i)][3]();
+      }));
+  });
+  return btn;
+}
+
 function makeCard(catInfo, insight, fallbackId) {
   const id = (insight && insight.id) || (catInfo && catInfo.id) || fallbackId;
   const job = jobFor(id);
@@ -721,53 +744,52 @@ function makeCard(catInfo, insight, fallbackId) {
     });
     actions.appendChild(enable);
   }
-  if (!active && !view) {
-    const regen = el("button", "btn icon", "↻");
-    tip(regen, "Regenerate");
-    regen.addEventListener("click", () =>
-      generate(id, (insight && insight.question) || job.question));
-    actions.appendChild(regen);
-  }
-  // ✎ edits every card: a category card opens its full editor, an ad-hoc
-  // Ask card (no definition behind it) gets the name/icon dialog
-  if (catInfo || insight) {
-    const edit = el("button", "btn icon", "✎");
-    tip(edit, catInfo
-      ? (catInfo.user ? "Edit insight — name, icon, prompt, schedule"
-        : "Edit card — name, icon, prompt, schedule")
-      : "Rename this card — name and icon");
-    edit.addEventListener("click", () => {
-      if (!catInfo) openNameEdit(insight);
-      else if (catInfo.user) openUserEdit(catInfo);
-      else openEdit(catInfo);
-    });
-    actions.appendChild(edit);
-  }
-  if (catInfo) {
-    const fb = el("button", "btn icon", "💬");
-    tip(fb, "Give feedback — remembered for every future run");
-    fb.addEventListener("click", () => openFeedback(catInfo));
-    actions.appendChild(fb);
-  }
+  // One button on the head, and a menu for the rest. Six icons in a row beside
+  // the title is what squeezed the title into an ellipsis on a phone: they are
+  // `flex: none`, so every one of them was taken out of the words you read the
+  // card by. Expand earns the visible slot because it is the only one that
+  // does something to what is on screen rather than to the card's definition.
   if (shown) {
     const expand = el("button", "btn icon", "⤢");
     tip(expand, "Expand");
     expand.addEventListener("click", () => openModal(shown));
     actions.appendChild(expand);
-    const dash = el("button", "btn icon", "▦");
-    tip(dash, "Add to dashboard");
-    dash.addEventListener("click", () => openCardModal(shown));
-    actions.appendChild(dash);
+  }
+
+  const menu = [];
+  if (!active && !view) {
+    menu.push(["↻", "Regenerate", "Run this card again now",
+      () => generate(id, (insight && insight.question) || job.question)]);
+  }
+  // ✎ edits every card: a category card opens its full editor, an ad-hoc
+  // Ask card (no definition behind it) gets the name/icon dialog
+  if (catInfo || insight) {
+    menu.push(["✎", catInfo ? "Edit" : "Rename", catInfo
+      ? (catInfo.user ? "Edit insight — name, icon, prompt, schedule"
+        : "Edit card — name, icon, prompt, schedule")
+      : "Rename this card — name and icon",
+      () => {
+        if (!catInfo) openNameEdit(insight);
+        else if (catInfo.user) openUserEdit(catInfo);
+        else openEdit(catInfo);
+      }]);
+  }
+  if (catInfo) {
+    menu.push(["💬", "Give feedback", "Remembered for every future run",
+      () => openFeedback(catInfo)]);
+  }
+  if (shown) {
+    menu.push(["▦", "Add to dashboard", "Copy this card into Home Assistant",
+      () => openCardModal(shown)]);
   }
   // ✕ deletes every card — including one whose only trace is a job, so a
   // failed Ask can be cleared away instead of sitting there forever.
   // A still-running job is left alone: the worker would just re-register it.
   if (catInfo || insight || (fallbackId && !active)) {
-    const del = el("button", "btn icon", "✕");
-    tip(del, "Delete this card and its history");
-    del.addEventListener("click", () => deleteCard(id, catInfo, catName));
-    actions.appendChild(del);
+    menu.push(["✕", "Delete", "Delete this card and its history",
+      () => deleteCard(id, catInfo, catName)]);
   }
+  if (menu.length) actions.appendChild(cardMenuButton(menu));
   head.appendChild(actions);
   card.appendChild(head);
 
@@ -2705,11 +2727,6 @@ function switchView(name) {
   document.querySelectorAll(".view").forEach((v) =>
     v.classList.toggle("active", v.id === "view" + name[0].toUpperCase() + name.slice(1)));
 
-  // Insights actions have no meaning on the other tabs. Settings stays —
-  // it is add-on-wide, not per-view.
-  const refresh = $("#refreshAll");
-  if (refresh) refresh.style.display = name === "insights" ? "" : "none";
-
   if (name === "findings") {
     // render what we have, then again once the fetch lands — but only if
     // it actually changed anything
@@ -3757,17 +3774,6 @@ $("#cardModal").addEventListener("click", (ev) => {
 });
 
 // ------------------------------------------------------------------ boot
-
-$("#refreshAll").addEventListener("click", async () => {
-  try {
-    const res = await api("api/generate_all", { method: "POST" });
-    toast(res.queued.length ? `Refreshing ${res.queued.length} insights…` : "Already refreshing");
-    await refreshStatus();
-    fastPoll();
-  } catch (e) {
-    toast(e.message);
-  }
-});
 
 $("#askForm").addEventListener("submit", async (ev) => {
   ev.preventDefault();
