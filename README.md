@@ -10,9 +10,13 @@ Full documentation for every add-on lives at **[bruhautomation.com](https://bruh
 
 ### [brAIn](brain/)
 
-**Give your smart home a mind.** Claude inside Home Assistant with full run of the place — every entity, every device, every area, floor, label, dashboard, helper, automation and add-on. One add-on, one sidebar panel, one Claude login, running on your own Claude subscription.
+**Your house already has nerves. Now give it a brAIn.** Claude plus a suite of new tools hands it the keys. Stop programming your house — let it think.
 
-It **administers** your setup (36 native tools, 65 registry-management services, and a real shell in `/config`), **finds what's broken** and offers to fix it, **explains your house** in insight cards built for your data, **remembers** what you tell it in one document everything else reads, **talks** as an Assist conversation agent, and **can be undone** — every file it writes is snapshotted first.
+A Home Assistant add-on that runs Claude Code and a suite of tools inside HA, which builds a permanent memory of your house. It sees the whole system — every entity, device, area, floor, dashboard, helper and automation — and it can change any of it. Explain a broken automation. Fix it. Write a new one. Remember why, next time.
+
+That memory isn't a black box: open it, read it, edit it, correct it. An insights panel shows what it knows about your house and what it's done there — in the sidebar, or embedded straight into your dashboards. Reach it as your conversation agent, through a full-featured chat interface, or from native Claude Code; your automations can call it too, which means your house can ask for help before you notice anything's wrong.
+
+One install, one sidebar panel, one login. Runs on the Claude Pro or Max subscription — or your own API key.
 
 📖 **[bruhautomation.com/brain](https://bruhautomation.com/brain/)** · [add-on README](brain/)
 
