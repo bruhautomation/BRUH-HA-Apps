@@ -20,6 +20,7 @@ import asyncio
 import importlib
 import json
 import os
+import re
 import sys
 import tempfile
 import time
@@ -46,12 +47,15 @@ import user_categories  # noqa: E402
 class StoreCase(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self._old = (findings_store.FINDINGS_FILE, findings_store.INBOX_DIR)
+        self._old = (findings_store.FINDINGS_FILE, findings_store.INBOX_DIR,
+                     findings_store.SETTLED_FILE)
         findings_store.FINDINGS_FILE = Path(self.tmp.name) / "findings.json"
         findings_store.INBOX_DIR = Path(self.tmp.name) / "inbox"
+        findings_store.SETTLED_FILE = Path(self.tmp.name) / "settled.json"
 
     def tearDown(self):
-        (findings_store.FINDINGS_FILE, findings_store.INBOX_DIR) = self._old
+        (findings_store.FINDINGS_FILE, findings_store.INBOX_DIR,
+         findings_store.SETTLED_FILE) = self._old
         self.tmp.cleanup()
 
 
@@ -104,6 +108,9 @@ class TestFindingsStore(StoreCase):
         self.assertEqual(len(set(ids)), 3)
 
     def test_lifecycle_and_live_filter(self):
+        """A finished fix is still live: brAIn changed something in the house
+        and nobody has read what it did yet. It leaves the list when a person
+        presses Got it, not when the run ends."""
         findings_store.add("Sensor stuck")
         ts = findings_store.list_all()[0]["ts"]
         self.assertEqual(len(findings_store.list_all("live")), 1)
@@ -114,7 +121,11 @@ class TestFindingsStore(StoreCase):
         self.assertEqual(entry["result"], "Reloaded it")
         self.assertEqual(entry["changed"], ["automation.x — trigger fixed"])
         self.assertTrue(entry["settled_at"])
-        self.assertEqual(findings_store.list_all("live"), [])
+        self.assertEqual(len(findings_store.list_all("live")), 1)
+        self.assertEqual(findings_store.open_count(), 1)
+
+        findings_store.settle_and_clear(ts, "fixed")
+        self.assertEqual(findings_store.list_all(), [])
         self.assertEqual(findings_store.open_count(), 0)
 
     def test_a_failed_fix_still_needs_you(self):
@@ -338,6 +349,7 @@ class ServerCase(unittest.TestCase):
         tmp = Path(self.tmp.name)
         self._olds = (
             findings_store.FINDINGS_FILE, findings_store.INBOX_DIR,
+            findings_store.SETTLED_FILE,
             card_tags.TAGS_FILE, self.server.INSIGHTS_DIR,
             self.server.MEMORY_INBOX_DIR, self.server.SHARED_MEMORY_FILE,
             prompt_store.OVERRIDES_FILE, feedback_store.FEEDBACK_FILE,
@@ -346,6 +358,7 @@ class ServerCase(unittest.TestCase):
         )
         findings_store.FINDINGS_FILE = tmp / "findings.json"
         findings_store.INBOX_DIR = tmp / "findings-inbox"
+        findings_store.SETTLED_FILE = tmp / "findings-settled.json"
         card_tags.TAGS_FILE = tmp / "card_tags.json"
         self.server.INSIGHTS_DIR = tmp
         self.server.MEMORY_INBOX_DIR = tmp / "memory-inbox"
@@ -386,6 +399,7 @@ class ServerCase(unittest.TestCase):
     def tearDown(self):
         (engine.run_claude, engine.run_agent) = self._old_engine
         (findings_store.FINDINGS_FILE, findings_store.INBOX_DIR,
+         findings_store.SETTLED_FILE,
          card_tags.TAGS_FILE, self.server.INSIGHTS_DIR,
          self.server.MEMORY_INBOX_DIR, self.server.SHARED_MEMORY_FILE,
          prompt_store.OVERRIDES_FILE, feedback_store.FEEDBACK_FILE,
@@ -418,7 +432,10 @@ class TestFindingRoutes(ServerCase):
 
         asyncio.run(run())
 
-    def test_ignore_done_and_reopen(self):
+    def test_done_writes_it_to_memory_and_clears_the_row(self):
+        """"I've fixed it" is an ending. The row goes, the fact that it was
+        fixed goes into memory, and the key stays so it is never raised
+        again."""
         findings_store.add("Sensor stuck")
         ts = findings_store.list_all()[0]["ts"]
 
@@ -426,19 +443,83 @@ class TestFindingRoutes(ServerCase):
             client = self._client()
             await client.start_server()
             try:
-                data = await (await client.post(f"/api/finding/{ts}/ignore")).json()
-                self.assertEqual(data["findings"][0]["status"], "ignored")
-                self.assertEqual(data["open"], 0)
-
-                await client.post(f"/api/finding/{ts}/reopen")
-                self.assertEqual(findings_store.get(ts)["status"], "open")
-
                 data = await (await client.post(f"/api/finding/{ts}/done")).json()
-                self.assertEqual(data["findings"][0]["status"], "fixed")
+                self.assertEqual(data["findings"], [])
+                self.assertEqual(data["open"], 0)
+                self.assertEqual([e["text"] for e in data["settled"]],
+                                 ["Sensor stuck"])
+                self.assertEqual(data["settled"][0]["kind"], "fixed")
                 # resolving it yourself is durable knowledge about the home
                 queued = list(self.server.MEMORY_INBOX_DIR.glob("*.jsonl"))
                 self.assertTrue(queued)
                 self.assertIn("Sensor stuck", queued[0].read_text())
+                # ...and it does not come back
+                self.assertTrue(findings_store.is_known("sensor stuck!"))
+            finally:
+                await client.close()
+
+        asyncio.run(run())
+
+    def test_ignore_says_it_is_normal_here(self):
+        """Dismissing is a different fact from fixing — this house is fine as
+        it is — so it lands in memory in different words."""
+        findings_store.add("Hallway light is on all night")
+        ts = findings_store.list_all()[0]["ts"]
+
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                data = await (await client.post(f"/api/finding/{ts}/ignore")).json()
+                self.assertEqual(data["findings"], [])
+                self.assertEqual(data["settled"][0]["kind"], "ignored")
+                queued = list(self.server.MEMORY_INBOX_DIR.glob("*.jsonl"))
+                self.assertIn("Not a problem in this home",
+                              queued[0].read_text())
+            finally:
+                await client.close()
+
+        asyncio.run(run())
+
+    def test_ack_clears_a_finished_fix_without_repeating_its_memory(self):
+        """The fixer already wrote what it changed. Got it only means "I have
+        read this", so it must not queue a second line saying it again."""
+        findings_store.add("Sensor stuck")
+        ts = findings_store.list_all()[0]["ts"]
+        findings_store.set_status(ts, "fixed", result="Reloaded it")
+
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                data = await (await client.post(f"/api/finding/{ts}/ack")).json()
+                self.assertEqual(data["findings"], [])
+                self.assertEqual(data["settled"][0]["kind"], "fixed")
+                self.assertEqual(
+                    list(self.server.MEMORY_INBOX_DIR.glob("*.jsonl")), [])
+            finally:
+                await client.close()
+
+        asyncio.run(run())
+
+    def test_unsettle_lets_brain_raise_it_again(self):
+        findings_store.add("Sensor stuck")
+        ts = findings_store.list_all()[0]["ts"]
+        findings_store.settle_and_clear(ts, "ignored")
+
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                resp = await client.post("/api/findings/unsettle",
+                                         json={"key": "sensor stuck"})
+                data = await resp.json()
+                self.assertEqual(data["settled"], [])
+                self.assertFalse(findings_store.is_known("Sensor stuck"))
+                # ...and asking again for something nothing suppresses is a 404
+                resp = await client.post("/api/findings/unsettle",
+                                         json={"key": "sensor stuck"})
+                self.assertEqual(resp.status, 404)
             finally:
                 await client.close()
 
@@ -570,6 +651,149 @@ class TestSnooze(StoreCase):
 
     def test_snoozing_an_unknown_finding_is_not_an_error(self):
         self.assertIsNone(findings_store.snooze(1, int(time.time()) + 60))
+
+
+class TestFindingsUI(unittest.TestCase):
+    """The panel is the only caller of these routes, so a verb it presses
+    that the server doesn't know is a button that does nothing — and there
+    is no import to catch it."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.js = (PANEL_DIR / "app.js").read_text(encoding="utf-8")
+        cls.server = importlib.import_module("server")
+
+    def test_every_verb_the_ui_presses_exists(self):
+        pressed = set(re.findall(r'findAction\(\s*f,\s*"([a-z]+)"', self.js))
+        pressed |= set(re.findall(r'chatFindingAction\("([a-z]+)"', self.js))
+        # "fix" and "forget" have routes of their own rather than table rows
+        for verb in pressed - {"fix", "forget"}:
+            self.assertIn(verb, self.server.FINDING_VERBS, verb)
+
+    def test_the_two_endings_read_differently(self):
+        """"I did it" beside "Not a problem" was the confusion: both looked
+        like ways to make a card go away. The labels have to say which fact
+        each one teaches the home."""
+        self.assertIn("I've fixed it", self.js)
+        self.assertIn("Not a problem here", self.js)
+        self.assertNotIn("I did it", self.js)
+
+    def test_there_is_no_archive_of_dismissed_cards(self):
+        """The whole point: an ending deletes the row. A filter listing
+        settled findings as cards would put them straight back on screen."""
+        self.assertNotIn('{ id: "ignored"', self.js)
+        self.assertNotIn('{ id: "fixed"', self.js)
+        self.assertIn('{ id: "settled", label: "Answered", ledger: true }',
+                      self.js)
+
+
+class TestSettledLedger(StoreCase):
+    """Settling deletes the row, so everything that used to be carried BY the
+    row — "we already told you about this", "you said it isn't a problem" —
+    has to be carried by the ledger instead. If it isn't, every ending
+    quietly becomes a Forget, and the analyst re-reports it next week."""
+
+    def test_settling_clears_the_row_and_keeps_the_answer(self):
+        findings_store.add("Freezer door sensor is noisy")
+        ts = findings_store.list_all()[0]["ts"]
+        settled = findings_store.settle_and_clear(ts, "ignored")
+        self.assertEqual(settled["text"], "Freezer door sensor is noisy")
+        self.assertEqual(findings_store.list_all(), [])
+        self.assertEqual(findings_store.listing()["settled"][0]["kind"],
+                         "ignored")
+
+    def test_a_settled_problem_is_never_reported_again(self):
+        findings_store.add("Freezer door sensor is noisy")
+        ts = findings_store.list_all()[0]["ts"]
+        findings_store.settle_and_clear(ts, "ignored")
+        for wording in ("Freezer door sensor is noisy",
+                        "freezer door sensor is noisy!",
+                        "  Freezer  door   sensor is noisy  "):
+            self.assertTrue(findings_store.is_known(wording), wording)
+            entry, created = findings_store.add(wording)
+            self.assertFalse(created, f"{wording!r} came back")
+            # nothing to hand back either: the row it would return is gone
+            self.assertIsNone(entry)
+        self.assertEqual(findings_store.add_many(
+            [{"text": "freezer DOOR sensor is noisy"}]), [])
+        self.assertEqual(findings_store.list_all(), [])
+
+    def test_settling_the_same_problem_twice_keeps_one_entry(self):
+        for _ in range(2):
+            findings_store.add("Noisy sensor")
+            ts = findings_store.list_all()[0]["ts"]
+            findings_store.settle_and_clear(ts, "fixed")
+            findings_store.unsettle("noisy sensor")
+            findings_store.add("Noisy sensor")
+            ts = findings_store.list_all()[0]["ts"]
+            findings_store.settle_and_clear(ts, "ignored")
+            findings_store.unsettle("noisy sensor")
+        findings_store.add("Noisy sensor")
+        ts = findings_store.list_all()[0]["ts"]
+        findings_store.settle_and_clear(ts, "ignored")
+        self.assertEqual(len(findings_store.settled_listing()), 1)
+
+    def test_unsettling_is_the_only_thing_that_forgets_an_answer(self):
+        findings_store.add("Noisy sensor")
+        ts = findings_store.list_all()[0]["ts"]
+        findings_store.settle_and_clear(ts, "ignored")
+        self.assertTrue(findings_store.unsettle("noisy sensor"))
+        self.assertFalse(findings_store.unsettle("noisy sensor"))
+        self.assertFalse(findings_store.is_known("Noisy sensor"))
+        _, created = findings_store.add("Noisy sensor")
+        self.assertTrue(created)
+
+    def test_a_settlement_that_never_happened_is_none(self):
+        self.assertIsNone(findings_store.settle_and_clear(999, "fixed"))
+
+    def test_only_the_two_endings_are_settlements(self):
+        findings_store.add("A")
+        ts = findings_store.list_all()[0]["ts"]
+        with self.assertRaises(ValueError):
+            findings_store.settle_and_clear(ts, "snoozed")
+
+    def test_the_ledger_still_teaches_the_analyst(self):
+        findings_store.add("Still open")
+        findings_store.add("Waved off")
+        findings_store.add("Sorted out")
+        for text, kind in (("Waved off", "ignored"), ("Sorted out", "fixed")):
+            ts = next(f["ts"] for f in findings_store.list_all()
+                      if f["text"] == text)
+            findings_store.settle_and_clear(ts, kind)
+        block = findings_store.prompt_block()
+        self.assertIn("Still open", block)
+        self.assertIn("DISMISSED", block)
+        self.assertIn("Waved off", block)
+        self.assertIn("ALREADY DEALT WITH", block)
+        self.assertIn("Sorted out", block)
+
+    def test_pre_ledger_dismissals_are_migrated_not_stranded(self):
+        """Upgrading with dismissed rows on disk: the Dismissed filter is
+        gone, so leaving them there would suppress findings from a place
+        nobody can see, with nothing on screen saying so."""
+        findings_store.add("Waved off ages ago")
+        findings_store.add("Still open")
+        ts = next(f["ts"] for f in findings_store.list_all()
+                  if f["text"] == "Waved off ages ago")
+        findings_store.set_status(ts, "ignored")
+
+        self.assertEqual(findings_store.migrate_settled(), 1)
+        self.assertEqual([f["text"] for f in findings_store.list_all()],
+                         ["Still open"])
+        self.assertEqual([e["text"] for e in findings_store.settled_listing()],
+                         ["Waved off ages ago"])
+        self.assertTrue(findings_store.is_known("waved off ages ago"))
+        # idempotent: a second startup has nothing left to move
+        self.assertEqual(findings_store.migrate_settled(), 0)
+
+    def test_a_finished_fix_is_not_migrated(self):
+        """It is live news, not an answer — somebody still has to read what
+        brAIn changed in their house."""
+        findings_store.add("Sensor stuck")
+        ts = findings_store.list_all()[0]["ts"]
+        findings_store.set_status(ts, "fixed", result="Reloaded it")
+        self.assertEqual(findings_store.migrate_settled(), 0)
+        self.assertEqual(len(findings_store.list_all("live")), 1)
 
 
 class TestSnoozeAndDiscussRoutes(ServerCase):

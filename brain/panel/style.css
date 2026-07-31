@@ -697,6 +697,29 @@ body.modal-open {
 }
 .chippop .pnote b { color: var(--ink-2); font-weight: 600; }
 
+/* The Memory pane is a TAB, not a dialog — and it kept the dialog's
+   scrolling when it was relocated out of one.
+
+   `adoptMemoryPane()` moves the knowledge modal's `.edit-body` into the tab
+   verbatim, which is what lets every id and handler keep working. What came
+   with it was `.edit-body { overflow-y: auto }` and `.kmd { max-height:
+   320px; overflow: auto }` — both sized for a box inside a fixed-height
+   modal. Inside a page that already scrolls, that is three nested
+   scrollers: the memory document scrolls inside the pane, which scrolls
+   inside the page. Whichever one your finger lands on is the one that
+   moves, and it is never the one you meant.
+
+   In the tab there is exactly one scroller, and it is the page. */
+#memoryHost > .edit-body {
+  padding: 0;
+  overflow: visible;
+}
+#memoryHost .kmd {
+  max-height: none;
+  overflow: visible;
+}
+#memoryHost .kmemedit { min-height: 60vh; }
+
 /* knowledge (memory) modal */
 .klist { display: flex; flex-direction: column; gap: 7px; margin-top: 4px; }
 .kempty { font-size: 13px; color: var(--ink-3); padding: 6px 2px; }
@@ -1334,6 +1357,14 @@ body.modal-open {
 body.term-immersive .topbar { display: none; }
 body.term-immersive { --bar-h: 0px; }
 
+/* The terminal tab owns the whole viewport, so the page behind it must not
+   scroll as well. Two scrollers stacked — the page and the chat log — is
+   why a swipe sometimes moved the wrong one, and why the log could sit a
+   little off the bottom of the screen. The tab is exactly the viewport
+   minus the bar; only the log inside it scrolls. */
+body.term-open, body.term-open .wrap { overflow: hidden; }
+body.term-open .wrap { padding-bottom: 0; }
+
 /* ---------------------------------------------------------- chat terminal
    Claude Code rendered as messages rather than drawn into a character grid.
    The grid is the reason the classic terminal is unreadable on a phone: it
@@ -1846,11 +1877,15 @@ body.term-classic #chatNew,
 body.term-classic #chatOpen,
 body.term-classic #chatInfo { display: none; }
 #viewTerminal.active .termfabs { display: flex; }
-/* While the keyboard has taken the bar, these would be one more thing over
-   a screen that has almost nothing left — and closing the keyboard brings
-   the bar back on its own. */
-body.term-kb #viewTerminal.active .termfabs,
-body.term-kb #viewTerminal.active .termmenu { display: none; }
+/* These are NEVER hidden.
+   
+   They used to go with the bar while the keyboard was up, on the reasoning
+   that closing the keyboard brings the bar back on its own. It does not
+   always: on iOS, dismissing the keyboard with its own control does not
+   blur the textarea, so the "keyboard is up" flag stuck true — and with the
+   bar folded and these hidden, every control on the screen was gone at once
+   with no way to get any of them back. An escape hatch that can be hidden
+   by the state it is meant to escape is not an escape hatch. */
 /* In chat mode the buttons sit over a scrolling document rather than a
    fixed grid, so they pin to the viewport corner of the log instead. */
 body:not(.term-classic) .termfabs { top: 6px; right: 8px; }
@@ -2079,9 +2114,35 @@ body.term-classic #termMode .ico-out { display: block; }
 .finding.sev-warning { border-left-color: var(--warning); }
 .finding.sev-serious { border-left-color: var(--serious); }
 .finding.sev-critical { border-left-color: var(--critical); }
-/* Settled findings step back without disappearing — the archive is how you
-   check what brAIn changed in your house last week. */
-.finding.st-fixed, .finding.st-ignored { opacity: 0.72; border-left-color: var(--hairline); }
+/* A finished fix is not an archive row — brAIn changed something in the
+   house and nobody has read it yet, so it keeps full weight and takes the
+   colour of a good outcome until the Got it press clears it. */
+.finding.st-fixed { border-left-color: var(--good); }
+/* Legacy: a dismissal from before the settled ledger, waiting for startup
+   to move it. Dimmed, because it is already answered. */
+.finding.st-ignored { opacity: 0.72; border-left-color: var(--hairline); }
+
+/* An answered problem is one line, not a card. There is no finding left to
+   show — the answer is the whole record. */
+.settledrow {
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 11px 14px;
+}
+.settledtext { margin: 0; font-size: 14px; line-height: 1.4; color: var(--ink-2); }
+.settledrow.st-ignored .findstate { color: var(--ink-3); }
+.settledrow.st-fixed .findstate { color: var(--good); }
+
+.findnote {
+  margin: 0 0 2px;
+  color: var(--ink-3);
+  font-size: 13px;
+  max-width: 66ch;
+}
 
 .findtitle { margin: 3px 0 0; font-size: 15.5px; line-height: 1.35; }
 

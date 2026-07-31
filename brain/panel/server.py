@@ -31,10 +31,14 @@ GET  /api/findings           — the work list: what brAIn thinks is broken
 POST /api/finding/{ts}/fix   — go fix it (the one tool-enabled Claude run)
 POST /api/finding/{ts}/ignore — not a problem here; never raise it again
 POST /api/finding/{ts}/done  — you fixed it yourself
-POST /api/finding/{ts}/reopen — back onto the list
+POST /api/finding/{ts}/ack   — you've read what brAIn's fix changed
+                                (all three END it: memory line, then the
+                                 row is deleted — see findings_store)
+POST /api/finding/{ts}/reopen — put a pre-ledger dismissal back on the list
 POST /api/finding/{ts}/snooze — remind me later; NOT a decision, so the
                                 status is untouched and it comes back
 POST /api/finding/{ts}/discuss — open it as a conversation in the chat
+POST /api/findings/unsettle  — {key}: let brAIn raise an answered one again
 DELETE /api/finding/{ts}     — forget it (unlike ignore, it can return)
 POST /api/memory/consolidate — file the inbox into memory.md now
 GET  /api/insight/{id}/history       — past runs of a category (no html)
@@ -1486,37 +1490,79 @@ async def h_findings(request: web.Request) -> web.Response:
     return web.json_response(await asyncio.to_thread(listing))
 
 
-# The lifecycle buttons: each is one status transition and the same reply.
-# Keeping them as one handler means adding a verb is a line here rather than
-# a handler, a route, and two docstrings that can disagree with each other.
+# The lifecycle buttons. Three of them END a finding, and ending one is the
+# same three moves every time: write the answer into memory, remember the
+# key so the analyst never raises it again, delete the row. Keeping that in
+# one table means the three endings cannot drift into three behaviours.
+#
+# `memory` is what the home now knows, phrased as a fact rather than as an
+# event on a list — `memory.md` is read by a model that has never seen this
+# tab. An empty one means the answer is already in memory (the fixer wrote
+# it when it made the change) and saying it twice would be the duplicate.
 FINDING_VERBS = {
-    # "Not a problem here." Sticky: dismissed findings are fed back into
-    # every future analysis, so it is never raised again rather than
-    # re-dismissed weekly.
-    "ignore": ("ignored", ""),
-    # "I handled it myself" — the ending for anything needing hands.
-    "done": ("fixed", "Marked done by you."),
-    "reopen": ("open", ""),
+    # "This is normal here." The strongest ending: it teaches the analyst
+    # that this is not a problem in this home, in any wording, forever.
+    "ignore": {"kind": "ignored",
+               "memory": "Not a problem in this home: {text}"},
+    # "I already handled it myself" — the ending for anything needing hands.
+    "done": {"kind": "fixed",
+             "memory": "Fixed by the homeowner on {date}: {text}"},
+    # "I've read what brAIn changed" — the ending for an automated fix,
+    # which already wrote its own memory line when it made the change.
+    "ack": {"kind": "fixed", "memory": ""},
+    # Not an ending: puts a legacy row (dismissed before the ledger existed,
+    # and still on disk) back on the list.
+    "reopen": {"status": "open"},
 }
 
 
 async def h_finding_verb(request: web.Request) -> web.Response:
     verb = request.match_info["verb"]
-    if verb not in FINDING_VERBS:
+    spec = FINDING_VERBS.get(verb)
+    if spec is None:
         raise web.HTTPNotFound(text="no such action")
     finding = _finding_or_404(request)
-    status, result = FINDING_VERBS[verb]
+
+    if "status" in spec:
+        def move() -> dict:
+            findings_store.set_status(finding["ts"], spec["status"])
+            return findings_store.listing()
+
+        return web.json_response(await asyncio.to_thread(move))
 
     def settle() -> dict:
-        findings_store.set_status(finding["ts"], status, result=result)
+        findings_store.settle_and_clear(finding["ts"], spec["kind"])
         return findings_store.listing()
 
     payload = await asyncio.to_thread(settle)
-    if verb == "done":
-        # resolving it yourself is durable knowledge about this home
+    if spec["memory"]:
         await _submit_memory(
-            f"Resolved on {time.strftime('%Y-%m-%d')}: {finding['text']}",
+            spec["memory"].format(text=finding["text"],
+                                  date=time.strftime("%Y-%m-%d")),
             source="homeowner")
+    return web.json_response(payload)
+
+
+async def h_finding_unsettle(request: web.Request) -> web.Response:
+    """Let brAIn raise an answered problem again.
+
+    The row is long gone, so there is nothing to put back — what this undoes
+    is the suppression, and the next analysis is free to find it again if it
+    is still there. That is the honest version of "I changed my mind": if it
+    really has stopped being true, nothing comes back.
+    """
+    body = await request.json() if request.can_read_body else {}
+    key = str((body or {}).get("key") or "").strip()
+    if not key:
+        raise web.HTTPBadRequest(text="which one?")
+
+    def undo() -> tuple[bool, dict]:
+        ok = findings_store.unsettle(key)
+        return ok, findings_store.listing()
+
+    ok, payload = await asyncio.to_thread(undo)
+    if not ok:
+        raise web.HTTPNotFound(text="nothing settled under that")
     return web.json_response(payload)
 
 
@@ -2368,6 +2414,44 @@ async def h_chat_conversations(request: web.Request) -> web.Response:
     })
 
 
+async def h_chat_adopt(request: web.Request) -> web.Response:
+    """Take up whatever the classic terminal was last doing.
+
+    The other half of the handoff, and the reason the switch is a switch
+    rather than two separate rooms. Going the other way is easy — we own the
+    chat's process, so we can stop it and tell the terminal which id to
+    resume. Coming back, there is nothing to ask: the tmux Claude is not
+    ours, it has no API, and it will not tell us what it is in the middle of.
+
+    What it does leave behind is its transcript, which Claude Code writes as
+    it goes. The most recently written conversation in this project
+    directory IS what the terminal was last doing, so that is what we pick
+    up — by resuming it, which starts our own process from that history.
+    The terminal's Claude is left completely alone: it is somebody's shell
+    and killing it is not ours to do.
+
+    Refused mid-turn, because adopting stops the chat's process and losing
+    an answer being written is worse than making you wait for it.
+    """
+    session = _chat()
+    if session.state == "busy":
+        raise web.HTTPConflict(reason="finish or stop the current answer first")
+    recent = await asyncio.to_thread(
+        conversations.listing, chat_session.WORK_DIR, 1)
+    newest = recent[0] if recent else None
+    if newest is None or newest["id"] == session.session_id:
+        # Already the same conversation (or there is nothing to take up):
+        # switching is then just a change of renderer, which is the point.
+        return web.json_response({"ok": True, "adopted": False,
+                                  "session_id": session.session_id})
+    replay = await asyncio.to_thread(
+        conversations.transcript, chat_session.WORK_DIR, newest["id"])
+    await session.resume(newest["id"], replay)
+    return web.json_response({"ok": True, "adopted": True,
+                              "session_id": newest["id"],
+                              "title": newest["title"]})
+
+
 async def h_chat_resume(request: web.Request) -> web.Response:
     body = await request.json()
     if not isinstance(body, dict):
@@ -2424,6 +2508,8 @@ def make_app() -> web.Application:
     app.router.add_post("/api/finding/{ts}/fix", h_finding_fix)
     app.router.add_post("/api/finding/{ts}/snooze", h_finding_snooze)
     app.router.add_post("/api/finding/{ts}/discuss", h_finding_discuss)
+    # Before the {ts} pattern, which would otherwise swallow it.
+    app.router.add_post("/api/findings/unsettle", h_finding_unsettle)
     app.router.add_post("/api/finding/{ts}/{verb}", h_finding_verb)
     app.router.add_delete("/api/finding/{ts}", h_finding_delete)
     app.router.add_get("/api/insight/{id}/history", h_history_list)
@@ -2472,6 +2558,7 @@ def make_app() -> web.Application:
     app.router.add_post("/api/chat/new", h_chat_new)
     app.router.add_post("/api/chat/handoff", h_chat_handoff)
     app.router.add_get("/api/chat/conversations", h_chat_conversations)
+    app.router.add_post("/api/chat/adopt", h_chat_adopt)
     app.router.add_post("/api/chat/resume", h_chat_resume)
 
     # The terminal tab: /terminal/ is reverse-proxied through to ttyd
@@ -2488,6 +2575,12 @@ def make_app() -> web.Application:
             "report what it did. Check the entity before trying again.")
         if orphaned:
             log.warning("%d fix run(s) were interrupted by a restart", orphaned)
+        # Dismissals made before the settled ledger existed live as rows in
+        # a status the tab no longer shows; move them somewhere visible.
+        migrated = await asyncio.to_thread(findings_store.migrate_settled)
+        if migrated:
+            log.info("moved %d dismissed finding(s) into the settled ledger",
+                     migrated)
         await _options_sync()
         app["worker"] = asyncio.create_task(_worker())
         app["scheduler"] = asyncio.create_task(_scheduler())
