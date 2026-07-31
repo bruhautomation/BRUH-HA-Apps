@@ -208,6 +208,21 @@ line, and a real text box so dictation and autocorrect behave. **⏹** stops an 
 in progress and **＋** starts a new chat. It survives a reload, a locked phone, and the
 add-on restarting.
 
+**Type / for commands.** The palette lists what *your* Claude Code actually has,
+including anything you put in \`/config/.claude/commands\` — the list comes from the CLI
+itself, so nothing has to be told about a command you add. ↑/↓ to move, Enter or Tab to
+pick. A few are REPL-only (\`/help\` among them) and say so rather than failing.
+
+**ⓘ shows the session** — the model, the project directory, how you are being billed,
+and this conversation's id. **Continue in the terminal** releases the session and hands
+you \`claude --resume <id>\` so Classic picks up the exact conversation. Both faces stand
+in \`/config\`, which is what lets each see the other's conversations: Claude Code files
+them per working directory.
+
+**A per-message price only appears if an API key is paying.** On a Pro or Max
+subscription those tokens are already bought, so there is nothing to charge and the
+footnote shows the duration and turn count instead.
+
 **Classic** is a true terminal — ttyd over tmux. Use it for anything that draws its own
 screen (a TUI, \`htop\`, an installer), for running shell commands yourself, or just
 because you prefer it.

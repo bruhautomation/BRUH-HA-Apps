@@ -2611,6 +2611,10 @@ const chatState = {
   ready: false,      // has a snapshot been drawn
   session: "chat",   // "chat" | "classic"
   runState: "idle",
+  sessionId: null,   // the CLI's id for this conversation — what `--resume` takes
+  info: {},          // model, cwd, version, api_key_source, from the CLI itself
+  commands: [],      // its slash commands, as it advertises them
+  cmdIndex: 0,       // highlighted row in the command palette
 };
 
 function chatLog() { return $("#chatLog"); }
@@ -2776,10 +2780,23 @@ function chatRender(ev) {
       const bits = [];
       if (ev.duration_ms) bits.push((ev.duration_ms / 1000).toFixed(1) + "s");
       if (ev.turns) bits.push(ev.turns + (ev.turns === 1 ? " turn" : " turns"));
-      if (ev.cost_usd) bits.push("$" + Number(ev.cost_usd).toFixed(3));
+      // The dollar figure only when dollars are actually involved. On a
+      // subscription the CLI still reports `total_cost_usd` — the list price
+      // of those tokens had you bought them — and printing that after every
+      // message is a number that looks like a charge and isn't one. The CLI
+      // tells us which it is: apiKeySource is "none" on a subscription.
+      if (ev.cost_usd && chatBilledPerToken()) {
+        bits.push("$" + Number(ev.cost_usd).toFixed(3));
+      }
       if (bits.length) chatAppend(el("div", "chatstat", bits.join(" · ")));
       break;
     }
+    case "info":
+      chatState.info = ev;
+      break;
+    case "commands":
+      chatState.commands = ev.commands || [];
+      break;
     case "cleared":
       chatReset();
       break;
@@ -2789,6 +2806,13 @@ function chatRender(ev) {
     default:
       break;
   }
+}
+
+// "none" means no API key is paying — a Pro/Max subscription, where the
+// tokens are already bought and a per-message price is meaningless.
+function chatBilledPerToken() {
+  const src = chatState.info && chatState.info.api_key_source;
+  return !!src && src !== "none";
 }
 
 function chatReset() {
@@ -2828,12 +2852,19 @@ function chatConnect() {
     try { ev = JSON.parse(msg.data); } catch (e) { return; }
     if (ev.type === "snapshot") {
       chatReset();
+      // Session facts arrive with the snapshot rather than being waited for:
+      // the CLI announces them once, at startup, and a viewer who connected
+      // afterwards would otherwise never see them.
+      chatState.sessionId = ev.session_id || null;
+      chatState.info = ev.info || {};
+      chatState.commands = ev.commands || [];
       (ev.events || []).forEach(chatRender);
       chatSetState(ev.state, ev.error);
       chatState.ready = true;
       chatScroll(true);
       return;
     }
+    if (ev.session_id) chatState.sessionId = ev.session_id;
     chatRender(ev);
   };
   es.onerror = () => {
@@ -2860,6 +2891,7 @@ async function chatSend(text) {
   if (!text || chatState.runState === "busy") return;
   const input = $("#chatInput");
   input.value = "";
+  $("#chatCmds").classList.add("hidden");
   chatGrow();
   chatWorking(true);
   try {
@@ -2886,12 +2918,44 @@ $("#chatForm").addEventListener("submit", (ev) => {
   chatSend($("#chatInput").value);
 });
 
-$("#chatInput").addEventListener("input", chatGrow);
+$("#chatInput").addEventListener("input", () => {
+  chatGrow();
+  chatState.cmdIndex = 0;
+  chatRenderCmds();
+});
 
-// Enter sends on a keyboard and breaks a line on a touchscreen. On a phone
-// the return key is where your thumb is and a two-line message is normal;
-// on a desktop, reaching for a button to send is the wrong ergonomics.
 $("#chatInput").addEventListener("keydown", (ev) => {
+  const matches = chatCmdMatches();
+  const paletteOpen = matches && matches.length
+    && !$("#chatCmds").classList.contains("hidden");
+
+  // While the palette is up it owns the arrows, Tab and Escape — and Enter,
+  // which picks rather than sends. Sending "/mod" because you were halfway
+  // through choosing /model is the failure this prevents.
+  if (paletteOpen) {
+    if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+      ev.preventDefault();
+      const step = ev.key === "ArrowDown" ? 1 : -1;
+      chatState.cmdIndex =
+        (chatState.cmdIndex + step + matches.length) % matches.length;
+      chatRenderCmds();
+      return;
+    }
+    if (ev.key === "Escape") {
+      ev.preventDefault();
+      $("#chatCmds").classList.add("hidden");
+      return;
+    }
+    if (ev.key === "Tab" || (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing)) {
+      ev.preventDefault();
+      chatPickCmd(matches[chatState.cmdIndex].name);
+      return;
+    }
+  }
+
+  // Enter sends on a keyboard and breaks a line on a touchscreen. On a phone
+  // the return key is where your thumb is and a two-line message is normal;
+  // on a desktop, reaching for a button to send is the wrong ergonomics.
   if (ev.key !== "Enter" || ev.shiftKey || ev.isComposing) return;
   if (window.matchMedia && window.matchMedia("(pointer: coarse)").matches) return;
   ev.preventDefault();
@@ -2928,6 +2992,135 @@ $("#chatNew").addEventListener("click", async () => {
 
 document.querySelectorAll(".chatseeds .seed").forEach((btn) =>
   btn.addEventListener("click", () => chatSend(btn.textContent)));
+
+// ------------------------------------------------------- session details
+//
+// Claude Code files every conversation under
+// ~/.claude/projects/<escaped working directory>/ and `claude --resume`
+// only lists the ones belonging to the directory you are standing in. Both
+// faces of this tab run in /config so they share that directory — but the
+// id is still the thing you need to type, and nothing was showing it.
+
+$("#chatInfo").addEventListener("click", async () => {
+  if (chipPopFor === $("#chatInfo")) { closeChipPop(); return; }
+  closeChipPop();
+  // Read it fresh: the id changes with every "New chat", and a popover is
+  // exactly where a stale one would go unnoticed.
+  try {
+    const snap = await api("api/chat/state");
+    chatState.sessionId = snap.session_id || null;
+    chatState.info = snap.info || {};
+  } catch (e) { /* fall back to what the stream last told us */ }
+
+  const info = chatState.info || {};
+  const rows = [];
+  const row = (name, value) =>
+    `<div class="prow"><span class="pname">${esc(name)}</span>`
+    + `<span class="pval mono">${esc(value)}</span></div>`;
+  if (info.model) rows.push(row("Model", info.model));
+  if (info.cwd) rows.push(row("Project", info.cwd));
+  rows.push(row("Billing", chatBilledPerToken()
+    ? "API key — charged per token" : "Your Claude subscription"));
+  if (chatState.sessionId) {
+    rows.push(`<p class="pnote">This conversation lives in Claude Code, not in
+      brAIn. To carry on with it in the classic terminal, release it here and
+      run <b>claude --resume</b> with the id below.</p>`
+      + `<div class="psid mono">${esc(chatState.sessionId)}</div>`
+      + `<div class="prow pacts">`
+      + `<button class="btn small" id="chatCopyResume">Copy the command</button>`
+      + `<button class="btn small primary" id="chatHandoff">Continue in the terminal</button>`
+      + `</div>`);
+  } else {
+    rows.push(`<p class="pnote">No conversation yet — send a message and this
+      is where its id will be.</p>`);
+  }
+  setChipPop($("#chatInfo"), "Chat session", rows.join(""));
+
+  const copyBtn = $("#chatCopyResume");
+  if (copyBtn) {
+    copyBtn.addEventListener("click", () => {
+      copyText(`claude --resume ${chatState.sessionId}`).then((ok) =>
+        toast(ok ? "Copied — paste it in the terminal"
+                 : `Run: claude --resume ${chatState.sessionId}`));
+    });
+  }
+  const handBtn = $("#chatHandoff");
+  if (handBtn) handBtn.addEventListener("click", chatHandoff);
+});
+
+// Stopping our session first is the point, not a side effect: while the
+// panel holds the conversation open, the terminal is being asked to resume
+// something that is still in use.
+async function chatHandoff() {
+  let out;
+  try {
+    out = await api("api/chat/handoff", { method: "POST" });
+  } catch (e) {
+    toast(e.message);
+    return;
+  }
+  closeChipPop();
+  const ok = await copyText(out.command);
+  applyTermMode("classic");
+  if (state.status && state.status.settings) {
+    state.status.settings.terminal_ui = "classic";
+  }
+  saveSettings({ terminal_ui: "classic" },
+    ok ? "Chat released — paste the copied command in the terminal"
+       : `Chat released — run: ${out.command}`);
+}
+
+// ------------------------------------------------------ command palette
+//
+// The list is the CLI's own, sent over the stream (`commands_changed`), so a
+// command someone drops into /config/.claude/commands shows up here without
+// brAIn knowing anything about it. A hardcoded list would be wrong the first
+// time anybody customised their install.
+
+function chatCmdMatches() {
+  const value = $("#chatInput").value;
+  if (!/^\/[^\s]*$/.test(value)) return null;   // only while typing the name
+  const term = value.slice(1).toLowerCase();
+  return chatState.commands
+    .filter((c) => c.name.toLowerCase().includes(term))
+    .slice(0, 50);
+}
+
+function chatRenderCmds() {
+  const box = $("#chatCmds");
+  const matches = chatCmdMatches();
+  if (!matches || !matches.length) {
+    box.classList.add("hidden");
+    box.innerHTML = "";
+    return;
+  }
+  chatState.cmdIndex = Math.min(chatState.cmdIndex, matches.length - 1);
+  box.innerHTML = matches.map((c, i) =>
+    `<button type="button" class="cmd${i === chatState.cmdIndex ? " on" : ""}"
+       role="option" data-name="${esc(c.name)}">`
+    + `<span class="cname">/${esc(c.name)}</span>`
+    + (c.hint ? `<span class="chint">${esc(c.hint)}</span>` : "")
+    + (c.description ? `<span class="cdesc">${esc(c.description)}</span>` : "")
+    + `</button>`).join("");
+  box.classList.remove("hidden");
+  const on = box.querySelector(".cmd.on");
+  if (on) on.scrollIntoView({ block: "nearest" });
+}
+
+function chatPickCmd(name) {
+  const input = $("#chatInput");
+  // A trailing space because most commands take arguments; the ones that
+  // don't ignore it.
+  input.value = "/" + name + " ";
+  $("#chatCmds").classList.add("hidden");
+  input.focus();
+  chatGrow();
+}
+
+$("#chatCmds").addEventListener("click", (ev) => {
+  const btn = ev.target.closest(".cmd");
+  if (btn) chatPickCmd(btn.dataset.name);
+});
 
 // ------------------------------------------------- immersive terminal
 

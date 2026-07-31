@@ -106,6 +106,15 @@ class ChatSession:
     def __init__(self) -> None:
         self.proc: asyncio.subprocess.Process | None = None
         self.session_id: str | None = None
+        # What the CLI says about itself at startup: the model it resolved,
+        # the directory it considers the project (which is what
+        # `claude --resume` keys conversations by), its version, and whether
+        # an API key is paying — see `_session_info`.
+        self.info: dict = {}
+        # Its slash commands, as it advertises them. Ours to display, not to
+        # invent: a hardcoded list goes stale the moment someone adds a
+        # command to /config/.claude/commands.
+        self.commands: list[dict] = []
         # Set by the server from the same effective-model resolution every
         # other Claude path uses; kept as a plain attribute rather than an
         # import so this module never depends on the web layer.
@@ -154,6 +163,8 @@ class ChatSession:
             "state": self.state,
             "error": self.error,
             "session_id": self.session_id,
+            "info": self.info,
+            "commands": self.commands,
         }
 
     # -- subscribers -----------------------------------------------------
@@ -184,6 +195,28 @@ class ChatSession:
             except asyncio.QueueFull:
                 self._subs.discard(q)
         return event
+
+    def _set_commands(self, commands: list) -> None:
+        clean = []
+        for item in commands:
+            if not isinstance(item, dict):
+                continue
+            name = item.get("name")
+            if not isinstance(name, str) or not name:
+                continue
+            # Internal plumbing the CLI exposes but nobody types.
+            if name.startswith("__"):
+                continue
+            clean.append({
+                "name": name,
+                "description": _clip(item.get("description") or "", 300),
+                "hint": _clip(item.get("argumentHint") or "", 60),
+            })
+        clean.sort(key=lambda c: c["name"])
+        if clean == self.commands:
+            return
+        self.commands = clean
+        self._emit({"type": "commands", "commands": clean}, keep=False)
 
     def _set_state(self, state: str, error: str = "") -> None:
         self.state = state
@@ -271,6 +304,21 @@ class ChatSession:
                 sid = event.get("session_id")
                 if isinstance(sid, str) and sid:
                     self.session_id = sid
+                # Two events describe the session rather than the
+                # conversation. They are state, not transcript — kept on the
+                # session and sent live, so a reconnect gets them in the
+                # snapshot instead of waiting for the CLI to repeat itself.
+                if event.get("type") == "system":
+                    if event.get("subtype") == "init":
+                        self.info = _session_info(event)
+                        self._emit({"type": "info", "session_id": self.session_id,
+                                    **self.info}, keep=False)
+                        if not self.commands and event.get("slash_commands"):
+                            self._set_commands([
+                                {"name": name} for name in event["slash_commands"]
+                                if isinstance(name, str)])
+                    elif event.get("subtype") == "commands_changed":
+                        self._set_commands(event.get("commands") or [])
                 for norm in _normalise(event):
                     # Deltas and run stats are live-only: the assistant event
                     # that follows carries the same text as a whole block, so
@@ -380,6 +428,24 @@ class ChatSession:
         self._busy_since = 0.0
         self._set_state("idle")
 
+    async def handoff(self) -> dict:
+        """Release this conversation so the classic terminal can take it up.
+
+        Claude Code stores the conversation itself and resumes it by id, so
+        "continue in the terminal" is just `claude --resume <id>` in the same
+        project directory. Two things have to be true first, and this does
+        both: the id has to be known to the person typing it, and *we* have
+        to stop holding the session open.
+        """
+        session_id = self.session_id
+        await self.stop()
+        return {
+            "ok": True,
+            "session_id": session_id,
+            "cwd": self.info.get("cwd") or WORK_DIR,
+            "command": f"claude --resume {session_id}" if session_id else "claude",
+        }
+
     async def reset(self) -> dict:
         """Start a genuinely new conversation.
 
@@ -390,6 +456,7 @@ class ChatSession:
         await self.stop()
         self.session_id = None
         self.events = []
+        self.info = {}
         self._seq = 0
         self._persist()
         self._emit({"type": "cleared"}, keep=False)
@@ -476,6 +543,28 @@ def _normalise(event: dict) -> list[dict]:
         }]
 
     return []
+
+
+def _session_info(event: dict) -> dict:
+    """The four facts about a session that the panel has a use for.
+
+    ``cwd`` matters more than it looks: Claude Code files conversations by
+    working directory (``~/.claude/projects/<escaped-cwd>/``), and
+    ``claude --resume`` only lists the ones belonging to the directory you
+    are standing in. If this and the terminal's cwd ever diverge, the chat's
+    conversations become unreachable from the terminal — so it is shown
+    rather than assumed.
+
+    ``api_key_source`` is the CLI's own answer to "is anyone being billed
+    per token". On a subscription it is "none", and a dollar figure would be
+    a number that looks like money and isn't.
+    """
+    return {
+        "model": event.get("model") or "",
+        "cwd": event.get("cwd") or "",
+        "version": event.get("claude_code_version") or "",
+        "api_key_source": event.get("apiKeySource") or "none",
+    }
 
 
 def _error_text(event: dict) -> str:

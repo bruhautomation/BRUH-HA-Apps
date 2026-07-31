@@ -524,6 +524,49 @@ class TestChatTerminalPanel(unittest.TestCase):
         self.assertIn('id="termMode"', self.html)
         self.assertIn('$("#termMode").addEventListener("click"', self.js)
 
+    def test_both_faces_stand_in_the_same_project_directory(self):
+        """Claude Code files conversations under
+        ~/.claude/projects/<escaped-cwd>/ and `--resume` only lists the ones
+        belonging to the directory you are in. If the tmux session inherits
+        some other cwd from the add-on's init, the two faces of this tab keep
+        their conversations where the other cannot see them — and
+        /config/CLAUDE.md and /config/.claude/settings.local.json stop
+        applying to the terminal at the same time."""
+        import re
+        run = (ADDON_DIR / "run.sh").read_text()
+        menu = (SCRIPTS / "brain-menu.sh").read_text()
+        self.assertIn('CLAUDE_PROJECT_DIR="/config"', run)
+        for launch in re.findall(r"tmux new-session[^\n]*", run):
+            self.assertIn("-c '${CLAUDE_PROJECT_DIR}'", launch, launch)
+        for launch in re.findall(r"^\s*(?:exec )?tmux new-(?:session|window)[^\n]*",
+                                 menu, re.M):
+            self.assertIn('-c "$CLAUDE_PROJECT_DIR"', launch, launch)
+        chat = (PANEL / "chat_session.py").read_text()
+        self.assertIn('BRAIN_CHAT_WORKDIR", "/config"', chat)
+
+    def test_a_subscription_is_not_shown_a_price_per_message(self):
+        """total_cost_usd is what those tokens would have cost had you bought
+        them, which on a Pro or Max plan is not a charge. The CLI's own
+        apiKeySource says which case this is."""
+        self.assertIn("function chatBilledPerToken()", self.js)
+        self.assertIn("chatBilledPerToken()", self.js)
+        self.assertIn('src !== "none"', self.js)
+        chat = (PANEL / "chat_session.py").read_text()
+        self.assertIn('"api_key_source": event.get("apiKeySource")', chat)
+
+    def test_the_command_palette_uses_the_clis_own_list(self):
+        """A hardcoded list is wrong the first time somebody adds a command
+        to /config/.claude/commands."""
+        self.assertIn('id="chatCmds"', self.html)
+        self.assertIn("function chatCmdMatches()", self.js)
+        self.assertIn("chatState.commands", self.js)
+        chat = (PANEL / "chat_session.py").read_text()
+        self.assertIn('"commands_changed"', chat)
+        self.assertIn("slash_commands", chat)
+        # The palette owns Enter while it is open, or half-typing /model
+        # sends "/mod" as a message.
+        self.assertIn("chatPickCmd(matches[chatState.cmdIndex].name)", self.js)
+
 
 class TestDocsTab(unittest.TestCase):
     """The guide's nav, search index and body all come from one source, so

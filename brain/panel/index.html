@@ -276,7 +276,8 @@
     <div id="chatEmpty" class="chatempty">
       <h3>Ask brAIn anything about your house</h3>
       <p>It has your entities, your history and your memory, and it can change
-         things — edit an automation, rename a device, build a dashboard.</p>
+         things — edit an automation, rename a device, build a dashboard.
+         Type <b>/</b> for Claude Code's commands.</p>
       <div class="chatseeds">
         <button class="seed">Why did the porch light not come on last night?</button>
         <button class="seed">Which of my devices have stopped reporting?</button>
@@ -284,6 +285,10 @@
       </div>
     </div>
     <div id="chatErr" class="chaterr hidden"></div>
+    <!-- The CLI's own slash commands, as it advertises them over the stream.
+         Not a list we maintain: a command someone adds to
+         /config/.claude/commands appears here without brAIn being told. -->
+    <div id="chatCmds" class="chatcmds hidden" role="listbox" aria-label="Commands"></div>
     <form id="chatForm" class="chatbar">
       <textarea id="chatInput" rows="1" enterkeyhint="send" autocomplete="off"
                 placeholder="Message brAIn…" aria-label="Message brAIn"></textarea>
@@ -306,6 +311,13 @@
     </button>
     <button id="chatNew" class="termfab" data-tip="New chat" aria-label="New chat">
       <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+    </button>
+    <!-- What the CLI says about itself, and the way to take this exact
+         conversation into the classic terminal. In a popover rather than a
+         bar, because it is answered once and would otherwise cost a row of
+         height on every screen for the rest of the session. -->
+    <button id="chatInfo" class="termfab" data-tip="Session" aria-label="Session details">
+      <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8v.1"/></svg>
     </button>
     <button id="termExpand" class="termfab" data-tip="Full-screen terminal"
             aria-label="Full-screen terminal" aria-pressed="false">

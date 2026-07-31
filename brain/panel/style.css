@@ -685,6 +685,9 @@ body.modal-open {
   font-variant-numeric: tabular-nums;
   color: var(--ink);
 }
+/* A path or a model name is not a number and can be long enough to leave the
+   popover — the reading it shares this row with never is. */
+.chippop .pval.mono { flex: 1; min-width: 0; text-align: right; overflow-wrap: anywhere; }
 .chippop .pnote {
   margin: 8px 0 0;
   padding-top: 8px;
@@ -1559,6 +1562,81 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   color: var(--ink);
   font-size: 13px;
 }
+
+/* The slash-command palette. The list is the CLI's own — it announces its
+   commands over the stream — so this shows whatever that install actually
+   has, including anything dropped into /config/.claude/commands.
+
+   It grows upward from the composer rather than downward from the top,
+   because the composer is where you are looking and the keyboard is
+   underneath it. */
+.chatcmds {
+  max-height: min(44vh, 320px);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  margin: 0 16px;
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+.chatcmds.hidden { display: none; }
+.chatcmds .cmd {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 0;
+  border-top: 1px solid var(--hairline);
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.chatcmds .cmd:first-child { border-top: 0; }
+.chatcmds .cmd.on, .chatcmds .cmd:hover {
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
+}
+.chatcmds .cname {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent-2);
+}
+.chatcmds .chint {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+/* One line: these descriptions are written for a model to route on and run
+   to several sentences. The first clause is the part a person is choosing by. */
+.chatcmds .cdesc {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+/* Session details, in the shared chip popover. */
+.chippop .mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  font-weight: 600;
+}
+.chippop .psid {
+  margin: 6px 0 10px;
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+.chippop .pacts { gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
 
 /* The composer. A real textarea, which is the whole point: dictation,
    autocorrect, selection and the system keyboard all behave, because there
