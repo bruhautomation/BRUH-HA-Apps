@@ -183,20 +183,28 @@ same `/config`, with the same permissions — what differs is only how you see i
   dot that goes green or red; tap it for the arguments and the full result. In the
   grid terminal each of those was twenty lines you scrolled past.
 - **Reasoning folds away** behind a "Thinking" line you can open.
-- **Slash commands.** Type **/** and you get the commands *your* Claude Code actually
-  has — including anything you put in `/config/.claude/commands` — with descriptions
-  and argument hints. ↑/↓ to move, Enter or Tab to pick. The list comes from the CLI
-  itself, so nothing needs telling about a command you add.
+- **Commands, both kinds.** Type **/** and you get the commands *your* Claude Code
+  actually has — including anything you put in `/config/.claude/commands`. Type
+  **brain** or **ha** and you get brAIn's own CLI, `brain memory add` through
+  `ha reload`, with the same descriptions and argument hints the dispatchers print.
+  ↑/↓ to move, Enter or Tab to pick. Both lists come from the thing that owns them, so
+  neither can go stale.
+- **⟲ lists every conversation** in `/config` — started here or in the classic
+  terminal, it makes no difference. Pick one and it replays into the pane and carries
+  on.
 - **The input is a real text box**, so dictation, autocorrect and selection behave.
 - **⏹ stops a running answer**, and **＋ starts a new chat**. The conversation
   survives a page reload, a phone locking, and the add-on restarting.
 - **ⓘ shows the session** — the model, the project directory, how you're being
-  billed, and the conversation's id, with **Continue in the terminal** to carry the
-  exact conversation over to Classic.
+  billed, and the conversation's id. **Continue in the terminal** opens Classic
+  *inside* this conversation: the chat releases it, and the terminal picks it up — a
+  new tmux window if it's already open, otherwise the next time you open it.
 
 Both faces stand in `/config`, which is what lets them see each other's
-conversations: Claude Code files them per working directory, so `claude --resume`
-in the terminal lists the chats you had in the panel, and vice versa.
+conversations at all: Claude Code files them per working directory. So `claude
+--resume` in the terminal lists the chats you had in the panel, ⟲ in the chat lists
+the ones you had in the terminal, and a conversation can move either way without
+losing anything.
 
 **Classic** is ttyd over tmux — a true terminal. Use it for anything that draws its
 own screen (a TUI, `htop`, an installer), for running shell commands yourself, or

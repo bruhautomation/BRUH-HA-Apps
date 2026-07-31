@@ -2625,6 +2625,7 @@ const chatState = {
   sessionId: null,   // the CLI's id for this conversation — what `--resume` takes
   info: {},          // model, cwd, version, api_key_source, from the CLI itself
   commands: [],      // its slash commands, as it advertises them
+  cli: [],           // the brain/ha dispatchers, parsed from their own help
   cmdIndex: 0,       // highlighted row in the command palette
 };
 
@@ -2869,6 +2870,7 @@ function chatConnect() {
       chatState.sessionId = ev.session_id || null;
       chatState.info = ev.info || {};
       chatState.commands = ev.commands || [];
+      chatState.cli = ev.cli || chatState.cli;
       (ev.events || []).forEach(chatRender);
       chatSetState(ev.state, ev.error);
       chatState.ready = true;
@@ -2959,7 +2961,8 @@ $("#chatInput").addEventListener("keydown", (ev) => {
     }
     if (ev.key === "Tab" || (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing)) {
       ev.preventDefault();
-      chatPickCmd(matches[chatState.cmdIndex].name);
+      chatPickCmd((matches[chatState.cmdIndex].prefix || "")
+                  + matches[chatState.cmdIndex].name);
       return;
     }
   }
@@ -3003,6 +3006,54 @@ $("#chatNew").addEventListener("click", async () => {
 
 document.querySelectorAll(".chatseeds .seed").forEach((btn) =>
   btn.addEventListener("click", () => chatSend(btn.textContent)));
+
+// ------------------------------------------------------- conversations
+//
+// The list is Claude Code's, not ours: it files every conversation under
+// the working directory, and both faces of this tab stand in /config. So a
+// session started in the classic terminal is here beside one started in the
+// chat, and picking either replays it into this pane and carries on.
+
+async function openConversations() {
+  openBox("#convModal");
+  const list = $("#convList");
+  list.innerHTML = "";
+  $("#convEmpty").classList.add("hidden");
+  let data;
+  try {
+    data = await api("api/chat/conversations");
+  } catch (e) {
+    toast(e.message);
+    return;
+  }
+  $("#convCwd").textContent = (chatState.info && chatState.info.cwd) || "/config";
+  const rows = data.conversations || [];
+  $("#convEmpty").classList.toggle("hidden", rows.length > 0);
+  rows.forEach((c) => {
+    const btn = el("button", "convitem");
+    btn.appendChild(el("span", "ctitle", c.title));
+    btn.appendChild(el("span", "cwhen", c.age));
+    btn.addEventListener("click", () => resumeConversation(c));
+    list.appendChild(btn);
+  });
+}
+
+async function resumeConversation(conv) {
+  closeBox("#convModal");
+  toast("Opening that conversation…");
+  try {
+    await api("api/chat/resume", {
+      method: "POST", body: JSON.stringify({ session_id: conv.id }) });
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+$("#chatOpen").addEventListener("click", openConversations);
+$("#convClose").addEventListener("click", () => closeBox("#convModal"));
+$("#convModal").addEventListener("click", (ev) => {
+  if (ev.target === $("#convModal")) closeBox("#convModal");
+});
 
 // ------------------------------------------------------- session details
 //
@@ -3088,13 +3139,39 @@ async function chatHandoff() {
 // brAIn knowing anything about it. A hardcoded list would be wrong the first
 // time anybody customised their install.
 
+// Two families, one palette. "/" is Claude Code's own; `brain` and `ha` are
+// the add-on's CLIs, which are not slash commands and so were the half of
+// what you can type here that nothing ever offered. Both lists come from
+// the thing that owns them — the CLI announces its commands over the
+// stream, the dispatchers are parsed from their own `help` — so neither can
+// drift out of date with what this install actually has.
+const CLI_PREFIX = /^(brain|ha|hass)(\s.*)?$/i;
+
 function chatCmdMatches() {
   const value = $("#chatInput").value;
-  if (!/^\/[^\s]*$/.test(value)) return null;   // only while typing the name
-  const term = value.slice(1).toLowerCase();
-  return chatState.commands
-    .filter((c) => c.name.toLowerCase().includes(term))
-    .slice(0, 50);
+
+  if (/^\/[^\s]*$/.test(value)) {          // only while typing the name
+    const term = value.slice(1).toLowerCase();
+    return chatState.commands
+      .filter((c) => c.name.toLowerCase().includes(term))
+      .map((c) => ({ ...c, prefix: "/" }))
+      .slice(0, 50);
+  }
+
+  // A CLI line, up to the point where arguments start: once you are typing
+  // a value ("brain memory add \"the garage…"), suggesting commands is just
+  // covering the screen.
+  if (CLI_PREFIX.test(value) && !/["'\d]/.test(value)) {
+    const term = value.trim().toLowerCase().replace(/\s+/g, " ");
+    const matches = chatState.cli
+      .filter((c) => c.name.toLowerCase().startsWith(term))
+      .slice(0, 50);
+    // An exact, complete match is not a suggestion — it is what you typed.
+    if (matches.length === 1 && matches[0].name.toLowerCase() === term) return null;
+    return matches.map((c) => ({ ...c, prefix: "" }));
+  }
+
+  return null;
 }
 
 function chatRenderCmds() {
@@ -3108,8 +3185,8 @@ function chatRenderCmds() {
   chatState.cmdIndex = Math.min(chatState.cmdIndex, matches.length - 1);
   box.innerHTML = matches.map((c, i) =>
     `<button type="button" class="cmd${i === chatState.cmdIndex ? " on" : ""}"
-       role="option" data-name="${esc(c.name)}">`
-    + `<span class="cname">/${esc(c.name)}</span>`
+       role="option" data-name="${esc((c.prefix || "") + c.name)}">`
+    + `<span class="cname">${esc((c.prefix || "") + c.name)}</span>`
     + (c.hint ? `<span class="chint">${esc(c.hint)}</span>` : "")
     + (c.description ? `<span class="cdesc">${esc(c.description)}</span>` : "")
     + `</button>`).join("");
@@ -3120,9 +3197,10 @@ function chatRenderCmds() {
 
 function chatPickCmd(name) {
   const input = $("#chatInput");
-  // A trailing space because most commands take arguments; the ones that
-  // don't ignore it.
-  input.value = "/" + name + " ";
+  // `name` already carries its prefix — "/" for a Claude Code command,
+  // nothing for a shell one. A trailing space because most take arguments;
+  // the ones that don't ignore it.
+  input.value = name + " ";
   $("#chatCmds").classList.add("hidden");
   input.focus();
   chatGrow();

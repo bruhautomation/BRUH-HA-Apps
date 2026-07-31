@@ -93,6 +93,8 @@ import addon_options
 import card_tags
 import categories as cat_mod
 import chat_session
+import cli_commands
+import conversations
 import engine
 import feedback_store
 import findings_store
@@ -2199,7 +2201,7 @@ async def h_chat_stream(request: web.Request) -> web.StreamResponse:
         await resp.write(b"data: " + json.dumps(payload).encode() + b"\n\n")
 
     try:
-        await send(session.snapshot())
+        await send(_chat_snapshot(session))
         while True:
             try:
                 event = await asyncio.wait_for(queue.get(), timeout=20)
@@ -2237,13 +2239,52 @@ async def h_chat_new(request: web.Request) -> web.Response:
 
 
 async def h_chat_handoff(request: web.Request) -> web.Response:
-    """Stop the chat session and say how to pick it up in the terminal."""
+    """Stop the chat session and hand it to the classic terminal."""
     return web.json_response(await _chat().handoff())
+
+
+async def h_chat_conversations(request: web.Request) -> web.Response:
+    """Every conversation in this project directory, whichever face made it.
+
+    Read straight out of Claude Code's own store, so a session started in
+    the terminal is listed here beside one started in the chat — that is
+    what "interchangeable" has to mean to be worth saying.
+    """
+    session = _chat()
+    return web.json_response({
+        "conversations": await asyncio.to_thread(
+            conversations.listing, chat_session.WORK_DIR, 30, session.session_id),
+        "current": session.session_id,
+    })
+
+
+async def h_chat_resume(request: web.Request) -> web.Response:
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise web.HTTPBadRequest(text="expected an object")
+    session_id = str(body.get("session_id") or "")
+    session = _chat()
+    replay = await asyncio.to_thread(
+        conversations.transcript, chat_session.WORK_DIR, session_id)
+    try:
+        return web.json_response(await session.resume(session_id, replay))
+    except ValueError as exc:
+        raise web.HTTPBadRequest(reason=str(exc))
+
+
+def _chat_snapshot(session: "chat_session.ChatSession") -> dict:
+    """The session's own snapshot, plus what the composer needs to offer.
+
+    The `brain`/`ha` command list rides along here rather than on its own
+    endpoint because it is wanted at exactly the moment the snapshot is —
+    when the chat opens — and it is cached, so it costs nothing to include.
+    """
+    return {**session.snapshot(), "cli": cli_commands.listing()}
 
 
 async def h_chat_state(request: web.Request) -> web.Response:
     """The snapshot on its own, for a client whose stream is not up yet."""
-    return web.json_response(_chat().snapshot())
+    return web.json_response(_chat_snapshot(_chat()))
 
 
 # ---------------------------------------------------------------------------
@@ -2318,6 +2359,8 @@ def make_app() -> web.Application:
     app.router.add_post("/api/chat/stop", h_chat_stop)
     app.router.add_post("/api/chat/new", h_chat_new)
     app.router.add_post("/api/chat/handoff", h_chat_handoff)
+    app.router.add_get("/api/chat/conversations", h_chat_conversations)
+    app.router.add_post("/api/chat/resume", h_chat_resume)
 
     # The terminal tab: /terminal/ is reverse-proxied through to ttyd
     # so the whole add-on lives behind one ingress port.

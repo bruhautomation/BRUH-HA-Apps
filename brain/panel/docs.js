@@ -208,16 +208,22 @@ line, and a real text box so dictation and autocorrect behave. **⏹** stops an 
 in progress and **＋** starts a new chat. It survives a reload, a locked phone, and the
 add-on restarting.
 
-**Type / for commands.** The palette lists what *your* Claude Code actually has,
-including anything you put in \`/config/.claude/commands\` — the list comes from the CLI
-itself, so nothing has to be told about a command you add. ↑/↓ to move, Enter or Tab to
-pick. A few are REPL-only (\`/help\` among them) and say so rather than failing.
+**Type / for Claude Code's commands, or \`brain\` / \`ha\` for brAIn's own.** The palette
+lists what *your* install actually has — including anything you put in
+\`/config/.claude/commands\`, and every subcommand the two dispatchers print. Neither
+list is written down in the panel, so neither can go stale. ↑/↓ to move, Enter or Tab
+to pick. A few Claude Code commands are REPL-only (\`/help\` among them) and say so
+rather than failing.
+
+**⟲ is every conversation** in \`/config\` — started here or in the classic terminal,
+it makes no difference. Pick one and it replays into the pane and carries on. Both
+faces stand in the same directory, which is what lets each see the other's
+conversations at all: Claude Code files them per working directory.
 
 **ⓘ shows the session** — the model, the project directory, how you are being billed,
-and this conversation's id. **Continue in the terminal** releases the session and hands
-you \`claude --resume <id>\` so Classic picks up the exact conversation. Both faces stand
-in \`/config\`, which is what lets each see the other's conversations: Claude Code files
-them per working directory.
+and this conversation's id. **Continue in the terminal** opens Classic *inside* this
+conversation: the chat lets go of it, and the terminal picks it up — in a new window
+if it is already open, otherwise the next time you open it.
 
 **A per-message price only appears if an API key is paying.** On a Pro or Max
 subscription those tokens are already bought, so there is nothing to charge and the

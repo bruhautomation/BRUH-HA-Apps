@@ -39,6 +39,8 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
+import subprocess
 import time
 from pathlib import Path
 
@@ -438,13 +440,44 @@ class ChatSession:
         to stop holding the session open.
         """
         session_id = self.session_id
+        cwd = self.info.get("cwd") or WORK_DIR
         await self.stop()
+        opened = _open_in_terminal(session_id) if session_id else False
         return {
             "ok": True,
             "session_id": session_id,
-            "cwd": self.info.get("cwd") or WORK_DIR,
+            "cwd": cwd,
+            "opened": opened,
             "command": f"claude --resume {session_id}" if session_id else "claude",
         }
+
+    async def resume(self, session_id: str, replay: list[dict]) -> dict:
+        """Take up an existing conversation — including one from the terminal.
+
+        This is what makes the two faces interchangeable rather than merely
+        adjacent. Claude Code holds the conversation and resumes it by id;
+        ``replay`` is its stored transcript rendered into our event shapes,
+        so the pane shows what was said instead of an empty box promising
+        that Claude remembers.
+        """
+        if not session_id:
+            raise ValueError("no conversation given")
+        await self.stop()
+        self.session_id = session_id
+        self.info = {}
+        self.events = []
+        self._seq = 0
+        # Live viewers repaint from here: clear first, then the history.
+        self._emit({"type": "cleared"}, keep=False)
+        for event in replay:
+            self._emit(dict(event))
+        if not replay:
+            self._emit({"type": "notice", "text":
+                        "Resumed. Claude has this conversation's history — "
+                        "this pane starts from here."})
+        self._persist()
+        await self.start()
+        return {"ok": True, "session_id": session_id, "events": len(replay)}
 
     async def reset(self) -> dict:
         """Start a genuinely new conversation.
@@ -576,6 +609,69 @@ def _error_text(event: dict) -> str:
     if isinstance(result, str) and result.strip():
         return _clip(result.strip(), 1000)
     return subtype or "The turn ended with an error."
+
+
+# ---------------------------------------------------------------------------
+# Handing a conversation to the classic terminal
+# ---------------------------------------------------------------------------
+
+HANDOFF_FILE = os.environ.get("BRAIN_TERMINAL_HANDOFF",
+                              "/data/terminal-handoff.json")
+TMUX_SESSION = os.environ.get("BRAIN_TMUX_SESSION", "claude")
+TERMINAL_START = os.environ.get("BRAIN_TERMINAL_START",
+                                "/usr/local/bin/brain-terminal-start")
+
+
+def _open_in_terminal(session_id: str) -> bool:
+    """Leave the conversation where the terminal will pick it up, and — if
+    the terminal is already running — open it there now.
+
+    The file is the contract and always written: ``brain-terminal-start``
+    reads it on launch, so even a terminal that has never been opened comes
+    up inside the conversation. The tmux window is the nicety on top, for
+    when the terminal is already attached and waiting; a new window rather
+    than keystrokes into whatever happens to be in front, and the existing
+    session is left alone in its own window.
+
+    Returns whether the window was opened. Everything here is best effort:
+    the file alone is enough to be correct, just not instant.
+    """
+    payload = json.dumps({"session_id": session_id, "ts": int(time.time())})
+    try:
+        path = Path(HANDOFF_FILE)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(payload, encoding="utf-8")
+        tmp.replace(path)
+        # The terminal runs as the claude user, so the file has to be
+        # readable — and removable — by it.
+        try:
+            os.chmod(path, 0o666)
+        except OSError:
+            pass
+    except OSError:
+        return False
+
+    argv = _tmux_argv() + [
+        "new-window", "-t", TMUX_SESSION, "-c", WORK_DIR, TERMINAL_START]
+    try:
+        proc = subprocess.run(argv, capture_output=True, timeout=10)
+        return proc.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def _tmux_argv() -> list[str]:
+    """tmux, as the user whose server it is.
+
+    The terminal's tmux server belongs to the `claude` user; the panel is
+    root. Without the drop, root talks to its own (empty) server and the
+    window opens where nobody is looking.
+    """
+    tmux = shutil.which("tmux") or "tmux"
+    if os.geteuid() == 0 and shutil.which("su-exec"):
+        return ["su-exec", "claude", tmux]
+    return [tmux]
 
 
 # One session per add-on, created lazily so importing this module (which the

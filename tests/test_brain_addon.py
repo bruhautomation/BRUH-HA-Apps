@@ -554,6 +554,45 @@ class TestChatTerminalPanel(unittest.TestCase):
         chat = (PANEL / "chat_session.py").read_text()
         self.assertIn('"api_key_source": event.get("apiKeySource")', chat)
 
+    def test_the_two_faces_can_hand_a_conversation_to_each_other(self):
+        """Interchangeable means both directions. Chat → terminal writes a
+        handoff the terminal's launcher reads; terminal → chat is the
+        conversation picker, which lists Claude Code's own store and replays
+        the one you choose."""
+        self.assertIn('id="chatOpen"', self.html)
+        self.assertIn('id="convModal"', self.html)
+        self.assertIn("api/chat/resume", self.js)
+        self.assertIn("api/chat/conversations", self.js)
+        chat = (PANEL / "chat_session.py").read_text()
+        self.assertIn("async def resume(", chat)
+        self.assertIn("def _open_in_terminal(", chat)
+        # The launcher is what makes a terminal that has never been opened
+        # still come up inside the conversation.
+        start = (SCRIPTS / "brain-terminal-start.sh").read_text()
+        self.assertIn("--resume", start)
+        run = (ADDON_DIR / "run.sh").read_text()
+        self.assertIn("brain-terminal-start", run)
+
+    def test_the_handoff_expires(self):
+        """A stale id would silently reopen last week's conversation the
+        next time the add-on restarted."""
+        start = (SCRIPTS / "brain-terminal-start.sh").read_text()
+        self.assertIn("HANDOFF_MAX_AGE", start)
+        # Consumed before it is acted on, so a handoff that fails to launch
+        # is not retried forever.
+        self.assertLess(start.index('rm -f "$HANDOFF_FILE"'),
+                        start.index('resume_id="$candidate"'))
+
+    def test_the_palette_offers_the_brain_and_ha_commands_too(self):
+        """They are not slash commands, so nothing announced them — and
+        they are half of what anyone types into that box."""
+        self.assertIn("CLI_PREFIX", self.js)
+        self.assertIn("chatState.cli", self.js)
+        cli = (PANEL / "cli_commands.py").read_text()
+        # Parsed from the dispatchers' own help, never hardcoded.
+        self.assertIn('[path, "help"]', cli)
+        self.assertNotIn('"brain memory add"', cli)
+
     def test_the_command_palette_uses_the_clis_own_list(self):
         """A hardcoded list is wrong the first time somebody adds a command
         to /config/.claude/commands."""
@@ -565,7 +604,7 @@ class TestChatTerminalPanel(unittest.TestCase):
         self.assertIn("slash_commands", chat)
         # The palette owns Enter while it is open, or half-typing /model
         # sends "/mod" as a message.
-        self.assertIn("chatPickCmd(matches[chatState.cmdIndex].name)", self.js)
+        self.assertIn("chatPickCmd((matches[chatState.cmdIndex].prefix", self.js)
 
 
 class TestDocsTab(unittest.TestCase):

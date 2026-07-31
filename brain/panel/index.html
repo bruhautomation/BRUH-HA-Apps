@@ -277,7 +277,8 @@
       <h3>Ask brAIn anything about your house</h3>
       <p>It has your entities, your history and your memory, and it can change
          things — edit an automation, rename a device, build a dashboard.
-         Type <b>/</b> for Claude Code's commands.</p>
+         Type <b>/</b> for Claude Code's commands, or <b>brain</b> / <b>ha</b> for
+         brAIn's own.</p>
       <div class="chatseeds">
         <button class="seed">Why did the porch light not come on last night?</button>
         <button class="seed">Which of my devices have stopped reporting?</button>
@@ -311,6 +312,13 @@
     </button>
     <button id="chatNew" class="termfab" data-tip="New chat" aria-label="New chat">
       <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+    </button>
+    <!-- Every conversation in this project directory, whichever face made
+         it. Claude Code files them per working directory and both faces
+         stand in /config, so one started in the terminal is listed here
+         beside one started in the chat. -->
+    <button id="chatOpen" class="termfab" data-tip="Conversations" aria-label="Conversations">
+      <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M3 12a9 9 0 1 0 2.6-6.4M3 4v5h5"/></svg>
     </button>
     <!-- What the CLI says about itself, and the way to take this exact
          conversation into the classic terminal. In a popover rather than a
@@ -465,6 +473,27 @@
         <button id="nameSave" class="btn primary">Save</button>
         <button id="nameDelete" class="btn ghost danger">Delete card</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- The conversation list. Read out of Claude Code's own store rather than
+     kept by us, so it is the same set the terminal's own /resume offers —
+     picking one here replays it into the chat pane and carries on. -->
+<div id="convModal" class="modal" role="dialog" aria-modal="true">
+  <div class="box edit">
+    <header>
+      <span>⟲</span>
+      <span>Conversations</span>
+      <div class="spacer"></div>
+      <button id="convClose" class="btn icon" data-tip="Close" aria-label="Close">✕</button>
+    </header>
+    <div class="edit-body">
+      <p class="hint tight">Everything in <code id="convCwd">/config</code>, newest first —
+        started here or in the classic terminal, it makes no difference. Picking one
+        replays it and carries on where it left off.</p>
+      <div id="convList" class="convlist"></div>
+      <p id="convEmpty" class="kempty hidden">No other conversations yet.</p>
     </div>
   </div>
 </div>

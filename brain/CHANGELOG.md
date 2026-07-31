@@ -2,6 +2,41 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.12.0
+
+### The two terminals are now one terminal with two faces
+
+Chat and Classic already ran the same Claude Code. What they did not do was
+let you move a conversation between them, which made them two places rather
+than two views.
+
+**⟲ lists every conversation** in the project directory — started in the
+chat, started in the terminal, it makes no difference — with its opening
+line and when it was last touched. Pick one and it **replays into the chat
+pane** and carries on. Not a blank box with a promise that Claude remembers:
+the actual conversation, because Claude Code stores it in the same message
+shapes it streams, so it renders through the same code as a live turn.
+
+**Continue in the terminal** now opens the terminal *inside* the
+conversation rather than handing you a command to paste. The chat releases
+its session, leaves a handoff for the terminal's launcher, and — if the
+terminal is already attached — opens it in a new tmux window there and then.
+A terminal that has never been opened still comes up in the right
+conversation, because the handoff is a file its launcher reads rather than
+keystrokes typed at whatever happens to be in front. It expires after ten
+minutes, so a restart tomorrow does not silently reopen today's chat.
+
+### The palette knows about `brain` and `ha`
+
+Type **/** and you get Claude Code's commands. Type **brain** or **ha** and
+you now get brAIn's own — `brain memory add`, `ha reload`, all of them, with
+the same descriptions and argument hints the dispatchers print.
+
+The list is parsed from `brain help` and `ha help` rather than written down
+here, so a subcommand added to a dispatcher appears in the palette without
+anything in the panel being touched. It gets out of the way once you start
+typing arguments.
+
 ## 1.11.2
 
 ### Home memory cannot be erased by a consolidation any more

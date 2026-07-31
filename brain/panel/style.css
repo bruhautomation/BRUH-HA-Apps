@@ -1640,6 +1640,36 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   color: var(--ink-3);
 }
 
+/* The conversation list. One row per conversation: what it opened with,
+   and when it was last touched — which between them are how anyone
+   recognises a conversation they had. */
+.convlist { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.convitem {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  width: 100%;
+  min-height: 48px;
+  padding: 10px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.convitem:hover { border-color: var(--accent); }
+.convitem .ctitle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13.5px;
+}
+.convitem .cwhen { flex: none; font-size: 11.5px; color: var(--ink-3); }
+
 /* Session details, in the shared chip popover. */
 .chippop .mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
