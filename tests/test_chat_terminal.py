@@ -352,6 +352,52 @@ class ChatSessionCase(unittest.IsolatedAsyncioTestCase):
         # The transcript is untouched — this is a handover, not a reset.
         self.assertTrue(self.session.events)
 
+    async def test_resuming_replays_the_conversation_into_the_pane(self):
+        """"Interchangeable" has to mean you can see what was said. A pane
+        that opens empty with a promise that Claude remembers is a handoff,
+        not a swap."""
+        replay = [
+            {"type": "user", "text": "why is the porch light off"},
+            {"type": "text", "text": "Its trigger never fires."},
+        ]
+        out = await self.session.resume("dead-beef", replay)
+        self.assertEqual(out["session_id"], "dead-beef")
+        self.assertEqual(self.session.session_id, "dead-beef")
+        self.assertEqual([e["type"] for e in self.session.events],
+                         ["user", "text"])
+        # And it survives a reload, like any other transcript.
+        reloaded = self.mod.ChatSession()
+        self.assertEqual(len(reloaded.events), 2)
+        self.assertEqual(reloaded.session_id, "dead-beef")
+
+    async def test_resuming_a_conversation_we_cannot_replay_still_says_so(self):
+        out = await self.session.resume("dead-beef", [])
+        self.assertTrue(out["ok"])
+        self.assertEqual(self.session.events[0]["type"], "notice")
+
+    async def test_resuming_nothing_is_refused(self):
+        with self.assertRaises(ValueError):
+            await self.session.resume("", [])
+
+    async def test_the_handoff_leaves_the_terminal_something_to_pick_up(self):
+        """The file is the contract — brain-terminal-start reads it on
+        launch, so even a terminal that has never been opened comes up
+        inside the conversation. The tmux window is the nicety on top."""
+        handoff = os.path.join(self.tmp.name, "handoff.json")
+        self.mod.HANDOFF_FILE = handoff
+        self.mod.TMUX_SESSION = "brain-test-nosuch"
+        await self.session.start()
+        await self.session.send("hello")
+        await self._drain(lambda evs: any(
+            e.get("type") == "state" and e.get("state") == "ready" for e in evs[1:]))
+        out = await self.session.handoff()
+        written = json.loads(open(handoff).read())
+        self.assertEqual(written["session_id"], out["session_id"])
+        self.assertIsInstance(written["ts"], int)
+        # No tmux server for that session name here, so it reports honestly
+        # rather than claiming to have opened a window.
+        self.assertFalse(out["opened"])
+
     async def test_an_empty_message_is_refused(self):
         with self.assertRaises(ValueError):
             await self.session.send("   ")

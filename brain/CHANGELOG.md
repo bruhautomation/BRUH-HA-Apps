@@ -2,6 +2,141 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.12.0
+
+### The two terminals are now one terminal with two faces
+
+Chat and Classic already ran the same Claude Code. What they did not do was
+let you move a conversation between them, which made them two places rather
+than two views.
+
+**⟲ lists every conversation** in the project directory — started in the
+chat, started in the terminal, it makes no difference — with its opening
+line and when it was last touched. Pick one and it **replays into the chat
+pane** and carries on. Not a blank box with a promise that Claude remembers:
+the actual conversation, because Claude Code stores it in the same message
+shapes it streams, so it renders through the same code as a live turn.
+
+**Continue in the terminal** now opens the terminal *inside* the
+conversation rather than handing you a command to paste. The chat releases
+its session, leaves a handoff for the terminal's launcher, and — if the
+terminal is already attached — opens it in a new tmux window there and then.
+A terminal that has never been opened still comes up in the right
+conversation, because the handoff is a file its launcher reads rather than
+keystrokes typed at whatever happens to be in front. It expires after ten
+minutes, so a restart tomorrow does not silently reopen today's chat.
+
+### Less in the way
+
+Two pieces of clutter that arrived with the features above.
+
+**The chat had five buttons floating over your output.** Five translucent
+squares stacked on top of the text you came to read is exactly what this
+view exists to get away from. There are two now: **⤢**, which keeps its own
+place because it is also the way back from a folded bar, and **⋯**, which
+holds New chat, Conversations, Session details and the switch to the classic
+terminal. Things you do occasionally, and decide about once.
+
+**The top bar stopped saying the same thing twice.** "Usage budget reached"
+was a chip sitting immediately beside a usage pill already reporting the
+very number it was about — and on a phone the pair wrapped the bar onto a
+third row to do it. The pill carries that state itself: its dot goes
+warning-coloured, and pressing it says plainly that automatic insights are
+paused, what the budget is, and when the window rolls over.
+
+What is left beside the pill is the one thing a press can undo: **Auto
+insights off**. In the ordinary case the bar is back to two rows on a phone
+— status and actions, then the tabs.
+
+### Findings you can argue with, and put off
+
+A finding had three answers: fix it, I did it, or never mention this again.
+Two things were missing, and both are things people actually want to say.
+
+**💬 Discuss** hands the finding to the chat with everything it knows about
+it — the detail, the suggested fix, the entity, the severity — and asks
+Claude to look into it and say plainly whether it really is a problem *here*.
+The prompt tells it explicitly not to change anything: "explain this to me"
+and "go change my house" are different consents, and **Fix it** is still the
+only button that gives the second.
+
+So that button travels with the conversation. While you are discussing a
+finding, a strip above the composer names it and keeps **Fix it**, **I did
+it**, **Later** and **Not a problem** one press away — because agreeing to a
+fix at the end of a conversation about it should not mean going back to the
+other tab to find the card again. It survives a reload, since a conversation
+is not over because the page reloaded.
+
+**⏰ Remind me later** takes a finding off the list for an hour, until
+tomorrow, next week or next month. It is deliberately *not* a status change:
+dismissing is permanent and is fed back into every future analysis so the
+same non-problem is never raised again, and using that for "not right now"
+would quietly throw away a real problem you meant to come back to. The
+finding stays exactly as open as it was — it just stops asking. It sits
+under a **Later** filter while it waits, with the date it returns and a
+"bring it back now", because something you cannot find has not come back.
+
+*Also fixed on the way past:* any control other than a top-bar chip that
+tried to open a popover had it closed again by the same press, because the
+dismiss-on-outside-click listener only recognised the chips as legitimate
+openers.
+
+### The palette knows about `brain` and `ha`
+
+Type **/** and you get Claude Code's commands. Type **brain** or **ha** and
+you now get brAIn's own — `brain memory add`, `ha reload`, all of them, with
+the same descriptions and argument hints the dispatchers print.
+
+The list is parsed from `brain help` and `ha help` rather than written down
+here, so a subcommand added to a dispatcher appears in the palette without
+anything in the panel being touched. It gets out of the way once you start
+typing arguments.
+
+## 1.11.2
+
+### Home memory cannot be erased by a consolidation any more
+
+**This is the important one.** The consolidator asks Claude for the whole
+updated `memory.md` and then checks the answer before writing it: not empty,
+still has its `##` headings, still under the size cap. A document that came
+back as *nothing but those headings* passed every one of those checks — it
+is not empty, it has headings, and it is very much under the cap. So a pass
+where the model rewrote instead of merging could replace a year of learned
+facts with the blank template, and nothing would object.
+
+Two guards now stand in front of that write:
+
+- **Coming back with no content at all, over a document that had some, is
+  refused outright** — at any size. There is no document small enough for
+  that to be a real merge.
+- **Losing most of the content in one pass is refused** while the document
+  is comfortably under its cap. Consolidation adds: it merges the inbox in
+  and dedupes, and it only sheds lines when the document is near the cap,
+  which is the one case the guard steps aside for.
+
+Either way the document is left exactly as it was and the inbox stays
+pending, so the next pass tries again. A stale memory is recoverable; a
+wiped one is not.
+
+**And a failed write no longer eats the facts.** The script runs without
+`set -e`, so if writing `memory.md` failed — a full disk, a permission
+problem — execution fell straight through to the step that archives the
+inbox. The document would be unchanged and the queue emptied: the one
+combination where nothing anywhere says something went wrong. The write is
+checked now, and a failure leaves both alone.
+
+### The Memory tab says when it is filing
+
+Consolidation runs daily, and early once the queue passes 20 facts. None of
+that reached the panel — only passes started with the **File into memory
+now** button did — so the queue could empty while you were looking at it
+with nothing on screen accounting for where the facts went.
+
+The tab now shows a running pass whoever started it, with a spinner and a
+line saying whether it is yours or the schedule's. It reads the lock the
+consolidator already takes, with a shared lock, so asking the question can
+never be something a real pass waits on.
+
 ## 1.11.1
 
 ### The terminal now stands where the chat does

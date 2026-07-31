@@ -700,7 +700,7 @@ install_cli_tools() {
 
     # Kept on PATH in their own right: neither is a brAIn faculty nor an HA
     # operation, and both are typed directly by users and by Claude.
-    for script in persist-install brain-menu; do
+    for script in persist-install brain-menu brain-terminal-start; do
         if [ -f "/opt/scripts/${script}.sh" ]; then
             cp "/opt/scripts/${script}.sh" "/usr/local/bin/${script}"
             chmod +x "/usr/local/bin/${script}"
@@ -1639,13 +1639,16 @@ get_claude_launch_command() {
     perms_flag=$(get_permissions_flag)
 
     if [ "$auto_launch_claude" = "true" ]; then
-        echo "tmux new-session -A -s claude -c '${CLAUDE_PROJECT_DIR}' '/usr/local/bin/claude-run ${perms_flag}'"
+        # brain-terminal-start, not claude-run directly: it checks whether the
+        # chat tab has handed a conversation over and resumes it if so, then
+        # execs claude-run with these same flags.
+        echo "tmux new-session -A -s claude -c '${CLAUDE_PROJECT_DIR}' '/usr/local/bin/brain-terminal-start ${perms_flag}'"
     else
         if [ -f /usr/local/bin/brain-menu ]; then
             echo "tmux new-session -A -s claude-picker -c '${CLAUDE_PROJECT_DIR}' '/usr/local/bin/brain-menu'"
         else
             bashio::log.warning "Session picker not found, falling back to auto-launch"
-            echo "tmux new-session -A -s claude -c '${CLAUDE_PROJECT_DIR}' '/usr/local/bin/claude-run ${perms_flag}'"
+            echo "tmux new-session -A -s claude -c '${CLAUDE_PROJECT_DIR}' '/usr/local/bin/brain-terminal-start ${perms_flag}'"
         fi
     fi
 }

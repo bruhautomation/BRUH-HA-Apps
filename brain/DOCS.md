@@ -89,11 +89,18 @@ that quietly stopped reporting three weeks ago, a device stuck `unavailable`, an
 automation whose trigger can never fire.
 
 brAIn files findings on its own, from scheduled analysis and from study sessions.
-Each one gets a severity, a plain-English explanation, and two buttons:
+Each one gets a severity, a plain-English explanation, and what to do about it:
 
 - **Fix it** — brAIn makes the change and reports back what it did. This is the *only*
   place the add-on runs Claude with tools on its own initiative, it is bounded to one
   finding, and it only ever happens because you pressed the button.
+- **Discuss** — hands it to the chat with everything brAIn knows about it and asks
+  whether it really is a problem *here*. The discussion changes nothing; the decisions
+  ride along above the composer, so agreeing to the fix at the end of it is one press.
+- **I did it** — you handled it yourself. brAIn remembers that you did.
+- **Remind me later** — an hour, tomorrow, next week, next month. Not a decision: the
+  finding stays exactly as open as it was and simply stops asking, and it waits under
+  the **Later** filter with the date it comes back.
 - **Not a problem** — dismissed for good. Dismissed findings are injected into every
   future analysis, so the same non-problem is never raised at you twice. The garage
   fridge that runs 24/7 gets flagged once.
@@ -183,20 +190,29 @@ same `/config`, with the same permissions — what differs is only how you see i
   dot that goes green or red; tap it for the arguments and the full result. In the
   grid terminal each of those was twenty lines you scrolled past.
 - **Reasoning folds away** behind a "Thinking" line you can open.
-- **Slash commands.** Type **/** and you get the commands *your* Claude Code actually
-  has — including anything you put in `/config/.claude/commands` — with descriptions
-  and argument hints. ↑/↓ to move, Enter or Tab to pick. The list comes from the CLI
-  itself, so nothing needs telling about a command you add.
+- **Commands, both kinds.** Type **/** and you get the commands *your* Claude Code
+  actually has — including anything you put in `/config/.claude/commands`. Type
+  **brain** or **ha** and you get brAIn's own CLI, `brain memory add` through
+  `ha reload`, with the same descriptions and argument hints the dispatchers print.
+  ↑/↓ to move, Enter or Tab to pick. Both lists come from the thing that owns them, so
+  neither can go stale.
+- **⋯ holds the rest** — *New chat*, *Conversations* (every conversation in `/config`,
+  started here or in the classic terminal; picking one replays it and carries on),
+  *Session details*, and the switch to Classic. Two buttons float over the terminal,
+  not a column of them.
 - **The input is a real text box**, so dictation, autocorrect and selection behave.
 - **⏹ stops a running answer**, and **＋ starts a new chat**. The conversation
   survives a page reload, a phone locking, and the add-on restarting.
-- **ⓘ shows the session** — the model, the project directory, how you're being
-  billed, and the conversation's id, with **Continue in the terminal** to carry the
-  exact conversation over to Classic.
+- **Session details** (under ⋯) shows the model, the project directory, how you're
+  being billed, and the conversation's id. **Continue in the terminal** opens Classic
+  *inside* this conversation: the chat releases it, and the terminal picks it up — a
+  new tmux window if it's already open, otherwise the next time you open it.
 
 Both faces stand in `/config`, which is what lets them see each other's
-conversations: Claude Code files them per working directory, so `claude --resume`
-in the terminal lists the chats you had in the panel, and vice versa.
+conversations at all: Claude Code files them per working directory. So `claude
+--resume` in the terminal lists the chats you had in the panel, ⟲ in the chat lists
+the ones you had in the terminal, and a conversation can move either way without
+losing anything.
 
 **Classic** is ttyd over tmux — a true terminal. Use it for anything that draws its
 own screen (a TUI, `htop`, an installer), for running shell commands yourself, or
@@ -389,7 +405,8 @@ nothing more. There is no brAIn subscription and no middleman.
 To keep it from eating the plan you also use for your own work:
 
 - The top bar shows both usage windows — the **5-hour session** and the **week** —
-  live. Press the pill for when each one resets.
+  live. Press the pill for when each one resets, what the budget gates, and whether
+  automatic work is currently paused by it.
 - The chat terminal shows a **per-message price only if an API key is paying**. On a
   subscription there is no per-message charge, so it shows the duration and turn count
   instead of a figure that would look like money and isn't.

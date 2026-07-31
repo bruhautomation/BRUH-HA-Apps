@@ -32,6 +32,9 @@ POST /api/finding/{ts}/fix   — go fix it (the one tool-enabled Claude run)
 POST /api/finding/{ts}/ignore — not a problem here; never raise it again
 POST /api/finding/{ts}/done  — you fixed it yourself
 POST /api/finding/{ts}/reopen — back onto the list
+POST /api/finding/{ts}/snooze — remind me later; NOT a decision, so the
+                                status is untouched and it comes back
+POST /api/finding/{ts}/discuss — open it as a conversation in the chat
 DELETE /api/finding/{ts}     — forget it (unlike ignore, it can return)
 POST /api/memory/consolidate — file the inbox into memory.md now
 GET  /api/insight/{id}/history       — past runs of a category (no html)
@@ -76,6 +79,7 @@ random token to keep the unauthenticated /local URLs unguessable.
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import json
 import logging
 import os
@@ -92,6 +96,8 @@ import addon_options
 import card_tags
 import categories as cat_mod
 import chat_session
+import cli_commands
+import conversations
 import engine
 import feedback_store
 import findings_store
@@ -153,6 +159,35 @@ MEMORY_TEMPLATE = """# Home Memory
 # Memory tab can say "queued" rather than pretending an edit landed
 # instantly. The merge itself happens in the consolidator, not here.
 MEMORY_STATE: dict = {"merging": False, "error": ""}
+
+# The consolidator's lock, which is also the only honest answer to "is a
+# pass running right now". MEMORY_STATE only knows about passes this panel
+# started; the daemon's own — daily, or early once the inbox passes 20 facts
+# — used to happen entirely in silence, so the Memory tab could sit there
+# showing a queue that was in fact being emptied as you watched.
+MEMORY_DIR = Path(os.environ.get("BRAIN_MEMORY_DIR", "/config/.brain/memory"))
+CONSOLIDATE_LOCK = MEMORY_DIR / ".consolidate.lock"
+
+
+def _consolidation_running() -> bool:
+    """True while any consolidator holds the lock.
+
+    A *shared* lock is enough to ask the question and is the important
+    detail: taking an exclusive one, even for a moment, would make this
+    read-only status check something a real pass could block on.
+    """
+    try:
+        fd = os.open(CONSOLIDATE_LOCK, os.O_RDONLY)
+    except OSError:
+        return False          # no lock file yet: nothing has ever run
+    try:
+        fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return False
+    except OSError:
+        return True           # somebody holds it exclusively
+    finally:
+        os.close(fd)
 
 MODEL = os.environ.get("BRAIN_MODEL", "").strip()
 TIMEOUT_S = int(float(os.environ.get("BRAIN_TIMEOUT_MIN", "8") or 8) * 60)
@@ -1482,6 +1517,75 @@ async def h_finding_verb(request: web.Request) -> web.Response:
     return web.json_response(payload)
 
 
+# "Remind me later" in the words people actually use. The list is short on
+# purpose: this is a snooze, not a calendar.
+SNOOZE_CHOICES = {
+    "hour": 3600,
+    "tomorrow": 86400,
+    "week": 7 * 86400,
+    "month": 30 * 86400,
+}
+
+
+async def h_finding_snooze(request: web.Request) -> web.Response:
+    """Take a finding off the list for a while — without settling it.
+
+    Kept apart from the ignore verb on purpose. Dismissing is permanent and
+    is fed back into every future analysis so the same non-problem is never
+    raised again; using that for "not right now" would quietly throw away a
+    real problem you meant to come back to.
+    """
+    finding = _finding_or_404(request)
+    body = await request.json() if request.can_read_body else {}
+    choice = str((body or {}).get("for") or "tomorrow")
+    if choice == "now":
+        until = 0                      # bring it back immediately
+    elif choice in SNOOZE_CHOICES:
+        until = int(time.time()) + SNOOZE_CHOICES[choice]
+    else:
+        raise web.HTTPBadRequest(
+            text=f"snooze for one of: now, {', '.join(SNOOZE_CHOICES)}")
+
+    def settle() -> dict:
+        findings_store.snooze(finding["ts"], until)
+        return findings_store.listing()
+
+    return web.json_response(await asyncio.to_thread(settle))
+
+
+# What the chat is handed when you press Discuss. It says "look, don't
+# touch": the discussion is for understanding the thing, and Fix it is still
+# the only button that authorises a change — which stays on screen while you
+# talk, so agreeing to it is one press away rather than a trip back.
+DISCUSS_PROMPT = """I want to talk about something you flagged as broken in my home.
+
+**{text}**
+{detail}{fix}{entity}
+Severity: {severity}
+
+Look into it and tell me what is actually going on — check the current state
+and the history before you answer, and say plainly whether you think it is
+really a problem here. Do not change anything yet; I will decide."""
+
+
+async def h_finding_discuss(request: web.Request) -> web.Response:
+    """Open this finding as a conversation in the chat terminal."""
+    finding = _finding_or_404(request)
+    prompt = DISCUSS_PROMPT.format(
+        text=finding["text"],
+        detail=f"\n{finding['detail']}\n" if finding["detail"] else "\n",
+        fix=f"\nWhat you suggested: {finding['fix']}\n" if finding["fix"] else "",
+        entity=f"\nEntity: {finding['entity_id']}\n" if finding["entity_id"] else "",
+        severity=finding["severity"],
+    )
+    session = _chat()
+    try:
+        await session.send(prompt)
+    except RuntimeError as exc:
+        raise web.HTTPConflict(reason=str(exc))
+    return web.json_response({"ok": True, "finding": finding})
+
+
 async def h_finding_fix(request: web.Request) -> web.Response:
     """"Yes, go fix this." Queues the one tool-enabled run in the panel."""
     finding = _finding_or_404(request)
@@ -1777,6 +1881,25 @@ def _facts_with_filing() -> list[dict]:
     return facts
 
 
+def _memory_state() -> dict:
+    """What the Memory tab needs to know about consolidation right now.
+
+    Two different things get called "merging" and the tab should say which:
+    a pass that is *running* (the lock is held, by the daemon or by the
+    button) and one that is merely *queued* (you added a fact and the next
+    scheduled pass will pick it up). Reporting only the second is what made
+    a background pass look like nothing happening.
+    """
+    running = _consolidation_running()
+    state = dict(MEMORY_STATE)
+    state["running"] = running
+    # The button's own flag stays authoritative for "you asked for this" —
+    # the lock cannot tell us who started a pass.
+    state["by"] = "you" if state.get("merging") else "schedule"
+    state["merging"] = bool(state.get("merging") or running)
+    return state
+
+
 async def h_knowledge(request: web.Request) -> web.Response:
     """Everything the analyst has learned, in one payload for the panel."""
     return web.json_response({
@@ -1785,7 +1908,7 @@ async def h_knowledge(request: web.Request) -> web.Response:
         "hypotheses": hypotheses.list_all("open"),
         "hypothesis_budget": hypotheses.budget(),
         "shared_memory": _read_shared_memory(),
-        "memory_state": dict(MEMORY_STATE),
+        "memory_state": await asyncio.to_thread(_memory_state),
         "inbox_pending": await asyncio.to_thread(_inbox_pending),
     })
 
@@ -2150,7 +2273,7 @@ async def h_chat_stream(request: web.Request) -> web.StreamResponse:
         await resp.write(b"data: " + json.dumps(payload).encode() + b"\n\n")
 
     try:
-        await send(session.snapshot())
+        await send(_chat_snapshot(session))
         while True:
             try:
                 event = await asyncio.wait_for(queue.get(), timeout=20)
@@ -2188,13 +2311,52 @@ async def h_chat_new(request: web.Request) -> web.Response:
 
 
 async def h_chat_handoff(request: web.Request) -> web.Response:
-    """Stop the chat session and say how to pick it up in the terminal."""
+    """Stop the chat session and hand it to the classic terminal."""
     return web.json_response(await _chat().handoff())
+
+
+async def h_chat_conversations(request: web.Request) -> web.Response:
+    """Every conversation in this project directory, whichever face made it.
+
+    Read straight out of Claude Code's own store, so a session started in
+    the terminal is listed here beside one started in the chat — that is
+    what "interchangeable" has to mean to be worth saying.
+    """
+    session = _chat()
+    return web.json_response({
+        "conversations": await asyncio.to_thread(
+            conversations.listing, chat_session.WORK_DIR, 30, session.session_id),
+        "current": session.session_id,
+    })
+
+
+async def h_chat_resume(request: web.Request) -> web.Response:
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise web.HTTPBadRequest(text="expected an object")
+    session_id = str(body.get("session_id") or "")
+    session = _chat()
+    replay = await asyncio.to_thread(
+        conversations.transcript, chat_session.WORK_DIR, session_id)
+    try:
+        return web.json_response(await session.resume(session_id, replay))
+    except ValueError as exc:
+        raise web.HTTPBadRequest(reason=str(exc))
+
+
+def _chat_snapshot(session: "chat_session.ChatSession") -> dict:
+    """The session's own snapshot, plus what the composer needs to offer.
+
+    The `brain`/`ha` command list rides along here rather than on its own
+    endpoint because it is wanted at exactly the moment the snapshot is —
+    when the chat opens — and it is cached, so it costs nothing to include.
+    """
+    return {**session.snapshot(), "cli": cli_commands.listing()}
 
 
 async def h_chat_state(request: web.Request) -> web.Response:
     """The snapshot on its own, for a client whose stream is not up yet."""
-    return web.json_response(_chat().snapshot())
+    return web.json_response(_chat_snapshot(_chat()))
 
 
 # ---------------------------------------------------------------------------
@@ -2222,6 +2384,8 @@ def make_app() -> web.Application:
     app.router.add_put("/api/card/{id}/tags", h_card_tags_put)
     app.router.add_get("/api/findings", h_findings)
     app.router.add_post("/api/finding/{ts}/fix", h_finding_fix)
+    app.router.add_post("/api/finding/{ts}/snooze", h_finding_snooze)
+    app.router.add_post("/api/finding/{ts}/discuss", h_finding_discuss)
     app.router.add_post("/api/finding/{ts}/{verb}", h_finding_verb)
     app.router.add_delete("/api/finding/{ts}", h_finding_delete)
     app.router.add_get("/api/insight/{id}/history", h_history_list)
@@ -2269,6 +2433,8 @@ def make_app() -> web.Application:
     app.router.add_post("/api/chat/stop", h_chat_stop)
     app.router.add_post("/api/chat/new", h_chat_new)
     app.router.add_post("/api/chat/handoff", h_chat_handoff)
+    app.router.add_get("/api/chat/conversations", h_chat_conversations)
+    app.router.add_post("/api/chat/resume", h_chat_resume)
 
     # The terminal tab: /terminal/ is reverse-proxied through to ttyd
     # so the whole add-on lives behind one ingress port.

@@ -60,7 +60,8 @@ and every attribute a \`create_\` service accepts has a service that changes it 
 A **finding** is something wrong with your house — a dying battery, a sensor that
 quietly stopped reporting three weeks ago, a device stuck unavailable, an automation
 whose trigger can never fire. brAIn files them on its own, and each one gets **Fix it**
-(it makes the change and reports back) or **Not a problem** (dismissed for good, and
+(it makes the change and reports back), **Discuss** (talk it over first, changing
+nothing), **Remind me later**, or **Not a problem** (dismissed for good, and
 never raised at you again).
 
 ## It explains your house
@@ -208,16 +209,21 @@ line, and a real text box so dictation and autocorrect behave. **⏹** stops an 
 in progress and **＋** starts a new chat. It survives a reload, a locked phone, and the
 add-on restarting.
 
-**Type / for commands.** The palette lists what *your* Claude Code actually has,
-including anything you put in \`/config/.claude/commands\` — the list comes from the CLI
-itself, so nothing has to be told about a command you add. ↑/↓ to move, Enter or Tab to
-pick. A few are REPL-only (\`/help\` among them) and say so rather than failing.
+**Type / for Claude Code's commands, or \`brain\` / \`ha\` for brAIn's own.** The palette
+lists what *your* install actually has — including anything you put in
+\`/config/.claude/commands\`, and every subcommand the two dispatchers print. Neither
+list is written down in the panel, so neither can go stale. ↑/↓ to move, Enter or Tab
+to pick. A few Claude Code commands are REPL-only (\`/help\` among them) and say so
+rather than failing.
 
-**ⓘ shows the session** — the model, the project directory, how you are being billed,
-and this conversation's id. **Continue in the terminal** releases the session and hands
-you \`claude --resume <id>\` so Classic picks up the exact conversation. Both faces stand
-in \`/config\`, which is what lets each see the other's conversations: Claude Code files
-them per working directory.
+**⋯ holds the rest.** *New chat*; *Conversations* — every conversation in \`/config\`,
+started here or in the classic terminal, and picking one replays it into the pane and
+carries on; *Session details* — the model, the project directory, how you are being
+billed, and this conversation's id, with **Continue in the terminal**, which opens
+Classic *inside* this conversation; and the switch between the two faces.
+
+Both faces stand in the same directory, which is what lets each see the other's
+conversations at all: Claude Code files them per working directory.
 
 **A per-message price only appears if an API key is paying.** On a Pro or Max
 subscription those tokens are already bought, so there is nothing to charge and the
@@ -295,6 +301,24 @@ again next week for you to dismiss again. If the garage freezer is *supposed* to
 **✓ I did it** is for anything with hands in it — replacing a battery, re-pairing a
 device. brAIn marks findings like these **needs you** rather than offering to fix them,
 because inventing a software substitute for a dead battery is worse than saying so.
+
+**💬 Discuss** opens it as a conversation in the Terminal tab, with everything brAIn
+knows about it already in the question: the detail, the fix it had in mind, the entity,
+the severity. It is asked to look into the thing and say plainly whether it really is a
+problem *in your house* — and told not to change anything, because "explain this to me"
+and "go change my house" are different permissions.
+
+The decisions come with you. While you are discussing a finding, a strip above the
+message box keeps **Fix it**, **I did it**, **Later** and **Not a problem** one press
+away, so agreeing to the fix at the end of the conversation doesn't mean coming back
+here to find the card again.
+
+**⏰ Remind me later** is the answer for "yes, but not now" — an hour, tomorrow, next
+week, next month. It is not a decision and it does not settle anything: the finding
+stays exactly as open as it was and simply stops asking. Use it instead of dismissing
+something you actually intend to deal with, because dismissing is permanent. While it
+waits it sits under the **Later** filter, showing when it comes back, with a button to
+bring it back sooner.
 
 ## After a fix
 

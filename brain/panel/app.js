@@ -197,7 +197,8 @@ function renderUsageChip() {
   chip.setAttribute("aria-label",
     `Claude usage — session ${Math.round(u.used_percent)}%`
     + (hasWeek ? `, week ${Math.round(u.week_percent)}%` : "")
-    + ". Press for reset times.");
+    + (u.blocked ? ". Automatic insights are paused until it resets." : "")
+    + ". Press for detail.");
   chip.classList.remove("hidden");
   // Keep an open disclosure honest: usage polls every few seconds.
   if (chipPopFor === chip) fillUsagePop();
@@ -221,60 +222,52 @@ function fillUsagePop() {
       u.week_resets_at ? `resets ${fmtDayClock(u.week_resets_at)}` : ""));
   }
   // The budget only ever throttles brAIn's own scheduled work, so it belongs
-  // here beside the number it is measured against — not in a separate chip.
+  // here beside the number it is measured against — not in a separate chip
+  // repeating a percentage the pill is already showing. When it has been
+  // reached this is the only place that says so, so it says it plainly.
   if (u.budget_percent != null) {
-    rows.push(`<p class="pnote">Automatic insights pause once the session `
-      + `window passes <b>${Math.round(u.budget_percent)}%</b>, leaving the rest `
-      + `of your Claude account to you. Asking a question by hand always runs.</p>`);
+    rows.push(u.blocked
+      ? `<p class="pnote"><b>Automatic insights are paused.</b> The session `
+        + `window is past your <b>${Math.round(u.budget_percent)}%</b> budget`
+        + (u.resets_at ? `, and resumes when it rolls over at `
+                       + `<b>${esc(fmtClock(u.resets_at))}</b>` : "")
+        + `. Anything you ask for by hand still runs, and the budget is in `
+        + `<b>⚙ Settings</b> if it is set too tight.</p>`
+      : `<p class="pnote">Automatic insights pause once the session window `
+        + `passes <b>${Math.round(u.budget_percent)}%</b>, leaving the rest of `
+        + `your Claude account to you. Asking a question by hand always runs.</p>`);
   }
   setChipPop($("#usageChip"), "Claude usage", rows.join(""));
 }
 
 // Topbar chip that says WHY nothing is auto-generating — and undoes it.
-// There are exactly two reasons, and they take different presses: a switch
-// somebody turned off is turned back on, and a budget that has been reached
-// is explained, because no press can un-spend it.
+//
+// Only for the reason a press can do something about. "Usage budget
+// reached" used to get a chip of its own, sitting next to a usage pill
+// already reporting the very number it was about — the same fact twice,
+// wrapping the bar onto a second row to say it. The pill carries that state
+// itself: its dot goes warning-coloured and its popover explains what the
+// budget gates and when the window rolls over. What is left here is the one
+// thing that is a switch somebody turned off.
 function renderPausedChip() {
   const s = state.status;
   const chip = $("#pausedChip");
   const text = $("#pausedChipText");
   let label = "";
   let mode = "";
-  if (s && s.authenticated) {
-    if (s.settings && s.settings.auto_enabled === false) {
-      label = "Auto insights off";
-      mode = "off";
-      chip.title = "Turn automatic insights back on";
-    } else if (s.usage && s.usage.blocked) {
-      label = "Usage budget reached";
-      mode = "budget";
-      chip.title = "";
-    }
+  if (s && s.authenticated && s.settings && s.settings.auto_enabled === false) {
+    label = "Auto insights off";
+    mode = "off";
+    chip.title = "Turn automatic insights back on";
   }
   text.textContent = label;
   chip.dataset.mode = mode;
   if (label) {
-    chip.setAttribute("aria-label", mode === "off"
-      ? "Automatic insights are off — press to turn them on"
-      : "Usage budget reached — press for detail");
+    chip.setAttribute("aria-label",
+      "Automatic insights are off — press to turn them on");
   }
   chip.classList.toggle("hidden", !label);
   if (!label && chipPopFor === chip) closeChipPop();
-  else if (mode === "budget" && chipPopFor === chip) fillPausedPop();
-}
-
-function fillPausedPop() {
-  const u = (state.status && state.status.usage) || {};
-  const body =
-    `<div class="prow"><span class="pname">Session used</span>`
-    + `<span class="pval">${Math.round(u.used_percent || 0)}%</span></div>`
-    + `<div class="prow"><span class="pname">Your budget</span>`
-    + `<span class="pval">${Math.round(u.budget_percent || 0)}%</span></div>`
-    + `<p class="pnote">Scheduled cards are paused`
-    + (u.resets_at ? ` until the 5-hour window rolls over at <b>${esc(fmtClock(u.resets_at))}</b>` : "")
-    + `. Questions you ask yourself still run. The budget is in `
-    + `<b>⚙ Settings</b> if it is set too tight.</p>`;
-  setChipPop($("#pausedChip"), "Automatic insights paused", body);
 }
 
 // ------------------------------------------------------- chip disclosures
@@ -319,7 +312,14 @@ function toggleChipPop(anchor, fill) {
 
 document.addEventListener("click", (ev) => {
   if (!chipPopFor) return;
-  if (ev.target.closest("#chipPop") || ev.target.closest(".chip.clickable")) return;
+  // Inside the popover, or on the control that owns it. The second is not a
+  // nicety: this listener runs after the handler that opened the popover, so
+  // without it every press would open and immediately close again. It used
+  // to name `.chip.clickable` specifically, which meant any OTHER control
+  // that opened one — a finding's "Remind me later", say — could never show
+  // it at all.
+  if (ev.target.closest("#chipPop")) return;
+  if (chipPopFor.contains(ev.target)) return;
   closeChipPop();
 });
 window.addEventListener("resize", () => positionChipPop());
@@ -1523,10 +1523,6 @@ $("#usageChip").addEventListener("click", () =>
 // because the thing it was reporting is no longer true. A budget that has
 // been reached is not a switch, so that one explains itself instead.
 $("#pausedChip").addEventListener("click", async () => {
-  if ($("#pausedChip").dataset.mode !== "off") {
-    toggleChipPop($("#pausedChip"), fillPausedPop);
-    return;
-  }
   closeChipPop();
   await saveSettings({ auto_enabled: true },
     "Automatic insights on — recurring cards will refresh again");
@@ -1676,9 +1672,15 @@ const FIND_SEVERITY = {
 
 // "live" is the default view on purpose: a work list that opens on its own
 // archive is a list nobody works.
+// A snoozed finding is still live — it just isn't asking yet, so it comes
+// out of "Needs you" and gets a chip of its own rather than vanishing. The
+// point of "remind me later" is that it comes back, and something you can't
+// find is not something that came back.
 const FIND_FILTERS = [
   { id: "live", label: "Needs you", match: (f) =>
-    ["open", "fixing", "failed", "needs_you"].includes(f.status) },
+    ["open", "fixing", "failed", "needs_you"].includes(f.status)
+    && !findings_isSnoozed(f) },
+  { id: "snoozed", label: "Later", match: (f) => findings_isSnoozed(f) },
   { id: "fixed", label: "Fixed", match: (f) => f.status === "fixed" },
   { id: "ignored", label: "Dismissed", match: (f) => f.status === "ignored" },
   { id: "all", label: "Everything", match: () => true },
@@ -1720,6 +1722,84 @@ async function findAction(finding, verb, done, btns) {
     if (verb === "fix") { refreshStatus().catch(() => {}); fastPoll(); }
   } catch (e) {
     toast(e.message);
+    btns.forEach((b) => { b.disabled = false; });
+  }
+}
+
+function findings_isSnoozed(f) {
+  return !!f.snoozed_until && f.snoozed_until * 1000 > Date.now();
+}
+
+// "Back tomorrow" beats "back 2026-08-01 14:03" for a thing you chose in
+// those words a moment ago.
+function timeUntil(epoch) {
+  const secs = epoch - Date.now() / 1000;
+  if (secs <= 0) return "now";
+  if (secs < 5400) return "in an hour";
+  if (secs < 172800) return "tomorrow";
+  if (secs < 1209600) return `in ${Math.round(secs / 86400)} days`;
+  return `on ${new Date(epoch * 1000).toLocaleDateString(
+    [], { month: "short", day: "numeric" })}`;
+}
+
+const SNOOZE_OPTIONS = [
+  ["hour", "In an hour"],
+  ["tomorrow", "Tomorrow"],
+  ["week", "Next week"],
+  ["month", "Next month"],
+];
+
+async function snoozeFinding(f, choice, btns) {
+  btns.forEach((b) => { b.disabled = true; });
+  try {
+    const data = await api(`api/finding/${f.ts}/snooze`, {
+      method: "POST", body: JSON.stringify({ for: choice }) });
+    state.findings = data.findings || [];
+    updateFindBadge(data.open);
+    renderFindings();
+    if (chatState.finding && chatState.finding.ts === f.ts && choice !== "now") {
+      setChatFinding(null);
+    }
+    toast(choice === "now" ? "Back on the list"
+                           : `Reminding you ${timeUntil(
+                               Math.floor(Date.now() / 1000)
+                               + { hour: 3600, tomorrow: 86400, week: 604800,
+                                   month: 2592000 }[choice])}`);
+  } catch (e) {
+    toast(e.message);
+    btns.forEach((b) => { b.disabled = false; });
+  }
+}
+
+function openSnoozePop(anchor, f, btns) {
+  const rows = SNOOZE_OPTIONS.map(([id, label]) =>
+    `<button class="btn small snoozeopt" data-for="${id}">${esc(label)}</button>`
+  ).join("");
+  setChipPop(anchor, "Remind me", `<div class="snoozeopts">${rows}</div>`
+    + `<p class="pnote">It stays exactly as it is — still open, still yours to
+       decide. This only stops it asking until then.</p>`);
+  $("#chipPop").querySelectorAll(".snoozeopt").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      closeChipPop();
+      snoozeFinding(f, btn.dataset.for, btns);
+    }));
+}
+
+// Discuss: hand the finding to the chat and go there. The action bar that
+// appears above the composer is what makes it a discussion you can end
+// rather than a detour — Fix it, I did it and Remind me later are all one
+// press away without coming back to this tab.
+async function discussFinding(f, btns) {
+  btns.forEach((b) => { b.disabled = true; });
+  try {
+    if (chatState.session === "classic") applyTermMode("chat");
+    switchView("terminal");
+    chatConnect();
+    await api(`api/finding/${f.ts}/discuss`, { method: "POST" });
+    setChatFinding(f);
+  } catch (e) {
+    toast(e.message);
+  } finally {
     btns.forEach((b) => { b.disabled = false; });
   }
 }
@@ -1786,14 +1866,38 @@ function makeFinding(f) {
       fix.addEventListener("click", () => findAction(
         f, "fix", "On it — brAIn is making the change", btns));
     }
+    // Talk about it before deciding. The discussion is read-only by
+    // construction — the prompt says so — because "explain this to me" and
+    // "go change my house" are different consents, and Fix it is the one
+    // that gives the second.
+    const talk = add(el("button", "btn small", "💬  Discuss"));
+    tip(talk, "Ask brAIn about this one in the chat, without changing anything");
+    talk.addEventListener("click", () => discussFinding(f, btns));
+
     const done = add(el("button", "btn small", "✓  I did it"));
     tip(done, "You handled it yourself — mark it resolved");
     done.addEventListener("click", () =>
       findAction(f, "done", "Marked done", btns));
+
+    // Not a decision, so not next to the ones that are. Dismissing is
+    // permanent and teaches the analyst never to raise it again; this just
+    // stops it asking until the date you pick.
+    const later = add(el("button", "btn small ghost", "⏰  Remind me later"));
+    tip(later, "Take it off the list for a while — it comes back, unchanged");
+    later.addEventListener("click", (ev) => openSnoozePop(ev.currentTarget, f, btns));
+
     const ignore = add(el("button", "btn small ghost", "Not a problem"));
     tip(ignore, "Dismiss it — brAIn will never raise this again");
     ignore.addEventListener("click", () => findAction(
       f, "ignore", "Dismissed — brAIn won't raise it again", btns));
+  }
+  if (findings_isSnoozed(f)) {
+    const back = el("div", "findsnoozed");
+    back.appendChild(el("span", null, `⏰ Back ${timeUntil(f.snoozed_until)}`));
+    const now = el("button", "btn small ghost", "Bring it back now");
+    now.addEventListener("click", () => snoozeFinding(f, "now", [now]));
+    back.appendChild(now);
+    card.appendChild(back);
   }
   card.appendChild(actions);
   return card;
@@ -2008,8 +2112,19 @@ function mdToHtml(md) {
 }
 
 function renderMemory(data) {
-  const merging = !!(data.memory_state && data.memory_state.merging);
+  const memState_ = data.memory_state || {};
+  const merging = !!memState_.merging;
+  const running = !!memState_.running;
   $("#kMemMerging").classList.toggle("hidden", !merging);
+  $("#kMemMergingSpin").classList.toggle("hidden", !running);
+  // A pass that is running says so, and says whose it is. The daemon's own
+  // passes used to be invisible here, so the queue emptied with nothing on
+  // screen accounting for it.
+  $("#kMemMergingText").textContent = running
+    ? (memState_.by === "you"
+        ? "Filing these into the memory document now…"
+        : "brAIn is filing memory now — this runs daily, and early when the queue builds up.")
+    : "✨ Queued — it lands at the next consolidation…";
   if (merging) pollMemoryMerge();
   if (memState.editing) return; // never clobber an edit in progress
   memState.text = data.shared_memory || "";
@@ -2518,6 +2633,7 @@ function switchView(name) {
       if (frame.getAttribute("src") === "about:blank") frame.src = "terminal/";
     } else {
       chatConnect();
+      restoreChatFinding();
     }
   } else {
     // Leaving the tab: whatever the keyboard was doing over there, the bar
@@ -2614,7 +2730,9 @@ const chatState = {
   sessionId: null,   // the CLI's id for this conversation — what `--resume` takes
   info: {},          // model, cwd, version, api_key_source, from the CLI itself
   commands: [],      // its slash commands, as it advertises them
+  cli: [],           // the brain/ha dispatchers, parsed from their own help
   cmdIndex: 0,       // highlighted row in the command palette
+  finding: null,     // the finding this conversation is about, if any
 };
 
 function chatLog() { return $("#chatLog"); }
@@ -2858,6 +2976,7 @@ function chatConnect() {
       chatState.sessionId = ev.session_id || null;
       chatState.info = ev.info || {};
       chatState.commands = ev.commands || [];
+      chatState.cli = ev.cli || chatState.cli;
       (ev.events || []).forEach(chatRender);
       chatSetState(ev.state, ev.error);
       chatState.ready = true;
@@ -2948,7 +3067,8 @@ $("#chatInput").addEventListener("keydown", (ev) => {
     }
     if (ev.key === "Tab" || (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing)) {
       ev.preventDefault();
-      chatPickCmd(matches[chatState.cmdIndex].name);
+      chatPickCmd((matches[chatState.cmdIndex].prefix || "")
+                  + matches[chatState.cmdIndex].name);
       return;
     }
   }
@@ -2992,6 +3112,112 @@ $("#chatNew").addEventListener("click", async () => {
 
 document.querySelectorAll(".chatseeds .seed").forEach((btn) =>
   btn.addEventListener("click", () => chatSend(btn.textContent)));
+
+// --------------------------------------------------- the finding on trial
+//
+// A discussion is about one finding, and the decisions about that finding
+// have to be reachable from inside it. Otherwise agreeing to a fix at the
+// end of a conversation means going back to the other tab and finding the
+// card again, which is where a decision goes to die.
+//
+// Remembered across reloads, because a conversation you were having is not
+// over because the page reloaded.
+
+function setChatFinding(f) {
+  chatState.finding = f || null;
+  const bar = $("#chatFinding");
+  bar.classList.toggle("hidden", !f);
+  if (!f) { prefSet("brain.chatFinding", ""); return; }
+  $("#chatFindingText").textContent = f.text;
+  $("#chatFindingFix").classList.toggle("hidden", !f.fixable);
+  prefSet("brain.chatFinding", String(f.ts));
+}
+
+async function restoreChatFinding() {
+  const ts = prefGet("brain.chatFinding");
+  if (!ts) return;
+  const f = (state.findings || []).find((x) => String(x.ts) === ts);
+  if (f) { setChatFinding(f); return; }
+  // The list may not be loaded yet on a cold start — fetch it once.
+  try {
+    const data = await api("api/findings");
+    state.findings = data.findings || [];
+    const found = state.findings.find((x) => String(x.ts) === ts);
+    if (found) setChatFinding(found);
+    else prefSet("brain.chatFinding", "");
+  } catch (e) { /* the strip simply stays down */ }
+}
+
+async function chatFindingAction(verb, done) {
+  const f = chatState.finding;
+  if (!f) return;
+  const btns = [...$("#chatFinding").querySelectorAll("button")];
+  await findAction(f, verb, done, btns);
+  // Settled: the discussion can carry on, but it is no longer a decision
+  // waiting on you, so the bar goes.
+  setChatFinding(null);
+}
+
+$("#chatFindingClose").addEventListener("click", () => setChatFinding(null));
+$("#chatFindingFix").addEventListener("click", () =>
+  chatFindingAction("fix", "On it — brAIn is making the change"));
+$("#chatFindingDone").addEventListener("click", () =>
+  chatFindingAction("done", "Marked done"));
+$("#chatFindingIgnore").addEventListener("click", () =>
+  chatFindingAction("ignore", "Dismissed — brAIn won't raise it again"));
+$("#chatFindingLater").addEventListener("click", (ev) => {
+  const f = chatState.finding;
+  if (!f) return;
+  openSnoozePop(ev.currentTarget, f, [ev.currentTarget]);
+});
+
+// ------------------------------------------------------- conversations
+//
+// The list is Claude Code's, not ours: it files every conversation under
+// the working directory, and both faces of this tab stand in /config. So a
+// session started in the classic terminal is here beside one started in the
+// chat, and picking either replays it into this pane and carries on.
+
+async function openConversations() {
+  openBox("#convModal");
+  const list = $("#convList");
+  list.innerHTML = "";
+  $("#convEmpty").classList.add("hidden");
+  let data;
+  try {
+    data = await api("api/chat/conversations");
+  } catch (e) {
+    toast(e.message);
+    return;
+  }
+  $("#convCwd").textContent = (chatState.info && chatState.info.cwd) || "/config";
+  const rows = data.conversations || [];
+  $("#convEmpty").classList.toggle("hidden", rows.length > 0);
+  rows.forEach((c) => {
+    const btn = el("button", "convitem");
+    btn.appendChild(el("span", "ctitle", c.title));
+    btn.appendChild(el("span", "cwhen", c.age));
+    btn.addEventListener("click", () => resumeConversation(c));
+    list.appendChild(btn);
+  });
+}
+
+async function resumeConversation(conv) {
+  closeBox("#convModal");
+  toast("Opening that conversation…");
+  try {
+    await api("api/chat/resume", {
+      method: "POST", body: JSON.stringify({ session_id: conv.id }) });
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+$("#chatOpen").addEventListener("click", openConversations);
+$("#convClose").addEventListener("click", () => closeBox("#convModal"));
+$("#convModal").addEventListener("click", (ev) => {
+  if (ev.target === $("#convModal")) closeBox("#convModal");
+});
 
 // ------------------------------------------------------- session details
 //
@@ -3077,13 +3303,39 @@ async function chatHandoff() {
 // brAIn knowing anything about it. A hardcoded list would be wrong the first
 // time anybody customised their install.
 
+// Two families, one palette. "/" is Claude Code's own; `brain` and `ha` are
+// the add-on's CLIs, which are not slash commands and so were the half of
+// what you can type here that nothing ever offered. Both lists come from
+// the thing that owns them — the CLI announces its commands over the
+// stream, the dispatchers are parsed from their own `help` — so neither can
+// drift out of date with what this install actually has.
+const CLI_PREFIX = /^(brain|ha|hass)(\s.*)?$/i;
+
 function chatCmdMatches() {
   const value = $("#chatInput").value;
-  if (!/^\/[^\s]*$/.test(value)) return null;   // only while typing the name
-  const term = value.slice(1).toLowerCase();
-  return chatState.commands
-    .filter((c) => c.name.toLowerCase().includes(term))
-    .slice(0, 50);
+
+  if (/^\/[^\s]*$/.test(value)) {          // only while typing the name
+    const term = value.slice(1).toLowerCase();
+    return chatState.commands
+      .filter((c) => c.name.toLowerCase().includes(term))
+      .map((c) => ({ ...c, prefix: "/" }))
+      .slice(0, 50);
+  }
+
+  // A CLI line, up to the point where arguments start: once you are typing
+  // a value ("brain memory add \"the garage…"), suggesting commands is just
+  // covering the screen.
+  if (CLI_PREFIX.test(value) && !/["'\d]/.test(value)) {
+    const term = value.trim().toLowerCase().replace(/\s+/g, " ");
+    const matches = chatState.cli
+      .filter((c) => c.name.toLowerCase().startsWith(term))
+      .slice(0, 50);
+    // An exact, complete match is not a suggestion — it is what you typed.
+    if (matches.length === 1 && matches[0].name.toLowerCase() === term) return null;
+    return matches.map((c) => ({ ...c, prefix: "" }));
+  }
+
+  return null;
 }
 
 function chatRenderCmds() {
@@ -3097,8 +3349,8 @@ function chatRenderCmds() {
   chatState.cmdIndex = Math.min(chatState.cmdIndex, matches.length - 1);
   box.innerHTML = matches.map((c, i) =>
     `<button type="button" class="cmd${i === chatState.cmdIndex ? " on" : ""}"
-       role="option" data-name="${esc(c.name)}">`
-    + `<span class="cname">/${esc(c.name)}</span>`
+       role="option" data-name="${esc((c.prefix || "") + c.name)}">`
+    + `<span class="cname">${esc((c.prefix || "") + c.name)}</span>`
     + (c.hint ? `<span class="chint">${esc(c.hint)}</span>` : "")
     + (c.description ? `<span class="cdesc">${esc(c.description)}</span>` : "")
     + `</button>`).join("");
@@ -3109,9 +3361,10 @@ function chatRenderCmds() {
 
 function chatPickCmd(name) {
   const input = $("#chatInput");
-  // A trailing space because most commands take arguments; the ones that
-  // don't ignore it.
-  input.value = "/" + name + " ";
+  // `name` already carries its prefix — "/" for a Claude Code command,
+  // nothing for a shell one. A trailing space because most take arguments;
+  // the ones that don't ignore it.
+  input.value = name + " ";
   $("#chatCmds").classList.add("hidden");
   input.focus();
   chatGrow();
@@ -3167,6 +3420,36 @@ $("#termExpand").addEventListener("click", () => {
   applyTermChrome();
 });
 
+// ----------------------------------------------------------- the ⋯ menu
+//
+// Five floating buttons over someone's output was five translucent squares
+// on top of the text they came to read. ⤢ earns its own because it is also
+// the way back from a folded bar; the rest are occasional, so they are a
+// menu — one button, and no decision about which glyph means what.
+
+function closeTermMenu() {
+  $("#termMenuPop").classList.add("hidden");
+  $("#termMenu").setAttribute("aria-expanded", "false");
+}
+
+$("#termMenu").addEventListener("click", () => {
+  const pop = $("#termMenuPop");
+  const open = pop.classList.toggle("hidden");
+  $("#termMenu").setAttribute("aria-expanded", open ? "false" : "true");
+  if (!open) closeChipPop();
+});
+
+// Every item closes it — a menu that stays open behind the thing it just
+// opened is one more thing to dismiss.
+document.querySelectorAll("#termMenuPop .tmitem").forEach((item) =>
+  item.addEventListener("click", () => closeTermMenu()));
+
+document.addEventListener("click", (ev) => {
+  if ($("#termMenuPop").classList.contains("hidden")) return;
+  if (ev.target.closest("#termMenuPop") || ev.target.closest("#termMenu")) return;
+  closeTermMenu();
+});
+
 // ------------------------------------------------- which terminal you get
 //
 // Two faces on one Claude Code. The setting is server-side rather than
@@ -3179,9 +3462,10 @@ function applyTermMode(mode) {
   chatState.session = classic ? "classic" : "chat";
   document.body.classList.toggle("term-classic", classic);
   const btn = $("#termMode");
-  const label = classic ? "Switch to chat" : "Switch to the classic terminal";
-  btn.setAttribute("aria-label", label);
-  btn.dataset.tip = label;
+  const label = classic ? "Chat" : "Classic terminal";
+  btn.setAttribute("aria-label",
+    classic ? "Switch to chat" : "Switch to the classic terminal");
+  $("#termModeLabel").textContent = label;
   const onTab = currentView === "terminal";
   if (classic) {
     chatDisconnect();

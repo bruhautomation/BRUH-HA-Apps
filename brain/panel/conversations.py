@@ -1,0 +1,313 @@
+"""Claude Code's own conversation store, read from the outside.
+
+The chat terminal and the classic terminal are two front ends onto one
+Claude Code. What makes them genuinely interchangeable rather than merely
+adjacent is this file: Claude Code writes every conversation to
+``~/.claude/projects/<escaped working directory>/<session id>.jsonl``, in
+the same message shapes it streams, so the panel can
+
+  * list the conversations that exist — whichever face started them, and
+  * replay one into the chat pane, so switching over shows the conversation
+    instead of an empty box with a promise attached.
+
+We only ever READ this directory. It belongs to the CLI: the CLI decides
+what a conversation is, when it is written and when it is pruned, and a
+panel that started editing those files would be a second writer to the one
+thing that must have exactly one.
+
+Two things here are inference rather than contract, and both fail soft:
+
+* **The directory name.** It is the working directory with every character
+  outside ``[A-Za-z0-9]`` replaced by ``-``. Derived, not published — so if
+  the computed name does not exist we go looking for a directory whose
+  sessions say they ran in the right place, and if that fails too the
+  listing is simply empty.
+* **Which entry is the title.** The first genuine user message. The file
+  also carries interruptions, tool results and injected notices as
+  ``user`` entries, so those are filtered; a conversation whose title
+  cannot be found is listed by its id rather than dropped.
+"""
+from __future__ import annotations
+
+import json
+import os
+import re
+import time
+from pathlib import Path
+
+# Where the CLI keeps its state. Same env var the add-on exports for every
+# other Claude path, with the CLI's own default behind it.
+CONFIG_DIR = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(
+    os.environ.get("BRAIN_HOME", "/data/home"), ".claude")
+
+MAX_TITLE_CHARS = 120
+# How far into a transcript to look for the first real user message before
+# giving up. Some conversations open with a long injected context block.
+TITLE_SCAN_LINES = 400
+# A replayed conversation is a scrollback, not the context — the CLI still
+# holds the whole thing. Newest N events, so a month-long session opens
+# instantly instead of pushing 10 MB into a browser.
+REPLAY_EVENTS = 400
+MAX_TEXT = 4000
+
+# Entries that are user-shaped but are not something a person typed.
+_NOT_A_PROMPT = (
+    "[Request interrupted",
+    "<system-reminder>",
+    "Caveat: The messages below",
+    "<command-name>",
+    "<local-command-stdout>",
+)
+
+
+def _escape(path: str) -> str:
+    return re.sub(r"[^A-Za-z0-9]", "-", path)
+
+
+def project_dir(cwd: str) -> Path | None:
+    """The directory Claude Code files this working directory's chats in.
+
+    The name is derived, so it is checked rather than trusted: if it is not
+    there, fall back to asking the transcripts themselves which directory
+    they ran in. That costs one line read per project and only happens when
+    the derived name is wrong.
+    """
+    root = Path(CONFIG_DIR) / "projects"
+    guess = root / _escape(cwd)
+    if guess.is_dir():
+        return guess
+    if not root.is_dir():
+        return None
+    try:
+        candidates = sorted(root.iterdir(), key=lambda p: p.stat().st_mtime,
+                            reverse=True)
+    except OSError:
+        return None
+    for candidate in candidates:
+        if not candidate.is_dir():
+            continue
+        for entry in _iter_sessions(candidate):
+            first = _first_line(entry)
+            if first and first.get("cwd") == cwd:
+                return candidate
+            break   # one session per project is enough to identify it
+    return None
+
+
+def _iter_sessions(directory: Path):
+    try:
+        return sorted(directory.glob("*.jsonl"),
+                      key=lambda p: p.stat().st_mtime, reverse=True)
+    except OSError:
+        return []
+
+
+def _first_line(path: Path) -> dict | None:
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                if line.strip():
+                    return json.loads(line)
+    except (OSError, ValueError):
+        return None
+    return None
+
+
+def _message_text(entry: dict) -> str:
+    """The text of a user/assistant entry, or "" if it carries none."""
+    content = (entry.get("message") or {}).get("content")
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    return "".join(
+        block.get("text", "") for block in content
+        if isinstance(block, dict) and block.get("type") == "text")
+
+
+def _is_prompt(entry: dict) -> bool:
+    if entry.get("type") != "user" or entry.get("isMeta") or entry.get("isSidechain"):
+        return False
+    text = _message_text(entry).strip()
+    if not text:
+        return False
+    return not text.startswith(_NOT_A_PROMPT)
+
+
+def title_of(path: Path) -> str:
+    """The conversation's first genuine user message, as a one-line title."""
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as fh:
+            for count, line in enumerate(fh):
+                if count > TITLE_SCAN_LINES:
+                    break
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except ValueError:
+                    continue
+                if _is_prompt(entry):
+                    text = " ".join(_message_text(entry).split())
+                    return text[:MAX_TITLE_CHARS]
+    except OSError:
+        pass
+    return ""
+
+
+def listing(cwd: str, limit: int = 30, exclude: str | None = None) -> list[dict]:
+    """Recent conversations for this working directory, newest first."""
+    directory = project_dir(cwd)
+    if directory is None:
+        return []
+    out = []
+    for path in _iter_sessions(directory):
+        session_id = path.stem
+        if exclude and session_id == exclude:
+            continue
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        # A file with nothing in it is a session that was opened and never
+        # used; offering it as something to resume is a dead end.
+        if stat.st_size < 200:
+            continue
+        out.append({
+            "id": session_id,
+            "title": title_of(path) or "(no opening message)",
+            "modified": stat.st_mtime,
+            "age": _age(stat.st_mtime),
+        })
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _age(when: float) -> str:
+    secs = max(0.0, time.time() - when)
+    if secs < 90:
+        return "just now"
+    if secs < 3600:
+        return f"{round(secs / 60)} min ago"
+    if secs < 86400:
+        return f"{round(secs / 3600)} h ago"
+    return f"{round(secs / 86400)} d ago"
+
+
+def transcript(cwd: str, session_id: str, limit: int = REPLAY_EVENTS) -> list[dict]:
+    """One conversation, in the chat pane's own event shapes.
+
+    This is what turns "switch to chat" from a promise into the
+    conversation: the CLI's stored messages are the same shapes it streams,
+    so they render through exactly the same code path as a live turn.
+    """
+    directory = project_dir(cwd)
+    if directory is None:
+        return []
+    # Session ids are UUIDs and this becomes a path — refuse anything that
+    # could climb out of the directory rather than sanitising it.
+    if not re.fullmatch(r"[A-Za-z0-9._-]{1,120}", session_id or ""):
+        return []
+    path = directory / f"{session_id}.jsonl"
+    if not path.is_file():
+        return []
+    events: list[dict] = []
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except ValueError:
+                    continue
+                events.extend(_replay(entry))
+                if len(events) > limit * 4:
+                    del events[:len(events) - limit * 2]
+    except OSError:
+        return []
+    return events[-limit:]
+
+
+def _replay(entry: dict) -> list[dict]:
+    """One stored entry → zero or more chat events.
+
+    Deliberately close to ``chat_session._normalise`` but not shared with
+    it: that one reads a live stream, where a ``user`` event is always a
+    tool result coming back. Here a ``user`` entry is usually a person
+    talking, and telling the two apart is the whole job.
+    """
+    if entry.get("isSidechain") or entry.get("isMeta"):
+        return []
+    etype = entry.get("type")
+
+    if etype == "user":
+        content = (entry.get("message") or {}).get("content")
+        blocks = content if isinstance(content, list) else []
+        results = [b for b in blocks
+                   if isinstance(b, dict) and b.get("type") == "tool_result"]
+        if results:
+            out = []
+            for block in results:
+                inner = block.get("content")
+                if isinstance(inner, list):
+                    text = "\n".join(
+                        part.get("text", "") for part in inner
+                        if isinstance(part, dict) and part.get("type") == "text")
+                else:
+                    text = inner if isinstance(inner, str) else ""
+                out.append({
+                    "type": "tool_result",
+                    "id": block.get("tool_use_id") or "",
+                    "ok": not block.get("is_error"),
+                    "text": _clip(text),
+                })
+            return out
+        if _is_prompt(entry):
+            return [{"type": "user", "text": _clip(_message_text(entry))}]
+        return []
+
+    if etype == "assistant":
+        out = []
+        for block in (entry.get("message") or {}).get("content") or []:
+            if not isinstance(block, dict):
+                continue
+            kind = block.get("type")
+            if kind == "text" and block.get("text"):
+                out.append({"type": "text", "text": _clip(block["text"])})
+            elif kind == "thinking" and block.get("thinking"):
+                out.append({"type": "thinking", "text": _clip(block["thinking"])})
+            elif kind == "tool_use":
+                args = block.get("input") if isinstance(block.get("input"), dict) else {}
+                out.append({
+                    "type": "tool",
+                    "id": block.get("id") or "",
+                    "name": block.get("name") or "tool",
+                    "summary": _tool_summary(args),
+                    "input": _clip(json.dumps(args, ensure_ascii=False, indent=2)),
+                })
+        return out
+
+    return []
+
+
+def _clip(text: str) -> str:
+    text = str(text or "")
+    return text if len(text) <= MAX_TEXT else text[:MAX_TEXT] + "\n… (truncated)"
+
+
+def _tool_summary(args: dict) -> str:
+    # Same idea as chat_session.tool_summary, kept here so this module can be
+    # read (and tested) without importing the live-session machinery.
+    for key in ("file_path", "path", "pattern", "command", "url", "query",
+                "entity_id", "prompt", "description", "notebook_path"):
+        value = args.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip().splitlines()[0][:200]
+    for value in args.values():
+        if isinstance(value, str) and value.strip():
+            return value.strip().splitlines()[0][:200]
+    return ""

@@ -277,7 +277,8 @@
       <h3>Ask brAIn anything about your house</h3>
       <p>It has your entities, your history and your memory, and it can change
          things — edit an automation, rename a device, build a dashboard.
-         Type <b>/</b> for Claude Code's commands.</p>
+         Type <b>/</b> for Claude Code's commands, or <b>brain</b> / <b>ha</b> for
+         brAIn's own.</p>
       <div class="chatseeds">
         <button class="seed">Why did the porch light not come on last night?</button>
         <button class="seed">Which of my devices have stopped reporting?</button>
@@ -285,6 +286,24 @@
       </div>
     </div>
     <div id="chatErr" class="chaterr hidden"></div>
+    <!-- What you are discussing, and the decisions that belong to it. The
+         discussion itself changes nothing — the prompt says so — so the
+         buttons that DO have to be here: agreeing to a fix at the end of a
+         conversation about it should be one press, not a trip back to the
+         other tab to find the card again. -->
+    <div id="chatFinding" class="chatfinding hidden">
+      <div class="cfhead">
+        <span class="cflabel">Discussing</span>
+        <span id="chatFindingText" class="cftext"></span>
+        <button id="chatFindingClose" class="btn icon" aria-label="Stop discussing it">✕</button>
+      </div>
+      <div class="cfacts">
+        <button id="chatFindingFix" class="btn small primary">✦  Fix it</button>
+        <button id="chatFindingDone" class="btn small">✓  I did it</button>
+        <button id="chatFindingLater" class="btn small ghost">⏰  Later</button>
+        <button id="chatFindingIgnore" class="btn small ghost">Not a problem</button>
+      </div>
+    </div>
     <!-- The CLI's own slash commands, as it advertises them over the stream.
          Not a list we maintain: a command someone adds to
          /config/.claude/commands appears here without brAIn being told. -->
@@ -303,26 +322,48 @@
 
   <iframe id="termFrame" title="Terminal" src="about:blank"></iframe>
 
+  <!-- Two buttons, not five. These float over somebody's output, and a
+       column of five translucent squares sitting on top of the text is
+       exactly the clutter the chat view exists to get away from. ⤢ stays on
+       its own because it is also the way back from a folded bar; everything
+       else is a menu, because those are things you do occasionally and
+       decide about once. -->
   <div class="termfabs">
-    <button id="termMode" class="termfab" data-tip="Switch to the classic terminal"
-            aria-label="Switch to the classic terminal">
-      <svg viewBox="0 0 24 24" class="ico ico-in" aria-hidden="true"><path d="m5 8 4 4-4 4M13 16h6"/></svg>
-      <svg viewBox="0 0 24 24" class="ico ico-out" aria-hidden="true"><path d="M21 12a8 8 0 0 1-8 8H7l-4 3V12a8 8 0 0 1 8-8h2a8 8 0 0 1 8 8z"/></svg>
-    </button>
-    <button id="chatNew" class="termfab" data-tip="New chat" aria-label="New chat">
-      <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-    </button>
-    <!-- What the CLI says about itself, and the way to take this exact
-         conversation into the classic terminal. In a popover rather than a
-         bar, because it is answered once and would otherwise cost a row of
-         height on every screen for the rest of the session. -->
-    <button id="chatInfo" class="termfab" data-tip="Session" aria-label="Session details">
-      <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8v.1"/></svg>
+    <button id="termMenu" class="termfab" data-tip="Chat options"
+            aria-label="Chat options" aria-expanded="false">
+      <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
     </button>
     <button id="termExpand" class="termfab" data-tip="Full-screen terminal"
             aria-label="Full-screen terminal" aria-pressed="false">
       <svg viewBox="0 0 24 24" class="ico ico-in" aria-hidden="true"><path d="M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5"/></svg>
       <svg viewBox="0 0 24 24" class="ico ico-out" aria-hidden="true"><path d="M4 9h5V4M20 9h-5V4M4 15h5v5M20 15h-5v5"/></svg>
+    </button>
+  </div>
+
+  <!-- The menu. Real buttons with the ids their handlers are already bound
+       to, rather than markup rebuilt on each open — a menu that recreates
+       its own controls loses every listener attached to them. -->
+  <div id="termMenuPop" class="termmenu hidden" role="menu">
+    <button id="chatNew" class="tmitem" role="menuitem">
+      <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+      <span>New chat</span>
+    </button>
+    <!-- Every conversation in this project directory, whichever face made
+         it. Claude Code files them per working directory and both faces
+         stand in /config, so one started in the terminal is listed here
+         beside one started in the chat. -->
+    <button id="chatOpen" class="tmitem" role="menuitem">
+      <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M3 12a9 9 0 1 0 2.6-6.4M3 4v5h5"/></svg>
+      <span>Conversations…</span>
+    </button>
+    <button id="chatInfo" class="tmitem" role="menuitem">
+      <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8v.1"/></svg>
+      <span>Session details</span>
+    </button>
+    <button id="termMode" class="tmitem" role="menuitem">
+      <svg viewBox="0 0 24 24" class="ico ico-in" aria-hidden="true"><path d="m5 8 4 4-4 4M13 16h6"/></svg>
+      <svg viewBox="0 0 24 24" class="ico ico-out" aria-hidden="true"><path d="M21 12a8 8 0 0 1-8 8H7l-4 3V12a8 8 0 0 1 8-8h2a8 8 0 0 1 8 8z"/></svg>
+      <span id="termModeLabel">Classic terminal</span>
     </button>
   </div>
 </div>
@@ -465,6 +506,27 @@
         <button id="nameSave" class="btn primary">Save</button>
         <button id="nameDelete" class="btn ghost danger">Delete card</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- The conversation list. Read out of Claude Code's own store rather than
+     kept by us, so it is the same set the terminal's own /resume offers —
+     picking one here replays it into the chat pane and carries on. -->
+<div id="convModal" class="modal" role="dialog" aria-modal="true">
+  <div class="box edit">
+    <header>
+      <span>⟲</span>
+      <span>Conversations</span>
+      <div class="spacer"></div>
+      <button id="convClose" class="btn icon" data-tip="Close" aria-label="Close">✕</button>
+    </header>
+    <div class="edit-body">
+      <p class="hint tight">Everything in <code id="convCwd">/config</code>, newest first —
+        started here or in the classic terminal, it makes no difference. Picking one
+        replays it and carries on where it left off.</p>
+      <div id="convList" class="convlist"></div>
+      <p id="convEmpty" class="kempty hidden">No other conversations yet.</p>
     </div>
   </div>
 </div>
@@ -665,8 +727,17 @@
                  placeholder="Teach it something — “The garage fridge is supposed to run 24/7”">
           <button class="btn small primary" type="submit">Add</button>
         </form>
-        <div id="kMemMerging" class="kmerging hidden">✨ Queued — it lands at the next
-          consolidation…</div>
+        <!-- Two different states wore the same words. A pass that is
+             RUNNING (the daemon's, daily or once the queue passes 20 facts,
+             or the one you asked for) is work happening now and says so;
+             one that is merely QUEUED is a fact waiting for the next pass.
+             Reporting only the second made a background consolidation look
+             like nothing at all — the queue would empty while you watched
+             and nothing on screen had said why. -->
+        <div id="kMemMerging" class="kmerging hidden">
+          <span id="kMemMergingSpin" class="kspin hidden" aria-hidden="true"></span>
+          <span id="kMemMergingText">✨ Queued — it lands at the next consolidation…</span>
+        </div>
         <div class="row kmemrow">
           <button id="kMemEdit" class="btn small">✎ Edit markdown</button>
           <button id="kMemSave" class="btn small primary hidden">Save</button>

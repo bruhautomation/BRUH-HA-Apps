@@ -143,6 +143,11 @@ def _shape(entry: dict) -> dict:
         "result": str(entry.get("result") or "")[:MAX_RESULT],
         "changed": _clean_changed(entry.get("changed")),
         "settled_at": int(entry.get("settled_at") or 0),
+        # "Not now" is not a decision, so it is not a status. Dismissing is
+        # permanent and is fed back into every future analysis; snoozing has
+        # to leave the finding exactly as open as it was and just stop it
+        # asking. A separate field is the only way to keep those apart.
+        "snoozed_until": int(entry.get("snoozed_until") or 0),
     }
 
 
@@ -196,11 +201,21 @@ def sweep_inbox() -> int:
 # Reads
 # ---------------------------------------------------------------------------
 
+def is_snoozed(shaped: dict, now: float | None = None) -> bool:
+    """Waiting for its time to come back round."""
+    until = shaped.get("snoozed_until") or 0
+    return bool(until) and until > (now if now is not None else time.time())
+
+
 def _matches(shaped: dict, status: str | None) -> bool:
     if status is None:
         return True
+    if status == "snoozed":
+        return is_snoozed(shaped)
     if status == "live":
-        return shaped["status"] in LIVE_STATUSES
+        # A snoozed finding is still live — it is just not asking yet, so it
+        # stays out of the list you are being shown until it is due.
+        return shaped["status"] in LIVE_STATUSES and not is_snoozed(shaped)
     return shaped["status"] == status
 
 
@@ -222,9 +237,13 @@ def listing() -> dict:
     """
     shaped = [s for s in (_shape(e) for e in _load()) if s["text"]]
     shaped.sort(key=lambda f: f["ts"], reverse=True)
+    now = time.time()
     return {
         "findings": shaped,
-        "open": len([f for f in shaped if f["status"] in UNSETTLED_STATUSES]),
+        "open": len([f for f in shaped
+                     if f["status"] in UNSETTLED_STATUSES
+                     and not is_snoozed(f, now)]),
+        "snoozed": len([f for f in shaped if is_snoozed(f, now)]),
     }
 
 
@@ -243,9 +262,11 @@ def open_count() -> int:
     string) to then throw all of it away but the length is real work on a
     Raspberry Pi.
     """
+    now = time.time()
     return len([e for e in _load()
                 if e.get("status", "open") in UNSETTLED_STATUSES
-                and str(e.get("text") or "").strip()])
+                and str(e.get("text") or "").strip()
+                and not (e.get("snoozed_until") or 0) > now])
 
 
 def is_known(text: str) -> bool:
@@ -360,6 +381,26 @@ def set_status(ts: int, status: str, result: str = "",
         if changed is not None:
             entry["changed"] = _clean_changed(changed)
         entry["settled_at"] = 0 if status in ("open", "fixing") else int(time.time())
+        _write(items)
+        return _shape(entry)
+    return None
+
+
+def snooze(ts: int, until: int) -> dict | None:
+    """Take a finding off the list until ``until`` (epoch seconds).
+
+    Deliberately does NOT touch the status. "Remind me later" and "not a
+    problem" are different answers — the second is permanent and teaches
+    the analyst never to raise it again, and using it for the first would
+    quietly throw away a real problem you meant to come back to.
+
+    ``until <= 0`` brings it back now.
+    """
+    items = _load()
+    for entry in items:
+        if int(entry.get("ts") or 0) != ts:
+            continue
+        entry["snoozed_until"] = max(0, int(until))
         _write(items)
         return _shape(entry)
     return None

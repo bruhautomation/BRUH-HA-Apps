@@ -765,10 +765,28 @@ body.modal-open {
 }
 .kmemedit:focus { border-color: var(--accent); }
 .kmerging {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 12.5px;
   font-weight: 600;
   color: var(--accent);
   padding: 4px 0;
+}
+/* Only for a pass that is actually running. "Queued" is a fact about the
+   future and a spinner would be claiming work is happening when none is. */
+.kspin {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: kspin 0.8s linear infinite;
+}
+@keyframes kspin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .kspin { animation: none; opacity: .5; }
 }
 .kdirty {
   font-size: 11px;
@@ -1622,6 +1640,36 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   color: var(--ink-3);
 }
 
+/* The conversation list. One row per conversation: what it opened with,
+   and when it was last touched — which between them are how anyone
+   recognises a conversation they had. */
+.convlist { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.convitem {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  width: 100%;
+  min-height: 48px;
+  padding: 10px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.convitem:hover { border-color: var(--accent); }
+.convitem .ctitle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13.5px;
+}
+.convitem .cwhen { flex: none; font-size: 11.5px; color: var(--ink-3); }
+
 /* Session details, in the shared chip popover. */
 .chippop .mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -1637,6 +1685,52 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   overflow-wrap: anywhere;
 }
 .chippop .pacts { gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+
+/* The finding a discussion is about, pinned above the composer with the
+   decisions that belong to it. It sits here rather than in the log because
+   the log scrolls and a decision that scrolls away is one you stop making. */
+.chatfinding {
+  margin: 0 16px 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--hairline);
+  border-left: 3px solid var(--warning);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.chatfinding.hidden { display: none; }
+.chatfinding .cfhead { display: flex; align-items: baseline; gap: 8px; }
+.chatfinding .cflabel {
+  flex: none;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.chatfinding .cftext {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+}
+.chatfinding .cfhead .btn.icon { width: 28px; height: 28px; flex: none; }
+.chatfinding .cfacts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+
+.snoozeopts { display: flex; flex-direction: column; gap: 6px; }
+.snoozeopts .snoozeopt { justify-content: flex-start; min-height: 40px; }
+
+/* Still on the card, but plainly not asking. */
+.findsnoozed {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--ink-3);
+}
 
 /* The composer. A real textarea, which is the whole point: dictation,
    autocorrect, selection and the system keyboard all behave, because there
@@ -1687,9 +1781,14 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
 .chatsend.stop { background: var(--surface-2); color: var(--ink); }
 .chatsend .ico { width: 20px; height: 20px; }
 
-/* One column of buttons over the terminal, because the way back from a
-   hidden bar cannot live in the bar. Dimmed until touched: they are over
-   someone's output, and output is what they came for. */
+/* Two buttons over the terminal, because the way back from a hidden bar
+   cannot live in the bar. Dimmed until touched: they are over someone's
+   output, and output is what they came for.
+
+   It was five, and five translucent squares stacked on top of the text was
+   precisely the clutter this view exists to avoid. ⤢ keeps its own place
+   because it is also the way back from a folded bar; everything else is one
+   ⋯ away, because those are things you do occasionally. */
 .termfabs {
   position: absolute;
   top: 8px;
@@ -1698,11 +1797,49 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   display: none;
   gap: 6px;
 }
+
+.termmenu {
+  position: absolute;
+  top: 54px;
+  right: 10px;
+  z-index: 26;
+  min-width: 208px;
+  padding: 5px;
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+.termmenu.hidden { display: none; }
+.tmitem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.tmitem:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
+.tmitem .ico { width: 17px; height: 17px; flex: none; color: var(--ink-3); }
+/* Chat-only entries: in the classic terminal there is no chat to start, no
+   transcript to list and no chat session to describe. */
+body.term-classic #chatNew,
+body.term-classic #chatOpen,
+body.term-classic #chatInfo { display: none; }
 #viewTerminal.active .termfabs { display: flex; }
 /* While the keyboard has taken the bar, these would be one more thing over
    a screen that has almost nothing left — and closing the keyboard brings
    the bar back on its own. */
-body.term-kb #viewTerminal.active .termfabs { display: none; }
+body.term-kb #viewTerminal.active .termfabs,
+body.term-kb #viewTerminal.active .termmenu { display: none; }
 /* In chat mode the buttons sit over a scrolling document rather than a
    fixed grid, so they pin to the viewport corner of the log instead. */
 body:not(.term-classic) .termfabs { top: 6px; right: 8px; }
@@ -1750,10 +1887,8 @@ body:not(.term-classic) .termfab:focus-visible {
   color: var(--ink);
 }
 
-/* "New chat" belongs to the chat, and the mode button says which way it is
-   about to go — outward arrows for "become the grid", a speech bubble for
-   "come back to messages". */
-body.term-classic #chatNew { display: none; }
+/* The mode item says which way it is about to go — a prompt glyph for
+   "become the grid", a speech bubble for "come back to messages". */
 #termMode .ico-out { display: none; }
 body.term-classic #termMode .ico-in { display: none; }
 body.term-classic #termMode .ico-out { display: block; }

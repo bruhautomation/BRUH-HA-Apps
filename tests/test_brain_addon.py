@@ -554,6 +554,119 @@ class TestChatTerminalPanel(unittest.TestCase):
         chat = (PANEL / "chat_session.py").read_text()
         self.assertIn('"api_key_source": event.get("apiKeySource")', chat)
 
+    def test_the_two_faces_can_hand_a_conversation_to_each_other(self):
+        """Interchangeable means both directions. Chat → terminal writes a
+        handoff the terminal's launcher reads; terminal → chat is the
+        conversation picker, which lists Claude Code's own store and replays
+        the one you choose."""
+        self.assertIn('id="chatOpen"', self.html)
+        self.assertIn('id="convModal"', self.html)
+        self.assertIn("api/chat/resume", self.js)
+        self.assertIn("api/chat/conversations", self.js)
+        chat = (PANEL / "chat_session.py").read_text()
+        self.assertIn("async def resume(", chat)
+        self.assertIn("def _open_in_terminal(", chat)
+        # The launcher is what makes a terminal that has never been opened
+        # still come up inside the conversation.
+        start = (SCRIPTS / "brain-terminal-start.sh").read_text()
+        self.assertIn("--resume", start)
+        run = (ADDON_DIR / "run.sh").read_text()
+        self.assertIn("brain-terminal-start", run)
+
+    def test_the_handoff_expires(self):
+        """A stale id would silently reopen last week's conversation the
+        next time the add-on restarted."""
+        start = (SCRIPTS / "brain-terminal-start.sh").read_text()
+        self.assertIn("HANDOFF_MAX_AGE", start)
+        # Consumed before it is acted on, so a handoff that fails to launch
+        # is not retried forever.
+        self.assertLess(start.index('rm -f "$HANDOFF_FILE"'),
+                        start.index('resume_id="$candidate"'))
+
+    def test_only_two_things_float_over_the_terminal(self):
+        """These sit on top of somebody's output. Five translucent squares
+        stacked over the text is exactly the clutter this view exists to get
+        away from — ⤢ earns its place because it is also the way back from a
+        folded bar, and the rest are a menu."""
+        import re
+        fabs = re.search(r'<div class="termfabs">(.*?)</div>', self.html, re.S)
+        self.assertIsNotNone(fabs, "no floating button group")
+        self.assertEqual(len(re.findall(r"<button ", fabs.group(1))), 2,
+                         "more than two buttons float over the terminal")
+        self.assertIn('id="termMenu"', fabs.group(1))
+        self.assertIn('id="termExpand"', fabs.group(1))
+        # The menu is static markup, not rebuilt on open: a menu that
+        # recreates its own controls loses every listener bound to them.
+        for item in ("chatNew", "chatOpen", "chatInfo", "termMode"):
+            self.assertIn(f'id="{item}"', self.html)
+        self.assertIn('id="termMenuPop"', self.html)
+
+    def test_the_bar_does_not_report_usage_twice(self):
+        """"Usage budget reached" was a chip sitting next to a usage pill
+        already showing the number it was about — the same fact twice, and
+        on a phone it wrapped the bar onto a third row to say it. The pill
+        carries that state itself now."""
+        self.assertNotIn("Usage budget reached", self.js)
+        paused = self.js[self.js.index("function renderPausedChip()"):]
+        paused = paused[:paused.index("\n}\n")]
+        self.assertIn("auto_enabled === false", paused)
+        self.assertNotIn("blocked", paused,
+                         "the paused chip is reporting usage again")
+        # ...and the pill says it, in the one place that now can.
+        fill = self.js[self.js.index("function fillUsagePop()"):]
+        fill = fill[:fill.index("\n}\n")]
+        self.assertIn("Automatic insights are paused", fill)
+
+    def test_a_popover_is_not_closed_by_the_press_that_opened_it(self):
+        """The dismiss-on-outside-click listener runs after the handler that
+        opens a popover, so it has to know what "outside" means. It used to
+        name `.chip.clickable` specifically, which meant any other control
+        that opened one — a finding's "Remind me later" — could never show
+        it at all."""
+        self.assertIn("chipPopFor.contains(ev.target)", self.js)
+        self.assertNotIn('ev.target.closest(".chip.clickable")', self.js)
+
+    def test_a_finding_can_be_discussed_and_deferred(self):
+        """Two things a work list needs and did not have: asking about an
+        item, and saying "not now" without saying "never"."""
+        self.assertIn('id="chatFinding"', self.html)
+        self.assertIn("function discussFinding(", self.js)
+        self.assertIn("function openSnoozePop(", self.js)
+        # The decisions travel with the discussion — agreeing to a fix at the
+        # end of a conversation about it should not mean going to find the
+        # card again.
+        for act in ("chatFindingFix", "chatFindingDone",
+                    "chatFindingLater", "chatFindingIgnore"):
+            self.assertIn(f'id="{act}"', self.html)
+        # And the discussion itself changes nothing.
+        server = (PANEL / "server.py").read_text()
+        self.assertIn("Do not change anything yet", server)
+
+    def test_remind_me_later_is_not_a_decision(self):
+        """Dismissing is permanent and is fed back into every future
+        analysis. Using that for "not right now" would quietly throw away a
+        real problem — so snooze must not touch the status."""
+        store = (PANEL / "findings_store.py").read_text()
+        self.assertIn("def snooze(", store)
+        self.assertIn("snoozed_until", store)
+        snooze = store[store.index("def snooze("):]
+        snooze = snooze[:snooze.index("\ndef ")]
+        self.assertNotIn('entry["status"]', snooze,
+                         "snoozing changed the finding's status")
+        # It comes back, and it is findable while it waits.
+        self.assertIn('if status == "snoozed"', store)
+        self.assertIn('{ id: "snoozed", label: "Later"', self.js)
+
+    def test_the_palette_offers_the_brain_and_ha_commands_too(self):
+        """They are not slash commands, so nothing announced them — and
+        they are half of what anyone types into that box."""
+        self.assertIn("CLI_PREFIX", self.js)
+        self.assertIn("chatState.cli", self.js)
+        cli = (PANEL / "cli_commands.py").read_text()
+        # Parsed from the dispatchers' own help, never hardcoded.
+        self.assertIn('[path, "help"]', cli)
+        self.assertNotIn('"brain memory add"', cli)
+
     def test_the_command_palette_uses_the_clis_own_list(self):
         """A hardcoded list is wrong the first time somebody adds a command
         to /config/.claude/commands."""
@@ -565,7 +678,7 @@ class TestChatTerminalPanel(unittest.TestCase):
         self.assertIn("slash_commands", chat)
         # The palette owns Enter while it is open, or half-typing /model
         # sends "/mod" as a message.
-        self.assertIn("chatPickCmd(matches[chatState.cmdIndex].name)", self.js)
+        self.assertIn("chatPickCmd((matches[chatState.cmdIndex].prefix", self.js)
 
 
 class TestDocsTab(unittest.TestCase):

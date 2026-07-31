@@ -22,6 +22,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -509,6 +510,145 @@ class TestFindingRoutes(ServerCase):
                 self.assertEqual(
                     (await client.post(f"/api/finding/{ts}/fix")).status, 400)
                 self.assertEqual(findings_store.get(ts)["status"], "open")
+            finally:
+                await client.close()
+
+        asyncio.run(run())
+
+
+class TestSnooze(StoreCase):
+    """"Remind me later" and "not a problem" are different answers.
+
+    The second is permanent and is fed back into every future analysis so
+    the same non-problem is never raised again. Using it for the first would
+    quietly throw away a real problem you meant to come back to — so snooze
+    must not touch the status at all.
+    """
+
+    def test_snoozing_leaves_the_finding_exactly_as_open_as_it_was(self):
+        findings_store.add("Battery low")
+        ts = findings_store.list_all()[0]["ts"]
+        shaped = findings_store.snooze(ts, int(time.time()) + 3600)
+        self.assertEqual(shaped["status"], "open")
+        self.assertEqual(findings_store.get(ts)["status"], "open")
+        self.assertTrue(findings_store.is_snoozed(shaped))
+
+    def test_a_snoozed_finding_stops_asking(self):
+        findings_store.add("Battery low")
+        ts = findings_store.list_all()[0]["ts"]
+        self.assertEqual(findings_store.open_count(), 1)
+        findings_store.snooze(ts, int(time.time()) + 3600)
+        self.assertEqual(findings_store.open_count(), 0)
+        self.assertEqual(findings_store.listing()["open"], 0)
+        self.assertEqual(findings_store.listing()["snoozed"], 1)
+        self.assertEqual(findings_store.list_all("live"), [])
+
+    def test_a_snoozed_finding_is_findable_rather_than_vanished(self):
+        """The point of "later" is that it comes back, and something you
+        cannot find has not come back."""
+        findings_store.add("Battery low")
+        ts = findings_store.list_all()[0]["ts"]
+        findings_store.snooze(ts, int(time.time()) + 3600)
+        self.assertEqual([f["text"] for f in findings_store.list_all("snoozed")],
+                         ["Battery low"])
+        self.assertEqual(len(findings_store.list_all()), 1)
+
+    def test_it_comes_back_on_its_own(self):
+        findings_store.add("Battery low")
+        ts = findings_store.list_all()[0]["ts"]
+        findings_store.snooze(ts, int(time.time()) - 1)   # already due
+        self.assertEqual(findings_store.open_count(), 1)
+        self.assertEqual(len(findings_store.list_all("live")), 1)
+        self.assertEqual(findings_store.list_all("snoozed"), [])
+
+    def test_it_can_be_brought_back_by_hand(self):
+        findings_store.add("Battery low")
+        ts = findings_store.list_all()[0]["ts"]
+        findings_store.snooze(ts, int(time.time()) + 3600)
+        findings_store.snooze(ts, 0)
+        self.assertEqual(findings_store.open_count(), 1)
+
+    def test_snoozing_an_unknown_finding_is_not_an_error(self):
+        self.assertIsNone(findings_store.snooze(1, int(time.time()) + 60))
+
+
+class TestSnoozeAndDiscussRoutes(ServerCase):
+    def test_the_snooze_route_takes_a_duration_and_gives_it_back(self):
+        findings_store.add("Battery low")
+        ts = findings_store.list_all()[0]["ts"]
+
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                before = int(time.time())
+                data = await (await client.post(
+                    f"/api/finding/{ts}/snooze", json={"for": "week"})).json()
+                self.assertEqual(data["open"], 0)
+                self.assertEqual(data["snoozed"], 1)
+                until = findings_store.get(ts)["snoozed_until"]
+                self.assertGreaterEqual(until, before + 7 * 86400 - 5)
+                # Still open. Snoozing is not a decision.
+                self.assertEqual(findings_store.get(ts)["status"], "open")
+
+                data = await (await client.post(
+                    f"/api/finding/{ts}/snooze", json={"for": "now"})).json()
+                self.assertEqual(data["open"], 1)
+
+                resp = await client.post(
+                    f"/api/finding/{ts}/snooze", json={"for": "forever"})
+                self.assertEqual(resp.status, 400)
+            finally:
+                await client.close()
+
+        asyncio.run(run())
+
+    def test_discussing_a_finding_hands_it_to_the_chat_read_only(self):
+        """The discussion is for understanding it. "Explain this to me" and
+        "go change my house" are different consents, and Fix it is the one
+        that gives the second."""
+        findings_store.add("Porch light never comes on",
+                           detail="The trigger cannot fire",
+                           fix="Invert the condition", entity_id="light.porch")
+        ts = findings_store.list_all()[0]["ts"]
+        sent = []
+
+        async def run():
+            import chat_session
+            client = self._client()
+            await client.start_server()
+
+            async def fake_send(text):
+                sent.append(text)
+                return {"ok": True}
+
+            session = chat_session.session()
+            original, session.send = session.send, fake_send
+            try:
+                data = await (await client.post(
+                    f"/api/finding/{ts}/discuss")).json()
+                self.assertTrue(data["ok"])
+                self.assertEqual(data["finding"]["ts"], ts)
+            finally:
+                session.send = original
+                await client.close()
+
+        asyncio.run(run())
+        self.assertEqual(len(sent), 1)
+        prompt = sent[0]
+        self.assertIn("Porch light never comes on", prompt)
+        self.assertIn("The trigger cannot fire", prompt)
+        self.assertIn("Invert the condition", prompt)
+        self.assertIn("light.porch", prompt)
+        self.assertIn("Do not change anything", prompt)
+
+    def test_discussing_a_finding_that_does_not_exist_is_a_404(self):
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                resp = await client.post("/api/finding/1/discuss")
+                self.assertEqual(resp.status, 404)
             finally:
                 await client.close()
 
