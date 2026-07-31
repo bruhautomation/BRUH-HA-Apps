@@ -738,6 +738,10 @@
           <span id="kMemMergingSpin" class="kspin hidden" aria-hidden="true"></span>
           <span id="kMemMergingText">✨ Queued — it lands at the next consolidation…</span>
         </div>
+        <!-- A consolidator that has stopped running is invisible by nature:
+             the queue just sits there, and every screen says everything is
+             fine. This is the one place that would have shown it. -->
+        <div id="kMemStale" class="kstale hidden"></div>
         <div class="row kmemrow">
           <button id="kMemEdit" class="btn small">✎ Edit markdown</button>
           <button id="kMemSave" class="btn small primary hidden">Save</button>

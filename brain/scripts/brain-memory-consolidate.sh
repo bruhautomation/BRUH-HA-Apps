@@ -402,17 +402,56 @@ LOCK_FILE="$MEMORY_DIR/.consolidate.lock"
 # caller tell "nothing to do" from "somebody else is doing it".
 LOCK_BUSY_RC=75
 
+# How long to wait for a pass that is genuinely in flight, and how often to
+# look. Polling, not `flock -w`: see below.
+LOCK_WAIT_S="${BRAIN_MEMORY_LOCK_WAIT:-600}"
+LOCK_POLL_S="${BRAIN_MEMORY_LOCK_POLL:-2}"
+
+# Can flock in THIS image actually take a lock, with the flags we use?
+#
+# Asked rather than assumed, and this is the whole lesson of the bug it
+# fixes. The add-on runs on Alpine, whose flock is BusyBox's: it accepts
+# only -sxnu. `-w SECS` is util-linux's, and BusyBox answers an unknown
+# option by printing usage and exiting 1 — the SAME status flock uses for
+# "the lock is held". So `flock -w 600 9` never locked anything, always
+# failed, and was read as contention. Every consolidation pass reported
+# "another consolidation is already running" and did nothing, for weeks,
+# while the inbox grew and memory quietly stopped being updated at all.
+#
+# The probe uses the same flag the real call uses, on a scratch file, so
+# "flock works here" means the exact thing we are about to do works here.
+flock_usable() {
+    command -v flock > /dev/null 2>&1 || return 1
+    ( exec 8> "${LOCK_FILE}.probe" && flock -n 8 ) > /dev/null 2>&1
+}
+
 with_lock() {
     mkdir -p "$MEMORY_DIR"
-    if ! command -v flock > /dev/null 2>&1; then
-        "$@"          # no flock in this image: better to run than to refuse
+    if ! flock_usable; then
+        # No usable flock: running is better than refusing, and it is said
+        # out loud rather than inferred from a pass that never happens.
+        log "no usable flock in this image — running without a lock"
+        "$@"
         return $?
     fi
-    exec 9> "$LOCK_FILE"
-    if ! flock -w "${BRAIN_MEMORY_LOCK_WAIT:-600}" 9; then
-        log "another consolidation is already running — skipping this pass"
-        return "$LOCK_BUSY_RC"
+    if ! exec 9> "$LOCK_FILE"; then
+        log "could not open the lock file — running without a lock"
+        "$@"
+        return $?
     fi
+
+    # -n and poll, never -w. Only the portable flag is used, and because the
+    # probe above proved -n works, a failure here means one thing: somebody
+    # else holds it. That is what makes LOCK_BUSY_RC honest.
+    local waited=0
+    until flock -n 9; do
+        if [ "$waited" -ge "$LOCK_WAIT_S" ]; then
+            log "another consolidation is already running — skipping this pass"
+            return "$LOCK_BUSY_RC"
+        fi
+        sleep "$LOCK_POLL_S"
+        waited=$((waited + LOCK_POLL_S))
+    done
     "$@"
 }
 

@@ -159,6 +159,9 @@ MEMORY_TEMPLATE = """# Home Memory
 # Memory tab can say "queued" rather than pretending an edit landed
 # instantly. The merge itself happens in the consolidator, not here.
 MEMORY_STATE: dict = {"merging": False, "error": ""}
+# Used to age a queue that has never been consolidated: on a fresh
+# install "no marker" means "not yet", not "wedged".
+_process_start = time.time()
 
 # The consolidator's lock, which is also the only honest answer to "is a
 # pass running right now". MEMORY_STATE only knows about passes this panel
@@ -1897,7 +1900,42 @@ def _memory_state() -> dict:
     # the lock cannot tell us who started a pass.
     state["by"] = "you" if state.get("merging") else "schedule"
     state["merging"] = bool(state.get("merging") or running)
+    state["stale_hours"] = _consolidation_stale_hours()
     return state
+
+
+# The consolidator runs daily, so a queue that has been waiting appreciably
+# longer than that is a consolidator that is not running — not a busy one.
+STALE_AFTER_H = 26
+
+
+def _consolidation_stale_hours() -> float:
+    """How long facts have been queued with nothing filing them, or 0.
+
+    This exists because the failure it surfaces hid for weeks. The lock was
+    calling `flock -w`, which BusyBox — Alpine's flock, which is what this
+    add-on runs on — rejects with the same exit status as "the lock is
+    held". So every pass reported contention, did nothing, and said so only
+    in the add-on log. The document went stale, the queue grew, and every
+    screen a user looks at said everything was fine.
+
+    Nothing here can detect that specific cause, and it should not try to:
+    what it detects is the symptom common to every cause, which is facts
+    waiting and no pass landing.
+    """
+    try:
+        pending = _inbox_pending()
+    except Exception:  # noqa: BLE001 - a status field must never raise
+        return 0.0
+    if not pending:
+        return 0.0
+    try:
+        last = (MEMORY_DIR / ".last_consolidated").stat().st_mtime
+    except OSError:
+        # Never consolidated. Only news once there has been time to.
+        last = _process_start
+    hours = (time.time() - last) / 3600.0
+    return round(hours, 1) if hours >= STALE_AFTER_H else 0.0
 
 
 async def h_knowledge(request: web.Request) -> web.Response:
