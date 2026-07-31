@@ -322,33 +322,48 @@
 
   <iframe id="termFrame" title="Terminal" src="about:blank"></iframe>
 
+  <!-- Two buttons, not five. These float over somebody's output, and a
+       column of five translucent squares sitting on top of the text is
+       exactly the clutter the chat view exists to get away from. ⤢ stays on
+       its own because it is also the way back from a folded bar; everything
+       else is a menu, because those are things you do occasionally and
+       decide about once. -->
   <div class="termfabs">
-    <button id="termMode" class="termfab" data-tip="Switch to the classic terminal"
-            aria-label="Switch to the classic terminal">
-      <svg viewBox="0 0 24 24" class="ico ico-in" aria-hidden="true"><path d="m5 8 4 4-4 4M13 16h6"/></svg>
-      <svg viewBox="0 0 24 24" class="ico ico-out" aria-hidden="true"><path d="M21 12a8 8 0 0 1-8 8H7l-4 3V12a8 8 0 0 1 8-8h2a8 8 0 0 1 8 8z"/></svg>
-    </button>
-    <button id="chatNew" class="termfab" data-tip="New chat" aria-label="New chat">
-      <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-    </button>
-    <!-- Every conversation in this project directory, whichever face made
-         it. Claude Code files them per working directory and both faces
-         stand in /config, so one started in the terminal is listed here
-         beside one started in the chat. -->
-    <button id="chatOpen" class="termfab" data-tip="Conversations" aria-label="Conversations">
-      <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M3 12a9 9 0 1 0 2.6-6.4M3 4v5h5"/></svg>
-    </button>
-    <!-- What the CLI says about itself, and the way to take this exact
-         conversation into the classic terminal. In a popover rather than a
-         bar, because it is answered once and would otherwise cost a row of
-         height on every screen for the rest of the session. -->
-    <button id="chatInfo" class="termfab" data-tip="Session" aria-label="Session details">
-      <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8v.1"/></svg>
+    <button id="termMenu" class="termfab" data-tip="Chat options"
+            aria-label="Chat options" aria-expanded="false">
+      <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
     </button>
     <button id="termExpand" class="termfab" data-tip="Full-screen terminal"
             aria-label="Full-screen terminal" aria-pressed="false">
       <svg viewBox="0 0 24 24" class="ico ico-in" aria-hidden="true"><path d="M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5"/></svg>
       <svg viewBox="0 0 24 24" class="ico ico-out" aria-hidden="true"><path d="M4 9h5V4M20 9h-5V4M4 15h5v5M20 15h-5v5"/></svg>
+    </button>
+  </div>
+
+  <!-- The menu. Real buttons with the ids their handlers are already bound
+       to, rather than markup rebuilt on each open — a menu that recreates
+       its own controls loses every listener attached to them. -->
+  <div id="termMenuPop" class="termmenu hidden" role="menu">
+    <button id="chatNew" class="tmitem" role="menuitem">
+      <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+      <span>New chat</span>
+    </button>
+    <!-- Every conversation in this project directory, whichever face made
+         it. Claude Code files them per working directory and both faces
+         stand in /config, so one started in the terminal is listed here
+         beside one started in the chat. -->
+    <button id="chatOpen" class="tmitem" role="menuitem">
+      <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M3 12a9 9 0 1 0 2.6-6.4M3 4v5h5"/></svg>
+      <span>Conversations…</span>
+    </button>
+    <button id="chatInfo" class="tmitem" role="menuitem">
+      <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8v.1"/></svg>
+      <span>Session details</span>
+    </button>
+    <button id="termMode" class="tmitem" role="menuitem">
+      <svg viewBox="0 0 24 24" class="ico ico-in" aria-hidden="true"><path d="m5 8 4 4-4 4M13 16h6"/></svg>
+      <svg viewBox="0 0 24 24" class="ico ico-out" aria-hidden="true"><path d="M21 12a8 8 0 0 1-8 8H7l-4 3V12a8 8 0 0 1 8-8h2a8 8 0 0 1 8 8z"/></svg>
+      <span id="termModeLabel">Classic terminal</span>
     </button>
   </div>
 </div>

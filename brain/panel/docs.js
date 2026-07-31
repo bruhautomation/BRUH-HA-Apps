@@ -216,15 +216,14 @@ list is written down in the panel, so neither can go stale. ↑/↓ to move, Ent
 to pick. A few Claude Code commands are REPL-only (\`/help\` among them) and say so
 rather than failing.
 
-**⟲ is every conversation** in \`/config\` — started here or in the classic terminal,
-it makes no difference. Pick one and it replays into the pane and carries on. Both
-faces stand in the same directory, which is what lets each see the other's
-conversations at all: Claude Code files them per working directory.
+**⋯ holds the rest.** *New chat*; *Conversations* — every conversation in \`/config\`,
+started here or in the classic terminal, and picking one replays it into the pane and
+carries on; *Session details* — the model, the project directory, how you are being
+billed, and this conversation's id, with **Continue in the terminal**, which opens
+Classic *inside* this conversation; and the switch between the two faces.
 
-**ⓘ shows the session** — the model, the project directory, how you are being billed,
-and this conversation's id. **Continue in the terminal** opens Classic *inside* this
-conversation: the chat lets go of it, and the terminal picks it up — in a new window
-if it is already open, otherwise the next time you open it.
+Both faces stand in the same directory, which is what lets each see the other's
+conversations at all: Claude Code files them per working directory.
 
 **A per-message price only appears if an API key is paying.** On a Pro or Max
 subscription those tokens are already bought, so there is nothing to charge and the

@@ -583,6 +583,40 @@ class TestChatTerminalPanel(unittest.TestCase):
         self.assertLess(start.index('rm -f "$HANDOFF_FILE"'),
                         start.index('resume_id="$candidate"'))
 
+    def test_only_two_things_float_over_the_terminal(self):
+        """These sit on top of somebody's output. Five translucent squares
+        stacked over the text is exactly the clutter this view exists to get
+        away from — ⤢ earns its place because it is also the way back from a
+        folded bar, and the rest are a menu."""
+        import re
+        fabs = re.search(r'<div class="termfabs">(.*?)</div>', self.html, re.S)
+        self.assertIsNotNone(fabs, "no floating button group")
+        self.assertEqual(len(re.findall(r"<button ", fabs.group(1))), 2,
+                         "more than two buttons float over the terminal")
+        self.assertIn('id="termMenu"', fabs.group(1))
+        self.assertIn('id="termExpand"', fabs.group(1))
+        # The menu is static markup, not rebuilt on open: a menu that
+        # recreates its own controls loses every listener bound to them.
+        for item in ("chatNew", "chatOpen", "chatInfo", "termMode"):
+            self.assertIn(f'id="{item}"', self.html)
+        self.assertIn('id="termMenuPop"', self.html)
+
+    def test_the_bar_does_not_report_usage_twice(self):
+        """"Usage budget reached" was a chip sitting next to a usage pill
+        already showing the number it was about — the same fact twice, and
+        on a phone it wrapped the bar onto a third row to say it. The pill
+        carries that state itself now."""
+        self.assertNotIn("Usage budget reached", self.js)
+        paused = self.js[self.js.index("function renderPausedChip()"):]
+        paused = paused[:paused.index("\n}\n")]
+        self.assertIn("auto_enabled === false", paused)
+        self.assertNotIn("blocked", paused,
+                         "the paused chip is reporting usage again")
+        # ...and the pill says it, in the one place that now can.
+        fill = self.js[self.js.index("function fillUsagePop()"):]
+        fill = fill[:fill.index("\n}\n")]
+        self.assertIn("Automatic insights are paused", fill)
+
     def test_a_popover_is_not_closed_by_the_press_that_opened_it(self):
         """The dismiss-on-outside-click listener runs after the handler that
         opens a popover, so it has to know what "outside" means. It used to

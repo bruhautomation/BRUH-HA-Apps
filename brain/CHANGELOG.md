@@ -26,6 +26,28 @@ conversation, because the handoff is a file its launcher reads rather than
 keystrokes typed at whatever happens to be in front. It expires after ten
 minutes, so a restart tomorrow does not silently reopen today's chat.
 
+### Less in the way
+
+Two pieces of clutter that arrived with the features above.
+
+**The chat had five buttons floating over your output.** Five translucent
+squares stacked on top of the text you came to read is exactly what this
+view exists to get away from. There are two now: **⤢**, which keeps its own
+place because it is also the way back from a folded bar, and **⋯**, which
+holds New chat, Conversations, Session details and the switch to the classic
+terminal. Things you do occasionally, and decide about once.
+
+**The top bar stopped saying the same thing twice.** "Usage budget reached"
+was a chip sitting immediately beside a usage pill already reporting the
+very number it was about — and on a phone the pair wrapped the bar onto a
+third row to do it. The pill carries that state itself: its dot goes
+warning-coloured, and pressing it says plainly that automatic insights are
+paused, what the budget is, and when the window rolls over.
+
+What is left beside the pill is the one thing a press can undo: **Auto
+insights off**. In the ordinary case the bar is back to two rows on a phone
+— status and actions, then the tabs.
+
 ### Findings you can argue with, and put off
 
 A finding had three answers: fix it, I did it, or never mention this again.

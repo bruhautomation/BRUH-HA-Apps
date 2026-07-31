@@ -73,9 +73,12 @@ function seed(mode) {
     $('#authChipText').textContent = 'Claude auth failed';
   } else if (mode === 'paused') {
     // A healthy login shows no chip at all — what fills the space instead is
-    // the paused chip, in its longest wording.
+    // the paused chip. There is only one wording left: "usage budget
+    // reached" used to have a chip of its own, next to a usage pill already
+    // reporting the number it was about, and saying it twice is what pushed
+    // the bar onto a second row.
     $('#pausedChip').classList.remove('hidden');
-    $('#pausedChipText').textContent = 'Usage budget reached';
+    $('#pausedChipText').textContent = 'Auto insights off';
   }
   // 'running' is neither: healthy, generating, usage only.
 }

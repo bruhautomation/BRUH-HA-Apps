@@ -197,7 +197,8 @@ function renderUsageChip() {
   chip.setAttribute("aria-label",
     `Claude usage — session ${Math.round(u.used_percent)}%`
     + (hasWeek ? `, week ${Math.round(u.week_percent)}%` : "")
-    + ". Press for reset times.");
+    + (u.blocked ? ". Automatic insights are paused until it resets." : "")
+    + ". Press for detail.");
   chip.classList.remove("hidden");
   // Keep an open disclosure honest: usage polls every few seconds.
   if (chipPopFor === chip) fillUsagePop();
@@ -221,60 +222,52 @@ function fillUsagePop() {
       u.week_resets_at ? `resets ${fmtDayClock(u.week_resets_at)}` : ""));
   }
   // The budget only ever throttles brAIn's own scheduled work, so it belongs
-  // here beside the number it is measured against — not in a separate chip.
+  // here beside the number it is measured against — not in a separate chip
+  // repeating a percentage the pill is already showing. When it has been
+  // reached this is the only place that says so, so it says it plainly.
   if (u.budget_percent != null) {
-    rows.push(`<p class="pnote">Automatic insights pause once the session `
-      + `window passes <b>${Math.round(u.budget_percent)}%</b>, leaving the rest `
-      + `of your Claude account to you. Asking a question by hand always runs.</p>`);
+    rows.push(u.blocked
+      ? `<p class="pnote"><b>Automatic insights are paused.</b> The session `
+        + `window is past your <b>${Math.round(u.budget_percent)}%</b> budget`
+        + (u.resets_at ? `, and resumes when it rolls over at `
+                       + `<b>${esc(fmtClock(u.resets_at))}</b>` : "")
+        + `. Anything you ask for by hand still runs, and the budget is in `
+        + `<b>⚙ Settings</b> if it is set too tight.</p>`
+      : `<p class="pnote">Automatic insights pause once the session window `
+        + `passes <b>${Math.round(u.budget_percent)}%</b>, leaving the rest of `
+        + `your Claude account to you. Asking a question by hand always runs.</p>`);
   }
   setChipPop($("#usageChip"), "Claude usage", rows.join(""));
 }
 
 // Topbar chip that says WHY nothing is auto-generating — and undoes it.
-// There are exactly two reasons, and they take different presses: a switch
-// somebody turned off is turned back on, and a budget that has been reached
-// is explained, because no press can un-spend it.
+//
+// Only for the reason a press can do something about. "Usage budget
+// reached" used to get a chip of its own, sitting next to a usage pill
+// already reporting the very number it was about — the same fact twice,
+// wrapping the bar onto a second row to say it. The pill carries that state
+// itself: its dot goes warning-coloured and its popover explains what the
+// budget gates and when the window rolls over. What is left here is the one
+// thing that is a switch somebody turned off.
 function renderPausedChip() {
   const s = state.status;
   const chip = $("#pausedChip");
   const text = $("#pausedChipText");
   let label = "";
   let mode = "";
-  if (s && s.authenticated) {
-    if (s.settings && s.settings.auto_enabled === false) {
-      label = "Auto insights off";
-      mode = "off";
-      chip.title = "Turn automatic insights back on";
-    } else if (s.usage && s.usage.blocked) {
-      label = "Usage budget reached";
-      mode = "budget";
-      chip.title = "";
-    }
+  if (s && s.authenticated && s.settings && s.settings.auto_enabled === false) {
+    label = "Auto insights off";
+    mode = "off";
+    chip.title = "Turn automatic insights back on";
   }
   text.textContent = label;
   chip.dataset.mode = mode;
   if (label) {
-    chip.setAttribute("aria-label", mode === "off"
-      ? "Automatic insights are off — press to turn them on"
-      : "Usage budget reached — press for detail");
+    chip.setAttribute("aria-label",
+      "Automatic insights are off — press to turn them on");
   }
   chip.classList.toggle("hidden", !label);
   if (!label && chipPopFor === chip) closeChipPop();
-  else if (mode === "budget" && chipPopFor === chip) fillPausedPop();
-}
-
-function fillPausedPop() {
-  const u = (state.status && state.status.usage) || {};
-  const body =
-    `<div class="prow"><span class="pname">Session used</span>`
-    + `<span class="pval">${Math.round(u.used_percent || 0)}%</span></div>`
-    + `<div class="prow"><span class="pname">Your budget</span>`
-    + `<span class="pval">${Math.round(u.budget_percent || 0)}%</span></div>`
-    + `<p class="pnote">Scheduled cards are paused`
-    + (u.resets_at ? ` until the 5-hour window rolls over at <b>${esc(fmtClock(u.resets_at))}</b>` : "")
-    + `. Questions you ask yourself still run. The budget is in `
-    + `<b>⚙ Settings</b> if it is set too tight.</p>`;
-  setChipPop($("#pausedChip"), "Automatic insights paused", body);
 }
 
 // ------------------------------------------------------- chip disclosures
@@ -1530,10 +1523,6 @@ $("#usageChip").addEventListener("click", () =>
 // because the thing it was reporting is no longer true. A budget that has
 // been reached is not a switch, so that one explains itself instead.
 $("#pausedChip").addEventListener("click", async () => {
-  if ($("#pausedChip").dataset.mode !== "off") {
-    toggleChipPop($("#pausedChip"), fillPausedPop);
-    return;
-  }
   closeChipPop();
   await saveSettings({ auto_enabled: true },
     "Automatic insights on — recurring cards will refresh again");
@@ -3431,6 +3420,36 @@ $("#termExpand").addEventListener("click", () => {
   applyTermChrome();
 });
 
+// ----------------------------------------------------------- the ⋯ menu
+//
+// Five floating buttons over someone's output was five translucent squares
+// on top of the text they came to read. ⤢ earns its own because it is also
+// the way back from a folded bar; the rest are occasional, so they are a
+// menu — one button, and no decision about which glyph means what.
+
+function closeTermMenu() {
+  $("#termMenuPop").classList.add("hidden");
+  $("#termMenu").setAttribute("aria-expanded", "false");
+}
+
+$("#termMenu").addEventListener("click", () => {
+  const pop = $("#termMenuPop");
+  const open = pop.classList.toggle("hidden");
+  $("#termMenu").setAttribute("aria-expanded", open ? "false" : "true");
+  if (!open) closeChipPop();
+});
+
+// Every item closes it — a menu that stays open behind the thing it just
+// opened is one more thing to dismiss.
+document.querySelectorAll("#termMenuPop .tmitem").forEach((item) =>
+  item.addEventListener("click", () => closeTermMenu()));
+
+document.addEventListener("click", (ev) => {
+  if ($("#termMenuPop").classList.contains("hidden")) return;
+  if (ev.target.closest("#termMenuPop") || ev.target.closest("#termMenu")) return;
+  closeTermMenu();
+});
+
 // ------------------------------------------------- which terminal you get
 //
 // Two faces on one Claude Code. The setting is server-side rather than
@@ -3443,9 +3462,10 @@ function applyTermMode(mode) {
   chatState.session = classic ? "classic" : "chat";
   document.body.classList.toggle("term-classic", classic);
   const btn = $("#termMode");
-  const label = classic ? "Switch to chat" : "Switch to the classic terminal";
-  btn.setAttribute("aria-label", label);
-  btn.dataset.tip = label;
+  const label = classic ? "Chat" : "Classic terminal";
+  btn.setAttribute("aria-label",
+    classic ? "Switch to chat" : "Switch to the classic terminal");
+  $("#termModeLabel").textContent = label;
   const onTab = currentView === "terminal";
   if (classic) {
     chatDisconnect();

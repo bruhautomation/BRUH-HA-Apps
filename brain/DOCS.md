@@ -196,14 +196,15 @@ same `/config`, with the same permissions — what differs is only how you see i
   `ha reload`, with the same descriptions and argument hints the dispatchers print.
   ↑/↓ to move, Enter or Tab to pick. Both lists come from the thing that owns them, so
   neither can go stale.
-- **⟲ lists every conversation** in `/config` — started here or in the classic
-  terminal, it makes no difference. Pick one and it replays into the pane and carries
-  on.
+- **⋯ holds the rest** — *New chat*, *Conversations* (every conversation in `/config`,
+  started here or in the classic terminal; picking one replays it and carries on),
+  *Session details*, and the switch to Classic. Two buttons float over the terminal,
+  not a column of them.
 - **The input is a real text box**, so dictation, autocorrect and selection behave.
 - **⏹ stops a running answer**, and **＋ starts a new chat**. The conversation
   survives a page reload, a phone locking, and the add-on restarting.
-- **ⓘ shows the session** — the model, the project directory, how you're being
-  billed, and the conversation's id. **Continue in the terminal** opens Classic
+- **Session details** (under ⋯) shows the model, the project directory, how you're
+  being billed, and the conversation's id. **Continue in the terminal** opens Classic
   *inside* this conversation: the chat releases it, and the terminal picks it up — a
   new tmux window if it's already open, otherwise the next time you open it.
 
@@ -404,7 +405,8 @@ nothing more. There is no brAIn subscription and no middleman.
 To keep it from eating the plan you also use for your own work:
 
 - The top bar shows both usage windows — the **5-hour session** and the **week** —
-  live. Press the pill for when each one resets.
+  live. Press the pill for when each one resets, what the budget gates, and whether
+  automatic work is currently paused by it.
 - The chat terminal shows a **per-message price only if an API key is paying**. On a
   subscription there is no per-message charge, so it shows the duration and turn count
   instead of a figure that would look like money and isn't.

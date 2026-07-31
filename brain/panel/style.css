@@ -1781,9 +1781,14 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
 .chatsend.stop { background: var(--surface-2); color: var(--ink); }
 .chatsend .ico { width: 20px; height: 20px; }
 
-/* One column of buttons over the terminal, because the way back from a
-   hidden bar cannot live in the bar. Dimmed until touched: they are over
-   someone's output, and output is what they came for. */
+/* Two buttons over the terminal, because the way back from a hidden bar
+   cannot live in the bar. Dimmed until touched: they are over someone's
+   output, and output is what they came for.
+
+   It was five, and five translucent squares stacked on top of the text was
+   precisely the clutter this view exists to avoid. ⤢ keeps its own place
+   because it is also the way back from a folded bar; everything else is one
+   ⋯ away, because those are things you do occasionally. */
 .termfabs {
   position: absolute;
   top: 8px;
@@ -1792,11 +1797,49 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   display: none;
   gap: 6px;
 }
+
+.termmenu {
+  position: absolute;
+  top: 54px;
+  right: 10px;
+  z-index: 26;
+  min-width: 208px;
+  padding: 5px;
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+.termmenu.hidden { display: none; }
+.tmitem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.tmitem:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
+.tmitem .ico { width: 17px; height: 17px; flex: none; color: var(--ink-3); }
+/* Chat-only entries: in the classic terminal there is no chat to start, no
+   transcript to list and no chat session to describe. */
+body.term-classic #chatNew,
+body.term-classic #chatOpen,
+body.term-classic #chatInfo { display: none; }
 #viewTerminal.active .termfabs { display: flex; }
 /* While the keyboard has taken the bar, these would be one more thing over
    a screen that has almost nothing left — and closing the keyboard brings
    the bar back on its own. */
-body.term-kb #viewTerminal.active .termfabs { display: none; }
+body.term-kb #viewTerminal.active .termfabs,
+body.term-kb #viewTerminal.active .termmenu { display: none; }
 /* In chat mode the buttons sit over a scrolling document rather than a
    fixed grid, so they pin to the viewport corner of the log instead. */
 body:not(.term-classic) .termfabs { top: 6px; right: 8px; }
@@ -1844,10 +1887,8 @@ body:not(.term-classic) .termfab:focus-visible {
   color: var(--ink);
 }
 
-/* "New chat" belongs to the chat, and the mode button says which way it is
-   about to go — outward arrows for "become the grid", a speech bubble for
-   "come back to messages". */
-body.term-classic #chatNew { display: none; }
+/* The mode item says which way it is about to go — a prompt glyph for
+   "become the grid", a speech bubble for "come back to messages". */
 #termMode .ico-out { display: none; }
 body.term-classic #termMode .ico-in { display: none; }
 body.term-classic #termMode .ico-out { display: block; }
