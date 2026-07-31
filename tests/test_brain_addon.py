@@ -583,6 +583,46 @@ class TestChatTerminalPanel(unittest.TestCase):
         self.assertLess(start.index('rm -f "$HANDOFF_FILE"'),
                         start.index('resume_id="$candidate"'))
 
+    def test_a_popover_is_not_closed_by_the_press_that_opened_it(self):
+        """The dismiss-on-outside-click listener runs after the handler that
+        opens a popover, so it has to know what "outside" means. It used to
+        name `.chip.clickable` specifically, which meant any other control
+        that opened one — a finding's "Remind me later" — could never show
+        it at all."""
+        self.assertIn("chipPopFor.contains(ev.target)", self.js)
+        self.assertNotIn('ev.target.closest(".chip.clickable")', self.js)
+
+    def test_a_finding_can_be_discussed_and_deferred(self):
+        """Two things a work list needs and did not have: asking about an
+        item, and saying "not now" without saying "never"."""
+        self.assertIn('id="chatFinding"', self.html)
+        self.assertIn("function discussFinding(", self.js)
+        self.assertIn("function openSnoozePop(", self.js)
+        # The decisions travel with the discussion — agreeing to a fix at the
+        # end of a conversation about it should not mean going to find the
+        # card again.
+        for act in ("chatFindingFix", "chatFindingDone",
+                    "chatFindingLater", "chatFindingIgnore"):
+            self.assertIn(f'id="{act}"', self.html)
+        # And the discussion itself changes nothing.
+        server = (PANEL / "server.py").read_text()
+        self.assertIn("Do not change anything yet", server)
+
+    def test_remind_me_later_is_not_a_decision(self):
+        """Dismissing is permanent and is fed back into every future
+        analysis. Using that for "not right now" would quietly throw away a
+        real problem — so snooze must not touch the status."""
+        store = (PANEL / "findings_store.py").read_text()
+        self.assertIn("def snooze(", store)
+        self.assertIn("snoozed_until", store)
+        snooze = store[store.index("def snooze("):]
+        snooze = snooze[:snooze.index("\ndef ")]
+        self.assertNotIn('entry["status"]', snooze,
+                         "snoozing changed the finding's status")
+        # It comes back, and it is findable while it waits.
+        self.assertIn('if status == "snoozed"', store)
+        self.assertIn('{ id: "snoozed", label: "Later"', self.js)
+
     def test_the_palette_offers_the_brain_and_ha_commands_too(self):
         """They are not slash commands, so nothing announced them — and
         they are half of what anyone types into that box."""

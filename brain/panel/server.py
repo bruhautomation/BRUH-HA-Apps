@@ -32,6 +32,9 @@ POST /api/finding/{ts}/fix   — go fix it (the one tool-enabled Claude run)
 POST /api/finding/{ts}/ignore — not a problem here; never raise it again
 POST /api/finding/{ts}/done  — you fixed it yourself
 POST /api/finding/{ts}/reopen — back onto the list
+POST /api/finding/{ts}/snooze — remind me later; NOT a decision, so the
+                                status is untouched and it comes back
+POST /api/finding/{ts}/discuss — open it as a conversation in the chat
 DELETE /api/finding/{ts}     — forget it (unlike ignore, it can return)
 POST /api/memory/consolidate — file the inbox into memory.md now
 GET  /api/insight/{id}/history       — past runs of a category (no html)
@@ -1514,6 +1517,75 @@ async def h_finding_verb(request: web.Request) -> web.Response:
     return web.json_response(payload)
 
 
+# "Remind me later" in the words people actually use. The list is short on
+# purpose: this is a snooze, not a calendar.
+SNOOZE_CHOICES = {
+    "hour": 3600,
+    "tomorrow": 86400,
+    "week": 7 * 86400,
+    "month": 30 * 86400,
+}
+
+
+async def h_finding_snooze(request: web.Request) -> web.Response:
+    """Take a finding off the list for a while — without settling it.
+
+    Kept apart from the ignore verb on purpose. Dismissing is permanent and
+    is fed back into every future analysis so the same non-problem is never
+    raised again; using that for "not right now" would quietly throw away a
+    real problem you meant to come back to.
+    """
+    finding = _finding_or_404(request)
+    body = await request.json() if request.can_read_body else {}
+    choice = str((body or {}).get("for") or "tomorrow")
+    if choice == "now":
+        until = 0                      # bring it back immediately
+    elif choice in SNOOZE_CHOICES:
+        until = int(time.time()) + SNOOZE_CHOICES[choice]
+    else:
+        raise web.HTTPBadRequest(
+            text=f"snooze for one of: now, {', '.join(SNOOZE_CHOICES)}")
+
+    def settle() -> dict:
+        findings_store.snooze(finding["ts"], until)
+        return findings_store.listing()
+
+    return web.json_response(await asyncio.to_thread(settle))
+
+
+# What the chat is handed when you press Discuss. It says "look, don't
+# touch": the discussion is for understanding the thing, and Fix it is still
+# the only button that authorises a change — which stays on screen while you
+# talk, so agreeing to it is one press away rather than a trip back.
+DISCUSS_PROMPT = """I want to talk about something you flagged as broken in my home.
+
+**{text}**
+{detail}{fix}{entity}
+Severity: {severity}
+
+Look into it and tell me what is actually going on — check the current state
+and the history before you answer, and say plainly whether you think it is
+really a problem here. Do not change anything yet; I will decide."""
+
+
+async def h_finding_discuss(request: web.Request) -> web.Response:
+    """Open this finding as a conversation in the chat terminal."""
+    finding = _finding_or_404(request)
+    prompt = DISCUSS_PROMPT.format(
+        text=finding["text"],
+        detail=f"\n{finding['detail']}\n" if finding["detail"] else "\n",
+        fix=f"\nWhat you suggested: {finding['fix']}\n" if finding["fix"] else "",
+        entity=f"\nEntity: {finding['entity_id']}\n" if finding["entity_id"] else "",
+        severity=finding["severity"],
+    )
+    session = _chat()
+    try:
+        await session.send(prompt)
+    except RuntimeError as exc:
+        raise web.HTTPConflict(reason=str(exc))
+    return web.json_response({"ok": True, "finding": finding})
+
+
 async def h_finding_fix(request: web.Request) -> web.Response:
     """"Yes, go fix this." Queues the one tool-enabled run in the panel."""
     finding = _finding_or_404(request)
@@ -2312,6 +2384,8 @@ def make_app() -> web.Application:
     app.router.add_put("/api/card/{id}/tags", h_card_tags_put)
     app.router.add_get("/api/findings", h_findings)
     app.router.add_post("/api/finding/{ts}/fix", h_finding_fix)
+    app.router.add_post("/api/finding/{ts}/snooze", h_finding_snooze)
+    app.router.add_post("/api/finding/{ts}/discuss", h_finding_discuss)
     app.router.add_post("/api/finding/{ts}/{verb}", h_finding_verb)
     app.router.add_delete("/api/finding/{ts}", h_finding_delete)
     app.router.add_get("/api/insight/{id}/history", h_history_list)

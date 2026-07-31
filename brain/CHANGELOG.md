@@ -26,6 +26,39 @@ conversation, because the handoff is a file its launcher reads rather than
 keystrokes typed at whatever happens to be in front. It expires after ten
 minutes, so a restart tomorrow does not silently reopen today's chat.
 
+### Findings you can argue with, and put off
+
+A finding had three answers: fix it, I did it, or never mention this again.
+Two things were missing, and both are things people actually want to say.
+
+**💬 Discuss** hands the finding to the chat with everything it knows about
+it — the detail, the suggested fix, the entity, the severity — and asks
+Claude to look into it and say plainly whether it really is a problem *here*.
+The prompt tells it explicitly not to change anything: "explain this to me"
+and "go change my house" are different consents, and **Fix it** is still the
+only button that gives the second.
+
+So that button travels with the conversation. While you are discussing a
+finding, a strip above the composer names it and keeps **Fix it**, **I did
+it**, **Later** and **Not a problem** one press away — because agreeing to a
+fix at the end of a conversation about it should not mean going back to the
+other tab to find the card again. It survives a reload, since a conversation
+is not over because the page reloaded.
+
+**⏰ Remind me later** takes a finding off the list for an hour, until
+tomorrow, next week or next month. It is deliberately *not* a status change:
+dismissing is permanent and is fed back into every future analysis so the
+same non-problem is never raised again, and using that for "not right now"
+would quietly throw away a real problem you meant to come back to. The
+finding stays exactly as open as it was — it just stops asking. It sits
+under a **Later** filter while it waits, with the date it returns and a
+"bring it back now", because something you cannot find has not come back.
+
+*Also fixed on the way past:* any control other than a top-bar chip that
+tried to open a popover had it closed again by the same press, because the
+dismiss-on-outside-click listener only recognised the chips as legitimate
+openers.
+
 ### The palette knows about `brain` and `ha`
 
 Type **/** and you get Claude Code's commands. Type **brain** or **ha** and

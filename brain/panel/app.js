@@ -319,7 +319,14 @@ function toggleChipPop(anchor, fill) {
 
 document.addEventListener("click", (ev) => {
   if (!chipPopFor) return;
-  if (ev.target.closest("#chipPop") || ev.target.closest(".chip.clickable")) return;
+  // Inside the popover, or on the control that owns it. The second is not a
+  // nicety: this listener runs after the handler that opened the popover, so
+  // without it every press would open and immediately close again. It used
+  // to name `.chip.clickable` specifically, which meant any OTHER control
+  // that opened one — a finding's "Remind me later", say — could never show
+  // it at all.
+  if (ev.target.closest("#chipPop")) return;
+  if (chipPopFor.contains(ev.target)) return;
   closeChipPop();
 });
 window.addEventListener("resize", () => positionChipPop());
@@ -1676,9 +1683,15 @@ const FIND_SEVERITY = {
 
 // "live" is the default view on purpose: a work list that opens on its own
 // archive is a list nobody works.
+// A snoozed finding is still live — it just isn't asking yet, so it comes
+// out of "Needs you" and gets a chip of its own rather than vanishing. The
+// point of "remind me later" is that it comes back, and something you can't
+// find is not something that came back.
 const FIND_FILTERS = [
   { id: "live", label: "Needs you", match: (f) =>
-    ["open", "fixing", "failed", "needs_you"].includes(f.status) },
+    ["open", "fixing", "failed", "needs_you"].includes(f.status)
+    && !findings_isSnoozed(f) },
+  { id: "snoozed", label: "Later", match: (f) => findings_isSnoozed(f) },
   { id: "fixed", label: "Fixed", match: (f) => f.status === "fixed" },
   { id: "ignored", label: "Dismissed", match: (f) => f.status === "ignored" },
   { id: "all", label: "Everything", match: () => true },
@@ -1720,6 +1733,84 @@ async function findAction(finding, verb, done, btns) {
     if (verb === "fix") { refreshStatus().catch(() => {}); fastPoll(); }
   } catch (e) {
     toast(e.message);
+    btns.forEach((b) => { b.disabled = false; });
+  }
+}
+
+function findings_isSnoozed(f) {
+  return !!f.snoozed_until && f.snoozed_until * 1000 > Date.now();
+}
+
+// "Back tomorrow" beats "back 2026-08-01 14:03" for a thing you chose in
+// those words a moment ago.
+function timeUntil(epoch) {
+  const secs = epoch - Date.now() / 1000;
+  if (secs <= 0) return "now";
+  if (secs < 5400) return "in an hour";
+  if (secs < 172800) return "tomorrow";
+  if (secs < 1209600) return `in ${Math.round(secs / 86400)} days`;
+  return `on ${new Date(epoch * 1000).toLocaleDateString(
+    [], { month: "short", day: "numeric" })}`;
+}
+
+const SNOOZE_OPTIONS = [
+  ["hour", "In an hour"],
+  ["tomorrow", "Tomorrow"],
+  ["week", "Next week"],
+  ["month", "Next month"],
+];
+
+async function snoozeFinding(f, choice, btns) {
+  btns.forEach((b) => { b.disabled = true; });
+  try {
+    const data = await api(`api/finding/${f.ts}/snooze`, {
+      method: "POST", body: JSON.stringify({ for: choice }) });
+    state.findings = data.findings || [];
+    updateFindBadge(data.open);
+    renderFindings();
+    if (chatState.finding && chatState.finding.ts === f.ts && choice !== "now") {
+      setChatFinding(null);
+    }
+    toast(choice === "now" ? "Back on the list"
+                           : `Reminding you ${timeUntil(
+                               Math.floor(Date.now() / 1000)
+                               + { hour: 3600, tomorrow: 86400, week: 604800,
+                                   month: 2592000 }[choice])}`);
+  } catch (e) {
+    toast(e.message);
+    btns.forEach((b) => { b.disabled = false; });
+  }
+}
+
+function openSnoozePop(anchor, f, btns) {
+  const rows = SNOOZE_OPTIONS.map(([id, label]) =>
+    `<button class="btn small snoozeopt" data-for="${id}">${esc(label)}</button>`
+  ).join("");
+  setChipPop(anchor, "Remind me", `<div class="snoozeopts">${rows}</div>`
+    + `<p class="pnote">It stays exactly as it is — still open, still yours to
+       decide. This only stops it asking until then.</p>`);
+  $("#chipPop").querySelectorAll(".snoozeopt").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      closeChipPop();
+      snoozeFinding(f, btn.dataset.for, btns);
+    }));
+}
+
+// Discuss: hand the finding to the chat and go there. The action bar that
+// appears above the composer is what makes it a discussion you can end
+// rather than a detour — Fix it, I did it and Remind me later are all one
+// press away without coming back to this tab.
+async function discussFinding(f, btns) {
+  btns.forEach((b) => { b.disabled = true; });
+  try {
+    if (chatState.session === "classic") applyTermMode("chat");
+    switchView("terminal");
+    chatConnect();
+    await api(`api/finding/${f.ts}/discuss`, { method: "POST" });
+    setChatFinding(f);
+  } catch (e) {
+    toast(e.message);
+  } finally {
     btns.forEach((b) => { b.disabled = false; });
   }
 }
@@ -1786,14 +1877,38 @@ function makeFinding(f) {
       fix.addEventListener("click", () => findAction(
         f, "fix", "On it — brAIn is making the change", btns));
     }
+    // Talk about it before deciding. The discussion is read-only by
+    // construction — the prompt says so — because "explain this to me" and
+    // "go change my house" are different consents, and Fix it is the one
+    // that gives the second.
+    const talk = add(el("button", "btn small", "💬  Discuss"));
+    tip(talk, "Ask brAIn about this one in the chat, without changing anything");
+    talk.addEventListener("click", () => discussFinding(f, btns));
+
     const done = add(el("button", "btn small", "✓  I did it"));
     tip(done, "You handled it yourself — mark it resolved");
     done.addEventListener("click", () =>
       findAction(f, "done", "Marked done", btns));
+
+    // Not a decision, so not next to the ones that are. Dismissing is
+    // permanent and teaches the analyst never to raise it again; this just
+    // stops it asking until the date you pick.
+    const later = add(el("button", "btn small ghost", "⏰  Remind me later"));
+    tip(later, "Take it off the list for a while — it comes back, unchanged");
+    later.addEventListener("click", (ev) => openSnoozePop(ev.currentTarget, f, btns));
+
     const ignore = add(el("button", "btn small ghost", "Not a problem"));
     tip(ignore, "Dismiss it — brAIn will never raise this again");
     ignore.addEventListener("click", () => findAction(
       f, "ignore", "Dismissed — brAIn won't raise it again", btns));
+  }
+  if (findings_isSnoozed(f)) {
+    const back = el("div", "findsnoozed");
+    back.appendChild(el("span", null, `⏰ Back ${timeUntil(f.snoozed_until)}`));
+    const now = el("button", "btn small ghost", "Bring it back now");
+    now.addEventListener("click", () => snoozeFinding(f, "now", [now]));
+    back.appendChild(now);
+    card.appendChild(back);
   }
   card.appendChild(actions);
   return card;
@@ -2529,6 +2644,7 @@ function switchView(name) {
       if (frame.getAttribute("src") === "about:blank") frame.src = "terminal/";
     } else {
       chatConnect();
+      restoreChatFinding();
     }
   } else {
     // Leaving the tab: whatever the keyboard was doing over there, the bar
@@ -2627,6 +2743,7 @@ const chatState = {
   commands: [],      // its slash commands, as it advertises them
   cli: [],           // the brain/ha dispatchers, parsed from their own help
   cmdIndex: 0,       // highlighted row in the command palette
+  finding: null,     // the finding this conversation is about, if any
 };
 
 function chatLog() { return $("#chatLog"); }
@@ -3006,6 +3123,64 @@ $("#chatNew").addEventListener("click", async () => {
 
 document.querySelectorAll(".chatseeds .seed").forEach((btn) =>
   btn.addEventListener("click", () => chatSend(btn.textContent)));
+
+// --------------------------------------------------- the finding on trial
+//
+// A discussion is about one finding, and the decisions about that finding
+// have to be reachable from inside it. Otherwise agreeing to a fix at the
+// end of a conversation means going back to the other tab and finding the
+// card again, which is where a decision goes to die.
+//
+// Remembered across reloads, because a conversation you were having is not
+// over because the page reloaded.
+
+function setChatFinding(f) {
+  chatState.finding = f || null;
+  const bar = $("#chatFinding");
+  bar.classList.toggle("hidden", !f);
+  if (!f) { prefSet("brain.chatFinding", ""); return; }
+  $("#chatFindingText").textContent = f.text;
+  $("#chatFindingFix").classList.toggle("hidden", !f.fixable);
+  prefSet("brain.chatFinding", String(f.ts));
+}
+
+async function restoreChatFinding() {
+  const ts = prefGet("brain.chatFinding");
+  if (!ts) return;
+  const f = (state.findings || []).find((x) => String(x.ts) === ts);
+  if (f) { setChatFinding(f); return; }
+  // The list may not be loaded yet on a cold start — fetch it once.
+  try {
+    const data = await api("api/findings");
+    state.findings = data.findings || [];
+    const found = state.findings.find((x) => String(x.ts) === ts);
+    if (found) setChatFinding(found);
+    else prefSet("brain.chatFinding", "");
+  } catch (e) { /* the strip simply stays down */ }
+}
+
+async function chatFindingAction(verb, done) {
+  const f = chatState.finding;
+  if (!f) return;
+  const btns = [...$("#chatFinding").querySelectorAll("button")];
+  await findAction(f, verb, done, btns);
+  // Settled: the discussion can carry on, but it is no longer a decision
+  // waiting on you, so the bar goes.
+  setChatFinding(null);
+}
+
+$("#chatFindingClose").addEventListener("click", () => setChatFinding(null));
+$("#chatFindingFix").addEventListener("click", () =>
+  chatFindingAction("fix", "On it — brAIn is making the change"));
+$("#chatFindingDone").addEventListener("click", () =>
+  chatFindingAction("done", "Marked done"));
+$("#chatFindingIgnore").addEventListener("click", () =>
+  chatFindingAction("ignore", "Dismissed — brAIn won't raise it again"));
+$("#chatFindingLater").addEventListener("click", (ev) => {
+  const f = chatState.finding;
+  if (!f) return;
+  openSnoozePop(ev.currentTarget, f, [ev.currentTarget]);
+});
 
 // ------------------------------------------------------- conversations
 //

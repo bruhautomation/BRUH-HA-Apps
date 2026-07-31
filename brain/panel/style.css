@@ -1686,6 +1686,52 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
 }
 .chippop .pacts { gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
 
+/* The finding a discussion is about, pinned above the composer with the
+   decisions that belong to it. It sits here rather than in the log because
+   the log scrolls and a decision that scrolls away is one you stop making. */
+.chatfinding {
+  margin: 0 16px 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--hairline);
+  border-left: 3px solid var(--warning);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.chatfinding.hidden { display: none; }
+.chatfinding .cfhead { display: flex; align-items: baseline; gap: 8px; }
+.chatfinding .cflabel {
+  flex: none;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.chatfinding .cftext {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+}
+.chatfinding .cfhead .btn.icon { width: 28px; height: 28px; flex: none; }
+.chatfinding .cfacts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+
+.snoozeopts { display: flex; flex-direction: column; gap: 6px; }
+.snoozeopts .snoozeopt { justify-content: flex-start; min-height: 40px; }
+
+/* Still on the card, but plainly not asking. */
+.findsnoozed {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
 /* The composer. A real textarea, which is the whole point: dictation,
    autocorrect, selection and the system keyboard all behave, because there
    is no hidden xterm helper element for them to fight with. */

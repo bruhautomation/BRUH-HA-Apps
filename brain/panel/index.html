@@ -286,6 +286,24 @@
       </div>
     </div>
     <div id="chatErr" class="chaterr hidden"></div>
+    <!-- What you are discussing, and the decisions that belong to it. The
+         discussion itself changes nothing — the prompt says so — so the
+         buttons that DO have to be here: agreeing to a fix at the end of a
+         conversation about it should be one press, not a trip back to the
+         other tab to find the card again. -->
+    <div id="chatFinding" class="chatfinding hidden">
+      <div class="cfhead">
+        <span class="cflabel">Discussing</span>
+        <span id="chatFindingText" class="cftext"></span>
+        <button id="chatFindingClose" class="btn icon" aria-label="Stop discussing it">✕</button>
+      </div>
+      <div class="cfacts">
+        <button id="chatFindingFix" class="btn small primary">✦  Fix it</button>
+        <button id="chatFindingDone" class="btn small">✓  I did it</button>
+        <button id="chatFindingLater" class="btn small ghost">⏰  Later</button>
+        <button id="chatFindingIgnore" class="btn small ghost">Not a problem</button>
+      </div>
+    </div>
     <!-- The CLI's own slash commands, as it advertises them over the stream.
          Not a list we maintain: a command someone adds to
          /config/.claude/commands appears here without brAIn being told. -->

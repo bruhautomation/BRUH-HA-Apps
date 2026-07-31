@@ -89,11 +89,18 @@ that quietly stopped reporting three weeks ago, a device stuck `unavailable`, an
 automation whose trigger can never fire.
 
 brAIn files findings on its own, from scheduled analysis and from study sessions.
-Each one gets a severity, a plain-English explanation, and two buttons:
+Each one gets a severity, a plain-English explanation, and what to do about it:
 
 - **Fix it** — brAIn makes the change and reports back what it did. This is the *only*
   place the add-on runs Claude with tools on its own initiative, it is bounded to one
   finding, and it only ever happens because you pressed the button.
+- **Discuss** — hands it to the chat with everything brAIn knows about it and asks
+  whether it really is a problem *here*. The discussion changes nothing; the decisions
+  ride along above the composer, so agreeing to the fix at the end of it is one press.
+- **I did it** — you handled it yourself. brAIn remembers that you did.
+- **Remind me later** — an hour, tomorrow, next week, next month. Not a decision: the
+  finding stays exactly as open as it was and simply stops asking, and it waits under
+  the **Later** filter with the date it comes back.
 - **Not a problem** — dismissed for good. Dismissed findings are injected into every
   future analysis, so the same non-problem is never raised at you twice. The garage
   fridge that runs 24/7 gets flagged once.

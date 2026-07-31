@@ -60,7 +60,8 @@ and every attribute a \`create_\` service accepts has a service that changes it 
 A **finding** is something wrong with your house — a dying battery, a sensor that
 quietly stopped reporting three weeks ago, a device stuck unavailable, an automation
 whose trigger can never fire. brAIn files them on its own, and each one gets **Fix it**
-(it makes the change and reports back) or **Not a problem** (dismissed for good, and
+(it makes the change and reports back), **Discuss** (talk it over first, changing
+nothing), **Remind me later**, or **Not a problem** (dismissed for good, and
 never raised at you again).
 
 ## It explains your house
@@ -301,6 +302,24 @@ again next week for you to dismiss again. If the garage freezer is *supposed* to
 **✓ I did it** is for anything with hands in it — replacing a battery, re-pairing a
 device. brAIn marks findings like these **needs you** rather than offering to fix them,
 because inventing a software substitute for a dead battery is worse than saying so.
+
+**💬 Discuss** opens it as a conversation in the Terminal tab, with everything brAIn
+knows about it already in the question: the detail, the fix it had in mind, the entity,
+the severity. It is asked to look into the thing and say plainly whether it really is a
+problem *in your house* — and told not to change anything, because "explain this to me"
+and "go change my house" are different permissions.
+
+The decisions come with you. While you are discussing a finding, a strip above the
+message box keeps **Fix it**, **I did it**, **Later** and **Not a problem** one press
+away, so agreeing to the fix at the end of the conversation doesn't mean coming back
+here to find the card again.
+
+**⏰ Remind me later** is the answer for "yes, but not now" — an hour, tomorrow, next
+week, next month. It is not a decision and it does not settle anything: the finding
+stays exactly as open as it was and simply stops asking. Use it instead of dismissing
+something you actually intend to deal with, because dismissing is permanent. While it
+waits it sits under the **Later** filter, showing when it comes back, with a button to
+bring it back sooner.
 
 ## After a fix
 
