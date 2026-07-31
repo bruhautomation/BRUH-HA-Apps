@@ -2187,6 +2187,11 @@ async def h_chat_new(request: web.Request) -> web.Response:
     return web.json_response(await _chat().reset())
 
 
+async def h_chat_handoff(request: web.Request) -> web.Response:
+    """Stop the chat session and say how to pick it up in the terminal."""
+    return web.json_response(await _chat().handoff())
+
+
 async def h_chat_state(request: web.Request) -> web.Response:
     """The snapshot on its own, for a client whose stream is not up yet."""
     return web.json_response(_chat().snapshot())
@@ -2263,6 +2268,7 @@ def make_app() -> web.Application:
     app.router.add_post("/api/chat/send", h_chat_send)
     app.router.add_post("/api/chat/stop", h_chat_stop)
     app.router.add_post("/api/chat/new", h_chat_new)
+    app.router.add_post("/api/chat/handoff", h_chat_handoff)
 
     # The terminal tab: /terminal/ is reverse-proxied through to ttyd
     # so the whole add-on lives behind one ingress port.

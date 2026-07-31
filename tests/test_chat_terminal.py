@@ -298,6 +298,60 @@ class ChatSessionCase(unittest.IsolatedAsyncioTestCase):
         notice = next(e for e in got if e["type"] == "notice")
         self.assertIn("turn limit", notice["text"])
 
+    async def test_the_session_reports_what_the_cli_says_about_itself(self):
+        """The model, the version, and two facts that are load-bearing: the
+        working directory (which is what `claude --resume` keys conversations
+        by) and whether an API key is paying."""
+        await self.session.start()
+        await asyncio.sleep(0.4)
+        info = self.session.info
+        self.assertEqual(info["model"], "claude-sonnet-5")
+        self.assertEqual(info["cwd"], self.tmp.name)
+        self.assertEqual(info["api_key_source"], "none")
+        self.assertEqual(self.session.snapshot()["info"], info)
+
+    async def test_the_command_list_is_the_clis_own(self):
+        """A hardcoded list is wrong the first time someone drops a command
+        into /config/.claude/commands. The CLI announces its own."""
+        await self.session.start()
+        await asyncio.sleep(0.4)
+        names = [c["name"] for c in self.session.commands]
+        self.assertIn("compact", names)
+        self.assertIn("model", names)
+        self.assertNotIn("__internal", names, "internal plumbing is not a command")
+        self.assertEqual(names, sorted(names))
+        model = next(c for c in self.session.commands if c["name"] == "model")
+        self.assertEqual(model["hint"], "[model]")
+        self.assertTrue(model["description"])
+
+    async def test_a_slash_command_is_sent_as_an_ordinary_message(self):
+        """They are not a client-side feature to reimplement — the CLI
+        executes them itself when they arrive as text."""
+        await self.session.start()
+        task = asyncio.create_task(self._drain(
+            lambda evs: any(e.get("type") == "text" for e in evs)))
+        await asyncio.sleep(0.05)
+        await self.session.send("/compact")
+        got = await task
+        user = next(e for e in got if e["type"] == "user")
+        self.assertEqual(user["text"], "/compact")
+
+    async def test_handing_off_releases_the_session_and_names_it(self):
+        """While the panel holds the conversation open, the terminal is being
+        asked to resume something still in use."""
+        await self.session.start()
+        await self.session.send("hello")
+        await self._drain(lambda evs: any(
+            e.get("type") == "state" and e.get("state") == "ready" for e in evs[1:]))
+        sid = self.session.session_id
+        self.assertTrue(sid)
+        out = await self.session.handoff()
+        self.assertEqual(out["session_id"], sid)
+        self.assertEqual(out["command"], f"claude --resume {sid}")
+        self.assertFalse(self.session.alive(), "the session is still held open")
+        # The transcript is untouched — this is a handover, not a reset.
+        self.assertTrue(self.session.events)
+
     async def test_an_empty_message_is_refused(self):
         with self.assertRaises(ValueError):
             await self.session.send("   ")
@@ -387,6 +441,28 @@ class TestChatRoutes(unittest.IsolatedAsyncioTestCase):
     async def test_an_empty_message_is_a_400(self):
         resp = await self.client.post("/api/chat/send", json={"text": " "})
         self.assertEqual(resp.status, 400)
+
+    async def test_the_snapshot_carries_the_session_facts(self):
+        """A viewer who connects after startup would otherwise never see the
+        model, the project directory or the command list — the CLI announces
+        them once and does not repeat itself."""
+        resp = await self.client.post("/api/chat/send", json={"text": "hi"})
+        self.assertEqual(resp.status, 200)
+        await asyncio.sleep(0.6)
+        snap = await (await self.client.get("/api/chat/state")).json()
+        self.assertEqual(snap["info"]["api_key_source"], "none")
+        self.assertTrue(snap["info"]["model"])
+        self.assertIn("compact", [c["name"] for c in snap["commands"]])
+        self.assertTrue(snap["session_id"])
+
+    async def test_handoff_stops_the_session_and_returns_the_command(self):
+        await self.client.post("/api/chat/send", json={"text": "hi"})
+        await asyncio.sleep(0.6)
+        out = await (await self.client.post("/api/chat/handoff")).json()
+        self.assertTrue(out["session_id"])
+        self.assertTrue(out["command"].startswith("claude --resume "))
+        self.assertEqual((await (await self.client.get("/api/chat/state")).json())["state"],
+                         "idle")
 
     async def test_the_terminal_ui_setting_round_trips(self):
         resp = await self.client.get("/api/settings")

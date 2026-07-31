@@ -46,7 +46,22 @@ def emit(obj):
     sys.stdout.flush()
 
 
-emit({"type": "system", "subtype": "init", "tools": ["Read", "Bash"]})
+# The two events that describe the session rather than the conversation.
+# `apiKeySource` is the CLI's own answer to "is anyone paying per token" —
+# "none" means a subscription, where a per-message dollar figure is a number
+# that looks like a charge and isn't one. FAKE_CHAT_APIKEY flips it.
+emit({"type": "system", "subtype": "commands_changed", "commands": [
+    {"name": "compact", "description": "Compact the conversation", "argumentHint": ""},
+    {"name": "model", "description": "Change the model", "argumentHint": "[model]"},
+    {"name": "context", "description": "Show what is in the context window",
+     "argumentHint": ""},
+    {"name": "__internal", "description": "plumbing nobody types", "argumentHint": ""},
+]})
+emit({"type": "system", "subtype": "init", "tools": ["Read", "Bash"],
+      "model": "claude-sonnet-5", "cwd": os.getcwd(),
+      "claude_code_version": "2.1.220",
+      "apiKeySource": os.environ.get("FAKE_CHAT_APIKEY", "none"),
+      "slash_commands": ["compact", "model", "context"]})
 
 for line in sys.stdin:
     line = line.strip()

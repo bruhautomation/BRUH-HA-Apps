@@ -1617,6 +1617,21 @@ get_permissions_flag() {
     fi
 }
 
+# The terminal starts in /config, explicitly.
+#
+# This is not cosmetic. Claude Code files every conversation under
+# ~/.claude/projects/<escaped-cwd>/, and `claude --resume` (and /resume)
+# only lists the ones belonging to the directory you are standing in. The
+# panel's chat terminal runs in /config; if the tmux session inherits some
+# other directory from the add-on's init, the two faces of the same tab keep
+# their conversations in different places and neither can see the other's.
+#
+# The same cwd is what makes /config/CLAUDE.md load and what makes
+# /config/.claude/settings.local.json the project settings — the permission
+# set the whole add-on is documented as running under. Inheriting that by
+# luck was never a good idea; -c says it.
+CLAUDE_PROJECT_DIR="/config"
+
 get_claude_launch_command() {
     local auto_launch_claude
     auto_launch_claude=$(bashio::config 'auto_launch_claude' 'true')
@@ -1624,13 +1639,13 @@ get_claude_launch_command() {
     perms_flag=$(get_permissions_flag)
 
     if [ "$auto_launch_claude" = "true" ]; then
-        echo "tmux new-session -A -s claude '/usr/local/bin/claude-run ${perms_flag}'"
+        echo "tmux new-session -A -s claude -c '${CLAUDE_PROJECT_DIR}' '/usr/local/bin/claude-run ${perms_flag}'"
     else
         if [ -f /usr/local/bin/brain-menu ]; then
-            echo "tmux new-session -A -s claude-picker '/usr/local/bin/brain-menu'"
+            echo "tmux new-session -A -s claude-picker -c '${CLAUDE_PROJECT_DIR}' '/usr/local/bin/brain-menu'"
         else
             bashio::log.warning "Session picker not found, falling back to auto-launch"
-            echo "tmux new-session -A -s claude '/usr/local/bin/claude-run ${perms_flag}'"
+            echo "tmux new-session -A -s claude -c '${CLAUDE_PROJECT_DIR}' '/usr/local/bin/claude-run ${perms_flag}'"
         fi
     fi
 }

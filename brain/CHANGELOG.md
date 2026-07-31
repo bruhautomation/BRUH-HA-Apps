@@ -2,6 +2,55 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.11.1
+
+### The terminal now stands where the chat does
+
+Claude Code files every conversation under
+`~/.claude/projects/<the working directory>/`, and `claude --resume` only
+lists the ones belonging to the directory you are standing in. The panel's
+chat terminal runs in `/config`; the tmux session inherited whatever
+directory the add-on's init happened to give it. When those differ, the two
+faces of the same tab keep their conversations where the other one cannot
+see them — which is why a chat conversation could not be resumed from the
+terminal.
+
+Every session the terminal starts is now pinned to `/config` explicitly. The
+same directory is what makes `/config/CLAUDE.md` load and what makes
+`/config/.claude/settings.local.json` the project settings the whole add-on
+is documented as running under, so inheriting it by luck was never a good
+idea either.
+
+The chat's **ⓘ** button now shows the session id, the model, the project
+directory and how you are being billed — with **Copy the command** and
+**Continue in the terminal**. The second one releases the session first,
+because while the panel holds a conversation open the terminal is being
+asked to resume something still in use.
+
+### No more price tag on a subscription
+
+Every answer ended with something like `$0.012`. That figure is what those
+tokens would have cost had you bought them from the API — on a Pro or Max
+plan it is not a charge, and printing it after every message is a number
+that looks like money and isn't.
+
+The CLI tells us which case it is (`apiKeySource`), so the figure now
+appears only when an API key is genuinely being billed per token. On a
+subscription you get the duration and the turn count, which are the parts
+that mean something.
+
+### Slash commands
+
+Claude Code advertises its own command list over the stream, and runs a
+command when it arrives as an ordinary message. So the chat terminal now
+has them: type **/** and the palette lists what *your* install actually has
+— including anything in `/config/.claude/commands` — with descriptions and
+argument hints. ↑/↓ to move, Enter or Tab to pick.
+
+The list is never hardcoded, so a command you add appears without brAIn
+being told about it. A few commands are REPL-only (`/help` among them) and
+say so politely rather than failing.
+
 ## 1.11.0
 
 ### The terminal stops being a window inside a window
