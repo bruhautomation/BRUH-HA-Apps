@@ -673,18 +673,41 @@ class TestFindingsUI(unittest.TestCase):
     def test_the_two_endings_read_differently(self):
         """"I did it" beside "Not a problem" was the confusion: both looked
         like ways to make a card go away. The labels have to say which fact
-        each one teaches the home."""
-        self.assertIn("I've fixed it", self.js)
-        self.assertIn("Not a problem here", self.js)
+        each one teaches the home.
+
+        They are verbs now, and short — a row of four buttons is read at a
+        glance or not at all — but they still say different things, and the
+        tooltips carry the meaning the labels no longer spell out."""
+        self.assertIn("I fixed it", self.js)
+        self.assertIn("Ignore", self.js)
         self.assertNotIn("I did it", self.js)
 
+    def test_every_button_on_the_row_carries_a_glyph(self):
+        """One unlabelled-by-icon button in a row of icons reads as the odd
+        one out rather than as the quiet one."""
+        for label in ('"✦  Fix it"', '"💬  Discuss"', '"✓  I fixed it"',
+                      '"⏰  Remind me later"', '"✕  Ignore"'):
+            self.assertIn(label, self.js)
+
     def test_there_is_no_archive_of_dismissed_cards(self):
-        """The whole point: an ending deletes the row. A filter listing
-        settled findings as cards would put them straight back on screen."""
+        """The whole point: an ending deletes the row and writes the answer
+        into memory, which is then the one place it is read from.
+
+        There is no view of the settled ledger at all. Rendering it beside
+        the work list put a growing pile of answered cards next to a list
+        that is supposed to empty, and invited people to treat it as the
+        record when memory already is. The ledger stays — it is the dedup
+        index that stops the analyst re-raising what you answered — it is
+        just not something the panel draws."""
         self.assertNotIn('{ id: "ignored"', self.js)
         self.assertNotIn('{ id: "fixed"', self.js)
-        self.assertIn('{ id: "settled", label: "Answered", ledger: true }',
-                      self.js)
+        self.assertNotIn('label: "Answered"', self.js)
+        self.assertNotIn('label: "Everything"', self.js)
+        self.assertNotIn("makeSettled", self.js)
+        self.assertNotIn("findingsSettled", self.js)
+        # Two chips and no more: the work, and what is waiting.
+        self.assertIn('{ id: "live", label: "Needs you"', self.js)
+        self.assertIn('{ id: "snoozed", label: "Later"', self.js)
 
 
 class TestSettledLedger(StoreCase):

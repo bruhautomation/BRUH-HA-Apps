@@ -2,6 +2,58 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.15.0
+
+### The full-screen terminal left the bar cut in half
+
+Going full-screen and coming back gave you a sliver of a top bar — and it
+stayed a sliver on every other tab, until a reload.
+
+`.topbar`'s height *is* `--bar-h`, and the panel writes `--bar-h` from the
+bar it just measured. That is stable at rest and wrong exactly once: the
+immersive terminal sets it to `0`, so on the way back out the bar is visible
+again but pinned to zero height by the panel's own inline value. It renders
+clipped, the next measurement reads the clipped height, and that becomes the
+new truth. Measured on a desktop viewport, the 56px bar came back as **1px**.
+
+Measuring now clears the override first, so the bar is always measured
+against the stylesheet's value for the current layout rather than against the
+previous measurement — and a zero is never written, because the CSS class
+already says zero and an inline one would outlive the class that justified
+it.
+
+### The findings buttons say what they do, in fewer words
+
+*"Not a problem here"* became **Ignore**, and *"I've fixed it"* became
+**I fixed it**. A row of four decisions is read at a glance or not at all,
+and the sentences were being skipped. What each ending *teaches* brAIn is
+still there, in the tooltip, which is where an explanation belongs. Ignore
+also gets a glyph — every other button on the row had one, so the one
+without read as the odd one out rather than as the quiet one.
+
+### Answered is gone, because memory is the record
+
+Settling a finding writes a plain fact into `memory.md` and deletes the row.
+The **Answered** filter then listed those answers again, which put a pile of
+dismissed cards next to a work list that is supposed to empty — and invited
+you to treat it as the record when memory already is. It and **Everything**
+are both gone; two chips remain, the work and what is waiting.
+
+The settled ledger itself is untouched and still doing its job: it is the
+dedup index that stops the analyst re-raising next week what you answered
+today. It is simply not a view any more.
+
+### Also
+
+- **The counts we advertise are now tested** (`tests/test_documented_counts.py`).
+  "36 native tools" and "65 registry-management services" are derived from
+  `TOOL_IMPLEMENTATIONS` and the `PowerTool(...)` registrations, and every
+  present-tense claim in the repo is checked against them. They had gone
+  stale twice; the site said 56 for six releases after nine more shipped.
+- **The docs screenshots are reproducible** (`tests/manual/demo_panel.py`).
+  It boots the real panel against a seeded demo home with Claude stubbed
+  out, so the pictures on bruhautomation.com stay the actual product.
+
 ## 1.14.1
 
 ### The guide opens with what brAIn is for

@@ -22,7 +22,6 @@ const state = {
   status: null,
   insights: [],
   findings: [],
-  findingsSettled: [],   // the answers, after the cards they came from went
   findFilter: "live",
   filter: "all",
   editingTags: null, // card id whose tag row is in edit mode
@@ -1688,12 +1687,6 @@ const FIND_STATUS = {
   ignored:   { label: "Dismissed", cls: "ignored" },
 };
 
-// What the settled ledger says, in the words of the press that made it.
-const SETTLED_KIND = {
-  fixed:   { label: "Dealt with", cls: "fixed" },
-  ignored: { label: "Not a problem here", cls: "ignored" },
-};
-
 const FIND_SEVERITY = {
   info: "Tidy-up", warning: "Degraded", serious: "Broken", critical: "Urgent",
 };
@@ -1707,15 +1700,24 @@ const FIND_SEVERITY = {
 // "fixed" is in the live list: brAIn changed something in the house, and
 // that is news until you have read it. The card's only button then is
 // "Got it", which ends it like every other ending does.
+//
+// There are two filters and no more. There used to be four: "Answered",
+// which listed the settled ledger, and "Everything", which existed mostly
+// to reach it. Both contradicted the thing that makes an ending an ending —
+// settling a finding writes a plain fact into memory and DELETES the row,
+// and memory is then the one place that answer is read from. Rendering the
+// ledger beside the work list put a growing pile of answered cards next to
+// a list that is supposed to empty, and invited people to treat it as the
+// record when memory already is.
+//
+// The ledger itself is untouched and must stay: it is the dedup index that
+// stops the analyst re-raising next week what you answered today. It is
+// simply not a view any more.
 const FIND_FILTERS = [
   { id: "live", label: "Needs you", match: (f) =>
     ["open", "fixing", "fixed", "failed", "needs_you"].includes(f.status)
     && !findings_isSnoozed(f) },
   { id: "snoozed", label: "Later", match: (f) => findings_isSnoozed(f) },
-  // Not a filter over the list — the rows are gone. It reads the ledger of
-  // answers instead, which is why it has a renderer of its own.
-  { id: "settled", label: "Answered", ledger: true },
-  { id: "all", label: "Everything", match: () => true },
 ];
 
 async function refreshFindings() {
@@ -1728,11 +1730,12 @@ async function refreshFindings() {
 }
 
 // Every findings endpoint answers with the same {findings, open, settled},
-// so there is one place that unpacks it — the list and its ledger arriving
-// from the same read is what keeps a just-settled card from being in both.
+// so there is one place that unpacks it. `settled` is deliberately dropped
+// on the floor: the ledger is a dedup index the server reads, not something
+// the panel renders — settling writes the answer into memory and deletes
+// the row, and memory is where that answer is read from afterwards.
 function takeFindings(data) {
   state.findings = data.findings || [];
-  state.findingsSettled = data.settled || [];
   updateFindBadge(data.open);
 }
 
@@ -1919,7 +1922,7 @@ function makeFinding(f) {
     // they do to a row. They are easy to confuse until you say what each
     // one teaches brAIn: one says the problem is over, the other says it
     // was never a problem here.
-    const done = add(el("button", "btn small", "✓  I've fixed it"));
+    const done = add(el("button", "btn small", "✓  I fixed it"));
     tip(done, "It was a real problem and it's sorted now. brAIn writes that "
       + "into memory and clears it off the list.");
     done.addEventListener("click", () =>
@@ -1932,7 +1935,10 @@ function makeFinding(f) {
     tip(later, "Take it off the list for a while — it comes back, unchanged");
     later.addEventListener("click", (ev) => openSnoozePop(ev.currentTarget, f, btns));
 
-    const ignore = add(el("button", "btn small ghost", "Not a problem here"));
+    // Every other button on this row carries a glyph, so the one without
+    // read as the odd one out rather than as the quiet one. The label is a
+    // verb like its neighbours; what it *means* is the tooltip's job.
+    const ignore = add(el("button", "btn small ghost", "✕  Ignore"));
     tip(ignore, "It's normal in this house and never needed fixing. brAIn "
       + "remembers that and won't raise it again, in any wording.");
     ignore.addEventListener("click", () => findAction(
@@ -1950,39 +1956,8 @@ function makeFinding(f) {
   return card;
 }
 
-// An answered problem, as one line. There is no card left to show — the
-// answer is the whole record — so it renders as a line and not as a
-// tombstone of the card it used to be.
-function makeSettled(entry) {
-  const kind = SETTLED_KIND[entry.kind] || SETTLED_KIND.fixed;
-  const row = el("article", `settledrow st-${kind.cls}`);
-  const head = el("div", "findmeta");
-  head.appendChild(el("span", "findstate", kind.label));
-  if (entry.ts) {
-    head.appendChild(el("span", "findsrc", new Date(entry.ts * 1000)
-      .toLocaleDateString([], { month: "short", day: "numeric" })));
-  }
-  row.appendChild(head);
-  row.appendChild(el("p", "settledtext", entry.text));
-  const again = el("button", "btn small ghost", "Let brAIn raise it again");
-  tip(again, "Stop suppressing it. Nothing comes back on its own — the next "
-    + "analysis is simply free to find it, if it's still there.");
-  again.addEventListener("click", async () => {
-    again.disabled = true;
-    try {
-      takeFindings(await api("api/findings/unsettle", {
-        method: "POST", body: JSON.stringify({ key: entry.key }) }));
-      renderFindings();
-      toast("brAIn can raise this again");
-    } catch (e) { toast(e.message); again.disabled = false; }
-  });
-  row.appendChild(again);
-  return row;
-}
-
 function findCount(f) {
-  return f.ledger ? (state.findingsSettled || []).length
-                  : state.findings.filter(f.match).length;
+  return state.findings.filter(f.match).length;
 }
 
 function renderFindings() {
@@ -1990,10 +1965,11 @@ function renderFindings() {
   chips.textContent = "";
   const counts = {};
   FIND_FILTERS.forEach((f) => { counts[f.id] = findCount(f); });
+  // "Needs you" is always offered because it is where the work is. "Later"
+  // appears only once something is actually waiting in it, so a home with
+  // nothing wrong is handed one chip rather than a row of empty ones.
   FIND_FILTERS.forEach((f) => {
-    // "Everything" always shows; the others only once they hold something,
-    // so a home with nothing wrong isn't handed three empty filters.
-    if (f.id !== "all" && f.id !== "live" && !counts[f.id]) return;
+    if (f.id !== "live" && !counts[f.id]) return;
     const chip = el("button", "fchip" + (state.findFilter === f.id ? " active" : ""),
       counts[f.id] ? `${f.label} · ${counts[f.id]}` : f.label);
     chip.addEventListener("click", () => { state.findFilter = f.id; renderFindings(); });
@@ -2003,20 +1979,6 @@ function renderFindings() {
   const list = $("#findList");
   list.textContent = "";
   const active = FIND_FILTERS.find((f) => f.id === state.findFilter) || FIND_FILTERS[0];
-  if (active.ledger) {
-    const settled = state.findingsSettled || [];
-    if (!settled.length) {
-      list.appendChild(el("div", "findempty",
-        "Nothing answered yet. When you fix something or tell brAIn it isn't "
-        + "a problem, the card goes and the answer lands here — and in memory."));
-      return;
-    }
-    list.appendChild(el("p", "findnote",
-      "These are gone from the list on purpose. brAIn knows the answers and "
-      + "won't raise any of them again."));
-    settled.forEach((e) => list.appendChild(makeSettled(e)));
-    return;
-  }
   const shown = state.findings.filter(active.match);
   if (!shown.length) {
     list.appendChild(el("div", "findempty", state.findFilter === "live"
@@ -2804,11 +2766,21 @@ $("#kAddForm").addEventListener("submit", async (ev) => {
 function syncBarHeight() {
   const bar = document.querySelector(".topbar");
   if (!bar) return;
+  const root = document.documentElement;
+  // Measure against the STYLESHEET's value for this layout, never against
+  // the one we last wrote. `.topbar`'s height *is* --bar-h, so an inline
+  // override on <html> feeds the previous measurement back into the thing
+  // being measured. Leaving the immersive terminal is where that bites:
+  // immersive writes 0px, and on the way back out the bar is visible again
+  // but pinned to height 0 by our own inline value, so it renders clipped —
+  // and the next measurement latches the clipped height for good.
+  root.style.removeProperty("--bar-h");
+  const h = Math.round(bar.getBoundingClientRect().height);
   // Hidden means zero, and getBoundingClientRect on a display:none element
-  // already says so — but a ResizeObserver does not fire for it, which is
-  // why this is callable rather than only observed.
-  document.documentElement.style.setProperty(
-    "--bar-h", Math.round(bar.getBoundingClientRect().height) + "px");
+  // already says so — but that is the one case we must NOT write, because
+  // `body.term-immersive { --bar-h: 0px }` is already saying it in CSS and
+  // an inline 0 would outlive the class that justified it.
+  if (h > 0) root.style.setProperty("--bar-h", h + "px");
 }
 
 (function trackBarHeight() {
