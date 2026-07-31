@@ -1533,12 +1533,11 @@ $("#setEnabled").addEventListener("change", () =>
 $("#setPlan").addEventListener("change", () =>
   saveSettings({ plan: $("#setPlan").value }));
 // Applied straight away rather than on the next status poll, so the Terminal
-// tab has already changed by the time the dialog is closed.
+// tab has already changed by the time the dialog is closed — and through the
+// same path as the tab's own switch, so changing it here carries the
+// conversation too rather than being the one route that abandons it.
 $("#setTerminalUi").addEventListener("change", () => {
-  const mode = $("#setTerminalUi").value;
-  applyTermMode(mode);
-  if (state.status && state.status.settings) state.status.settings.terminal_ui = mode;
-  saveSettings({ terminal_ui: mode });
+  switchTermMode($("#setTerminalUi").value);
 });
 $("#setBudget").addEventListener("input", () => {
   $("#setBudgetVal").textContent = $("#setBudget").value + "%";
@@ -3374,13 +3373,16 @@ $("#chatInfo").addEventListener("click", async () => {
   rows.push(row("Billing", chatBilledPerToken()
     ? "API key — charged per token" : "Your Claude subscription"));
   if (chatState.sessionId) {
+    // No "continue in the terminal" button here: switching the tab's face
+    // already carries the conversation across, and a second control for the
+    // same act is how you end up unsure which one actually moves you. The
+    // id and the command are still here, for a shell that isn't this one.
     rows.push(`<p class="pnote">This conversation lives in Claude Code, not in
-      brAIn. To carry on with it in the classic terminal, release it here and
-      run <b>claude --resume</b> with the id below.</p>`
+      brAIn — which is why switching to the classic terminal carries it with
+      you. Elsewhere (an SSH session, another machine), resume it by id.</p>`
       + `<div class="psid mono">${esc(chatState.sessionId)}</div>`
       + `<div class="prow pacts">`
       + `<button class="btn small" id="chatCopyResume">Copy the command</button>`
-      + `<button class="btn small primary" id="chatHandoff">Continue in the terminal</button>`
       + `</div>`);
   } else {
     rows.push(`<p class="pnote">No conversation yet — send a message and this
@@ -3396,8 +3398,6 @@ $("#chatInfo").addEventListener("click", async () => {
                  : `Run: claude --resume ${chatState.sessionId}`));
     });
   }
-  const handBtn = $("#chatHandoff");
-  if (handBtn) handBtn.addEventListener("click", chatHandoff);
 });
 
 // Stopping our session first is the point, not a side effect: while the
@@ -3412,14 +3412,63 @@ async function chatHandoff() {
     return;
   }
   closeChipPop();
+  // The command is copied as a fallback, not as the instruction: the server
+  // has already left the id where the terminal picks it up, and opened a
+  // window on it if the terminal was up. Somebody who never pastes it still
+  // lands in the conversation.
   const ok = await copyText(out.command);
-  applyTermMode("classic");
-  if (state.status && state.status.settings) {
-    state.status.settings.terminal_ui = "classic";
+  setTermMode("classic",
+    out.opened ? "Carried over — the terminal is in this conversation"
+      : ok ? "Carried over — paste the copied command in the terminal"
+           : `Carried over — run: ${out.command}`);
+  return out;
+}
+
+// Coming back the other way. We can't ask the tmux Claude what it is doing,
+// but Claude Code writes every conversation as it goes, so the most recently
+// written one IS what the terminal was last on — the server picks it up and
+// resumes it here. That Claude is left running: it is somebody's shell.
+async function chatAdopt() {
+  try {
+    return await api("api/chat/adopt", { method: "POST" });
+  } catch (e) {
+    // Never block the switch on it. The renderer changing is the thing that
+    // was asked for; not finding a conversation to carry is a worse chat,
+    // not a broken button.
+    toast(e.message);
+    return null;
   }
-  saveSettings({ terminal_ui: "classic" },
-    ok ? "Chat released — paste the copied command in the terminal"
-       : `Chat released — run: ${out.command}`);
+}
+
+// One place that changes which face is in front, so the setting, the body
+// class and the server can never end up saying three different things.
+function setTermMode(mode, note) {
+  applyTermMode(mode);
+  if (state.status && state.status.settings) {
+    state.status.settings.terminal_ui = mode;
+  }
+  saveSettings({ terminal_ui: mode }, note);
+}
+
+// The switch carries the conversation. Flipping the renderer and leaving
+// the conversation behind is what made two faces feel like two rooms.
+async function switchTermMode(next) {
+  const btn = $("#termMode");
+  if (btn) btn.disabled = true;
+  try {
+    if (next === "classic") {
+      if (chatState.sessionId) { await chatHandoff(); return; }
+      setTermMode("classic", "Classic terminal");
+      return;
+    }
+    setTermMode("chat", "Chat terminal");
+    const out = await chatAdopt();
+    if (out && out.adopted) {
+      toast(out.title ? `Picked up: ${out.title}` : "Picked up where you left off");
+    }
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 // ------------------------------------------------------ command palette
@@ -3613,11 +3662,7 @@ function syncTermMode() {
 }
 
 $("#termMode").addEventListener("click", () => {
-  const next = chatState.session === "classic" ? "chat" : "classic";
-  applyTermMode(next);
-  if (state.status && state.status.settings) state.status.settings.terminal_ui = next;
-  saveSettings({ terminal_ui: next },
-    next === "classic" ? "Classic terminal" : "Chat terminal");
+  switchTermMode(chatState.session === "classic" ? "chat" : "classic");
 });
 
 // The ttyd frame is the only thing in the stack that can tell whether the

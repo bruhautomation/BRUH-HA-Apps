@@ -61,8 +61,12 @@ A **finding** is something wrong with your house — a dying battery, a sensor t
 quietly stopped reporting three weeks ago, a device stuck unavailable, an automation
 whose trigger can never fire. brAIn files them on its own, and each one gets **Fix it**
 (it makes the change and reports back), **Discuss** (talk it over first, changing
-nothing), **Remind me later**, or **Not a problem** (dismissed for good, and
-never raised at you again).
+nothing), **Remind me later**, **I've fixed it**, or **Not a problem here**.
+
+Those last two are endings, and ending one **removes it**. The answer goes into memory
+as a fact about your home and the wording is remembered, so the same problem is never
+raised at you twice — but there is no pile of dismissed cards left behind. A work list
+full of things nobody has to look at again is not a work list.
 
 ## It explains your house
 
@@ -202,6 +206,17 @@ sidebar entry and no second login.
 ⚙ Settings). Both run the same Claude Code, on the same login, in the same \`/config\`,
 with the same permissions — the difference is entirely how you see it.
 
+**The switch carries the conversation.** Going to Classic releases the chat's session
+and opens the terminal already inside it. Coming back picks up whatever the terminal was
+last doing, transcript and all. You do not have to finish a thought in the face you
+started it in — swap mid-answer and carry on typing.
+
+One honest limit: only one Claude Code process can own a conversation at a time, so this
+is a hand-off, not a mirror. The face you leave lets go; the face you arrive in takes
+over with the full history. The terminal's own shell is never killed to make that happen
+— it is your shell — so if you had one running, it is still sitting there where you left
+it.
+
 **Chat** is the default. Claude Code's output rendered as a conversation: text that
 reflows to your screen, code blocks that scroll inside their own box, tool calls folded
 into one line each (tap for the arguments and the result), reasoning behind a "Thinking"
@@ -219,8 +234,8 @@ rather than failing.
 **⋯ holds the rest.** *New chat*; *Conversations* — every conversation in \`/config\`,
 started here or in the classic terminal, and picking one replays it into the pane and
 carries on; *Session details* — the model, the project directory, how you are being
-billed, and this conversation's id, with **Continue in the terminal**, which opens
-Classic *inside* this conversation; and the switch between the two faces.
+billed, and this conversation's id (copy it to resume from an SSH session or another
+machine); and the switch between the two faces.
 
 Both faces stand in the same directory, which is what lets each see the other's
 conversations at all: Claude Code files them per working directory.

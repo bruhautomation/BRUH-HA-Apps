@@ -2414,6 +2414,44 @@ async def h_chat_conversations(request: web.Request) -> web.Response:
     })
 
 
+async def h_chat_adopt(request: web.Request) -> web.Response:
+    """Take up whatever the classic terminal was last doing.
+
+    The other half of the handoff, and the reason the switch is a switch
+    rather than two separate rooms. Going the other way is easy — we own the
+    chat's process, so we can stop it and tell the terminal which id to
+    resume. Coming back, there is nothing to ask: the tmux Claude is not
+    ours, it has no API, and it will not tell us what it is in the middle of.
+
+    What it does leave behind is its transcript, which Claude Code writes as
+    it goes. The most recently written conversation in this project
+    directory IS what the terminal was last doing, so that is what we pick
+    up — by resuming it, which starts our own process from that history.
+    The terminal's Claude is left completely alone: it is somebody's shell
+    and killing it is not ours to do.
+
+    Refused mid-turn, because adopting stops the chat's process and losing
+    an answer being written is worse than making you wait for it.
+    """
+    session = _chat()
+    if session.state == "busy":
+        raise web.HTTPConflict(reason="finish or stop the current answer first")
+    recent = await asyncio.to_thread(
+        conversations.listing, chat_session.WORK_DIR, 1)
+    newest = recent[0] if recent else None
+    if newest is None or newest["id"] == session.session_id:
+        # Already the same conversation (or there is nothing to take up):
+        # switching is then just a change of renderer, which is the point.
+        return web.json_response({"ok": True, "adopted": False,
+                                  "session_id": session.session_id})
+    replay = await asyncio.to_thread(
+        conversations.transcript, chat_session.WORK_DIR, newest["id"])
+    await session.resume(newest["id"], replay)
+    return web.json_response({"ok": True, "adopted": True,
+                              "session_id": newest["id"],
+                              "title": newest["title"]})
+
+
 async def h_chat_resume(request: web.Request) -> web.Response:
     body = await request.json()
     if not isinstance(body, dict):
@@ -2520,6 +2558,7 @@ def make_app() -> web.Application:
     app.router.add_post("/api/chat/new", h_chat_new)
     app.router.add_post("/api/chat/handoff", h_chat_handoff)
     app.router.add_get("/api/chat/conversations", h_chat_conversations)
+    app.router.add_post("/api/chat/adopt", h_chat_adopt)
     app.router.add_post("/api/chat/resume", h_chat_resume)
 
     # The terminal tab: /terminal/ is reverse-proxied through to ttyd

@@ -16,8 +16,10 @@ import asyncio
 import importlib
 import json
 import os
+import re
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -509,6 +511,76 @@ class TestChatRoutes(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(out["command"].startswith("claude --resume "))
         self.assertEqual((await (await self.client.get("/api/chat/state")).json())["state"],
                          "idle")
+
+    def _fake_conversation(self, session_id, text, age_s=0):
+        """A transcript in Claude Code's own store, as the classic terminal
+        would have left one behind."""
+        import conversations
+        project = (Path(self.tmp.name) / "projects"
+                   / re.sub(r"[^A-Za-z0-9]", "-", self.tmp.name))
+        project.mkdir(parents=True, exist_ok=True)
+        path = project / f"{session_id}.jsonl"
+        path.write_text(json.dumps({
+            "type": "user", "cwd": self.tmp.name,
+            "message": {"role": "user", "content": text}}) + "\n"
+            + "x" * 300 + "\n", encoding="utf-8")
+        if age_s:
+            when = time.time() - age_s
+            os.utime(path, (when, when))
+        conversations.CONFIG_DIR = self.tmp.name
+        return path
+
+    async def test_switching_back_to_chat_picks_up_the_terminal(self):
+        """The other half of the handoff. We cannot ask the tmux Claude what
+        it is doing, but Claude Code writes its transcript as it goes, so the
+        most recently written conversation IS what the terminal was last on.
+        Without this, switching back lands you in a different conversation
+        and the two faces are two rooms."""
+        self._fake_conversation("older-one", "an older chat", age_s=7200)
+        self._fake_conversation("terminal-one", "what the terminal was doing")
+
+        out = await (await self.client.post("/api/chat/adopt")).json()
+        self.assertTrue(out["adopted"])
+        self.assertEqual(out["session_id"], "terminal-one")
+        self.assertEqual(out["title"], "what the terminal was doing")
+
+        snap = await (await self.client.get("/api/chat/state")).json()
+        self.assertEqual(snap["session_id"], "terminal-one")
+        # ...and the conversation is on screen, not merely promised
+        self.assertIn("what the terminal was doing",
+                      [e.get("text") for e in snap["events"]])
+
+    async def test_adopting_the_conversation_we_are_already_in_is_a_no_op(self):
+        await self.client.post("/api/chat/send", json={"text": "hi"})
+        await asyncio.sleep(0.6)
+        current = (await (await self.client.get("/api/chat/state")).json())["session_id"]
+        self._fake_conversation(current, "the one we are already in")
+
+        out = await (await self.client.post("/api/chat/adopt")).json()
+        self.assertFalse(out["adopted"])
+        self.assertEqual(out["session_id"], current)
+
+    async def test_nothing_to_adopt_is_not_an_error(self):
+        """A first run has no store at all. Switching faces must still work —
+        not finding a conversation to carry is a worse chat, not a broken
+        button."""
+        import conversations
+        conversations.CONFIG_DIR = os.path.join(self.tmp.name, "nothing-here")
+        out = await (await self.client.post("/api/chat/adopt")).json()
+        self.assertFalse(out["adopted"])
+
+    async def test_adopting_mid_answer_is_refused(self):
+        """Adopting stops our process. Losing an answer being written is
+        worse than making somebody wait for it."""
+        self._fake_conversation("terminal-one", "what the terminal was doing")
+        os.environ["FAKE_CHAT_MODE"] = "slow"
+        self.chat_session.session().state = "busy"
+        try:
+            resp = await self.client.post("/api/chat/adopt")
+            self.assertEqual(resp.status, 409)
+        finally:
+            os.environ["FAKE_CHAT_MODE"] = "ok"
+            self.chat_session.session().state = "idle"
 
     async def test_the_terminal_ui_setting_round_trips(self):
         resp = await self.client.get("/api/settings")

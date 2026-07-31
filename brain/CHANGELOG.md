@@ -42,6 +42,33 @@ happening, nothing does.
 Dismissals you made before this release are folded into the same record at
 startup, so nothing you had already waved off comes back.
 
+### The terminal switch carries the conversation
+
+Switching between Chat and Classic changed the renderer and left the
+conversation behind, which made two faces of one Claude Code feel like two
+rooms. Going one way there was a separate **Continue in the terminal**
+button that did carry it — so the switch and the button did different things
+and neither of them was obviously the one that moved you.
+
+Now the switch is the only control, and it carries either direction:
+
+* **To Classic** — the chat releases its session and the terminal opens
+  already inside that conversation.
+* **Back to Chat** — it picks up whatever the terminal was last doing,
+  transcript and all.
+
+That second half needs explaining, because the terminal's Claude is not ours
+and has no API to ask. What it does leave behind is its transcript, which
+Claude Code writes as it goes — so the most recently written conversation in
+`/config` *is* what the terminal was last on, and that is what gets resumed.
+
+One honest limit: only one Claude Code process can own a conversation at a
+time, so this is a hand-off, not a mirror. The face you leave lets go and the
+face you arrive in takes over with the full history. Your shell in the
+terminal is never killed to make that happen — it is your shell — and
+switching is refused mid-answer rather than throwing away an answer being
+written.
+
 ### Three fixes for things that only show up on a phone
 
 * **The floating buttons could vanish for good.** Raising the software
