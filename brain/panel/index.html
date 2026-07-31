@@ -83,9 +83,6 @@
   <button id="usageChip" class="chip clickable hidden" aria-expanded="false"><span class="dot"></span><span class="uwin"><span class="ulab">Session</span><span id="usageChipPct"></span></span><span id="usageChipWeek" class="uwin hidden"><span class="ulab">Week</span><span id="usageChipWeekPct"></span></span></button>
   <button id="pausedChip" class="chip clickable warn hidden"><span class="dot"></span><span id="pausedChipText"></span></button>
 
-  <button id="refreshAll" class="btn icon hidden" data-tip="Refresh all">
-    <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M20 11a8 8 0 1 0-.6 4M20 5v6h-6"/></svg>
-  </button>
   <button id="settingsBtn" class="btn icon hidden" data-tip="Settings">
     <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 8.9 19a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0-1.1-2.7H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 6.9a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 2.7 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/></svg>
   </button>
@@ -220,13 +217,15 @@
          place either is discoverable. -->
     <form id="askForm" class="askbar">
       <input id="askInput" type="text" maxlength="500" autocomplete="off"
-             placeholder="Ask a question — “Which rooms are coldest at night?” — or say “learn about my energy use” to send brAIn off studying">
+             placeholder="Ask anything about your home…">
       <button class="btn primary" type="submit">Ask&nbsp;✨</button>
     </form>
-    <p class="askhint">Every answer becomes a card. If it's worth having every
-      week, press <b>＋ Make recurring</b> on it and it becomes a scheduled
-      insight. Say <b>“learn about…”</b> and brAIn studies that corner of the
-      house instead — what it finds lands in <b>Memory</b> and <b>Findings</b>.</p>
+    <!-- The bar has two verbs and the hint is one line, because that is all
+         the room there is above the first card on a phone. It names the
+         second verb only: asking is what the placeholder already invites,
+         and "＋ Make recurring" is a button on the card it applies to. -->
+    <p class="askhint">Every answer becomes a card. Say <b>“learn about…”</b>
+      to send brAIn studying instead.</p>
 
     <div id="filters" class="filters"></div>
     <div id="grid" class="grid"></div>

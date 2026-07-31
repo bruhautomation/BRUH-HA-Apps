@@ -181,19 +181,42 @@ html, body {
 /* The bar has two verbs and no buttons for either, so the sentence under it
    is the only place both are discoverable. */
 .askhint {
-  margin: -8px 0 16px;
+  margin: -8px 0 14px;
   font-size: 12.5px;
   color: var(--ink-3);
-  line-height: 1.6;
+  line-height: 1.5;
+  max-width: 68ch;
 }
 .askhint b { color: var(--ink-2); font-weight: 650; }
 
 /* ---------------------------------------------------------------- chips */
+/* One row that scrolls, not four that wrap. Sixteen tags wrapping is four
+   rows of chrome between the ask bar and the first card — on a phone that is
+   the whole screen above the fold spent on a filter most people never touch.
+   Horizontal scroll is the right trade here because a tag row is a rail you
+   flick, and "All" stays pinned so there is always a way back. */
 .filters {
   display: flex;
   gap: 8px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  /* room for the pinned chip's shadow, and for thumbs at the edges */
+  padding: 2px 4px 2px 0;
   margin-bottom: 18px;
+  /* the fade says "there is more this way" without spending a row saying it */
+  mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+}
+.filters::-webkit-scrollbar { display: none; }
+.filters .fchip { flex: none; }
+/* All is how you undo a filter, so it must not be the thing that scrolled
+   away. It rides the left edge with the plate behind it. */
+.filters .fchip:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  box-shadow: 8px 0 8px -6px var(--plane);
 }
 .fchip {
   appearance: none;
@@ -236,24 +259,69 @@ html, body {
   @keyframes rise { from { opacity: 0; transform: translateY(10px); } }
 }
 
+/* The title gets the row. Everything in this head used to sit on ONE flex
+   line — icon, category, title, and six `flex: none` buttons — so on a phone
+   the buttons took ~250px of a 390px card and left the words about 120px.
+   The category (which wraps) took three lines of it and the title (which
+   ellipsises) was cut to "Upstair…". That is precisely backwards: the eyebrow
+   is the thing you can afford to lose. */
 .card-head {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
   align-items: center;
-  gap: 10px;
+  gap: 2px 10px;
   padding: 13px 16px 0;
 }
 .card-head .cicon { font-size: 19px; flex: none; }
-.card-head .ctitles { min-width: 0; flex: 1; }
-.card-head .cat { font-size: 11px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase; color: var(--ink-3); }
-.card-head h3 {
-  margin: 1px 0 0;
-  font-size: 15.5px;
+.card-head .ctitles { min-width: 0; }
+.card-head .cat {
+  font-size: 11px;
   font-weight: 700;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  /* one line, and it is the one that gives way */
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.card-head .actions { display: flex; gap: 5px; flex: none; }
+.card-head h3 {
+  margin: 1px 0 0;
+  font-size: 15.5px;
+  font-weight: 700;
+  /* wraps to two lines rather than truncating: the title is what the card
+     is, and a card called "Upstair…" is not a card you can pick out */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.card-head .actions { display: flex; gap: 5px; flex: none; align-self: start; }
+
+/* The card's ⋯ menu: each action with its name and what it does, which is
+   what a row of unlabelled glyphs could never fit. */
+.cardmenu { display: grid; gap: 2px; min-width: 232px; }
+.cardmenuitem {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 9px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  min-height: 44px;
+}
+.cardmenuitem:hover, .cardmenuitem:focus-visible { background: var(--surface-2); }
+.cardmenuitem .cmicon { font-size: 15px; line-height: 1.35; width: 18px; flex: none; }
+.cardmenuitem .cmtext { display: grid; gap: 1px; min-width: 0; }
+.cardmenuitem .cmtext b { font-size: 13.5px; font-weight: 600; }
+.cardmenuitem .cmtext small { font-size: 11.5px; color: var(--ink-3); }
 
 .card .summary {
   padding: 8px 16px 0;
@@ -1150,6 +1218,31 @@ body.modal-open {
   .docs { grid-template-columns: 1fr; gap: 16px; }
   .docsnav { position: static; }
   .docsbody { max-width: none; }
+}
+
+/* A path or an entity_id in inline code is one unbreakable token, and one of
+   them is enough to push the column wider than the screen — at which point
+   the page scrolls sideways and every tab looks broken, not just this one. */
+.docsbody code, .docsbody a { overflow-wrap: anywhere; }
+
+/* ------------------------------------------------------- the zoom trap
+   iOS Safari zooms the whole page in when you focus a text control whose
+   font is under 16px, and it does NOT zoom back out when you leave it. In
+   an ingress iframe that leaves the panel stuck at some arbitrary scale
+   with the bar off-screen — reported, accurately, as "you can zoom on the
+   docs and mess them up". The docs search box was 14.4px; so were most of
+   the dialogs, and the chat composer was 16px because somebody had already
+   hit this once and fixed it in one place.
+
+   The fix belongs here rather than on each control: 16px is a *touch*
+   requirement, so it is asked for on touch, and pointer devices keep the
+   density they were designed at. Any control added later is covered by
+   having been added at all. */
+@media (pointer: coarse) {
+  input[type="text"], input[type="search"], input[type="number"],
+  input[type="password"], input:not([type]), textarea, select {
+    font-size: 16px;
+  }
 }
 
 

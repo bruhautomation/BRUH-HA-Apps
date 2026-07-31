@@ -167,8 +167,8 @@ Claude analyses your Home Assistant data and writes interactive cards.
 
 - **Cards chosen for your home.** A fresh install ships **none**. brAIn studies the house
   first, then proposes cards grounded in what it actually found — you pick which to keep.
-  Delete one you don't want with ✕; ask for it again whenever you like and brAIn builds it
-  fresh, for the house it now knows.
+  Delete one you don't want with **⋯ → Delete**; ask for it again whenever you like and
+  brAIn builds it fresh, for the house it now knows.
 - **The ask bar makes cards.** Every question you ask becomes a card. If the answer is
   worth having every week, press **＋ Make recurring** on it and the question becomes a
   scheduled insight. There is no separate "new insight" dialog — asking *is* the way in.
@@ -176,18 +176,33 @@ Claude analyses your Home Assistant data and writes interactive cards.
   brAIn runs a study session instead of drawing a card: it digs through the registry,
   history and long-term statistics for that corner of the house, and what it finds lands
   in **Memory** and **Findings**. It runs for minutes in the background.
-- **Tags are yours.** Each card carries a few \`#tags\` — the chips at the top of the
-  dashboard filter by them, so \`#batteries\` surfaces every card that found a battery
-  problem, whatever category it came from. Press ✎ on a card's tag row to drop a bad tag
-  or add your own. Your edits survive regeneration; new tags a later run discovers still
+- **Tags are yours.** Each card carries a few \`#tags\` — the chips above the cards filter
+  by them, so \`#batteries\` surfaces every card that found a battery problem, whatever
+  category it came from. The row scrolls sideways; **✦ All** stays pinned at the left, so
+  clearing a filter is always one press. Press ✎ on a card's tag row to drop a bad tag or
+  add your own. Your edits survive regeneration; new tags a later run discovers still
   appear.
-- **Feedback** — 💬 on any card tells Claude what to do differently next time
-  ("ignore the guest room sensor", "show costs in dollars"). It sticks.
-- **Dashboard cards** — ▦ gives you YAML for a Webpage card so an insight lives on your
-  own dashboard.
 
-Each card's ✎ dialog sets its own schedule. Fixed daily times ("07:00, 19:00") use far
-fewer tokens than a short interval.
+### A card's buttons
+
+Two on the card, and the rest behind **⋯**. Six glyphs in a row was most of the width of
+a card on a phone, and the title was what got squeezed out to make room for them.
+
+- **⤢ Expand** — the only one on the card itself, because it is the only one that acts on
+  what is on screen rather than on the card's definition.
+- **⋯ → Regenerate** — run this card again now.
+- **⋯ → Edit** — name, icon, prompt and schedule. Fixed daily times ("07:00, 19:00") use
+  far fewer tokens than a short interval.
+- **⋯ → Give feedback** — tell Claude what to do differently next time ("ignore the guest
+  room sensor", "show costs in dollars"). It sticks, for every future run.
+- **⋯ → Add to dashboard** — YAML for a Webpage card, so an insight lives on your own
+  Home Assistant dashboard.
+- **⋯ → Delete** — the card and its history.
+
+There is no "refresh everything" button. It used to sit in the top bar, where it was a
+circular arrow that read like a page reload and in fact queued a Claude run for every
+card you had — minutes of work and a real bite out of the usage the pill beside it was
+reporting. Cards run on their own schedule, and **⋯ → Regenerate** does one on demand.
 
 ## Findings
 
@@ -719,7 +734,8 @@ estimate of brAIn's own spending and the weekly one isn't shown.
 Biggest levers, in order:
 
 1. **Fixed daily times** on a card ("07:00, 19:00") instead of an interval.
-2. **Disable cards you don't read.** Each card's ✎ dialog has an Enabled switch.
+2. **Disable cards you don't read.** Each card's **⋯ → Edit** dialog has an Enabled
+   switch.
 3. **A smaller model.** Settings → Claude model. Smaller models cost far fewer tokens;
    the bigger ones dig deeper.
 4. **Fewer history days.** Settings → History analyzed.
@@ -793,7 +809,7 @@ the panel, run \`brain doctor\` — it reports which credential source is active
 
 ## An insight is wrong
 
-Don't fight it in the prompt — use **💬 Feedback** on the card. That's remembered and
+Don't fight it in the prompt — use **⋯ → Give feedback** on the card. That's remembered and
 applied to every future run of that card.
 
 If it's wrong about a *fact* rather than a presentation choice, fix it in **Memory**.

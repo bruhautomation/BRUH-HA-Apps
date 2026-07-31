@@ -165,12 +165,65 @@ class ConversationsCase(unittest.TestCase):
 
     def test_the_replay_is_capped_to_the_newest_events(self):
         """A month-long session is a 10 MB file. What the pane needs is a
-        scrollback — the CLI still holds the context."""
+        scrollback — the CLI still holds the context. Talk is kept ahead of
+        tool calls, but more talk than the budget is still trimmed to the
+        newest rather than kept whole for being talk."""
         lines = [user_entry(f"message {i}") for i in range(500)]
         self._write("aaa", lines)
         events = self.mod.transcript(self.cwd, "aaa", limit=25)
         self.assertEqual(len(events), 25)
         self.assertEqual(events[-1]["text"], "message 499")
+
+    def _tool_turn(self, n):
+        """One working exchange: a call, its result, a sentence about it."""
+        return [
+            assistant_entry([{"type": "tool_use", "id": f"t{n}", "name": "Read",
+                              "input": {"file_path": f"/config/{n}.yaml"}}]),
+            entry(type="user", message={"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": f"t{n}",
+                 "content": "ok"}]}),
+        ]
+
+    def test_the_budget_is_spent_on_the_conversation_not_the_tool_chatter(self):
+        """The bug behind "not all the messages come over".
+
+        Measured on a real transcript, 92% of replay events were tool calls
+        and their results — so a flat "newest N" window carried 3 of the 17
+        things the person had said. Switching faces showed the last few
+        minutes of tool chatter and almost none of the conversation.
+        """
+        lines = []
+        for i in range(60):
+            lines.append(user_entry(f"question {i}"))
+            for n in range(10):
+                lines += self._tool_turn(f"{i}-{n}")
+            lines.append(assistant_entry([{"type": "text", "text": f"answer {i}"}]))
+        self._write("aaa", lines)
+
+        events = self.mod.transcript(self.cwd, "aaa", limit=400)
+        self.assertLessEqual(len(events), 400)
+        said = [e["text"] for e in events if e["type"] == "user"]
+        replied = [e["text"] for e in events if e["type"] == "text"]
+        # every word either party said survives — that is the conversation
+        self.assertEqual(len(said), 60)
+        self.assertEqual(said[0], "question 0")
+        self.assertEqual(len(replied), 60)
+        # ...and the leftover budget still buys the most recent tool calls
+        self.assertTrue([e for e in events if e["type"] == "tool"])
+
+    def test_a_trimmed_replay_never_leaves_half_a_tool_call(self):
+        """A call with no result renders as a spinner that never stops, and a
+        result with no call renders as nothing while still costing a slot."""
+        lines = []
+        for n in range(200):
+            lines += self._tool_turn(n)
+        self._write("aaa", lines)
+
+        events = self.mod.transcript(self.cwd, "aaa", limit=51)
+        calls = {e["id"] for e in events if e["type"] == "tool"}
+        results = {e["id"] for e in events if e["type"] == "tool_result"}
+        self.assertEqual(calls, results)
+        self.assertTrue(calls)
 
     def test_a_session_id_cannot_climb_out_of_the_directory(self):
         outside = Path(self.tmp.name) / "secret.jsonl"
