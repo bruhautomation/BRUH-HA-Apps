@@ -2,6 +2,47 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.12.1
+
+### Memory was never being consolidated at all
+
+This is the actual reason memory stopped updating, and it is embarrassing.
+
+The consolidator takes a lock so two passes can't rewrite `memory.md` at
+once. It took it with `flock -w 600` — and `-w` is **util-linux's** flag.
+This add-on runs on Alpine, whose `flock` is BusyBox's, and BusyBox accepts
+only `-sxun`. Handed an option it doesn't know, BusyBox prints usage and
+exits **1** — which is the exact status `flock` uses for *"the lock is
+held"*.
+
+So every consolidation pass, from the daily daemon and from **File into
+memory now** alike, failed to take a lock that nobody held, decided another
+pass must be running, and did nothing. For weeks. The inbox grew, the
+document went stale, and the only trace was one line in the add-on log.
+
+The guards added in 1.11.2 were real, but they sat behind a gate that never
+opened.
+
+Now: only the portable flags are used. Waiting is `flock -n` polled, and
+whether flock can be used at all is **probed with the same flag the real
+call uses** — so "flock works here" means the exact thing we're about to do
+works here. If it genuinely can't lock, the pass runs anyway and says so,
+because refusing forever is the worse failure. Real contention is still
+reported as contention.
+
+Any facts that piled up while this was broken are consolidated on the next
+pass — nothing was lost, it was queued.
+
+### ...and a wedged consolidator is now visible
+
+The reason this hid for weeks is that nothing on any screen said anything:
+the queue just sat there looking like a queue. The Memory tab now says so
+when facts have been waiting appreciably longer than the daily pass — with
+what to try, and where to look if that doesn't clear it.
+
+It deliberately doesn't detect *this* bug. It detects the symptom every
+cause of it shares: facts waiting, and no pass landing.
+
 ## 1.12.0
 
 ### The two terminals are now one terminal with two faces

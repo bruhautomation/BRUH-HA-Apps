@@ -2126,6 +2126,21 @@ function renderMemory(data) {
         : "brAIn is filing memory now — this runs daily, and early when the queue builds up.")
     : "✨ Queued — it lands at the next consolidation…";
   if (merging) pollMemoryMerge();
+
+  // A queue that has been waiting far longer than the daily pass is not a
+  // busy consolidator, it is one that is not running — and that failed
+  // silently for weeks once, with every screen saying everything was fine.
+  // Whatever the cause, this is the symptom, so this is what gets said.
+  const stale = Number(memState_.stale_hours) || 0;
+  const staleBox = $("#kMemStale");
+  staleBox.classList.toggle("hidden", !stale || running);
+  if (stale && !running) {
+    const when = stale >= 48 ? `${Math.round(stale / 24)} days`
+                             : `${Math.round(stale)} hours`;
+    staleBox.textContent = `⚠ Nothing has been filed into memory for ${when}, `
+      + `and facts are waiting. Press “File into memory now” — if that doesn't `
+      + `clear it, the add-on log shows what the consolidator is hitting.`;
+  }
   if (memState.editing) return; // never clobber an edit in progress
   memState.text = data.shared_memory || "";
   const has = !!memState.text.trim();

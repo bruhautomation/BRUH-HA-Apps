@@ -445,6 +445,155 @@ def test_a_failed_write_does_not_archive_the_inbox(tmp_path):
     assert inbox_lines(memory_dir) != [], "the facts were archived after a failed write"
 
 
+def write_busybox_flock(tmp_path: Path) -> Path:
+    """A stand-in for BusyBox's flock, which is what Alpine ships.
+
+    It takes only -sxun. `-w SECS` is util-linux's, and BusyBox answers an
+    unknown option by printing usage and exiting 1 — the same status flock
+    uses for "the lock is held".
+    """
+    bindir = tmp_path / "bbbin"
+    bindir.mkdir(exist_ok=True)
+    script = bindir / "flock"
+    script.write_text(
+        "#!/bin/bash\n"
+        "args=()\n"
+        'while [ $# -gt 0 ]; do\n'
+        '  case "$1" in\n'
+        "    -s|-x|-u|-n) args+=(\"$1\"); shift ;;\n"
+        '    -*) echo "flock: unrecognized option: ${1#-}" >&2\n'
+        '        echo "Usage: flock [-sxun] FD|{FILE [-c] PROG ARGS}" >&2\n'
+        "        exit 1 ;;\n"
+        '    *) args+=("$1"); shift ;;\n'
+        "  esac\n"
+        "done\n"
+        'exec /usr/bin/flock "${args[@]}"\n')
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    return bindir
+
+
+@pytest.mark.skipif(not os.path.exists("/usr/bin/flock"),
+                    reason="needs a real flock to delegate to")
+def test_consolidation_works_where_flock_is_busyboxs(tmp_path):
+    """The bug that stopped memory updating at all.
+
+    The add-on runs on Alpine, whose flock is BusyBox's and does not take
+    `-w`. BusyBox rejects an unknown option with exit 1 — exactly the status
+    that means "the lock is held" — so `flock -w 600 9` never locked
+    anything, always failed, and was read as contention. Every pass logged
+    "another consolidation is already running" and did nothing, for weeks,
+    while the inbox grew and the document silently went stale.
+
+    Only the portable flags are used now, and the probe that decides whether
+    flock is usable uses the same flag the real call does.
+    """
+    memory_dir = tmp_path / "memory"
+    seed_inbox(memory_dir)
+    memory_dir.mkdir(parents=True, exist_ok=True)
+    (memory_dir / "memory.md").write_text("# Home Memory\n\n## Preferences\n")
+
+    fake = write_fake_consolidation_claude(
+        tmp_path, FAKE_MERGED_MEMORY + "-----VOICE-----\n" + FAKE_VOICE)
+    bindir = write_busybox_flock(tmp_path)
+    result = run_consolidator(memory_dir, fake,
+                              PATH=f"{bindir}{os.pathsep}{os.environ['PATH']}")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "already running" not in result.stdout, \
+        "a flock that cannot take -w was reported as contention"
+    assert "'the beacon' = light.office_lamp" in (memory_dir / "memory.md").read_text()
+    assert inbox_lines(memory_dir) == []
+
+
+@pytest.mark.skipif(not os.path.exists("/usr/bin/flock"),
+                    reason="needs a real flock to delegate to")
+def test_real_contention_is_still_reported_as_contention(tmp_path):
+    """The fix must not turn the lock off. With a BusyBox-shaped flock and
+    the lock genuinely held, the pass still stands down — and leaves the
+    inbox alone for whoever holds it."""
+    import fcntl
+    memory_dir = tmp_path / "memory"
+    seed_inbox(memory_dir)
+    memory_dir.mkdir(parents=True, exist_ok=True)
+    fake = write_fake_consolidation_claude(
+        tmp_path, FAKE_MERGED_MEMORY + "-----VOICE-----\n" + FAKE_VOICE)
+    bindir = write_busybox_flock(tmp_path)
+
+    with open(memory_dir / ".consolidate.lock", "w") as held:
+        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        result = run_consolidator(
+            memory_dir, fake,
+            PATH=f"{bindir}{os.pathsep}{os.environ['PATH']}",
+            BRAIN_MEMORY_LOCK_WAIT="2", BRAIN_MEMORY_LOCK_POLL="1")
+
+    assert result.returncode == 75, result.stdout + result.stderr
+    assert "already running" in result.stdout
+    assert inbox_lines(memory_dir) != []
+
+
+def test_no_flock_at_all_runs_rather_than_refuses(tmp_path):
+    """A missing or unusable flock must not mean "never consolidate again" —
+    which is what the whole failure above amounted to."""
+    memory_dir = tmp_path / "memory"
+    seed_inbox(memory_dir)
+    memory_dir.mkdir(parents=True, exist_ok=True)
+    (memory_dir / "memory.md").write_text("# Home Memory\n\n## Preferences\n")
+    fake = write_fake_consolidation_claude(
+        tmp_path, FAKE_MERGED_MEMORY + "-----VOICE-----\n" + FAKE_VOICE)
+
+    # A PATH with the coreutils this script needs but no flock.
+    bindir = tmp_path / "noflock"
+    bindir.mkdir()
+    for tool in ("bash", "cat", "date", "grep", "sed", "mkdir", "mv", "rm",
+                 "cp", "find", "wc", "stat", "touch", "sort", "head", "tail",
+                 "tr", "jq", "printf", "timeout", "basename", "chmod"):
+        src = shutil.which(tool)
+        if src:
+            (bindir / tool).symlink_to(src)
+    result = run_consolidator(memory_dir, fake, PATH=str(bindir))
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "without a lock" in result.stdout
+    assert inbox_lines(memory_dir) == []
+
+
+def test_a_consolidator_that_stopped_running_is_visible(tmp_path):
+    """The failure above hid for weeks because nothing on any screen said
+    anything: the queue just sat there. This does not detect the flock bug —
+    it detects the symptom every cause of it shares, which is facts waiting
+    and no pass landing."""
+    import importlib
+    sys.path.insert(0, str(ADDON / "panel"))
+    memory_dir = tmp_path / "memory"
+    (memory_dir / "inbox").mkdir(parents=True)
+    os.environ["BRAIN_MEMORY_DIR"] = str(memory_dir)
+    os.environ["BRAIN_MEMORY_INBOX"] = str(memory_dir / "inbox")
+    import server
+    server = importlib.reload(server)
+
+    # Nothing queued: nothing to be late about.
+    assert server._consolidation_stale_hours() == 0.0
+
+    (memory_dir / "inbox" / "a.jsonl").write_text(
+        json.dumps({"fact": "waiting"}) + "\n")
+    marker = memory_dir / ".last_consolidated"
+
+    # Freshly consolidated with a queue is just a queue.
+    marker.touch()
+    assert server._consolidation_stale_hours() == 0.0
+
+    # A day and a bit with facts waiting is a consolidator that is not
+    # running — the daemon's cadence is daily.
+    old = time.time() - 40 * 3600
+    os.utime(marker, (old, old))
+    assert server._consolidation_stale_hours() > 26
+
+    # Never consolidated is aged from startup, so a fresh install is not
+    # accused of being broken before it has had a chance to run.
+    marker.unlink()
+    assert server._consolidation_stale_hours() == 0.0
+
+
 def test_the_panel_can_see_a_pass_the_daemon_started(tmp_path):
     """The daemon consolidates daily, and early once the queue passes 20
     facts. None of that used to reach the Memory tab, so the queue would
