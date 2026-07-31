@@ -2008,8 +2008,19 @@ function mdToHtml(md) {
 }
 
 function renderMemory(data) {
-  const merging = !!(data.memory_state && data.memory_state.merging);
+  const memState_ = data.memory_state || {};
+  const merging = !!memState_.merging;
+  const running = !!memState_.running;
   $("#kMemMerging").classList.toggle("hidden", !merging);
+  $("#kMemMergingSpin").classList.toggle("hidden", !running);
+  // A pass that is running says so, and says whose it is. The daemon's own
+  // passes used to be invisible here, so the queue emptied with nothing on
+  // screen accounting for it.
+  $("#kMemMergingText").textContent = running
+    ? (memState_.by === "you"
+        ? "Filing these into the memory document now…"
+        : "brAIn is filing memory now — this runs daily, and early when the queue builds up.")
+    : "✨ Queued — it lands at the next consolidation…";
   if (merging) pollMemoryMerge();
   if (memState.editing) return; // never clobber an edit in progress
   memState.text = data.shared_memory || "";

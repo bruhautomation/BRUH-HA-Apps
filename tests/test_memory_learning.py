@@ -307,6 +307,173 @@ def test_consolidate_failure_leaves_files_untouched(tmp_path):
     assert (memory_dir / "memory.md").read_text() == original
 
 
+EMPTY_TEMPLATE = """# Home Memory
+
+## Preferences
+
+## Entity nicknames
+
+## Household patterns
+
+## Device notes
+"""
+
+FULL_MEMORY = """# Home Memory
+
+## Preferences
+- Movie nights: lights to 20%
+- Coffee is made at 06:15 on weekdays
+- Nobody is home Tuesdays 09:00-15:00
+
+## Entity nicknames
+- 'the beacon' = light.office_lamp
+- 'the cave' = the basement media room
+
+## Device notes
+- The garage fridge is meant to run 24/7
+- sensor.attic_temp reads 3 degrees high
+"""
+
+
+def test_a_consolidation_that_returns_the_bare_template_is_refused(tmp_path):
+    """The erasure case, and every other guard waves it through: an empty
+    template is non-empty, has its "##" headings, and is far under the size
+    cap. A pass that hands back nothing but headings over a document with
+    facts in it did not merge — it rewrote — and accepting that is how a
+    year of learned facts disappears in one night."""
+    memory_dir = tmp_path / "memory"
+    seed_inbox(memory_dir)
+    memory_dir.mkdir(parents=True, exist_ok=True)
+    (memory_dir / "memory.md").write_text(FULL_MEMORY)
+
+    fake = write_fake_consolidation_claude(
+        tmp_path, EMPTY_TEMPLATE + "-----VOICE-----\n" + FAKE_VOICE)
+    result = run_consolidator(memory_dir, fake)
+
+    assert result.returncode != 0, "an erasing pass reported success"
+    assert "REFUSED" in result.stdout
+    # The document is untouched and the facts are still queued for a retry.
+    assert (memory_dir / "memory.md").read_text() == FULL_MEMORY
+    assert inbox_lines(memory_dir) != []
+    assert not (memory_dir / ".last_consolidated").exists()
+
+
+def test_a_consolidation_that_drops_most_of_the_document_is_refused(tmp_path):
+    """Consolidation adds. It dedupes, and it drops the lowest-value lines
+    when the document is near its cap — but losing most of the content in
+    one pass, well under the cap, is a rewrite wearing a merge's clothes."""
+    memory_dir = tmp_path / "memory"
+    seed_inbox(memory_dir)
+    memory_dir.mkdir(parents=True, exist_ok=True)
+    (memory_dir / "memory.md").write_text(FULL_MEMORY)
+
+    shrunk = "# Home Memory\n\n## Preferences\n- Movie nights: lights to 20%\n"
+    fake = write_fake_consolidation_claude(
+        tmp_path, shrunk + "-----VOICE-----\n" + FAKE_VOICE)
+    result = run_consolidator(memory_dir, fake)
+
+    assert result.returncode != 0
+    assert "REFUSED" in result.stdout
+    assert (memory_dir / "memory.md").read_text() == FULL_MEMORY
+    assert inbox_lines(memory_dir) != []
+
+
+def test_normal_growth_is_not_mistaken_for_erasure(tmp_path):
+    """The guard has to let the ordinary case through, including the dedup
+    a real merge does — otherwise it is just a broken consolidator."""
+    memory_dir = tmp_path / "memory"
+    seed_inbox(memory_dir)
+    memory_dir.mkdir(parents=True, exist_ok=True)
+    (memory_dir / "memory.md").write_text(FULL_MEMORY)
+
+    # Seven content lines in, seven back plus the new fact: a merge.
+    merged = FULL_MEMORY.replace(
+        "## Entity nicknames\n",
+        "## Entity nicknames\n- 'the beacon' = light.office_lamp (confirmed)\n")
+    fake = write_fake_consolidation_claude(
+        tmp_path, merged + "-----VOICE-----\n" + FAKE_VOICE)
+    result = run_consolidator(memory_dir, fake)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "REFUSED" not in result.stdout
+    assert inbox_lines(memory_dir) == []
+
+
+def test_a_young_document_may_still_be_reshaped(tmp_path):
+    """A document with two facts in it legitimately doubles and halves as
+    it finds its shape; the proportional guard would make that impossible.
+    Only the drop-to-nothing rule applies down here."""
+    memory_dir = tmp_path / "memory"
+    seed_inbox(memory_dir)
+    memory_dir.mkdir(parents=True, exist_ok=True)
+    (memory_dir / "memory.md").write_text(
+        "# Home Memory\n\n## Preferences\n- a\n- b\n- c\n")
+
+    fake = write_fake_consolidation_claude(
+        tmp_path,
+        "# Home Memory\n\n## Preferences\n- a and b, together\n"
+        + "-----VOICE-----\n" + FAKE_VOICE)
+    result = run_consolidator(memory_dir, fake)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "a and b, together" in (memory_dir / "memory.md").read_text()
+
+
+def test_a_failed_write_does_not_archive_the_inbox(tmp_path):
+    """The one combination where nothing on screen says anything went
+    wrong: the document unchanged because the write failed, and the facts
+    gone because the archive step ran anyway.
+
+    The failure is staged by putting a directory where the temp file wants
+    to go, so the redirect cannot open it. A read-only parent would be the
+    obvious way, but root ignores the mode and the suite runs as root in
+    some environments — this one fails for everybody.
+    """
+    memory_dir = tmp_path / "memory"
+    seed_inbox(memory_dir)
+    memory_dir.mkdir(parents=True, exist_ok=True)
+    (memory_dir / "memory.md").write_text(FULL_MEMORY)
+    (memory_dir / "memory.md.tmp").mkdir()
+
+    fake = write_fake_consolidation_claude(
+        tmp_path, FULL_MEMORY + "-----VOICE-----\n" + FAKE_VOICE)
+    result = run_consolidator(memory_dir, fake)
+
+    assert result.returncode != 0, "a failed write reported success"
+    assert "could not write memory.md" in result.stdout
+    assert (memory_dir / "memory.md").read_text() == FULL_MEMORY
+    assert inbox_lines(memory_dir) != [], "the facts were archived after a failed write"
+
+
+def test_the_panel_can_see_a_pass_the_daemon_started(tmp_path):
+    """The daemon consolidates daily, and early once the queue passes 20
+    facts. None of that used to reach the Memory tab, so the queue would
+    empty while you watched it and nothing on screen accounted for it. The
+    lock the consolidator already takes is the honest signal."""
+    import fcntl
+    import importlib
+    sys.path.insert(0, str(ADDON / "panel"))
+    os.environ["BRAIN_MEMORY_DIR"] = str(tmp_path / "memory")
+    (tmp_path / "memory").mkdir(parents=True, exist_ok=True)
+    import server
+    server = importlib.reload(server)
+
+    assert server._consolidation_running() is False, "no lock file, nothing running"
+
+    lock = tmp_path / "memory" / ".consolidate.lock"
+    lock.touch()
+    assert server._consolidation_running() is False, "an unheld lock is not a pass"
+
+    with open(lock, "w") as held:
+        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        assert server._consolidation_running() is True
+        # Asking must never be something a real pass can block on.
+        assert server._consolidation_running() is True
+        fcntl.flock(held, fcntl.LOCK_UN)
+
+    assert server._consolidation_running() is False
+
+
 def test_consolidate_empty_inbox_is_a_noop(tmp_path):
     memory_dir = tmp_path / "memory"
     memory_dir.mkdir(parents=True)

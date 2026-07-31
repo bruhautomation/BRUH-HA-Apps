@@ -665,8 +665,17 @@
                  placeholder="Teach it something — “The garage fridge is supposed to run 24/7”">
           <button class="btn small primary" type="submit">Add</button>
         </form>
-        <div id="kMemMerging" class="kmerging hidden">✨ Queued — it lands at the next
-          consolidation…</div>
+        <!-- Two different states wore the same words. A pass that is
+             RUNNING (the daemon's, daily or once the queue passes 20 facts,
+             or the one you asked for) is work happening now and says so;
+             one that is merely QUEUED is a fact waiting for the next pass.
+             Reporting only the second made a background consolidation look
+             like nothing at all — the queue would empty while you watched
+             and nothing on screen had said why. -->
+        <div id="kMemMerging" class="kmerging hidden">
+          <span id="kMemMergingSpin" class="kspin hidden" aria-hidden="true"></span>
+          <span id="kMemMergingText">✨ Queued — it lands at the next consolidation…</span>
+        </div>
         <div class="row kmemrow">
           <button id="kMemEdit" class="btn small">✎ Edit markdown</button>
           <button id="kMemSave" class="btn small primary hidden">Save</button>

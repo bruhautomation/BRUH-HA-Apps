@@ -56,6 +56,23 @@ PROCESSED_PRUNE_DAYS=30
 
 VOICE_SEPARATOR="-----VOICE-----"
 
+# The shrink guard: how much of the document a single consolidation is
+# allowed to lose before we assume the model rewrote it instead of merging
+# into it. 60% keeps room for real dedup work — merging a week of inbox
+# facts genuinely does collapse near-duplicates — while catching the case
+# that matters, which is coming back with the bare template.
+SHRINK_GUARD_PERCENT="${BRAIN_MEMORY_SHRINK_PERCENT:-60}"
+# Below this there is nothing worth protecting, and an early document
+# legitimately doubles and halves as it finds its shape.
+SHRINK_GUARD_MIN_LINES=6
+
+# What counts as a fact for the guard: lines that carry content, not the
+# headings and comments that survive any rewrite. Counting raw lines would
+# make a template full of headings look like a full document.
+count_content_lines() {
+    printf '%s\n' "$1" | grep -cvE '^[[:space:]]*(#|<!--|-->|$)' || true
+}
+
 log() {
     echo "[brain-memory] $*"
 }
@@ -256,6 +273,46 @@ consolidate_once() {
         log "updated memory.md lost its section headings — inbox left pending"
         return 1
     fi
+
+    # The document must not come back mostly empty.
+    #
+    # Every check above passes for a memory.md that is nothing but its four
+    # headings: it is non-empty, it has "##", and it is well under the cap.
+    # So a pass where the model rewrote instead of merging — or summarised
+    # the whole house down to three lines — would replace a year of learned
+    # facts with a blank template, and every guard would wave it through.
+    # That is the shape of "my memory got erased".
+    #
+    # Consolidation ADDS: it merges the inbox in, dedupes, and only drops
+    # anything when the document is near its size cap. So losing a large
+    # share of the content lines in one pass is not a merge, whatever it
+    # says. Refuse it, keep both the document and the inbox, and let the
+    # next pass try again — a stale memory is recoverable, a wiped one is
+    # not.
+    local old_content new_content shrink_floor
+    old_content=$(count_content_lines "$current_memory")
+    new_content=$(count_content_lines "$new_memory")
+
+    # Coming back with nothing but headings is erasure, at any size. There
+    # is no document small enough for this to be a legitimate merge, so it
+    # is refused before the proportional guard gets a say.
+    if [ "$old_content" -gt 0 ] && [ "$new_content" -eq 0 ]; then
+        log "REFUSED: consolidation returned an empty template over ${old_content} existing fact(s) — inbox left pending, document untouched"
+        return 1
+    fi
+
+    # Proportional guard for the partial case. Skipped while the document is
+    # small enough that it legitimately doubles and halves as it finds its
+    # shape, and skipped when it is at its cap, where shrinking is the job
+    # we asked for.
+    if [ "$old_content" -ge "$SHRINK_GUARD_MIN_LINES" ] \
+       && [ "${#current_memory}" -lt $((MEMORY_MAX_KB * 1024 * 9 / 10)) ]; then
+        shrink_floor=$((old_content * SHRINK_GUARD_PERCENT / 100))
+        if [ "$new_content" -lt "$shrink_floor" ]; then
+            log "REFUSED: consolidation would cut memory.md from ${old_content} to ${new_content} facts — inbox left pending, document untouched"
+            return 1
+        fi
+    fi
     if [ "${#new_memory}" -gt $((MEMORY_MAX_KB * 1024)) ]; then
         log "updated memory.md exceeds ${MEMORY_MAX_KB} KB — inbox left pending"
         return 1
@@ -277,10 +334,24 @@ consolidate_once() {
         : > "$SNAPSHOT_DIR/$snapshot" 2>/dev/null || snapshot=""
     fi
 
-    printf '%s\n' "$new_memory" > "${MEMORY_FILE}.tmp"
-    mv "${MEMORY_FILE}.tmp" "$MEMORY_FILE"
-    printf '%s\n' "$new_voice" > "${VOICE_FILE}.tmp"
-    mv "${VOICE_FILE}.tmp" "$VOICE_FILE"
+    # The write has to be checked, not assumed. This script runs without
+    # `set -e`, so a full disk or a permission problem here used to fall
+    # straight through to the archive step below — which moves the inbox
+    # away. The document would be unchanged and the facts gone: the one
+    # combination where nothing on screen says anything went wrong.
+    if ! printf '%s\n' "$new_memory" > "${MEMORY_FILE}.tmp" \
+       || ! mv "${MEMORY_FILE}.tmp" "$MEMORY_FILE"; then
+        rm -f "${MEMORY_FILE}.tmp"
+        log "could not write memory.md — inbox left pending, document untouched"
+        return 1
+    fi
+    if ! printf '%s\n' "$new_voice" > "${VOICE_FILE}.tmp" \
+       || ! mv "${VOICE_FILE}.tmp" "$VOICE_FILE"; then
+        rm -f "${VOICE_FILE}.tmp"
+        # memory.md already landed, so this pass DID happen — voice.md is a
+        # derived distillate and the next pass rebuilds it.
+        log "memory.md updated but voice.md could not be written — it will be rebuilt next pass"
+    fi
 
     record_change "$current_memory" "$new_memory" "snapshots/$snapshot" "consolidation"
 

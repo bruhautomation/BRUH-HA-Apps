@@ -2,6 +2,51 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.11.2
+
+### Home memory cannot be erased by a consolidation any more
+
+**This is the important one.** The consolidator asks Claude for the whole
+updated `memory.md` and then checks the answer before writing it: not empty,
+still has its `##` headings, still under the size cap. A document that came
+back as *nothing but those headings* passed every one of those checks — it
+is not empty, it has headings, and it is very much under the cap. So a pass
+where the model rewrote instead of merging could replace a year of learned
+facts with the blank template, and nothing would object.
+
+Two guards now stand in front of that write:
+
+- **Coming back with no content at all, over a document that had some, is
+  refused outright** — at any size. There is no document small enough for
+  that to be a real merge.
+- **Losing most of the content in one pass is refused** while the document
+  is comfortably under its cap. Consolidation adds: it merges the inbox in
+  and dedupes, and it only sheds lines when the document is near the cap,
+  which is the one case the guard steps aside for.
+
+Either way the document is left exactly as it was and the inbox stays
+pending, so the next pass tries again. A stale memory is recoverable; a
+wiped one is not.
+
+**And a failed write no longer eats the facts.** The script runs without
+`set -e`, so if writing `memory.md` failed — a full disk, a permission
+problem — execution fell straight through to the step that archives the
+inbox. The document would be unchanged and the queue emptied: the one
+combination where nothing anywhere says something went wrong. The write is
+checked now, and a failure leaves both alone.
+
+### The Memory tab says when it is filing
+
+Consolidation runs daily, and early once the queue passes 20 facts. None of
+that reached the panel — only passes started with the **File into memory
+now** button did — so the queue could empty while you were looking at it
+with nothing on screen accounting for where the facts went.
+
+The tab now shows a running pass whoever started it, with a spinner and a
+line saying whether it is yours or the schedule's. It reads the lock the
+consolidator already takes, with a shared lock, so asking the question can
+never be something a real pass waits on.
+
 ## 1.11.1
 
 ### The terminal now stands where the chat does

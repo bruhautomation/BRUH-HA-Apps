@@ -76,6 +76,7 @@ random token to keep the unauthenticated /local URLs unguessable.
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import json
 import logging
 import os
@@ -153,6 +154,35 @@ MEMORY_TEMPLATE = """# Home Memory
 # Memory tab can say "queued" rather than pretending an edit landed
 # instantly. The merge itself happens in the consolidator, not here.
 MEMORY_STATE: dict = {"merging": False, "error": ""}
+
+# The consolidator's lock, which is also the only honest answer to "is a
+# pass running right now". MEMORY_STATE only knows about passes this panel
+# started; the daemon's own — daily, or early once the inbox passes 20 facts
+# — used to happen entirely in silence, so the Memory tab could sit there
+# showing a queue that was in fact being emptied as you watched.
+MEMORY_DIR = Path(os.environ.get("BRAIN_MEMORY_DIR", "/config/.brain/memory"))
+CONSOLIDATE_LOCK = MEMORY_DIR / ".consolidate.lock"
+
+
+def _consolidation_running() -> bool:
+    """True while any consolidator holds the lock.
+
+    A *shared* lock is enough to ask the question and is the important
+    detail: taking an exclusive one, even for a moment, would make this
+    read-only status check something a real pass could block on.
+    """
+    try:
+        fd = os.open(CONSOLIDATE_LOCK, os.O_RDONLY)
+    except OSError:
+        return False          # no lock file yet: nothing has ever run
+    try:
+        fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return False
+    except OSError:
+        return True           # somebody holds it exclusively
+    finally:
+        os.close(fd)
 
 MODEL = os.environ.get("BRAIN_MODEL", "").strip()
 TIMEOUT_S = int(float(os.environ.get("BRAIN_TIMEOUT_MIN", "8") or 8) * 60)
@@ -1777,6 +1807,25 @@ def _facts_with_filing() -> list[dict]:
     return facts
 
 
+def _memory_state() -> dict:
+    """What the Memory tab needs to know about consolidation right now.
+
+    Two different things get called "merging" and the tab should say which:
+    a pass that is *running* (the lock is held, by the daemon or by the
+    button) and one that is merely *queued* (you added a fact and the next
+    scheduled pass will pick it up). Reporting only the second is what made
+    a background pass look like nothing happening.
+    """
+    running = _consolidation_running()
+    state = dict(MEMORY_STATE)
+    state["running"] = running
+    # The button's own flag stays authoritative for "you asked for this" —
+    # the lock cannot tell us who started a pass.
+    state["by"] = "you" if state.get("merging") else "schedule"
+    state["merging"] = bool(state.get("merging") or running)
+    return state
+
+
 async def h_knowledge(request: web.Request) -> web.Response:
     """Everything the analyst has learned, in one payload for the panel."""
     return web.json_response({
@@ -1785,7 +1834,7 @@ async def h_knowledge(request: web.Request) -> web.Response:
         "hypotheses": hypotheses.list_all("open"),
         "hypothesis_budget": hypotheses.budget(),
         "shared_memory": _read_shared_memory(),
-        "memory_state": dict(MEMORY_STATE),
+        "memory_state": await asyncio.to_thread(_memory_state),
         "inbox_pending": await asyncio.to_thread(_inbox_pending),
     })
 
