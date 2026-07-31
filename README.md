@@ -12,14 +12,9 @@ Full documentation for every add-on lives at **[bruhautomation.com](https://bruh
 
 **Give your smart home a mind.** Claude inside Home Assistant with full run of the place — every entity, every device, every area, floor, label, dashboard, helper, automation and add-on. One add-on, one sidebar panel, one Claude login, running on your own Claude subscription.
 
-- **It runs Home Assistant** — 36 native tools for reading and controlling, 65 registry-management services for the parts that normally live behind the Settings UI, and a real shell in `/config` for everything that's still YAML. Create, rename, move, disable and delete areas, floors, labels, devices, entities, integrations, helpers, zones, people, users and dashboards
-- **It finds what's broken** — dead batteries, sensors that stopped reporting, devices stuck unavailable, automations that can never fire. **Fix it** makes the change; **Not a problem** means it never asks again
-- **It explains your house** — insight cards with real interactive visualisations, proposed for *your* home rather than shipped as defaults. Ask anything and get a card back; keep the good ones as recurring, or drop any of them on a dashboard
-- **It remembers** — one editable document of durable facts about your home, learned from conversations, insight runs and study sessions, and read by every part of brAIn
-- **It talks** — a conversation agent for Assist, answering in seconds from pre-warmed workers, area-aware and memory-aware
-- **It has a terminal** — the real Claude Code CLI in your browser, in two shapes: **Chat** renders it as a conversation that reflows to a phone, **Classic** is ttyd + tmux for anything that draws its own screen
-- **It can be undone** — every file Claude writes under `/config` is snapshotted first; `brain undo` puts it back
-- **It shows what it costs** — your Anthropic session and weekly usage in the bar and as HA sensors, with a budget that pauses automatic work before it eats your plan
+It **administers** your setup (36 native tools, 65 registry-management services, and a real shell in `/config`), **finds what's broken** and offers to fix it, **explains your house** in insight cards built for your data, **remembers** what you tell it in one document everything else reads, **talks** as an Assist conversation agent, and **can be undone** — every file it writes is snapshotted first.
+
+📖 **[bruhautomation.com/brain](https://bruhautomation.com/brain/)** · [add-on README](brain/)
 
 ### [BRUH Minecraft](bruh-minecraft-server/)
 
