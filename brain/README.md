@@ -1,17 +1,33 @@
 # brAIn
 
-**Give your smart home a mind.**
+**Your house already has nerves. Now give it a brAIn.**
 
-brAIn puts Claude inside Home Assistant with full run of the place — every entity,
-every device, every area, floor, label, dashboard, helper, automation and add-on. It
-reads your history, edits your configuration, fixes what's broken, remembers what you
-tell it, and answers when you speak to it.
-
-One add-on. One panel. One Claude login. It runs on your own Claude subscription.
+Claude plus a suite of new tools hands it the keys. Stop programming your house — let it
+think.
 
 **📖 Full documentation: [bruhautomation.com/brain](https://bruhautomation.com/brain/)** —
 install guide, every feature with worked examples, the service and tool reference, and the
 changelog. This page is the short version.
+
+## What it is
+
+A Home Assistant add-on that runs Claude Code and a suite of tools inside HA, which builds
+a permanent memory of your house.
+
+It sees the whole system — every entity, device, area, floor, dashboard, helper and
+automation — and it can change any of it. Explain a broken automation. Fix it. Write a new
+one. Remember why, next time.
+
+That memory isn't a black box. Open it, read it, edit it, correct it. An insights panel
+shows what it knows about your house and what it's done there — in the sidebar, or embedded
+straight into your dashboards.
+
+Reach it however you want: as your conversation agent, through a full-featured chat
+interface, or from native Claude Code. Your automations can call it too — which means your
+house can ask for help before you notice anything's wrong.
+
+One install, one sidebar panel, one login. Runs on the Claude **Pro** or **Max**
+subscription — or your own API key.
 
 ![The brAIn Insights tab: an ask bar, tag filters, and insight cards — one answering "Why
 did the hallway light come on at 3 am?" with a trace timeline, one showing a month of

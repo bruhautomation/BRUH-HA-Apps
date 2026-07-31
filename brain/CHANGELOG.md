@@ -2,6 +2,23 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.14.1
+
+### The guide opens with what brAIn is for
+
+The Docs tab opened by describing what brAIn is made of. It now opens the
+way the READMEs and bruhautomation.com do — *your house already has nerves,
+now give it a brAIn* — followed by what it actually does: sees the whole
+system and can change any of it, keeps a memory you can open and edit,
+reachable as a conversation agent or a chat interface or native Claude Code,
+and callable from your own automations so the house can ask for help before
+you notice anything is wrong.
+
+Five surfaces describe this add-on — two READMEs, `DOCS.md`, the Docs tab and
+the website — and they had drifted apart. They now open with the same words.
+
+Text only. No behaviour, no options, nothing to reconfigure.
+
 ## 1.14.0
 
 ### Switching to chat brought a fraction of the conversation
