@@ -2215,28 +2215,6 @@ body.term-classic #termMode .ico-out { display: block; }
    to move it. Dimmed, because it is already answered. */
 .finding.st-ignored { opacity: 0.72; border-left-color: var(--hairline); }
 
-/* An answered problem is one line, not a card. There is no finding left to
-   show — the answer is the whole record. */
-.settledrow {
-  display: grid;
-  gap: 6px;
-  justify-items: start;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius);
-  background: var(--surface);
-  padding: 11px 14px;
-}
-.settledtext { margin: 0; font-size: 14px; line-height: 1.4; color: var(--ink-2); }
-.settledrow.st-ignored .findstate { color: var(--ink-3); }
-.settledrow.st-fixed .findstate { color: var(--good); }
-
-.findnote {
-  margin: 0 0 2px;
-  color: var(--ink-3);
-  font-size: 13px;
-  max-width: 66ch;
-}
-
 .findtitle { margin: 3px 0 0; font-size: 15.5px; line-height: 1.35; }
 
 .findmeta {

@@ -387,7 +387,29 @@ class TestTopbarLayout(unittest.TestCase):
         self.assertIn("--bar-h", self.css)
         self.assertIn("height: calc(100dvh - var(--bar-h))", self.css)
         self.assertIn("trackBarHeight", self.js)
-        self.assertIn('"--bar-h", Math.round(bar.getBoundingClientRect()', self.js)
+        self.assertIn("bar.getBoundingClientRect()", self.js)
+
+    def test_measuring_the_bar_does_not_feed_on_its_own_last_answer(self):
+        """`.topbar { height: var(--bar-h) }` and the panel writes --bar-h
+        from the measured bar, so measuring while our inline override is in
+        place measures the previous measurement.
+
+        Stable at rest, and wrong exactly once: immersive sets 0, and on the
+        way back out the bar is visible again but pinned to 0 by our own
+        inline value, so it renders clipped — and the next measurement
+        latches the clipped height. That is the half-height header after a
+        round trip through the full-screen terminal.
+
+        Two rules keep it honest: clear the override before measuring, and
+        never write a zero (the CSS class already says 0, and an inline 0
+        would outlive the class that justified it)."""
+        self.assertIn("height: var(--bar-h)", self.css)
+        body = self.js.split("function syncBarHeight(")[1].split("\n}")[0]
+        self.assertIn('removeProperty("--bar-h")', body)
+        self.assertLess(body.index('removeProperty("--bar-h")'),
+                        body.index("getBoundingClientRect()"),
+                        "clear the override BEFORE measuring, or it measures itself")
+        self.assertIn("if (h > 0)", body)
 
     def test_the_terminal_can_fold_the_bar_away(self):
         """A phone with the keyboard up gave the terminal about a third of
