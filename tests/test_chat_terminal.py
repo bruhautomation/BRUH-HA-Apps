@@ -487,10 +487,12 @@ class TestChatRoutes(unittest.IsolatedAsyncioTestCase):
             "BRAIN_SETTINGS_FILE": os.path.join(self.tmp.name, "settings.json"),
             "BRAIN_DIR": os.path.join(self.tmp.name, "insights"),
             "BRAIN_SECRETS": os.path.join(self.tmp.name, "secrets"),
+            "BRAIN_RUN_SOURCES": os.path.join(self.tmp.name, "run-sources.jsonl"),
         }.items():
             os.environ[key] = value
         os.environ.pop("FAKE_CHAT_MODE", None)
-        for name in ("engine", "settings_store", "chat_session", "server"):
+        for name in ("engine", "settings_store", "run_sources", "conversations",
+                     "chat_session", "server"):
             module = importlib.import_module(name)
             setattr(self, name, importlib.reload(module))
 
@@ -636,6 +638,77 @@ class TestChatRoutes(unittest.IsolatedAsyncioTestCase):
         finally:
             os.environ["FAKE_CHAT_MODE"] = "ok"
             self.chat_session.session().state = "idle"
+
+    # ---------------------------------------------------------------
+    # Who ran what.
+    #
+    # /config is not only where you type: voice, the automation listener
+    # and the memory consolidator drive the same Claude Code from there,
+    # and Claude Code files all of it in one directory. Left alone, the
+    # rail became a column of near-identical machine prompts with a
+    # person's own chats somewhere underneath, and "switch back from the
+    # terminal" adopted whichever of them had run most recently.
+    # ---------------------------------------------------------------
+
+    def _claim(self, session_id, source):
+        self.assertTrue(self.run_sources.record(session_id, source))
+
+    async def test_the_rail_shows_yours_and_says_so_for_the_rest(self):
+        self._fake_conversation("mine", "why is the porch light on", age_s=60)
+        self._fake_conversation("machine", "You maintain a small long-term memory file")
+        self._claim("machine", "memory")
+
+        data = await (await self.client.get("/api/chat/conversations")).json()
+        self.assertEqual([c["id"] for c in data["conversations"]], ["mine"])
+        self.assertEqual(data["conversations"][0]["source"], "you")
+
+        data = await (await self.client.get(
+            "/api/chat/conversations?source=memory")).json()
+        self.assertEqual([c["id"] for c in data["conversations"]], ["machine"])
+        self.assertEqual(data["conversations"][0]["source"], "memory")
+
+        # ...and nothing is hidden: "all" is still one request away.
+        data = await (await self.client.get(
+            "/api/chat/conversations?source=all")).json()
+        self.assertEqual({c["id"] for c in data["conversations"]},
+                         {"mine", "machine"})
+
+    async def test_the_filter_only_offers_faces_that_have_run_here(self):
+        """A house with no voice assistant should not be given a Voice
+        filter that is empty forever, or told the concept exists."""
+        self._fake_conversation("mine", "hello")
+        data = await (await self.client.get("/api/chat/conversations")).json()
+        self.assertEqual([s["id"] for s in data["sources"]], ["you"])
+
+        self._fake_conversation("v1", "turn off the kitchen lights")
+        self._claim("v1", "voice")
+        data = await (await self.client.get("/api/chat/conversations")).json()
+        self.assertEqual([s["id"] for s in data["sources"]], ["you", "voice"])
+        self.assertEqual([s["count"] for s in data["sources"]], [1, 1])
+
+    async def test_a_full_page_of_machine_chats_still_returns_yours(self):
+        """Filtering server-side is what makes the page size mean rows you
+        asked for. A house whose voice assistant makes a session per
+        command would otherwise spend a whole page on those."""
+        for n in range(40):
+            self._claim(f"v{n}", "voice")
+            self._fake_conversation(f"v{n}", f"voice turn {n}")
+        self._fake_conversation("mine", "the one I actually had", age_s=7200)
+
+        data = await (await self.client.get("/api/chat/conversations")).json()
+        self.assertEqual([c["id"] for c in data["conversations"]], ["mine"])
+
+    async def test_switching_back_never_adopts_a_machines_conversation(self):
+        """The consolidator writes a transcript on its own schedule, so on a
+        busy house the newest file in /config was routinely not yours."""
+        self._fake_conversation("terminal-one", "what the terminal was doing",
+                                age_s=120)
+        self._fake_conversation("consolidator", "You maintain a small memory file")
+        self._claim("consolidator", "memory")
+
+        out = await (await self.client.post("/api/chat/adopt")).json()
+        self.assertTrue(out["adopted"])
+        self.assertEqual(out["session_id"], "terminal-one")
 
     async def test_the_terminal_ui_setting_round_trips(self):
         resp = await self.client.get("/api/settings")

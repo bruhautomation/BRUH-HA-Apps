@@ -213,6 +213,10 @@ same `/config`, with the same permissions — what differs is only how you see i
   started here or in the classic terminal; picking one replays it and carries on),
   *Session details*, and the switch to Classic. Two buttons float over the terminal,
   not a column of them.
+- **Yours, and everyone else's.** brAIn runs Claude in `/config` for voice, automation
+  tasks and filing memory, so those conversations live beside yours. The list shows
+  yours by default and puts the rest behind a chip each — *Voice*, *Automation*,
+  *Memory*, *Study* — with a count, and only for the ones your house actually uses.
 - **The input is a real text box**, so dictation, autocorrect and selection behave.
 - **⏹ stops a running answer**, and **＋ starts a new chat**. The conversation
   survives a page reload, a phone locking, and the add-on restarting.
@@ -408,7 +412,7 @@ the Terminal tab itself), because it changes nothing about how the add-on runs.
 | `additional_directories` | list | `[]` | Extra paths to expose. |
 | `persistent_apk_packages` | list | `[]` | Alpine packages reinstalled on every start. |
 | `persistent_pip_packages` | list | `[]` | Python packages reinstalled on every start. |
-| `log_level` | enum | `info` | Add-on log verbosity. |
+| `log_level` | enum | `info` | Add-on log verbosity. At `debug` the panel logs every HTTP request (polls included) and ttyd its own connection chatter; below that a successful poll is silent and only failures are logged. |
 
 ## What it costs
 

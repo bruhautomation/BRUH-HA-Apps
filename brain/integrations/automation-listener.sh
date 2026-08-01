@@ -54,6 +54,14 @@ if [ -r /data/.brain_env ]; then
     source /data/.brain_env
 fi
 
+# Lets a task's transcript be labelled "Automation" in the Chats rail
+# instead of sitting there looking like something you typed. Optional: an
+# image without it just leaves tasks unlabelled.
+if [ -r /opt/scripts/brain-run-source.sh ]; then
+    # shellcheck disable=SC1091
+    source /opt/scripts/brain-run-source.sh
+fi
+
 # Resolve the claude binary (see assist-listener.sh for details).
 CLAUDE_BIN="claude-run"
 if [ ! -x /usr/local/bin/claude-run ]; then
@@ -188,6 +196,23 @@ extract_claude_result() {
     fi
 }
 
+# The same result object carries the session id, which is the id of the
+# transcript Claude Code has just written into /config. Claiming it is what
+# lets the Chats rail say "Automation" beside it instead of listing an
+# automation's task among the conversations you had.
+#
+# Claimed after the run rather than before because this path never had to
+# name its own session — --output-format json hands it back for free, and
+# a flag we don't need is a flag that can be unsupported.
+claim_task_session() {
+    local out_file="$1" sid
+    command -v brain_claim_session > /dev/null 2>&1 || return 0
+    sid=$(jq -r 'if type == "object" then (.session_id // empty) else empty end' \
+        "$out_file" 2>/dev/null | tr -cd 'A-Za-z0-9._-')
+    [ -n "$sid" ] && brain_claim_session "$sid" automation
+    return 0
+}
+
 # Process an automation task file
 process_task() {
     local task_file="$1"
@@ -298,6 +323,7 @@ process_task() {
 
     local result stderr_output
     result=$(extract_claude_result "$output_file")
+    claim_task_session "$output_file"
     stderr_output=$(cat "$stderr_file" 2>/dev/null || echo "")
     rm -f "$output_file" "$stderr_file"
 
@@ -319,6 +345,7 @@ process_task() {
             duration=$((end_time - start_time))
 
             result=$(extract_claude_result "$output_file")
+            claim_task_session "$output_file"
             stderr_output=$(cat "$stderr_file" 2>/dev/null || echo "")
             rm -f "$output_file" "$stderr_file"
             bashio::log.info "Retried task [$task_id] after /api/mcp cleanup"

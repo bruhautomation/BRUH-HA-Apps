@@ -26,6 +26,11 @@ Two things here are inference rather than contract, and both fail soft:
   also carries interruptions, tool results and injected notices as
   ``user`` entries, so those are filtered; a conversation whose title
   cannot be found is listed by its id rather than dropped.
+
+*Who started it* is deliberately neither: the CLI does not record it, and
+reading it back out of the prompt text would be inference that breaks the
+day somebody rewords a prompt. It comes from ``run_sources`` instead, where
+every background caller claims its own session id before running.
 """
 from __future__ import annotations
 
@@ -34,6 +39,8 @@ import os
 import re
 import time
 from pathlib import Path
+
+import run_sources
 
 # Where the CLI keeps its state. Same env var the add-on exports for every
 # other Claude path, with the CLI's own default behind it.
@@ -57,6 +64,10 @@ SPEECH = ("user", "text", "thinking")
 # spend, so the budget is what decides what you see, not this.
 MAX_SCAN_EVENTS = 5000
 MAX_TEXT = 4000
+# How many sessions a filtered listing will look at before giving up. Only
+# reached when the filter is rejecting nearly everything, which is exactly
+# the case that must stay bounded.
+MAX_FILTER_SCAN = 400
 
 # Entries that are user-shaped but are not something a person typed.
 _NOT_A_PROMPT = (
@@ -164,12 +175,26 @@ def title_of(path: Path) -> str:
     return ""
 
 
-def listing(cwd: str, limit: int = 30, exclude: str | None = None) -> list[dict]:
-    """Recent conversations for this working directory, newest first."""
+def listing(cwd: str, limit: int = 30, exclude: str | None = None,
+            sources: tuple[str, ...] | None = None) -> list[dict]:
+    """Recent conversations for this working directory, newest first.
+
+    Each row carries the face that started it (``source``). Everything the
+    add-on runs by itself claims its session id up front (run_sources), so
+    an unclaimed id means a person typed it — which is why ``"you"`` is the
+    default rather than something guessed from the opening message.
+
+    ``sources`` keeps only those faces. Filtering here rather than in the
+    panel is what makes ``limit`` mean "this many rows you asked for": a
+    house whose voice assistant makes a session per command would otherwise
+    spend a whole page of 30 on machine chats and hand back four of yours.
+    """
     directory = project_dir(cwd)
     if directory is None:
         return []
-    out = []
+    wanted = set(sources) if sources else None
+    rows = []
+    scanned = 0
     for path in _iter_sessions(directory):
         session_id = path.stem
         if exclude and session_id == exclude:
@@ -182,15 +207,58 @@ def listing(cwd: str, limit: int = 30, exclude: str | None = None) -> list[dict]
         # used; offering it as something to resume is a dead end.
         if stat.st_size < 200:
             continue
+        rows.append({"id": session_id, "path": path, "modified": stat.st_mtime})
+        scanned += 1
+        # Bounded even when the filter matches nothing: a directory of ten
+        # thousand voice sessions must not turn one listing into ten
+        # thousand title reads.
+        if len(rows) >= (limit if wanted is None else MAX_FILTER_SCAN):
+            break
+    claimed = run_sources.lookup(row["id"] for row in rows)   # one read, not one per row
+    out = []
+    for row in rows:
+        source = claimed.get(row["id"], "you")
+        if wanted is not None and source not in wanted:
+            continue
         out.append({
-            "id": session_id,
-            "title": title_of(path) or "(no opening message)",
-            "modified": stat.st_mtime,
-            "age": _age(stat.st_mtime),
+            "id": row["id"],
+            "title": title_of(row["path"]) or "(no opening message)",
+            "modified": row["modified"],
+            "age": _age(row["modified"]),
+            "source": source,
         })
         if len(out) >= limit:
             break
     return out
+
+
+def source_counts(cwd: str, limit: int = 200) -> dict[str, int]:
+    """How many recent conversations belong to each face.
+
+    Deliberately not ``listing()``: a count needs the id and nothing else,
+    and listing reads up to 400 lines of every transcript to find its
+    title. Paying for two hundred title scans to draw a number on a chip
+    is how a filter row becomes the most expensive thing on the tab.
+    """
+    directory = project_dir(cwd)
+    if directory is None:
+        return {}
+    ids = []
+    for path in _iter_sessions(directory):
+        try:
+            if path.stat().st_size < 200:
+                continue
+        except OSError:
+            continue
+        ids.append(path.stem)
+        if len(ids) >= limit:
+            break
+    claimed = run_sources.lookup(ids)
+    counts: dict[str, int] = {}
+    for session_id in ids:
+        key = claimed.get(session_id, "you")
+        counts[key] = counts.get(key, 0) + 1
+    return counts
 
 
 def _age(when: float) -> str:

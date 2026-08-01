@@ -2,6 +2,61 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.17.0
+
+### "File into memory now" actually files
+
+The consolidator gave Claude 120 seconds to rewrite the whole memory
+document plus the voice distillate. On a document with anything in it that
+was a coin flip, and losing it looked identical to a broken login: `timeout`
+killed the CLI, the pass logged *"Claude invocation failed (not
+authenticated?)"*, the queue stayed exactly where it was, and the daemon did
+it again five minutes later, forever. The one line explaining it sent you to
+re-do a sign-in that was fine.
+
+A pass now gets 480 seconds — what an insight run gets, for the same reason —
+and says what actually went wrong: a timeout says it timed out and names the
+setting to raise, and any other failure carries Claude's own last line of
+stderr instead of a guess. The Memory tab shows that reason too, where you
+come back to look, rather than only in a toast that has already gone.
+
+The button also stops waiting for the pass it starts. A consolidation takes
+minutes; the request carrying it timed out long before it did, which is why
+pressing the button appeared to do nothing and then said it had failed while
+the pass was still running. It now returns straight away, the tab reports
+progress off the consolidator's own lock, and pressing it again while a pass
+is in flight joins that one instead of racing it.
+
+### The Chats rail is your chats
+
+brAIn runs Claude Code in `/config` for voice, for automation tasks and for
+filing memory, and Claude Code files all of it in the same place your own
+conversations go. So the rail filled with machine prompts — forty copies of
+the consolidator's opening line — with your own chats somewhere underneath.
+Worse, switching back from the classic terminal adopted *the most recent
+conversation*, which on a busy house was routinely the consolidator's.
+
+Every background run now claims its session before it starts, so each row
+says whose it is and a chip row picks between them. **Yours** is the default,
+Voice / Automation / Memory / Study are one press away with a count each, and
+only faces that have actually run in your house are offered. Switching back
+from the terminal only ever picks up a conversation of yours.
+
+### A quieter log, and a terminal that stays put
+
+The panel logged a line per request, and an open panel polls: thousands of
+identical `200`s pushing the one line that explained a failure off the top of
+the page. Successful polls are now silent, anything that failed is logged as
+a warning, and `log_level: debug` turns every request back on. ttyd's own
+notice-level chatter goes the same way.
+
+Most of that chatter was a real bug: nothing pinged the browser half of the
+terminal's websocket, so on an idle terminal no bytes crossed it and the
+proxy in front — ingress, or Nabu Casa remote — closed it as idle after a
+minute or two. ttyd killed the session's process, the client reconnected, and
+it repeated for as long as the tab was open. Both halves are pinged now, so a
+terminal left open stays connected.
+
 ## 1.16.0
 
 ### Your conversations, in a rail

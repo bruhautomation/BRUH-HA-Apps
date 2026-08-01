@@ -284,11 +284,34 @@ claude_cmd=$(resolve_claude)
 echo -e "${CYAN}Studying: ${topic_label}${NC}" >&2
 echo -e "${DIM}This runs a bounded agentic session and may take a minute…${NC}" >&2
 
-# shellcheck disable=SC2086
-if ! output=$(printf '%s' "$prompt" | timeout "$TIMEOUT" \
-        $claude_cmd -p "${turn_args[@]}" \
-        ${MODEL:+--model "$MODEL"} 2>/dev/null); then
+# Name the session up front so the Chats rail can file the transcript this
+# leaves behind under Study. A study session is a study session however it
+# was asked for — by you here, or by the watcher on the panel's behalf.
+session_args=()
+if [ -r /opt/scripts/brain-run-source.sh ]; then
+    # shellcheck disable=SC1091
+    . /opt/scripts/brain-run-source.sh
+    learn_session=$(brain_new_session study)
+    [ -n "$learn_session" ] && session_args=(--session-id "$learn_session")
+fi
+
+run_study() {
+    # shellcheck disable=SC2086
+    printf '%s' "$prompt" | timeout "$TIMEOUT" \
+        $claude_cmd -p "${turn_args[@]}" "$@" \
+        ${MODEL:+--model "$MODEL"} 2>/dev/null
+}
+
+if ! output=$(run_study "${session_args[@]}"); then
     rc=$?
+    # An older CLI rejects --session-id outright. The label is optional;
+    # the study session is not.
+    if [ "${#session_args[@]}" -gt 0 ] && [ "$rc" -ne 124 ]; then
+        session_args=()
+        output=$(run_study) && rc=0
+    fi
+fi
+if [ "${rc:-0}" -ne 0 ]; then
     if [ "$rc" -eq 124 ]; then
         echo -e "${RED}Study session ran past its ${TIMEOUT}s limit and was stopped.${NC}" >&2
         echo -e "${DIM}Nothing was written. Raise BRAIN_LEARN_TIMEOUT for deeper sessions.${NC}" >&2

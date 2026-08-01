@@ -55,6 +55,26 @@ AREA_MAP_FILE = os.path.join(CACHE_DIR, "area_map.txt")
 
 WORK_DIR = os.environ.get("BRAIN_ASSIST_WORKDIR", "/config")
 
+# Every worker drives Claude Code from /config, so its transcripts land in
+# the same store the Chats rail reads. Claiming the session id is what
+# stops a house that uses voice from finding its own chats buried under a
+# column of "turn off the kitchen lights". The ledger's shape is defined by
+# panel/run_sources.py — written by hand here rather than imported, because
+# the pool is a standalone daemon and must not need the panel to start.
+RUN_SOURCES = os.environ.get("BRAIN_RUN_SOURCES", "/data/run-sources.jsonl")
+
+
+def claim_session(session_id: str) -> None:
+    """Record a session as voice's. Bookkeeping: never fails a turn."""
+    try:
+        os.makedirs(os.path.dirname(RUN_SOURCES), exist_ok=True)
+        with open(RUN_SOURCES, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"id": session_id, "source": "voice",
+                                 "ts": int(time.time())},
+                                separators=(",", ":")) + "\n")
+    except OSError:
+        pass
+
 MAX_TURNS = os.environ.get("BRAIN_ASSIST_MAX_TURNS", "5")
 DEFAULT_TIMEOUT = int(os.environ.get("BRAIN_ASSIST_TIMEOUT", "105"))
 TIMEOUT_MARGIN = 15
@@ -652,6 +672,8 @@ class Worker:
                     continue
                 sid = event.get("session_id")
                 if sid:
+                    if sid != self.session_id:
+                        claim_session(sid)
                     self.session_id = sid
                 self._events.put(event)
         finally:

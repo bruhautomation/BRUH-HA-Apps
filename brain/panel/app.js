@@ -2110,30 +2110,40 @@ async function renderKnowledge() {
   // confirmed guess becomes a plain memory line and its record is
   // settled, so there is no Q/A pair left to show.
 
-  renderPending(data.inbox_pending);
+  renderPending(data.inbox_pending, data.memory_state);
   renderMemory(data);
 }
 
 // The consolidate button says how much is waiting, so pressing it is an
-// informed choice rather than a hopeful one.
-function renderPending(n) {
+// informed choice rather than a hopeful one — and it stays "Filing…" for
+// as long as a pass is actually in flight, whoever started it. Reading
+// that off a local flag meant the button came back to life the instant the
+// request returned, inviting a second press onto a pass still running.
+function renderPending(n, state) {
   const label = $("#kPending");
   const btn = $("#kConsolidate");
   if (!label || !btn) return;
   const count = Number(n) || 0;
+  const busy = memState.consolidating || !!(state && state.merging);
   label.textContent = count
     ? `${count} thing${count === 1 ? "" : "s"} waiting`
     : "nothing waiting";
   label.classList.remove("hidden");
-  btn.disabled = memState.consolidating || !count;
-  btn.textContent = memState.consolidating
-    ? "Filing…" : "⇪ File into memory now";
+  btn.disabled = busy || !count;
+  btn.textContent = busy ? "Filing…" : "⇪ File into memory now";
 }
 
 // ---- home memory file: formatted view, raw-markdown edit, Claude merge ----
 
 const memState = { editing: false, dirty: false, text: "", pollTimer: null,
-                   consolidating: false };
+                   consolidating: false, lastReported: 0, watching: false,
+                   pollFails: 0 };
+
+// How often to ask whether a pass has landed. It was 2.5s against the full
+// knowledge payload; the endpoint is now a flag, so this is cheap — but a
+// consolidation takes minutes, not seconds, and nothing is gained by
+// asking twice a second.
+const MEM_POLL_MS = 4000;
 
 const MEM_TEMPLATE = "# Home Memory\n\n## Preferences\n\n## Entity nicknames\n\n"
   + "## Household patterns\n\n## Device notes\n";
@@ -2175,45 +2185,54 @@ function mdToHtml(md) {
   return out.join("\n");
 }
 
-function renderMemory(data) {
-  const memState_ = data.memory_state || {};
-  const merging = !!memState_.merging;
-  const running = !!memState_.running;
+// Everything on this tab that depends only on the consolidator's state, so
+// the poll can keep it live without re-fetching the document behind it.
+function renderMemoryProgress(st) {
+  const merging = !!st.merging;
+  const running = !!st.running;
   $("#kMemMerging").classList.toggle("hidden", !merging);
   $("#kMemMergingSpin").classList.toggle("hidden", !running);
   // A pass that is running says so, and says whose it is. The daemon's own
   // passes used to be invisible here, so the queue emptied with nothing on
   // screen accounting for it.
   $("#kMemMergingText").textContent = running
-    ? (memState_.by === "you"
-        ? "Filing these into the memory document now…"
+    ? (st.by === "you"
+        ? "Filing these into the memory document now… this takes a few minutes."
         : "brAIn is filing memory now — this runs daily, and early when the queue builds up.")
     : "✨ Queued — it lands at the next consolidation…";
-  if (merging) pollMemoryMerge();
 
   // A queue that has been waiting far longer than the daily pass is not a
   // busy consolidator, it is one that is not running — and that failed
   // silently for weeks once, with every screen saying everything was fine.
   // Whatever the cause, this is the symptom, so this is what gets said.
-  const stale = Number(memState_.stale_hours) || 0;
+  // A pass that failed says what it hit, here, rather than only in a toast
+  // that has already gone: this is the screen you come back to.
+  const stale = Number(st.stale_hours) || 0;
   const staleBox = $("#kMemStale");
-  staleBox.classList.toggle("hidden", !stale || running);
-  if (stale && !running) {
+  const trouble = !running && (st.error || stale);
+  staleBox.classList.toggle("hidden", !trouble);
+  if (st.error) {
+    staleBox.textContent = `⚠ The last attempt to file memory did not finish: `
+      + `${st.error}`;
+  } else if (stale) {
     const when = stale >= 48 ? `${Math.round(stale / 24)} days`
                              : `${Math.round(stale)} hours`;
     staleBox.textContent = `⚠ Nothing has been filed into memory for ${when}, `
       + `and facts are waiting. Press “File into memory now” — if that doesn't `
       + `clear it, the add-on log shows what the consolidator is hitting.`;
   }
+}
+
+function renderMemory(data) {
+  const st = data.memory_state || {};
+  renderMemoryProgress(st);
+  if (st.merging) pollMemoryMerge();
   if (memState.editing) return; // never clobber an edit in progress
   memState.text = data.shared_memory || "";
   const has = !!memState.text.trim();
   $("#kMemView").innerHTML = has ? mdToHtml(memState.text) : "";
   $("#kMemView").classList.toggle("hidden", !has);
   $("#kMemEmpty").classList.toggle("hidden", has);
-  if (data.memory_state && data.memory_state.error) {
-    toast("Memory merge problem: " + data.memory_state.error);
-  }
 }
 
 function setMemEditing(on) {
@@ -2228,18 +2247,61 @@ function setMemEditing(on) {
   $("#kMemDirty").classList.add("hidden");
 }
 
-// while a Claude merge is running, poll until it lands and show the result
+// While a pass is running, poll until it lands and say how it went.
+//
+// The poll asks for the flag, not the library: /api/memory/state is a
+// couple of hundred bytes, where the knowledge payload it used to fetch
+// every 2.5s is ~19 KB of facts and the whole memory document. The
+// document is only re-read when the pass has actually finished, which is
+// the one moment it can have changed.
 function pollMemoryMerge() {
   clearTimeout(memState.pollTimer);
   memState.pollTimer = setTimeout(async () => {
     if (currentView !== "memory") return;
+    let data;
     try {
-      const data = await api("api/knowledge");
-      renderMemory(data);
-      if (data.memory_state && data.memory_state.merging) pollMemoryMerge();
-      else if (!memState.editing) toast("Memory file updated");
-    } catch (e) { /* transient; next open re-renders */ }
-  }, 2500);
+      data = await api("api/memory/state");
+      memState.pollFails = 0;
+    } catch (e) {
+      // Transient — a suspended webview aborts in-flight requests, and
+      // giving up on the first one leaves the tab frozen on "Filing…".
+      // Bounded, because a panel that is genuinely gone should stop being
+      // asked every four seconds forever.
+      memState.pollFails = (memState.pollFails || 0) + 1;
+      if (memState.pollFails <= 10) pollMemoryMerge();
+      return;
+    }
+    const st = data.memory_state || {};
+    if (st.merging) {
+      // Only a pass this panel started has an outcome we can report: the
+      // daemon's own never touch memory_state, so announcing one would
+      // announce whatever the last button press did, again.
+      if (st.by === "you") memState.watching = true;
+      renderMemoryProgress(st);
+      pollMemoryMerge();
+      return;
+    }
+    // Landed. Re-read everything once, and report the outcome exactly
+    // once — reportMemoryPass keys off done_at, so a pass is never
+    // announced twice however many pollers saw it finish.
+    reportMemoryPass(st);
+    renderKnowledge();
+  }, MEM_POLL_MS);
+}
+
+// One pass, one message. The error lives on in memory_state so the tab can
+// keep showing it, which is exactly why it must not be re-toasted on every
+// render — a failing consolidator used to raise a toast per poll.
+function reportMemoryPass(st) {
+  const stamp = Number(st.done_at) || 0;
+  if (!memState.watching) return;
+  memState.watching = false;
+  if (!stamp || stamp === memState.lastReported) return;
+  memState.lastReported = stamp;
+  if (st.error) toast("Could not file it: " + st.error);
+  else if (memState.editing) return;
+  else if (st.filed) toast(`Filed ${st.filed} thing(s) into memory`);
+  else toast("Nothing was waiting — memory is up to date");
 }
 
 $("#kMemEdit").addEventListener("click", () => {
@@ -2267,20 +2329,27 @@ $("#kConsolidate").addEventListener("click", async () => {
       + "Press Cancel to go save them first, or OK to discard them.")) return;
     setMemEditing(false);
   }
+  // Started, not awaited: the pass rewrites the whole document with a
+  // Claude call behind it and takes minutes. Holding the button's request
+  // open for that is what made pressing it look like nothing happening —
+  // the request timed out long before the pass did, and the toast said the
+  // filing had failed while it was still running.
   memState.consolidating = true;
   $("#kConsolidate").disabled = true;
   $("#kConsolidate").textContent = "Filing…";
   $("#kMemMerging").classList.remove("hidden");
   try {
     const res = await api("api/memory/consolidate", { method: "POST" });
-    toast(res.consolidated
-      ? `Filed ${res.consolidated} thing(s) into memory`
-      : "Nothing was waiting — memory is up to date");
+    toast(res.started
+      ? "Filing into memory — this takes a few minutes."
+      : "A pass is already running — this will land in the same one.");
+    memState.watching = true;
+    pollMemoryMerge();
   } catch (e) {
-    toast("Could not file it: " + e.message);
+    toast("Could not start it: " + e.message);
+    $("#kMemMerging").classList.add("hidden");
   } finally {
     memState.consolidating = false;
-    $("#kMemMerging").classList.add("hidden");
     renderKnowledge();
   }
 });
@@ -3356,6 +3425,55 @@ $("#chatFindingLater").addEventListener("click", (ev) => {
 // the working directory, and both faces of this tab stand in /config. So a
 // session started in the classic terminal is here beside one started in the
 // chat, and picking either replays it into this pane and carries on.
+//
+// It also files everything the ADD-ON runs there, which is not the same
+// thing at all: voice, the automation listener and the memory consolidator
+// drive the same Claude Code, so a house using them showed a rail of
+// identical machine prompts. Each row now says whose it is and the filter
+// chooses; "Yours" is the default because that is what a list of your
+// conversations means. Nothing is hidden — a machine's run is one press
+// away, and worth having when you want to know what voice actually did.
+
+// Which face the list is showing. Persisted: a filter you have to re-pick
+// on every reload is a filter you stop using.
+const convFilter = { source: prefGet("brain.convSource") || "you",
+                     options: [] };
+
+function setConvFilter(source) {
+  convFilter.source = source;
+  prefSet("brain.convSource", source);
+  refreshChatRail();
+  if ($("#convModal").classList.contains("open")) openConversations();
+}
+
+// One row's "who ran this", as a chip. Yours get none: a label on every
+// row for the ordinary case is just noise with extra steps.
+function sourceChip(row) {
+  if (!row.source || row.source === "you") return null;
+  const meta = convFilter.options.find((o) => o.id === row.source);
+  return el("span", "csrc", meta ? meta.label : row.source);
+}
+
+// The chips above the list. Only faces that have actually run here are
+// offered — the server counts them — so a house with no voice assistant is
+// never given an empty Voice filter to wonder about.
+function renderConvFilter(host, onPick) {
+  host.textContent = "";
+  if (convFilter.options.length <= 1) return;   // only "Yours": no choice to make
+  convFilter.options.forEach((o) => {
+    const b = el("button", "crfilter" + (o.id === convFilter.source ? " on" : ""),
+                 o.count ? `${o.label} ${o.count}` : o.label);
+    b.type = "button";
+    if (o.blurb) tip(b, o.blurb);
+    b.setAttribute("aria-pressed", o.id === convFilter.source ? "true" : "false");
+    b.addEventListener("click", () => { setConvFilter(o.id); onPick(); });
+    host.appendChild(b);
+  });
+}
+
+function convQuery() {
+  return `api/chat/conversations?source=${encodeURIComponent(convFilter.source)}`;
+}
 
 async function openConversations() {
   openBox("#convModal");
@@ -3364,17 +3482,21 @@ async function openConversations() {
   $("#convEmpty").classList.add("hidden");
   let data;
   try {
-    data = await api("api/chat/conversations");
+    data = await api(convQuery());
   } catch (e) {
     toast(e.message);
     return;
   }
+  convFilter.options = data.sources || [];
+  renderConvFilter($("#convFilter"), () => {});
   $("#convCwd").textContent = (chatState.info && chatState.info.cwd) || "/config";
   const rows = data.conversations || [];
   $("#convEmpty").classList.toggle("hidden", rows.length > 0);
   rows.forEach((c) => {
     const btn = el("button", "convitem");
     btn.appendChild(el("span", "ctitle", c.title));
+    const chip = sourceChip(c);
+    if (chip) btn.appendChild(chip);
     btn.appendChild(el("span", "cwhen", c.age));
     btn.addEventListener("click", () => resumeConversation(c));
     list.appendChild(btn);
@@ -3396,8 +3518,9 @@ function railVisible() {
 async function refreshChatRail() {
   if (!railVisible()) return;
   try {
-    const data = await api("api/chat/conversations");
+    const data = await api(convQuery());
     chatState.convs = data.conversations || [];
+    convFilter.options = data.sources || [];
   } catch (e) {
     return;  // transient: the rail keeps whatever it last showed
   }
@@ -3407,9 +3530,11 @@ async function refreshChatRail() {
 function renderChatRail() {
   const list = $("#chatRailList");
   if (!list) return;
+  renderConvFilter($("#chatRailFilter"), () => {});
   list.textContent = "";
   if (!chatState.convs.length) {
-    list.appendChild(el("div", "crempty", "No past chats yet."));
+    list.appendChild(el("div", "crempty", convFilter.source === "you"
+      ? "No past chats yet." : "Nothing here yet."));
     return;
   }
   chatState.convs.forEach((c) => {
@@ -3418,7 +3543,11 @@ function renderChatRail() {
     const here = !!chatState.sessionId && c.id === chatState.sessionId;
     const btn = el("button", "critem" + (here ? " active" : ""));
     btn.appendChild(el("span", "ctitle", c.title));
-    btn.appendChild(el("span", "cwhen", c.age));
+    const foot = el("div", "crfoot");
+    const chip = sourceChip(c);
+    if (chip) foot.appendChild(chip);
+    foot.appendChild(el("span", "cwhen", c.age));
+    btn.appendChild(foot);
     if (here) btn.setAttribute("aria-current", "true");
     else btn.addEventListener("click", () => resumeConversation(c));
     list.appendChild(btn);

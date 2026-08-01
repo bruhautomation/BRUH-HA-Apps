@@ -30,6 +30,19 @@ TTYD_BASE = f"http://{TTYD_HOST}:{TTYD_PORT}"
 
 PREFIX = "/terminal"
 
+# Ping both legs of the bridge, not just the upstream one.
+#
+# ttyd pings the proxy and the proxy pings ttyd, so that half of the link
+# never looks idle. The browser half had nothing: on a terminal nobody is
+# typing at, no bytes crossed it at all, and the proxy in front of us —
+# ingress, or Nabu Casa remote — closed it as idle after a minute or two.
+# ttyd saw the socket go, killed the session's process, the client
+# reconnected, and the whole cycle repeated for as long as the tab was
+# open. That is the "WS closed / killing process / started process" churn
+# every minute or two in the add-on log, and it is why a terminal left open
+# kept losing its place.
+WS_HEARTBEAT_S = float(os.environ.get("BRAIN_TERMINAL_WS_HEARTBEAT", "25"))
+
 # Headers that describe a single hop and must not be relayed onward.
 HOP_BY_HOP = {
     "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
@@ -76,7 +89,8 @@ async def _proxy_ws(request: web.Request, url: str) -> web.StreamResponse:
         p.strip() for p in
         request.headers.get("Sec-WebSocket-Protocol", "").split(",") if p.strip()
     ]
-    client = web.WebSocketResponse(protocols=protocols or ("tty",))
+    client = web.WebSocketResponse(protocols=protocols or ("tty",),
+                                   heartbeat=WS_HEARTBEAT_S)
     await client.prepare(request)
 
     session: aiohttp.ClientSession = request.app["ttyd_session"]
@@ -85,7 +99,7 @@ async def _proxy_ws(request: web.Request, url: str) -> web.StreamResponse:
             url.replace("http://", "ws://", 1),
             protocols=protocols or ("tty",),
             headers=_clean(request.headers),
-            heartbeat=30,
+            heartbeat=WS_HEARTBEAT_S,
             max_msg_size=0,
         ) as upstream:
 

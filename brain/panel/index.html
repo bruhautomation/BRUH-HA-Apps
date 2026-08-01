@@ -281,6 +281,10 @@
         <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
       </button>
     </div>
+    <!-- Who ran what. Only rendered when there is more than one answer:
+         on a house with no voice assistant and no automations there is
+         nothing to filter and the row would be a single dead chip. -->
+    <div id="chatRailFilter" class="crfilters"></div>
     <div id="chatRailList" class="crlist"></div>
   </aside>
 
@@ -544,7 +548,10 @@
     <div class="edit-body">
       <p class="hint tight">Everything in <code id="convCwd">/config</code>, newest first —
         started here or in the classic terminal, it makes no difference. Picking one
-        replays it and carries on where it left off.</p>
+        replays it and carries on where it left off. brAIn runs Claude here too —
+        voice, automations, filing memory — so those are behind their own chips
+        rather than mixed in with yours.</p>
+      <div id="convFilter" class="crfilters"></div>
       <div id="convList" class="convlist"></div>
       <p id="convEmpty" class="kempty hidden">No other conversations yet.</p>
     </div>
