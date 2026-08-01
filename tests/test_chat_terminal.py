@@ -30,6 +30,61 @@ FAKE = Path(__file__).resolve().parent / "fake_claude_chat.py"
 sys.path.insert(0, str(PANEL))
 
 
+class TestContextUsage(unittest.TestCase):
+    """How full the conversation is, read off the CLI's own usage report.
+
+    The prompt the CLI just sent IS the conversation so far, so the last
+    turn's input tokens are the context in use — a measurement rather than
+    an estimate. Cache reads count: a cached prompt still occupies the
+    window, it is only cheaper.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import chat_session
+        cls.mod = chat_session
+
+    def _session(self, model="claude-sonnet-5"):
+        s = self.mod.ChatSession.__new__(self.mod.ChatSession)
+        s.context = {}
+        s.info = {"model": model}
+        s.model = model
+        s._emit = lambda *a, **k: None
+        return s
+
+    def test_window_is_known_per_family_and_unknown_otherwise(self):
+        for model in ("claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"):
+            self.assertEqual(self.mod.context_window(model), 200_000, model)
+        # A model we have no published figure for reports no window, so the
+        # panel shows a token count and no percentage. A percentage of a
+        # guessed denominator is worse than no percentage.
+        self.assertEqual(self.mod.context_window("some-future-model"), 0)
+        self.assertEqual(self.mod.context_window(""), 0)
+
+    def test_cache_reads_count_toward_the_window(self):
+        s = self._session()
+        s._take_context({"usage": {
+            "input_tokens": 1200,
+            "cache_read_input_tokens": 40_000,
+            "cache_creation_input_tokens": 800,
+            "output_tokens": 900,     # not context until it comes back as input
+        }})
+        self.assertEqual(s.context, {"tokens": 42_000, "window": 200_000})
+
+    def test_a_result_without_usage_leaves_it_alone(self):
+        s = self._session()
+        s.context = {"tokens": 5, "window": 200_000}
+        s._take_context({})
+        s._take_context({"usage": "nonsense"})
+        s._take_context({"usage": {"output_tokens": 10}})
+        self.assertEqual(s.context, {"tokens": 5, "window": 200_000})
+
+    def test_an_unknown_model_still_reports_its_tokens(self):
+        s = self._session(model="some-future-model")
+        s._take_context({"usage": {"input_tokens": 900}})
+        self.assertEqual(s.context, {"tokens": 900, "window": 0})
+
+
 class TestNormalise(unittest.TestCase):
     """The wire shape → the six event types the panel knows how to draw."""
 
@@ -592,6 +647,55 @@ class TestChatRoutes(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await resp.json())["settings"]["terminal_ui"], "classic")
         resp = await self.client.put("/api/settings", json={"terminal_ui": "vim"})
         self.assertEqual(resp.status, 400)
+
+
+class TestChatChrome(unittest.TestCase):
+    """The parts of the chat tab that are markup and CSS rather than events."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.js = (PANEL / "app.js").read_text()
+        cls.css = (PANEL / "style.css").read_text()
+        cls.html = (PANEL / "index.html").read_text()
+
+    def test_the_last_message_is_not_flush_against_the_composer(self):
+        """Scrolled fully down, 8px of bottom padding put the last line of an
+        answer hard against the composer's border — which reads as the
+        message being cut off rather than as the end of it."""
+        block = self.css.split(".chatlog {")[1].split("}")[0]
+        pad = block.split("padding:")[1].split(";")[0].split()
+        self.assertGreaterEqual(int(pad[2].replace("px", "")), 20)
+
+    def test_the_safe_area_inset_is_on_whatever_is_bottom_most(self):
+        """The meta line sits BELOW the composer, so the composer is no
+        longer the thing that has to clear an iPhone's home indicator — and
+        which element is last depends on whether the meta line is showing.
+        The container is always last, so it carries the inset."""
+        chat = self.css.split("\n.chat {")[1].split("}")[0]
+        self.assertIn("env(safe-area-inset-bottom)", chat)
+        self.assertIn("box-sizing: border-box", chat)
+        bar = self.css.split(".chatbar {")[1].split("}")[0]
+        self.assertNotIn("safe-area-inset", bar)
+
+    def test_the_rail_is_a_wide_screen_affordance_only(self):
+        """248px of conversations is most of a phone. Below the breakpoint
+        the rail is not rendered and ⋯ → Conversations is still the way in,
+        so nothing is only reachable from a screen you don't have."""
+        self.assertIn('id="chatRail"', self.html)
+        self.assertIn('id="chatOpen"', self.html)   # the menu route survives
+        self.assertIn(".chatrail {\n  display: none;", self.css)
+        self.assertIn("@media (min-width: 1100px)", self.css)
+
+    def test_a_new_chat_does_not_claim_the_old_one_is_lost(self):
+        """Claude Code keeps the conversation and it stays in the list, so
+        "Claude forgets its context" overstated what a new chat costs."""
+        self.assertNotIn("Claude forgets its context", self.js)
+        self.assertIn("This one is kept", self.js)
+
+    def test_an_unknown_model_gets_a_count_and_no_percentage(self):
+        """A percentage of a guessed context window is worse than none."""
+        self.assertIn("tokens of context", self.js)
+        self.assertIn("if (ctx.window > 0)", self.js)
 
 
 if __name__ == "__main__":

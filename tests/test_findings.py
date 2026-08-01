@@ -686,8 +686,26 @@ class TestFindingsUI(unittest.TestCase):
         """One unlabelled-by-icon button in a row of icons reads as the odd
         one out rather than as the quiet one."""
         for label in ('"✦  Fix it"', '"💬  Discuss"', '"✓  I fixed it"',
-                      '"⏰  Remind me later"', '"✕  Ignore"'):
+                      '"⏰  Remind me later"', '"⌫  Dismiss"', '"✕  Ignore"'):
             self.assertIn(label, self.js)
+
+    def test_dismiss_clears_without_teaching_anything(self):
+        """Three ways off the list, and they are not the same thing.
+
+        Ignore settles: the answer goes into memory and the analyst is told
+        never to raise it again. Dismiss just clears the row — no memory
+        line, no ledger entry — so the next run is free to find it again.
+        That is `forget`, which findings_store already separates from
+        `ignore` for exactly this reason, and it had no button.
+        """
+        self.assertIn('findAction(\n      f, "forget", "Cleared", btns)', self.js)
+        self.assertIn('"ignore", "Noted — brAIn won\'t raise it again"', self.js)
+
+    def test_the_endings_tooltips_stay_short(self):
+        """These are read at a glance beside five other buttons. The old
+        Ignore tooltip ran to two clauses and a caveat about wording."""
+        self.assertIn('"Normal in this house — brAIn won\'t raise it again."', self.js)
+        self.assertNotIn("in any wording", self.js)
 
     def test_there_is_no_archive_of_dismissed_cards(self):
         """The whole point: an ending deletes the row and writes the answer

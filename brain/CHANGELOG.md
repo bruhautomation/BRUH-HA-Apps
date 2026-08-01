@@ -2,6 +2,59 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.16.0
+
+### Your conversations, in a rail
+
+On a screen wide enough for it (1100px and up), the chat tab grows a column
+of its own listing every conversation in `/config` — whichever face made it —
+with **＋** to start a new one and the current one marked rather than hidden.
+Picking one resumes it, exactly as the ⋯ menu already did.
+
+Below that width nothing changes: 248px of conversations is most of a phone,
+so the rail isn't rendered and **⋯ → Conversations** is still the way in.
+Nothing is reachable only from a screen you don't have.
+
+### Which model, and how full
+
+Under the composer, quietly: the model that is actually answering, and how
+much of the context window the conversation is occupying — `42k / 200k
+context · 21%`, turning amber past 80%.
+
+The token figure is the CLI's own report of what it sent on the last turn,
+and what it sent *is* the conversation so far, so it is a measurement rather
+than an estimate. Cache reads count, because a cached prompt still occupies
+the window; it is only cheaper. A model we have no published window for
+reports its token count and no percentage, because a percentage of a guessed
+denominator is worse than none.
+
+### A new chat does not lose the old one
+
+"Start a new chat? This one is cleared and Claude forgets its context" was
+overstating it. Claude Code keeps the conversation, it stays in the list, and
+you can reopen it — so the prompt now says what is actually true.
+
+### Dismiss, next to Ignore
+
+A finding can now be cleared off the list **without** teaching brAIn
+anything. **Ignore** settles it: a line into memory, and the analyst is told
+never to raise it again. **Dismiss** just deletes the row, so the next
+analysis is free to find it again — which is what `forget` in the store has
+always done, and it had no button.
+
+The tooltips are shorter too. Ignore's ran to two clauses and a caveat about
+wording, next to five other buttons nobody was going to stop and read.
+
+### Fixed
+
+- **The last line of an answer is no longer flush against the composer.**
+  Scrolled fully down, the chat log left 8px, which reads as the message
+  being cut off rather than as the end of it.
+- **The iPhone home indicator no longer overlaps the chat.** The safe-area
+  inset was on the composer, which stopped being the bottom-most element when
+  the model line was added below it. It is on the container now, which is
+  always last whether that line is showing or not.
+
 ## 1.15.0
 
 ### The full-screen terminal left the bar cut in half

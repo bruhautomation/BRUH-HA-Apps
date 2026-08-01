@@ -1935,12 +1935,20 @@ function makeFinding(f) {
     tip(later, "Take it off the list for a while — it comes back, unchanged");
     later.addEventListener("click", (ev) => openSnoozePop(ev.currentTarget, f, btns));
 
+    // Off the list now, and free to come back. Not a judgement about the
+    // problem — it clears the row without teaching the analyst anything, so
+    // the next run may well raise it again. That is the difference from
+    // Ignore, and it is the whole reason both exist.
+    const dismiss = add(el("button", "btn small ghost", "⌫  Dismiss"));
+    tip(dismiss, "Clear it for now. brAIn may raise it again.");
+    dismiss.addEventListener("click", () => findAction(
+      f, "forget", "Cleared", btns));
+
     // Every other button on this row carries a glyph, so the one without
     // read as the odd one out rather than as the quiet one. The label is a
     // verb like its neighbours; what it *means* is the tooltip's job.
     const ignore = add(el("button", "btn small ghost", "✕  Ignore"));
-    tip(ignore, "It's normal in this house and never needed fixing. brAIn "
-      + "remembers that and won't raise it again, in any wording.");
+    tip(ignore, "Normal in this house — brAIn won't raise it again.");
     ignore.addEventListener("click", () => findAction(
       f, "ignore", "Noted — brAIn won't raise it again", btns));
   }
@@ -2808,6 +2816,8 @@ const chatState = {
   runState: "idle",
   sessionId: null,   // the CLI's id for this conversation — what `--resume` takes
   info: {},          // model, cwd, version, api_key_source, from the CLI itself
+  context: {},       // {tokens, window} — how full the conversation is
+  convs: [],         // past conversations, for the wide-screen sidebar
   commands: [],      // its slash commands, as it advertises them
   cli: [],           // the brain/ha dispatchers, parsed from their own help
   cmdIndex: 0,       // highlighted row in the command palette
@@ -2990,6 +3000,11 @@ function chatRender(ev) {
     }
     case "info":
       chatState.info = ev;
+      chatMeta();
+      break;
+    case "context":
+      chatState.context = { tokens: ev.tokens, window: ev.window };
+      chatMeta();
       break;
     case "commands":
       chatState.commands = ev.commands || [];
@@ -3003,6 +3018,47 @@ function chatRender(ev) {
     default:
       break;
   }
+}
+
+// Which model is answering, and how full the conversation is.
+//
+// The token figure is the CLI's own report of what it sent on the last turn,
+// which IS the conversation so far — so it is a measurement, not an
+// estimate. The percentage only appears for a model whose window we have a
+// published figure for; for anything else the count stands on its own,
+// because a percentage of a guessed denominator is worse than no percentage.
+function chatMeta() {
+  const box = $("#chatMeta");
+  if (!box) return;
+  const model = (chatState.info && chatState.info.model) || "";
+  const ctx = chatState.context || {};
+  box.classList.toggle("hidden", !model && !ctx.tokens);
+  $("#chatModel").textContent = model ? prettyModel(model) : "";
+  const pill = $("#chatCtx");
+  if (!ctx.tokens) { pill.classList.add("hidden"); return; }
+  pill.classList.remove("hidden");
+  const k = ctx.tokens >= 1000
+    ? (ctx.tokens / 1000).toFixed(ctx.tokens >= 10000 ? 0 : 1) + "k"
+    : String(ctx.tokens);
+  if (ctx.window > 0) {
+    const pct = Math.round((ctx.tokens / ctx.window) * 100);
+    pill.textContent = `${k} / ${Math.round(ctx.window / 1000)}k context · ${pct}%`;
+    // Only two states, and the warning one is the only one worth a colour:
+    // a context that is nearly full is about to start dropping the start of
+    // the conversation, which is the thing you would want warning about.
+    pill.classList.toggle("warn", pct >= 80);
+  } else {
+    pill.textContent = `${k} tokens of context`;
+    pill.classList.remove("warn");
+  }
+}
+
+// `claude-opus-5-20260101` is not a thing anyone says out loud.
+function prettyModel(id) {
+  const m = /(opus|sonnet|haiku)[-\s]?([0-9](?:\.[0-9])?)?/i.exec(id || "");
+  if (!m) return id;
+  const name = m[1][0].toUpperCase() + m[1].slice(1).toLowerCase();
+  return m[2] ? `Claude ${name} ${m[2]}` : `Claude ${name}`;
 }
 
 // "none" means no API key is paying — a Pro/Max subscription, where the
@@ -3054,12 +3110,16 @@ function chatConnect() {
       // afterwards would otherwise never see them.
       chatState.sessionId = ev.session_id || null;
       chatState.info = ev.info || {};
+      chatState.context = ev.context || {};
       chatState.commands = ev.commands || [];
+      chatMeta();
       chatState.cli = ev.cli || chatState.cli;
       (ev.events || []).forEach(chatRender);
       chatSetState(ev.state, ev.error);
       chatState.ready = true;
       chatScroll(true);
+      renderChatRail();
+      refreshChatRail();
       return;
     }
     if (ev.session_id) chatState.sessionId = ev.session_id;
@@ -3219,10 +3279,15 @@ $("#chatStop").addEventListener("click", async () => {
 });
 
 $("#chatNew").addEventListener("click", async () => {
+  // Not "this is cleared and Claude forgets": Claude Code keeps the
+  // conversation on disk and it stays in the list, so the honest cost is
+  // that the next thing you say starts a separate one.
   if (chatLog().childElementCount && !window.confirm(
-    "Start a new chat? This one is cleared and Claude forgets its context.")) return;
+    "Start a new chat? This one is kept — you can reopen it from the "
+    + "conversations list.")) return;
   try { await api("api/chat/new", { method: "POST" }); }
   catch (e) { toast(e.message); }
+  refreshChatRail();
 });
 
 document.querySelectorAll(".chatseeds .seed").forEach((btn) =>
@@ -3315,6 +3380,52 @@ async function openConversations() {
     list.appendChild(btn);
   });
 }
+
+// The wide-screen rail. Same list and same resume as the ⋯ dialog — one
+// source of conversations, two ways to reach it — so a conversation started
+// in the classic terminal shows up here too.
+//
+// Only fetched when the rail is actually on screen: below the breakpoint it
+// is `display: none`, and a list nobody can see is not worth a request on
+// every tab switch.
+function railVisible() {
+  const rail = $("#chatRail");
+  return !!rail && getComputedStyle(rail).display !== "none";
+}
+
+async function refreshChatRail() {
+  if (!railVisible()) return;
+  try {
+    const data = await api("api/chat/conversations");
+    chatState.convs = data.conversations || [];
+  } catch (e) {
+    return;  // transient: the rail keeps whatever it last showed
+  }
+  renderChatRail();
+}
+
+function renderChatRail() {
+  const list = $("#chatRailList");
+  if (!list) return;
+  list.textContent = "";
+  if (!chatState.convs.length) {
+    list.appendChild(el("div", "crempty", "No past chats yet."));
+    return;
+  }
+  chatState.convs.forEach((c) => {
+    // The one you are in is marked rather than hidden: a list that silently
+    // omits the current item makes you wonder where it went.
+    const here = !!chatState.sessionId && c.id === chatState.sessionId;
+    const btn = el("button", "critem" + (here ? " active" : ""));
+    btn.appendChild(el("span", "ctitle", c.title));
+    btn.appendChild(el("span", "cwhen", c.age));
+    if (here) btn.setAttribute("aria-current", "true");
+    else btn.addEventListener("click", () => resumeConversation(c));
+    list.appendChild(btn);
+  });
+}
+
+$("#chatRailNew").addEventListener("click", () => $("#chatNew").click());
 
 async function resumeConversation(conv) {
   closeBox("#convModal");

@@ -75,7 +75,7 @@ A **finding** is something wrong with your house — a dying battery, a sensor t
 quietly stopped reporting three weeks ago, a device stuck unavailable, an automation
 whose trigger can never fire. brAIn files them on its own, and each one gets **Fix it**
 (it makes the change and reports back), **Discuss** (talk it over first, changing
-nothing), **Remind me later**, **I've fixed it**, or **Not a problem here**.
+nothing), **Remind me later**, **I fixed it**, **Dismiss**, or **Ignore**.
 
 Those last two are endings, and ending one **removes it**. The answer goes into memory
 as a fact about your home and the wording is remembered, so the same problem is never
@@ -269,6 +269,22 @@ machine); and the switch between the two faces.
 Both faces stand in the same directory, which is what lets each see the other's
 conversations at all: Claude Code files them per working directory.
 
+**On a wide screen the conversations get a rail.** From about 1100px the chat grows a
+column down the left listing every conversation, with **＋** for a new one and the one
+you are in marked rather than hidden. It is the same list the menu opens and the same
+resume — below that width it isn't drawn, because 248px of conversations is most of a
+phone, and **⋯ → Conversations** is still there.
+
+**Starting a new chat does not lose the old one.** Claude Code keeps it and it stays in
+the list. What a new chat costs is that the next thing you say belongs to a separate
+conversation, not that anything was forgotten.
+
+**Under the box: which model is answering, and how full the conversation is** — say
+\`42k / 200k context · 21%\`, going amber past 80%. The number is the CLI's own report of
+what it sent on the last turn, and what it sent *is* the conversation so far, so it is
+measured rather than estimated. Cached parts count: a cached prompt still takes up the
+window, it is only cheaper to send.
+
 **A per-message price only appears if an API key is paying.** On a Pro or Max
 subscription those tokens are already bought, so there is nothing to charge and the
 footnote shows the duration and turn count instead.
@@ -342,12 +358,12 @@ Every change it makes is snapshotted first by the same hook the terminal uses, s
 They are easy to confuse until you say what each one *teaches brAIn*, which is the only
 difference that matters:
 
-**✓ I've fixed it** — it was a real problem and it is sorted now. For anything with hands
+**✓ I fixed it** — it was a real problem and it is sorted now. For anything with hands
 in it: replacing a battery, re-pairing a device. brAIn marks findings like these **needs
 you** rather than offering to fix them, because inventing a software substitute for a
 dead battery is worse than saying so.
 
-**Not a problem here** — it was never a problem. It is normal in this house. If the
+**✕ Ignore** — it was never a problem. It is normal in this house. If the
 garage freezer is *supposed* to sit at -30°C, one press ends that conversation for good:
 the answer is fed back into every future analysis, so brAIn stops raising it rather than
 raising it again next week for you to dismiss again.
@@ -357,6 +373,17 @@ your home, the wording is remembered so the same problem is never reported at yo
 and **the card is deleted**. There is no pile of dismissed cards to scroll past — a list
 of things nobody has to look at again is not a work list.
 
+### Dismiss, which is neither
+
+**⌫ Dismiss** clears the row and teaches brAIn nothing. No memory line, no suppression —
+so the next analysis is free to find the same thing again, and probably will if it is
+still there.
+
+That is the difference from Ignore, and it is why both exist. Ignore is a judgement about
+the problem: *this is normal here*. Dismiss is a judgement about the list: *not now, and I
+don't want to promise anything*. Use it when you're clearing the board rather than
+answering it.
+
 **💬 Discuss** opens it as a conversation in the Terminal tab, with everything brAIn
 knows about it already in the question: the detail, the fix it had in mind, the entity,
 the severity. It is asked to look into the thing and say plainly whether it really is a
@@ -364,7 +391,7 @@ problem *in your house* — and told not to change anything, because "explain th
 and "go change my house" are different permissions.
 
 The decisions come with you. While you are discussing a finding, a strip above the
-message box keeps **Fix it**, **I've fixed it**, **Later** and **Not a problem here**
+message box keeps **Fix it**, **I fixed it**, **Later** and **Ignore**
 one press away, so agreeing to the fix at the end of the conversation doesn't mean
 coming back here to find the card again.
 
