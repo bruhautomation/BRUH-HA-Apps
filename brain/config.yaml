@@ -1,7 +1,7 @@
 ---
 name: "brAIn"
 description: "Give your smart home a mind — Claude with full run of Home Assistant: every entity, device, area, dashboard and automation, plus insights, findings, memory, voice and a terminal"
-version: "1.18.2"
+version: "1.18.3"
 slug: "brain"
 init: false
 
@@ -23,9 +23,10 @@ url: "https://github.com/bruhautomation/BRUH-HA-Apps/tree/main/brain"
 ingress: true
 ingress_port: 8099
 # The sidebar icon has to be an MDI name — Home Assistant won't take custom
-# artwork here — so it can only rhyme with the mark, which is a gable with a
-# window. A snowflake head was chosen when the mark was a neural mesh.
-panel_icon: mdi:home-analytics
+# artwork here — so it can only ever rhyme with the mark, never be it. It says
+# what the add-on is instead: brAIn is the mind you gave the house, so it is a
+# brain. `mdi:home-analytics` said dashboard, which is one tab of five.
+panel_icon: mdi:brain
 panel_title: "brAIn"
 panel_admin: true
 
