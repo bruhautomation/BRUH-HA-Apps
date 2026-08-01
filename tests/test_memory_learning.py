@@ -308,6 +308,96 @@ def test_consolidate_failure_leaves_files_untouched(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# A document at its ceiling
+# ---------------------------------------------------------------------------
+# The size check used to `return 1` on the first overshoot, so the daemon ran
+# the identical prompt every 5 minutes and got the identical over-size answer
+# forever — while the queue grew, asking each attempt to fit MORE into a
+# document already full. A refusal has to change the next attempt.
+
+
+def write_size_retry_claude(tmp_path: Path, big: str, small: str) -> Path:
+    """A claude that overshoots until it is told by how much."""
+    script = tmp_path / "fake_size_retry_claude.sh"
+    script.write_text(
+        "#!/bin/bash\n"
+        "prompt=$(cat)\n"
+        'printf "%s\\n=====\\n" "$prompt" >> "$FAKE_PROMPT_LOG"\n'
+        'if printf "%s" "$prompt" | grep -q "PREVIOUS ATTEMPT WAS REJECTED"; then\n'
+        "cat << 'SMALL'\n" + small + "SMALL\n"
+        "else\n"
+        "cat << 'BIG'\n" + big + "BIG\n"
+        "fi\n"
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    return script
+
+
+def _oversize_memory(filler_lines: int) -> str:
+    body = "".join(f"- fact number {i} about the house\n"
+                   for i in range(filler_lines))
+    return ("# Home Memory\n\n## Preferences\n" + body
+            + "\n## Entity nicknames\n\n## Household patterns\n\n"
+              "## Device notes\n")
+
+
+def test_an_oversize_pass_is_retried_with_the_measured_overshoot(tmp_path):
+    memory_dir = tmp_path / "memory"
+    seed_inbox(memory_dir)
+    (memory_dir / "memory.md").write_text("# Home Memory\n\n## Preferences\n")
+    prompt_log = tmp_path / "prompts.txt"
+
+    fake = write_size_retry_claude(
+        tmp_path,
+        _oversize_memory(200) + "-----VOICE-----\n" + FAKE_VOICE,
+        FAKE_MERGED_MEMORY + "-----VOICE-----\n" + FAKE_VOICE,
+    )
+    result = run_consolidator(
+        memory_dir, fake,
+        BRAIN_MEMORY_MAX_KB="1", FAKE_PROMPT_LOG=str(prompt_log),
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "asking for a tighter pass" in result.stdout
+    # The second attempt landed: the queue drained and the document moved.
+    assert "'the beacon'" in (memory_dir / "memory.md").read_text()
+    assert len(inbox_lines(memory_dir)) == 0
+
+    # The retry is a different prompt, and says by how much it overshot —
+    # repeating "keep it under 1 KB" would not be a second attempt.
+    prompts = prompt_log.read_text().split("=====")
+    assert len(prompts) >= 3            # two prompts, trailing empty
+    assert "PREVIOUS ATTEMPT WAS REJECTED" not in prompts[0]
+    assert "PREVIOUS ATTEMPT WAS REJECTED" in prompts[1]
+    assert "bytes over the hard 1 KB ceiling" in prompts[1]
+
+
+def test_a_document_that_will_not_fit_names_the_setting_that_ends_it(tmp_path):
+    memory_dir = tmp_path / "memory"
+    seed_inbox(memory_dir)
+    original = "# Home Memory\n\n## Preferences\n- keep me\n"
+    (memory_dir / "memory.md").write_text(original)
+    prompt_log = tmp_path / "prompts.txt"
+
+    too_big = _oversize_memory(200) + "-----VOICE-----\n" + FAKE_VOICE
+    fake = write_size_retry_claude(tmp_path, too_big, too_big)
+    result = run_consolidator(
+        memory_dir, fake,
+        BRAIN_MEMORY_MAX_KB="1", FAKE_PROMPT_LOG=str(prompt_log),
+    )
+
+    assert result.returncode != 0
+    # It gives up after the second try rather than looping on the same prompt.
+    assert prompt_log.read_text().count("=====") == 2
+    # And the message is actionable: the old one said only that the document
+    # was too big, which is not something anybody can act on.
+    assert "memory_max_kb" in result.stdout
+    # Nothing was lost while it failed.
+    assert (memory_dir / "memory.md").read_text() == original
+    assert len(inbox_lines(memory_dir)) == 1
+
+
+# ---------------------------------------------------------------------------
 # Why a pass failed
 # ---------------------------------------------------------------------------
 # Every failure used to report itself the same way — "Claude invocation
@@ -1191,7 +1281,7 @@ def test_config_yaml_has_memory_options():
     config = yaml.safe_load((ADDON / "config.yaml").read_text())
     assert config["options"]["learning"] is True
     assert config["options"]["memory_injection"] is True
-    assert config["options"]["memory_max_kb"] == 8
+    assert config["options"]["memory_max_kb"] == 32
     assert config["schema"]["learning"] == "bool?"
     assert config["schema"]["memory_injection"] == "bool?"
     assert config["schema"]["memory_max_kb"] == "int(1,64)?"

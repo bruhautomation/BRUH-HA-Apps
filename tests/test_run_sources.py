@@ -154,6 +154,29 @@ class ShellHalfCase(unittest.TestCase):
             self.assertEqual(self.mod.lookup([f"id-{source}"]),
                              {f"id-{source}": source}, source)
 
+    def test_a_failing_redirect_prints_nothing_either(self):
+        """Silence means the shell's message too, not just the command's.
+
+        `cmd >> file 2>/dev/null` silences *the command*; a redirection that
+        cannot open the file is reported by the shell before the command
+        runs at all. That is how a library documented as silent printed
+        "brain-run-source.sh: line 34: /data/run-sources.jsonl: Permission
+        denied" into the add-on log on every consolidation pass — the
+        existing unwritable-path test missed it because `mkdir -p` failed
+        first and returned before the redirect. A directory cannot be
+        appended to by anyone, including the root the add-on runs as.
+        """
+        target = Path(self.tmp.name) / "not-a-file"
+        target.mkdir()
+        out = subprocess.run(
+            ["bash", "-c",
+             f'set -eu\nBRAIN_RUN_SOURCES="{target}"\n'
+             f'source "{SHELL_LIB}"\nbrain_claim_session abc voice\necho survived'],
+            capture_output=True, text=True, check=False)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("survived", out.stdout)
+        self.assertEqual(out.stderr.strip(), "")
+
     def test_a_failure_is_silent_and_never_fails_the_caller(self):
         out = subprocess.run(
             ["bash", "-c",

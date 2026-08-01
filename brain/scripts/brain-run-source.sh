@@ -31,8 +31,14 @@ brain_claim_session() {
     [ -n "$sid" ] || return 0
     _brain_known_source "$source" || return 0
     mkdir -p "$(dirname "$BRAIN_RUN_SOURCES")" 2>/dev/null || return 0
-    printf '{"id":"%s","source":"%s","ts":%s}\n' \
-        "$sid" "$source" "$(date +%s)" >> "$BRAIN_RUN_SOURCES" 2>/dev/null || return 0
+    # The braces are load-bearing. `cmd >> file 2>/dev/null` silences the
+    # COMMAND's stderr, but a redirection that fails to open the file is
+    # reported by the shell before the command runs at all — which is how a
+    # library documented as silent printed "brain-run-source.sh: line 34:
+    # /data/run-sources.jsonl: Permission denied" into the add-on log on
+    # every pass. Redirecting the group covers the shell's own message too.
+    { printf '{"id":"%s","source":"%s","ts":%s}\n' \
+        "$sid" "$source" "$(date +%s)" >> "$BRAIN_RUN_SOURCES"; } 2>/dev/null || return 0
     _brain_prune_sources
     return 0
 }
@@ -53,7 +59,7 @@ _brain_prune_sources() {
     local lines
     lines=$(wc -l < "$BRAIN_RUN_SOURCES" 2>/dev/null || echo 0)
     [ "$lines" -gt 5000 ] 2>/dev/null || return 0
-    tail -n 4000 "$BRAIN_RUN_SOURCES" > "${BRAIN_RUN_SOURCES}.tmp" 2>/dev/null \
+    { tail -n 4000 "$BRAIN_RUN_SOURCES" > "${BRAIN_RUN_SOURCES}.tmp"; } 2>/dev/null \
         && mv "${BRAIN_RUN_SOURCES}.tmp" "$BRAIN_RUN_SOURCES" 2>/dev/null
     rm -f "${BRAIN_RUN_SOURCES}.tmp" 2>/dev/null
     return 0

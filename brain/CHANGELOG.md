@@ -2,6 +2,57 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.18.0
+
+### A full memory document stopped filing anything, forever
+
+Once memory.md reached its size cap, every consolidation refused itself and
+nothing was ever filed again. The pass asks Claude for the whole updated
+document and rejects an answer over the cap — but the rejection changed
+nothing about the next attempt, so the daemon ran the identical prompt every
+five minutes, got the identical over-size answer, and refused it again. The
+queue kept growing behind it, which meant each attempt was asked to fit
+*more* into a document already full: a loop that got further from succeeding
+the longer it ran. The only symptom was a Memory tab that never moved.
+
+An overshoot is now measured and fed back — "your last answer was N bytes
+over, drop the oldest and lowest-value facts until it fits" — and only a
+second overshoot fails the pass. When it does fail, it says the document is
+full and names `memory_max_kb`, instead of reporting a byte count nobody can
+act on.
+
+### Memory got room to be memory
+
+`memory_max_kb` now defaults to **32 KB**, up from 8. Voice is unaffected —
+it reads the 2 KB `voice.md` distillate on every request, and always did, so
+the small cap was never buying speed where speed is felt.
+
+The insight bundle was the other half of that mistake: learned memory and the
+CLAUDE.md house context shared one 4 KB budget with memory read first, so a
+memory document over 4 KB was silently truncated mid-fact *and* a document
+that filled the budget starved the house context entirely. Each gets its own
+now, sized so a full memory document arrives whole. When the bundle is over
+budget the context is trimmed rather than dropped — dropping it threw away
+everything brAIn has learned about the home to save a few hundred bytes.
+
+### Background passes can label themselves again
+
+The run-source ledger is written by the panel (as root) and by the
+consolidator and study watcher (started as the `claude` user). Root created
+it first, so every daemon claim failed with `Permission denied` and ran
+unlabelled — defeating the 1.17.0 change that keeps machine conversations out
+of your Chats rail and away from `adopt`. It is created claude-owned up
+front. The failure also printed a bash error on every pass despite the
+library being documented as silent: `>> file 2>/dev/null` silences the
+command, not the shell's own "cannot open" message.
+
+### "File into memory now" logs where you were told to look
+
+A button-started pass had its output captured and discarded unless the script
+exited non-zero — while the failure it reported told you to go read those
+lines in the add-on log. They now stream there as the pass writes them, the
+same as the daemon's.
+
 ## 1.17.0
 
 ### "File into memory now" actually files

@@ -377,7 +377,7 @@ the Terminal tab itself), because it changes nothing about how the add-on runs.
 | --- | --- | --- | --- |
 | `learning` | bool | `true` | Master switch for everything brAIn learns: the consolidator, the end-of-conversation reflection pass, and study sessions. Turning it off leaves existing memory untouched. |
 | `memory_injection` | bool | `true` | Splice learned memory into voice prompts. |
-| `memory_max_kb` | 1–64 | `8` | Size cap for the memory document. |
+| `memory_max_kb` | 1–64 | `32` | Size cap for the memory document. A pass that cannot fit under it files nothing, so this is the setting to raise when the log says the document is full. |
 | `study_max_turns` | 0–500 | `60` | Turn cap for `brain learn`. **`0` removes the cap.** See the note below. |
 | `study_timeout_minutes` | 2–120 | `30` | Wall-clock limit for a study session. |
 

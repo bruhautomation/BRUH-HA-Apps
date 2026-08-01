@@ -1859,10 +1859,30 @@ class TestMemoryContext(unittest.TestCase):
         self.assertEqual(self.ha_data._read_context(), "")
 
     def test_total_budget_capped(self):
-        self._write(self.ha_data.MEMORY_FILE, "m" * 10_000)
-        self._write(self.ha_data.CONTEXT_FILE, "c" * 10_000)
+        self._write(self.ha_data.MEMORY_FILE, "m" * 100_000)
+        self._write(self.ha_data.CONTEXT_FILE, "c" * 100_000)
         ctx = self.ha_data._read_context()
-        self.assertLessEqual(len(ctx), self.ha_data.CONTEXT_CHARS + 2)
+        self.assertLessEqual(
+            len(ctx), self.ha_data.MEMORY_CHARS + self.ha_data.CONTEXT_CHARS + 2)
+
+    def test_memory_has_its_own_budget(self):
+        """A memory document larger than the CLAUDE.md excerpt's budget is
+        injected whole, and does not eat the excerpt's share on its way.
+
+        The two used to share CONTEXT_CHARS, memory first, which truncated
+        any memory.md over 4 KB mid-fact *and* starved the house context
+        whenever memory filled the budget. memory_max_kb defaults to 32."""
+        self._write(self.ha_data.MEMORY_FILE, "m" * 20_000)
+        self._write(self.ha_data.CONTEXT_FILE, "c" * 3_000)
+        ctx = self.ha_data._read_context()
+        self.assertEqual(ctx.count("m"), 20_000)
+        self.assertEqual(ctx.count("c"), 3_000)
+
+    def test_a_full_memory_document_survives_injection(self):
+        """The budget is sized off memory_max_kb — the largest document the
+        consolidator is allowed to write must arrive intact, or the cap and
+        the injection disagree about what "the memory" is."""
+        self.assertGreaterEqual(self.ha_data.MEMORY_CHARS, 32 * 1024)
 
     def test_shrink_trims_entities_before_context(self):
         big = "n" * 3000
@@ -1874,8 +1894,25 @@ class TestMemoryContext(unittest.TestCase):
         self.assertEqual(out["context"], "learned facts")
         self.assertLess(len(out["entities"]), 50)
 
-    def test_shrink_drops_context_only_as_last_resort(self):
+    def test_shrink_trims_context_before_dropping_it(self):
+        """Now that a whole memory document fits in `context`, popping it is
+        no longer a proportionate response to being slightly over budget:
+        that trades everything brAIn has learned for a few hundred bytes."""
         big = "n" * 3000
+        bundle = {
+            "entities": [{"e": f"sensor.x{i}", "n": big} for i in range(20)],
+            "context": "c" * 70_000,
+        }
+        out = self.ha_data._shrink_to_budget(bundle)
+        self.assertIn("context", out)
+        self.assertLess(len(out["context"]), 70_000)
+        self.assertEqual(len(out["entities"]), 20)
+
+    def test_shrink_still_drops_context_when_trimming_cannot_fit(self):
+        """Last resort is still last resort: when the rest of the bundle
+        fills the budget on its own, a trimmed context is no more shippable
+        than a whole one."""
+        big = "n" * 6000
         bundle = {
             "entities": [{"e": f"sensor.x{i}", "n": big} for i in range(20)],
             "context": "c" * 70_000,
