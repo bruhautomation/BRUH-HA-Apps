@@ -140,17 +140,88 @@ class TestPanelBranding(unittest.TestCase):
                      "M362,198 L377,198 L486,333"):  # N diagonal
             self.assertIn(part, self.html, "the wordmark lost a glyph")
 
+    # brAIn's roof is the parent's own path, unmodified. Minecraft's is the
+    # same roof redrawn on the block grid — same apex, same 45° slopes, same
+    # knockout window, stepped instead of smooth — so that the roof and the MC
+    # caps are built to one rule rather than two.
+    SMOOTH_GABLE = "M293.5,21.6V70.83S189.86,174.05,188.83,175.5H450.09Z"
+    BLOCKY_GABLE = "M188.83,175.5V158.4H200.46"
+
     def test_the_mark_is_the_gable(self):
-        """The brand mark is a gable lifted from the parent BRUH logo, and it
-        is the same path everywhere — inline in the bar, in the favicon, in
-        every rendered PNG. A second hand-drawn copy is how a mark drifts."""
-        gable = "M293.5,21.6V70.83S189.86,174.05,188.83,175.5H450.09Z"
-        self.assertIn(gable, self.html, "the top bar isn't drawing the gable")
-        self.assertIn(gable, (PANEL / "favicon.svg").read_text())
-        for name in ("brain-icon.svg", "brain-app-tile-dark.svg",
-                     "brain-logo-ondark.svg", "brain-logo-onlight.svg"):
-            self.assertIn(gable, (BASE_DIR / "branding" / "icons" / name).read_text(),
-                          f"{name} does not carry the shared gable path")
+        """Each app's roof is one path, used everywhere that app appears —
+        inline in the bar, in the favicon, in every rendered PNG. A second
+        hand-drawn copy is how a mark drifts.
+
+        The two apps do not share the *same* roof any more, and that is the
+        point: an app whose caps are blocky and whose roof is smooth is two
+        drawings in one lockup."""
+        self.assertIn(self.SMOOTH_GABLE, self.html, "the top bar isn't drawing the gable")
+        self.assertIn(self.SMOOTH_GABLE, (PANEL / "favicon.svg").read_text())
+
+        for app, gable in (("brain", self.SMOOTH_GABLE), ("minecraft", self.BLOCKY_GABLE)):
+            for svg in sorted((BASE_DIR / "branding" / app).glob("*.svg")):
+                self.assertIn(gable, svg.read_text(),
+                              f"{svg.name} does not carry {app}'s gable path")
+
+    def test_each_app_draws_only_its_own_roof(self):
+        """The blocky roof belongs to Minecraft and the smooth one to brAIn.
+        Mixing them is the failure this catches: a Minecraft square built from
+        a brAIn tile would pass every other check here."""
+        for app, mine, theirs in (("brain", self.SMOOTH_GABLE, self.BLOCKY_GABLE),
+                                  ("minecraft", self.BLOCKY_GABLE, self.SMOOTH_GABLE)):
+            for svg in sorted((BASE_DIR / "branding" / app).glob("*.svg")):
+                body = svg.read_text()
+                self.assertIn(mine, body, f"{svg.name} lost its own roof")
+                self.assertNotIn(theirs, body, f"{svg.name} is wearing the other app's roof")
+
+        mc_favicon = (BASE_DIR / "bruh-minecraft-server" / "panel" / "favicon.svg").read_text()
+        self.assertIn(self.BLOCKY_GABLE, mc_favicon,
+                      "the Minecraft favicon is not the blocky roof")
+        self.assertNotIn(self.SMOOTH_GABLE, mc_favicon,
+                         "the Minecraft favicon is wearing brAIn's roof")
+
+    def test_no_asset_is_the_gable_alone(self):
+        """The gable is the *family* mark: it says BRUH and says nothing about
+        which add-on you are looking at. Two add-ons putting the same roof in
+        the same Home Assistant sidebar are two add-ons nobody can tell apart,
+        so every shipped asset carries the BR ligature too — including the
+        squares and the favicons, which is exactly where the temptation to drop
+        back to a bare roof lives."""
+        ligature = "M159.55,176c0-23.95"
+        for svg in sorted((BASE_DIR / "branding").glob("*/*.svg")):
+            self.assertIn(ligature, svg.read_text(),
+                          f"{svg.name} is the gable without the BR ligature")
+        for panel in ("brain", "bruh-minecraft-server"):
+            favicon = BASE_DIR / panel / "panel" / "favicon.svg"
+            self.assertIn(ligature, favicon.read_text(),
+                          f"{panel}'s favicon is the gable without the BR ligature")
+
+    def test_both_apps_have_a_full_brand_set(self):
+        """Twelve files each, same names, so render.mjs and anything else that
+        reaches for a variant can do it by pattern rather than by special case."""
+        for app, stem in (("brain", "brain"), ("minecraft", "bruh-minecraft")):
+            for shape in ("logo-onlight", "logo-ondark", "logo-onazure",
+                          "logo-mono-black", "logo-mono-white",
+                          "square-onlight", "square-ondark",
+                          "square-mono-black", "square-mono-white",
+                          "tile-dark", "tile-azure", "tile-light"):
+                path = BASE_DIR / "branding" / app / f"{stem}-{shape}.svg"
+                self.assertTrue(path.exists(), f"missing {path.relative_to(BASE_DIR)}")
+
+    def test_the_two_apps_are_told_apart_by_their_caps(self):
+        """What distinguishes the marks is the drawing of the small caps and
+        the roof together. brAIn sets AIN smooth over the parent's smooth gable
+        and keeps its signal rules; Minecraft sets MC on a 16u block grid under
+        a stepped roof, and drops the signal so the blocks carry it alone.
+        Swapping either is how the two apps stop being distinguishable."""
+        brain = (BASE_DIR / "branding" / "brain" / "brain-logo-ondark.svg").read_text()
+        mc = (BASE_DIR / "branding" / "minecraft" / "bruh-minecraft-logo-ondark.svg").read_text()
+        self.assertIn("M186,333 L239,198", brain, "brAIn lost its A")
+        self.assertIn("M362,198 L377,198 L486,333", brain, "brAIn lost its N diagonal")
+        self.assertNotIn("M186,333 L239,198", mc,
+                         "the Minecraft mark is carrying brAIn's smooth caps")
+        # The blocky MC is built from 16-unit rects, which brAIn never uses.
+        self.assertIn('width="16" height="16"', mc, "the Minecraft caps aren't blocky")
 
     def test_the_inline_mark_follows_the_theme(self):
         """One SVG serves a light and a dark bar, so its three brand roles
@@ -173,7 +244,15 @@ class TestPanelBranding(unittest.TestCase):
         icons = BASE_DIR / "branding" / "icons"
         for stale in ("brain.svg", "brain-alt-solid.svg", "brain-logo.svg",
                       "brain-logo-alt-solid.svg", "bruh-terminal.svg",
-                      "bruh-insights.svg"):
+                      "bruh-insights.svg",
+                      # Gable-only art, retired when the squares arrived: an
+                      # icon that doesn't say which app it is isn't an icon.
+                      "brain-icon.svg", "brain-icon-mono-black.svg",
+                      "brain-icon-mono-white.svg", "brain-app-tile-dark.svg",
+                      "brain-app-tile-azure.svg", "bruh-mark.svg",
+                      # The old Minecraft cube: a gradient plate and an
+                      # isometric block, sharing nothing with the family.
+                      "bruh-minecraft.svg"):
             self.assertFalse((icons / stale).exists(),
                              f"branding/icons/{stale} belongs to a retired mark")
 

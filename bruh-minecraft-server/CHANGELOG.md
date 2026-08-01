@@ -5,6 +5,30 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.14.6
+
+### Changed
+
+- **The roof is blocky now too.** The mark had `MC` on a 16u block grid sitting
+  under the parent's smooth gable — two drawings in one lockup. The roof is
+  stepped onto the same grid, keeping the apex, the 45° slopes and the knockout
+  window, so the whole mark is built to one rule. brAIn keeps the smooth roof;
+  a test now fails if either app is caught wearing the other's.
+
+## 1.14.5
+
+### Changed
+
+- **A real BRUH mark, at last.** The add-on's icon, its panel favicon and its
+  panel header were a gradient plate with an isometric cube on it — no `BR`
+  ligature, no gable, not even the brand palette. It now carries the same lockup
+  as brAIn and the parent logo, with `MC` set on a 16u block grid as the thing
+  that tells the two apps apart. The header's pickaxe emoji on a green gradient
+  square goes with it.
+- **The full set of store artwork.** `logo.png` is rendered at the right ratio
+  instead of being a stretched leftover, and the home-assistant/brands submission
+  gains the `icon@2x`, `logo` and `logo@2x` files it never had.
+
 ## 1.14.4
 
 ### Fixed

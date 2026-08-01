@@ -2,6 +2,18 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.18.2
+
+### Changed
+
+- **The icon says which add-on it is.** `icon.png`, the panel favicon and every
+  square brAIn shipped were the gable on its own — which is the *family* mark. It
+  says BRUH and says nothing about which add-on you are looking at, so brAIn and
+  BRUH Minecraft arrived in the same Home Assistant sidebar wearing the same roof.
+  Every square now comes from the full lockup: the parent's `BR` ligature, the
+  gable that doubles as the `A`, and `AIN` in smooth caps. Gable-only art is gone
+  from the repo, and a test keeps it gone.
+
 ## 1.18.1
 
 ### "brAIn is filing memory now" that never stopped saying it

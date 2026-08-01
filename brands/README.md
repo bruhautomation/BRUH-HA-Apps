@@ -7,7 +7,7 @@ fresh install shows "icon not available" until the brand is submitted.
 
 One-time submission (assets here are already to spec — `icon.png` 256×256,
 `icon@2x.png` 512×512, `logo.png` 512×384, `logo@2x.png` 1024×768, rendered
-from `../branding/icons/` by `../branding/render.mjs`):
+from `../branding/` by `../branding/render.mjs`):
 
 1. Fork `home-assistant/brands`
 2. Copy `custom_integrations/brain/` and `custom_integrations/bruh_minecraft/`

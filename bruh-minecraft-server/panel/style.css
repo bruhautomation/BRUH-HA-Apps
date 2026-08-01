@@ -96,10 +96,11 @@ body {
 }
 .brand { display: flex; align-items: center; gap: 12px; }
 .brand .logo {
-  font-size: 28px;
-  background: linear-gradient(135deg, #6fbf43, #2c7a2b);
+  /* The mark is a self-contained tile — its own ground, its own radius — so it
+     gets no background, no gradient and no plate here. */
   width: 44px; height: 44px;
-  display: flex; align-items: center; justify-content: center;
+  display: block;
+  flex: none;
   border-radius: 8px;
   box-shadow: 0 2px 8px rgba(0,0,0,.2);
 }
