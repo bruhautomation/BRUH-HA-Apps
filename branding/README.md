@@ -27,7 +27,7 @@ unmodified from `bruh-logo-dark.svg`:
 | Element | Source |
 | --- | --- |
 | `BR` ligature | the parent's own single path — B stacked on R, one continuous stem, the bottom of the B is the top of the R |
-| Gable | the parent's own roof path — notched asymmetric apex, 45° slopes, 2×2 window as a knockout |
+| Gable | the parent's own roof — notched asymmetric apex, 45° slopes, 2×2 window as a knockout. brAIn uses the path unmodified; BRUH Minecraft steps it onto the 16u block grid, same apex and same slopes |
 
 What identifies each app is the **treatment of the small caps**, set on the parent's
 own metrics — cap height `135–144`, baseline `333`, and the parent's `14.5u` gap
@@ -35,8 +35,10 @@ between the eave and the cap line:
 
 - **BRain** — smooth monoline caps, `AI` in azure. Carries the parent's three
   signal rules and bubbles in the wedge between the R and the roof.
-- **BRUH Minecraft** — the same lockup with `MC` drawn on a 16u block grid, and the
-  signal motif dropped so the blocks and the roof carry it alone.
+- **BRUH Minecraft** — the same lockup with `MC` drawn on a 16u block grid *and the
+  roof stepped onto the same grid*, with the signal motif dropped so the blocks
+  carry it alone. Blocky caps under a smooth roof were two drawings in one
+  lockup; now the whole mark is built to one rule.
 
 Newly drawn in both: the small caps only. The source has no A/I/N/M/C outlines to
 lift, so they are built on the parent's stroke-to-cap ratio (`0.111`, measured from
@@ -107,8 +109,9 @@ is still the answer; it goes soft, but it is never the wrong app. This is why
 - Never separate `AI` from BRain, or `MC` from Minecraft, and never set them in a
   different weight from the rest of the word.
 - BRain keeps its signal rules and bubbles; Minecraft does not. Don't swap them.
-- BRain's caps are smooth, Minecraft's are blocky. That contrast is the system —
-  don't blur it by making one look like the other.
+- BRain is smooth throughout, Minecraft is stepped throughout — caps *and* roof.
+  That contrast is the system; don't blur it, and never put one app's roof under
+  the other's caps.
 - No shadows, gradients, outlines, rotation or skew.
 - The apex notch is inherited and deliberate. Do not straighten it.
 - Clear space: **68u** at master scale (half the small-cap height) on all four sides.

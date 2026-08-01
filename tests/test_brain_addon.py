@@ -140,16 +140,45 @@ class TestPanelBranding(unittest.TestCase):
                      "M362,198 L377,198 L486,333"):  # N diagonal
             self.assertIn(part, self.html, "the wordmark lost a glyph")
 
+    # brAIn's roof is the parent's own path, unmodified. Minecraft's is the
+    # same roof redrawn on the block grid — same apex, same 45° slopes, same
+    # knockout window, stepped instead of smooth — so that the roof and the MC
+    # caps are built to one rule rather than two.
+    SMOOTH_GABLE = "M293.5,21.6V70.83S189.86,174.05,188.83,175.5H450.09Z"
+    BLOCKY_GABLE = "M188.83,175.5V158.4H200.46"
+
     def test_the_mark_is_the_gable(self):
-        """The brand mark is a gable lifted from the parent BRUH logo, and it
-        is the same path everywhere — inline in the bar, in the favicon, in
-        every rendered PNG. A second hand-drawn copy is how a mark drifts."""
-        gable = "M293.5,21.6V70.83S189.86,174.05,188.83,175.5H450.09Z"
-        self.assertIn(gable, self.html, "the top bar isn't drawing the gable")
-        self.assertIn(gable, (PANEL / "favicon.svg").read_text())
-        for svg in sorted((BASE_DIR / "branding").glob("*/*.svg")):
-            self.assertIn(gable, svg.read_text(),
-                          f"{svg.name} does not carry the shared gable path")
+        """Each app's roof is one path, used everywhere that app appears —
+        inline in the bar, in the favicon, in every rendered PNG. A second
+        hand-drawn copy is how a mark drifts.
+
+        The two apps do not share the *same* roof any more, and that is the
+        point: an app whose caps are blocky and whose roof is smooth is two
+        drawings in one lockup."""
+        self.assertIn(self.SMOOTH_GABLE, self.html, "the top bar isn't drawing the gable")
+        self.assertIn(self.SMOOTH_GABLE, (PANEL / "favicon.svg").read_text())
+
+        for app, gable in (("brain", self.SMOOTH_GABLE), ("minecraft", self.BLOCKY_GABLE)):
+            for svg in sorted((BASE_DIR / "branding" / app).glob("*.svg")):
+                self.assertIn(gable, svg.read_text(),
+                              f"{svg.name} does not carry {app}'s gable path")
+
+    def test_each_app_draws_only_its_own_roof(self):
+        """The blocky roof belongs to Minecraft and the smooth one to brAIn.
+        Mixing them is the failure this catches: a Minecraft square built from
+        a brAIn tile would pass every other check here."""
+        for app, mine, theirs in (("brain", self.SMOOTH_GABLE, self.BLOCKY_GABLE),
+                                  ("minecraft", self.BLOCKY_GABLE, self.SMOOTH_GABLE)):
+            for svg in sorted((BASE_DIR / "branding" / app).glob("*.svg")):
+                body = svg.read_text()
+                self.assertIn(mine, body, f"{svg.name} lost its own roof")
+                self.assertNotIn(theirs, body, f"{svg.name} is wearing the other app's roof")
+
+        mc_favicon = (BASE_DIR / "bruh-minecraft-server" / "panel" / "favicon.svg").read_text()
+        self.assertIn(self.BLOCKY_GABLE, mc_favicon,
+                      "the Minecraft favicon is not the blocky roof")
+        self.assertNotIn(self.SMOOTH_GABLE, mc_favicon,
+                         "the Minecraft favicon is wearing brAIn's roof")
 
     def test_no_asset_is_the_gable_alone(self):
         """The gable is the *family* mark: it says BRUH and says nothing about
@@ -180,9 +209,10 @@ class TestPanelBranding(unittest.TestCase):
                 self.assertTrue(path.exists(), f"missing {path.relative_to(BASE_DIR)}")
 
     def test_the_two_apps_are_told_apart_by_their_caps(self):
-        """What distinguishes the marks is the small caps, not the roof. brAIn
-        sets AIN smooth and keeps the parent's signal rules; Minecraft sets MC
-        on a 16u block grid and drops the signal so the blocks carry it alone.
+        """What distinguishes the marks is the drawing of the small caps and
+        the roof together. brAIn sets AIN smooth over the parent's smooth gable
+        and keeps its signal rules; Minecraft sets MC on a 16u block grid under
+        a stepped roof, and drops the signal so the blocks carry it alone.
         Swapping either is how the two apps stop being distinguishable."""
         brain = (BASE_DIR / "branding" / "brain" / "brain-logo-ondark.svg").read_text()
         mc = (BASE_DIR / "branding" / "minecraft" / "bruh-minecraft-logo-ondark.svg").read_text()
