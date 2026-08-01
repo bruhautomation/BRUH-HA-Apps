@@ -2,6 +2,16 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.18.3
+
+### Changed
+
+- **The sidebar icon is a brain.** It was `mdi:home-analytics` — a house with a
+  chart in it, which describes the Insights tab and none of the other four.
+  Home Assistant only takes an MDI name in that slot, so the sidebar can never
+  carry the mark itself; what it *can* do is say what the add-on is, and brAIn
+  is the mind you gave the house. `mdi:brain` it is.
+
 ## 1.18.2
 
 ### Changed
