@@ -511,6 +511,14 @@ daemon_loop() {
 # files. "Only the consolidator writes memory.md" is the rule; this is what
 # makes it mean "only one consolidator".
 LOCK_FILE="$MEMORY_DIR/.consolidate.lock"
+# When the pass now running started. The lock answers "is one running"; this
+# answers "since when", which is the only honest reply to "how long does this
+# take" — a pass is a Claude call over a whole document and takes as long as
+# it takes. Its own file because the lock's cannot be used: `exec 9>` truncates
+# at open, so a second caller waiting for the lock would wipe the holder's.
+# Only ever read while the lock is held, so a copy left by a killed pass is
+# never shown.
+RUNNING_MARKER="$MEMORY_DIR/.consolidating"
 # Skipped-because-busy is not a failed pass, but it is not a completed one
 # either: exiting 0 let the panel's "File into memory now" report facts as
 # filed while they sat untouched in the queue. Its own exit code lets the
@@ -537,7 +545,12 @@ LOCK_POLL_S="${BRAIN_MEMORY_LOCK_POLL:-2}"
 # "flock works here" means the exact thing we are about to do works here.
 flock_usable() {
     command -v flock > /dev/null 2>&1 || return 1
-    ( exec 8> "${LOCK_FILE}.probe" && flock -n 8 ) > /dev/null 2>&1
+    local rc=0
+    ( exec 8> "${LOCK_FILE}.probe" && flock -n 8 ) > /dev/null 2>&1 || rc=1
+    # The probe is a test fixture, not state. Left behind it is a second
+    # lock-shaped file sitting next to the real one in the memory directory.
+    rm -f "${LOCK_FILE}.probe"
+    return "$rc"
 }
 
 with_lock() {
@@ -562,12 +575,28 @@ with_lock() {
     until flock -n 9; do
         if [ "$waited" -ge "$LOCK_WAIT_S" ]; then
             log "another consolidation is already running — skipping this pass"
+            exec 9>&-
             return "$LOCK_BUSY_RC"
         fi
         sleep "$LOCK_POLL_S"
         waited=$((waited + LOCK_POLL_S))
     done
+    : > "$RUNNING_MARKER" 2>/dev/null || true
     "$@"
+    local rc=$?
+    rm -f "$RUNNING_MARKER" 2>/dev/null || true
+
+    # Release it. A lock is held for the pass, not for the process — and the
+    # daemon is a process that outlives every pass it runs. Leaving fd 9 open
+    # meant the daemon's first pass held the lock until its next one a day
+    # later, and `--once` never noticed because exiting released it for free.
+    # What that cost was not contention but the *reporting* of contention:
+    # the lock is also the panel's answer to "is a pass running right now", so
+    # a lock held forever is a Memory tab that says "brAIn is filing memory
+    # now" forever, and a "File into memory now" button that declines to start
+    # a pass because it believes one is already in flight.
+    exec 9>&-
+    return "$rc"
 }
 
 case "${1:-}" in

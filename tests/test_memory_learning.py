@@ -761,6 +761,178 @@ def test_no_flock_at_all_runs_rather_than_refuses(tmp_path):
     assert inbox_lines(memory_dir) == []
 
 
+def _lock_is_held(lock_file: Path) -> bool:
+    """The panel's `_consolidation_running()`, asked from another process.
+
+    Another process is the whole point: flock is per open file description,
+    so asking from inside the shell that took it proves nothing about what
+    the panel sees.
+    """
+    probe = subprocess.run(
+        [sys.executable, "-c",
+         "import fcntl, os, sys\n"
+         "try: fd = os.open(sys.argv[1], os.O_RDONLY)\n"
+         "except OSError: print('free'); raise SystemExit\n"
+         "try:\n"
+         "    fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)\n"
+         "    fcntl.flock(fd, fcntl.LOCK_UN)\n"
+         "    print('free')\n"
+         "except OSError: print('held')\n"
+         "finally: os.close(fd)\n",
+         str(lock_file)],
+        capture_output=True, text=True, check=False)
+    return probe.stdout.strip() == "held"
+
+
+def _run_with_lock_twice(memory_dir: Path, tmp_path: Path) -> Path:
+    """Drive `with_lock` the way the daemon does: twice, in ONE process that
+    outlives both passes. Returns a file recording whether the lock was held
+    between them, sampled from outside that process.
+
+    The consolidator's own dispatcher is stripped so sourcing it defines the
+    functions without starting a daemon loop.
+    """
+    body = CONSOLIDATOR.read_text().split('case "${1:-}" in')[0]
+    lib = tmp_path / "consolidator_lib.sh"
+    lib.write_text(body)
+    verdict = tmp_path / "verdict.txt"
+    driver = tmp_path / "driver.sh"
+    driver.write_text(
+        "#!/bin/bash\n"
+        f'source "{lib}"\n'
+        "with_lock true\n"
+        # Still alive, between passes — exactly where the daemon sits for a
+        # day at a time, and where the panel asks its question.
+        f'"{sys.executable}" -c "import fcntl,os,sys\n'
+        "try: fd = os.open(sys.argv[1], os.O_RDONLY)\n"
+        "except OSError: open(sys.argv[2],\\\"w\\\").write(\\\"free\\\"); raise SystemExit\n"
+        "try:\n"
+        "    fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)\n"
+        "    fcntl.flock(fd, fcntl.LOCK_UN)\n"
+        "    open(sys.argv[2],\\\"w\\\").write(\\\"free\\\")\n"
+        "except OSError: open(sys.argv[2],\\\"w\\\").write(\\\"held\\\")\n"
+        "finally: os.close(fd)\n"
+        f'" "{memory_dir}/.consolidate.lock" "{verdict}"\n'
+        "with_lock true\n")
+    subprocess.run(["bash", str(driver)], check=True, capture_output=True,
+                   text=True, env=dict(os.environ,
+                                       BRAIN_MEMORY_DIR=str(memory_dir)))
+    return verdict
+
+
+@pytest.mark.skipif(not shutil.which("flock"), reason="needs flock")
+def test_the_lock_is_released_when_the_pass_ends(tmp_path):
+    """The lock belongs to the pass, not to the process that ran it.
+
+    `with_lock` opened fd 9 and never closed it. `--once` got away with that
+    because exiting releases the lock for free — but the daemon calls
+    `with_lock` in a loop and outlives every pass, so its first pass held the
+    lock until its next one, a day later.
+
+    What that broke was not concurrency — one consolidator at a time is still
+    what you want — but the *reporting* of it. The lock is also the panel's
+    only honest answer to "is a pass running right now", so a lock held
+    forever meant a Memory tab stuck on "brAIn is filing memory now" long
+    after the pass had finished, and a "File into memory now" button that
+    returned `{"started": false, "running": true}` every time because it
+    believed a pass was already in flight. Nothing failed and nothing said
+    so: the merge had worked, and the screen still showed it working.
+    """
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir(parents=True, exist_ok=True)
+    verdict = _run_with_lock_twice(memory_dir, tmp_path)
+
+    assert verdict.read_text().strip() == "free", (
+        "the lock was still held between two passes of a long-lived daemon — "
+        "the panel reads that as a consolidation running forever")
+    assert not _lock_is_held(memory_dir / ".consolidate.lock"), \
+        "the lock outlived the process that took it"
+
+
+@pytest.mark.skipif(not shutil.which("flock"), reason="needs flock")
+def test_releasing_the_lock_does_not_stop_it_locking(tmp_path):
+    """Releasing must not become never taking it. While a pass is running the
+    lock is held, or two consolidators rewrite memory.md at once."""
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir(parents=True, exist_ok=True)
+    body = CONSOLIDATOR.read_text().split('case "${1:-}" in')[0]
+    lib = tmp_path / "lib.sh"
+    lib.write_text(body)
+    held = tmp_path / "held.txt"
+    driver = tmp_path / "d.sh"
+    # Sample the lock from *inside* the pass, where it must be held.
+    driver.write_text(
+        "#!/bin/bash\n"
+        f'source "{lib}"\n'
+        "probe() {\n"
+        f'  "{sys.executable}" -c "import fcntl,os,sys\n'
+        "try:\n"
+        "    fd = os.open(sys.argv[1], os.O_RDONLY)\n"
+        "    fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)\n"
+        "    fcntl.flock(fd, fcntl.LOCK_UN)\n"
+        "    open(sys.argv[2],\\\"w\\\").write(\\\"free\\\")\n"
+        "except OSError: open(sys.argv[2],\\\"w\\\").write(\\\"held\\\")\n"
+        f'" "{memory_dir}/.consolidate.lock" "{held}"\n'
+        "}\n"
+        "with_lock probe\n")
+    subprocess.run(["bash", str(driver)], check=True, capture_output=True,
+                   text=True, env=dict(os.environ,
+                                       BRAIN_MEMORY_DIR=str(memory_dir)))
+
+    assert held.read_text().strip() == "held", \
+        "the lock was not held during the pass it is supposed to guard"
+
+
+@pytest.mark.skipif(not shutil.which("flock"), reason="needs flock")
+def test_the_lock_probe_does_not_leave_a_file_behind(tmp_path):
+    """`flock_usable` writes a probe file to find out whether flock works
+    here. It is a test fixture, not state, and it was landing in the memory
+    directory next to the real lock."""
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir(parents=True, exist_ok=True)
+    fake = write_fake_consolidation_claude(
+        tmp_path, FAKE_MERGED_MEMORY + "-----VOICE-----\n" + FAKE_VOICE)
+    seed_inbox(memory_dir)
+    (memory_dir / "memory.md").write_text("# Home Memory\n\n## Preferences\n")
+    run_consolidator(memory_dir, fake)
+
+    assert not (memory_dir / ".consolidate.lock.probe").exists(), \
+        "the flock probe left its scratch file in the memory directory"
+
+
+@pytest.mark.skipif(not shutil.which("flock"), reason="needs flock")
+def test_a_running_pass_says_when_it_started(tmp_path):
+    """The tab counts up rather than promising "a few minutes".
+
+    A pass is one Claude call that rewrites the whole document, so how long
+    it takes depends on the document. What someone watching it needs is not a
+    duration but a number that moves — the difference between a slow pass and
+    a stuck one.
+    """
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir(parents=True, exist_ok=True)
+    body = CONSOLIDATOR.read_text().split('case "${1:-}" in')[0]
+    lib = tmp_path / "lib.sh"
+    lib.write_text(body)
+    seen = tmp_path / "seen.txt"
+    driver = tmp_path / "d.sh"
+    driver.write_text(
+        "#!/bin/bash\n"
+        f'source "{lib}"\n'
+        # Inside the pass the marker exists; that is what the panel reads.
+        f'inside() {{ [ -f "{memory_dir}/.consolidating" ] '
+        f'&& echo marked > "{seen}" || echo missing > "{seen}"; }}\n'
+        "with_lock inside\n")
+    subprocess.run(["bash", str(driver)], check=True, capture_output=True,
+                   text=True, env=dict(os.environ,
+                                       BRAIN_MEMORY_DIR=str(memory_dir)))
+
+    assert seen.read_text().strip() == "marked", \
+        "a running pass left nothing to say when it started"
+    assert not (memory_dir / ".consolidating").exists(), \
+        "the start marker outlived the pass — the tab would count up forever"
+
+
 def test_a_consolidator_that_stopped_running_is_visible(tmp_path):
     """The failure above hid for weeks because nothing on any screen said
     anything: the queue just sat there. This does not detect the flock bug —
