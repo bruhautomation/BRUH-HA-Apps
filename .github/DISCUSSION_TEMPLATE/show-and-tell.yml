@@ -1,0 +1,34 @@
+title: ""
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Show what you built — an automation brAIn wrote, a dashboard, a server setup.
+        Screenshots and short clips can be dragged straight into any box below.
+
+  - type: dropdown
+    id: addon
+    attributes:
+      label: Which add-on?
+      options:
+        - brAIn
+        - BRUH Minecraft
+        - Both
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What did you build?
+    validations:
+      required: true
+
+  - type: textarea
+    id: how
+    attributes:
+      label: How does it work?
+      description: Config, prompts, YAML — whatever someone would need to copy it.
+    validations:
+      required: false

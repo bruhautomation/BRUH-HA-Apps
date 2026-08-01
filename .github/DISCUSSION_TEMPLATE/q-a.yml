@@ -1,0 +1,59 @@
+title: "[Q&A] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ask anything about installing, configuring or using a BRUH add-on.
+        Found a reproducible bug instead? [Open a bug report](https://github.com/bruhautomation/BRUH-HA-Apps/issues/new?template=bug_report.yml).
+
+  - type: dropdown
+    id: addon
+    attributes:
+      label: Which add-on?
+      options:
+        - brAIn
+        - BRUH Minecraft
+        - Other / unsure
+    validations:
+      required: true
+
+  - type: input
+    id: addon_version
+    attributes:
+      label: Add-on version
+      description: Settings > Add-ons > (the add-on) > Info.
+      placeholder: "1.9.0"
+    validations:
+      required: false
+
+  - type: input
+    id: ha_version
+    attributes:
+      label: Home Assistant version
+      placeholder: "2025.4.1"
+    validations:
+      required: false
+
+  - type: textarea
+    id: question
+    attributes:
+      label: What are you trying to do?
+      description: The goal, not just the error — it usually changes the answer.
+    validations:
+      required: true
+
+  - type: textarea
+    id: tried
+    attributes:
+      label: What have you tried so far?
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Redact tokens and credentials first.
+      render: shell
+    validations:
+      required: false

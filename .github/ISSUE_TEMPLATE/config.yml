@@ -1,5 +1,14 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Question or discussion
-    url: https://github.com/bruhautomation/BRUH-HA-Apps/discussions
-    about: Ask questions or discuss ideas with other users.
+  - name: Question or help
+    url: https://github.com/bruhautomation/BRUH-HA-Apps/discussions/new?category=q-a
+    about: Not sure it's a bug? Ask in Q&A and the answer stays searchable for everyone.
+  - name: Idea or feature request
+    url: https://github.com/bruhautomation/BRUH-HA-Apps/discussions/new?category=ideas
+    about: Propose it in Ideas first — supported ones become roadmap issues.
+  - name: Show and tell
+    url: https://github.com/bruhautomation/BRUH-HA-Apps/discussions/new?category=show-and-tell
+    about: Share an automation, dashboard or server setup you built.
+  - name: Documentation
+    url: https://bruhautomation.com
+    about: Full docs for every add-on.

@@ -1,0 +1,42 @@
+title: "[Idea] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ideas start here. Once an idea has support and a clear shape, a maintainer
+        turns it into an issue on the roadmap — so there's no need to file both.
+
+  - type: dropdown
+    id: addon
+    attributes:
+      label: Which add-on?
+      options:
+        - brAIn
+        - BRUH Minecraft
+        - The repository / docs
+        - Other / unsure
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the use case, not the solution.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: How might it work?
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: How do you handle this today?
+      description: The workaround you're living with, if any.
+    validations:
+      required: false
