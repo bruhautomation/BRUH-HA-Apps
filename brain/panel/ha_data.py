@@ -30,6 +30,13 @@ MAX_STATE_CHANGES = 50
 MAX_STAT_IDS = 24
 MAX_BUNDLE_CHARS = 120_000
 CONTEXT_CHARS = 4_000
+# Learned memory gets its own budget rather than sharing CONTEXT_CHARS.
+# It used to be read with `_read_capped(MEMORY_FILE, CONTEXT_CHARS)` and the
+# CLAUDE.md excerpt handed whatever was left, which had two failure modes at
+# once: a memory document larger than 4 KB was silently truncated mid-fact,
+# and a document that filled the budget starved the house context entirely.
+# Sized to hold a full memory.md (memory_max_kb, 32 by default) plus slack.
+MEMORY_CHARS = 34_000
 # Device-context expansion (sibling sensors of presence trackers)
 MAX_CONTEXT_ENTITIES = 150
 MAX_CONTEXT_PER_DEVICE = 40
@@ -414,10 +421,10 @@ def _read_context() -> str:
     the CLAUDE.md excerpt fills whatever budget remains.
     """
     parts: list[str] = []
-    memory = _read_capped(MEMORY_FILE, CONTEXT_CHARS)
+    memory = _read_capped(MEMORY_FILE, MEMORY_CHARS)
     if memory:
         parts.append(memory)
-    claude_md = _read_capped(CONTEXT_FILE, CONTEXT_CHARS - len(memory))
+    claude_md = _read_capped(CONTEXT_FILE, CONTEXT_CHARS)
     if claude_md:
         parts.append(claude_md)
     return "\n\n".join(parts)
@@ -446,7 +453,17 @@ def _shrink_to_budget(bundle: dict) -> dict:
     ents = bundle.get("entities") or []
     while len(ents) > 20 and size() > MAX_BUNDLE_CHARS:
         del ents[len(ents) // 2:]  # keep the front half
-    # 3. drop free-text context only as a last resort
+    # 3. trim the free-text context, and only drop it outright if trimming
+    #    it away still isn't enough. Popping it was fine when it was 4 KB;
+    #    now that a full memory document fits in it, "drop it all" would
+    #    throw away everything brAIn has learned about the home to save a
+    #    few hundred characters.
+    ctx_text = bundle.get("context") or ""
+    while ctx_text and size() > MAX_BUNDLE_CHARS:
+        ctx_text = ctx_text[:len(ctx_text) // 2]
+        if len(ctx_text) < 500:
+            break
+        bundle["context"] = ctx_text
     if size() > MAX_BUNDLE_CHARS:
         bundle.pop("context", None)
     return bundle

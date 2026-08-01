@@ -428,6 +428,65 @@ class TestManualConsolidation(PanelCase):
         # --once, not the daemon loop: the panel must never start a second one
         self.assertEqual(marker.read_text().strip(), "--once")
 
+    def test_the_pass_logs_reach_the_addon_log(self):
+        """A button-started pass logs where the daemon's passes log.
+
+        Its output used to be captured into a local variable and dropped
+        unless the script exited non-zero — while the failure the panel
+        reported ("see the add-on log's [brain-memory] lines for why it
+        kept the facts") pointed at a log those lines had never reached.
+        """
+        script = Path(self.tmp.name) / "chatty.sh"
+        script.write_text(
+            "#!/bin/bash\n"
+            "echo '[brain-memory] consolidating 45 fact(s)...'\n"
+            "echo '[brain-memory] memory.md updated'\n"
+            "exit 0\n", encoding="utf-8")
+        script.chmod(0o755)
+        self.server.CONSOLIDATE_SCRIPT = str(script)
+        self._queue(1)
+
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                with self.assertLogs(self.server.log, level="INFO") as caught:
+                    await client.post("/api/memory/consolidate")
+                    await self._await_pass(client)
+            finally:
+                await client.close()
+            return "\n".join(caught.output)
+
+        logged = asyncio.run(run())
+        self.assertIn("consolidating 45 fact(s)", logged)
+        self.assertIn("memory.md updated", logged)
+
+    def test_a_failure_still_reports_the_last_line_it_printed(self):
+        """Streaming the output must not cost the tab its error message —
+        the reason a pass refused is what the Memory tab shows."""
+        script = Path(self.tmp.name) / "refuses.sh"
+        script.write_text(
+            "#!/bin/bash\n"
+            "echo '[brain-memory] consolidating 45 fact(s)...'\n"
+            "echo '[brain-memory] memory.md is still 900 bytes over the 8 KB "
+            "cap after 2 attempts — raise memory_max_kb'\n"
+            "exit 1\n", encoding="utf-8")
+        script.chmod(0o755)
+        self.server.CONSOLIDATE_SCRIPT = str(script)
+        self._queue(1)
+
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                await client.post("/api/memory/consolidate")
+                return await self._await_pass(client)
+            finally:
+                await client.close()
+
+        state = asyncio.run(run())
+        self.assertIn("memory_max_kb", state["error"])
+
     def test_the_button_returns_before_the_pass_does(self):
         """The whole point of the change. A pass that takes longer than any
         HTTP client will wait must still leave the button responsive and the

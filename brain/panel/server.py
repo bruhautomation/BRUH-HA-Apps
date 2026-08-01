@@ -91,6 +91,7 @@ import re
 import secrets
 import shutil
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -2062,22 +2063,53 @@ def _consolidate_now() -> tuple[bool, str]:
     if not os.path.isfile(CONSOLIDATE_SCRIPT):
         return False, "the consolidator isn't installed in this image"
     try:
-        proc = subprocess.run(
+        proc = subprocess.Popen(
             ["bash", CONSOLIDATE_SCRIPT, "--once"],
-            capture_output=True, text=True, timeout=CONSOLIDATE_TIMEOUT_S,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, bufsize=1,
             env={**os.environ, "HOME": engine.CLAUDE_HOME},
         )
-    except subprocess.TimeoutExpired:
-        return False, f"consolidation passed its {CONSOLIDATE_TIMEOUT_S}s limit"
     except OSError as exc:
         return False, f"could not run the consolidator: {exc}"
-    if proc.returncode == CONSOLIDATE_BUSY_RC:
+
+    # The pass's own [brain-memory] lines go to the add-on log as they are
+    # written, exactly like the daemon's. They used to be captured into a
+    # local variable and dropped on the floor unless the script exited
+    # non-zero — while the failure the panel reported told you to go read
+    # them in a log they had never reached. A pass can run for minutes, so
+    # this streams rather than collecting: "consolidating 45 fact(s)..."
+    # is worth having while it happens, not after.
+    timed_out = threading.Event()
+
+    def _kill() -> None:
+        timed_out.set()
+        proc.kill()
+
+    killer = threading.Timer(CONSOLIDATE_TIMEOUT_S, _kill)
+    killer.start()
+    tail: list[str] = []
+    try:
+        for raw in proc.stdout or ():
+            line = raw.rstrip()
+            if not line:
+                continue
+            log.info("%s", line)
+            tail.append(line)
+            del tail[:-20]
+        rc = proc.wait()
+    finally:
+        killer.cancel()
+        if proc.stdout:
+            proc.stdout.close()
+
+    if timed_out.is_set():
+        return False, f"consolidation passed its {CONSOLIDATE_TIMEOUT_S}s limit"
+    if rc == CONSOLIDATE_BUSY_RC:
         return False, ("another consolidation is already running — "
                        "give it a moment and press it again")
-    if proc.returncode != 0:
-        tail = (proc.stdout or proc.stderr or "").strip().splitlines()
+    if rc != 0:
         return False, (tail[-1][:300] if tail else
-                       f"the consolidator exited {proc.returncode}")
+                       f"the consolidator exited {rc}")
     return True, ""
 
 

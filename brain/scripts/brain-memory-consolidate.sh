@@ -42,8 +42,12 @@ SNAPSHOT_DIR="$MEMORY_DIR/snapshots"
 SHARE_INBOX="${BRAIN_SHARE_INBOX:-/share/brain/memory-inbox}"
 MARKER_FILE="$MEMORY_DIR/.last_consolidated"
 
-MEMORY_MAX_KB="${BRAIN_MEMORY_MAX_KB:-8}"
+MEMORY_MAX_KB="${BRAIN_MEMORY_MAX_KB:-32}"
 VOICE_MAX_BYTES=2048
+# How many times one pass may be asked to fit the cap before it gives up.
+# Two: the first attempt is the merge, the second is the merge with the
+# measured overshoot fed back. A third would be the same prompt again.
+MAX_SIZE_ATTEMPTS="${BRAIN_MEMORY_SIZE_ATTEMPTS:-2}"
 CLAUDE_MODEL="${BRAIN_MEMORY_MODEL:-haiku}"
 # A pass rewrites the WHOLE document plus the voice distillate — up to
 # 10 KB of output in one turn, not a one-line answer. At 120s that was a
@@ -186,7 +190,7 @@ count_pending_lines() {
 }
 
 build_prompt() {
-    local current_memory="$1" inbox_lines="$2"
+    local current_memory="$1" inbox_lines="$2" retry_note="${3:-}"
     local dead_ends
     dead_ends=$(dead_ends_block)
     cat << PROMPT
@@ -222,34 +226,29 @@ ${VOICE_SEPARATOR}
 Then print a voice.md distillate (2 KB maximum): ONLY entity nicknames, the top preferences, and device caveats — what a voice assistant needs on every request. Short markdown bullets.
 
 Output ONLY the two files and the separator — no commentary, no code fences.
+${retry_note}
 PROMPT
 }
 
-consolidate_once() {
-    mkdir -p "$MEMORY_DIR" "$INBOX_DIR"
+# What the model is told after it overshot the cap. It goes last, where the
+# instruction it contradicts cannot be the more recent one, and it names the
+# measured overshoot: the cap is already in the prompt and was already
+# missed, so repeating it is not a different prompt — and a prompt that is
+# not different is not a second attempt.
+size_retry_note() {
+    local produced="$1" over="$2"
+    printf '%s' "
+YOUR PREVIOUS ATTEMPT WAS REJECTED AND NOTHING WAS SAVED. The memory.md you produced was ${produced} bytes — ${over} bytes over the hard ${MEMORY_MAX_KB} KB ceiling. Produce the same merge again, but drop the lowest-value and oldest facts until memory.md is comfortably under $((MEMORY_MAX_KB * 1024)) bytes. Fitting matters more than keeping every fact: an over-size document is discarded whole, so the alternative to dropping a few old lines is filing nothing at all."
+}
 
-    sweep_share_inbox
-    retire_stale_hypotheses
-
-    local files
-    files=$(pending_inbox_files)
-    if [ -z "$files" ]; then
-        log "inbox empty — nothing to consolidate"
-        touch "$MARKER_FILE" 2>/dev/null || true
-        return 0
-    fi
-
-    local inbox_lines current_memory
-    # shellcheck disable=SC2086
-    inbox_lines=$(cat $files 2>/dev/null | grep . || true)
-    current_memory=$(cat "$MEMORY_FILE" 2>/dev/null || echo "")
-
-    local prompt output
-    prompt=$(build_prompt "$current_memory" "$inbox_lines")
-
+# One Claude pass over $1, leaving the model's output in the file named by $2.
+# The output goes to a file rather than stdout because `log` writes to stdout:
+# a function that returned both would splice "[brain-memory] ..." lines into
+# memory.md. Returns non-zero having logged why.
+claude_pass() {
+    local prompt="$1" out_file="$2"
     local claude_cmd
     claude_cmd=$(resolve_claude)
-    log "consolidating $(printf '%s\n' "$inbox_lines" | wc -l) fact(s) with model ${CLAUDE_MODEL}..."
 
     # The pass claims its session id before running, so the Chats rail can
     # label the transcript the CLI is about to leave behind as this rather
@@ -271,10 +270,10 @@ consolidate_once() {
     local err_file rc=0
     err_file=$(mktemp 2>/dev/null || echo "/tmp/brain-memory-err.$$")
     # shellcheck disable=SC2086
-    output=$(printf '%s' "$prompt" | timeout "$CLAUDE_TIMEOUT" \
+    printf '%s' "$prompt" | timeout "$CLAUDE_TIMEOUT" \
             $claude_cmd -p --disallowedTools "*" --max-turns 1 \
             "${session_args[@]}" \
-            --model "$CLAUDE_MODEL" 2>"$err_file") || rc=$?
+            --model "$CLAUDE_MODEL" >"$out_file" 2>"$err_file" || rc=$?
 
     # An older CLI answers an unknown flag with usage and a non-zero exit.
     # Drop the label and run the pass — a conversation nobody can attribute
@@ -284,9 +283,9 @@ consolidate_once() {
         log "this Claude CLI has no --session-id — running unlabelled"
         rc=0
         # shellcheck disable=SC2086
-        output=$(printf '%s' "$prompt" | timeout "$CLAUDE_TIMEOUT" \
+        printf '%s' "$prompt" | timeout "$CLAUDE_TIMEOUT" \
                 $claude_cmd -p --disallowedTools "*" --max-turns 1 \
-                --model "$CLAUDE_MODEL" 2>"$err_file") || rc=$?
+                --model "$CLAUDE_MODEL" >"$out_file" 2>"$err_file" || rc=$?
     fi
 
     if [ "$rc" != 0 ]; then
@@ -304,76 +303,139 @@ consolidate_once() {
         return 1
     fi
     rm -f "$err_file"
+    return 0
+}
 
-    if ! printf '%s\n' "$output" | grep -qxF -- "$VOICE_SEPARATOR"; then
-        log "output missing the ${VOICE_SEPARATOR} separator — inbox left pending"
-        return 1
+consolidate_once() {
+    mkdir -p "$MEMORY_DIR" "$INBOX_DIR"
+
+    sweep_share_inbox
+    retire_stale_hypotheses
+
+    local files
+    files=$(pending_inbox_files)
+    if [ -z "$files" ]; then
+        log "inbox empty — nothing to consolidate"
+        touch "$MARKER_FILE" 2>/dev/null || true
+        return 0
     fi
 
-    local new_memory new_voice
-    new_memory=$(printf '%s\n' "$output" | sed "/^${VOICE_SEPARATOR}\$/,\$d")
-    new_voice=$(printf '%s\n' "$output" | sed "1,/^${VOICE_SEPARATOR}\$/d")
+    local inbox_lines current_memory
+    # shellcheck disable=SC2086
+    inbox_lines=$(cat $files 2>/dev/null | grep . || true)
+    current_memory=$(cat "$MEMORY_FILE" 2>/dev/null || echo "")
 
-    # Sanity checks: both parts non-empty, memory keeps its section
-    # structure, and neither blows its size cap. On failure, keep the old
-    # files and leave the inbox pending for the next attempt.
-    if [ -z "$(printf '%s' "$new_memory" | tr -d '[:space:]')" ] || \
-       [ -z "$(printf '%s' "$new_voice" | tr -d '[:space:]')" ]; then
-        log "empty memory or voice section in output — inbox left pending"
-        return 1
-    fi
-    if ! printf '%s' "$new_memory" | grep -q "##"; then
-        log "updated memory.md lost its section headings — inbox left pending"
-        return 1
-    fi
+    local prompt output out_file attempt=1 retry_note=""
+    local new_memory new_voice old_content new_content shrink_floor over
+    out_file=$(mktemp 2>/dev/null || echo "/tmp/brain-memory-out.$$")
 
-    # The document must not come back mostly empty.
+    log "consolidating $(printf '%s\n' "$inbox_lines" | wc -l) fact(s) with model ${CLAUDE_MODEL}..."
+
+    # A refusal has to change the next attempt or it is not a retry.
     #
-    # Every check above passes for a memory.md that is nothing but its four
-    # headings: it is non-empty, it has "##", and it is well under the cap.
-    # So a pass where the model rewrote instead of merging — or summarised
-    # the whole house down to three lines — would replace a year of learned
-    # facts with a blank template, and every guard would wave it through.
-    # That is the shape of "my memory got erased".
-    #
-    # Consolidation ADDS: it merges the inbox in, dedupes, and only drops
-    # anything when the document is near its size cap. So losing a large
-    # share of the content lines in one pass is not a merge, whatever it
-    # says. Refuse it, keep both the document and the inbox, and let the
-    # next pass try again — a stale memory is recoverable, a wiped one is
-    # not.
-    local old_content new_content shrink_floor
-    old_content=$(count_content_lines "$current_memory")
-    new_content=$(count_content_lines "$new_memory")
-
-    # Coming back with nothing but headings is erasure, at any size. There
-    # is no document small enough for this to be a legitimate merge, so it
-    # is refused before the proportional guard gets a say.
-    if [ "$old_content" -gt 0 ] && [ "$new_content" -eq 0 ]; then
-        log "REFUSED: consolidation returned an empty template over ${old_content} existing fact(s) — inbox left pending, document untouched"
-        return 1
-    fi
-
-    # Proportional guard for the partial case. Skipped while the document is
-    # small enough that it legitimately doubles and halves as it finds its
-    # shape, and skipped when it is at its cap, where shrinking is the job
-    # we asked for.
-    if [ "$old_content" -ge "$SHRINK_GUARD_MIN_LINES" ] \
-       && [ "${#current_memory}" -lt $((MEMORY_MAX_KB * 1024 * 9 / 10)) ]; then
-        shrink_floor=$((old_content * SHRINK_GUARD_PERCENT / 100))
-        if [ "$new_content" -lt "$shrink_floor" ]; then
-            log "REFUSED: consolidation would cut memory.md from ${old_content} to ${new_content} facts — inbox left pending, document untouched"
+    # The size check below used to `return 1` on the first overshoot. The
+    # daemon then ran the identical prompt — same document, same inbox —
+    # every 5 minutes, got the identical over-size answer, and refused it
+    # again, forever. Meanwhile the queue kept growing, so each attempt was
+    # asked to fit MORE into a document already at its ceiling: a loop that
+    # got further from succeeding the longer it ran, and whose only symptom
+    # was a memory tab that never moved. An overshoot now feeds the measured
+    # excess back to the model, and only a second overshoot is fatal — with
+    # a message naming the setting that ends it.
+    while : ; do
+        prompt=$(build_prompt "$current_memory" "$inbox_lines" "$retry_note")
+        if ! claude_pass "$prompt" "$out_file"; then
+            rm -f "$out_file"
             return 1
         fi
-    fi
-    if [ "${#new_memory}" -gt $((MEMORY_MAX_KB * 1024)) ]; then
-        log "updated memory.md exceeds ${MEMORY_MAX_KB} KB — inbox left pending"
-        return 1
-    fi
-    if [ "${#new_voice}" -gt "$VOICE_MAX_BYTES" ]; then
-        log "voice.md distillate exceeds ${VOICE_MAX_BYTES} bytes — inbox left pending"
-        return 1
-    fi
+        output=$(cat "$out_file" 2>/dev/null)
+
+        if ! printf '%s\n' "$output" | grep -qxF -- "$VOICE_SEPARATOR"; then
+            log "output missing the ${VOICE_SEPARATOR} separator — inbox left pending"
+            rm -f "$out_file"
+            return 1
+        fi
+
+        new_memory=$(printf '%s\n' "$output" | sed "/^${VOICE_SEPARATOR}\$/,\$d")
+        new_voice=$(printf '%s\n' "$output" | sed "1,/^${VOICE_SEPARATOR}\$/d")
+
+        # Sanity checks: both parts non-empty, memory keeps its section
+        # structure, and neither blows its size cap. On failure, keep the old
+        # files and leave the inbox pending for the next attempt.
+        if [ -z "$(printf '%s' "$new_memory" | tr -d '[:space:]')" ] || \
+           [ -z "$(printf '%s' "$new_voice" | tr -d '[:space:]')" ]; then
+            log "empty memory or voice section in output — inbox left pending"
+            rm -f "$out_file"
+            return 1
+        fi
+        if ! printf '%s' "$new_memory" | grep -q "##"; then
+            log "updated memory.md lost its section headings — inbox left pending"
+            rm -f "$out_file"
+            return 1
+        fi
+
+        # The document must not come back mostly empty.
+        #
+        # Every check above passes for a memory.md that is nothing but its
+        # four headings: it is non-empty, it has "##", and it is well under
+        # the cap. So a pass where the model rewrote instead of merging — or
+        # summarised the whole house down to three lines — would replace a
+        # year of learned facts with a blank template, and every guard would
+        # wave it through. That is the shape of "my memory got erased".
+        #
+        # Consolidation ADDS: it merges the inbox in, dedupes, and only drops
+        # anything when the document is near its size cap. So losing a large
+        # share of the content lines in one pass is not a merge, whatever it
+        # says. Refuse it, keep both the document and the inbox, and let the
+        # next pass try again — a stale memory is recoverable, a wiped one is
+        # not.
+        old_content=$(count_content_lines "$current_memory")
+        new_content=$(count_content_lines "$new_memory")
+
+        # Coming back with nothing but headings is erasure, at any size.
+        # There is no document small enough for this to be a legitimate
+        # merge, so it is refused before the proportional guard gets a say.
+        if [ "$old_content" -gt 0 ] && [ "$new_content" -eq 0 ]; then
+            log "REFUSED: consolidation returned an empty template over ${old_content} existing fact(s) — inbox left pending, document untouched"
+            rm -f "$out_file"
+            return 1
+        fi
+
+        # Proportional guard for the partial case. Skipped while the document
+        # is small enough that it legitimately doubles and halves as it finds
+        # its shape, and skipped when it is at its cap, where shrinking is
+        # the job we asked for — including the job the retry below asks for.
+        if [ "$old_content" -ge "$SHRINK_GUARD_MIN_LINES" ] \
+           && [ "${#current_memory}" -lt $((MEMORY_MAX_KB * 1024 * 9 / 10)) ] \
+           && [ -z "$retry_note" ]; then
+            shrink_floor=$((old_content * SHRINK_GUARD_PERCENT / 100))
+            if [ "$new_content" -lt "$shrink_floor" ]; then
+                log "REFUSED: consolidation would cut memory.md from ${old_content} to ${new_content} facts — inbox left pending, document untouched"
+                rm -f "$out_file"
+                return 1
+            fi
+        fi
+
+        over=$(( ${#new_memory} - MEMORY_MAX_KB * 1024 ))
+        if [ "$over" -gt 0 ]; then
+            if [ "$attempt" -lt "$MAX_SIZE_ATTEMPTS" ]; then
+                log "memory.md came back ${#new_memory} bytes — ${over} over the ${MEMORY_MAX_KB} KB cap; asking for a tighter pass (attempt $((attempt + 1)) of ${MAX_SIZE_ATTEMPTS})"
+                retry_note=$(size_retry_note "${#new_memory}" "$over")
+                attempt=$((attempt + 1))
+                continue
+            fi
+            log "memory.md is still ${over} bytes over the ${MEMORY_MAX_KB} KB cap after ${MAX_SIZE_ATTEMPTS} attempts — inbox left pending. The document is full: raise memory_max_kb in the add-on configuration (max 64) or the queue cannot drain."
+            rm -f "$out_file"
+            return 1
+        fi
+        if [ "${#new_voice}" -gt "$VOICE_MAX_BYTES" ]; then
+            log "voice.md distillate exceeds ${VOICE_MAX_BYTES} bytes — inbox left pending"
+            rm -f "$out_file"
+            return 1
+        fi
+        break
+    done
+    rm -f "$out_file"
 
     # Snapshot the pre-merge document BEFORE overwriting it — this is what
     # `brain memory undo` restores, and it has to exist even if the write

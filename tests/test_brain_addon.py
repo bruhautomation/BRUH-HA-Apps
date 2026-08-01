@@ -977,6 +977,39 @@ class TestSharedLoginWiring(unittest.TestCase):
         self.assertIn("brain-auth-env.sh", profile)
 
 
+class TestRunSourceLedgerOwnership(unittest.TestCase):
+    """Both halves of the run-source ledger have to be able to write it.
+
+    The panel creates it as root; the consolidator and the study watcher
+    are started with `su-exec claude` and append to the same file. Whoever
+    got there first owned it, root won, and every daemon pass failed its
+    claim with "Permission denied" and ran unlabelled — which is exactly
+    what the ledger exists to prevent: an unlabelled consolidation shows up
+    in the Chats rail as a conversation somebody typed, and `adopt` picks
+    it up. Root can write a claude-owned file, so only this direction
+    needs arranging, and it has to happen before the daemons start.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.run_sh = (ADDON_DIR / "run.sh").read_text()
+
+    def test_the_ledger_is_created_claude_owned(self):
+        self.assertIn("chown claude:claude /data/run-sources.jsonl", self.run_sh)
+
+    def test_the_daemons_that_claim_run_as_claude(self):
+        for script in ("brain-memory-consolidate.sh", "brain-study-watcher.sh"):
+            self.assertIn(f"su-exec claude bash /opt/scripts/{script}",
+                          self.run_sh, script)
+
+    def test_the_ledger_exists_before_anything_claims_it(self):
+        setup = self.run_sh.index("chown claude:claude /data/run-sources.jsonl")
+        for script in ("brain-memory-consolidate.sh", "brain-study-watcher.sh"):
+            self.assertLess(setup, self.run_sh.index(f"su-exec claude bash "
+                                                     f"/opt/scripts/{script}"),
+                            script)
+
+
 class TestTurnBudgets(unittest.TestCase):
     """A turn cap TRUNCATES — it doesn't degrade. A run that hits one stops
     mid-thought and produces nothing parseable, so the work is paid for and

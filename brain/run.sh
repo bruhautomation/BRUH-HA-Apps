@@ -411,6 +411,19 @@ setup_claude_user() {
         /data/.brain \
         /data/tasks 2>/dev/null || true
 
+    # The run-source ledger is written by BOTH sides: the panel (root) and
+    # the background callers the panel does not run — the consolidator and
+    # the study watcher, which start under `su-exec claude`. Whoever created
+    # it first owned it, and root won, so every daemon pass failed to claim
+    # its session id with "Permission denied" and ran unlabelled. That is
+    # the whole point of the ledger: an unlabelled consolidation shows up in
+    # the Chats rail as if somebody typed it, and `adopt` picks it up.
+    # Create it claude-owned and group-writable up front — root can write a
+    # claude-owned file regardless, so only this direction needs arranging.
+    touch /data/run-sources.jsonl 2>/dev/null || true
+    chown claude:claude /data/run-sources.jsonl 2>/dev/null || true
+    chmod 664 /data/run-sources.jsonl 2>/dev/null || true
+
     # Claude Code needs write access to /config for editing HA configuration.
     # This is safe within the add-on container; HA Core runs in its own container.
     chown claude:claude /config 2>/dev/null || true
