@@ -270,6 +270,20 @@
        stream-json output as DOM, so text reflows to the screen it is on;
        classic is ttyd over tmux, which is a character grid and is the right
        answer for anything that draws one (a TUI, htop, an installer). -->
+  <!-- On a wide screen the conversations get a rail of their own rather than
+       living two presses deep in ⋯. Below the breakpoint the rail is not
+       rendered at all and the menu is still the way in — a 240px column is
+       most of a phone. -->
+  <aside id="chatRail" class="chatrail" aria-label="Conversations">
+    <div class="crhead">
+      <span class="crtitle">Chats</span>
+      <button id="chatRailNew" class="btn icon" data-tip="New chat" aria-label="New chat">
+        <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+    </div>
+    <div id="chatRailList" class="crlist"></div>
+  </aside>
+
   <section id="termChat" class="chat">
     <div id="chatLog" class="chatlog" role="log" aria-live="polite" aria-label="Conversation"></div>
     <div id="chatEmpty" class="chatempty">
@@ -298,9 +312,9 @@
       </div>
       <div class="cfacts">
         <button id="chatFindingFix" class="btn small primary">✦  Fix it</button>
-        <button id="chatFindingDone" class="btn small">✓  I've fixed it</button>
+        <button id="chatFindingDone" class="btn small">✓  I fixed it</button>
         <button id="chatFindingLater" class="btn small ghost">⏰  Later</button>
-        <button id="chatFindingIgnore" class="btn small ghost">Not a problem here</button>
+        <button id="chatFindingIgnore" class="btn small ghost">✕  Ignore</button>
       </div>
     </div>
     <!-- The CLI's own slash commands, as it advertises them over the stream.
@@ -317,6 +331,13 @@
         <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2"/></svg>
       </button>
     </form>
+    <!-- Which model is answering, and how full the conversation is. Both are
+         questions you only ask when something feels off — a slow reply, a
+         forgetful one — so they sit under the box rather than in the bar. -->
+    <div id="chatMeta" class="chatmeta hidden">
+      <span id="chatModel" class="cmmodel"></span>
+      <span id="chatCtx" class="cmctx hidden"></span>
+    </div>
   </section>
 
   <iframe id="termFrame" title="Terminal" src="about:blank"></iframe>

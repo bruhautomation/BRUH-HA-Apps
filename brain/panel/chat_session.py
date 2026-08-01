@@ -58,6 +58,25 @@ TRANSCRIPT_FILE = os.environ.get(
     "BRAIN_CHAT_TRANSCRIPT", "/data/chat_transcript.json")
 MAX_EVENTS = 600
 
+# Published context windows, by the substring that identifies the family in
+# a resolved model id. Used ONLY to turn a token count into a percentage —
+# an unknown model reports its tokens and no percentage, rather than a
+# percentage of a window we guessed at.
+CONTEXT_WINDOWS = (
+    ("haiku", 200_000),
+    ("sonnet", 200_000),
+    ("opus", 200_000),
+)
+
+
+def context_window(model: str) -> int:
+    """The context window for a resolved model id, or 0 if we don't know."""
+    lowered = (model or "").lower()
+    for token, size in CONTEXT_WINDOWS:
+        if token in lowered:
+            return size
+    return 0
+
 # A single tool result can be a whole file. The panel shows a preview and
 # offers the rest on request, so what we keep is bounded too.
 MAX_RESULT_CHARS = 4000
@@ -122,6 +141,11 @@ class ChatSession:
         # import so this module never depends on the web layer.
         self.model = os.environ.get("BRAIN_MODEL", "")
         self.events: list[dict] = []
+        # How much of the window the conversation is currently occupying.
+        # {"tokens": int, "window": int} — window 0 when the model is one we
+        # have no published figure for. Read off the CLI's own usage report
+        # for the last turn, because the prompt it sent IS the context.
+        self.context: dict = {}
         self.state = "idle"          # idle | starting | ready | busy | error
         self.error = ""
         self._subs: set[asyncio.Queue] = set()
@@ -167,6 +191,7 @@ class ChatSession:
             "session_id": self.session_id,
             "info": self.info,
             "commands": self.commands,
+            "context": self.context,
         }
 
     # -- subscribers -----------------------------------------------------
@@ -197,6 +222,32 @@ class ChatSession:
             except asyncio.QueueFull:
                 self._subs.discard(q)
         return event
+
+    def _take_context(self, event: dict) -> None:
+        """Record how full the context is, from the turn that just finished.
+
+        The CLI reports what it *sent*, and what it sent is the conversation
+        so far — so the last turn's input tokens are the context in use.
+        Cache reads count: a cached prompt is still occupying the window,
+        it is just cheaper. Output does not, until it comes back as input on
+        the next turn, which it will and this will then say so.
+        """
+        usage = event.get("usage")
+        if not isinstance(usage, dict):
+            return
+        tokens = sum(
+            value for key, value in usage.items()
+            if key in ("input_tokens", "cache_read_input_tokens",
+                       "cache_creation_input_tokens")
+            and isinstance(value, int) and value > 0
+        )
+        if tokens <= 0:
+            return
+        model = (self.info.get("model") or self.model or "")
+        context = {"tokens": tokens, "window": context_window(model)}
+        if context != self.context:
+            self.context = context
+            self._emit({"type": "context", **context}, keep=False)
 
     def _set_commands(self, commands: list) -> None:
         clean = []
@@ -328,6 +379,7 @@ class ChatSession:
                     # transcript a reload repaints.
                     self._emit(norm, keep=norm.pop("_keep", True))
                 if event.get("type") == "result":
+                    self._take_context(event)
                     self._busy_since = 0.0
                     self._set_state("ready")
                     self._persist()
@@ -465,6 +517,7 @@ class ChatSession:
         await self.stop()
         self.session_id = session_id
         self.info = {}
+        self.context = {}
         self.events = []
         self._seq = 0
         # Live viewers repaint from here: clear first, then the history.
@@ -490,6 +543,7 @@ class ChatSession:
         self.session_id = None
         self.events = []
         self.info = {}
+        self.context = {}
         self._seq = 0
         self._persist()
         self._emit({"type": "cleared"}, keep=False)

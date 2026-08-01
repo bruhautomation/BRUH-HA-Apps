@@ -1432,6 +1432,95 @@ body.modal-open {
   margin: -18px -20px -20px;
 }
 
+/* The conversations rail. A flex row only once there is room for one — the
+   rail is `display: none` below the breakpoint, so on a phone the tab is
+   exactly what it was and ⋯ → Conversations is still the way in. */
+@media (min-width: 1100px) {
+  body:not(.term-classic):not(.term-immersive) #viewTerminal.active {
+    display: flex;
+  }
+  body:not(.term-classic):not(.term-immersive) #viewTerminal.active .chatrail {
+    display: flex;
+  }
+  #viewTerminal.active .chat { flex: 1; min-width: 0; }
+}
+
+.chatrail {
+  display: none;
+  flex: none;
+  width: 248px;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--hairline);
+  background: var(--plane);
+}
+.crhead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 8px 10px 16px;
+  border-bottom: 1px solid var(--hairline);
+}
+.crtitle {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.crlist {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.crempty { padding: 12px 8px; color: var(--ink-3); font-size: 13px; }
+.critem {
+  display: grid;
+  gap: 1px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.critem:hover { background: var(--surface-2); }
+.critem.active { background: var(--surface-2); cursor: default; }
+.critem.active .ctitle { color: var(--accent); }
+.critem .ctitle {
+  font-size: 13.5px;
+  line-height: 1.35;
+  /* Two lines and then stop: a conversation's title is its first message, so
+     without a cap one rambling opener owns the whole rail. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.critem .cwhen { font-size: 11.5px; color: var(--ink-3); }
+
+/* Model and context, under the composer. Quiet by construction: this is a
+   thing you look for, not a thing that should catch your eye. */
+.chatmeta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 16px 10px;
+  font-size: 11.5px;
+  color: var(--ink-3);
+}
+.cmctx { font-variant-numeric: tabular-nums; }
+.cmctx::before { content: "·"; margin-right: 10px; }
+.cmctx.warn { color: var(--warning); font-weight: 600; }
+
 #termFrame {
   width: 100%;
   height: 100%;
@@ -1470,6 +1559,11 @@ body.term-open .wrap { padding-bottom: 0; }
   display: none;
   flex-direction: column;
   height: 100%;
+  box-sizing: border-box;
+  /* On the container, not on the composer: the meta line sits below the
+     composer, so the element that must clear an iPhone's home indicator
+     depends on whether it is showing. The container is always last. */
+  padding-bottom: env(safe-area-inset-bottom);
   background: var(--plane);
 }
 body:not(.term-classic) #viewTerminal.active .chat { display: flex; }
@@ -1485,7 +1579,10 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
      under them later is ordinary, but the FIRST message sitting under them
      permanently is not — and the first message is right-aligned, which is
      exactly where they are. */
-  padding: 56px 16px 8px;
+  /* The bottom is NOT 8px. Scrolled fully down, 8px put the last line of an
+     answer hard against the composer's border, which reads as the message
+     being cut off rather than as the end of it. */
+  padding: 56px 16px 28px;
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -1874,7 +1971,7 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   display: flex;
   align-items: flex-end;
   gap: 8px;
-  padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+  padding: 10px 16px;
   border-top: 1px solid var(--hairline);
   background: var(--plane);
 }
