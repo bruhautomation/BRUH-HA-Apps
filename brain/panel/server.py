@@ -177,6 +177,10 @@ _process_start = time.time()
 # showing a queue that was in fact being emptied as you watched.
 MEMORY_DIR = Path(os.environ.get("BRAIN_MEMORY_DIR", "/config/.brain/memory"))
 CONSOLIDATE_LOCK = MEMORY_DIR / ".consolidate.lock"
+# The consolidator stamps this when a pass starts and removes it when the pass
+# ends. Read only while the lock is held, so one left behind by a killed pass
+# is never shown as a pass in flight.
+CONSOLIDATE_RUNNING_MARKER = MEMORY_DIR / ".consolidating"
 
 
 def _consolidation_running() -> bool:
@@ -198,6 +202,27 @@ def _consolidation_running() -> bool:
         return True           # somebody holds it exclusively
     finally:
         os.close(fd)
+
+
+def _consolidation_running_for() -> int:
+    """How long the pass now running has been going (seconds, 0 = unknown).
+
+    So the tab can count up instead of promising a duration. "This takes a
+    few minutes" was the honest shape of the answer and still left you unable
+    to tell a slow pass from a stuck one, which is the only thing you
+    actually want to know while watching it.
+
+    Elapsed rather than a start timestamp: the marker's mtime is on the
+    add-on's clock and the tab renders on the browser's, and an ingress panel
+    is often open on a phone whose clock is minutes off. Subtracting here
+    means the two clocks never have to agree.
+    """
+    try:
+        started = CONSOLIDATE_RUNNING_MARKER.stat().st_mtime
+    except OSError:
+        return 0
+    return max(0, int(time.time() - started))
+
 
 MODEL = os.environ.get("BRAIN_MODEL", "").strip()
 TIMEOUT_S = int(float(os.environ.get("BRAIN_TIMEOUT_MIN", "8") or 8) * 60)
@@ -1995,6 +2020,9 @@ def _memory_state() -> dict:
     # the lock cannot tell us who started a pass.
     state["by"] = "you" if state.get("merging") else "schedule"
     state["merging"] = bool(state.get("merging") or running)
+    # Only meaningful while a pass is actually in flight; a marker left by a
+    # killed one would otherwise read as a pass running since last Tuesday.
+    state["running_for"] = _consolidation_running_for() if running else 0
     state["stale_hours"] = _consolidation_stale_hours()
     # A failure we remember is only news until something else succeeds. The
     # daemon's passes never touch MEMORY_STATE — it only knows about ours —

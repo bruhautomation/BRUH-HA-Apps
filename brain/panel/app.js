@@ -2187,6 +2187,18 @@ function mdToHtml(md) {
 
 // Everything on this tab that depends only on the consolidator's state, so
 // the poll can keep it live without re-fetching the document behind it.
+// " (2m 10s)" for a pass that has been running `secs`, or "" when we don't
+// know — an unknown elapsed is silence, never a confident "(0s)". The server
+// does the subtraction, so a phone with a wrong clock still reads right.
+function elapsedLabel(secs) {
+  const s = Math.max(0, Math.floor(Number(secs) || 0));
+  if (!s) return "";
+  if (s < 60) return ` (${s}s)`;
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return rem ? ` (${m}m ${rem}s)` : ` (${m}m)`;
+}
+
 function renderMemoryProgress(st) {
   const merging = !!st.merging;
   const running = !!st.running;
@@ -2195,10 +2207,16 @@ function renderMemoryProgress(st) {
   // A pass that is running says so, and says whose it is. The daemon's own
   // passes used to be invisible here, so the queue emptied with nothing on
   // screen accounting for it.
+  // How long it has been going, not how long it "takes". A pass is one Claude
+  // call that rewrites the whole document, so its length depends on the
+  // document — "a few minutes" answered a question nobody was asking, while
+  // the one they were ("is this still working, or is it stuck?") needs a
+  // number that moves.
+  const since = elapsedLabel(st.running_for);
   $("#kMemMergingText").textContent = running
     ? (st.by === "you"
-        ? "Filing these into the memory document now… this takes a few minutes."
-        : "brAIn is filing memory now — this runs daily, and early when the queue builds up.")
+        ? `Filing these into the memory document now…${since}`
+        : `brAIn is filing memory now — this runs daily, and early when the queue builds up.${since}`)
     : "✨ Queued — it lands at the next consolidation…";
 
   // A queue that has been waiting far longer than the daily pass is not a

@@ -2,6 +2,46 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.18.1
+
+### "brAIn is filing memory now" that never stopped saying it
+
+The Memory tab could sit forever on *brAIn is filing memory now — this runs
+daily, and early when the queue builds up*, long after the pass it was
+describing had finished and written the document. Pressing **File into memory
+now** did nothing visible: no pass started, nothing failed, nothing said so.
+
+The lock. `with_lock` opened its file descriptor and never closed it, so the
+lock was held for the life of the *process* rather than the length of the
+*pass*. `--once` got away with that for years because exiting releases the
+lock for free — but the daemon calls `with_lock` in a loop and outlives every
+pass it runs, so its first consolidation held the lock until its next one, a
+day later.
+
+Nothing about that broke consolidation, which is why it hid: one consolidator
+at a time is still exactly what happened, and the merges kept working. What it
+broke was the *reporting*. The lock is also the panel's only honest answer to
+"is a pass running right now", so a lock held forever meant a tab permanently
+announcing a merge that had finished, and a button that answered every press
+with `{"started": false, "running": true}` because it believed a pass was
+already in flight. The one case that still worked was a fresh start, before
+the daemon's first pass had taken the lock — which is why it looked like the
+terminal worked and the panel didn't.
+
+The lock is now released when the pass ends, in the contention path too, and
+the probe `flock_usable` writes no longer leaves a second lock-shaped file in
+the memory directory.
+
+### A pass says how long it has been going
+
+"This takes a few minutes" answered a question nobody was asking. A pass is
+one Claude call that rewrites the whole document, so its length depends on the
+document — and what you want while watching it is not a duration but the
+difference between slow and stuck. The banner now counts up: *Filing these
+into the memory document now… (2m 10s)*, for the daemon's passes as well as
+the button's. The elapsed time is measured on the add-on's clock and sent as a
+number of seconds, so a phone whose clock is minutes off still reads right.
+
 ## 1.18.0
 
 ### A full memory document stopped filing anything, forever
