@@ -275,6 +275,16 @@ you are in marked rather than hidden. It is the same list the menu opens and the
 resume — below that width it isn't drawn, because 248px of conversations is most of a
 phone, and **⋯ → Conversations** is still there.
 
+**The rail shows yours, and says who ran the rest.** brAIn drives the same Claude Code
+from \`/config\` for voice, for automation tasks and for filing memory, so those land in
+the same store your own chats do — and a house that uses them ends up with a column of
+machine prompts. Each row carries who started it, and the chips above the list choose:
+**Yours** to begin with, then **Voice**, **Automation**, **Memory** or **Study** with a
+count each. Only faces that have actually run in your house are offered, nothing is
+hidden, and opening a machine's run is a perfectly good way to see what voice really
+did with "turn off the kitchen lights". Switching back from the classic terminal only
+ever picks up a conversation of yours.
+
 **Starting a new chat does not lose the old one.** Claude Code keeps it and it stays in
 the list. What a new chat costs is that the next thing you say belongs to a separate
 conversation, not that anything was forgotten.

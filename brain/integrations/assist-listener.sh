@@ -80,6 +80,13 @@ if [ -r /data/.brain_env ]; then
     source /data/.brain_env
 fi
 
+# Voice already mints its own session ids (that is how a follow-up turn
+# resumes the same conversation), so labelling one costs a single call.
+if [ -r /opt/scripts/brain-run-source.sh ]; then
+    # shellcheck disable=SC1091
+    source /opt/scripts/brain-run-source.sh
+fi
+
 # Resolve the claude binary.  The wrapper at /usr/local/bin/claude-run
 # drops to the non-root 'claude' user via su-exec so that Claude Code runs
 # as UID 1000 inside the container.  If the wrapper doesn't exist yet, fall
@@ -584,7 +591,13 @@ USER: ${stamped_text}"
         fi
         if [ -z "$resume_session" ]; then
             new_session=$(cat /proc/sys/kernel/random/uuid 2>/dev/null || true)
-            [ -n "$new_session" ] && session_mode="new"
+            if [ -n "$new_session" ]; then
+                session_mode="new"
+                # Claimed before the run, so a voice turn that then fails
+                # still leaves a transcript the rail can attribute.
+                command -v brain_claim_session > /dev/null 2>&1 \
+                    && brain_claim_session "$new_session" voice
+            fi
         fi
     fi
 
@@ -636,6 +649,8 @@ USER: ${stamped_text}"
             resume_session=""
             new_session=$(cat /proc/sys/kernel/random/uuid 2>/dev/null || true)
             exit_code=0
+            command -v brain_claim_session > /dev/null 2>&1 \
+                && brain_claim_session "$new_session" voice
             if [ -n "$new_session" ]; then
                 session_mode="new"
                 invoke_claude "$remaining" "new:$new_session" "$message_fresh" || exit_code=$?

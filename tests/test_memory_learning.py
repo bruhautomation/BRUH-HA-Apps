@@ -307,6 +307,120 @@ def test_consolidate_failure_leaves_files_untouched(tmp_path):
     assert (memory_dir / "memory.md").read_text() == original
 
 
+# ---------------------------------------------------------------------------
+# Why a pass failed
+# ---------------------------------------------------------------------------
+# Every failure used to report itself the same way — "Claude invocation
+# failed (not authenticated?)" — because stderr went to /dev/null and the
+# exit code was never looked at. What was actually happening on a full
+# document was `timeout` killing the CLI at 120s, every five minutes,
+# forever: the queue never moved, the panel's button never worked, and the
+# one message in the log sent people to re-do a sign-in that was fine.
+
+
+def test_a_timed_out_pass_says_so_instead_of_blaming_the_login(tmp_path):
+    memory_dir = tmp_path / "memory"
+    seed_inbox(memory_dir)
+    original = "# Home Memory\n\n## Preferences\n- keep me\n"
+    (memory_dir / "memory.md").write_text(original)
+
+    slow = tmp_path / "slow_claude.sh"
+    slow.write_text("#!/bin/bash\ncat > /dev/null\nsleep 30\n")
+    slow.chmod(slow.stat().st_mode | stat.S_IEXEC)
+
+    result = run_consolidator(memory_dir, slow, BRAIN_MEMORY_CLAUDE_TIMEOUT="1")
+    assert result.returncode != 0
+    assert "did not finish inside 1s" in result.stdout
+    assert "not authenticated" not in result.stdout
+    # ...and the pass is still safe: nothing written, nothing dropped
+    assert (memory_dir / "memory.md").read_text() == original
+    assert len(inbox_lines(memory_dir)) == 1
+
+
+def test_a_failure_carries_what_claude_actually_said(tmp_path):
+    memory_dir = tmp_path / "memory"
+    seed_inbox(memory_dir)
+
+    failing = tmp_path / "failing_claude.sh"
+    failing.write_text(
+        "#!/bin/bash\ncat > /dev/null\n"
+        "echo 'Credit balance is too low' >&2\nexit 1\n")
+    failing.chmod(failing.stat().st_mode | stat.S_IEXEC)
+
+    result = run_consolidator(memory_dir, failing)
+    assert result.returncode != 0
+    assert "Credit balance is too low" in result.stdout
+    assert "inbox left pending" in result.stdout
+
+
+def test_the_default_timeout_leaves_room_for_a_whole_document(tmp_path):
+    """A pass rewrites memory.md AND voice.md in one turn — up to 10 KB of
+    output. The old 120s was a coin flip on a full document, and losing it
+    looked exactly like a broken login."""
+    text = CONSOLIDATOR.read_text()
+    assert "BRAIN_MEMORY_CLAUDE_TIMEOUT:-480" in text
+
+
+# ---------------------------------------------------------------------------
+# Labelling the transcript the pass leaves behind
+# ---------------------------------------------------------------------------
+
+
+def test_a_pass_claims_its_session_so_the_rail_can_label_it(tmp_path):
+    memory_dir = tmp_path / "memory"
+    seed_inbox(memory_dir)
+    ledger = tmp_path / "run-sources.jsonl"
+
+    args_file = tmp_path / "args"
+    fake = tmp_path / "arg_logging_claude.sh"
+    fake.write_text(
+        "#!/bin/bash\ncat > /dev/null\n"
+        f'printf "%s\\n" "$@" > {args_file}\n'
+        "cat << 'OUT'\n" + FAKE_MERGED_MEMORY + "-----VOICE-----\n"
+        + FAKE_VOICE + "OUT\n")
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+
+    result = run_consolidator(
+        memory_dir, fake,
+        BRAIN_RUN_SOURCES=str(ledger),
+        BRAIN_RUN_SOURCE_LIB=str(ADDON / "scripts" / "brain-run-source.sh"))
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    args = args_file.read_text().split()
+    assert "--session-id" in args
+    session_id = args[args.index("--session-id") + 1]
+    claimed = [json.loads(line) for line in ledger.read_text().splitlines() if line]
+    assert claimed == [{"id": session_id, "source": "memory",
+                        "ts": claimed[0]["ts"]}]
+
+
+def test_an_older_cli_without_session_flags_still_consolidates(tmp_path):
+    """The label is bookkeeping. A conversation nobody can attribute beats
+    a consolidation that never happens."""
+    memory_dir = tmp_path / "memory"
+    seed_inbox(memory_dir)
+
+    picky = tmp_path / "picky_claude.sh"
+    picky.write_text(
+        "#!/bin/bash\ncat > /dev/null\n"
+        'for a in "$@"; do\n'
+        '  if [ "$a" = "--session-id" ]; then\n'
+        "    echo 'error: unknown option --session-id' >&2\n    exit 1\n"
+        "  fi\ndone\n"
+        "cat << 'OUT'\n" + FAKE_MERGED_MEMORY + "-----VOICE-----\n"
+        + FAKE_VOICE + "OUT\n")
+    picky.chmod(picky.stat().st_mode | stat.S_IEXEC)
+
+    result = run_consolidator(
+        memory_dir, picky,
+        BRAIN_RUN_SOURCES=str(tmp_path / "run-sources.jsonl"),
+        BRAIN_RUN_SOURCE_LIB=str(ADDON / "scripts" / "brain-run-source.sh"))
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "no --session-id" in result.stdout
+    assert "'the beacon' = light.office_lamp" in (memory_dir / "memory.md").read_text()
+    assert inbox_lines(memory_dir) == []
+
+
 EMPTY_TEMPLATE = """# Home Memory
 
 ## Preferences

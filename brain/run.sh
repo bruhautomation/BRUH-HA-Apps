@@ -1720,10 +1720,20 @@ start_web_terminal() {
     # Backgrounded: the panel is this add-on's foreground process now, and
     # it reverse-proxies /terminal/ through to this ttyd. The cleanup trap
     # tears both down on SIGTERM.
+    # --debug is libwebsockets' log mask, and ttyd's default (7) includes
+    # NOTICE: three lines every time a socket opens or closes, plus one per
+    # process started and killed. With the terminal tab open that is the
+    # bulk of the add-on log and none of it is ever read. 3 keeps ERR and
+    # WARN — the levels that mean something went wrong — and log_level:
+    # debug in the add-on options turns the rest back on.
+    local ttyd_debug=3
+    [ "$(bashio::config 'log_level' 'info')" = "debug" ] && ttyd_debug=7
+
     ttyd \
         --port "${port}" \
         --interface 0.0.0.0 \
         --writable \
+        --debug "${ttyd_debug}" \
         --ping-interval 30 \
         --client-option enableReconnect=true \
         --client-option reconnect=10 \
@@ -1749,6 +1759,10 @@ start_panel() {
     export BRAIN_MODEL="$(bashio::config 'model' '')"
     export BRAIN_TIMEOUT_MIN="$(bashio::config 'generation_timeout_minutes' '8')"
     export BRAIN_LOG_LEVEL="$(bashio::config 'log_level' 'info')"
+    # One switch for "tell me everything": at debug the panel logs every
+    # request again, polls included. At any other level a successful poll
+    # is silent — see QuietAccessLogger.
+    export BRAIN_ACCESS_LOG="$([ "$BRAIN_LOG_LEVEL" = "debug" ] && echo true || echo false)"
     export BRAIN_ENABLE_INSIGHTS="$(bashio::config 'enable_insights' 'true')"
     export BRAIN_ENABLE_TERMINAL="$(bashio::config 'enable_terminal' 'true')"
     export BRAIN_DIR="/data/insights"

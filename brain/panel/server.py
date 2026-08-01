@@ -95,6 +95,7 @@ import time
 from pathlib import Path
 
 from aiohttp import web
+from aiohttp.abc import AbstractAccessLogger
 
 import addon_options
 import card_tags
@@ -110,6 +111,7 @@ import hypotheses
 import knowledge_store
 import onboarding
 import prompt_store
+import run_sources
 import settings_store
 import terminal_proxy
 import usage_store
@@ -162,7 +164,7 @@ MEMORY_TEMPLATE = """# Home Memory
 # Whether the consolidator has pending work, surfaced to the panel so the
 # Memory tab can say "queued" rather than pretending an edit landed
 # instantly. The merge itself happens in the consolidator, not here.
-MEMORY_STATE: dict = {"merging": False, "error": ""}
+MEMORY_STATE: dict = {"merging": False, "error": "", "filed": 0, "done_at": 0}
 # Used to age a queue that has never been consolidated: on a fresh
 # install "no marker" means "not yet", not "wedged".
 _process_start = time.time()
@@ -204,7 +206,11 @@ TIMEOUT_S = int(float(os.environ.get("BRAIN_TIMEOUT_MIN", "8") or 8) * 60)
 # inbox passes 20 pending facts) — this is the same pass, triggered by hand.
 CONSOLIDATE_SCRIPT = os.environ.get(
     "BRAIN_CONSOLIDATE_SCRIPT", "/opt/scripts/brain-memory-consolidate.sh")
-CONSOLIDATE_TIMEOUT_S = int(os.environ.get("BRAIN_CONSOLIDATE_TIMEOUT", "300"))
+# Longer than anything the pass can legitimately spend: its own Claude call
+# (480s by default) plus the wait for a lock the daemon may be holding. A
+# ceiling below that turned a slow pass into a killed one — and the request
+# carrying it into a five-minute POST that ended in a 502.
+CONSOLIDATE_TIMEOUT_S = int(os.environ.get("BRAIN_CONSOLIDATE_TIMEOUT", "1200"))
 # The consolidator's "someone else holds the lock" exit code. It is not a
 # failure of the pass, but it is not a filing either — reporting it as
 # success is what made the button claim it had filed facts it hadn't.
@@ -325,6 +331,48 @@ logging.basicConfig(
     format="[insights] %(levelname)s %(message)s",
 )
 log = logging.getLogger("brain")
+
+
+class QuietAccessLogger(AbstractAccessLogger):
+    """The add-on log is where you look when something is wrong.
+
+    An open panel polls: status every 20s, the knowledge payload while a
+    consolidation runs, findings, the chat stream. Logging a line for each
+    put a request every two seconds into the add-on log — thousands of
+    identical 200s that pushed the one line explaining a failure off the
+    top of the page. Nobody has ever debugged brAIn from its access log,
+    and everybody has had to scroll past it.
+
+    So: nothing is logged for a routine poll that succeeded. Anything that
+    failed is logged, at warning, because that is the shape of the thing
+    you came looking for. ``log_level: debug`` in the add-on options gets
+    every request back, with its timing — one switch for "tell me
+    everything", rather than an option of its own for each thing that is
+    noisy.
+    """
+
+    # Endpoints the panel asks for on a timer. Everything else — a POST, a
+    # delete, a page load — is a thing somebody did, and gets a line.
+    POLLED = ("/api/status", "/api/knowledge", "/api/memory/state",
+              "/api/insights", "/api/findings", "/api/onboarding",
+              "/api/auth/setup/status", "/api/chat/")
+
+    def log(self, request, response, time):
+        status = response.status
+        if status >= 400:
+            self.logger.warning('%s %s -> %s', request.method, request.path, status)
+            return
+        if VERBOSE_ACCESS_LOG:
+            self.logger.info('%s %s -> %s (%.3fs)',
+                             request.method, request.path, status, time)
+            return
+        if request.method == "GET" and request.path.startswith(self.POLLED):
+            return
+        self.logger.info('%s %s -> %s', request.method, request.path, status)
+
+
+VERBOSE_ACCESS_LOG = os.environ.get("BRAIN_ACCESS_LOG", "").lower() in (
+    "1", "true", "yes", "on")
 
 # ---------------------------------------------------------------------------
 # Job state
@@ -1947,6 +1995,12 @@ def _memory_state() -> dict:
     state["by"] = "you" if state.get("merging") else "schedule"
     state["merging"] = bool(state.get("merging") or running)
     state["stale_hours"] = _consolidation_stale_hours()
+    # A failure we remember is only news until something else succeeds. The
+    # daemon's passes never touch MEMORY_STATE — it only knows about ours —
+    # so without this the tab would keep showing the reason one pass failed
+    # long after the next one had quietly filed everything.
+    if state.get("error") and _last_consolidated() > int(state.get("done_at") or 0):
+        state["error"] = ""
     return state
 
 
@@ -2027,8 +2081,22 @@ def _consolidate_now() -> tuple[bool, str]:
     return True, ""
 
 
-async def h_memory_consolidate(request: web.Request) -> web.Response:
-    """Fold the inbox into memory.md now, rather than at the next pass.
+async def h_memory_state(request: web.Request) -> web.Response:
+    """Just "is a pass running, and how did the last one go".
+
+    The Memory tab polls while a pass is in flight, and it used to poll
+    /api/knowledge — 19 KB of facts, hypotheses and the whole memory
+    document, every 2.5 seconds, to find out whether a flag had flipped.
+    This is the flag. The document is re-read once, when it changes.
+    """
+    return web.json_response({
+        "memory_state": await asyncio.to_thread(_memory_state),
+        "inbox_pending": await asyncio.to_thread(_inbox_pending),
+    })
+
+
+async def _consolidate_task() -> None:
+    """One pass, in the background, reporting through MEMORY_STATE.
 
     What we report is what the queue actually did, not what we asked it to
     do: the consolidator leaves the inbox pending on every failure it can
@@ -2036,24 +2104,48 @@ async def h_memory_consolidate(request: web.Request) -> web.Response:
     either side of the pass is the only honest measure of "filed".
     """
     before = await asyncio.to_thread(_inbox_pending)
-    MEMORY_STATE.update(merging=True, error="")
     try:
         ok, error = await asyncio.to_thread(_consolidate_now)
+        after = await asyncio.to_thread(_inbox_pending)
+        drained = max(0, before - after)
+        if ok and before and not drained:
+            ok, error = False, (
+                "the consolidator finished but the queue didn't move — see "
+                "the add-on log's [brain-memory] lines for why it kept the "
+                "facts")
+        if not ok:
+            log.warning("consolidation failed: %s", error)
+        MEMORY_STATE.update(error="" if ok else (error or "consolidation failed"),
+                            filed=drained)
+    except Exception as exc:                       # never leave it "merging"
+        log.exception("consolidation crashed")
+        MEMORY_STATE.update(error=str(exc), filed=0)
     finally:
-        MEMORY_STATE.update(merging=False)
-    after = await asyncio.to_thread(_inbox_pending)
-    drained = max(0, before - after)
-    if ok and before and not drained:
-        ok, error = False, (
-            "the consolidator finished but the queue didn't move — see the "
-            "add-on log's [brain-memory] lines for why it kept the facts")
-    MEMORY_STATE.update(error="" if ok else error)
-    if not ok:
-        raise web.HTTPBadGateway(text=error or "consolidation failed")
+        MEMORY_STATE.update(merging=False, done_at=int(time.time()))
+
+
+async def h_memory_consolidate(request: web.Request) -> web.Response:
+    """Fold the inbox into memory.md now, rather than at the next pass.
+
+    Started, not awaited. A pass rewrites the whole document with a Claude
+    call behind it and can legitimately run for minutes; holding the POST
+    open for that meant the button's request timed out (a 502 in the log,
+    an unexplained "could not file it" on screen) while the pass it started
+    carried on invisibly. The tab already knows how to render a pass in
+    flight — ``memory_state.running`` is the lock itself — so the honest
+    answer here is "it's going", and the result arrives the same way the
+    daemon's own passes do.
+    """
+    if MEMORY_STATE.get("merging") or await asyncio.to_thread(_consolidation_running):
+        return web.json_response({"started": False, "running": True,
+                                  "inbox_pending": await asyncio.to_thread(_inbox_pending)})
+    MEMORY_STATE.update(merging=True, error="", filed=0)
+    task = asyncio.create_task(_consolidate_task())
+    request.app.setdefault("consolidations", set()).add(task)
+    task.add_done_callback(lambda t: request.app["consolidations"].discard(t))
     return web.json_response({
-        "consolidated": drained,
-        "shared_memory": await asyncio.to_thread(_read_shared_memory),
-        "inbox_pending": after,
+        "started": True, "running": True,
+        "inbox_pending": await asyncio.to_thread(_inbox_pending),
     })
 
 
@@ -2405,13 +2497,49 @@ async def h_chat_conversations(request: web.Request) -> web.Response:
     Read straight out of Claude Code's own store, so a session started in
     the terminal is listed here beside one started in the chat — that is
     what "interchangeable" has to mean to be worth saying.
+
+    "Whichever face" turned out to include faces that are not a person.
+    Voice, the automation listener and the memory consolidator all drive
+    the same CLI from /config, so on a house that uses them the rail filled
+    with machine prompts — forty copies of the consolidator's opening line
+    with your own chats somewhere underneath. Each row now says whose it
+    is, and ``?source=`` picks which to show; the default is yours, because
+    the rail is a list of your conversations.
     """
     session = _chat()
+    wanted = request.query.get("source", "you")
+    if wanted in ("", "all"):
+        sources = None
+    else:
+        sources = tuple(
+            s for s in wanted.split(",")
+            if s == "you" or run_sources.known(s)) or ("you",)
     return web.json_response({
         "conversations": await asyncio.to_thread(
-            conversations.listing, chat_session.WORK_DIR, 30, session.session_id),
+            conversations.listing, chat_session.WORK_DIR, 30,
+            session.session_id, sources),
         "current": session.session_id,
+        "sources": await asyncio.to_thread(_conversation_source_counts),
     })
+
+
+def _conversation_source_counts() -> list[dict]:
+    """What the filter offers, and how much is behind each choice.
+
+    Only faces that have actually run here are offered: a house with no
+    voice assistant should not be given a Voice filter that is empty
+    forever, and one that has never had a fix run should not be told the
+    concept exists.
+    """
+    counts = conversations.source_counts(chat_session.WORK_DIR)
+    out = [{"id": "you", "label": "Yours",
+            "blurb": "you, in the chat or the terminal",
+            "count": counts.get("you", 0)}]
+    for key, meta in run_sources.SOURCES.items():
+        if counts.get(key):
+            out.append({"id": key, "label": meta["label"],
+                        "blurb": meta["blurb"], "count": counts[key]})
+    return out
 
 
 async def h_chat_adopt(request: web.Request) -> web.Response:
@@ -2432,12 +2560,19 @@ async def h_chat_adopt(request: web.Request) -> web.Response:
 
     Refused mid-turn, because adopting stops the chat's process and losing
     an answer being written is worse than making you wait for it.
+
+    "Most recently written" has to mean most recent conversation *of
+    yours*. The consolidator, voice and the automation listener all write
+    transcripts into this same directory on their own schedule, so on a
+    busy house the newest file was routinely a machine's — and switching
+    back from the terminal adopted the memory consolidator's prompt instead
+    of what you had been doing.
     """
     session = _chat()
     if session.state == "busy":
         raise web.HTTPConflict(reason="finish or stop the current answer first")
     recent = await asyncio.to_thread(
-        conversations.listing, chat_session.WORK_DIR, 1)
+        conversations.listing, chat_session.WORK_DIR, 1, None, ("you",))
     newest = recent[0] if recent else None
     if newest is None or newest["id"] == session.session_id:
         # Already the same conversation (or there is nothing to take up):
@@ -2539,6 +2674,7 @@ def make_app() -> web.Application:
     app.router.add_post("/api/hypothesis/{ts}/reject", h_hypothesis_reject)
     app.router.add_put("/api/memory", h_memory_put)
     app.router.add_post("/api/memory/consolidate", h_memory_consolidate)
+    app.router.add_get("/api/memory/state", h_memory_state)
     app.router.add_post("/api/knowledge/fact", h_knowledge_fact_add)
     app.router.add_delete("/api/knowledge/fact/{ts}", h_knowledge_fact_delete)
     app.router.add_post("/api/knowledge/question/{ts}/answer", h_knowledge_answer)
@@ -2602,4 +2738,5 @@ def make_app() -> web.Application:
 
 if __name__ == "__main__":
     INSIGHTS_DIR.mkdir(parents=True, exist_ok=True)
-    web.run_app(make_app(), host=BIND_HOST, port=BIND_PORT, print=None)
+    web.run_app(make_app(), host=BIND_HOST, port=BIND_PORT, print=None,
+                access_log_class=QuietAccessLogger)

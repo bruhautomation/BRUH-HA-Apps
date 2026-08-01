@@ -45,7 +45,14 @@ MARKER_FILE="$MEMORY_DIR/.last_consolidated"
 MEMORY_MAX_KB="${BRAIN_MEMORY_MAX_KB:-8}"
 VOICE_MAX_BYTES=2048
 CLAUDE_MODEL="${BRAIN_MEMORY_MODEL:-haiku}"
-CLAUDE_TIMEOUT="${BRAIN_MEMORY_CLAUDE_TIMEOUT:-120}"
+# A pass rewrites the WHOLE document plus the voice distillate — up to
+# 10 KB of output in one turn, not a one-line answer. At 120s that was a
+# coin flip on a full document, and every loss looked identical to a
+# failure: `timeout` kills the CLI, the pass reports "not authenticated?",
+# the inbox stays pending, and the daemon does it again five minutes later
+# forever. The queue in the panel never moved and the log filled up.
+# 480s is what an insight run gets, for the same reason.
+CLAUDE_TIMEOUT="${BRAIN_MEMORY_CLAUDE_TIMEOUT:-480}"
 
 CHECK_INTERVAL="${BRAIN_MEMORY_CHECK_INTERVAL:-300}"     # daemon poll (s)
 DAILY_INTERVAL=86400                                     # forced cadence (s)
@@ -244,13 +251,59 @@ consolidate_once() {
     claude_cmd=$(resolve_claude)
     log "consolidating $(printf '%s\n' "$inbox_lines" | wc -l) fact(s) with model ${CLAUDE_MODEL}..."
 
+    # The pass claims its session id before running, so the Chats rail can
+    # label the transcript the CLI is about to leave behind as this rather
+    # than as something you typed. An older CLI without --session-id is
+    # handled below: the run is what matters, the label is bookkeeping.
+    local session_args=() session_id="" source_lib
+    source_lib="${BRAIN_RUN_SOURCE_LIB:-/opt/scripts/brain-run-source.sh}"
+    if [ -r "$source_lib" ]; then
+        # shellcheck disable=SC1090
+        . "$source_lib"
+        session_id=$(brain_new_session memory)
+        [ -n "$session_id" ] && session_args=(--session-id "$session_id")
+    fi
+
+    # stderr is kept, not discarded. Throwing it away is what made every
+    # failure — timeout, rate limit, a malformed prompt — report itself as
+    # "not authenticated?", which sent people to re-do a sign-in that was
+    # fine while the real cause stayed invisible.
+    local err_file rc=0
+    err_file=$(mktemp 2>/dev/null || echo "/tmp/brain-memory-err.$$")
     # shellcheck disable=SC2086
-    if ! output=$(printf '%s' "$prompt" | timeout "$CLAUDE_TIMEOUT" \
+    output=$(printf '%s' "$prompt" | timeout "$CLAUDE_TIMEOUT" \
             $claude_cmd -p --disallowedTools "*" --max-turns 1 \
-            --model "$CLAUDE_MODEL" 2>/dev/null); then
-        log "Claude invocation failed (not authenticated?) — inbox left pending"
+            "${session_args[@]}" \
+            --model "$CLAUDE_MODEL" 2>"$err_file") || rc=$?
+
+    # An older CLI answers an unknown flag with usage and a non-zero exit.
+    # Drop the label and run the pass — a conversation nobody can attribute
+    # beats a consolidation that never happens.
+    if [ "$rc" != 0 ] && [ "${#session_args[@]}" -gt 0 ] \
+       && grep -qi "unknown option\|unrecognized option" "$err_file" 2>/dev/null; then
+        log "this Claude CLI has no --session-id — running unlabelled"
+        rc=0
+        # shellcheck disable=SC2086
+        output=$(printf '%s' "$prompt" | timeout "$CLAUDE_TIMEOUT" \
+                $claude_cmd -p --disallowedTools "*" --max-turns 1 \
+                --model "$CLAUDE_MODEL" 2>"$err_file") || rc=$?
+    fi
+
+    if [ "$rc" != 0 ]; then
+        local why detail
+        # 124 is `timeout`'s, and it is the failure this pass actually has:
+        # say so, with the number to raise, instead of blaming the login.
+        if [ "$rc" = 124 ]; then
+            why="Claude did not finish inside ${CLAUDE_TIMEOUT}s (raise BRAIN_MEMORY_CLAUDE_TIMEOUT)"
+        else
+            why="Claude exited ${rc}"
+        fi
+        detail=$(grep -v '^[[:space:]]*$' "$err_file" 2>/dev/null | tail -n 1 | cut -c1-200)
+        rm -f "$err_file"
+        log "${why}${detail:+ — $detail} — inbox left pending"
         return 1
     fi
+    rm -f "$err_file"
 
     if ! printf '%s\n' "$output" | grep -qxF -- "$VOICE_SEPARATOR"; then
         log "output missing the ${VOICE_SEPARATOR} separator — inbox left pending"
