@@ -31,7 +31,7 @@ subscription — or your own API key.
 
 ![The brAIn Insights tab: an ask bar, tag filters, and insight cards — one answering "Why
 did the hallway light come on at 3 am?" with a trace timeline, one showing a month of
-electricity by device](../docs/images/panel-insights.webp)
+electricity by device](https://raw.githubusercontent.com/bruhautomation/BRUH-HA-Apps/main/docs/images/panel-insights.webp)
 
 ## What it does
 
@@ -47,7 +47,7 @@ electricity by device](../docs/images/panel-insights.webp)
 ![The brAIn Findings tab, headed "What brAIn thinks is broken", listing a dead back-door
 battery sensor, thirteen orphaned entities, and two loft sensors that never rejoined after a
 Zigbee channel change — each with Fix it, Discuss, I've fixed it, Remind me later and Not a
-problem here](../docs/images/panel-findings.webp)
+problem here](https://raw.githubusercontent.com/bruhautomation/BRUH-HA-Apps/main/docs/images/panel-findings.webp)
 
 ## Try it in one line
 
@@ -71,7 +71,7 @@ why didn't the porch light automation fire last night?
 
 ![The brAIn Terminal tab in chat mode, tracing a 3 am light through the logbook and an
 automation trace, then editing the automation, validating the YAML and reloading the
-domain](../docs/images/panel-terminal.webp)
+domain](https://raw.githubusercontent.com/bruhautomation/BRUH-HA-Apps/main/docs/images/panel-terminal.webp)
 
 ## The CLI
 

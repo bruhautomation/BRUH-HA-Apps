@@ -176,7 +176,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the full release-by-release history, includ
 
 ## License & support
 
-MIT — see [LICENSE](../LICENSE).
+MIT — see [LICENSE](https://github.com/bruhautomation/BRUH-HA-Apps/blob/main/LICENSE).
 
 Issues and feature requests: <https://github.com/bruhautomation/BRUH-HA-Apps/issues>.
 
