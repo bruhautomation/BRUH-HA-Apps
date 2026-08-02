@@ -9,6 +9,14 @@ think.
 install guide, every feature with worked examples, the service and tool reference, and the
 changelog. This page is the short version.
 
+> ### Back up Home Assistant first — somewhere that isn't this machine.
+>
+> brAIn edits your real configuration: automations, dashboards, helpers, entities. It is
+> built to be careful, it snapshots files before it changes them, and `brain undo` puts
+> them back. None of that is a backup you can restore from if something goes wrong.
+>
+> **Settings → System → Backups**, then copy it off the device.
+
 ## What it is
 
 A Home Assistant add-on that runs Claude Code and a suite of tools inside HA, which builds

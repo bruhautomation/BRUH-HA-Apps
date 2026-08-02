@@ -1595,5 +1595,65 @@ class TestTerminalProxy(unittest.TestCase):
                          f"{self.mod.TTYD_BASE}/token?arg=1&arg=2")
 
 
+class TestBackupNotice(unittest.TestCase):
+    """"Back up first" has to survive a redesign of the screen it sits on.
+
+    brAIn edits real configuration. The snapshot hook and `brain undo` cover
+    a bad edit; neither covers a bad restore, a dead SD card, or a mistake
+    nobody noticed for a week. The notice says so, once, on the one screen
+    every install passes through before brAIn is allowed to change anything.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.html = (PANEL / "index.html").read_text()
+        cls.css = (PANEL / "style.css").read_text()
+        cls.readme = (ADDON_DIR / "README.md").read_text()
+        cls.docs = (ADDON_DIR / "DOCS.md").read_text()
+
+    def test_the_onboarding_screen_carries_it(self):
+        self.assertIn('id="obBackup"', self.html)
+
+    def test_it_is_not_inside_a_single_phase(self):
+        """The onboarding screen has four phases and shows one at a time.
+        Inside any of them, the notice is visible for part of the flow and
+        gone for the rest."""
+        section = self.html.split('id="onboard"', 1)[1]
+        notice_at = section.index('id="obBackup"')
+        for phase in ('id="obLearn"', 'id="obRecommend"',
+                      'id="obChoose"', 'id="obSparse"'):
+            with self.subTest(phase=phase):
+                self.assertLess(notice_at, section.index(phase),
+                                "the notice must precede every phase div")
+
+    def test_it_says_off_the_device(self):
+        """A backup on the machine you are changing is the one you cannot
+        use when that machine is the problem — which is the whole point."""
+        for name, text in (("panel", self.html), ("README", self.readme),
+                           ("DOCS", self.docs)):
+            with self.subTest(doc=name):
+                self.assertRegex(
+                    text, r"isn't this machine|off the device",
+                    f"{name} does not say where the backup should live",
+                )
+
+    def test_it_does_not_offer_undo_as_the_backup(self):
+        """`brain undo` restores a file brAIn edited. Letting that read as
+        'so you don't need a backup' is the failure this notice exists to
+        prevent, so it names undo and then says it is not enough."""
+        for name, text in (("panel", self.html), ("README", self.readme),
+                           ("DOCS", self.docs)):
+            with self.subTest(doc=name):
+                self.assertIn("brain undo", text)
+                self.assertRegex(text, r"None of that is a backup|not a backup")
+
+    def test_it_is_styled_as_a_caution_not_an_error(self):
+        """Red is what this panel spends on 'something went wrong just now'.
+        A permanent notice wearing it teaches people to read past red."""
+        block = self.css.split(".setup .notice {", 1)[1].split("}", 1)[0]
+        self.assertIn("--warning", block)
+        self.assertNotIn("--critical", block)
+
+
 if __name__ == "__main__":
     unittest.main()

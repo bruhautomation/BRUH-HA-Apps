@@ -1,0 +1,113 @@
+name: Label by add-on
+
+# Turn the "Which add-on?" answer into a label.
+#
+# Every issue and discussion template already asks which add-on it is
+# about, and makes it required. That answer lands as prose in the body,
+# which means it is readable but not *filterable* — you cannot ask GitHub
+# for "the brAIn ones", which is the thing anyone actually wants.
+#
+# Discussions and issues share one label set, so a label is the closest
+# thing to the "section" split without multiplying categories: keeping
+# Q&A / Ideas / Show and tell and slicing each by product beats six
+# categories that each go quiet.
+#
+# Labels are applied via GraphQL for both kinds, because REST has no
+# equivalent for discussions.
+
+on:
+  issues:
+    types: [opened, edited]
+  discussion:
+    types: [created, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      discussions: write
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            // Which label each dropdown option maps to. An option that
+            // means "I don't know" maps to nothing on purpose — a wrong
+            // label is worse than no label, because people filter on it.
+            const MAP = {
+              'brAIn':                 ['brain'],
+              'BRUH Minecraft':        ['minecraft'],
+              'Both':                  ['brain', 'minecraft'],
+              'The repository / docs': ['repo'],
+            };
+            const COLORS = {
+              brain:     { color: '1e9fe0', description: 'The brAIn add-on' },
+              minecraft: { color: '3fa34d', description: 'The BRUH Minecraft add-on' },
+              repo:      { color: '6e7781', description: 'Repository, CI or docs' },
+            };
+
+            const isDiscussion = !!context.payload.discussion;
+            const item = context.payload.discussion || context.payload.issue;
+            if (!item) return;
+
+            // Issue forms render as "### Which add-on?" followed by a
+            // blank line and the answer. Take the first non-empty line
+            // after the heading and match it exactly — a `startsWith`
+            // would make "brAIn" swallow every option beginning with it.
+            const body = item.body || '';
+            const m = body.match(/#+\s*Which add-on\?\s*\n+([^\n]+)/i);
+            if (!m) {
+              core.info('No "Which add-on?" answer found; leaving unlabelled.');
+              return;
+            }
+            const answer = m[1].trim();
+            const wanted = MAP[answer];
+            if (!wanted) {
+              core.info(`"${answer}" maps to no label; leaving unlabelled.`);
+              return;
+            }
+
+            // Only add what is missing, so an edit doesn't fight a label
+            // a maintainer removed on purpose... except we cannot tell
+            // those apart, so we only ever ADD, never remove.
+            const existing = new Set((item.labels || []).map(l => l.name));
+            const missing = wanted.filter(n => !existing.has(n));
+            if (!missing.length) {
+              core.info('Already labelled.');
+              return;
+            }
+
+            const { owner, repo } = context.repo;
+
+            // Create any label that doesn't exist yet. A first run on a
+            // fresh repo would otherwise fail on a missing label rather
+            // than making it.
+            const ids = [];
+            for (const name of missing) {
+              try {
+                const { data } = await github.rest.issues.getLabel({ owner, repo, name });
+                ids.push(data.node_id);
+              } catch (err) {
+                if (err.status !== 404) throw err;
+                const { data } = await github.rest.issues.createLabel({
+                  owner, repo, name, ...COLORS[name],
+                });
+                core.info(`Created label "${name}".`);
+                ids.push(data.node_id);
+              }
+            }
+
+            await github.graphql(
+              `mutation($id: ID!, $labelIds: [ID!]!) {
+                 addLabelsToLabelable(input: {labelableId: $id, labelIds: $labelIds}) {
+                   clientMutationId
+                 }
+               }`,
+              { id: item.node_id, labelIds: ids },
+            );
+            core.info(
+              `Labelled ${isDiscussion ? 'discussion' : 'issue'} #${item.number} ` +
+              `with ${missing.join(', ')}.`);

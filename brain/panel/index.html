@@ -171,6 +171,18 @@
       how it's named, when it's occupied, what it uses, how it behaves. Then it proposes
       cards that are actually about <i>your</i> home rather than a generic one.</p>
 
+    <!-- Sits outside the phase divs on purpose: it is true in every phase,
+         and the one screen everybody passes through before brAIn is allowed
+         to change anything is this one. -->
+    <div class="notice" id="obBackup">
+      <strong>Back up Home Assistant first — somewhere that isn't this machine.</strong>
+      <p>brAIn edits your real configuration: automations, dashboards, helpers,
+        entities. It is built to be careful, it snapshots files before it changes
+        them, and <code>brain undo</code> puts them back. None of that is a backup
+        you can restore from if something goes wrong.</p>
+      <p>Settings → System → Backups, then copy it off the device.</p>
+    </div>
+
     <div id="obLearn">
       <div class="obsteps" id="obTopics"></div>
       <div class="row">

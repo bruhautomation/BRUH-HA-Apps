@@ -547,6 +547,31 @@ html, body {
 }
 .setup .urlbox a { color: var(--accent); font-weight: 600; }
 .setup .flowerr { color: var(--critical); font-size: 13px; margin-top: 10px; }
+
+/* A standing caution, not an error.
+ *
+ * Deliberately not --critical: red is what this panel uses for "something
+ * went wrong just now", and spending it on a notice that is always on
+ * screen teaches people to read past red. The warning accent and a rule
+ * down the left say "read this once" without claiming anything is broken. */
+.setup .notice {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--hairline);
+  border-left: 3px solid var(--warning);
+  border-radius: 10px;
+  background: var(--plane);
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+.setup .notice strong { color: var(--ink); display: block; margin-bottom: 6px; }
+.setup .notice p { margin: 6px 0 0; }
+.setup .notice code {
+  background: var(--surface-2);
+  padding: 1px 6px;
+  border-radius: 6px;
+}
 .steps { margin: 0 0 6px; padding-left: 18px; color: var(--ink-2); font-size: 13.5px; }
 .steps li { margin: 3px 0; }
 

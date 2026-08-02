@@ -5,6 +5,16 @@
 Claude plus a suite of new tools hands it the keys. Stop programming your house — let it
 think.
 
+> ### Back up Home Assistant first — somewhere that isn't this machine.
+>
+> brAIn edits your real configuration: automations, dashboards, helpers, entities. It is
+> built to be careful, it snapshots files before it changes them, and `brain undo` puts
+> them back. None of that is a backup you can restore from if something goes wrong.
+>
+> **Settings → System → Backups**, then copy it off the device. A backup that only exists
+> on the machine you are changing is the one you cannot use when that machine is the
+> problem.
+
 A Home Assistant add-on that runs Claude Code and a suite of tools inside HA, which builds
 a permanent memory of your house.
 
