@@ -1,0 +1,117 @@
+#include <tunables/global>
+
+# AppArmor profile for the brAIn add-on.
+#
+# What this profile can and cannot be
+# -----------------------------------
+# brAIn runs Claude Code: an agent that edits /config, runs shell commands,
+# installs packages, and drives git. A profile that enumerates the binaries
+# it is allowed to execute would be a profile that breaks the add-on the
+# first time somebody asks it to do something new — and every such break
+# looks like "brAIn is broken", not "AppArmor said no".
+#
+# So this profile does not try to constrain what brAIn does *inside* its
+# container. It constrains what brAIn can do to the *host*: mounting,
+# loading kernel modules, raw sockets, writing kernel tunables, ptracing
+# out of the profile, and reaching the Docker socket. Those are the
+# primitives a container escape needs, none of them are things an agent
+# editing Home Assistant config ever legitimately needs, and denying them
+# is what the Supervisor's security model is asking for here.
+#
+# Deny rules are listed before the broad grants on purpose: in AppArmor an
+# explicit `deny` always wins over an allow, but keeping them at the top
+# makes the intent of the file readable in the order a person reads it.
+
+profile brain flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+
+  # ------------------------------------------------------------------
+  # Host-escape primitives — denied outright
+  # ------------------------------------------------------------------
+
+  # Kernel tunables. Nothing in this add-on tunes the host kernel.
+  deny /proc/sys/** wklx,
+  deny /sys/kernel/** wklx,
+  deny @{PROC}/sysrq-trigger rwklx,
+
+  # Kernel module loading and raw device access.
+  deny /sys/module/** wklx,
+  deny /dev/mem rwklx,
+  deny /dev/kmem rwklx,
+  deny /dev/port rwklx,
+  deny /dev/kmsg rwklx,
+
+  # Firmware and boot.
+  deny /sys/firmware/** rwklx,
+  deny /boot/** rwklx,
+
+  # The Docker socket. brAIn talks to the Supervisor over its HTTP API with
+  # SUPERVISOR_TOKEN; it has no business talking to Docker directly, and
+  # a writable docker.sock is root on the host by another name.
+  deny /var/run/docker.sock rwklx,
+  deny /run/docker.sock rwklx,
+
+  # ------------------------------------------------------------------
+  # Capabilities
+  # ------------------------------------------------------------------
+  # run.sh creates the `claude` user (UID 1000) and drops to it with
+  # su-exec, so setuid/setgid and chown are genuinely needed. Everything
+  # in the dangerous set — SYS_ADMIN, SYS_MODULE, SYS_RAWIO, SYS_PTRACE,
+  # NET_ADMIN, NET_RAW, DAC_READ_SEARCH — is absent by omission.
+  capability chown,
+  capability dac_override,
+  capability fowner,
+  capability fsetid,
+  capability kill,
+  capability setgid,
+  capability setuid,
+  capability setpcap,
+  capability audit_write,
+
+  deny capability sys_admin,
+  deny capability sys_module,
+  deny capability sys_rawio,
+  deny capability sys_ptrace,
+  deny capability sys_boot,
+  deny capability net_admin,
+  deny capability net_raw,
+  deny capability mac_admin,
+  deny capability mac_override,
+  deny capability dac_read_search,
+
+  # No mounting, ever. This is the single most important line in the file.
+  deny mount,
+  deny umount,
+  deny pivot_root,
+
+  # ------------------------------------------------------------------
+  # What the add-on legitimately does
+  # ------------------------------------------------------------------
+
+  # Filesystem: /config, /data, /share, /media, /backup, /addons and the
+  # container's own tree. Broad by design, per the note at the top.
+  file,
+
+  # Signals: run.sh's cleanup trap tears down ttyd, the listeners and the
+  # background daemons on SIGTERM, and chat_session.py interrupts Claude.
+  signal (send,receive) set=(kill,term,int,hup,cont,usr1,usr2,winch),
+
+  # Process supervision. su-exec, tmux, ttyd, node and python all fork and
+  # exec each other; `ptrace (trace) peer=brain` keeps that inside the
+  # profile without granting ptrace of anything outside it.
+  ptrace (trace,read) peer=brain,
+
+  # Networking: the panel (8099), ttyd (7681), the worker pool (8098), the
+  # Supervisor API, and Claude's API over TLS. Unix sockets for s6.
+  network inet stream,
+  network inet6 stream,
+  network inet dgram,
+  network inet6 dgram,
+  network unix stream,
+  network unix dgram,
+  network netlink raw,
+
+  # Anything the add-on execs runs under this same profile rather than
+  # escaping to the unconfined host profile.
+  /** ix,
+}

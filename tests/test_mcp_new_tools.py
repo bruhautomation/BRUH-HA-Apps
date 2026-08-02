@@ -3,7 +3,6 @@
 the schema-driven dispatcher contract, and image content envelopes."""
 
 import io
-import json
 import os
 import sys
 import unittest

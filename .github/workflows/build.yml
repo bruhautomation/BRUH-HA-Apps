@@ -1,0 +1,104 @@
+name: Build images
+
+# Publishes multi-arch add-on images to GHCR.
+#
+# Why: right now every user builds these containers on their own Home
+# Assistant box. On a Raspberry Pi that is a long, SD-card-punishing build
+# that can fail on a transient network error, and the result is whatever
+# each machine happened to resolve at build time. Home Assistant's
+# publishing guidance is direct about it — pre-built images make "the
+# installation process fast and has almost no chance of failure."
+#
+# Cutting over is TWO steps, deliberately:
+#   1. Merge this workflow and let it publish a release. Nothing changes
+#      for users yet — `config.yaml` still has no `image:`, so the
+#      Supervisor keeps building locally.
+#   2. Once `ghcr.io/bruhautomation/{arch}-brain:<version>` exists for
+#      both architectures, add to each add-on's config.yaml:
+#          image: "ghcr.io/bruhautomation/{arch}-brain"
+#      and bump the version.
+#
+# Doing step 2 first would point every install at a tag that does not
+# exist yet, and the add-on would stop installing entirely. The images
+# must be on the registry before anything is told to pull them.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "brain/**"
+      - "bruh-minecraft-server/**"
+      - ".github/workflows/build.yml"
+  workflow_dispatch:
+    inputs:
+      addon:
+        description: "Which add-on to build (blank = both)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.addon }} (${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        addon: [brain, bruh-minecraft-server]
+        arch: [aarch64, amd64]
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # Skip an add-on whose files this push didn't touch, and honour the
+      # manual-dispatch filter.
+      - name: Decide whether to build
+        id: decide
+        run: |
+          requested="${{ github.event.inputs.addon }}"
+          if [ -n "$requested" ] && [ "$requested" != "${{ matrix.addon }}" ]; then
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping ${{ matrix.addon }} (dispatch asked for $requested)"
+            exit 0
+          fi
+          echo "build=true" >> "$GITHUB_OUTPUT"
+
+      - name: Read version
+        if: steps.decide.outputs.build == 'true'
+        id: version
+        run: |
+          version=$(grep -E '^version:' "${{ matrix.addon }}/config.yaml" \
+            | head -1 | sed 's/.*"\([^"]*\)".*/\1/')
+          if [ -z "$version" ]; then
+            echo "::error::could not parse version from ${{ matrix.addon }}/config.yaml"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Building ${{ matrix.addon }} $version for ${{ matrix.arch }}"
+
+      - name: Log in to GHCR
+        if: steps.decide.outputs.build == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The Home Assistant builder handles the per-architecture base image,
+      # the OCI labels from build.yaml, and the tagging convention the
+      # Supervisor expects ({arch}-<slug>:<version> plus :latest).
+      - name: Build and publish
+        if: steps.decide.outputs.build == 'true'
+        uses: home-assistant/builder@master
+        with:
+          args: |
+            --${{ matrix.arch }} \
+            --target /data/${{ matrix.addon }} \
+            --image ${{ matrix.arch }}-${{ matrix.addon }} \
+            --docker-hub ghcr.io/${{ github.repository_owner }} \
+            --addon

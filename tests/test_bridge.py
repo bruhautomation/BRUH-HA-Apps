@@ -18,7 +18,6 @@ import os
 import tempfile
 import time
 import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
 
 # We can't import homeassistant directly, so we test the static methods
 # and logic patterns used in bridge.py
@@ -143,7 +142,7 @@ class TestBridgeStaticMethods(unittest.TestCase):
     def test_read_and_remove_empty_file_returns_error(self):
         """_read_and_remove should handle empty files."""
         path = os.path.join(self.tmpdir, "empty.json")
-        with open(path, "w") as f:
+        with open(path, "w"):
             pass  # empty file
         result = self._read_and_remove(path)
         self.assertIn("Error", result)

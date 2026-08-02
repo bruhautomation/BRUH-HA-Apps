@@ -14,7 +14,6 @@ Tests cover:
 
 import json
 import os
-import re
 import unittest
 
 import yaml

@@ -15,7 +15,6 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 import aiohttp
 from aiohttp.test_utils import AioHTTPTestCase
@@ -310,7 +309,7 @@ class TestWorldsSwitchAutoRestart(PanelTestBase):
         )
 
     async def test_switch_surfaces_restart_failure(self):
-        calls = await self._patch_deps(restart_err="Supervisor HTTP 403")
+        await self._patch_deps(restart_err="Supervisor HTTP 403")
         resp = await self.client.request("POST", "/api/worlds/survival/switch")
         self.assertEqual(resp.status, 200)
         data = await resp.json()
@@ -683,7 +682,8 @@ class TestWorldImport(PanelTestBase):
         self.assertEqual(resp.status, 400)
 
     async def test_import_rejects_zip_without_level_dat(self):
-        import io, zipfile
+        import io
+        import zipfile
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as z:
             z.writestr("notes.txt", "hi")
@@ -696,7 +696,9 @@ class TestWorldImport(PanelTestBase):
         self.assertIn("level.dat", (await resp.json())["error"])
 
     async def test_import_stages_valid_world(self):
-        import io, zipfile, tempfile, shutil
+        import io
+        import zipfile
+        import tempfile
         # Point the panel module's world directory at a tempdir so imports
         # don't try to write into /config.
         with tempfile.TemporaryDirectory() as tmp:
@@ -825,7 +827,6 @@ class TestRecommendDelta(PanelTestBase):
     async def test_any_change_false_when_matching(self):
         self._set_meminfo(8192)
         # Pick the recommendation first, then claim it's already current.
-        from importlib import reload
         rec_resp = await self.client.request("GET", "/api/recommend")
         rec = await rec_resp.json()
         self._set_options(memory_mb=rec["memory_mb"])
@@ -889,7 +890,8 @@ class TestWorldExport(PanelTestBase):
         self.assertEqual(resp.headers["Content-Type"], "application/zip")
         self.assertIn("myworld", resp.headers["Content-Disposition"])
         # The body is a real zip with our files in it.
-        import io, zipfile
+        import io
+        import zipfile
         buf = io.BytesIO(await resp.read())
         with zipfile.ZipFile(buf) as zf:
             names = set(zf.namelist())

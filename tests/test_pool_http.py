@@ -17,7 +17,6 @@ import types
 import uuid
 from pathlib import Path
 
-import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 POOL_PATH = (
@@ -246,7 +245,6 @@ def load_bridge(tmp_path: Path):
     ha_core.HomeAssistant = type("HomeAssistant", (), {})
     ha_helpers = types.ModuleType("homeassistant.helpers")
     ha_aiohttp = types.ModuleType("homeassistant.helpers.aiohttp_client")
-    import aiohttp
 
     def async_get_clientsession(hass):
         return hass.aiohttp_session
@@ -263,7 +261,7 @@ def load_bridge(tmp_path: Path):
     for name in ("bridge.py", "const.py"):
         (pkg_dir / name).write_text((BRIDGE_DIR / name).read_text())
     sys.path.insert(0, str(tmp_path))
-    pkg_name = f"bridgepkg"
+    pkg_name = "bridgepkg"
     if pkg_name in sys.modules:
         for mod_name in list(sys.modules):
             if mod_name.startswith(pkg_name):

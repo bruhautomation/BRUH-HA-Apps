@@ -5,6 +5,60 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.15.0
+
+### The management panel answered your whole network
+
+This add-on sets `host_network: true` so Bedrock clients can discover the
+server on the LAN, and the panel binds `0.0.0.0:8099`. Together that put the
+management API on your network with nothing in front of it. Ingress is a
+proxy, not a gate: it authenticates the people who arrive through Home
+Assistant and has no say over anyone who types the IP.
+
+So `http://homeassistant.local:8099` reached, without any login,
+`POST /api/command` (arbitrary RCON — `/op`, `/ban`, `/stop`), world delete,
+backup restore, plugin install and the server.properties editor. This is the
+exposure Home Assistant documented in
+[GHSA-gh5m-4m97-c95h](https://github.com/home-assistant/core/security/advisories/GHSA-gh5m-4m97-c95h).
+
+The panel now refuses any request that did not arrive through the
+Supervisor, judged by the connection's own peer address — not by
+`X-Forwarded-For`, which a direct caller sets themselves. Two paths stay
+public because they have to be: `/pack/{name}`, which Minecraft clients
+fetch the resource pack from, and `/api/health`, which reports liveness and
+nothing else. Refusals are logged, so "the panel does nothing when I open it
+by IP" has an answer in the add-on log.
+
+**Nothing changes if you open the panel from Home Assistant**, which is how
+the sidebar, the Worlds tab and every button already work.
+
+### AppArmor is on
+
+`apparmor: false` was set in `config.yaml`, which disabled the Supervisor's
+sandbox and cost a point of security rating. It matters more here than on
+most add-ons: this one loads third-party plugin jars that run with the
+server's full authority. The profile that replaced it lets the JVM do JVM
+things — fork and exec, executable memory for the JIT, the four game ports —
+and denies the host-escape set: mounting, kernel modules, raw sockets,
+kernel tunables, the Docker socket. **The add-on now rates 6/6 in the
+store.**
+
+### Added
+
+- **Every option has a name and an explanation in the UI.** All ~50 of them
+  were documented in `config.yaml` comments and none of it reached the
+  configuration page, which showed raw keys like `geyser_mtu` with no
+  description. `translations/en.yaml` moves that writing to where it is read.
+- **A watchdog** on the new `/api/health`, so a hung panel restarts instead
+  of sitting there reading as "started".
+- A minimum `homeassistant` version, declared rather than assumed.
+
+### Changed
+
+- The generated RCON password and the console log are excluded from Home
+  Assistant backups. Your worlds and world backups are still included —
+  those are the point of backing this add-on up.
+
 ## 1.14.6
 
 ### Changed

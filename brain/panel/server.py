@@ -100,7 +100,6 @@ from aiohttp.abc import AbstractAccessLogger
 
 import addon_options
 import card_tags
-import categories as cat_mod
 import chat_session
 import cli_commands
 import conversations

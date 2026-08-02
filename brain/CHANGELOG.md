@@ -2,6 +2,66 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.19.0
+
+### The terminal port was a shell anyone on your network could open
+
+`ports: 7681/tcp: 7681` published ttyd to the LAN on every install, and ttyd
+was started with `--writable` and no `--credential`. Anyone who could reach
+your Home Assistant box — a guest on the Wi-Fi, anything on the IoT VLAN, a
+compromised device — could open `http://homeassistant.local:7681` and get a
+root shell with `/config` read-write and a Claude Code already signed in to
+your Anthropic account. No Home Assistant login was involved at any point.
+This is the exposure Home Assistant documented in
+[GHSA-gh5m-4m97-c95h](https://github.com/home-assistant/core/security/advisories/GHSA-gh5m-4m97-c95h).
+
+Two things changed, and either alone would have been enough:
+
+- **The port is no longer published.** Ingress never needed it — the panel
+  reverse-proxies `/terminal/` to ttyd over loopback, which is what makes
+  Terminal a tab. If you were using the direct port for a wall tablet,
+  assign it again under the add-on's Network settings.
+- **ttyd requires a password now, published or not.** `run.sh` generates one
+  into `/data/terminal-credential` on first start and the panel presents it
+  upstream on every proxied request, so nothing changes for anyone coming in
+  through Home Assistant. The password is printed in the add-on log. The
+  proxy drops any `Authorization` header the browser sends before adding its
+  own, so a cached credential for the ingress origin cannot be replayed at
+  ttyd.
+
+`webui:` is gone with it — it pointed at the raw ttyd port, so the button
+would now lead somewhere nothing is listening.
+
+### An AppArmor profile
+
+brAIn shipped without one, which cost a point of the Supervisor's security
+rating and left the container unsandboxed. brAIn runs an agent that edits
+files and runs commands, so a profile enumerating permitted binaries would
+break the first time you asked it to do something new. This one constrains
+what brAIn can do to the **host** instead: no mounting, no kernel modules,
+no raw sockets, no writes to kernel tunables, no Docker socket, and no
+ptracing out of the profile. **brAIn now rates 6/6 in the add-on store.**
+
+### The Claude credential no longer rides into your backups
+
+`/data` holds your signed-in Claude Code session, and Home Assistant backups
+are unencrypted unless you opt in — then get copied to cloud storage, NAS
+shares and support tickets. `backup_exclude` now keeps the OAuth credential,
+the terminal password and the chat scrollback out of them. Restoring costs
+you one sign-in.
+
+### Added
+
+- **Every option has a name and an explanation in the UI.** `config.yaml`
+  documented all 35 of them in comments nobody installing an add-on reads,
+  while the configuration page showed `assist_max_turns` with a blank
+  description. `translations/en.yaml` moves that writing to where it is read.
+- **A watchdog.** The panel is the ingress target and the foreground
+  process, so a hung panel was a dead add-on that still read as "started".
+  The Supervisor now polls `/api/health` and restarts it.
+- `stage`, `boot` and a minimum `homeassistant` version, declared rather
+  than inherited from defaults.
+
 ## 1.18.3
 
 ### Changed

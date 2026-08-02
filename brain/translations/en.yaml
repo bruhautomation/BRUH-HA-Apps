@@ -1,0 +1,178 @@
+---
+# Option labels and help text for brAIn's configuration UI.
+#
+# Without this file Home Assistant renders the raw key — `assist_max_turns`
+# with an empty description — and every explanation in config.yaml stays a
+# comment nobody installing the add-on ever reads. The wording here is the
+# same wording as those comments, phrased for someone looking at the form.
+configuration:
+  enable_terminal:
+    name: Terminal tab
+    description: >-
+      Show the Terminal tab, where you talk to Claude Code directly. Turn
+      this off to run brAIn as insights and voice only.
+  enable_insights:
+    name: Insights tab
+    description: >-
+      Show the Insights and Findings tabs — the scheduled reports about
+      your home and the list of things brAIn thinks are broken.
+  auto_launch_claude:
+    name: Start Claude in the terminal
+    description: >-
+      Open Claude Code automatically when you open the Terminal tab. Off
+      gives you a plain shell, with `claude` available to run yourself.
+  auto_generate_context:
+    name: Write CLAUDE.md for your config
+    description: >-
+      Keep /config/CLAUDE.md up to date with a summary of your entities,
+      areas and integrations, so Claude starts every conversation already
+      knowing the shape of your home.
+  enable_ha_mcp_server:
+    name: Home Assistant tools
+    description: >-
+      Give Claude direct tools for reading entity states, calling
+      services, browsing the registry and rendering templates. Turning
+      this off leaves Claude able to read your files but not your house.
+  enable_assist_integration:
+    name: Voice assistant
+    description: >-
+      Register brAIn under Settings → Voice assistants so you can pick it
+      as a conversation agent and talk to your home.
+  enable_automation_integration:
+    name: Automation tasks
+    description: >-
+      Let automations hand Claude a job with the `brain.run_task` service.
+  enable_mobile_ui:
+    name: Mobile terminal toolbar
+    description: >-
+      Add an arrow-key and modifier toolbar to the terminal on phones and
+      tablets, plus the iOS dictation fix. No effect on desktop.
+  dangerously_skip_permissions:
+    name: Skip permission prompts in the terminal
+    description: >-
+      Stop Claude asking before it edits a file or runs a command in the
+      interactive terminal. Convenient, and exactly as risky as it sounds
+      — everything brAIn can reach, it can then change without asking.
+      Background listeners ignore this and use their own allow-list.
+  assist_fast_mode:
+    name: Fast voice responses
+    description: >-
+      Keep warm Claude processes ready so voice commands answer in about
+      a second instead of waiting for a cold start. Uses more memory.
+  assist_tool_access:
+    name: What voice can reach
+    description: >-
+      "Home Assistant only" limits voice to entities, services and the
+      registry. "Full" also gives it the shell and your files — more
+      capable, and a much larger blast radius for a misheard sentence.
+  assist_max_turns:
+    name: Voice thinking limit
+    description: >-
+      How many tool calls a single voice command may make before brAIn
+      answers with what it has. Higher handles harder questions and takes
+      longer.
+  automation_max_turns:
+    name: Automation task limit
+    description: >-
+      How many tool calls a `brain.run_task` job may make before it stops.
+  study_max_turns:
+    name: Study session limit
+    description: >-
+      How many tool calls a "learn/study/research" request may make. These
+      run in the background, so this can be generous.
+  study_timeout_minutes:
+    name: Study session timeout
+    description: How long a study session may run before it is stopped.
+  learning:
+    name: Learn about your home
+    description: >-
+      Let brAIn file what it discovers into its memory, so it stops
+      re-asking things you have already told it.
+  memory_injection:
+    name: Use memory in answers
+    description: >-
+      Include what brAIn has learned in its prompts. Off keeps the memory
+      document but stops it informing answers.
+  memory_max_kb:
+    name: Memory size limit
+    description: >-
+      How large the memory document may grow. When it is full, filing new
+      facts means dropping old ones. This is not a speed setting — voice
+      reads a separate 2 KB summary and never the full document.
+  edit_journal_days:
+    name: Keep undo history for
+    description: >-
+      How long to keep the file snapshots taken before Claude edits
+      anything, so `brain undo` can put them back. 0 disables snapshots.
+  auto_refresh_hours:
+    name: Refresh insights every
+    description: >-
+      How often scheduled insight cards regenerate. 0 turns off automatic
+      refreshes and leaves you to regenerate cards by hand.
+  history_days:
+    name: History to analyse
+    description: >-
+      How many days of entity history to hand an insight run. More gives
+      better trends and costs more of your Claude usage per run.
+  history_keep_runs:
+    name: Keep past versions
+    description: How many previous versions of each insight card to keep.
+  history_keep_days:
+    name: Discard versions after
+    description: How long to keep past insight versions before pruning them.
+  model:
+    name: Claude model
+    description: >-
+      Model to use, e.g. claude-opus-5 or claude-sonnet-5. Leave blank to
+      use whatever your Claude Code login defaults to.
+  generation_timeout_minutes:
+    name: Insight timeout
+    description: >-
+      How long a single insight run may take before it is abandoned.
+  access_share:
+    name: Access /share
+    description: Let brAIn read and write Home Assistant's share folder.
+  access_media:
+    name: Access /media
+    description: Let brAIn read and write your media folder.
+  access_backup:
+    name: Read backups
+    description: >-
+      Let brAIn read (never write) your backup folder, so it can tell you
+      what is in a backup and when it was taken.
+  access_addon_configs:
+    name: Access other add-on configs
+    description: >-
+      Let brAIn read and edit the configuration folders of your other
+      add-ons — needed to debug them, and a wide door.
+  access_addons:
+    name: Access local add-ons
+    description: >-
+      Let brAIn read and edit add-ons you are developing locally.
+  additional_directories:
+    name: Extra folders
+    description: >-
+      Additional paths to mount into the add-on, one per line, for config
+      that lives outside the usual places.
+  persistent_apk_packages:
+    name: Alpine packages to keep
+    description: >-
+      Alpine (apk) packages reinstalled on every restart, so tools you
+      rely on survive an add-on update.
+  persistent_pip_packages:
+    name: Python packages to keep
+    description: >-
+      Python (pip) packages reinstalled on every restart.
+  log_level:
+    name: Log level
+    description: >-
+      How much brAIn writes to the add-on log. "debug" also turns the
+      terminal's own websocket logging back on — verbose, but the right
+      setting when something is going wrong.
+network:
+  7681/tcp: >-
+    Web terminal, direct access. Off by default and not needed for normal
+    use — the terminal is already a tab in the panel. Assign a port only
+    for something like a wall tablet that opens the terminal directly. It
+    is password-protected either way; the password is in the add-on log
+    and at /data/terminal-credential.

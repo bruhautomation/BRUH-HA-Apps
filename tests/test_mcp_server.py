@@ -221,7 +221,7 @@ class TestToolImplementations(unittest.TestCase):
         """Test calling a HA service."""
         mock_api.return_value = [{"entity_id": "light.test", "state": "on"}]
 
-        result = ha_mcp_server.call_service("light", "turn_on", {"entity_id": "light.test"})
+        ha_mcp_server.call_service("light", "turn_on", {"entity_id": "light.test"})
         mock_api.assert_called_with("/api/services/light/turn_on", method="POST", data={"entity_id": "light.test"})
 
     @patch("ha_mcp_server.ha_api_request")
@@ -315,7 +315,7 @@ class TestToolImplementations(unittest.TestCase):
         """Test firing an event."""
         mock_api.return_value = {"message": "Event fired."}
 
-        result = ha_mcp_server.fire_event("custom_event", {"key": "value"})
+        ha_mcp_server.fire_event("custom_event", {"key": "value"})
         mock_api.assert_called_once()
 
     @patch("ha_mcp_server.ha_api_request")
@@ -371,7 +371,7 @@ class TestHandleToolCall(unittest.TestCase):
     def test_routes_get_entity_state(self, mock_fn):
         """Test routing to get_entity_state."""
         mock_fn.return_value = {"entity_id": "test"}
-        result = ha_mcp_server.handle_tool_call("get_entity_state", {"entity_id": "light.test"})
+        ha_mcp_server.handle_tool_call("get_entity_state", {"entity_id": "light.test"})
         mock_fn.assert_called_with(entity_id="light.test")
 
     @patch("ha_mcp_server.get_all_states")

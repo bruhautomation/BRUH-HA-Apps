@@ -19,7 +19,7 @@ import json
 import os
 import sys
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "brain", "ha-mcp-server"))
 
@@ -308,7 +308,7 @@ class TestEdgeCaseHandleToolCall(unittest.TestCase):
     def test_extra_arguments_ignored(self, mock_fn):
         """Extra arguments beyond required should not cause errors."""
         mock_fn.return_value = {"entity_id": "test"}
-        result = ha_mcp_server.handle_tool_call(
+        ha_mcp_server.handle_tool_call(
             "get_entity_state",
             {"entity_id": "test.entity", "extra_field": "ignored"}
         )
@@ -386,7 +386,7 @@ class TestTemplateRendering(unittest.TestCase):
     def test_render_empty_template(self, mock_api):
         """Empty template should still be sent to HA."""
         mock_api.return_value = ""
-        result = ha_mcp_server.render_template("")
+        ha_mcp_server.render_template("")
         mock_api.assert_called_once()
 
     @patch("ha_mcp_server.ha_api_request")

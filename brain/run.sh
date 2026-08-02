@@ -1670,6 +1670,40 @@ get_claude_launch_command() {
 # Web Terminal
 # ============================================================================
 
+# The password ttyd asks for on its own port.
+#
+# ttyd is a shell. Anyone who reaches it gets /config read-write and a
+# Claude Code already signed in to the user's account — so it is the one
+# thing in this add-on that must never answer an unauthenticated request.
+# Ingress authenticates its own callers, but 7681 is a plain TCP port a
+# user can publish to the LAN from the add-on's Network panel, and until
+# now that published port had no password at all.
+#
+# The credential is generated once and kept in /data (persistent, so it
+# survives restarts and the terminal proxy can read it back). The panel
+# forwards it upstream on every proxied request, so ingress users never
+# see a login prompt — this exists for the direct port only.
+setup_terminal_credential() {
+    local cred_file="/data/terminal-credential"
+
+    if [ -s "$cred_file" ]; then
+        TTYD_CREDENTIAL=$(cat "$cred_file")
+        return
+    fi
+
+    local password
+    password=$(head -c 24 /dev/urandom | base64 | tr -d '/+=' | head -c 24)
+    if [ -z "$password" ]; then
+        bashio::log.error "  Terminal: could not generate a password — refusing to start ttyd unprotected"
+        return 1
+    fi
+
+    TTYD_CREDENTIAL="brain:${password}"
+    # 0600 root-only: the panel runs as root and is the only reader.
+    (umask 077 && printf '%s' "$TTYD_CREDENTIAL" > "$cred_file")
+    bashio::log.info "  Terminal: generated a password for direct access on :7681"
+}
+
 start_web_terminal() {
     local port=7681
 
@@ -1677,6 +1711,11 @@ start_web_terminal() {
     enable_terminal=$(bashio::config 'enable_terminal' 'true')
     if [ "$enable_terminal" != "true" ]; then
         bashio::log.info "Terminal disabled (enable_terminal: false) — panel only"
+        return
+    fi
+
+    if ! setup_terminal_credential; then
+        bashio::log.error "Terminal not started (no credential)"
         return
     fi
 
@@ -1745,6 +1784,7 @@ start_web_terminal() {
     ttyd \
         --port "${port}" \
         --interface 0.0.0.0 \
+        --credential "${TTYD_CREDENTIAL}" \
         --writable \
         --debug "${ttyd_debug}" \
         --ping-interval 30 \
@@ -1757,7 +1797,8 @@ start_web_terminal() {
         bash -c "$launch_command" &
 
     TTYD_PID=$!
-    bashio::log.info "  Terminal ready (proxied at /terminal/, direct on :${port})"
+    bashio::log.info "  Terminal ready (proxied at /terminal/)"
+    bashio::log.info "  Direct access on :${port} needs a password — see the panel's Settings, or /data/terminal-credential"
 }
 
 # ============================================================================

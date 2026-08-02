@@ -1,0 +1,47 @@
+name: CodeQL
+
+# tests/test_security.py catches what a regex can catch — hardcoded
+# tokens, obvious injection shapes, missing quotes. CodeQL catches the
+# rest: taint from a request parameter into a subprocess call, path
+# traversal into a file read, and the like. Both add-ons take untrusted
+# input (voice commands, automation payloads, uploaded zips), so the
+# dataflow analysis is worth the minutes.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly, so a newly-published query finds old code too.
+    - cron: "27 4 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python, javascript-typescript]
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          language: ${{ matrix.language }}
+          queries: security-and-quality
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"

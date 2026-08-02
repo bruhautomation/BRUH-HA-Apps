@@ -21,13 +21,11 @@ from __future__ import annotations
 import json
 import logging
 import os
-import time
-from datetime import datetime, timedelta, timezone
-from typing import Any
+from datetime import datetime, timezone
 
 from homeassistant.core import HomeAssistant
 
-from .const import DOMAIN, MEMORY_DIR, SHARED_DIR
+from .const import MEMORY_DIR, SHARED_DIR
 
 _LOGGER = logging.getLogger(__name__)
 

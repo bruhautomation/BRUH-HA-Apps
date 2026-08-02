@@ -14,7 +14,6 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import json
-import os
 import sys
 import types
 import unittest
@@ -58,7 +57,6 @@ def _install_ha_stubs() -> tuple[types.ModuleType, list[dict]]:
         entry_id = "test"
     sys.modules["homeassistant.config_entries"].ConfigEntry = _ConfigEntry
 
-    import dataclasses as _dc
 
     class _AnyAttrMeta(type):
         def __getattr__(cls, name: str):
@@ -117,7 +115,7 @@ def _install_ha_stubs() -> tuple[types.ModuleType, list[dict]]:
         spec.loader.exec_module(module)  # type: ignore[union-attr]
         return module
 
-    const = _exec("const")
+    _exec("const")
     bridge = _exec("bridge")
     _exec("coordinator")
     _exec("entity")

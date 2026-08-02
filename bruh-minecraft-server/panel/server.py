@@ -23,17 +23,33 @@ GET  /api/logs/tail         — Server-Sent Events stream of console.log tail
 Runs as the `minecraft` user on 0.0.0.0:8099. The HA supervisor proxies the
 ingress URL into /api/hassio_ingress/<token>/...; we therefore use only
 relative links in the HTML and let aiohttp serve at /.
+
+Why 0.0.0.0 is not the same as "public"
+---------------------------------------
+This add-on sets `host_network: true` (Bedrock LAN discovery needs it), so
+binding 0.0.0.0:8099 puts this server on the *host's* network — reachable
+from every device on the LAN, with no Home Assistant login in front of it.
+Ingress is a proxy, not a gate: it authenticates its own callers and has
+no say over anyone who types the IP directly. Until the `_lan_gate`
+middleware below, `POST /api/command` (arbitrary RCON), world delete and
+restore all answered those callers. That is the exposure Home Assistant
+documented in GHSA-gh5m-4m97-c95h.
+
+The gate allows the Supervisor's own networks and loopback, and nothing
+else — except the two paths that must stay public: `/pack/{name}`, which
+Minecraft clients fetch the resource pack from, and `/api/health`, which
+the Supervisor watchdog polls and which reports liveness only.
 """
 from __future__ import annotations
 
 import asyncio
 import hashlib
+import ipaddress
 import json
+import logging
 import os
 import re
-import shlex
 import shutil
-import subprocess
 import sys
 import tempfile
 import time
@@ -104,6 +120,84 @@ RCON_HOST = "127.0.0.1"
 RCON_PORT = 25575
 BIND_HOST = "0.0.0.0"
 BIND_PORT = 8099
+
+log = logging.getLogger("bruh_minecraft.panel")
+
+
+# ---------------------------------------------------------------------------
+# LAN gate — who is allowed to reach the management API
+# ---------------------------------------------------------------------------
+# The Supervisor proxies ingress requests from its own container, so a
+# legitimate panel request arrives from the hassio docker network. These are
+# the ranges the Supervisor documents for it, plus loopback for anything the
+# add-on calls on itself.
+_ALLOWED_NETWORKS = tuple(
+    ipaddress.ip_network(cidr) for cidr in (
+        "172.30.32.0/23",          # hassio bridge (Supervisor, ingress)
+        "fd0c:ac1e:2100::/48",     # hassio bridge, IPv6
+        "127.0.0.0/8",
+        "::1/128",
+    )
+)
+
+# Paths that answer anyone. Both are reads, and neither exposes state:
+# a resource pack is by definition handed to every player who joins, and
+# health is a liveness bit for the Supervisor watchdog.
+_PUBLIC_PREFIXES = ("/pack/", "/api/health")
+
+
+def _peer_ip(request: web.Request) -> str | None:
+    """Source address of the connection itself.
+
+    Deliberately NOT X-Forwarded-For: that header is set by the client on a
+    direct connection, so trusting it would let a LAN caller claim to be the
+    Supervisor and walk straight through this gate.
+    """
+    peer = request.transport.get_extra_info("peername") if request.transport else None
+    # A TCP peername is (host, port[, ...]); a unix-socket one is a string
+    # path, and a closed transport gives None. Only the tuple form carries
+    # an address — anything else has no address to trust, and `_is_trusted`
+    # turns that into a refusal rather than an exception in the middleware.
+    if not isinstance(peer, tuple) or not peer:
+        return None
+    host = peer[0]
+    if not isinstance(host, str):
+        return None
+    # IPv4-mapped IPv6 (::ffff:192.168.1.5) — compare as the IPv4 it is.
+    if host.startswith("::ffff:"):
+        host = host[len("::ffff:"):]
+    return host
+
+
+def _is_trusted(host: str | None) -> bool:
+    if not host:
+        return False
+    try:
+        addr = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return any(addr in net for net in _ALLOWED_NETWORKS)
+
+
+@web.middleware
+async def _lan_gate(request: web.Request, handler):
+    """Refuse management requests that did not come through the Supervisor."""
+    if any(request.path.startswith(p) for p in _PUBLIC_PREFIXES):
+        return await handler(request)
+
+    host = _peer_ip(request)
+    if _is_trusted(host):
+        return await handler(request)
+
+    log.warning(
+        "refused %s %s from %s — the panel is reachable on the LAN because "
+        "host_network is on, but only Home Assistant may drive it",
+        request.method, request.path, host or "unknown",
+    )
+    return web.json_response(
+        {"error": "forbidden: open this panel from Home Assistant"},
+        status=403,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1805,6 +1899,16 @@ async def api_resource_pack_apply(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "url": url, "sha1": sha1})
 
 
+async def api_health(_: web.Request) -> web.Response:
+    """Liveness for the Supervisor watchdog. Public, and says nothing.
+
+    Deliberately not a status endpoint: anything that reported the world
+    name, player list or server version here would be handing the LAN the
+    reconnaissance the gate above exists to withhold.
+    """
+    return web.json_response({"ok": True})
+
+
 async def serve_pack(request: web.Request) -> web.Response:
     """Public endpoint Minecraft clients fetch the pack from. No auth — packs
     are by definition public assets the server hands to anyone who joins."""
@@ -2128,7 +2232,12 @@ async def api_curated_install_status(_: web.Request) -> web.Response:
 # App factory
 # ---------------------------------------------------------------------------
 def build_app() -> web.Application:
-    app = web.Application()
+    # The gate goes on first so it sees every request, including static
+    # assets — the panel's own JS is not something the LAN needs either.
+    app = web.Application(middlewares=[_lan_gate])
+
+    # Liveness for the watchdog; public by design (see _PUBLIC_PREFIXES).
+    app.router.add_get("/api/health", api_health)
 
     # Static
     app.router.add_get("/", index)
@@ -2186,6 +2295,10 @@ def build_app() -> web.Application:
 
 
 def main() -> None:
+    # access_log is off, so without this the gate's refusals would go
+    # nowhere — and "the panel does nothing when I open it by IP" is
+    # exactly the case that needs a line in the add-on log.
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     MC_PANEL_STATE.mkdir(parents=True, exist_ok=True)
     web.run_app(build_app(), host=BIND_HOST, port=BIND_PORT, access_log=None)
 

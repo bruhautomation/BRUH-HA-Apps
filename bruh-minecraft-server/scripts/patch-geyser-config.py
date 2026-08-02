@@ -67,7 +67,7 @@ def set_key(text: str, key: str, value: str, *, section_path: list[str]) -> str:
 
     # 3. Build the missing section path at end-of-file.
     trailer = "" if text.endswith("\n") else "\n"
-    block = [f"\n# Added by BRUH Minecraft Server add-on\n"]
+    block = ["\n# Added by BRUH Minecraft Server add-on\n"]
     for depth, name in enumerate(section_path):
         block.append("  " * depth + f"{name}:\n")
     block.append("  " * len(section_path) + f"{key}: {value}\n")

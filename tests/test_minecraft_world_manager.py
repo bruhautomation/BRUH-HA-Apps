@@ -20,7 +20,6 @@ symlink to the active profile. These tests lock in:
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 import tempfile
 import textwrap

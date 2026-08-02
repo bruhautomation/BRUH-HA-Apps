@@ -13,7 +13,6 @@ Tests cover:
 
 import os
 import yaml
-import json
 import unittest
 
 BASE_DIR = os.path.join(os.path.dirname(__file__), "..")

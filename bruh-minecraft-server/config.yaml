@@ -1,7 +1,7 @@
 ---
 name: "BRUH Minecraft"
 description: "Rock-solid Minecraft Java Edition server with ingress panel, RCON, git world backups, auto-updates, plugin management, and deep Home Assistant integration"
-version: "1.14.6"
+version: "1.15.0"
 slug: "bruh_minecraft_server"
 init: false
 
@@ -13,13 +13,37 @@ arch:
 # External resources
 url: "https://github.com/bruhautomation/BRUH-HA-Apps/tree/main/bruh-minecraft-server"
 
-# AppArmor profile
-apparmor: false
+# AppArmor profile — see apparmor.txt next to this file.
+#
+# This was `false`, which both disabled the sandbox and cost a point of
+# the Supervisor's security rating. The profile that replaced it lets the
+# JVM do JVM things (fork/exec, executable memory for the JIT, the four
+# game ports) and denies the host-escape set: mount, kernel modules, raw
+# sockets, kernel tunables, the Docker socket. That matters more here than
+# on most add-ons, because this one loads third-party plugin jars.
+apparmor: true
 
 # Boot policy
 boot: auto
 startup: services
 stage: stable
+
+# Restart the add-on if the panel stops answering. /api/health is the one
+# endpoint the LAN gate lets through unauthenticated (it reports liveness
+# and nothing else), so the watchdog does not depend on where it is
+# called from.
+watchdog: "http://[HOST]:[PORT:8099]/api/health"
+
+# Keep the RCON password out of Home Assistant backups. Worlds and
+# backups themselves are the point of backing this add-on up; the
+# generated admin credential is not, and HA backups are unencrypted
+# unless the user opts in.
+backup_exclude:
+  - panel/rcon.secret
+  - panel/console.log
+
+# The panel writes options back through the Supervisor.
+homeassistant: "2023.6.0"
 
 # Web interface configuration (ingress panel)
 ingress: true
