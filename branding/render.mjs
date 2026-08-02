@@ -47,8 +47,8 @@ const APPS = [
 		],
 		lockups: [
 			['brain/logo.png', 512, 384],
-			['brands/custom_integrations/brain/logo.png', 512, 384],
-			['brands/custom_integrations/brain/logo@2x.png', 1024, 768],
+			['brands/custom_integrations/brain/logo.png', 341, 256],
+			['brands/custom_integrations/brain/logo@2x.png', 682, 512],
 		],
 	},
 	{
@@ -62,8 +62,8 @@ const APPS = [
 		],
 		lockups: [
 			['bruh-minecraft-server/logo.png', 512, 384],
-			['brands/custom_integrations/bruh_minecraft/logo.png', 512, 384],
-			['brands/custom_integrations/bruh_minecraft/logo@2x.png', 1024, 768],
+			['brands/custom_integrations/bruh_minecraft/logo.png', 341, 256],
+			['brands/custom_integrations/bruh_minecraft/logo@2x.png', 682, 512],
 		],
 	},
 ];
@@ -106,6 +106,13 @@ for (const app of APPS) {
 	// plate, or crop it if fitted by width. The SVG keeps its viewBox and fills
 	// the padded box; preserveAspectRatio defaults to "meet", so it scales to
 	// fit and can never crop.
+	//
+	// The add-on store plate and the brands plate are the same 4:3 drawing at
+	// two different sizes, and the second is not a free choice: brands caps the
+	// *shortest* side of a logo at 256 (512 hDPI), so a 4:3 plate is 341×256 and
+	// 682×512 there — 512×384 fails `scripts/validate.sh` in that repo on height
+	// alone. The store has no such rule, so it keeps the larger plate. Padding is
+	// a fraction of the width, so both sizes are the same drawing.
 	for (const [out, w, h] of app.lockups) {
 		const svg = read(app.logo).replace('<svg ', '<svg style="width:100%;height:100%" ');
 		const pad = Math.round(w * 0.137);
