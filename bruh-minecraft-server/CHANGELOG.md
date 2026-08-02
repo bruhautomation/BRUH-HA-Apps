@@ -5,6 +5,20 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.15.1
+
+### Fixed
+
+- **The integration page showed no logo.** Home Assistant had no artwork for the
+  `bruh_minecraft` domain and fell back to printing the raw domain beside the
+  name. The artwork was staged for a submission to home-assistant/brands that
+  can no longer be made — since Home Assistant 2026.3.0 that repository closes
+  any pull request adding a new custom integration automatically.
+
+  The integration now ships a `brand/` folder beside its manifest, which Home
+  Assistant serves itself and prefers over the CDN. The icon and wide lockup
+  appear with nothing to submit and nobody to wait for.
+
 ## 1.15.0
 
 ### The management panel answered your whole network
