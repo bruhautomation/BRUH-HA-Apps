@@ -2,6 +2,23 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.19.1
+
+### Added
+
+- **"Back up Home Assistant first" now says so where it matters.** brAIn edits
+  your real configuration — automations, dashboards, helpers, entities. It is
+  built to be careful, it snapshots every file before it changes it, and
+  `brain undo` puts them back. None of that is a backup you can restore from,
+  and the gap between "careful" and "recoverable" is the one worth naming out
+  loud. The notice sits on the first-run screen, above every phase of it, so
+  it is on screen before brAIn is allowed to change anything — and in the
+  README and DOCS for anyone deciding whether to install.
+
+  It is styled as a caution rather than an error. Red in this panel means
+  "something went wrong just now", and a permanent notice wearing it teaches
+  people to read past red.
+
 ## 1.19.0
 
 ### The terminal port was a shell anyone on your network could open
