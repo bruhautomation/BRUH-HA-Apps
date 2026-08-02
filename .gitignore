@@ -1,7 +1,14 @@
 # Node.js
+# There is no Node package in this repo — the only reason npm ever runs here
+# is `npm install playwright` at the root, which the manual browser checks in
+# tests/manual/ ask for. That writes a package.json and a lockfile nothing
+# reads, so running the checks left `git status` dirty.
 node_modules/
 npm-debug.log
 yarn-error.log
+# Anchored: a bare `package.json` would also swallow one added beside
+# branding/render.mjs, which is Node and could legitimately grow one.
+/package.json
 package-lock.json
 yarn.lock
 
