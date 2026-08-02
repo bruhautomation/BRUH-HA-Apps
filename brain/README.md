@@ -39,7 +39,7 @@ subscription — or your own API key.
 
 ![The brAIn Insights tab: an ask bar, tag filters, and insight cards — one answering "Why
 did the hallway light come on at 3 am?" with a trace timeline, one showing a month of
-electricity by device](../docs/images/panel-insights.webp)
+electricity by device](https://raw.githubusercontent.com/bruhautomation/BRUH-HA-Apps/main/docs/images/panel-insights.webp)
 
 ## What it does
 
@@ -55,7 +55,7 @@ electricity by device](../docs/images/panel-insights.webp)
 ![The brAIn Findings tab, headed "What brAIn thinks is broken", listing a dead back-door
 battery sensor, thirteen orphaned entities, and two loft sensors that never rejoined after a
 Zigbee channel change — each with Fix it, Discuss, I've fixed it, Remind me later and Not a
-problem here](../docs/images/panel-findings.webp)
+problem here](https://raw.githubusercontent.com/bruhautomation/BRUH-HA-Apps/main/docs/images/panel-findings.webp)
 
 ## Try it in one line
 
@@ -79,7 +79,7 @@ why didn't the porch light automation fire last night?
 
 ![The brAIn Terminal tab in chat mode, tracing a 3 am light through the logbook and an
 automation trace, then editing the automation, validating the YAML and reloading the
-domain](../docs/images/panel-terminal.webp)
+domain](https://raw.githubusercontent.com/bruhautomation/BRUH-HA-Apps/main/docs/images/panel-terminal.webp)
 
 ## The CLI
 
@@ -118,6 +118,17 @@ Two offline copies ship with the add-on and say the same things: [DOCS.md](DOCS.
 Home Assistant renders on the add-on's **Documentation** tab, and the panel's own **Docs**
 tab, which is searchable and works with no internet at all.
 
+## Credits
+
+The web terminal at the heart of this add-on began as
+[Claude Terminal](https://github.com/heytcass/home-assistant-addons) by Tom
+Cassady — that add-on is what showed Claude Code could live inside Home
+Assistant behind ingress at all. BRUH Terminal was built on it, and brAIn is
+what BRUH Terminal grew into.
+
+BRUH Power Tools is adapted from [Spook](https://github.com/frenck/spook) by
+Franck Nijhof (MIT).
+
 ## License
 
-MIT. BRUH Power Tools is adapted from [Spook](https://github.com/frenck/spook) (MIT).
+MIT.

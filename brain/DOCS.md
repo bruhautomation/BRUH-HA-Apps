@@ -534,6 +534,17 @@ That is the point of it, and it is worth knowing where the edges are.
 | `/data/findings.json` | The findings list and its history. |
 | `/data/.brain/edits/` | The edit journal `brain undo` restores from. |
 
+## Credits
+
+The web terminal at the heart of this add-on began as
+[Claude Terminal](https://github.com/heytcass/home-assistant-addons) by Tom
+Cassady — that add-on is what showed Claude Code could live inside Home
+Assistant behind ingress at all. BRUH Terminal was built on it, and brAIn is
+what BRUH Terminal grew into.
+
+BRUH Power Tools is adapted from [Spook](https://github.com/frenck/spook) by
+Franck Nijhof (MIT).
+
 ## License
 
-MIT. BRUH Power Tools is adapted from [Spook](https://github.com/frenck/spook) (MIT).
+MIT.

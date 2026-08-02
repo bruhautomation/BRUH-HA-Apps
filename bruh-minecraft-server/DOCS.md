@@ -656,7 +656,7 @@ script:
           command: "fill ~-10 ~ ~-10 ~10 ~ ~10 minecraft:stone"
 ```
 
-**Assist voice control** — the [brAIn](../brain/) add-on pairs with this to let you say "tell everyone dinner's ready" and have it hit the `say` service. See the brAIn docs for setup; no config change needed on the Minecraft side.
+**Assist voice control** — the [brAIn](https://github.com/bruhautomation/BRUH-HA-Apps/blob/main/brain/) add-on pairs with this to let you say "tell everyone dinner's ready" and have it hit the `say` service. See the brAIn docs for setup; no config change needed on the Minecraft side.
 
 ## 4.3 Security considerations
 

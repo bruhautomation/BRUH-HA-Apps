@@ -54,6 +54,17 @@ https://github.com/bruhautomation/BRUH-HA-Apps
 
 BRUH Automation and these add-ons are independent projects, **not affiliated with, endorsed by, or sponsored by Anthropic, Home Assistant / Nabu Casa, Mojang, or Microsoft**. "Claude" and "Claude Code" are trademarks of Anthropic, PBC; "Minecraft" is a trademark of Mojang Synergies AB; "Home Assistant" is a trademark of the Open Home Foundation. The brAIn add-on runs the official Claude Code CLI under **your own** Anthropic account — your use of Claude through it is governed by [Anthropic's terms](https://www.anthropic.com/legal/consumer-terms). The BRUH Minecraft add-on downloads server software from official upstream sources at runtime and requires you to accept the [Minecraft EULA](https://www.minecraft.net/eula) yourself.
 
+## Credits
+
+brAIn's web terminal began as
+[Claude Terminal](https://github.com/heytcass/home-assistant-addons) by Tom
+Cassady — that add-on is what showed Claude Code could live inside Home
+Assistant behind ingress at all. BRUH Terminal was built on it, and brAIn is
+what BRUH Terminal grew into.
+
+BRUH Power Tools is adapted from [Spook](https://github.com/frenck/spook) by
+Franck Nijhof (MIT).
+
 ## License
 
 [MIT](LICENSE)
