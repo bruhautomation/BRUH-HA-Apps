@@ -110,6 +110,17 @@ Two offline copies ship with the add-on and say the same things: [DOCS.md](DOCS.
 Home Assistant renders on the add-on's **Documentation** tab, and the panel's own **Docs**
 tab, which is searchable and works with no internet at all.
 
+## Credits
+
+The web terminal at the heart of this add-on began as
+[Claude Terminal](https://github.com/heytcass/home-assistant-addons) by Tom
+Cassady — that add-on is what showed Claude Code could live inside Home
+Assistant behind ingress at all. BRUH Terminal was built on it, and brAIn is
+what BRUH Terminal grew into.
+
+BRUH Power Tools is adapted from [Spook](https://github.com/frenck/spook) by
+Franck Nijhof (MIT).
+
 ## License
 
-MIT. BRUH Power Tools is adapted from [Spook](https://github.com/frenck/spook) (MIT).
+MIT.
