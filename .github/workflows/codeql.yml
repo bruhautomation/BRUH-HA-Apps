@@ -1,0 +1,61 @@
+name: CodeQL
+
+# tests/test_security.py catches what a regex can catch — hardcoded
+# tokens, obvious injection shapes, missing quotes. CodeQL catches the
+# rest: taint from a request parameter into a subprocess call, path
+# traversal into a file read, and the like. Both add-ons take untrusted
+# input (voice commands, automation payloads, uploaded zips), so the
+# dataflow analysis is worth the minutes.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly, so a newly-published query finds old code too.
+    - cron: "27 4 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze
+    runs-on: ubuntu-latest
+    # Code scanning is free on public repositories and a paid add-on
+    # (GitHub Code Security) on private ones. While this repo is private
+    # the analysis runs fine and finds nothing, then fails uploading its
+    # results with "Code scanning is not enabled for this repository" — a
+    # permanently red check that reports a billing state, not a defect.
+    #
+    # So the job sits out while the repo is private and starts itself the
+    # moment it is public, which an add-on repository has to be anyway
+    # (Home Assistant fetches repository.yaml over plain HTTPS). Nothing
+    # to remember to turn on later.
+    if: github.event.repository.private == false
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python, javascript-typescript]
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          # `languages`, plural. Singular is silently ignored — the action
+          # warns and falls back to autodetect, so both matrix jobs scanned
+          # every language instead of one each, doing the same work twice.
+          languages: ${{ matrix.language }}
+          queries: security-and-quality
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:${{ matrix.language }}"
