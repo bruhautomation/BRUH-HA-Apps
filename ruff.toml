@@ -1,0 +1,42 @@
+# Ruff configuration.
+#
+# The point of adding a Python linter to a codebase this size is to catch
+# the errors that are errors — unused imports that outlived a refactor,
+# variables assigned and never read, f-strings with nothing to
+# interpolate. It is not to relitigate the house style, which is settled
+# and consistent across ~15k lines.
+#
+# So: pyflakes (F) and the pycodestyle errors (E) are on, and the handful
+# of E rules that argue with the existing style are off, each with the
+# reason it is off. Adding a rule later should mean fixing the code it
+# flags, not adding another line to the ignore list.
+
+target-version = "py311"
+
+exclude = [
+    "brands",
+    "branding",
+]
+
+[lint]
+select = ["E", "F"]
+
+ignore = [
+    # Line length. The YAML linter already disables its equivalent, and
+    # the comments in this codebase carry a lot of the reasoning — a
+    # column limit would reformat prose, not code.
+    "E501",
+    # `if not x: return` on one line. Used throughout the panels for
+    # guard clauses, where splitting the line makes the guard harder to
+    # skim, not easier.
+    "E701",
+    "E702",
+    # Single-character names in comprehensions (`for l in lines`). Real
+    # in a dense expression, noise in a two-line list comprehension.
+    "E741",
+]
+
+[lint.per-file-ignores]
+# Test helpers append to sys.path before importing the module under test,
+# which is an import that cannot come first by construction.
+"tests/*" = ["E402"]

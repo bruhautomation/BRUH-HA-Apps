@@ -19,11 +19,10 @@ Tests cover:
 - handle_tool_call routing for all new tools
 """
 
-import json
 import os
 import sys
 import unittest
-from unittest.mock import patch, call
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "brain", "ha-mcp-server"))
 
@@ -614,7 +613,6 @@ class TestHandleToolCallRouting(unittest.TestCase):
             "entity_id": "light.test", "action": "turn_on", "brightness": 128
         })
         mock_fn.assert_called_once()
-        kwargs = {k: v for k, v in zip(mock_fn.call_args[1].keys(), mock_fn.call_args[1].values())} if mock_fn.call_args[1] else {}
         # Check it was called with the right entity
         args = mock_fn.call_args
         self.assertEqual(args[1]["entity_id"], "light.test")

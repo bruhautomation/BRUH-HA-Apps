@@ -70,7 +70,6 @@ import settings_store    # noqa: E402
 import findings_store    # noqa: E402
 import knowledge_store   # noqa: E402
 import hypotheses        # noqa: E402
-import onboarding        # noqa: E402
 
 # Nothing here may reach a real Claude CLI.
 engine.run_claude = lambda *a, **k: {"ok": True, "text": "OK", "error": "", "meta": {}}

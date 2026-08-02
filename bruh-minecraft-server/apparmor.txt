@@ -1,0 +1,106 @@
+#include <tunables/global>
+
+# AppArmor profile for the BRUH Minecraft add-on.
+#
+# The threat this profile is actually for
+# ---------------------------------------
+# This add-on runs a JVM that loads third-party plugin jars — code the user
+# downloaded from Modrinth or pasted a URL for, running with the full
+# authority of the server process. A malicious or merely careless plugin is
+# the realistic risk here, not the Minecraft server itself.
+#
+# So the profile lets the JVM do JVM things (fork, exec, map executable
+# memory, open sockets, write the world) and denies the host-escape
+# primitives: mounting, kernel modules, raw sockets, kernel tunables, and
+# the Docker socket. This add-on also runs with `host_network: true` for
+# Bedrock LAN discovery, which makes the network denials worth more than
+# they would be on a bridged add-on.
+#
+# `apparmor: false` used to be set in config.yaml. It is on now — the
+# profile below is what replaced it.
+
+profile bruh_minecraft_server flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+
+  # ------------------------------------------------------------------
+  # Host-escape primitives — denied outright
+  # ------------------------------------------------------------------
+  deny /proc/sys/** wklx,
+  deny /sys/kernel/** wklx,
+  deny @{PROC}/sysrq-trigger rwklx,
+
+  deny /sys/module/** wklx,
+  deny /dev/mem rwklx,
+  deny /dev/kmem rwklx,
+  deny /dev/port rwklx,
+  deny /dev/kmsg rwklx,
+
+  deny /sys/firmware/** rwklx,
+  deny /boot/** rwklx,
+
+  # A plugin with the Docker socket is root on the host.
+  deny /var/run/docker.sock rwklx,
+  deny /run/docker.sock rwklx,
+
+  # ------------------------------------------------------------------
+  # Capabilities
+  # ------------------------------------------------------------------
+  # run.sh drops the server to the `minecraft` user, so setuid/setgid and
+  # chown are needed. Everything dangerous is absent by omission and then
+  # denied explicitly so a future edit has to be deliberate.
+  capability chown,
+  capability dac_override,
+  capability fowner,
+  capability fsetid,
+  capability kill,
+  capability setgid,
+  capability setuid,
+  capability setpcap,
+  capability audit_write,
+
+  deny capability sys_admin,
+  deny capability sys_module,
+  deny capability sys_rawio,
+  deny capability sys_ptrace,
+  deny capability sys_boot,
+  deny capability net_admin,
+  deny capability net_raw,
+  deny capability mac_admin,
+  deny capability mac_override,
+  deny capability dac_read_search,
+
+  deny mount,
+  deny umount,
+  deny pivot_root,
+
+  # ------------------------------------------------------------------
+  # What the add-on legitimately does
+  # ------------------------------------------------------------------
+
+  # Worlds, backups, plugin jars, the server jar, /share and /backup.
+  file,
+
+  # run.sh's crash-restart loop and the backup watcher signal the JVM;
+  # the JVM signals its own threads.
+  signal (send,receive) set=(kill,term,int,hup,cont,usr1,usr2,winch),
+
+  ptrace (trace,read) peer=bruh_minecraft_server,
+
+  # Minecraft Java (25565/tcp+udp), Geyser Bedrock (19132/udp), Simple
+  # Voice Chat (24454/udp), RCON on loopback, the panel on 8099, and
+  # outbound HTTPS for jar/plugin downloads. `network netlink raw` is what
+  # the JVM uses to enumerate interfaces — note this is netlink, not
+  # `network raw`, which stays denied via the net_raw capability above.
+  network inet stream,
+  network inet6 stream,
+  network inet dgram,
+  network inet6 dgram,
+  network unix stream,
+  network unix dgram,
+  network netlink raw,
+
+  # The JVM maps executable memory for the JIT. Without this Java will not
+  # start at all — this is the line most hand-written Minecraft AppArmor
+  # profiles get wrong.
+  /** ixm,
+}

@@ -1,7 +1,7 @@
 ---
 name: "brAIn"
 description: "Give your smart home a mind — Claude with full run of Home Assistant: every entity, device, area, dashboard and automation, plus insights, findings, memory, voice and a terminal"
-version: "1.18.3"
+version: "1.19.0"
 slug: "brain"
 init: false
 
@@ -18,8 +18,8 @@ url: "https://github.com/bruhautomation/BRUH-HA-Apps/tree/main/brain"
 # ONE ingress panel serves everything: the aiohttp panel on 8099 is the
 # ingress target, and it reverse-proxies /terminal/ through to ttyd on
 # 7681 (HTTP + WebSocket) so the terminal is a tab rather than a second
-# add-on. 7681 stays published for direct access when ingress is
-# inconvenient (a tablet kiosk, a bookmarked full-screen terminal).
+# add-on. 7681 is declared below but no longer published by default — see
+# the note on `ports`.
 ingress: true
 ingress_port: 8099
 # The sidebar icon has to be an MDI name — Home Assistant won't take custom
@@ -30,10 +30,48 @@ panel_icon: mdi:brain
 panel_title: "brAIn"
 panel_admin: true
 
+# Declared but NOT published by default (`null`).
+#
+# ttyd is a shell with /config read-write and a signed-in Claude Code
+# behind it. Published, it answered to anything on the LAN — no Home
+# Assistant login involved — which is the exposure Home Assistant wrote up
+# in GHSA-gh5m-4m97-c95h. Ingress does not need this port (the panel
+# reverse-proxies /terminal/ to ttyd over loopback), so the default is off
+# and a user who wants a kiosk assigns a port in the Network panel.
+#
+# ttyd requires HTTP Basic auth either way now: run.sh generates the
+# password into /data/terminal-credential and the panel presents it
+# upstream, so turning the port on is no longer the same as turning
+# authentication off.
 ports:
-  7681/tcp: 7681
+  7681/tcp: null
 ports_description:
-  7681/tcp: "Web terminal, direct access (not required for ingress)"
+  7681/tcp: "Web terminal, direct access (off by default; password-protected, not required for ingress)"
+
+# Restart the add-on if the panel stops answering. The panel is the
+# ingress target and the foreground process, so a hung panel is a dead
+# add-on that still looks "started" in the Supervisor.
+watchdog: "http://[HOST]:[PORT:8099]/api/health"
+
+# Keep the Claude OAuth credential out of Home Assistant backups.
+#
+# /data persists the signed-in Claude Code session. HA backups are not
+# encrypted unless the user opts in, and they get copied to cloud storage,
+# NAS shares and support tickets — an account credential should not ride
+# along. Losing it on restore costs one sign-in.
+backup_exclude:
+  - .config/claude/**
+  - home/.claude/**
+  - terminal-credential
+  - chat_transcript.json
+
+# Lifecycle stage, declared rather than inherited from the default.
+stage: stable
+boot: auto
+
+# The panel writes options back through the Supervisor and reads the
+# add-on/registry APIs that landed in 2023.x.
+homeassistant: "2023.6.0"
 
 # App configuration options.
 #
@@ -142,5 +180,7 @@ discovery:
 # Service startup configuration
 startup: services
 
-# Web UI access URL
-webui: http://[HOST]:[PORT:7681]/
+# No `webui:`. It pointed at http://[HOST]:[PORT:7681]/ — the raw ttyd
+# port, which is now unpublished by default, so the button would have led
+# somewhere nothing was listening. Ingress is the way in, and the sidebar
+# panel is already that button.

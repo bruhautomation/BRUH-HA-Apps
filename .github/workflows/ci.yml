@@ -28,6 +28,80 @@ jobs:
       - name: Run pytest
         run: pytest tests/ -q
 
+  ruff:
+    name: Python lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Install ruff
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff
+
+      # Shell, YAML and Dockerfiles were all linted; the ~15k lines of
+      # Python that actually serve the panels were not.
+      - name: Run ruff
+        run: ruff check .
+
+  hassfest:
+    name: HA integration validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # hassfest is what Home Assistant runs against its own integrations:
+      # it validates manifest.json, services.yaml, and that every service
+      # and entity string has a translation. Both custom integrations are
+      # deployed by their add-on rather than through HACS, which means
+      # nothing else was ever checking them.
+      #
+      # The integrations live under each add-on rather than in a top-level
+      # custom_components/. hassfest finds them either way — it walks the
+      # tree and dedupes by domain — but staging them makes the layout it
+      # reports match the one the action documents, and costs a copy.
+      - name: Stage integrations for hassfest
+        run: |
+          mkdir -p custom_components
+          cp -r brain/custom_components/brain custom_components/brain
+          cp -r bruh-minecraft-server/custom_components/bruh_minecraft \
+                custom_components/bruh_minecraft
+
+      - name: Run hassfest
+        uses: home-assistant/actions/hassfest@master
+
+  apparmor:
+    name: AppArmor profiles
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install apparmor_parser
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y apparmor
+
+      # A profile that doesn't parse doesn't fail at review time — it fails
+      # on a user's machine, as an add-on that won't start. -Q parses and
+      # validates without loading anything into the kernel.
+      - name: Validate profiles
+        run: |
+          status=0
+          for profile in brain/apparmor.txt bruh-minecraft-server/apparmor.txt; do
+            if sudo apparmor_parser -Q -K "$profile"; then
+              echo "✓ $profile"
+            else
+              echo "::error file=$profile::AppArmor profile does not parse"
+              status=1
+            fi
+          done
+          exit $status
+
   yamllint:
     name: YAML lint
     runs-on: ubuntu-latest
@@ -46,7 +120,9 @@ jobs:
             bruh-minecraft-server/config.yaml \
             bruh-minecraft-server/build.yaml \
             brain/config.yaml \
-            brain/build.yaml
+            brain/build.yaml \
+            brain/translations/en.yaml \
+            bruh-minecraft-server/translations/en.yaml
 
   shellcheck:
     name: Shellcheck

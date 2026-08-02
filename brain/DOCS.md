@@ -461,8 +461,54 @@ edges.
 | Port | What | Needed? |
 | --- | --- | --- |
 | 8099 | The ingress panel. Also reverse-proxies `/terminal/`. | Internal; ingress handles it. |
-| 7681 | ttyd, direct access. | Optional — handy for a kiosk or a bookmarked full-screen terminal. |
+| 7681 | ttyd, direct access. | **Off by default.** Optional, for a kiosk or a bookmarked full-screen terminal. |
 | 8098 | The assist worker pool's internal API. | Internal only. |
+
+### About port 7681
+
+Before 1.19.0 this port was published on every install and ttyd ran without
+a password, so anyone on your network could open a root shell with `/config`
+read-write and your signed-in Claude. It is unpublished now, and the
+terminal you use in the panel does not need it — the panel proxies ttyd over
+loopback, which is what makes Terminal a tab.
+
+If you do want the direct port (a wall tablet, a bookmark), assign it under
+the add-on's **Network** settings. It asks for a password either way:
+
+- Username `brain`; the password is generated on first start.
+- It is printed in the add-on log, and stored at `/data/terminal-credential`.
+- To rotate it, delete that file and restart the add-on.
+
+Please don't forward this port through your router. It is a shell.
+
+## Security
+
+brAIn runs with real authority over your Home Assistant: `/config`
+read-write, admin access to the Home Assistant API, and — depending on the
+options you enable — `/share`, `/media` and other add-ons' configuration.
+That is the point of it, and it is worth knowing where the edges are.
+
+- **Home Assistant's login is the boundary.** Everything brAIn exposes sits
+  behind ingress, which means behind your Home Assistant account. Nothing
+  should be reachable without it; if you find something that is, that is a
+  vulnerability and [SECURITY.md](https://github.com/bruhautomation/BRUH-HA-Apps/blob/main/SECURITY.md)
+  is how to report it privately.
+- **AppArmor is on.** The profile denies the container the things a host
+  escape needs — mounting, kernel modules, raw sockets, kernel tunables, the
+  Docker socket. It deliberately does not restrict what brAIn does *inside*
+  the container, because an agent that can only run a fixed list of commands
+  is an agent that breaks the first time you ask it something new.
+- **Your Claude credential stays out of your backups.** Home Assistant
+  backups are unencrypted unless you opt in, and they travel. Restoring a
+  backup costs you one sign-in.
+- **Claude Code runs as an unprivileged user** (UID 1000), not root.
+- **`dangerously_skip_permissions` does what it says.** Off by default. On,
+  Claude stops asking before it edits a file or runs a command in the
+  interactive terminal.
+- **The panel's rating is 6/6** in the add-on store — the highest the
+  Supervisor gives, and it is worth knowing that `hassio_role: admin` costs
+  two points that ingress and AppArmor pay back. brAIn needs that role
+  because `ha addon` manages your other add-ons.
 
 ## Where things live
 

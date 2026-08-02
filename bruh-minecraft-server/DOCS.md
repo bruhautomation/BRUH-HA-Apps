@@ -660,7 +660,11 @@ script:
 
 ## 4.3 Security considerations
 
-- **RCON is loopback-only** (bound to `127.0.0.1:25575`) with a 32-character random password stored at `/data/panel/rcon.secret` (mode 0600). It's never exposed to the LAN.
+- **The panel only answers Home Assistant.** This add-on uses `host_network: true` so Bedrock clients can find the server on your LAN, which also puts the panel's port on your LAN. Ingress authenticates the people who arrive through Home Assistant; it has no say over someone who types the IP directly. Since 1.15.0 the panel refuses any request that didn't come through the Supervisor, judged by the connection's own peer address. Before that, `http://<your-ha-ip>:8099` reached arbitrary RCON, world deletion and backup restore with no login at all — if you ran an earlier version on a network with guests or untrusted devices on it, assume it was reachable.
+  - Two paths stay public because they must be: `/pack/<name>`, which Minecraft clients fetch the resource pack from, and `/api/health`, which reports liveness and nothing else.
+  - Refusals are logged. If the panel seems dead when you open it by IP, that is why — open it from the Home Assistant sidebar instead.
+- **AppArmor is on** (it was disabled before 1.15.0). The profile denies the container what a host escape needs — mounting, kernel modules, raw sockets, kernel tunables, the Docker socket — while leaving the JVM free to do JVM things. It does not restrain what a plugin can do to your *world*; see the plugin note below.
+- **RCON is loopback-only** (bound to `127.0.0.1:25575`) with a 32-character random password stored at `/data/panel/rcon.secret` (mode 0600). It's never exposed to the LAN, and it is excluded from Home Assistant backups.
 - **Ingress auth** — the panel inherits whatever authentication your Home Assistant instance uses; there's no separate login.
 - **Offline mode on the internet is dangerous.** If you forward port 25565 publicly with `online-mode: false`, anyone who guesses a username can join as that player — including OPs. Keep offline mode LAN-only, or put the server behind a Velocity/Waterfall proxy that handles auth.
 - **Plugin URLs run with full server permissions.** Only add URLs you trust from the `plugins:` option. 1.2.5+ verifies downloads start with the ZIP magic bytes so a rate-limit HTML page can't be saved as a jar, but a malicious signed jar can still compromise the server.

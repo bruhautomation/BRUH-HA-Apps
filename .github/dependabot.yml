@@ -8,6 +8,15 @@ updates:
       - dependencies
       - github-actions
 
+  # The test toolchain was the one dependency set nothing was watching.
+  - package-ecosystem: pip
+    directory: /tests
+    schedule:
+      interval: weekly
+    labels:
+      - dependencies
+      - python
+
   - package-ecosystem: docker
     directory: /brain
     schedule:

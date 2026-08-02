@@ -11,11 +11,17 @@ at /terminal/ makes the client connect to /terminal/ws on its own — we
 just strip the prefix on the way upstream.
 
 Nothing here is reachable from outside Home Assistant: ingress already
-authenticated the request before aiohttp ever sees it.
+authenticated the request before aiohttp ever sees it. ttyd itself now
+requires HTTP Basic auth, because its port *is* reachable from outside if
+a user publishes it — so the proxy holds the credential and presents it
+upstream, and the person coming in through ingress never sees a prompt.
+The credential is deliberately added after `_clean()`, so a browser that
+sends its own `Authorization` header cannot override ours.
 """
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
 import os
 
@@ -23,6 +29,10 @@ import aiohttp
 from aiohttp import web
 
 log = logging.getLogger("brain.terminal")
+
+# Written by run.sh's setup_terminal_credential() before ttyd starts.
+CREDENTIAL_FILE = os.environ.get("BRAIN_TTYD_CREDENTIAL_FILE",
+                                 "/data/terminal-credential")
 
 TTYD_HOST = os.environ.get("BRAIN_TTYD_HOST", "127.0.0.1")
 TTYD_PORT = int(os.environ.get("BRAIN_TTYD_PORT", "7681"))
@@ -48,6 +58,10 @@ HOP_BY_HOP = {
     "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
     "te", "trailers", "transfer-encoding", "upgrade", "host",
     "content-encoding", "content-length",
+    # If ttyd ever refuses our credential, relaying its challenge would pop
+    # a browser Basic-auth dialog inside the ingress iframe that no password
+    # the user knows can satisfy. A bare 401 is the more honest failure.
+    "www-authenticate",
 }
 
 DISABLED_PAGE = """<!doctype html><meta charset="utf-8">
@@ -63,6 +77,36 @@ restart to use it.</p>
 
 def _clean(headers) -> dict:
     return {k: v for k, v in headers.items() if k.lower() not in HOP_BY_HOP}
+
+
+def _auth_header() -> dict:
+    """Basic-auth header for ttyd, or {} if there is no credential yet.
+
+    Read on every request rather than cached at import: the panel and ttyd
+    are started by the same run.sh, but nothing orders the panel's import
+    after the credential file exists, and a value cached as empty would
+    stay empty for the life of the process.
+    """
+    try:
+        with open(CREDENTIAL_FILE, "r", encoding="utf-8") as fh:
+            credential = fh.read().strip()
+    except OSError:
+        return {}
+    if not credential:
+        return {}
+    encoded = base64.b64encode(credential.encode("utf-8")).decode("ascii")
+    return {"Authorization": f"Basic {encoded}"}
+
+
+def _upstream_headers(request: web.Request) -> dict:
+    headers = _clean(request.headers)
+    # Drop whatever the client sent before adding ours — a browser that has
+    # cached credentials for the ingress origin must not be able to present
+    # them to ttyd in place of the real one.
+    headers.pop("Authorization", None)
+    headers.pop("authorization", None)
+    headers.update(_auth_header())
+    return headers
 
 
 def _upstream_url(request: web.Request) -> str:
@@ -98,7 +142,7 @@ async def _proxy_ws(request: web.Request, url: str) -> web.StreamResponse:
         async with session.ws_connect(
             url.replace("http://", "ws://", 1),
             protocols=protocols or ("tty",),
-            headers=_clean(request.headers),
+            headers=_upstream_headers(request),
             heartbeat=WS_HEARTBEAT_S,
             max_msg_size=0,
         ) as upstream:
@@ -144,7 +188,7 @@ async def handle(request: web.Request) -> web.StreamResponse:
     try:
         async with session.request(
             request.method, url,
-            headers=_clean(request.headers),
+            headers=_upstream_headers(request),
             data=request.content if request.body_exists else None,
             allow_redirects=False,
         ) as upstream:

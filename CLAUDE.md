@@ -14,6 +14,9 @@ BRUH Terminal (`bruh-claude-terminal/`) and BRUH Insights (`bruh-insights/`) wer
 ### brAIn specifics
 
 - One ingress port (8099, the panel). The panel reverse-proxies `/terminal/` through to ttyd on 7681 (`brain/panel/terminal_proxy.py`), so the terminal is a tab. The assist worker pool's internal API moved to **8098** to free 8099.
+- **Ingress authenticates its own callers and nobody else's.** A port is either published or it is not, and a published one answers the LAN with no Home Assistant login in front of it — which is what [GHSA-gh5m-4m97-c95h](https://github.com/home-assistant/core/security/advisories/GHSA-gh5m-4m97-c95h) was about. brAIn shipped 7681 published with ttyd on `--writable` and no `--credential`: a root shell with `/config` and a signed-in Claude, for anything on the network. It is `null` in `ports:` now (declared, so the Network panel can still assign it) **and** ttyd always takes a generated `--credential` from `/data/terminal-credential`, which `terminal_proxy` presents upstream so ingress users never meet a prompt. The proxy **drops the client's `Authorization` header before adding its own** — otherwise a browser holding a credential for the ingress origin could present it to ttyd instead — and strips `WWW-Authenticate` on the way back, because a Basic-auth dialog inside the ingress iframe asks for a password the user has never been shown. BRUH Minecraft has the same shape and a worse case: `host_network: true` (Bedrock LAN discovery needs it) put its `0.0.0.0:8099` management API — arbitrary RCON, world delete, restore — directly on the LAN, so `panel/server.py`'s `_lan_gate` middleware now allows only the Supervisor's networks and loopback. It reads the **socket's peer address**, never `X-Forwarded-For`, which a direct caller sets themselves; `/pack/` and `/api/health` are the only public prefixes, and `_peer_ip` returns `None` for anything that is not an `(host, port)` tuple so a unix-socket peer refuses instead of matching on `peer[0]`'s first character. Both add-ons ship `apparmor.txt` (profile name = slug, or the Supervisor won't load it) denying the host-escape set; Minecraft's needs `ixm`, not `ix`, or the JIT cannot map executable memory and Java never starts. Both rate **6/6** — `tests/test_addon_hardening.py` recomputes the Supervisor's arithmetic so a regression shows up there rather than in the store weeks later.
+- **Every option needs a line in `translations/en.yaml`, or the UI shows the raw key.** `config.yaml`'s inline comments are for whoever edits `config.yaml`; they are not documentation, because nobody installing an add-on reads them. `test_addon_hardening` fails on an option with no entry, an entry with no option, and an entry missing a name or description — the drift is otherwise invisible.
+- **`backup_exclude` is where credentials go to not be in a backup.** HA backups are unencrypted unless the user opts in, then get copied to cloud storage and support tickets. Paths are relative to `/data`.
 - `enable_terminal` / `enable_insights` switch either face off; the panel always runs because it is the ingress target.
 - **No git auto-backup.** It was removed along with `auto_backup` / `backup_interval_minutes`. In its place, a `PreToolUse` hook (`scripts/brain-edit-snapshot.py`) snapshots files before Claude edits them, and `brain undo` restores them. Never touch a user's existing `/config/.git`.
 - **Two CLI dispatchers**, not fourteen scripts: `brain` (memory, learn, ask, undo, doctor) and `ha` (log, reload, entity, service, addon, notify, share, check, context). Both delegate to `/opt/scripts`. Adding a command = a script plus one dispatcher line.
@@ -53,8 +56,12 @@ Shared brand sources live in `branding/brain/` and `branding/minecraft/` (twelve
 ```
 BRUH-HA-Apps/
 ├── repository.yaml              # HA add-on repository metadata
+├── SECURITY.md                  # Disclosure policy + what each add-on can reach
+├── ruff.toml                    # Python lint rules (E+F; style exceptions explained)
 ├── brain/                       # Main add-on
 │   ├── config.yaml              # HA add-on configuration manifest
+│   ├── apparmor.txt             # AppArmor profile (profile name must equal the slug)
+│   ├── translations/en.yaml     # Option labels + help text for the config UI
 │   ├── build.yaml               # Multi-arch build config
 │   ├── Dockerfile               # Container build definition
 │   ├── run.sh                   # Main startup/entrypoint script

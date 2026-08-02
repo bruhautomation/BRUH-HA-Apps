@@ -11,7 +11,6 @@ strategy as test_integration_python.py. The MCP server is imported directly.
 import ast
 import json
 import os
-import re
 import sys
 import unittest
 from unittest.mock import patch

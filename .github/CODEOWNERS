@@ -1,0 +1,4 @@
+# Every change in this repository is reviewed by the maintainer.
+# GitHub uses this to request review automatically; pair it with a branch
+# protection rule on `main` for it to be binding rather than advisory.
+* @bruhautomation

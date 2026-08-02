@@ -45,6 +45,13 @@ PLATFORMS: list[Platform] = [
 ]
 
 
+# This integration is only ever set up from a config entry — the add-on
+# announces itself to the Supervisor and `async_step_hassio` picks it up.
+# There is nothing to configure in configuration.yaml, and saying so is
+# what stops Home Assistant assuming there might be.
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
+
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     hass.data.setdefault(DOMAIN, {})
     _register_services(hass)

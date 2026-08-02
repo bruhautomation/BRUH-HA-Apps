@@ -7,7 +7,6 @@ home it hasn't looked at.
 """
 
 import json
-import os
 import sys
 import tempfile
 import unittest

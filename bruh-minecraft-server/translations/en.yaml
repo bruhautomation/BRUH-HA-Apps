@@ -1,0 +1,205 @@
+---
+# Option labels and help text for BRUH Minecraft's configuration UI.
+#
+# config.yaml documents every option inline and none of it reaches the
+# person filling in the form. This file is that documentation, moved to
+# where it is read.
+configuration:
+  eula:
+    name: Accept the Minecraft EULA
+    description: >-
+      You must accept Mojang's EULA (minecraft.net/eula) to run a server.
+      The add-on refuses to start until you do — accepting a legal
+      agreement on your behalf isn't ours to do.
+  active_world:
+    name: Active world
+    description: >-
+      Which world is currently live. Each world keeps its own settings,
+      save, plugins and backups, and only one runs at a time. Use the
+      panel's Worlds tab to switch rather than editing this by hand.
+  server_type:
+    name: Server software
+    description: >-
+      Paper is the default: faster than vanilla and takes the whole Bukkit
+      plugin ecosystem. Purpur adds gameplay tweaks. Folia is for very
+      large player counts and breaks most plugins. Vanilla is Mojang's
+      own server with no plugin support. Fabric and Forge are mod loaders.
+  minecraft_version:
+    name: Game version
+    description: >-
+      LATEST tracks the newest stable release, SNAPSHOT includes
+      pre-releases, or pin an exact version like 1.21.4 when a plugin or
+      modpack needs one.
+  memory_mb:
+    name: Server memory
+    description: >-
+      How much RAM to give the server, in MB. 1–2 GB suits a few friends,
+      4–6 GB a busy plugin server. Leave headroom for Home Assistant and
+      the operating system — don't set this near your machine's total.
+  use_aikar_flags:
+    name: Use Aikar's JVM flags
+    description: >-
+      Well-known garbage-collection tuning that reduces lag spikes. Leave
+      this on unless you are supplying your own tuning below.
+  extra_jvm_args:
+    name: Extra JVM arguments
+    description: >-
+      Additional flags for the Java command line, space separated. For
+      experts — bad flags stop the server booting.
+  rcon_password:
+    name: RCON password
+    description: >-
+      Leave blank and the add-on generates a strong one and keeps it
+      private, which is the right answer for almost everyone: RCON only
+      listens inside the container. Set one only if an external tool
+      must connect.
+  auto_update_server:
+    name: Update the server on restart
+    description: >-
+      Re-download the latest server build every boot. Turn off to freeze
+      on the installed version, e.g. while a plugin catches up to a new
+      Minecraft release.
+  auto_backup:
+    name: Automatic backups
+    description: Snapshot the world on a schedule.
+  backup_interval_minutes:
+    name: Back up every
+    description: >-
+      How often to snapshot. More often is a tighter safety net and more
+      disk churn.
+  backup_keep_count:
+    name: Backups to keep
+    description: >-
+      How many snapshots to retain before the oldest are pruned. 48 is
+      about two days at hourly backups.
+  backup_use_git:
+    name: Incremental backups
+    description: >-
+      Store backups as git commits so only what changed is kept, with
+      full history and restore to any point. Off uses full tar archives.
+  auto_restart_on_crash:
+    name: Restart after a crash
+    description: >-
+      Relaunch the server if it exits unexpectedly. Five crashes in five
+      minutes gives up, so a hard-broken server doesn't thrash.
+  auto_restart_schedule:
+    name: Scheduled restart
+    description: >-
+      Cron expression for a routine restart, e.g. "0 4 * * *" for 4 AM
+      daily. Blank for none. A nightly restart clears memory
+      fragmentation on long-running servers.
+  enable_ha_integration:
+    name: Home Assistant integration
+    description: >-
+      Expose sensors (players, TPS, version, difficulty) and services
+      (run command, say, backup) to Home Assistant.
+  announce_ha_events:
+    name: Let automations chat in-game
+    description: >-
+      Allow Home Assistant automations to broadcast messages in-game,
+      e.g. "front door opened".
+  enable_bedrock_support:
+    name: Bedrock cross-play
+    description: >-
+      Install Geyser and Floodgate so phones, tablets, consoles and
+      Windows 10/11 can join this Java server. Needs Paper, Purpur or
+      Folia.
+  geyser_auth_type:
+    name: How Bedrock players sign in
+    description: >-
+      "auto" picks the right one from your world's online-mode and is
+      what you want. "floodgate" requires an Xbox Live sign-in,
+      "offline" requires none (right for a family LAN server), and
+      "online" prompts for Xbox on every connect.
+  geyser_mtu:
+    name: Bedrock packet size
+    description: >-
+      Leave at 1400 unless iOS players hang on "Connecting to multiplayer
+      server…" — dropping to 1200 fixes that on flaky home Wi-Fi.
+  auto_kick_ghost_sessions:
+    name: Clear stuck sessions
+    description: >-
+      When a login is refused with "You are already connected to this
+      server!", kick the stale session so the retry works. Helps iOS
+      Bedrock reconnects in particular.
+  auto_quarantine_duplicates:
+    name: Quarantine duplicate plugins
+    description: >-
+      When two copies of the same plugin are present, move all but the
+      newest to a quarantine folder. Jars are never deleted. Without
+      this, Paper logs "Ambiguous plugin name" and disables one at
+      random.
+  plugins:
+    name: Plugin URLs
+    description: >-
+      Bukkit plugin .jar URLs to install on every boot. Removing an entry
+      does not delete the jar — do that from the panel's Plugins tab.
+  install_viaversion:
+    name: ViaVersion
+    description: >-
+      Lets players on a newer Minecraft version join an older server.
+      Leave on: turning it off breaks compatibility whenever Mojang
+      releases before Paper catches up.
+  install_viabackwards:
+    name: ViaBackwards
+    description: >-
+      Lets players on an older version join a newer server. Needs
+      ViaVersion, which is enabled automatically with it.
+  install_essentialsx:
+    name: EssentialsX
+    description: >-
+      The everyday quality-of-life pack — /home, /tpa, /spawn, /warp,
+      /heal, kits, mute and jail, economy.
+  install_essentialsx_chat:
+    name: EssentialsX Chat
+    description: >-
+      Chat formatting and per-group prefixes such as [Admin] tags. Pairs
+      with LuckPerms. Enables EssentialsX automatically.
+  install_luckperms:
+    name: LuckPerms
+    description: >-
+      The standard permissions manager — groups, per-command permissions
+      and chat prefixes. The plugin for "let my moderators kick but not
+      op".
+  install_worldedit:
+    name: WorldEdit
+    description: >-
+      Mass block editing for builders: select a region with //wand, then
+      //set, //copy, //paste, //replace and terrain smoothing.
+  install_coreprotect:
+    name: CoreProtect
+    description: >-
+      Logs every block placed and broken, every container opened and all
+      chat, so you can find who did what and roll a griefing spree back.
+      Essential on any server open to strangers.
+  install_griefprevention:
+    name: GriefPrevention
+    description: >-
+      Players claim land with a golden shovel and their claim protects
+      itself from everyone else. Good for survival with strangers.
+  install_mcmmo:
+    name: mcMMO
+    description: >-
+      RPG-style skills — mining, woodcutting, swords, archery — that
+      level as players use them. Adds long-term progression to survival.
+  install_chestsort:
+    name: ChestSort
+    description: Auto-sorts chests and inventories. No downside.
+  install_veinminer:
+    name: VeinMiner
+    description: Sneak and break one ore to mine the whole vein at once.
+  install_spark:
+    name: Spark
+    description: >-
+      Performance profiler. Run /spark profiler to find which plugin or
+      chunk is costing you frames when the server feels slow.
+  log_level:
+    name: Log level
+    description: >-
+      How much the add-on writes to its own log. This does not change
+      Minecraft's logging.
+network:
+  25565/tcp: Minecraft Java Edition
+  25565/udp: Minecraft Java Edition
+  19132/udp: Minecraft Bedrock via Geyser, for phones, tablets and consoles
+  24454/udp: Simple Voice Chat, if you install that plugin
