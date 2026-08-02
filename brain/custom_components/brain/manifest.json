@@ -2,7 +2,9 @@
   "domain": "brain",
   "name": "brAIn",
   "after_dependencies": [
-    "hassio"
+    "blueprint",
+    "hassio",
+    "recorder"
   ],
   "codeowners": [
     "@bruhautomation"

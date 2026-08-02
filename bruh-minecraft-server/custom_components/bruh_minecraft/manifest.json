@@ -17,8 +17,5 @@
   ],
   "loggers": [
     "custom_components.bruh_minecraft"
-  ],
-  "discovery": [
-    "bruh_minecraft"
   ]
 }

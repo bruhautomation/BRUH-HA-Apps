@@ -249,8 +249,25 @@ class TestManifest(unittest.TestCase):
     def test_config_flow(self):
         self.assertTrue(self.manifest["config_flow"])
 
-    def test_discovery_registered(self):
-        self.assertIn("bruh_minecraft", self.manifest.get("discovery", []))
+    def test_manifest_has_no_discovery_key(self):
+        """`discovery` is not a Home Assistant manifest key.
+
+        This test used to assert the opposite, and the key it asserted did
+        nothing: hassfest rejects it outright ("extra keys not allowed").
+        Supervisor discovery is two other things, both checked below — the
+        add-on announcing itself in config.yaml, and the config flow
+        implementing the hassio step that catches the announcement.
+        """
+        self.assertNotIn("discovery", self.manifest)
+
+    def test_discovery_is_wired_the_way_home_assistant_expects(self):
+        with open(os.path.join(INTEG_DIR, "config_flow.py")) as f:
+            config_flow = f.read()
+        self.assertIn(
+            "async def async_step_hassio", config_flow,
+            "without a hassio step the Supervisor's announcement is ignored",
+        )
+        self.assertIn("hassio", self.manifest.get("after_dependencies", []))
 
 
 # ---------------------------------------------------------------------------

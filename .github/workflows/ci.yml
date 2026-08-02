@@ -62,8 +62,9 @@ jobs:
       # nothing else was ever checking them.
       #
       # The integrations live under each add-on rather than in a top-level
-      # custom_components/, so they are staged into the layout hassfest
-      # expects.
+      # custom_components/. hassfest finds them either way — it walks the
+      # tree and dedupes by domain — but staging them makes the layout it
+      # reports match the one the action documents, and costs a copy.
       - name: Stage integrations for hassfest
         run: |
           mkdir -p custom_components

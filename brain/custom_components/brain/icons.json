@@ -1,21 +1,4 @@
 {
-  "entity": {
-    "conversation": {
-      "_": {
-        "default": "mdi:creation"
-      }
-    },
-    "binary_sensor": {
-      "_": {
-        "default": "mdi:heart-pulse"
-      }
-    },
-    "button": {
-      "_": {
-        "default": "mdi:play-circle-outline"
-      }
-    }
-  },
   "services": {
     "send_prompt": {
       "service": "mdi:message-text"
