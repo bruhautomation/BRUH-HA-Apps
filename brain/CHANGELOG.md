@@ -2,6 +2,27 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.19.2
+
+### Fixed
+
+- **The integration page reads "brain brAIn" instead of showing a logo.** Home
+  Assistant had no artwork for the `brain` domain, so it fell back to printing
+  the raw domain beside the name. The artwork existed and had been staged for
+  over a year for a submission to home-assistant/brands that could not be made:
+  since Home Assistant 2026.3.0 that repository closes any pull request adding a
+  new custom integration automatically, before a human sees it.
+
+  What replaced it is a `brand/` folder shipped beside the integration's own
+  manifest, which Home Assistant serves itself and prefers over the CDN. brAIn
+  now ships one, so the icon and the wide lockup appear on the integration page
+  and in the sidebar with nothing to submit and nobody to wait for.
+
+  The logos are 341×256 and 682×512 rather than the 512×384 the add-on store
+  gets. The brand spec caps a logo's *shortest* side at 256 — the staged assets
+  were 512×384 and would have failed the validator that submission was aiming
+  at, so they had never been in spec either.
+
 ## 1.19.1
 
 ### Added

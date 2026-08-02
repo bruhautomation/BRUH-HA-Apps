@@ -29,28 +29,35 @@ PR template says the same thing in its opening comment. See the
 
 Assets here are kept in spec anyway: they are the same files the integration
 ships, and a validator that passes is worth more than one that has never been
-run. `bruhautomation/brands` carries them on a branch if the policy ever
-reverses.
+run.
 
-## What replaces it
+## What replaces it, and where it lives now
 
-A custom integration now serves its own artwork from a `brand/` folder beside
-its manifest, and local images take priority over the CDN. No manifest change
-is needed:
+A custom integration serves its own artwork from a `brand/` folder beside its
+manifest; Home Assistant prefers those over the CDN and needs no manifest
+change to find them. **Both integrations ship one** — this is the live route,
+and the one to edit:
 
 ```
-custom_components/brain/
-├── manifest.json
-└── brand/
-    ├── icon.png
-    ├── icon@2x.png
-    ├── logo.png
-    └── logo@2x.png
+brain/custom_components/brain/brand/                     # brAIn
+bruh-minecraft-server/custom_components/bruh_minecraft/brand/   # BRUH Minecraft
+├── icon.png        256×256
+├── icon@2x.png     512×512
+├── logo.png        341×256
+└── logo@2x.png     682×512
 ```
 
-Note this is **not** the `custom_components/brain/icon.png` that `render.mjs`
-already writes — that path predates the proxy API and is not what HA reads.
-The `brand/` subfolder is.
+`render.mjs` writes those folders and this directory from the same SVGs, so the
+two sets are byte-identical by construction. That is deliberate: which route
+resolves first is not something we control, and a user's logo should not depend
+on it.
+
+Note the `brand/` **folder** is what HA reads. A bare
+`custom_components/<domain>/icon.png` — which this repo used to ship — is not
+read by anything, and was removed rather than left to look load-bearing.
+
+Nothing extra is needed to ship them: both add-ons deploy their integration with
+a recursive copy, so the folder travels with the files beside it.
 
 There is no `custom_integrations/bruh_claude/` here any more. That domain was
 renamed to `brain` in 1.0.0 and never submitted, so publishing artwork for it

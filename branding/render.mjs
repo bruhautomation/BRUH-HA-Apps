@@ -10,9 +10,18 @@
 // Home Assistant wants PNGs in three places and they are not the same thing:
 //
 //   <addon>/icon.png, <addon>/logo.png     the add-on store entry
-//   <addon>/custom_components/*/icon.png   the integration, shipped in the addon
-//   brands/custom_integrations/*/          the integration page, via the
-//                                          home-assistant/brands repo
+//   <addon>/custom_components/*/brand/     the integration page — HA 2026.3.0+
+//                                          serves these itself and prefers them
+//                                          over the CDN (the brands proxy API)
+//   brands/custom_integrations/*/          what home-assistant/brands would have
+//                                          served, kept in spec but unsubmittable
+//
+// The middle one is a `brand/` *folder*, not the bare custom_components/*/icon.png
+// that used to sit there — HA reads the folder and has never read that file.
+//
+// The two brand sets are byte-identical and deliberately so: the sizes are the
+// brands spec either way, and one drifting from the other would mean the logo a
+// user sees depends on which route resolved first.
 //
 // Every square here comes from a *tile*, never from the bare gable. The gable
 // alone is the family mark: it says BRUH and says nothing about which app you
@@ -41,12 +50,15 @@ const APPS = [
 		logo: 'brain/brain-logo-ondark.svg',
 		squares: [
 			['brain/icon.png', 256],
-			['brain/custom_components/brain/icon.png', 256],
+			['brain/custom_components/brain/brand/icon.png', 256],
+			['brain/custom_components/brain/brand/icon@2x.png', 512],
 			['brands/custom_integrations/brain/icon.png', 256],
 			['brands/custom_integrations/brain/icon@2x.png', 512],
 		],
 		lockups: [
 			['brain/logo.png', 512, 384],
+			['brain/custom_components/brain/brand/logo.png', 341, 256],
+			['brain/custom_components/brain/brand/logo@2x.png', 682, 512],
 			['brands/custom_integrations/brain/logo.png', 341, 256],
 			['brands/custom_integrations/brain/logo@2x.png', 682, 512],
 		],
@@ -57,11 +69,15 @@ const APPS = [
 		logo: 'minecraft/bruh-minecraft-logo-ondark.svg',
 		squares: [
 			['bruh-minecraft-server/icon.png', 256],
+			['bruh-minecraft-server/custom_components/bruh_minecraft/brand/icon.png', 256],
+			['bruh-minecraft-server/custom_components/bruh_minecraft/brand/icon@2x.png', 512],
 			['brands/custom_integrations/bruh_minecraft/icon.png', 256],
 			['brands/custom_integrations/bruh_minecraft/icon@2x.png', 512],
 		],
 		lockups: [
 			['bruh-minecraft-server/logo.png', 512, 384],
+			['bruh-minecraft-server/custom_components/bruh_minecraft/brand/logo.png', 341, 256],
+			['bruh-minecraft-server/custom_components/bruh_minecraft/brand/logo@2x.png', 682, 512],
 			['brands/custom_integrations/bruh_minecraft/logo.png', 341, 256],
 			['brands/custom_integrations/bruh_minecraft/logo@2x.png', 682, 512],
 		],
