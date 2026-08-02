@@ -22,6 +22,17 @@ jobs:
   analyze:
     name: Analyze
     runs-on: ubuntu-latest
+    # Code scanning is free on public repositories and a paid add-on
+    # (GitHub Code Security) on private ones. While this repo is private
+    # the analysis runs fine and finds nothing, then fails uploading its
+    # results with "Code scanning is not enabled for this repository" — a
+    # permanently red check that reports a billing state, not a defect.
+    #
+    # So the job sits out while the repo is private and starts itself the
+    # moment it is public, which an add-on repository has to be anyway
+    # (Home Assistant fetches repository.yaml over plain HTTPS). Nothing
+    # to remember to turn on later.
+    if: github.event.repository.private == false
     permissions:
       security-events: write
       actions: read

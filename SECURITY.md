@@ -79,4 +79,8 @@ Things that are working as intended, and are documented rather than fixed:
 - Background listeners use an explicit tool allow-list rather than
   `--dangerously-skip-permissions`.
 - CI runs secret, injection and quoting checks (`tests/test_security.py`),
-  CodeQL, shellcheck and hadolint on every pull request.
+  shellcheck, hadolint, and AppArmor profile validation on every pull
+  request. CodeQL runs too, on any public clone of this repository —
+  code scanning is free on public repositories and a paid add-on on
+  private ones, so the job stands itself down while a repository is
+  private rather than reporting a billing state as a failure.
