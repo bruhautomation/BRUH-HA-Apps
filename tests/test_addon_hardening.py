@@ -379,6 +379,67 @@ class TestOptionTranslations(unittest.TestCase):
                 self.assertEqual([], missing, f"{slug}: undescribed ports: {missing}")
 
 
+class TestIntegrationManifests(unittest.TestCase):
+    """hassfest's manifest rules, checked here so a break is local.
+
+    Each of these cost a CI round when the hassfest job was first added,
+    and each is a one-line edit away from coming back.
+    """
+
+    MANIFESTS = {
+        "brain": os.path.join(
+            ADDONS["brain"], "custom_components", "brain", "manifest.json"),
+        "bruh_minecraft": os.path.join(
+            ADDONS["bruh_minecraft_server"], "custom_components",
+            "bruh_minecraft", "manifest.json"),
+    }
+
+    def _load(self, path):
+        import json
+        with open(path) as f:
+            return json.load(f)
+
+    def test_keys_are_domain_then_name_then_alphabetical(self):
+        for slug, path in self.MANIFESTS.items():
+            with self.subTest(integration=slug):
+                keys = list(self._load(path))
+                self.assertEqual(
+                    ["domain", "name"], keys[:2],
+                    "hassfest wants domain and name first",
+                )
+                self.assertEqual(
+                    sorted(keys[2:]), keys[2:],
+                    "hassfest wants the remaining keys alphabetical",
+                )
+
+    def test_no_unknown_keys(self):
+        """`discovery` lived here for a while and did nothing.
+
+        Supervisor discovery is config.yaml plus the config flow's hassio
+        step; a manifest key named after it just fails validation.
+        """
+        allowed = {
+            "domain", "name", "after_dependencies", "codeowners",
+            "config_flow", "dependencies", "documentation", "integration_type",
+            "iot_class", "issue_tracker", "loggers", "quality_scale",
+            "requirements", "single_config_entry", "version",
+        }
+        for slug, path in self.MANIFESTS.items():
+            with self.subTest(integration=slug):
+                unknown = sorted(set(self._load(path)) - allowed)
+                self.assertEqual([], unknown, f"{slug}: unknown keys {unknown}")
+
+    def test_lazily_imported_components_are_declared(self):
+        """power_tools imports these inside service handlers, so they are
+        after_dependencies — but undeclared they are a hassfest error and,
+        at runtime, a load-order gamble."""
+        manifest = self._load(self.MANIFESTS["brain"])
+        after = manifest.get("after_dependencies", [])
+        for component in ("blueprint", "recorder"):
+            with self.subTest(component=component):
+                self.assertIn(component, after)
+
+
 class TestSecurityRating(unittest.TestCase):
     """The Supervisor's own arithmetic, so a regression is visible here
     rather than in the store weeks later.

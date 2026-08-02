@@ -38,7 +38,10 @@ jobs:
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
         with:
-          language: ${{ matrix.language }}
+          # `languages`, plural. Singular is silently ignored — the action
+          # warns and falls back to autodetect, so both matrix jobs scanned
+          # every language instead of one each, doing the same work twice.
+          languages: ${{ matrix.language }}
           queries: security-and-quality
 
       - name: Analyze
