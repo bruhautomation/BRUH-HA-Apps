@@ -2,6 +2,22 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.19.7
+
+### Changed
+
+- **The add-on installs from a prebuilt image instead of building on your
+  machine.** `config.yaml` now carries an `image:` key pointing at
+  `ghcr.io/bruhautomation/{arch}-brain`, which the add-on's CI has been
+  publishing for both architectures on every change. Installs and updates
+  become a download rather than a container build — on a Raspberry Pi that is
+  minutes of SD-card writes replaced by a pull, and one less thing that can
+  fail halfway through on a flaky network. Everyone also gets the identical
+  image, rather than whatever their machine happened to resolve at build time.
+
+  Nothing about the add-on itself changes, and no action is needed: the next
+  update simply arrives the fast way.
+
 ## 1.19.6
 
 ### Security
