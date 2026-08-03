@@ -16,7 +16,7 @@ A Home Assistant add-on that runs Claude Code and a suite of tools inside HA, wh
 
 That memory isn't a black box: open it, read it, edit it, correct it. An insights panel shows what it knows about your house and what it's done there — in the sidebar, or embedded straight into your dashboards. Reach it as your conversation agent, through a full-featured chat interface, or from native Claude Code; your automations can call it too, which means your house can ask for help before you notice anything's wrong.
 
-One install, one sidebar panel, one login. Runs on the Claude Pro or Max subscription — or your own API key.
+One install, one sidebar panel, one login. **Runs on the Claude Pro or Max subscription — or your own API key**.
 
 📖 **[bruhautomation.com/brain](https://bruhautomation.com/brain/)** · [add-on README](brain/)
 
