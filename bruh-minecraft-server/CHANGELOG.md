@@ -5,6 +5,17 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.15.3
+
+### Changed
+
+- **The add-on installs from a prebuilt image instead of building on your
+  machine.** `config.yaml` now carries an `image:` key pointing at
+  `ghcr.io/bruhautomation/{arch}-bruh-minecraft-server`, published for both
+  architectures by CI. Installs and updates become a download rather than a
+  container build, which on a Raspberry Pi is the difference between minutes
+  of SD-card writes and a pull. No action needed.
+
 ## 1.15.2
 
 ### Security

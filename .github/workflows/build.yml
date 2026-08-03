@@ -116,3 +116,37 @@ jobs:
             --image ${{ matrix.arch }}-${{ matrix.addon }} \
             --docker-hub ghcr.io/${{ github.repository_owner }} \
             --addon
+
+      # A private package looks exactly like a working one from in here: the
+      # push succeeds, the tag exists, the job is green. It only fails on a
+      # user's box, because the Supervisor pulls ANONYMOUSLY — and to them a
+      # 403 is not a permissions note, it is an add-on that will not install.
+      #
+      # So ask the registry the same way they will. Only when config.yaml
+      # actually has an `image:` key: without one the Supervisor builds
+      # locally and never touches the registry, so visibility is nobody's
+      # problem yet and this should not invent a failure.
+      - name: Verify the image is publicly pullable
+        if: steps.decide.outputs.build == 'true'
+        env:
+          OWNER: ${{ github.repository_owner }}
+          IMAGE: ${{ matrix.arch }}-${{ matrix.addon }}
+          TAG: ${{ steps.version.outputs.version }}
+        run: |
+          if ! grep -qE '^image:' "${{ matrix.addon }}/config.yaml"; then
+            echo "No image: key in ${{ matrix.addon }}/config.yaml — the Supervisor"
+            echo "builds locally and never pulls, so registry visibility is moot."
+            exit 0
+          fi
+          token=$(curl -fsSL \
+            "https://ghcr.io/token?scope=repository:${OWNER}/${IMAGE}:pull&service=ghcr.io" \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')
+          code=$(curl -sSL -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer ${token}" \
+            -H "Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.docker.distribution.manifest.v2+json" \
+            "https://ghcr.io/v2/${OWNER}/${IMAGE}/manifests/${TAG}")
+          if [ "$code" != "200" ]; then
+            echo "::error::ghcr.io/${OWNER}/${IMAGE}:${TAG} answered HTTP ${code} to an anonymous pull. config.yaml points every install here, so this ships as a broken add-on. Set the package to Public at https://github.com/orgs/${OWNER}/packages"
+            exit 1
+          fi
+          echo "ghcr.io/${OWNER}/${IMAGE}:${TAG} is publicly pullable."

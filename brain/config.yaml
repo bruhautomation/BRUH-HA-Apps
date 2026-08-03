@@ -1,9 +1,21 @@
 ---
 name: "brAIn"
 description: "Give your smart home a mind — Claude with full run of Home Assistant: every entity, device, area, dashboard and automation, plus insights, findings, memory, voice and a terminal"
-version: "1.19.6"
+version: "1.19.7"
 slug: "brain"
 init: false
+
+# Pull the prebuilt image instead of building on the user's machine.
+# `{arch}` is substituted by the Supervisor and matches what build.yml
+# publishes: ghcr.io/bruhautomation/{aarch64,amd64}-brain:<version>.
+#
+# This key is load-bearing in a way that is easy to miss. With it set, the
+# Supervisor stops building locally and pulls — so a version here with no
+# matching tag on the registry, or a package that is not Public, is not a
+# slow install, it is an add-on that will not install at all. build.yml
+# asks the registry anonymously after every push and fails if the answer
+# is not 200, which is the check that keeps those two in step.
+image: "ghcr.io/bruhautomation/{arch}-brain"
 
 # Supported architectures
 arch:
