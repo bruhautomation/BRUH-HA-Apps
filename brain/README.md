@@ -9,7 +9,7 @@ think.
 install guide, features with worked examples, the service and tool reference, and the
 changelog. This page is the short version.
 
-> ### Back up Home Assistant first — somewhere that isn't this machine.
+> ### Back up Home Assistant first — somewhere that isn't on the same machine it runs on.
 >
 > brAIn edits your real configuration: automations, dashboards, helpers, entities. It is
 > built to be careful, it snapshots files before it changes them, and `brain undo` puts
