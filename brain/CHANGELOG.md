@@ -2,6 +2,51 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.20.0
+
+### Changed
+
+- **One list of things waiting on you, and it's Findings.** brAIn asks you two
+  kinds of question: *is this broken?* and *have I got this right?* Until now
+  the second one was asked in two other places as well — inline under every
+  insight card, and in the Memory tab under "Waiting on you" — while the
+  badge on Findings counted neither of them. Answering a guess on the card
+  left the same guess sitting in Memory looking unanswered, and a Memory tab
+  badged with work you didn't have to do is how you learn to stop reading the
+  badge next to it, which counts work you do.
+
+  Guesses now sit at the top of the Findings list with the same **✓ Yes** /
+  **✕ No** they always had, and the badge counts everything waiting on a
+  decision. The Memory tab is what it should have been all along: a queue that
+  files itself and a document to read. It has no badge, because nothing on it
+  is waiting for you.
+
+### Added
+
+- **"Wrong" replaces "Ignore" on a finding, and it asks why.** The old button
+  said what happened to the row. What people actually mean is usually *you've
+  misread my house* — the sensor isn't stuck, it's a contact on a cupboard
+  nobody opens — and the old button had nowhere to say so. brAIn learned that
+  one sentence was unwanted and nothing about the house, so the next run made
+  the same mistake in different words.
+
+  Pressing **✕ Wrong** now opens a box for one sentence:
+
+  > That sensor always reads on. It's not stuck.
+
+  That goes two places: into your memory document at the next consolidation,
+  and into what every future analysis is told about this home. **It is not
+  treated as an instruction.** brAIn is handed what you said and works out
+  what follows from it — usually a standing fact about a device or a habit,
+  sometimes nothing at all — so you don't have to phrase a correction
+  carefully for it to be useful.
+
+  The box is optional: if it really is just normal here, press Send empty and
+  it behaves exactly as Ignore did. The same box is offered when you turn down
+  a guess, and from the action strip while you're discussing a finding in the
+  chat — telling Claude there reaches that one conversation, and the box
+  reaches every future one.
+
 ## 1.19.7
 
 ### Changed

@@ -1192,7 +1192,10 @@ class TestGenerateFlow(InsightsServerCase):
         self.assertEqual(self.bundle_focus, "Watch the dryer")
         stored = self._stored()
         self.assertEqual(stored["focus_used"], "Watch the dryer")
-        self.assertEqual(stored["questions"],
+        # Hypotheses go to the queue, never onto the card: they are decisions,
+        # and decisions are shown in exactly one place (the Findings tab).
+        self.assertNotIn("questions", stored)
+        self.assertEqual([h["text"] for h in hypotheses.list_all("open")],
                          ["The garage fridge is meant to run 24/7 — right?"])
         self.assertEqual(stored["learned"], ["Hall sensor drops offline at 2 AM"])
         # A finding is a work-list item, not part of the card: it lands in
@@ -1230,7 +1233,7 @@ class TestGenerateFlow(InsightsServerCase):
         ts = findings_store.list_all()[0]["ts"]
         findings_store.set_status(ts, "ignored")
         block = findings_store.prompt_block()
-        self.assertIn("DISMISSED", block)
+        self.assertIn("SAID WERE WRONG", block)
         self.assertIn("Back Door battery is dead", block)
 
     def _queued_facts(self):
@@ -1264,7 +1267,8 @@ class TestGenerateFlow(InsightsServerCase):
         self.reply.pop("learned")
         asyncio.run(self.server._generate("energy"))
         stored = self._stored()
-        self.assertEqual(stored["questions"], [])
+        self.assertNotIn("questions", stored)
+        self.assertEqual(hypotheses.list_all("open"), [])
         self.assertEqual(stored["learned"], [])
         self.assertEqual(stored["tags"], [])
         self.assertEqual(findings_store.list_all(), [])
@@ -1315,92 +1319,37 @@ class TestGenerateFlow(InsightsServerCase):
         self.assertTrue((Path(self.tmp.name) / "history" / cat["id"]).exists())
 
 
-class TestQuestionsEndpoints(InsightsServerCase):
-    def setUp(self):
-        super().setUp()
-        self._old_service = self.ha_data.call_service
-        self.calls = []
+class TestCardsDoNotAsk(InsightsServerCase):
+    """A card reports; it does not ask.
 
-        async def ok_service(service, data):
-            self.calls.append((service, data))
+    Runs used to store every hypothesis they raised on the card and render
+    yes/no under the chart, while the Memory tab listed the same claims and
+    the Findings badge counted neither. Three surfaces, one decision, and
+    answering it on one left the other two looking unanswered. The queue is
+    the only place a guess lives now, and the Findings tab is the only place
+    it is answered. What a run does with its guesses is asserted in
+    TestGenerateFlow, which is where a run is actually driven.
+    """
 
-        self.ha_data.call_service = ok_service
-
-    def tearDown(self):
-        self.ha_data.call_service = self._old_service
-        super().tearDown()
-
-    def test_questions_listed_and_answered(self):
-        self._save("energy", "2026-07-18T10:00:00",
-                   category_title="Energy", questions=["Is X on purpose?"])
+    def test_the_card_question_endpoints_are_gone(self):
+        """They were the card's half of a decision that now has one home.
+        Left routed, they would be a second way to settle a guess — and the
+        one that does not tell the Findings tab anything happened."""
 
         async def run():
             client = self._client()
             await client.start_server()
             try:
-                resp = await client.get("/api/questions")
-                qs = (await resp.json())["questions"]
-                self.assertEqual(qs, [{"insight_id": "energy",
-                                       "category_title": "Energy",
-                                       "question": "Is X on purpose?"}])
-
-                resp = await client.post("/api/questions/answer", json={
-                    "insight_id": "energy", "question": "Is X on purpose?",
-                    "answer": "Yes, it runs the pond pump."})
-                self.assertEqual(resp.status, 200)
-                # Queued locally rather than round-tripped through an HA
-                # service — the consolidator is in this container.
-                self.assertEqual(self.calls, [])
-
-                # the question stops surfacing
-                resp = await client.get("/api/questions")
-                self.assertEqual((await resp.json())["questions"], [])
-                with open(Path(self.tmp.name) / "energy.json") as f:
-                    self.assertEqual(json.load(f)["questions"], [])
-
-                # unknown question / insight and bad bodies
-                resp = await client.post("/api/questions/answer", json={
-                    "insight_id": "energy", "question": "Is X on purpose?",
-                    "answer": "again"})
-                self.assertEqual(resp.status, 404)
-                resp = await client.post("/api/questions/answer", json={
-                    "insight_id": "nope", "question": "q", "answer": "a"})
-                self.assertEqual(resp.status, 404)
-                resp = await client.post("/api/questions/answer", json={
-                    "insight_id": "energy", "question": "", "answer": "a"})
-                self.assertEqual(resp.status, 400)
+                for path in ("/api/questions",):
+                    self.assertEqual((await client.get(path)).status, 404)
+                for path in ("/api/questions/answer", "/api/questions/dismiss"):
+                    resp = await client.post(path, json={
+                        "insight_id": "energy", "question": "q", "answer": "a"})
+                    self.assertEqual(resp.status, 404, path)
             finally:
                 await client.close()
 
         asyncio.run(run())
-
-    def test_answer_is_queued_as_a_statement(self):
-        """The answer is remembered as prose, not as a "Q: ... -> A: ..."
-        pair — that form is what made the old memory unreadable."""
-        self._save("energy", "2026-07-18T10:00:00", questions=["Why cold?"])
-
-        async def broken_service(service, data):
-            raise RuntimeError("no integration")
-
-        self.ha_data.call_service = broken_service
-
-        async def run():
-            client = self._client()
-            await client.start_server()
-            try:
-                resp = await client.post("/api/questions/answer", json={
-                    "insight_id": "energy", "question": "Why cold?",
-                    "answer": "Broken vent."})
-                self.assertEqual(resp.status, 200)
-            finally:
-                await client.close()
-
-        asyncio.run(run())
-        files = list(self.server.MEMORY_INBOX_DIR.glob("*.jsonl"))
-        self.assertEqual(len(files), 1)
-        fact = json.loads(files[0].read_text().splitlines()[0])["fact"]
-        self.assertEqual(fact, "Why cold: Broken vent.")
-        self.assertNotIn("Q:", fact)
 
 
 class TestUserCategoryEndpoints(InsightsServerCase):

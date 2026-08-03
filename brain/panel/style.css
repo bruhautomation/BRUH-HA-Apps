@@ -431,29 +431,10 @@ html, body {
 
 .hl .prev { font-size: 10.5px; color: var(--ink-3); margin-top: 2px; font-style: italic; }
 
-/* --------------------------------------------------- analyst questions */
-.questions { padding: 10px 16px 0; display: flex; flex-direction: column; gap: 8px; }
-.qrow {
-  border: 1px dashed color-mix(in srgb, var(--accent) 40%, var(--hairline));
-  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
-  border-radius: 10px;
-  padding: 8px 11px;
-}
-.qrow .qtext { font-size: 13px; color: var(--ink-2); font-weight: 600; }
-.qrow .qform { display: flex; gap: 7px; margin-top: 7px; }
-.qrow .qform input {
-  flex: 1;
-  min-width: 0;
-  padding: 6px 10px;
-  font: inherit;
-  font-size: 12.5px;
-  color: var(--ink);
-  background: var(--plane);
-  border: 1px solid var(--hairline);
-  border-radius: 8px;
-  outline: none;
-}
-.qrow .qform input:focus { border-color: var(--accent); }
+/* Insight cards carried a yes/no row per guess here (.questions/.qrow) and
+   the Memory tab carried the same rows again. Both are gone: guesses are
+   decisions, decisions are the Findings tab's, and the styles for them live
+   with the findings block below. */
 
 /* --------------------------------------------------- skeleton + states */
 .card.pending .viz-skel {
@@ -963,11 +944,6 @@ body.modal-open {
     resize: none;
   }
 }
-
-/* card-question header with the "not relevant" dismiss */
-.qhead { display: flex; align-items: flex-start; gap: 7px; }
-.qhead .qtext { flex: 1; min-width: 0; }
-.qdismiss { flex: none; }
 
 /* ready-to-paste YAML block in the dashboard-card modal */
 .yamlbox {
@@ -2463,6 +2439,43 @@ body.term-classic #termMode .ico-out { display: block; }
   margin-top: 14px;
 }
 .findactions .phase { margin: 0; padding: 0; border: 0; background: none; }
+
+/* A guess brAIn wants confirmed. Same card, same list, no severity stripe:
+   nothing here is broken, so the left edge takes the accent rather than a
+   warning colour, and the eyebrow asks instead of grading. */
+.finding.hypo {
+  border-left-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 5%, var(--surface));
+}
+.finding.hypo .findsev { color: var(--accent); }
+
+/* The reason box, in place of the card's buttons. It sits inside the card
+   it is about — you are correcting something, and the thing being corrected
+   has to stay readable while you type about it. */
+.findnote { margin-top: 14px; }
+.findnotehint {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--ink-2);
+  max-width: 62ch;
+}
+.findnotebox {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 9px 12px;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--ink);
+  background: var(--plane);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  outline: none;
+  resize: vertical;
+}
+.findnotebox:focus { border-color: var(--accent); }
+.findnoteactions { display: flex; gap: 9px; align-items: center; margin-top: 10px; }
 
 /* -------------------------------------------------------------- card tags
    Read-only chips until ✎ — a tag you can lose to a mis-tap on a phone is

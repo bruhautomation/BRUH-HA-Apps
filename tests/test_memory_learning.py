@@ -284,6 +284,46 @@ def test_consolidate_once_sweeps_share_inbox(tmp_path):
     assert len(processed) == 1
 
 
+def test_the_pass_is_told_what_a_correction_is(tmp_path):
+    """A "Wrong" press on a finding queues the report AND the homeowner's
+    reason, tagged source=correction. Handed over as an ordinary fact, the
+    consolidator would file the thing being DENIED — "the porch sensor has
+    been stuck for 8 days" written into memory as true of the house.
+
+    So the prompt names the source and says what to do with it, and what it
+    says is deliberately a judgement call: record the durable truth the
+    reason implies, and if there isn't one, record nothing. The button is
+    not a memory-write instruction, and the prompt must not read as one.
+    """
+    memory_dir = tmp_path / "memory"
+    inbox = memory_dir / "inbox"
+    inbox.mkdir(parents=True)
+    (inbox / "1-correction.jsonl").write_text(json.dumps({
+        "ts": int(time.time()), "source": "correction",
+        "fact": 'brAIn reported: "Porch sensor stuck on for 8 days". The '
+                "homeowner says that is not a problem here, because: that "
+                "sensor always reads on.",
+        "confidence": "medium"}) + "\n")
+
+    prompt_log = tmp_path / "prompts.txt"
+    fake = tmp_path / "fake_claude.sh"
+    fake.write_text(
+        "#!/bin/bash\n"
+        'cat >> "$FAKE_PROMPT_LOG"\n'
+        "cat << 'OUT'\n" + FAKE_MERGED_MEMORY
+        + "-----VOICE-----\n" + FAKE_VOICE + "OUT\n")
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+
+    run_consolidator(memory_dir, fake, FAKE_PROMPT_LOG=str(prompt_log))
+    prompt = prompt_log.read_text()
+    assert 'source is "correction"' in prompt
+    assert "The report is not a fact and must never be recorded." in prompt
+    assert "Use your judgement" in prompt
+    # The correction itself still reaches the model — it is what the reason
+    # is a reason ABOUT.
+    assert "that sensor always reads on" in prompt
+
+
 def test_consolidate_failure_leaves_files_untouched(tmp_path):
     memory_dir = tmp_path / "memory"
     seed_inbox(memory_dir)

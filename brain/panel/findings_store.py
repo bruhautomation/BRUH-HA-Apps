@@ -14,7 +14,8 @@ settles is just a second inbox:
                        ├─▶ failed      it tried and couldn't
                        └─▶ needs_you   only a human can (replace the battery)
        ──"I've handled it"───▶ settled: you fixed it yourself
-       ──"Not a problem"─────▶ settled: it is normal in this home
+       ──"Wrong"─────────────▶ settled: it isn't a problem here, and here is
+                                        why — in the homeowner's own words
   fixed ──"Got it"────────────▶ settled: you have seen what brAIn changed
 
 **A finding leaves the list when a person ends it, and then it is gone.**
@@ -30,6 +31,17 @@ key in the settled ledger, which is what stops the analyst reporting the
 same thing at you next week. The ledger is an index, never a queue —
 nothing is swept out of it, because sweeping it is how a problem you
 already answered comes back.
+
+**"Wrong" carries a reason, and the reason is the valuable half.** A key
+suppresses one wording; "that sensor always reads on, it isn't stuck" tells
+the analyst why a whole shape of report is noise in this home, and it is
+the difference between a list that gets quieter and one that keeps making
+the same mistake in new words. The note rides along on the ledger entry —
+there is no second store for it, because a correction with no report to
+correct is not a thing anybody wrote — and ``prompt_block`` renders it
+under the finding it belongs to. It is not an instruction and is not
+phrased as one: the model is handed what the homeowner said and left to
+work out what follows from it.
 
 Two producers write here:
 
@@ -73,6 +85,10 @@ MAX_DETAIL = 600
 MAX_FIX = 600
 MAX_RESULT = 1500
 MAX_CHANGED = 8
+# A correction is a sentence, not an essay. Long enough for "that sensor
+# always reads on because it watches the fridge compressor", short enough
+# that twenty of them still fit in a prompt beside everything else.
+MAX_NOTE = 400
 
 SEVERITIES = ("info", "warning", "serious", "critical")
 STATUSES = ("open", "fixing", "fixed", "failed", "needs_you", "ignored")
@@ -447,7 +463,7 @@ def snooze(ts: int, until: int) -> dict | None:
     return None
 
 
-def settle_and_clear(ts: int, kind: str) -> dict | None:
+def settle_and_clear(ts: int, kind: str, note: str = "") -> dict | None:
     """Finish with a finding: remember the answer, drop the row.
 
     A settled finding used to sit in the list for good — the tab filled up
@@ -464,6 +480,9 @@ def settle_and_clear(ts: int, kind: str) -> dict | None:
     That is the same shape as the facts ledger: an index, not a queue.
     Nothing is deleted from it, because deleting is exactly how something
     you already answered comes back.
+
+    ``note`` is the homeowner's reason, kept verbatim on the ledger entry so
+    the analyst reads why rather than only what.
     """
     if kind not in ("fixed", "ignored"):
         raise ValueError(f"unknown settlement: {kind}")
@@ -478,11 +497,13 @@ def settle_and_clear(ts: int, kind: str) -> dict | None:
     if settled is None:
         return None
     _write(kept)
-    _remember_settled(settled, kind)
+    _remember_settled(settled, kind, note=note)
+    settled["note"] = str(note or "").strip()[:MAX_NOTE]
     return settled
 
 
-def _remember_settled(shaped: dict, kind: str, when: int = 0) -> None:
+def _remember_settled(shaped: dict, kind: str, when: int = 0,
+                      note: str = "") -> None:
     ledger = _load_settled()
     key = normalize(shaped["text"])
     ledger = [e for e in ledger if e.get("key") != key]
@@ -491,6 +512,7 @@ def _remember_settled(shaped: dict, kind: str, when: int = 0) -> None:
         "text": shaped["text"],
         "kind": kind,
         "ts": when or int(time.time()),
+        "note": str(note or "").strip()[:MAX_NOTE],
     })
     _write_settled(ledger[-MAX_SETTLED:])
 
@@ -603,21 +625,27 @@ def prompt_block() -> str:
     The last two come from the settled ledger rather than the list, because
     settling deletes the row — plus any legacy row still carrying a settled
     status from before the ledger existed.
+
+    Where a dismissal carries the homeowner's reason, the reason is rendered
+    with it. That is the part worth the tokens: a key stops one wording, and
+    "the porch sensor watches the compressor, it is meant to sit on" stops
+    every report built on the same wrong assumption.
     """
     everything = list_all()
     live = [f for f in everything if f["status"] in LIVE_STATUSES][:PROMPT_OPEN]
 
-    def _settled(kind: str, limit: int) -> list[str]:
+    def _settled(kind: str, limit: int) -> list[tuple[str, str]]:
         seen: set[str] = set()
-        out: list[str] = []
-        for text in ([e.get("text", "") for e in settled_listing()
-                      if e.get("kind") == kind]
-                     + [f["text"] for f in everything if f["status"] == kind]):
+        out: list[tuple[str, str]] = []
+        for text, note in ([(e.get("text", ""), str(e.get("note") or ""))
+                            for e in settled_listing() if e.get("kind") == kind]
+                           + [(f["text"], "") for f in everything
+                              if f["status"] == kind]):
             key = normalize(text)
             if not key or key in seen:
                 continue
             seen.add(key)
-            out.append(text)
+            out.append((text, note.strip()[:MAX_NOTE]))
             if len(out) >= limit:
                 break
         return out
@@ -631,12 +659,16 @@ def prompt_block() -> str:
         parts += [f"- {f['text']}" for f in live]
     if ignored:
         parts.append(
-            "\nPROBLEMS THE HOMEOWNER DISMISSED — they are not problems in this "
-            "home. Never raise them again, in any wording:")
-        parts += [f"- {t}" for t in ignored]
+            "\nPROBLEMS THE HOMEOWNER SAID WERE WRONG OR NOT PROBLEMS HERE — "
+            "never raise them again, in any wording. Where they said why, that "
+            "reason is about this house and holds beyond the one report: take "
+            "it into account in what you look at next, rather than only "
+            "avoiding these words:")
+        parts += [f"- {t}" + (f"\n  They said: {n}" if n else "")
+                  for t, n in ignored]
     if fixed:
         parts.append(
             "\nPROBLEMS THE HOMEOWNER HAS ALREADY DEALT WITH — do not raise "
             "them again unless the data shows they have come back:")
-        parts += [f"- {t}" for t in fixed]
+        parts += [f"- {t}" for t, _ in fixed]
     return "\n".join(parts)

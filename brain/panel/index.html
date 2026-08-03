@@ -51,8 +51,10 @@
     </button>
     <button class="viewtab" data-view="memory" role="tab" data-tip="Memory">
       <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 5.5a3 3 0 0 0-5.7-1.3A2.8 2.8 0 0 0 4 9.4a3 3 0 0 0 .4 4.8A2.9 2.9 0 0 0 7 19a3 3 0 0 0 5-1.2zM12 5.5a3 3 0 0 1 5.7-1.3A2.8 2.8 0 0 1 20 9.4a3 3 0 0 1-.4 4.8A2.9 2.9 0 0 1 17 19a3 3 0 0 1-5-1.2z"/></svg>
+      <!-- No badge. This tab holds a queue that files itself and a document
+           you read; nothing on it is waiting on a person. The one badge in
+           the strip is Findings', which counts exactly that. -->
       <span>Memory</span>
-      <span id="memBadge" class="badge hidden"></span>
     </button>
     <button class="viewtab" data-view="docs" role="tab" data-tip="Docs">
       <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H11v16H5.5A1.5 1.5 0 0 1 4 18.5zM20 5.5A1.5 1.5 0 0 0 18.5 4H13v16h5.5a1.5 1.5 0 0 0 1.5-1.5z"/></svg>
@@ -244,18 +246,22 @@
   </section>
 </div>
 
-<!-- Findings: the work list. Memory says what is true of this home and a
-     hypothesis asks whether a belief is right; a finding is the third thing
-     — something that is WRONG, with two ways out and no third. -->
+<!-- Findings: the decision list. Memory says what is TRUE of this home; a
+     finding is what is BROKEN in it and a hypothesis is what brAIn might
+     have WRONG about it. Those stay three different kinds of knowledge and
+     three different stores — but the last two are the same job, which is a
+     decision only the person living here can make, and they are shown in
+     one list for that reason. Two lists of decisions meant two badges and
+     neither ever read as done. -->
 <div id="viewFindings" class="view">
   <section class="findwrap">
     <div class="findhead">
       <div>
-        <h2>What brAIn thinks is broken</h2>
-        <p class="sub">Problems found while analysing your home — a dead battery, a
-          sensor that stopped reporting, an automation that can never fire. Send
-          brAIn to fix it, or tell it this isn't a problem here and it will never
-          raise it again.</p>
+        <h2>What's waiting on you</h2>
+        <p class="sub">Problems brAIn found while analysing your home — a dead battery,
+          a sensor that stopped reporting, an automation that can never fire — and
+          guesses it wants confirmed. Send it to fix something, or tell it what it's
+          got wrong and why; the reason is what it learns from.</p>
       </div>
       <div class="findfilters" id="findFilters"></div>
     </div>
@@ -330,7 +336,7 @@
         <button id="chatFindingFix" class="btn small primary">✦  Fix it</button>
         <button id="chatFindingDone" class="btn small">✓  I fixed it</button>
         <button id="chatFindingLater" class="btn small ghost">⏰  Later</button>
-        <button id="chatFindingIgnore" class="btn small ghost">✕  Ignore</button>
+        <button id="chatFindingWrong" class="btn small ghost">✕  Wrong</button>
       </div>
     </div>
     <!-- The CLI's own slash commands, as it advertises them over the stream.
@@ -728,17 +734,20 @@
       <button id="kClose" class="btn icon" data-tip="Close" aria-label="Close">✕</button>
     </header>
     <div class="edit-body ksplit">
-      <!-- This column is a queue, so it reads like one: two headings, two
-           lists, one button. Every paragraph that explained the model rather
-           than the list under it is in the Docs tab instead — the lists are
+      <!-- This column is a queue, so it reads like one: one heading, one
+           list, one button. Every paragraph that explained the model rather
+           than the list under it is in the Docs tab instead — the list is
            short and self-evident, and the prose was longer than the content
-           it introduced. -->
-      <div class="kcol">
-        <label>Waiting on you</label>
-        <p class="hint tight">Guesses brAIn wants confirmed. <b>Yes</b> files it as a fact,
-          <b>No</b> drops it for good.</p>
-        <div id="kOpenQs" class="klist"></div>
+           it introduced.
 
+           It used to open with "Waiting on you" — guesses brAIn wanted
+           confirmed, with yes/no beside each. Those are decisions and they
+           are on the Findings tab now, with the problems, because both are
+           the same job and splitting it across two tabs meant neither list
+           ever emptied. Nothing on this tab is waiting on a person any more:
+           the queue below files itself on a timer, and the document beside
+           it is there to read. -->
+      <div class="kcol">
         <label>Waiting to be filed</label>
         <!-- Consolidation is normally daily (or early past 20 pending facts).
              That is the right cadence for a background daemon and the wrong

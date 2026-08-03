@@ -210,6 +210,8 @@ FACTS
 
 Lines beginning "FORGET: " are removal requests, not facts: drop the matching content from the document (including rewordings of it) and do not record the request itself.
 
+Lines whose source is "correction" are the homeowner telling you brAIn reported something wrong, and why. The report is not a fact and must never be recorded. Their reason usually is one, once you write it as a standing truth about the house rather than as a reply — "the porch motion sensor reads on continuously; that is how it is wired, not a fault" rather than "the homeowner said the stuck-sensor report was wrong". Use your judgement: record what the reason implies and nothing more, merge it into whatever the document already says about that device or habit, and if it contradicts an existing line, the correction is newer and wins. If a correction carries no durable truth — only that one particular report was unwanted — record nothing for it.
+
 ${dead_ends:+Lines of inquiry the homeowner has already rejected — do not reintroduce them or build on them:
 ${dead_ends}
 }

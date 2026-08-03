@@ -546,6 +546,28 @@ class TestHypothesisIdentity(unittest.TestCase):
         self.assertEqual(by_text["claim 2"], "rejected")
         self.assertEqual(by_text["claim 0"], "open")
 
+    def test_a_reason_for_no_rides_with_the_dead_end(self):
+        """A dead end tells the analyst it was on the wrong track. The
+        homeowner's sentence tells it WHY, which is what rules out the next
+        three guesses built on the same misreading — so it is rendered with
+        the claim rather than kept somewhere nothing reads."""
+        made = self.mod.propose("The garage fridge is faulty")
+        self.mod.reject(made["ts"], note="It's the beer fridge — it cycles.")
+        ends = self.mod.dead_ends()
+        self.assertEqual(len(ends), 1)
+        self.assertIn("The garage fridge is faulty", ends[0])
+        self.assertIn("It's the beer fridge — it cycles.", ends[0])
+
+    def test_a_no_without_a_reason_is_still_just_the_claim(self):
+        made = self.mod.propose("The attic fan is broken")
+        self.mod.reject(made["ts"])
+        self.assertEqual(self.mod.dead_ends(), ["The attic fan is broken"])
+
+    def test_a_reason_is_capped(self):
+        made = self.mod.propose("Something")
+        settled = self.mod.reject(made["ts"], note="y" * 900)
+        self.assertEqual(len(settled["note"]), self.mod.MAX_NOTE_CHARS)
+
 
 class TestChatTerminalPanel(unittest.TestCase):
     """The chat terminal's half of the Terminal tab. The session itself is
@@ -736,8 +758,16 @@ class TestChatTerminalPanel(unittest.TestCase):
         # end of a conversation about it should not mean going to find the
         # card again.
         for act in ("chatFindingFix", "chatFindingDone",
-                    "chatFindingLater", "chatFindingIgnore"):
+                    "chatFindingLater", "chatFindingWrong"):
             self.assertIn(f'id="{act}"', self.html)
+        # Wrong asks for its reason here too. Explaining it to Claude in the
+        # chat reaches this conversation; the box reaches every future one,
+        # and an ending that dropped it would make going back to the tab the
+        # better option — which is what the strip exists to avoid.
+        self.assertIn('openNoteForm(\n  $("#chatFinding")', self.js)
+        # The strip is reused, not rebuilt: a box left open on the finding
+        # you just settled would greet the next one with its buttons hidden.
+        self.assertIn('const openNote = bar.querySelector(".findnote");', self.js)
         # And the discussion itself changes nothing.
         server = (PANEL / "server.py").read_text()
         self.assertIn("Do not change anything yet", server)
@@ -875,18 +905,25 @@ class TestDocsTab(unittest.TestCase):
             "function esc(", "function inlineMd(", "function renderMarkdown(",
             "function docsSearch(", "function renderDocsNav(", "function selectDocs(",
             "function renderDocs(", "function renderMemory(", "function mdInline(",
-            "function mdToHtml(", "function setMemEditing(", "function makeQuestions(",
-            "function switchView(", "async function refreshMemoryBadge(",
+            "function mdToHtml(", "function setMemEditing(", "function makeHypothesis(",
+            "function switchView(", "function openNoteForm(",
         ]
         missing = [fn for fn in required if fn not in self.app]
         self.assertEqual(missing, [], f"app.js lost: {missing}")
 
-    def test_cards_settle_guesses_with_two_taps(self):
-        """The card renderer kept a free-text answer box after hypotheses
-        replaced questions — so it asked for an essay where the answer is
-        yes or no, and never settled the queue."""
+    def test_guesses_are_settled_in_one_place(self):
+        """They were settled in two — inline on the insight card, and again in
+        the Memory tab — with a third surface (the Findings badge) counting
+        neither. Answering one left the other showing an open question.
+
+        The Findings tab is the one place now: same two taps, and No opens
+        the same reason box the Wrong button does."""
         self.assertNotIn("Answer to help future insights", self.app)
-        self.assertIn('"api/questions/answer", { answer: q }', self.app)
+        self.assertNotIn("api/questions/", self.app)
+        self.assertNotIn("makeQuestions", self.app)
+        self.assertNotIn("#kOpenQs", self.app)
+        self.assertIn('api/hypothesis/${h.ts}/${verb}', self.app)
+        self.assertIn("list.appendChild(makeHypothesis(h))", self.app)
 
     def test_renderer_escapes_before_formatting(self):
         """The content is ours, but a docs renderer is exactly where a lazy
