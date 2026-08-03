@@ -92,13 +92,26 @@ function timeAgo(iso) {
 
 // Height auto-sizing: a script appended to every srcdoc posts its content
 // height; sandboxed frames can't be measured from outside.
-const SIZE_SNIPPET = (id) => `<script>(function(){var last=0;function post(){var b=document.body;if(!b)return;var h=Math.ceil(Math.max(b.offsetHeight,b.getBoundingClientRect().height));if(h>0&&Math.abs(h-last)>2){last=h;parent.postMessage({type:"bruh-size",id:${JSON.stringify(id)},h:h},"*");}}try{new ResizeObserver(post).observe(document.body);}catch(e){}window.addEventListener("load",post);setTimeout(post,400);setTimeout(post,1200);})();<\/script>`;
+
+// JSON is not script-safe on its own: `JSON.stringify` leaves `<` alone, so
+// an id containing `</script>` would close the tag it is embedded in and the
+// rest would be parsed as markup. Escaping `<` covers `</script`, `<script`
+// and `<!--` in one go, and `<` is still the same string to the parser.
+const jsonInScript = (v) => JSON.stringify(v).replace(/</g, "\\u003c");
+
+const SIZE_SNIPPET = (id) => `<script>(function(){var last=0;function post(){var b=document.body;if(!b)return;var h=Math.ceil(Math.max(b.offsetHeight,b.getBoundingClientRect().height));if(h>0&&Math.abs(h-last)>2){last=h;parent.postMessage({type:"bruh-size",id:${jsonInScript(id)},h:h},"*");}}try{new ResizeObserver(post).observe(document.body);}catch(e){}window.addEventListener("load",post);setTimeout(post,400);setTimeout(post,1200);})();<\/script>`;
 
 window.addEventListener("message", (ev) => {
   const d = ev.data;
   if (!d || d.type !== "bruh-size" || typeof d.h !== "number") return;
   const frame = document.querySelector(`iframe[data-frame="${CSS.escape(String(d.id))}"]`);
-  if (frame) frame.style.height = Math.min(Math.max(d.h, 120), 760) + "px";
+  // The sender has to be the frame it says it is. These frames are
+  // sandboxed srcdoc, so every one of them reports `ev.origin` as the
+  // string "null" — an origin check cannot tell one from another, or from
+  // any other opaque-origin window that happens to post at us. Window
+  // identity can, and it is the same rule the keyboard message follows.
+  if (!frame || ev.source !== frame.contentWindow) return;
+  frame.style.height = Math.min(Math.max(d.h, 120), 760) + "px";
 });
 
 // ------------------------------------------------------------------ auth UI
@@ -2161,8 +2174,14 @@ function mdInline(s) {
 }
 
 function mdToHtml(md) {
-  md = String(md || "").replace(/<!--[\s\S]*?-->/g, "");
-  md = md.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  // Escape first, strip comments second. Stripping `<!-- -->` out of raw
+  // markup is a sanitiser shape — one pass over nested or truncated
+  // comments leaves `<!--` behind — and it never needed to be one: the
+  // escape below is what makes this safe, and running it first means the
+  // comment strip is only ever tidying already-inert text.
+  md = String(md || "")
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  md = md.replace(/&lt;!--[\s\S]*?--&gt;/g, "");
   const out = [];
   let list = null;
   const closeList = () => { if (list) { out.push(`</${list}>`); list = null; } };

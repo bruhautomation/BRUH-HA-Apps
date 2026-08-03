@@ -214,6 +214,8 @@ def get_auth() -> dict | None:
             data["source"] = "local"
             return data
     except (OSError, ValueError):
+        # No local credential, or an unreadable one, means trying the next
+        # store below rather than reporting a failure here.
         pass
     shared = _read_shared_auth()
     if shared:
@@ -257,6 +259,8 @@ def clear_auth() -> None:
         try:
             os.remove(path)
         except OSError:
+            # Signing out removes what is there; a store that is already empty
+            # needs nothing done to it.
             pass
 
 
@@ -472,6 +476,8 @@ def extract_json(text: str) -> dict | None:
         obj = json.loads(text)
         return obj if isinstance(obj, dict) else None
     except ValueError:
+        # Not JSON, so there is no object to return. The caller reads None as
+        # "the model did not answer in the shape we asked for".
         pass
     start = text.find("{")
     end = text.rfind("}")
@@ -553,6 +559,8 @@ class SetupTokenFlow:
                 winsz = struct.pack("HHHH", PTY_ROWS, PTY_COLS, 0, 0)
                 fcntl.ioctl(follower, termios.TIOCSWINSZ, winsz)
             except OSError:
+                # A pty that will not take a window size still works — the only cost
+                # is that a long OAuth URL may wrap.
                 pass
             argv = _claude_argv() + ["setup-token"]
             env = dict(os.environ)
@@ -607,6 +615,7 @@ class SetupTokenFlow:
             try:
                 proc.kill()
             except OSError:
+                # Already exited.
                 pass
 
     # -- internals ---------------------------------------------------------
@@ -661,6 +670,7 @@ class SetupTokenFlow:
                         try:
                             os.write(fd, b"\r")
                         except OSError:
+                            # The pty is gone, which the loop discovers on its next read.
                             pass
                 # watchdog: a code exchange that neither succeeds nor prints a
                 # retry prompt within the window is declared dead so the UI
@@ -695,11 +705,13 @@ class SetupTokenFlow:
                 try:
                     proc.kill()
                 except OSError:
+                    # Already exited.
                     pass
             if fd is not None:
                 try:
                     os.close(fd)
                 except OSError:
+                    # Already closed.
                     pass
 
     def _scan(self, buf: str) -> None:
@@ -748,6 +760,7 @@ class SetupTokenFlow:
                     if self._fd is not None:
                         os.write(self._fd, b"\r")
                 except OSError:
+                    # The pty is gone; the phase set above is what the UI reads.
                     pass
             return
 

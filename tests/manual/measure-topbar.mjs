@@ -143,8 +143,14 @@ function probe(floors) {
     process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
   const page = await browser.newPage();
 
-  const html = fs.readFileSync(path.join(PANEL, 'index.html'), 'utf8')
-    .replace(/<script[^>]*src=[^>]*><\/script>/g, '');
+  // The panel's own JS needs a live backend, so it must not run — but
+  // cutting the tags out of the markup with a regex is a filter that only
+  // matches the shapes we happened to think of (`</script >` slips past it,
+  // and so does anything the file gains later). Refuse the requests instead:
+  // the browser decides what a script tag is, and nothing has to be edited.
+  await page.route('**/*.js', (route) => route.abort());
+
+  const html = fs.readFileSync(path.join(PANEL, 'index.html'), 'utf8');
 
   const rows = [];
   for (const width of WIDTHS) {

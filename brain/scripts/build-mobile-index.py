@@ -101,6 +101,8 @@ def probe_ttyd_html() -> tuple[str | None, str]:
             try:
                 proc.wait(timeout=2)
             except Exception:
+                # It did not die on kill either. There is nothing further to try, and
+                # the index still builds.
                 pass
 
 

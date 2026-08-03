@@ -93,6 +93,7 @@ def _pack_description(root: Path) -> str:
             if isinstance(desc, str):
                 return desc[:120]
         except (OSError, ValueError):
+            # This mcmeta is unreadable or not JSON; the next candidate gets a turn.
             pass
     return ""
 

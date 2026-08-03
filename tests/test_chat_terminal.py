@@ -268,7 +268,8 @@ class ChatSessionCase(unittest.IsolatedAsyncioTestCase):
         lines = []
         while loop.time() < deadline:
             try:
-                lines = [json.loads(l) for l in open(log) if l.strip()]
+                lines = [json.loads(l)
+                         for l in Path(log).read_text().splitlines() if l.strip()]
             except OSError:
                 lines = []
             if len(lines) >= count:
@@ -527,7 +528,7 @@ class ChatSessionCase(unittest.IsolatedAsyncioTestCase):
         await self._drain(lambda evs: any(
             e.get("type") == "state" and e.get("state") == "ready" for e in evs[1:]))
         out = await self.session.handoff()
-        written = json.loads(open(handoff).read())
+        written = json.loads(Path(handoff).read_text())
         self.assertEqual(written["session_id"], out["session_id"])
         self.assertIsInstance(written["ts"], int)
         # No tmux server for that session name here, so it reports honestly

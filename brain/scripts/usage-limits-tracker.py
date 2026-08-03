@@ -238,6 +238,8 @@ def fetch_usage_limits(token):
         try:
             body = exc.read().decode("utf-8", errors="replace")[:200]
         except Exception:
+            # An error body we cannot read leaves the status code to speak for
+            # itself, which the line below prints.
             pass
         sys.stderr.write(
             f"usage-limits-tracker: HTTP {status} from Anthropic API: {body}\n"
@@ -291,6 +293,8 @@ def write_error_status(error_msg):
             json.dump(output, fh, indent=2)
         os.replace(tmp, USAGE_FILE)
     except OSError:
+        # The sensors read this file. A failed write leaves the previous
+        # reading to age out, which is what the two-hour window is for.
         pass
 
 
@@ -421,6 +425,7 @@ def main():
                         )
                         last_logged = current
                 except Exception:
+                    # Logging a change in utilisation must not end the poll loop.
                     pass
             else:
                 consecutive_failures += 1

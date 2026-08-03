@@ -1376,6 +1376,8 @@ async def _import_statistics(hass: HomeAssistant, call: ServiceCall) -> dict | N
             )
             metadata["unit_class"] = converter.UNIT_CLASS if converter else None
         except ImportError:
+            # An older recorder ships no unit-converter table, so the statistic is
+            # created with a null unit class rather than not created at all.
             pass
     except ImportError:  # older recorder
         metadata["has_mean"] = call.data["has_mean"]
@@ -1442,6 +1444,8 @@ def _reference_sources(hass: HomeAssistant):
         for state in hass.states.async_all("automation"):
             yield state.entity_id, entities_in_automation(hass, state.entity_id)
     except ImportError:
+        # Not every install loads the automation component; one that does not
+        # contributes no references.
         pass
     try:
         from homeassistant.components.script import entities_in_script
@@ -1449,6 +1453,7 @@ def _reference_sources(hass: HomeAssistant):
         for state in hass.states.async_all("script"):
             yield state.entity_id, entities_in_script(hass, state.entity_id)
     except ImportError:
+        # Same for scripts: absent means nothing to yield, not an error.
         pass
     try:
         from homeassistant.components.homeassistant.scene import entities_in_scene
@@ -1456,6 +1461,7 @@ def _reference_sources(hass: HomeAssistant):
         for state in hass.states.async_all("scene"):
             yield state.entity_id, entities_in_scene(hass, state.entity_id)
     except ImportError:
+        # Same for scenes.
         pass
 
 
@@ -1618,6 +1624,8 @@ def _save_dashboard_backup(directory: str, slug: str, config: dict) -> str:
         try:
             os.remove(os.path.join(directory, stale))
         except OSError:
+            # Pruning old dashboard backups is opportunistic — one that will not
+            # delete is retried on the next save, and keeping it costs a file.
             pass
     return path
 

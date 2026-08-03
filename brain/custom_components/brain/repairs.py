@@ -62,6 +62,8 @@ def _remove_file(path: str) -> None:
     try:
         os.remove(path)
     except OSError:
+        # Removing a file that is already gone is this function's goal, not
+        # its failure.
         pass
 
 

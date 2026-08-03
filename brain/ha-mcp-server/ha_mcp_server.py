@@ -841,6 +841,8 @@ def get_history(entity_id, hours=24):
         try:
             numeric.append(float(p["state"]))
         except (TypeError, ValueError):
+            # "unavailable" and "unknown" are states, not readings. The summary is
+            # built from the points that are numbers.
             pass
     if numeric:
         summary["min"] = min(numeric)

@@ -432,16 +432,34 @@ _SAFE_ID = re.compile(r"^[a-z0-9][a-z0-9_\-]{0,63}$")
 _STAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}$")
 
 
+def _under(base: Path, *parts: str) -> Path:
+    """Join `parts` under `base` and prove the result stayed there.
+
+    Every caller has already matched its id against `_SAFE_ID` or
+    `_STAMP_RE`, neither of which can produce a separator or a dot
+    segment — so this second lock never fires in practice. It is here
+    because containment is then a property of the path being returned
+    rather than of a regex somewhere further up the call stack: a reader
+    (and a static analyser) can see the guarantee at the point the path
+    is built, without going to find the pattern that made it true.
+    """
+    root = base.resolve()
+    path = (root / Path(*parts)).resolve()
+    if path != root and root not in path.parents:
+        raise web.HTTPBadRequest(text="bad path")
+    return path
+
+
 def _insight_path(insight_id: str) -> Path:
     if not _SAFE_ID.match(insight_id):
         raise web.HTTPBadRequest(text="bad insight id")
-    return INSIGHTS_DIR / f"{insight_id}.json"
+    return _under(INSIGHTS_DIR, f"{insight_id}.json")
 
 
 def _history_dir(insight_id: str) -> Path:
     if not _SAFE_ID.match(insight_id):
         raise web.HTTPBadRequest(text="bad insight id")
-    return INSIGHTS_DIR / "history" / insight_id
+    return _under(INSIGHTS_DIR, "history", insight_id)
 
 
 def all_categories() -> list[dict]:
@@ -481,6 +499,8 @@ def load_insights() -> list[dict]:
             try:
                 out.append(json.loads(p.read_text(encoding="utf-8")))
             except (OSError, ValueError):
+                # A file mid-write, or one that is not valid JSON, is left out of this
+                # listing and picked up by the next one.
                 pass
     for stem, p in files.items():
         try:
@@ -514,6 +534,8 @@ def save_insight(insight: dict) -> None:
         try:
             old.unlink()
         except OSError:
+            # Trimming is opportunistic; a file that will not delete is retried the
+            # next time a card is saved.
             pass
     _write_history_copy(insight)
 
@@ -557,6 +579,7 @@ def _prune_history(hdir: Path) -> None:
         try:
             path.unlink()
         except OSError:
+            # A run that will not delete is retried on the next prune.
             pass
 
 
@@ -674,6 +697,8 @@ async def _generate(insight_id: str) -> None:
                 previous = {k: prev.get(k) for k in
                             ("generated_at", "title", "summary", "highlights", "learned")}
             except (OSError, ValueError):
+                # No previous run to diff against — which is what a first generation
+                # for this card looks like.
                 pass
         prompt = build_prompt(cat, bundle, question=question, feedback=feedback,
                               hypothesis_budget=hypotheses.budget(),
@@ -1191,6 +1216,7 @@ def _purge_card_data(card_id: str) -> None:
     try:
         _insight_path(card_id).unlink()
     except OSError:
+        # A card with no stored insight is already in the state a purge wants.
         pass
     _unmirror_card(card_id)
     shutil.rmtree(_history_dir(card_id), ignore_errors=True)
@@ -1232,7 +1258,7 @@ def _history_run_path(request: web.Request) -> Path:
     ts = request.match_info["ts"]
     if not _STAMP_RE.match(ts):
         raise web.HTTPBadRequest(text="bad timestamp")
-    return hdir / f"{ts}.json"
+    return _under(hdir, f"{ts}.json")
 
 
 async def h_history_list(request: web.Request) -> web.Response:
@@ -1445,6 +1471,7 @@ def get_card_token() -> str:
         if len(token) >= 16:
             return token
     except OSError:
+        # No token file yet: one is minted below.
         pass
     token = secrets.token_hex(16)
     CARD_TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -1452,6 +1479,8 @@ def get_card_token() -> str:
     try:
         CARD_TOKEN_FILE.chmod(0o600)
     except OSError:
+        # A token file whose mode will not set is still only reachable from
+        # inside the container.
         pass
     return token
 
@@ -1478,16 +1507,33 @@ def _card_file_name(insight_id: str) -> str:
     return f"{insight_id}-{get_card_token()}.html"
 
 
+def _card_mirror_path(insight_id: str) -> Path | None:
+    """Where one card's mirrored HTML lives, or None if the id isn't one.
+
+    The mirror directory is under `/config/www`, which Home Assistant
+    serves — so unlike the rest of the insight store, a name that escaped
+    the directory would land somewhere the world can fetch. Both callers
+    are best-effort and neither wants an exception, hence None rather
+    than the `HTTPBadRequest` `_under` raises for a request handler.
+    """
+    if not _SAFE_ID.match(insight_id):
+        return None
+    try:
+        return _under(WWW_CARD_DIR, _card_file_name(insight_id))
+    except web.HTTPBadRequest:
+        return None
+
+
 def _mirror_card(insight: dict) -> None:
     """Best-effort mirror of one insight; a no-op until the dir exists."""
     if not WWW_CARD_DIR.is_dir():
         return
     html = insight.get("html")
     insight_id = str(insight.get("id") or "")
-    if not isinstance(html, str) or not html or not _SAFE_ID.match(insight_id):
+    path = _card_mirror_path(insight_id)
+    if not isinstance(html, str) or not html or path is None:
         return
     try:
-        path = WWW_CARD_DIR / _card_file_name(insight_id)
         tmp = path.with_suffix(".tmp")
         tmp.write_text(html + _CARD_RELOAD_SNIPPET, encoding="utf-8")
         tmp.replace(path)
@@ -1498,9 +1544,14 @@ def _mirror_card(insight: dict) -> None:
 def _unmirror_card(insight_id: str) -> None:
     if not WWW_CARD_DIR.is_dir():
         return
+    path = _card_mirror_path(insight_id)
+    if path is None:
+        return
     try:
-        (WWW_CARD_DIR / _card_file_name(insight_id)).unlink(missing_ok=True)
+        path.unlink(missing_ok=True)
     except OSError:
+        # Best effort: the mirror is a copy, and a card whose stale HTML
+        # outlives it shows up as a 404 on a dashboard, not as lost data.
         pass
 
 
@@ -1521,6 +1572,7 @@ def _sync_card_mirrors() -> bool:
             if stale.name not in keep:
                 stale.unlink()
     except OSError:
+        # A mirror that will not delete is swept again on the next sync.
         pass
     for ins in insights:
         _mirror_card(ins)
@@ -1921,7 +1973,11 @@ async def h_onboarding_recommend(request: web.Request) -> web.Response:
     try:
         bundle = await ha_data.collect_bundle(shape, eff_history_days())
     except Exception as exc:  # noqa: BLE001 — report, don't 500
-        raise web.HTTPBadGateway(text=f"could not read Home Assistant: {exc}")
+        # `exc` is whatever the bundle collector hit, so its text is not
+        # ours and is not written for anyone to read. The log gets it; the
+        # response gets the one sentence that tells the user what to do.
+        log.warning("onboarding bundle failed: %s", exc, exc_info=True)
+        raise web.HTTPBadGateway(text="could not read Home Assistant")
 
     prompt = onboarding.build_prompt(memory, bundle)
     result = await asyncio.to_thread(
@@ -2273,7 +2329,11 @@ async def h_memory_put(request: web.Request) -> web.Response:
     try:
         await asyncio.to_thread(_write_shared_memory, text)
     except OSError as exc:
-        raise web.HTTPInternalServerError(text=f"could not write memory file: {exc}")
+        # An OSError's text carries the errno and the path it was writing,
+        # which says where the add-on keeps its files and nothing the user
+        # can act on. The log is the right place for both.
+        log.warning("memory write failed: %s", exc)
+        raise web.HTTPInternalServerError(text="could not write memory file")
     return web.json_response({"saved": True})
 
 
@@ -2519,6 +2579,8 @@ async def h_chat_stream(request: web.Request) -> web.StreamResponse:
                 continue
             await send(event)
     except (ConnectionResetError, asyncio.CancelledError):
+        # The viewer closed the tab, or the task was cancelled. Either way
+        # there is no longer anyone to send to.
         pass
     finally:
         session.unsubscribe(queue)

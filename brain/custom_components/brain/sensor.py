@@ -157,6 +157,8 @@ def _parse_timestamp(value: str) -> datetime | None:
                 dt = dt.replace(tzinfo=timezone.utc)
             return dt
     except (ValueError, TypeError):
+        # An absent or unparseable timestamp is reported as no timestamp; the
+        # sensor renders without one rather than going unavailable.
         pass
     return None
 

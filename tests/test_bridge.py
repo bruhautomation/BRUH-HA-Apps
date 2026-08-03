@@ -60,6 +60,8 @@ class TestBridgeStaticMethods(unittest.TestCase):
             try:
                 os.remove(path)
             except OSError:
+                # Mirrors the handler under test: an unremovable corrupt file is
+                # simply retried.
                 pass
             return "Error: received corrupt response from Claude Terminal."
         except OSError:

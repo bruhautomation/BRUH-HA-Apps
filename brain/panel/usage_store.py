@@ -74,6 +74,8 @@ def _load_runs() -> list[dict]:
                     if isinstance(r, dict) and isinstance(r.get("ts"), (int, float))
                     and isinstance(r.get("tokens"), int)]
     except (OSError, ValueError, AttributeError):
+        # An absent or corrupt usage file reads as no runs, which is what a
+        # fresh install has.
         pass
     return []
 
@@ -98,6 +100,7 @@ def record_run(tokens: int, insight_id: str = "", now: float | None = None) -> N
         runs = [r for r in runs if r["ts"] >= cutoff]
         _write_runs(runs)
     except OSError:
+        # Usage accounting must never fail the run it is accounting for.
         pass
 
 

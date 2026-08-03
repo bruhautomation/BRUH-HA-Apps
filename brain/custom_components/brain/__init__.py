@@ -93,6 +93,8 @@ try:
     with open(os.path.join(os.path.dirname(__file__), "manifest.json")) as _fh:
         _LOADED_VERSION = json.load(_fh).get("version", "unknown")
 except (OSError, json.JSONDecodeError):
+    # No manifest, or one we cannot parse, leaves the version "unknown" —
+    # which is exactly what the restart check treats as "cannot tell".
     pass
 
 SEND_PROMPT_SCHEMA = vol.Schema(
@@ -385,6 +387,8 @@ def _remove_file(path: str) -> None:
     try:
         os.remove(path)
     except OSError:
+        # Removing a file that is already gone is this function's goal, not
+        # its failure.
         pass
 
 

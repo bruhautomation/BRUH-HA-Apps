@@ -175,6 +175,8 @@ class ClaudeBridge:
             if host and port and token:
                 return f"http://{host}:{port}", token
         except (OSError, json.JSONDecodeError, ValueError):
+            # No endpoint file, no token, or a half-written one all mean the same
+            # thing: the pool's HTTP API is not up, so the caller uses file IPC.
             pass
         return None
 
@@ -440,6 +442,8 @@ class ClaudeBridge:
             try:
                 os.remove(path)
             except OSError:
+                # The retry loop is what this delete protects. If the file will not go,
+                # the next pass reports the same corruption — no worse than now.
                 pass
             return "Error: received corrupt response from Claude Terminal."
         except OSError as exc:
@@ -457,6 +461,9 @@ class ClaudeBridge:
                     try:
                         os.remove(os.path.join(sessions_dir, name))
                     except OSError:
+                        # Clearing a conversation is a courtesy; a session file that outlives
+                        # it is resumed at most once more.
                         pass
         except OSError:
+            # One unremovable session file must not stop the sweep clearing the rest.
             pass
