@@ -6,14 +6,14 @@ Claude plus a suite of new tools hands it the keys. Stop programming your house 
 think.
 
 **📖 Full documentation: [bruhautomation.com/brain](https://bruhautomation.com/brain/)** —
-install guide, every feature with worked examples, the service and tool reference, and the
+install guide, features with worked examples, the service and tool reference, and the
 changelog. This page is the short version.
 
 > ### Back up Home Assistant first — somewhere that isn't this machine.
 >
 > brAIn edits your real configuration: automations, dashboards, helpers, entities. It is
 > built to be careful, it snapshots files before it changes them, and `brain undo` puts
-> them back. None of that is a backup you can restore from if something goes wrong.
+> them back. Something could still go wrong though - be prepared. 
 >
 > **Settings → System → Backups**, then copy it off the device.
 
