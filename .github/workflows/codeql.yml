@@ -41,7 +41,20 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [python, javascript-typescript]
+        # `actions` analyses the workflow files themselves — the token a job
+        # is handed, and whether a third-party action is pinned to something
+        # that can move under it. It belongs here for the same reason the
+        # other two do: this repo's CI has write access to a package registry
+        # and runs other people's code.
+        #
+        # It is also here to close a gap that cost real time. GitHub's default
+        # setup did analyse `actions` and raised nine "workflow does not
+        # contain permissions" alerts; adding this workflow disabled default
+        # setup, and with it the only thing that scanned workflows. The alerts
+        # stayed open with nothing left to re-scan them, so fixing the code
+        # could not close them — an analysis that stops running leaves its
+        # findings frozen rather than retiring them.
+        language: [python, javascript-typescript, actions]
 
     steps:
       - uses: actions/checkout@v7
