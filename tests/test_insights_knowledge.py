@@ -434,7 +434,6 @@ class TestGenerateLearns(InsightsServerCase):
         self.assertEqual(facts[0]["category"], "energy")
 
     def test_hypotheses_queued_and_repeats_dropped(self):
-        import hypotheses
         asyncio.run(self.server._generate("energy"))
         self.assertEqual(self._stored()["questions"],
                          ["The garage fridge is meant to run 24/7 — right?"])
@@ -448,7 +447,6 @@ class TestGenerateLearns(InsightsServerCase):
         self.assertEqual(len(hypotheses.list_all("open")), 1)
 
     def test_queue_is_capped_regardless_of_what_the_model_returns(self):
-        import hypotheses
         for i in range(hypotheses.MAX_OPEN + 3):
             hypotheses.propose(f"claim number {i}")
         self.assertEqual(len(hypotheses.list_all("open")), hypotheses.MAX_OPEN)
@@ -656,7 +654,6 @@ class TestKnowledgeEndpoints(InsightsServerCase):
         """Cards carry the claim's TEXT, not its id. Without resolving it in
         the queue the card looked answered while the guess stayed open in
         Memory until it expired a fortnight later."""
-        import hypotheses
         claim = "The garage fridge is meant to run 24/7 — right?"
         hypotheses.propose(claim, "energy")
         self.server.save_insight({
@@ -680,7 +677,6 @@ class TestKnowledgeEndpoints(InsightsServerCase):
         self.assertTrue(any(claim in f["text"] for f in knowledge_store.list_facts()))
 
     def test_rejecting_from_a_card_settles_the_queue(self):
-        import hypotheses
         claim = "The attic fan is broken — right?"
         hypotheses.propose(claim, "energy")
         self.server.save_insight({

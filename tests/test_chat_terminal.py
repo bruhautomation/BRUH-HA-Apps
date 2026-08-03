@@ -275,7 +275,9 @@ class ChatSessionCase(unittest.IsolatedAsyncioTestCase):
             if len(lines) >= count:
                 return lines
             await asyncio.sleep(0.05)
-        self.fail(f"only {len(lines)} of {count} spawns were logged")
+        # `raise`, not `self.fail` — same failure, but the function now has
+        # one kind of exit rather than a return and a fall-through.
+        raise AssertionError(f"only {len(lines)} of {count} spawns were logged")
 
     async def _drain(self, until, timeout=10.0):
         """Collect events until ``until(events)`` is true, or give up."""

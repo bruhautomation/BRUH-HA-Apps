@@ -138,7 +138,7 @@ class BridgeTestCase(unittest.TestCase):
             # In synchronous tests the handler completes before we return,
             # so this loop should never actually wait.
             import time; time.sleep(0.05)
-        self.fail(f"response file {res} never appeared")
+        raise AssertionError(f"response file {res} never appeared")
 
 
 class TestHandle(BridgeTestCase):

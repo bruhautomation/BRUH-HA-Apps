@@ -197,7 +197,7 @@ async def _lan_gate(request: web.Request, handler):
     log.warning(
         "refused %s %s from %s — the panel is reachable on the LAN because "
         "host_network is on, but only Home Assistant may drive it",
-        _for_log(request.method), _for_log(request.path), host or "unknown",
+        _for_log(request.method), _for_log(request.path), _for_log(host or "unknown"),
     )
     return web.json_response(
         {"error": "forbidden: open this panel from Home Assistant"},
@@ -236,8 +236,16 @@ def _is_rcon_noise(line: str) -> bool:
 
 
 def _for_log(value: str, limit: int = 256) -> str:
-    """Flatten caller-supplied text to a single bounded log line."""
-    return re.sub(r"[\r\n\t]+", " ", str(value))[:limit]
+    """Flatten caller-supplied text to a single bounded log line.
+
+    Spelled out as `replace` calls rather than one `re.sub` because the
+    line break is the whole point: a `\\r` or `\\n` reaching the log is
+    what lets a caller write log lines of its own, and each one is worth
+    seeing named here.
+    """
+    return (str(value)
+            .replace("\r\n", " ").replace("\n", " ")
+            .replace("\r", " ").replace("\t", " ")[:limit])
 
 
 # ---------------------------------------------------------------------------

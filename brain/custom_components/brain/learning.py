@@ -19,15 +19,12 @@ stale rather than disagreeing with it.
 from __future__ import annotations
 
 import json
-import logging
 import os
 from datetime import datetime, timezone
 
 from homeassistant.core import HomeAssistant
 
 from .const import MEMORY_DIR, SHARED_DIR
-
-_LOGGER = logging.getLogger(__name__)
 
 EVENT_LEARNED = "brain_learned"
 

@@ -308,9 +308,12 @@ class ClaudeBridge:
             raise
 
         if result_text is None:
-            if accepted:
-                raise _StreamBrokenError("stream ended without a result event")
-            raise RuntimeError("stream ended without a result event")
+            # `accepted` is necessarily True here: the only way out of the
+            # block above without an exception is past the status check that
+            # sets it. So a stream that ends with no result event is always
+            # the broken-stream case, and always falls back to file IPC —
+            # the `RuntimeError` this used to raise instead was unreachable.
+            raise _StreamBrokenError("stream ended without a result event")
         self._append_history(conv_id, text, result_text)
         return result_text
 

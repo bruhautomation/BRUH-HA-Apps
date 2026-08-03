@@ -375,7 +375,9 @@ def test_bridge_falls_back_to_files_when_api_down(tmp_path, monkeypatch):
             text = await bridge.async_send_conversation_streaming(
                 "fallback please", conversation_id="convFB"
             )
-            await responder
+            # A responder that never fires should fail this test, not hang
+            # the suite waiting for it.
+            await asyncio.wait_for(responder, 5)
             assert text == "via files"
         finally:
             await hass.aiohttp_session.close()
