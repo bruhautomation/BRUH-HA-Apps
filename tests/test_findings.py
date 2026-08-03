@@ -41,6 +41,7 @@ import knowledge_store  # noqa: E402
 import onboarding  # noqa: E402
 import prompt_store  # noqa: E402
 import settings_store  # noqa: E402
+import undo_store  # noqa: E402
 import user_categories  # noqa: E402
 
 
@@ -395,6 +396,9 @@ class ServerCase(unittest.TestCase):
             "error": "", "meta": {}}
         self.server.JOBS.clear()
         self.server.QUEUE = asyncio.Queue()
+        # The undo ring is process-global and in memory on purpose. Left
+        # between tests, a token from one leaks into the next.
+        undo_store.clear()
 
     def tearDown(self):
         (engine.run_claude, engine.run_agent) = self._old_engine
@@ -555,6 +559,229 @@ class TestFindingRoutes(ServerCase):
         line = json.loads(queued[0].read_text().splitlines()[0])
         self.assertEqual(line["source"], "homeowner")
         self.assertIn("Fixed by the homeowner", line["fact"])
+
+    def test_i_fixed_it_can_say_what_you_did(self):
+        """Same box as Wrong, and not the same thing: nothing is being
+        denied here, so the note is more of the fact rather than evidence
+        against a report — and it keeps the homeowner source, not
+        `correction`, or the consolidator would be told to weigh a fix
+        against a claim nobody made."""
+        findings_store.add("Back Door battery is dead")
+        ts = findings_store.list_all()[0]["ts"]
+        why = "Replaced the CR2032 — it's a 3-monthly job on that one."
+
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                resp = await client.post(f"/api/finding/{ts}/done",
+                                         json={"note": why})
+                self.assertEqual(resp.status, 200)
+            finally:
+                await client.close()
+
+        asyncio.run(run())
+        queued = list(self.server.MEMORY_INBOX_DIR.glob("*.jsonl"))
+        line = json.loads(queued[0].read_text().splitlines()[0])
+        self.assertEqual(line["source"], "homeowner")
+        self.assertIn("Fixed by the homeowner", line["fact"])
+        self.assertIn(why, line["fact"])
+
+    def test_every_ending_hands_back_a_way_to_undo_it(self):
+        """They delete the row — that is what makes the list a list — and
+        the two endings sit beside each other meaning opposite things, so a
+        mis-tap has nothing to put back by hand."""
+        for verb in ("wrong", "done"):
+            findings_store.add(f"Problem for {verb}")
+            ts = next(f["ts"] for f in findings_store.list_all()
+                      if f["text"] == f"Problem for {verb}")
+
+            async def run(v=verb, t=ts):
+                client = self._client()
+                await client.start_server()
+                try:
+                    return await (await client.post(f"/api/finding/{t}/{v}")).json()
+                finally:
+                    await client.close()
+
+            self.assertTrue(asyncio.run(run()).get("undo"), verb)
+
+    def test_undoing_an_ending_puts_back_all_three_of_its_effects(self):
+        """An ending does three things — deletes the row, writes the key
+        that suppresses it, queues the memory line. Undoing one of the three
+        would leave a card that is back on the list and still silently
+        deduped away next run."""
+        findings_store.add("Front porch sensor stuck")
+        ts = findings_store.list_all()[0]["ts"]
+
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                data = await (await client.post(
+                    f"/api/finding/{ts}/wrong",
+                    json={"note": "It always reads on."})).json()
+                self.assertEqual(data["findings"], [])
+                resp = await client.post(f"/api/undo/{data['undo']}")
+                self.assertEqual(resp.status, 200)
+                return await resp.json()
+            finally:
+                await client.close()
+
+        payload = asyncio.run(run())
+        self.assertTrue(payload["undone"])
+        self.assertEqual([f["text"] for f in payload["findings"]],
+                         ["Front porch sensor stuck"])
+        self.assertEqual(payload["findings"][0]["ts"], ts)
+        # The suppression is lifted...
+        self.assertEqual(findings_store.settled_listing(), [])
+        # ...and the memory line it queued is out of the inbox. It cannot
+        # have been consolidated yet — the token is younger than any pass.
+        self.assertEqual(
+            list(self.server.MEMORY_INBOX_DIR.glob("*.jsonl")), [])
+
+    def test_a_token_is_spent_once(self):
+        """Two presses on a toast still on screen must not restore twice."""
+        findings_store.add("Sensor stuck")
+        ts = findings_store.list_all()[0]["ts"]
+
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                data = await (await client.post(f"/api/finding/{ts}/wrong")).json()
+                first = await client.post(f"/api/undo/{data['undo']}")
+                second = await client.post(f"/api/undo/{data['undo']}")
+                return first.status, second.status
+            finally:
+                await client.close()
+
+        first, second = asyncio.run(run())
+        self.assertEqual(first, 200)
+        self.assertEqual(second, 404)
+        self.assertEqual(len(findings_store.list_all()), 1)
+
+    def test_undo_says_so_when_the_row_came_back_on_its_own(self):
+        """Re-reported while the toast was up: the list holds a newer
+        version, so putting the old one back would lose whatever happened
+        since. The suppression still lifts — that is what was asked for."""
+        findings_store.add("Sensor stuck")
+        ts = findings_store.list_all()[0]["ts"]
+
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                data = await (await client.post(f"/api/finding/{ts}/wrong")).json()
+                # something re-files it under the same id before you press Undo
+                findings_store._write([{"ts": ts, "text": "Sensor stuck",
+                                        "status": "open"}])
+                return await (await client.post(f"/api/undo/{data['undo']}")).json()
+            finally:
+                await client.close()
+
+        payload = asyncio.run(run())
+        self.assertFalse(payload["undone"])
+        self.assertEqual(len(payload["findings"]), 1)
+        self.assertEqual(findings_store.settled_listing(), [])
+
+    def test_dismiss_is_undoable_and_teaches_nothing_either_way(self):
+        findings_store.add("Sensor stuck")
+        ts = findings_store.list_all()[0]["ts"]
+
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                data = await (await client.delete(f"/api/finding/{ts}")).json()
+                self.assertTrue(data.get("undo"))
+                return await (await client.post(f"/api/undo/{data['undo']}")).json()
+            finally:
+                await client.close()
+
+        payload = asyncio.run(run())
+        self.assertTrue(payload["undone"])
+        self.assertEqual(len(payload["findings"]), 1)
+        self.assertEqual(findings_store.settled_listing(), [])
+        self.assertEqual(list(self.server.MEMORY_INBOX_DIR.glob("*.jsonl")), [])
+
+    def test_fix_and_snooze_offer_no_undo(self):
+        """Fix starts a Claude run against the actual house, so an "undo"
+        that only took the card back would be a lie about what it undid.
+        Snooze took nothing away and already has "Bring it back now"."""
+        findings_store.add("Sensor stuck")
+        ts = findings_store.list_all()[0]["ts"]
+
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                snoozed = await (await client.post(
+                    f"/api/finding/{ts}/snooze", json={"for": "week"})).json()
+                fixed = await (await client.post(f"/api/finding/{ts}/fix")).json()
+                return snoozed, fixed
+            finally:
+                await client.close()
+
+        snoozed, fixed = asyncio.run(run())
+        self.assertNotIn("undo", snoozed)
+        self.assertNotIn("undo", fixed)
+
+    def test_undoing_a_guess_puts_it_back_in_the_queue(self):
+        claim = "The garage fridge is meant to run 24/7"
+        entry = hypotheses.propose(claim, "energy")
+
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                data = await (await client.post(
+                    f"/api/hypothesis/{entry['ts']}/confirm")).json()
+                self.assertTrue(data.get("undo"))
+                return await (await client.post(f"/api/undo/{data['undo']}")).json()
+            finally:
+                await client.close()
+
+        payload = asyncio.run(run())
+        self.assertTrue(payload["undone"])
+        self.assertEqual([h["text"] for h in payload["hypotheses"]], [claim])
+        self.assertEqual([h["status"] for h in hypotheses.list_all()], ["open"])
+        self.assertEqual(list(self.server.MEMORY_INBOX_DIR.glob("*.jsonl")), [])
+
+    def test_undoing_a_no_clears_the_dead_end_too(self):
+        """Rejecting also wrote the claim into the ask-history. Leaving that
+        behind would put the guess back on the list and make it
+        un-proposable for ever after."""
+        claim = "The attic fan is broken"
+        entry = hypotheses.propose(claim, "energy")
+
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                data = await (await client.post(
+                    f"/api/hypothesis/{entry['ts']}/reject",
+                    json={"note": "It's on a humidistat."})).json()
+                return await (await client.post(f"/api/undo/{data['undo']}")).json()
+            finally:
+                await client.close()
+
+        asyncio.run(run())
+        self.assertEqual([h["status"] for h in hypotheses.list_all()], ["open"])
+        self.assertEqual(hypotheses.dead_ends(), [])
+        self.assertFalse(knowledge_store.is_known_question(claim))
+        self.assertEqual(list(self.server.MEMORY_INBOX_DIR.glob("*.jsonl")), [])
+
+    def test_an_expired_token_is_refused_rather_than_guessed_at(self):
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                return (await client.post("/api/undo/nope-not-a-token")).status
+            finally:
+                await client.close()
+
+        self.assertEqual(asyncio.run(run()), 404)
 
     def test_the_list_carries_the_guesses_too(self):
         """One list of decisions, one badge that can read as done. The count
@@ -843,6 +1070,44 @@ class TestFindingsUI(unittest.TestCase):
         self.assertIn('{ id: "snoozed", label: "Later"', self.js)
 
 
+class TestUndoStore(unittest.TestCase):
+    """"I misclicked", and nothing more.
+
+    In memory and short-lived on purpose: it is the thing the toast offers
+    while the toast is on screen, not a history. A durable undo log would be
+    a second record of decisions that memory.md already holds — the exact
+    duplication the Findings redesign removed.
+    """
+
+    def setUp(self):
+        undo_store.clear()
+
+    tearDown = setUp
+
+    def test_a_token_is_taken_exactly_once(self):
+        """Undo is not idempotent in the useful direction: two presses on a
+        toast still up must not restore a row twice."""
+        token = undo_store.record("finding", finding={"ts": 1})
+        self.assertEqual(undo_store.take(token)["finding"], {"ts": 1})
+        self.assertIsNone(undo_store.take(token))
+
+    def test_an_unknown_token_is_none_rather_than_a_raise(self):
+        self.assertIsNone(undo_store.take("not-a-token"))
+
+    def test_an_expired_token_is_gone(self):
+        token = undo_store.record("finding", finding={"ts": 1})
+        undo_store._ENTRIES[token]["at"] -= undo_store.TTL_S + 1
+        self.assertIsNone(undo_store.take(token))
+
+    def test_the_ring_drops_the_oldest_first(self):
+        """More than a handful pending means somebody is working through a
+        list fast, and only the newest few are reachable anyway."""
+        tokens = [undo_store.record("finding", finding={"ts": i})
+                  for i in range(undo_store.MAX_ENTRIES + 3)]
+        self.assertIsNone(undo_store.take(tokens[0]))
+        self.assertIsNotNone(undo_store.take(tokens[-1]))
+
+
 class TestSettledLedger(StoreCase):
     """Settling deletes the row, so everything that used to be carried BY the
     row — "we already told you about this", "you said it isn't a problem" —
@@ -901,6 +1166,42 @@ class TestSettledLedger(StoreCase):
 
     def test_a_settlement_that_never_happened_is_none(self):
         self.assertIsNone(findings_store.settle_and_clear(999, "fixed"))
+
+    def test_a_row_goes_back_under_the_id_it_left_under(self):
+        """Undo's half of an ending. The ts is the id the panel acted on, so
+        a row that came back under a new one would be a different card to
+        everything holding a reference to it."""
+        findings_store.add("Sensor stuck")
+        row = findings_store.list_all()[0]
+        findings_store.settle_and_clear(row["ts"], "ignored")
+        self.assertEqual(findings_store.list_all(), [])
+
+        back = findings_store.restore(row)
+        self.assertEqual(back["ts"], row["ts"])
+        self.assertEqual(back["text"], "Sensor stuck")
+        self.assertEqual(back["status"], "open")
+        self.assertEqual(findings_store.open_count(), 1)
+
+    def test_a_row_is_not_restored_over_a_newer_one(self):
+        """If the analyst re-reported it while the toast was up, the list
+        already holds a newer version and overwriting it would throw away
+        whatever has happened since."""
+        findings_store.add("Sensor stuck")
+        row = findings_store.list_all()[0]
+        findings_store.settle_and_clear(row["ts"], "ignored")
+        findings_store.unsettle(findings_store.normalize(row["text"]))
+        findings_store.add("Sensor stuck")
+        again = findings_store.list_all()[0]
+        # Force the collision the ts-as-id contract makes possible.
+        again["ts"] = row["ts"]
+        findings_store._write([again])
+
+        self.assertIsNone(findings_store.restore(row))
+        self.assertEqual(len(findings_store.list_all()), 1)
+
+    def test_restoring_junk_is_refused_rather_than_stored(self):
+        self.assertIsNone(findings_store.restore({}))
+        self.assertIsNone(findings_store.restore({"ts": 1, "text": "  "}))
 
     def test_the_reason_survives_the_row_it_was_typed_on(self):
         """The row is deleted; the reason is the part worth keeping. Losing

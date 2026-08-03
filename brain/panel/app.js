@@ -10,13 +10,119 @@ const el = (tag, cls, text) => {
   if (text != null) node.textContent = text;
   return node;
 };
-// Icon-only controls get an instant styled tooltip (CSS [data-tip]) instead
-// of the browser's sluggish native title bubble, plus a matching aria-label.
+// Controls get an instant styled tooltip instead of the browser's sluggish
+// native title bubble, plus a matching aria-label.
 const tip = (node, text) => {
   node.dataset.tip = text;
   node.setAttribute("aria-label", text);
   return node;
 };
+
+// ---------------------------------------------------------------- tooltips
+// One element for the lot, positioned in JS and clamped to the viewport.
+//
+// It was a `::after` per control, absolutely positioned at `right: -4px` and
+// up to 240px wide — so it hung leftward from the control's right edge and
+// fell off the screen for anything sitting in the first ~236px. On a phone
+// that was four of the six buttons under a finding; on a desktop it was
+// still two, because the findings list starts at the left margin. Nothing in
+// CSS can see the viewport edge, so nothing in CSS could fix it.
+//
+// One element also means one thing on screen at a time, which is what you
+// want from a tooltip and what per-control pseudo-elements can't promise.
+const TIP_DELAY_MS = 150;
+const TIP_GAP = 7;
+const TIP_MARGIN = 8;
+const tipState = { node: null, timer: null, box: null };
+
+function tipBox() {
+  if (!tipState.box) {
+    tipState.box = el("div", "tipbox");
+    // The text is already on the control as aria-label, so a screen reader
+    // must not meet it twice.
+    tipState.box.setAttribute("aria-hidden", "true");
+    document.body.appendChild(tipState.box);
+  }
+  return tipState.box;
+}
+
+function placeTip(node) {
+  const box = tipBox();
+  box.textContent = node.dataset.tip || "";
+  // Measure before deciding: max-width is a clamp, so the rendered width is
+  // whatever the text needed and guessing it is how this broke the first time.
+  box.style.left = "0px";
+  box.style.top = "0px";
+  const a = node.getBoundingClientRect();
+  const b = box.getBoundingClientRect();
+  const vw = document.documentElement.clientWidth;
+  const vh = document.documentElement.clientHeight;
+  // Centred on the control, then pulled inside the viewport. Centring rather
+  // than edge-anchoring means the clamp only has to act near the very edges.
+  const left = Math.max(TIP_MARGIN,
+    Math.min(a.left + a.width / 2 - b.width / 2, vw - b.width - TIP_MARGIN));
+  // Below by default so the pointer never covers it; above when below would
+  // not fit, which is what the old `.card .foot` override was for.
+  let top = a.bottom + TIP_GAP;
+  if (top + b.height > vh - TIP_MARGIN) top = a.top - b.height - TIP_GAP;
+  box.style.left = Math.round(Math.max(TIP_MARGIN, left)) + "px";
+  box.style.top = Math.round(Math.max(TIP_MARGIN, top)) + "px";
+  box.classList.add("on");
+}
+
+function hideTip() {
+  clearTimeout(tipState.timer);
+  tipState.node = null;
+  if (tipState.box) tipState.box.classList.remove("on");
+}
+
+// Take down what is SHOWING without cancelling what is pending. A tooltip is
+// fixed to where its control was, so a scroll makes a visible one a label
+// pointing at nothing — but one still inside its open delay is measured when
+// it opens, after the scroll, so it is already correct. Cancelling that one
+// too is what made a tooltip vanish for good whenever the page happened to
+// settle a scroll in the 150ms after the pointer arrived.
+function dismissTip() {
+  if (tipState.box) tipState.box.classList.remove("on");
+}
+
+function showTip(node) {
+  if (!node || !node.dataset.tip || node.disabled) return;
+  clearTimeout(tipState.timer);
+  tipState.node = node;
+  tipState.timer = setTimeout(() => {
+    if (tipState.node === node && node.isConnected) placeTip(node);
+  }, TIP_DELAY_MS);
+}
+
+// Delegated, because most of these controls are built and rebuilt as the
+// lists redraw — binding per control would leak a listener per render.
+// `pointerover` rather than `mouseenter`: it bubbles, and a touch that
+// becomes a press should not leave a bubble behind, which is why the
+// pointerdown handler below closes it.
+document.addEventListener("pointerover", (ev) => {
+  const node = ev.target.closest && ev.target.closest("[data-tip]");
+  if (node !== tipState.node) { hideTip(); showTip(node); }
+});
+document.addEventListener("pointerout", (ev) => {
+  const node = ev.target.closest && ev.target.closest("[data-tip]");
+  if (node && node === tipState.node) hideTip();
+});
+document.addEventListener("pointerdown", hideTip);
+document.addEventListener("focusin", (ev) => {
+  const node = ev.target.closest && ev.target.closest("[data-tip]");
+  if (node) showTip(node);
+});
+document.addEventListener("focusout", hideTip);
+// A tooltip is fixed to where the control WAS, so a scroll makes a visible
+// one a label pointing at nothing — it goes rather than chasing. A resize
+// reflows everything, and the pointer is very unlikely to still be over what
+// it was, so that one takes the pending tooltip with it.
+window.addEventListener("scroll", dismissTip, true);
+window.addEventListener("resize", hideTip);
+document.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape") hideTip();
+});
 
 const state = {
   status: null,
@@ -78,12 +184,51 @@ function closeBox(sel) {
   syncModalLock();
 }
 
-function toast(msg) {
+// How long an undoable toast stays up. Longer than a plain one, because a
+// plain toast is something you read and this is something you might act on
+// — and 3.2s is not enough to notice you pressed the wrong button, look at
+// the message, and reach the control.
+const TOAST_MS = 3200;
+const TOAST_UNDO_MS = 8000;
+
+// `undo` is a token from the server; when there is one the toast grows a
+// button. Every ending on the Findings tab deletes its row — that is what
+// makes the list a list — so a mis-tap has nothing to put back by hand, and
+// the two endings sit beside each other meaning opposite things.
+function toast(msg, undo) {
   const t = $("#toast");
-  t.textContent = msg;
+  t.textContent = "";
+  t.appendChild(el("span", null, msg));
+  // Only while the toast is up: the button is the offer, and the offer
+  // expires with it. The token expires server-side too, so a stale one is
+  // refused rather than acting on a decision made five minutes ago.
+  t.classList.toggle("undoable", !!undo);
+  if (undo) {
+    const btn = el("button", "toastundo", "Undo");
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      try {
+        const data = await api(`api/undo/${undo}`, { method: "POST" });
+        takeFindings(data);
+        renderFindings();
+        t.classList.remove("show");
+        // `undone: false` means the row could not go back — the analyst
+        // re-reported it while the toast was up, so the list already holds
+        // a newer version and overwriting it would lose what happened
+        // since. Say which, rather than claiming a success.
+        toast(data.undone ? "Put back"
+                          : "It's already back on the list — nothing to undo");
+      } catch (e) {
+        btn.disabled = false;
+        toast(e.message);
+      }
+    });
+    t.appendChild(btn);
+  }
   t.classList.add("show");
   clearTimeout(toast._t);
-  toast._t = setTimeout(() => t.classList.remove("show"), 3200);
+  toast._t = setTimeout(() => t.classList.remove("show"),
+                        undo ? TOAST_UNDO_MS : TOAST_MS);
 }
 
 function timeAgo(iso) {
@@ -1734,7 +1879,10 @@ async function findAction(finding, verb, done, btns, note) {
         ...(note ? { body: JSON.stringify({ note }) } : {}) });
     takeFindings(data);
     renderFindings();
-    toast(done);
+    // `undo` is present on the presses that took a row away, and absent on
+    // Fix it (a Claude run is already touching the house) and on the snooze
+    // (it took nothing away, and has "Bring it back now").
+    toast(done, data.undo);
     if (verb === "fix") { refreshStatus().catch(() => {}); fastPoll(); }
   } catch (e) {
     toast(e.message);
@@ -1942,11 +2090,25 @@ function makeFinding(f) {
     // they do to a row. They are easy to confuse until you say what each
     // one teaches brAIn: one says the problem is over, the other says it
     // was never a problem here.
+    // Same box as Wrong, and for the same reason — but what it collects is
+    // not a correction. Nothing here is being denied: "I fixed it" leaves
+    // brAIn knowing a problem is over, and "replaced the CR2032, it's a
+    // 3-monthly job on that sensor" leaves it knowing the house. So it goes
+    // into memory beside the fact rather than as evidence against a report.
     const done = add(el("button", "btn small", "✓  I fixed it"));
-    tip(done, "It was a real problem and it's sorted now. brAIn writes that "
-      + "into memory and clears it off the list.");
-    done.addEventListener("click", () =>
-      findAction(f, "done", "Fixed — written into memory", btns));
+    tip(done, "It was a real problem and it's sorted now. Say what you did, "
+      + "if it's worth remembering.");
+    done.addEventListener("click", () => openNoteForm(card, actions,
+      (note, formBtns) => findAction(
+        f, "done",
+        note ? "Fixed — that's gone into memory" : "Fixed — written into memory",
+        btns.concat(formBtns), note),
+      {
+        hint: "What did you do? Optional — it goes into memory with the fix, "
+          + "so brAIn knows how this house works next time.",
+        placeholder: "Replaced the CR2032 — it's a 3-monthly job on that one.",
+        send: "Done",
+      }));
 
     // Not a decision, so not next to the ones that are. Dismissing is
     // permanent and teaches the analyst never to raise it again; this just
@@ -2014,7 +2176,7 @@ async function hypoAction(h, verb, done, btns, note) {
       ...(note ? { body: JSON.stringify({ note }) } : {}) });
     takeFindings(data);
     renderFindings();
-    toast(done);
+    toast(done, data.undo);
   } catch (e) {
     toast(e.message);
     btns.forEach((b) => { b.disabled = false; });
@@ -2105,39 +2267,74 @@ function renderFindings() {
 // or dismiss), learned facts (add/remove), answered Q&A, and the shared
 // memory.md the brAIn maintains.
 
+// Where a queued fact came from, in words rather than in the source tag the
+// writer stamped on it. An unknown source falls through as itself: a new
+// writer showing its own tag is odd, and showing nothing is a lie.
 function kSourceLabel(src) {
-  return { insights: "discovered", homeowner: "your answer",
-    feedback: "feedback", user: "added by you" }[src] || src;
+  return {
+    insights: "discovered", homeowner: "your answer", confirmed: "you confirmed",
+    correction: "your correction", feedback: "feedback", user: "added by you",
+    panel: "added by you", assist: "voice", terminal: "terminal",
+    "terminal-forget": "removal, from the terminal",
+    study: "study session", automation: "automation",
+  }[src] || src;
 }
 
-// One discovery still waiting for the document. ✕ drops it from the queue,
-// and asks the consolidator to take it out of the document too in case an
-// earlier pass already wrote it down.
-function makeFactRow(f) {
+// One fact still waiting for the document — a line of the inbox itself, not
+// a reconstruction of it, so what is listed here is exactly what the count
+// beside the button counts and exactly what the next pass will read.
+//
+// ✕ drops the line. It does NOT ask the consolidator to strike the text
+// from memory.md, which is what the old button did: a queued fact has by
+// definition never been filed, so there was nothing there to remove, and
+// the request went off to delete a line that in most cases did not exist.
+function makeQueuedRow(f) {
   const row = el("div", "fbitem");
   const txt = el("div", "txt");
   txt.appendChild(el("div", null, f.text));
   const when = new Date(f.ts * 1000);
   txt.appendChild(el("div", "when",
-    `${kSourceLabel(f.source)}${f.category ? " · " + f.category : ""}` +
+    kSourceLabel(f.source) +
     (isNaN(when.getTime()) ? "" :
       " · " + when.toLocaleDateString([], { month: "short", day: "numeric" }))));
   row.appendChild(txt);
   const del = el("button", "btn icon", "✕");
-  tip(del, "Forget this fact — it's also removed from the memory file");
+  tip(del, "Drop it from the queue — it never reaches memory");
   del.addEventListener("click", async () => {
+    del.disabled = true;
     try {
-      const res = await api(`api/knowledge/fact/${f.ts}`, { method: "DELETE" });
-      if (res.removing) {
-        toast("Forgotten — removing it from the memory file too…");
-        $("#kMemMerging").classList.remove("hidden");
-        pollMemoryMerge();
-      }
-      renderKnowledge();
-    } catch (e) { toast(e.message); }
+      const res = await api(`api/memory/inbox/${f.id}`, { method: "DELETE" });
+      takeQueue(res.inbox, res.inbox_pending);
+      toast("Dropped — it won't be filed");
+    } catch (e) {
+      toast(e.message);
+      del.disabled = false;
+    }
   });
   row.appendChild(del);
   return row;
+}
+
+// The list and its count, drawn from the one payload that carries both.
+function takeQueue(inbox, pending) {
+  const items = inbox || [];
+  const factsEl = $("#kFacts");
+  factsEl.textContent = "";
+  if (!items.length) {
+    factsEl.appendChild(el("div", "kempty",
+      "Nothing waiting — it's all in the memory document."));
+  }
+  // Newest first: what you just taught it is what you came to check on.
+  items.slice().reverse().forEach((f) => factsEl.appendChild(makeQueuedRow(f)));
+  // The list is capped and the count is not, so on a very long queue say
+  // what is not on screen rather than letting the two numbers disagree
+  // again in a quieter way.
+  const hidden = Math.max(0, (Number(pending) || 0) - items.length);
+  if (hidden) {
+    factsEl.appendChild(el("div", "kmore",
+      `…and ${hidden} more waiting. They all get filed together.`));
+  }
+  renderPending(pending, memState.lastState);
 }
 
 async function renderKnowledge() {
@@ -2155,26 +2352,24 @@ async function renderKnowledge() {
   // badges, neither of which ever read as done. What is left here is one
   // queue and one document, which is what this tab is for.
 
-  // Discoveries still waiting for the document. Filed ones are not listed
-  // anywhere: they are in the memory document on the right, which is the
-  // whole point of filing them, and showing them a second time under
-  // "already in memory" left a permanent 23-item list beside a queue that
-  // was supposed to read as empty.
-  const queued = (data.facts || []).filter((f) => !f.filed);
-
-  const factsEl = $("#kFacts");
-  factsEl.textContent = "";
-  if (!queued.length) {
-    factsEl.appendChild(el("div", "kempty",
-      "Nothing waiting — it's all in the memory document."));
-  }
-  queued.slice().reverse().forEach((f) => factsEl.appendChild(makeFactRow(f)));
+  // What is actually in the inbox, which is what the count counts. This
+  // list used to be built from the facts ledger instead, keeping anything
+  // the last consolidation predated — a different population entirely. The
+  // ledger holds what the ANALYST discovered; the inbox holds that plus
+  // corrections, confirmed guesses, facts you taught it here, voice, study
+  // sessions and whatever another add-on dropped in /share. So the label
+  // said nine things waiting over four cards, and both were right about
+  // different questions.
+  //
+  // Filed facts are still listed nowhere: they are the document on the
+  // right, which is the whole point of filing them.
+  memState.lastState = data.memory_state;
+  takeQueue(data.inbox, data.inbox_pending);
 
   // "Answered questions" is gone with the model it belonged to: a
   // confirmed guess becomes a plain memory line and its record is
   // settled, so there is no Q/A pair left to show.
 
-  renderPending(data.inbox_pending, data.memory_state);
   renderMemory(data);
 }
 
@@ -2201,7 +2396,11 @@ function renderPending(n, state) {
 
 const memState = { editing: false, dirty: false, text: "", pollTimer: null,
                    consolidating: false, lastReported: 0, watching: false,
-                   pollFails: 0 };
+                   pollFails: 0,
+                   // The last consolidation state seen, so dropping one row
+                   // from the queue can redraw the button without a second
+                   // round trip for something that has not changed.
+                   lastState: null };
 
 // How often to ask whether a pass has landed. It was 2.5s against the full
 // knowledge payload; the endpoint is now a flag, so this is cheap — but a
@@ -3506,8 +3705,18 @@ async function chatFindingAction(verb, done, note, extraBtns) {
 $("#chatFindingClose").addEventListener("click", () => setChatFinding(null));
 $("#chatFindingFix").addEventListener("click", () =>
   chatFindingAction("fix", "On it — brAIn is making the change"));
-$("#chatFindingDone").addEventListener("click", () =>
-  chatFindingAction("done", "Fixed — written into memory"));
+$("#chatFindingDone").addEventListener("click", () => openNoteForm(
+  $("#chatFinding"), $("#chatFinding").querySelector(".cfacts"),
+  (note, formBtns) => chatFindingAction(
+    "done",
+    note ? "Fixed — that's gone into memory" : "Fixed — written into memory",
+    note, formBtns),
+  {
+    hint: "What did you do? Optional — it goes into memory with the fix, so "
+      + "brAIn knows how this house works next time.",
+    placeholder: "Replaced the CR2032 — it's a 3-monthly job on that one.",
+    send: "Done",
+  }));
 // The same ending as the card's, and it asks the same question — the strip
 // exists so you don't have to go back to the tab to decide, and an ending
 // that quietly dropped the reason would make going back the better option.

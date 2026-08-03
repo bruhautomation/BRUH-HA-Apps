@@ -291,6 +291,70 @@ class TestPanelBranding(unittest.TestCase):
         self.assertEqual(self.html.count('id="kAddForm"'), 1)
 
 
+class TestTooltips(unittest.TestCase):
+    """A tooltip that opens off the screen is a tooltip that isn't there.
+
+    They were a `::after` per control, `position: absolute; right: -4px`,
+    max-width 240px — so the bubble hung LEFTWARD from the control's right
+    edge and fell off the side of the screen for anything sitting in the
+    first ~236px. Four of the six buttons under a finding at 390px; still
+    two at 1100px, because the findings list starts at the left margin. CSS
+    cannot see the viewport edge, so no CSS-only version of this can be
+    correct — the pixels are measured by tests/manual/measure-tooltips.mjs
+    and this pins the shape that measurement relies on.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.js = (PANEL / "app.js").read_text()
+        cls.css = (PANEL / "style.css").read_text()
+
+    def test_there_is_one_tooltip_element_placed_in_js(self):
+        self.assertIn(".tipbox {", self.css)
+        self.assertIn("position: fixed;", self.css[self.css.index(".tipbox {"):])
+        self.assertIn("function placeTip(", self.js)
+        # The pseudo-element version, and the per-container override that was
+        # patching one case of the same bug, are gone.
+        self.assertNotIn("[data-tip]::after", self.css)
+        self.assertNotIn(".card .foot [data-tip]", self.css)
+
+    def test_it_is_clamped_to_the_viewport_in_both_axes(self):
+        place = self.js[self.js.index("function placeTip("):]
+        place = place[:place.index("\nfunction ")]
+        self.assertIn("clientWidth", place)
+        self.assertIn("clientHeight", place)
+        self.assertIn("TIP_MARGIN", place)
+        # Measured, not assumed: max-width is a clamp, so the rendered width
+        # is whatever the text needed and guessing it is the original bug.
+        self.assertIn("getBoundingClientRect()", place)
+
+    def test_the_listeners_are_delegated(self):
+        """Most of these controls are rebuilt every time a list redraws.
+        Binding per control leaks a listener per render."""
+        for ev in ("pointerover", "pointerout", "pointerdown", "focusin"):
+            self.assertIn(f'document.addEventListener("{ev}"', self.js)
+
+    def test_a_scroll_does_not_cancel_a_tooltip_that_has_not_opened(self):
+        """A visible tooltip is fixed to where the control was, so a scroll
+        has to take it down. One still inside its open delay is measured
+        when it opens, AFTER the scroll — cancelling that one too is what
+        made a tooltip vanish for good whenever the page settled a scroll in
+        the 150ms after the pointer arrived."""
+        self.assertIn('window.addEventListener("scroll", dismissTip, true)', self.js)
+        dismiss = self.js[self.js.index("function dismissTip("):]
+        dismiss = dismiss[:dismiss.index("\n}") + 2]
+        self.assertNotIn("clearTimeout", dismiss)
+        self.assertIn("clearTimeout", self.js[self.js.index("function hideTip("):
+                                              self.js.index("function dismissTip(")])
+
+    def test_the_bubble_is_hidden_from_screen_readers(self):
+        """tip() already puts the same text on the control as aria-label.
+        Reaching it twice is worse than not reaching it at all."""
+        box = self.js[self.js.index("function tipBox("):]
+        self.assertIn('setAttribute("aria-hidden", "true")',
+                      box[:box.index("\n}")])
+
+
 class TestTopbarLayout(unittest.TestCase):
     """The bar has two shapes: one 56px row on a pointer-sized screen, and a
     two-row phone bar with the tabs on a strip of their own.

@@ -208,6 +208,26 @@ def reject(ts: int, note: str = "") -> dict | None:
     return _settle(ts, "rejected", note=note)
 
 
+def reopen(ts: int) -> dict | None:
+    """Put a settled guess back in the queue — the undo half of an answer.
+
+    Only ever reverses a yes or a no somebody has just pressed, so it does
+    not consult the cap: the claim was open a moment ago and counted against
+    it then. An expired one stays expired — nobody pressed anything, and
+    fourteen days is the answer.
+    """
+    entries = _read()
+    for e in entries:
+        if int(e.get("ts") or 0) == ts and e.get("status") in (
+                "confirmed", "rejected"):
+            e["status"] = "open"
+            e.pop("settled_at", None)
+            e.pop("note", None)
+            _write(entries)
+            return {"ts": ts, "text": e["text"], "status": "open"}
+    return None
+
+
 def dead_ends(limit: int = 20) -> list[str]:
     """Rejected claims, newest last — the only part of this queue worth
     putting in a prompt. A claim the homeowner explained comes with their

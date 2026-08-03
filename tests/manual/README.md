@@ -3,7 +3,7 @@
 Checks that need a real browser, so they can't run in CI alongside the pytest
 suite. Run them by hand when you touch what they measure.
 
-All three need Playwright, resolved from this repo's own `node_modules`:
+They all need Playwright, resolved from this repo's own `node_modules`:
 
 ```bash
 npm install playwright        # once, at the repo root
@@ -55,6 +55,32 @@ node tests/manual/measure-cardhead.mjs
 
 Run it after touching the card head. The title gets the row and wraps to two
 lines; the eyebrow is the part that gives way.
+
+## `measure-tooltips.mjs`
+
+Hovers every visible `[data-tip]` control on the Findings tab at five widths
+and fails if the bubble lands outside the viewport — or never opens, which
+looks the same to whoever wanted to read it.
+
+```bash
+node tests/manual/measure-tooltips.mjs
+```
+
+Tooltips used to be a `::after` per control, `position: absolute; right: -4px`
+with a 240px max-width — so the bubble hung *leftward* from the control's
+right edge and ran off the side of the screen for anything in the first
+~236px. That was four of the six buttons under a finding at 390px, and still
+two of them at 1100px, because the findings list starts at the left margin.
+
+CSS cannot see the viewport edge, so no CSS-only version of this is correct.
+The panel places one shared fixed-position element in JS and clamps it, and
+this is what measures the clamp. Run it after adding a control with a
+tooltip, or after touching `placeTip` / `.tipbox`. Set `TIP_SHOT_DIR=/some/dir`
+to also write a PNG per width.
+
+`tests/test_brain_addon.py::TestTooltips` pins the structure it relies on, so
+CI still fails if the pseudo-element version comes back — it just can't
+measure pixels.
 
 ## `demo_panel.py` + `shoot-panel.mjs` — the docs screenshots
 

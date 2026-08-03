@@ -404,6 +404,14 @@ in it: replacing a battery, re-pairing a device. brAIn marks findings like these
 you** rather than offering to fix them, because inventing a software substitute for a
 dead battery is worse than saying so.
 
+It offers the same box, for a different reason: nothing is being corrected here, so what
+you type is simply more of the fact.
+
+> Replaced the CR2032 — it's a 3-monthly job on that one.
+
+"I fixed it" leaves brAIn knowing a problem is over. That sentence leaves it knowing your
+house. Optional, like the other one.
+
 **✕ Wrong** — brAIn has misread something, or it is simply normal in this house. If the
 garage freezer is *supposed* to sit at -30°C, one press ends that conversation for good:
 the answer is fed back into every future analysis, so brAIn stops raising it rather than
@@ -430,6 +438,22 @@ Both endings do the same three things. The answer goes into memory as a plain fa
 your home, the wording is remembered so the same problem is never reported at you twice,
 and **the card is deleted**. There is no pile of dismissed cards to scroll past — a list
 of things nobody has to look at again is not a work list.
+
+### Undo
+
+Because the card is deleted, and because the two endings sit next to each other meaning
+opposite things. Every press that takes something off the list — both endings, **Got it**,
+**Dismiss**, and either answer to a guess — leaves an **Undo** in the toast for a few
+seconds. It puts back all of it: the card, the suppression that would have stopped brAIn
+raising it again, and the line it queued for your memory document.
+
+It is deliberately only that long. This is "I pressed the wrong one", not a history: once
+a consolidation has run, the fact is in the document and the way to change it is to edit
+the document. If you press Undo after that, it says so rather than pretending.
+
+**Fix it has no Undo**, because it starts a Claude run against your actual house and
+taking the card back would be a lie about what was undone. **Remind me later** has none
+either — it took nothing away, and it already has *Bring it back now*.
 
 ### Dismiss, which is neither
 
@@ -510,10 +534,19 @@ Nothing writes the document directly except the consolidator. Everything else qu
 | Voice conversations | preferences and corrections you state out loud |
 | Insight runs | durable discoveries about the home |
 | Study sessions | whatever \`brain learn\` finds |
+| Findings | what you said when you pressed **Wrong** or **I fixed it** |
+| Guesses | the ones you confirmed, and your reason for the ones you didn't |
 | \`brain memory add\` | what you type in the terminal |
 
 One writer means the terminal, the panel, and voice can all feed the same memory without
 fighting over the file.
+
+**Waiting to be filed** is that queue, and every row in it is a line the next pass will
+read — whoever put it there. It used to list only what insight runs had discovered while
+counting everything, which is why it could say "9 things waiting" above four cards. **✕**
+on a row drops it before it is filed; nothing is asked of the consolidator, because a
+queued fact has never reached the document. A line that *is* in the document is edited out
+of the document, in the markdown editor beside the queue.
 
 ## Filing the queue now
 

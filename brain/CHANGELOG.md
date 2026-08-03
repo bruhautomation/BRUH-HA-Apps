@@ -2,6 +2,69 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.21.0
+
+### Added
+
+- **Undo, in the toast.** Every press that takes something off the Findings
+  list — both endings, **Got it**, **Dismiss**, and either answer to a guess —
+  now leaves an **Undo** button in the toast for a few seconds. It puts back
+  all of it: the card, the suppression that would have stopped brAIn raising
+  it again, and the line it queued for your memory document.
+
+  It exists because those presses delete the row, which is what makes the list
+  a list, and because "I fixed it" and "Wrong" sit next to each other meaning
+  opposite things — so a mis-tap is not hypothetical and there was nothing to
+  put back by hand. It is deliberately short-lived: this is "I pressed the
+  wrong one", not a history. Once a consolidation has run, the fact is in the
+  document and editing the document is the honest answer — press Undo after
+  that and it says so rather than pretending.
+
+  **Fix it has no Undo**, because it has already sent Claude at your actual
+  house and taking the card back would be a lie about what was undone.
+  **Remind me later** has none either: it took nothing away, and it already
+  has *Bring it back now*.
+
+- **"I fixed it" takes a note too.** The same box **Wrong** offers, for a
+  different reason — nothing is being corrected, so what you type is simply
+  more of the fact:
+
+  > Replaced the CR2032 — it's a 3-monthly job on that one.
+
+  "I fixed it" leaves brAIn knowing a problem is over. That sentence leaves it
+  knowing your house. Optional, like the other one, and it lands in memory as
+  part of the fix rather than as a correction of anything.
+
+### Fixed
+
+- **"9 things waiting" over four cards.** The Memory tab's filing queue
+  counted one thing and listed another. The count read the memory inbox —
+  every fact any writer has queued for the consolidator. The list read the
+  facts ledger, which only holds what *insight runs discovered*, minus
+  anything older than the last consolidation. So corrections, confirmed
+  guesses, facts you typed in yourself, voice, study sessions and anything
+  another add-on left in `/share` were all counted and never shown. Neither
+  number was wrong; they were answers to different questions.
+
+  The list is the inbox now — every row is a line the next pass will actually
+  read, labelled with where it came from — and the count is the length of it,
+  from the same read. **✕** on a row drops it from the queue and asks the
+  consolidator for nothing, because a queued fact has never reached the
+  document; the old button was asking to strike a line that, more often than
+  not, had never been written.
+
+- **Tooltips ran off the left of the screen.** They were anchored to each
+  control's right edge and up to 240px wide, so anything sitting in the first
+  ~236px lost its text off the side — four of the six buttons under a finding
+  on a phone, and still two of them on a desktop, because the list starts at
+  the left margin. They are measured and clamped to the window now, and open
+  upward when there is no room below.
+
+- **The toast was squeezed into the right-hand half of the screen.** It was
+  positioned from the centre, which on a phone left it about 195px to lay out
+  in — so its text wrapped to four lines inside a box with the whole width to
+  spare. Nobody noticed until the Undo button had to sit beside it.
+
 ## 1.20.0
 
 ### Changed
