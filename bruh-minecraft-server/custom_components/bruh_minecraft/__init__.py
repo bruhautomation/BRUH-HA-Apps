@@ -7,7 +7,6 @@ Registers:
 """
 from __future__ import annotations
 
-import logging
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
@@ -34,8 +33,6 @@ from .const import (
     SERVICE_WHITELIST_REMOVE,
 )
 from .coordinator import BruhMinecraftCoordinator
-
-_LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[Platform] = [
     Platform.SENSOR,

@@ -13,7 +13,7 @@ changelog. This page is the short version.
 >
 > brAIn edits your real configuration: automations, dashboards, helpers, entities. It is
 > built to be careful, it snapshots files before it changes them, and `brain undo` puts
-> them back. Something could still go wrong though - be prepared. 
+> them back. None of that is a backup. Something could still go wrong — be prepared.
 >
 > **Settings → System → Backups**, then copy it off the device.
 

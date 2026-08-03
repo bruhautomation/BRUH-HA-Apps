@@ -761,6 +761,22 @@ def test_no_flock_at_all_runs_rather_than_refuses(tmp_path):
     assert inbox_lines(memory_dir) == []
 
 
+# Run in a *separate* process by `_lock_is_held`. One string, not a stack of
+# adjacent literals: a list of implicitly concatenated strings is one missing
+# comma away from silently becoming a different program.
+_FLOCK_PROBE = """\
+import fcntl, os, sys
+try: fd = os.open(sys.argv[1], os.O_RDONLY)
+except OSError: print('free'); raise SystemExit
+try:
+    fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+    fcntl.flock(fd, fcntl.LOCK_UN)
+    print('free')
+except OSError: print('held')
+finally: os.close(fd)
+"""
+
+
 def _lock_is_held(lock_file: Path) -> bool:
     """The panel's `_consolidation_running()`, asked from another process.
 
@@ -769,17 +785,7 @@ def _lock_is_held(lock_file: Path) -> bool:
     the panel sees.
     """
     probe = subprocess.run(
-        [sys.executable, "-c",
-         "import fcntl, os, sys\n"
-         "try: fd = os.open(sys.argv[1], os.O_RDONLY)\n"
-         "except OSError: print('free'); raise SystemExit\n"
-         "try:\n"
-         "    fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)\n"
-         "    fcntl.flock(fd, fcntl.LOCK_UN)\n"
-         "    print('free')\n"
-         "except OSError: print('held')\n"
-         "finally: os.close(fd)\n",
-         str(lock_file)],
+        [sys.executable, "-c", _FLOCK_PROBE, str(lock_file)],
         capture_output=True, text=True, check=False)
     return probe.stdout.strip() == "held"
 

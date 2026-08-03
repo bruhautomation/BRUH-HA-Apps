@@ -47,6 +47,8 @@ def load_overrides() -> dict:
         if isinstance(cats, dict):
             return {"categories": cats}
     except (OSError, ValueError, AttributeError):
+        # No overrides file, or an unreadable one, means no overrides — which
+        # is the shipped behaviour, not a broken one.
         pass
     return {"categories": {}}
 

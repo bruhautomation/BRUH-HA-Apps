@@ -215,6 +215,8 @@ def sweep_inbox() -> int:
         try:
             path.unlink()
         except OSError:
+            # The findings are already filed. An inbox file that will not delete is
+            # swept again next pass and deduped by the settled ledger.
             pass
     return added
 

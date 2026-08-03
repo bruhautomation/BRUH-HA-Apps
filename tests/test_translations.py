@@ -40,7 +40,7 @@ def _walk_strings(node, path=""):
 
 @pytest.mark.parametrize("path", FILES, ids=lambda p: p.name)
 def test_no_literal_braces_in_translation_strings(path):
-    data = json.load(open(path))
+    data = json.loads(path.read_text(encoding="utf-8"))
     for key, text in _walk_strings(data):
         assert "{{" not in text, (
             f"{path.name}{key}: literal Jinja braces blank the HA dialog: {text[:80]!r}"
@@ -54,14 +54,14 @@ def test_no_literal_braces_in_translation_strings(path):
 def test_strings_and_en_translation_identical():
     """Custom integrations serve translations/en.json; strings.json is the
     source of truth for contributors. They must never drift."""
-    a = json.load(open(FILES[0]))
-    b = json.load(open(FILES[1]))
+    a = json.loads(FILES[0].read_text(encoding="utf-8"))
+    b = json.loads(FILES[1].read_text(encoding="utf-8"))
     assert a == b
 
 
 def test_menu_steps_have_labels():
     """Every async_show_menu step needs menu_options labels (defense in
     depth — the flow also passes labels inline)."""
-    data = json.load(open(FILES[0]))
+    data = json.loads(FILES[0].read_text(encoding="utf-8"))
     user_step = data["config"]["step"]["user"]
     assert set(user_step["menu_options"]) == {"add_agent", "add_insight"}

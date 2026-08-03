@@ -268,13 +268,16 @@ class ChatSessionCase(unittest.IsolatedAsyncioTestCase):
         lines = []
         while loop.time() < deadline:
             try:
-                lines = [json.loads(l) for l in open(log) if l.strip()]
+                lines = [json.loads(l)
+                         for l in Path(log).read_text().splitlines() if l.strip()]
             except OSError:
                 lines = []
             if len(lines) >= count:
                 return lines
             await asyncio.sleep(0.05)
-        self.fail(f"only {len(lines)} of {count} spawns were logged")
+        # `raise`, not `self.fail` — same failure, but the function now has
+        # one kind of exit rather than a return and a fall-through.
+        raise AssertionError(f"only {len(lines)} of {count} spawns were logged")
 
     async def _drain(self, until, timeout=10.0):
         """Collect events until ``until(events)`` is true, or give up."""
@@ -527,7 +530,7 @@ class ChatSessionCase(unittest.IsolatedAsyncioTestCase):
         await self._drain(lambda evs: any(
             e.get("type") == "state" and e.get("state") == "ready" for e in evs[1:]))
         out = await self.session.handoff()
-        written = json.loads(open(handoff).read())
+        written = json.loads(Path(handoff).read_text())
         self.assertEqual(written["session_id"], out["session_id"])
         self.assertIsInstance(written["ts"], int)
         # No tmux server for that session name here, so it reports honestly

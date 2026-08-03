@@ -379,7 +379,7 @@ class TestManualConsolidation(PanelCase):
             if not state["merging"]:
                 return state
             await asyncio.sleep(0.02)
-        self.fail("the consolidation never finished")
+        raise AssertionError("the consolidation never finished")
 
     def test_pending_count_reaches_the_panel(self):
         """The button says how much is waiting, so pressing it is an informed

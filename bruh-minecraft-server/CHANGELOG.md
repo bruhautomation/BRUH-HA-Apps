@@ -5,6 +5,31 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.15.2
+
+### Security
+
+- **The LAN-refusal log line took a percent-decoded request path.** aiohttp
+  hands `request.path` over already decoded, so `%0a` in a URL arrived as a real
+  newline and anything on the LAN could write its own lines into the add-on log
+  — under a message about being refused. The method, path and peer are flattened
+  to one line and capped before they are formatted in.
+- **Path containment is now proved where the path is built.** World names, pack
+  names and backup refs were already behind anchored allowlists that cannot
+  express a separator, so nothing was reachable. `_under()` makes containment a
+  property of the path being used rather than of a pattern four hundred lines
+  away — worth having in a panel that runs with `host_network: true` and hands
+  out world delete, restore and upload.
+- **The restore-ref pattern is bounded.** `world-[\w-]+\.tar\.gz` on a URL
+  segment a caller picks is an unbounded run of word characters in front of a
+  literal suffix, which is what makes a failed match cost more than the string
+  is long. No archive this writes comes near 64 characters.
+
+### Changed
+
+- Every deliberately silent exception handler now says what is lost when the
+  exception is ignored.
+
 ## 1.15.1
 
 ### Fixed

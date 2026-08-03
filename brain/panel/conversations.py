@@ -171,6 +171,7 @@ def title_of(path: Path) -> str:
                     text = " ".join(_message_text(entry).split())
                     return text[:MAX_TITLE_CHARS]
     except OSError:
+        # A transcript that cannot be read has no title to offer.
         pass
     return ""
 

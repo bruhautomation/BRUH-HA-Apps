@@ -90,6 +90,7 @@ class Rcon:
         try:
             self._sock.shutdown(socket.SHUT_RDWR)
         except OSError:
+            # The socket is already down, which is what shutdown was asking for.
             pass
         try:
             self._sock.close()

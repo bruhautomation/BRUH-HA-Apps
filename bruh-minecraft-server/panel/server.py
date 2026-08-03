@@ -189,10 +189,15 @@ async def _lan_gate(request: web.Request, handler):
     if _is_trusted(host):
         return await handler(request)
 
+    # The refused request's own path goes into this line, and aiohttp hands
+    # it to us percent-decoded — so `%0a` in a URL arrives as a real newline
+    # and a caller could otherwise write whatever it liked into the log as a
+    # line of its own. Everything the caller chose is flattened to one line
+    # and capped before it is formatted in.
     log.warning(
         "refused %s %s from %s — the panel is reachable on the LAN because "
         "host_network is on, but only Home Assistant may drive it",
-        request.method, request.path, host or "unknown",
+        _for_log(request.method), _for_log(request.path), _for_log(host or "unknown"),
     )
     return web.json_response(
         {"error": "forbidden: open this panel from Home Assistant"},
@@ -230,9 +235,40 @@ def _is_rcon_noise(line: str) -> bool:
     return any(p.search(line) for p in _RCON_NOISE_PATTERNS)
 
 
+def _for_log(value: str, limit: int = 256) -> str:
+    """Flatten caller-supplied text to a single bounded log line.
+
+    Spelled out as `replace` calls rather than one `re.sub` because the
+    line break is the whole point: a `\\r` or `\\n` reaching the log is
+    what lets a caller write log lines of its own, and each one is worth
+    seeing named here.
+    """
+    return (str(value)
+            .replace("\r\n", " ").replace("\n", " ")
+            .replace("\r", " ").replace("\t", " ")[:limit])
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+def _under(base: Path, *parts: str) -> Path:
+    """Join `parts` under `base` and prove the result stayed there.
+
+    Every caller validates its name first — `VALID_WORLD_NAME`,
+    `VALID_PACK_NAME`, or an inline `re.fullmatch` — and none of those
+    patterns can produce a separator, so this second lock never fires in
+    practice. It is here because this panel runs with `host_network:
+    true` and hands out world delete, restore and upload: containment
+    should be a property of the path being used, visible where the path
+    is built, rather than of a pattern defined four hundred lines away.
+    """
+    root = base.resolve()
+    path = (root / Path(*parts)).resolve()
+    if path != root and root not in path.parents:
+        raise web.HTTPBadRequest(text="bad path")
+    return path
+
+
 def _rcon_password() -> str:
     secret = MC_PANEL_STATE / "rcon.secret"
     if secret.is_file():
@@ -433,6 +469,7 @@ def _host_total_memory_mb() -> int:
                 if line.startswith("MemTotal:"):
                     return int(line.split()[1]) // 1024
     except (OSError, ValueError):
+        # No readable MemTotal — fall through to the default below.
         pass
     return 0
 
@@ -622,6 +659,8 @@ def _setup_required() -> bool:
             SETUP_MARKER.parent.mkdir(parents=True, exist_ok=True)
             SETUP_MARKER.write_text(time.strftime("%Y-%m-%dT%H:%M:%S%z"))
         except OSError:
+            # The marker only stops the wizard being shown again. Failing to write
+            # it costs a wizard, not a configuration.
             pass
         return False
     # EULA is false AND no marker — true first run.
@@ -1010,11 +1049,11 @@ async def api_setup(request: web.Request) -> web.Response:
             warnings.append(f"{key}: {err}")
 
     # ── Stage the world skeleton + per-world `server.properties`.
-    world_dir = MC_WORLDS_DIR / world_name
+    world_dir = _under(MC_WORLDS_DIR, world_name)
     world_dir.mkdir(parents=True, exist_ok=True)
     (world_dir / "plugins").mkdir(exist_ok=True)
     (world_dir / "mods").mkdir(exist_ok=True)
-    (MC_BACKUPS_ROOT / world_name).mkdir(parents=True, exist_ok=True)
+    _under(MC_BACKUPS_ROOT, world_name).mkdir(parents=True, exist_ok=True)
 
     props_path = world_dir / "server.properties"
     props: dict[str, str] = {}
@@ -1215,7 +1254,11 @@ async def api_restore(request: web.Request) -> web.Response:
     # Accept either a git SHA (40 hex) or an archive basename
     if re.fullmatch(r"[0-9a-f]{7,40}", ref):
         return await _restore_from_git(ref)
-    if re.fullmatch(r"world-[\w\-]+\.tar\.gz", ref):
+    # Bounded repetition, not `+`: the name is a URL segment a caller picks,
+    # and an unbounded run of word characters in front of a literal suffix
+    # is what makes a failed match cost more than the string is long. No
+    # archive this writes comes close to 64 characters.
+    if re.fullmatch(r"world-[\w-]{1,64}\.tar\.gz", ref):
         return await _restore_from_archive(ref)
     return web.json_response({"error": "unrecognised backup ref"}, status=400)
 
@@ -1252,7 +1295,7 @@ async def _restore_from_git(sha: str) -> web.Response:
 
 
 async def _restore_from_archive(name: str) -> web.Response:
-    src = MC_BACKUP_DIR / "archives" / name
+    src = _under(MC_BACKUP_DIR, "archives", name)
     if not src.is_file():
         return web.json_response({"error": "archive not found"}, status=404)
     try:
@@ -1366,7 +1409,7 @@ async def api_plugin_delete(request: web.Request) -> web.Response:
     name = request.match_info["name"]
     if "/" in name or ".." in name or not name.endswith(".jar"):
         return web.json_response({"error": "invalid name"}, status=400)
-    target = MC_SERVER_DIR / "plugins" / name
+    target = _under(MC_SERVER_DIR, "plugins", name)
     if not target.is_file():
         return web.json_response({"error": "not found"}, status=404)
     target.unlink()
@@ -1405,7 +1448,7 @@ def _read_world_props(name: str) -> dict[str, str]:
     """Read just the highlight keys from `<MC_WORLDS_DIR>/<name>/server.properties`
     for display in the Worlds tab. Returns an empty dict if the world has
     no properties file yet (a freshly-created world before its first boot)."""
-    path = MC_WORLDS_DIR / name / "server.properties"
+    path = _under(MC_WORLDS_DIR, name, "server.properties")
     if not path.is_file():
         return {}
     out: dict[str, str] = {}
@@ -1418,6 +1461,8 @@ def _read_world_props(name: str) -> dict[str, str]:
             if k in _WORLD_LIST_PROP_KEYS:
                 out[k] = _unescape_java_property(v)
     except OSError:
+        # A world whose server.properties will not read is listed with whatever
+        # defaults the caller already holds.
         pass
     return out
 
@@ -1501,7 +1546,7 @@ async def api_worlds_create(request: web.Request) -> web.Response:
     # wizard's choices, then re-write. setup-server-properties.sh on boot
     # preserves these (its seed-if-absent rule only adds keys that are
     # missing — ours are present so they stay).
-    props_path = MC_WORLDS_DIR / name / "server.properties"
+    props_path = _under(MC_WORLDS_DIR, name, "server.properties")
     existing: dict[str, str] = {}
     if props_path.is_file():
         for line in props_path.read_text().splitlines():
@@ -1722,7 +1767,7 @@ async def api_worlds_export(request: web.Request) -> web.StreamResponse:
     name = request.match_info["name"]
     if not VALID_WORLD_NAME.match(name):
         return web.json_response({"error": "invalid name"}, status=400)
-    world_dir = MC_WORLDS_DIR / name
+    world_dir = _under(MC_WORLDS_DIR, name)
     if not world_dir.is_dir():
         return web.json_response({"error": "world not found"}, status=404)
 
@@ -1740,6 +1785,7 @@ async def api_worlds_export(request: web.Request) -> web.StreamResponse:
             if stale.stat().st_mtime < cutoff:
                 stale.unlink()
         except OSError:
+            # One stale export that will not delete is retried on the next export.
             pass
 
     handle = tempfile.NamedTemporaryFile(delete=False, dir=out_dir, suffix=".zip")
@@ -1825,7 +1871,7 @@ async def api_resource_pack_upload(request: web.Request) -> web.Response:
                     {"error": "name must end in .zip and contain only A-Z a-z 0-9 . _ -"},
                     status=400,
                 )
-            saved = MC_RESOURCE_PACKS / target_name
+            saved = _under(MC_RESOURCE_PACKS, target_name)
             tmp = saved.with_suffix(saved.suffix + ".uploading")
             with open(tmp, "wb") as f:
                 while True:
@@ -1856,7 +1902,7 @@ async def api_resource_pack_delete(request: web.Request) -> web.Response:
     name = request.match_info["name"]
     if not VALID_PACK_NAME.match(name):
         return web.json_response({"error": "invalid name"}, status=400)
-    target = MC_RESOURCE_PACKS / name
+    target = _under(MC_RESOURCE_PACKS, name)
     if not target.is_file():
         return web.json_response({"error": "not found"}, status=404)
     target.unlink()
@@ -1871,7 +1917,7 @@ async def api_resource_pack_apply(request: web.Request) -> web.Response:
     name = request.match_info["name"]
     if not VALID_PACK_NAME.match(name):
         return web.json_response({"error": "invalid name"}, status=400)
-    pack = MC_RESOURCE_PACKS / name
+    pack = _under(MC_RESOURCE_PACKS, name)
     if not pack.is_file():
         return web.json_response({"error": "not found"}, status=404)
     sha1 = _pack_sha1(pack)
@@ -1915,7 +1961,7 @@ async def serve_pack(request: web.Request) -> web.Response:
     name = request.match_info["name"]
     if not VALID_PACK_NAME.match(name):
         return web.Response(status=400, text="invalid name")
-    target = MC_RESOURCE_PACKS / name
+    target = _under(MC_RESOURCE_PACKS, name)
     if not target.is_file():
         return web.Response(status=404, text="not found")
     return web.FileResponse(target, headers={
@@ -1988,7 +2034,7 @@ async def api_worlds_import(request: web.Request) -> web.Response:
     if upload_path is None:
         return web.json_response({"error": "no file uploaded"}, status=400)
 
-    target_dir = MC_WORLDS_DIR / name
+    target_dir = _under(MC_WORLDS_DIR, name)
     if target_dir.exists():
         upload_path.unlink(missing_ok=True)
         return web.json_response(
@@ -2030,7 +2076,7 @@ async def api_worlds_import(request: web.Request) -> web.Response:
         # Standard skeleton.
         (target_dir / "plugins").mkdir(exist_ok=True)
         (target_dir / "mods").mkdir(exist_ok=True)
-        (MC_BACKUPS_ROOT / name).mkdir(parents=True, exist_ok=True)
+        _under(MC_BACKUPS_ROOT, name).mkdir(parents=True, exist_ok=True)
     finally:
         shutil.rmtree(extract_root, ignore_errors=True)
         upload_path.unlink(missing_ok=True)
@@ -2074,7 +2120,7 @@ def _load_curated_catalog() -> dict:
 
 def _read_world_curated(name: str) -> dict | None:
     """Return the .curated.json marker for a world profile, or None."""
-    marker = MC_WORLDS_DIR / name / ".curated.json"
+    marker = _under(MC_WORLDS_DIR, name, ".curated.json")
     if not marker.is_file():
         return None
     data = _read_json(marker, {})
@@ -2138,10 +2184,10 @@ async def _apply_curated_resource_pack(world_name: str, cid: str, host: str,
     if not isinstance(rp, dict):
         return
     rp_name = rp.get("name") or f"{cid}-resource-pack.zip"
-    pack = MC_RESOURCE_PACKS / rp_name
+    pack = _under(MC_RESOURCE_PACKS, rp_name)
     if not pack.is_file():
         return
-    props_path = MC_WORLDS_DIR / world_name / "server.properties"
+    props_path = _under(MC_WORLDS_DIR, world_name, "server.properties")
     props: dict[str, str] = {}
     if props_path.is_file():
         for line in props_path.read_text().splitlines():
@@ -2203,7 +2249,7 @@ async def api_curated_install(request: web.Request) -> web.Response:
     world_name = str(body.get("name") or cid).strip()
     if not VALID_WORLD_NAME.match(world_name):
         return web.json_response({"error": "invalid world name"}, status=400)
-    if (MC_WORLDS_DIR / world_name).exists():
+    if _under(MC_WORLDS_DIR, world_name).exists():
         return web.json_response(
             {"error": f"a world named '{world_name}' already exists"}, status=409)
 

@@ -13,6 +13,7 @@ import json
 import os
 import sys
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import yaml
@@ -30,7 +31,7 @@ import ha_mcp_server  # noqa: E402
 
 def _power_tool_services():
     """Extract the registered service names from power_tools.py via AST."""
-    source = open(os.path.join(INTEGRATION_DIR, "power_tools.py")).read()
+    source = Path(INTEGRATION_DIR, "power_tools.py").read_text(encoding="utf-8")
     tree = ast.parse(source)
     services = []
     for node in ast.walk(tree):
@@ -147,7 +148,7 @@ class TestInitWiring(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.source = open(os.path.join(INTEGRATION_DIR, "__init__.py")).read()
+        cls.source = Path(INTEGRATION_DIR, "__init__.py").read_text(encoding="utf-8")
 
     def test_imports_power_tools(self):
         self.assertIn(
@@ -168,9 +169,8 @@ class TestPowerToolsModuleShape(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.source = open(
-            os.path.join(INTEGRATION_DIR, "power_tools.py")
-        ).read()
+        cls.source = Path(
+            INTEGRATION_DIR, "power_tools.py").read_text(encoding="utf-8")
 
     def test_admin_gate_present(self):
         """Every handler goes through the admin gate wrapper."""
@@ -343,12 +343,10 @@ class TestDashboardServices(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.source = open(
-            os.path.join(INTEGRATION_DIR, "power_tools.py")
-        ).read()
-        cls.run_sh = open(
-            os.path.join(BASE_DIR, "brain", "run.sh")
-        ).read()
+        cls.source = Path(
+            INTEGRATION_DIR, "power_tools.py").read_text(encoding="utf-8")
+        cls.run_sh = Path(
+            BASE_DIR, "brain", "run.sh").read_text(encoding="utf-8")
 
     def test_update_backs_up_before_saving(self):
         """The backup write must appear before async_save in the update

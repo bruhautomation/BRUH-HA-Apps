@@ -476,6 +476,8 @@ class ChatSession:
                             raw = await asyncio.wait_for(proc.stderr.read(), 2)
                             detail = raw.decode("utf-8", "replace").strip()[-400:]
                         except (asyncio.TimeoutError, ValueError):
+                            # Nothing on stderr inside the timeout. The state set below still
+                            # reports the failure, just without a detail line.
                             pass
                     self._set_state("error", detail or "The Claude session ended.")
                 else:
@@ -535,6 +537,8 @@ class ChatSession:
             }) + "\n").encode())
             await self.proc.stdin.drain()
         except (OSError, ConnectionResetError, AssertionError):
+            # The pipe is already closed, so the interrupt cannot be delivered —
+            # which is what the kill-and-resume below exists for.
             pass
         deadline = time.time() + INTERRUPT_GRACE
         while time.time() < deadline:
@@ -556,6 +560,8 @@ class ChatSession:
                 proc.kill()
                 await proc.wait()
             except (OSError, ProcessLookupError):
+                # The process ended between the check and the kill. That is the
+                # outcome being asked for.
                 pass
         self._busy_since = 0.0
         self._set_state("idle")
@@ -752,6 +758,10 @@ def _error_text(event: dict) -> str:
 HANDOFF_FILE = os.environ.get("BRAIN_TERMINAL_HANDOFF",
                               "/data/terminal-handoff.json")
 TMUX_SESSION = os.environ.get("BRAIN_TMUX_SESSION", "claude")
+# The `claude` user run.sh creates (UID 1000), which is who the terminal —
+# and so the other end of the handoff — runs as.
+CLAUDE_UID = int(os.environ.get("BRAIN_CLAUDE_UID", "1000"))
+CLAUDE_GID = int(os.environ.get("BRAIN_CLAUDE_GID", "1000"))
 TERMINAL_START = os.environ.get("BRAIN_TERMINAL_START",
                                 "/usr/local/bin/brain-terminal-start")
 
@@ -777,11 +787,18 @@ def _open_in_terminal(session_id: str) -> bool:
         tmp = path.with_suffix(".tmp")
         tmp.write_text(payload, encoding="utf-8")
         tmp.replace(path)
-        # The terminal runs as the claude user, so the file has to be
-        # readable — and removable — by it.
+        # The terminal runs as the claude user and this file is written by
+        # the panel, which is root — so hand it over rather than opening it
+        # up. 0o666 did the job by making it world-writable, which is a
+        # wider grant than the one user that needs it, and removing it was
+        # never the file's permission to give: unlinking is governed by the
+        # directory, which the claude user already owns.
         try:
-            os.chmod(path, 0o666)
+            os.chown(path, CLAUDE_UID, CLAUDE_GID)
+            os.chmod(path, 0o600)
         except OSError:
+            # Best effort: an unreadable handoff file costs the terminal its
+            # `--resume`, and the session id is still in the transcript.
             pass
     except OSError:
         return False

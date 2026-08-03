@@ -35,6 +35,8 @@ def _load() -> dict:
         if isinstance(cats, dict):
             return {"categories": cats}
     except (OSError, ValueError, AttributeError):
+        # A missing file, or one that is not the shape we wrote, starts from
+        # empty rather than costing the caller its request.
         pass
     return {"categories": {}}
 

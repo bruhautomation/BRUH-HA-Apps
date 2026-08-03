@@ -12,6 +12,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "brain", "ha-mc
 
 import ha_mcp_server
 
+try:
+    from PIL import Image
+except ImportError:  # Pillow is optional; the test that needs it skips
+    Image = None
+
 
 class TestRegistryConsistency(unittest.TestCase):
     """The registry is the contract: schemas, implementations, and specs
@@ -72,12 +77,9 @@ class TestCameraSnapshot(unittest.TestCase):
         self.assertIn("error", result)
         self.assertIn("too large", result["error"])
 
+    @unittest.skipIf(Image is None, "Pillow not installed")
     @patch("ha_mcp_server.ha_api_request_raw")
     def test_downscales_with_pillow(self, mock_raw):
-        try:
-            from PIL import Image
-        except ImportError:
-            self.skipTest("Pillow not installed")
         big = Image.new("RGB", (2000, 1500), color=(120, 30, 30))
         buf = io.BytesIO()
         big.save(buf, format="JPEG")

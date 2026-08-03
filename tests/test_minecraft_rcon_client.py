@@ -123,6 +123,8 @@ class FakeRconServer:
             try:
                 client.close()
             except Exception:
+                # The fake server is shutting down — a client socket that is already
+                # closed needs nothing.
                 pass
             self._sock.close()
 

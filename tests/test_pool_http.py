@@ -120,11 +120,11 @@ def test_health_and_auth(tmp_path, monkeypatch):
 
         # token + endpoint published for the integration
         assert os.path.isfile(mod.API_TOKEN_FILE)
-        endpoint = json.load(open(mod.API_ENDPOINT_FILE))
+        endpoint = json.loads(Path(mod.API_ENDPOINT_FILE).read_text())
         assert endpoint["port"] == 18741
 
         # With the token, /health returns the full telemetry.
-        token = open(mod.API_TOKEN_FILE).read().strip()
+        token = Path(mod.API_TOKEN_FILE).read_text().strip()
         conn = http.client.HTTPConnection("127.0.0.1", 18741, timeout=5)
         conn.request("GET", "/health", headers={"X-BRUH-Token": token})
         resp = conn.getresponse()
@@ -149,7 +149,7 @@ def test_conversation_sse_streams_deltas(tmp_path, monkeypatch):
     pool = mod.Pool()
     try:
         start_server(mod, pool, 18742)
-        token = open(mod.API_TOKEN_FILE).read().strip()
+        token = Path(mod.API_TOKEN_FILE).read_text().strip()
         conn = http.client.HTTPConnection("127.0.0.1", 18742, timeout=30)
         conn.request(
             "POST", "/conversation",
@@ -226,7 +226,7 @@ def test_pool_status_heartbeat(tmp_path, monkeypatch):
     pool = mod.Pool()
     try:
         pool.handle(make_request("beat"))
-        status = json.load(open(mod.POOL_STATUS_FILE))
+        status = json.loads(Path(mod.POOL_STATUS_FILE).read_text())
         assert status["status"] == "ok"
         assert status["last_request"]["duration_s"] >= 0
     finally:
@@ -277,9 +277,9 @@ def test_bridge_streams_over_http_end_to_end(tmp_path, monkeypatch):
         start_server(mod, pool, 18743)
         # Point the endpoint file at localhost (container hostname isn't
         # resolvable in CI)
-        endpoint = json.load(open(mod.API_ENDPOINT_FILE))
+        endpoint = json.loads(Path(mod.API_ENDPOINT_FILE).read_text())
         endpoint["host"] = "127.0.0.1"
-        json.dump(endpoint, open(mod.API_ENDPOINT_FILE, "w"))
+        Path(mod.API_ENDPOINT_FILE).write_text(json.dumps(endpoint))
 
         bridge_mod = load_bridge(tmp_path)
         import aiohttp
@@ -327,8 +327,8 @@ def test_bridge_falls_back_to_files_when_api_down(tmp_path, monkeypatch):
     mod = load_pool_module(tmp_path, monkeypatch)
     # endpoint file points at a dead port
     os.makedirs(os.path.dirname(mod.API_ENDPOINT_FILE), exist_ok=True)
-    json.dump({"host": "127.0.0.1", "port": 1, "ts": time.time()},
-              open(mod.API_ENDPOINT_FILE, "w"))
+    Path(mod.API_ENDPOINT_FILE).write_text(
+        json.dumps({"host": "127.0.0.1", "port": 1, "ts": time.time()}))
     with open(mod.API_TOKEN_FILE, "w") as fh:
         fh.write("x" * 32)
 
@@ -360,13 +360,13 @@ def test_bridge_falls_back_to_files_when_api_down(tmp_path, monkeypatch):
                              if f.endswith(".json")]
                     if files:
                         p = os.path.join(bridge.requests_dir, files[0])
-                        req = json.load(open(p))
+                        req = json.loads(Path(p).read_text())
                         os.remove(p)
                         out = os.path.join(bridge.responses_dir,
                                            req["id"] + ".json")
                         os.makedirs(bridge.responses_dir, exist_ok=True)
-                        json.dump({"id": req["id"], "text": "via files"},
-                                  open(out, "w"))
+                        Path(out).write_text(
+                            json.dumps({"id": req["id"], "text": "via files"}))
                         return
                     await asyncio.sleep(0.02)
 
@@ -375,7 +375,9 @@ def test_bridge_falls_back_to_files_when_api_down(tmp_path, monkeypatch):
             text = await bridge.async_send_conversation_streaming(
                 "fallback please", conversation_id="convFB"
             )
-            await responder
+            # A responder that never fires should fail this test, not hang
+            # the suite waiting for it.
+            await asyncio.wait_for(responder, 5)
             assert text == "via files"
         finally:
             await hass.aiohttp_session.close()
@@ -409,8 +411,8 @@ def test_bridge_does_not_resend_after_accepted_stream_break(tmp_path, monkeypatc
 
     threading.Thread(target=broken_server, daemon=True).start()
 
-    json.dump({"host": "127.0.0.1", "port": port, "ts": time.time()},
-              open(mod.API_ENDPOINT_FILE, "w"))
+    Path(mod.API_ENDPOINT_FILE).write_text(
+        json.dumps({"host": "127.0.0.1", "port": port, "ts": time.time()}))
     with open(mod.API_TOKEN_FILE, "w") as fh:
         fh.write("t" * 32)
 

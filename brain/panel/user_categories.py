@@ -48,6 +48,7 @@ def _load_raw() -> list[dict]:
         if isinstance(cats, list):
             return [c for c in cats if isinstance(c, dict) and c.get("id")]
     except (OSError, ValueError, AttributeError):
+        # A missing or corrupt file means no custom cards, not a broken panel.
         pass
     return []
 

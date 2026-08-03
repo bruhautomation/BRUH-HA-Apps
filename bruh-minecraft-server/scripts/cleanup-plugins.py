@@ -114,6 +114,8 @@ def read_plugin_meta(jar_path: Path) -> Optional[tuple[str, str, Optional[str]]]
                 if name:
                     return (name, version or "0", api_version)
     except (zipfile.BadZipFile, OSError):
+        # A jar that is not a readable zip, or carries no plugin.yml, is not a
+        # plugin we can name.
         pass
     return None
 

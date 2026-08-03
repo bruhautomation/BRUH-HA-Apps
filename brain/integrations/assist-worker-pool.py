@@ -72,6 +72,8 @@ def claim_session(session_id: str) -> None:
                                  "ts": int(time.time())},
                                 separators=(",", ":")) + "\n")
     except OSError:
+        # Bookkeeping for the Chats rail. A voice turn must never fail because
+        # the ledger could not be appended to.
         pass
 
 MAX_TURNS = os.environ.get("BRAIN_ASSIST_MAX_TURNS", "5")
@@ -248,6 +250,8 @@ def debug_log(lines: list[str]) -> None:
             for line in lines:
                 fh.write(line.replace("{ts}", stamp) + "\n")
     except OSError:
+        # The transcript is a convenience; a turn that cannot be logged still
+        # has to be answered.
         pass
 
 
@@ -396,6 +400,7 @@ def get_ha_timezone() -> str:
         if tz:
             return tz
     except OSError:
+        # No cached timezone — ask Home Assistant for it below.
         pass
     if not SUPERVISOR_TOKEN:
         return ""
@@ -466,6 +471,8 @@ def save_last_profile(custom: str, model: str, denied_csv: str = "") -> None:
             )
         os.replace(tmp, LAST_PROFILE_FILE)
     except OSError:
+        # The cache only saves the next spare a rebuild. Losing it costs
+        # startup time, not correctness.
         pass
 
 
@@ -493,6 +500,8 @@ def prewarm_spare(pool: "Pool") -> None:
         model = data.get("model") or "default"
         denied = data.get("denied") or ""
     except (OSError, json.JSONDecodeError, AttributeError):
+        # An absent or corrupt cache warms the spare on defaults, which is
+        # what a first run does anyway.
         pass
     pool._spawn_spare((build_system_prompt(custom), model, denied))
 
@@ -734,6 +743,7 @@ class Worker:
         try:
             self.proc.kill()
         except OSError:
+            # The process is already gone, which is what kill was asking for.
             pass
 
 
@@ -844,6 +854,8 @@ class Pool:
             with open(os.path.join(SESSIONS_DIR, conv_id), "w") as fh:
                 fh.write(session_id)
         except OSError:
+            # A session that cannot be recorded starts fresh next turn instead of
+            # resuming — slower, still correct.
             pass
 
     def reap(self) -> None:
@@ -1045,6 +1057,7 @@ def load_or_create_token() -> str:
         if len(token) >= 16:
             return token
     except OSError:
+        # No readable token file: mint a new one below.
         pass
     token = secrets.token_hex(16)
     os.makedirs(SHARED_DIR, exist_ok=True)
@@ -1087,6 +1100,7 @@ def write_pool_status(pool) -> None:
             json.dump(status, fh)
         os.replace(tmp, POOL_STATUS_FILE)
     except OSError:
+        # The status file feeds a health sensor. The pool keeps serving without it.
         pass
 
 
@@ -1180,6 +1194,8 @@ class ApiHandler(BaseHTTPRequestHandler):
             try:
                 emit({"type": "error", "message": str(exc)})
             except OSError:
+                # The client is already gone, so there is nowhere to report that the
+                # report failed.
                 pass
 
 
@@ -1204,6 +1220,8 @@ def start_http_server(pool) -> None:
         try:
             os.remove(API_ENDPOINT_FILE)
         except OSError:
+            # The endpoint file is being withdrawn because the API did not start.
+            # If it is already absent, that is the state we wanted.
             pass
 
 
@@ -1237,6 +1255,8 @@ def claim_request(path: str) -> dict | None:
     try:
         os.remove(work)
     except OSError:
+        # A request file that will not delete is re-read and re-answered, which
+        # the id-based response naming already tolerates.
         pass
     if not isinstance(req, dict) or not req.get("id") or not req.get("text"):
         return None
@@ -1268,8 +1288,10 @@ def _prune_older_than(directory: str, cutoff: float) -> None:
                 if os.path.isfile(path) and os.path.getmtime(path) < cutoff:
                     os.remove(path)
             except OSError:
+                # An unreadable directory has nothing to prune.
                 pass
     except OSError:
+        # One undeletable file must not end the sweep.
         pass
 
 
@@ -1284,8 +1306,10 @@ def cleanup_stale_files() -> None:
                         if os.path.getmtime(path) < cutoff:
                             os.remove(path)
                     except OSError:
+                        # An unreadable directory has nothing to prune.
                         pass
         except OSError:
+            # One undeletable file must not end the sweep.
             pass
     now = time.time()
     _prune_older_than(SESSIONS_DIR, now - SESSION_RETENTION_S)
@@ -1298,6 +1322,8 @@ def main() -> None:
     try:
         os.chmod(LOG_DIR, 0o700)  # transcripts inside are 0600
     except OSError:
+        # A log directory whose mode will not tighten is one we did not create.
+        # The transcripts inside are opened 0600 either way.
         pass
 
     log(

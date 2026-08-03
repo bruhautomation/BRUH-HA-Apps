@@ -126,6 +126,8 @@ def _maybe_prune() -> None:
         try:
             tmp.unlink()
         except OSError:
+            # This is the cleanup after a failed write. If the temp file is already
+            # gone, the cleanup is done.
             pass
 
 

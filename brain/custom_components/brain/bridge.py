@@ -175,6 +175,8 @@ class ClaudeBridge:
             if host and port and token:
                 return f"http://{host}:{port}", token
         except (OSError, json.JSONDecodeError, ValueError):
+            # No endpoint file, no token, or a half-written one all mean the same
+            # thing: the pool's HTTP API is not up, so the caller uses file IPC.
             pass
         return None
 
@@ -306,9 +308,12 @@ class ClaudeBridge:
             raise
 
         if result_text is None:
-            if accepted:
-                raise _StreamBrokenError("stream ended without a result event")
-            raise RuntimeError("stream ended without a result event")
+            # `accepted` is necessarily True here: the only way out of the
+            # block above without an exception is past the status check that
+            # sets it. So a stream that ends with no result event is always
+            # the broken-stream case, and always falls back to file IPC —
+            # the `RuntimeError` this used to raise instead was unreachable.
+            raise _StreamBrokenError("stream ended without a result event")
         self._append_history(conv_id, text, result_text)
         return result_text
 
@@ -440,6 +445,8 @@ class ClaudeBridge:
             try:
                 os.remove(path)
             except OSError:
+                # The retry loop is what this delete protects. If the file will not go,
+                # the next pass reports the same corruption — no worse than now.
                 pass
             return "Error: received corrupt response from Claude Terminal."
         except OSError as exc:
@@ -457,6 +464,9 @@ class ClaudeBridge:
                     try:
                         os.remove(os.path.join(sessions_dir, name))
                     except OSError:
+                        # Clearing a conversation is a courtesy; a session file that outlives
+                        # it is resumed at most once more.
                         pass
         except OSError:
+            # One unremovable session file must not stop the sweep clearing the rest.
             pass
