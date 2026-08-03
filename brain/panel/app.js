@@ -2979,12 +2979,22 @@ function chatToolResult(ev) {
   const box = chatState.tools.get(ev.id);
   if (!box) return;
   box.classList.remove("running");
-  box.classList.add(ev.ok ? "ok" : "bad");
+  box.classList.add(ev.denied ? "denied" : ev.ok ? "ok" : "bad");
   const body = box.querySelector(".tbody");
-  body.appendChild(el("div", "tlabel", ev.ok ? "Result" : "Error"));
+  body.appendChild(el("div", "tlabel",
+                      ev.denied ? "Not permitted" : ev.ok ? "Result" : "Error"));
   const pre = el("pre");
   pre.appendChild(el("code", null, ev.text || "(no output)"));
   body.appendChild(pre);
+  // A refusal needs the sentence as well as the label. Without it the box
+  // says a thing failed and leaves you to work out that nothing was broken,
+  // that retrying cannot help, and that the fix is somewhere else entirely.
+  if (ev.denied) {
+    body.appendChild(el("div", "tnote",
+      "The permission set refused this, so it never ran — nothing is broken "
+      + "and asking again will not change it. The terminal can ask you to "
+      + "approve a call like this one; the chat cannot."));
+  }
   // A failure is the one case worth opening unasked — it is the reason the
   // next thing Claude says will look strange.
   if (!ev.ok) box.open = true;

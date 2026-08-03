@@ -159,6 +159,42 @@ class TestNormalise(unittest.TestCase):
         self.assertFalse(out[0]["ok"])
         self.assertEqual(out[0]["text"], "boom")
 
+    def _result(self, text, is_error=True):
+        out = self.mod._normalise({"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "t1",
+             "is_error": is_error, "content": text},
+        ]}})
+        return out[0]
+
+    def test_a_refused_tool_call_is_marked_refused_not_broken(self):
+        """Headless `-p` cannot prompt, so a refusal is final — and "that
+        broke" sends you debugging while "not allowed" sends you to
+        Settings. The panel has to be able to tell them apart."""
+        denied = self._result(
+            "Claude requested permissions to use Bash, but you haven't "
+            "granted it yet.")
+        self.assertFalse(denied["ok"])
+        self.assertTrue(denied["denied"])
+
+    def test_an_ordinary_failure_is_not_called_a_refusal(self):
+        self.assertFalse(self._result("boom")["denied"])
+        self.assertFalse(self._result("Traceback: KeyError")["denied"])
+
+    def test_a_kernel_eacces_is_not_a_policy_decision(self):
+        """`Permission denied` is what the OS says when a perfectly
+        permitted Bash call touches a file it cannot read. Calling that a
+        permission-set refusal would send people to change a setting that
+        was never in the way."""
+        self.assertFalse(
+            self._result("cat: /root/x: Permission denied")["denied"])
+        self.assertFalse(
+            self._result("bash: ./run.sh: Permission denied")["denied"])
+
+    def test_a_success_is_never_a_refusal(self):
+        ok = self._result("file contents", is_error=False)
+        self.assertTrue(ok["ok"])
+        self.assertFalse(ok["denied"])
+
     def test_an_error_result_becomes_a_notice_in_words(self):
         out = self.mod._normalise({
             "type": "result", "is_error": True, "subtype": "error_max_turns"})
