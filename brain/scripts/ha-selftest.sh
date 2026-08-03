@@ -312,6 +312,26 @@ if [ -n "$auth_where" ]; then
 else
     warn "No Claude credentials found — sign in from the panel, run 'claude', or use 'ha login'"
 fi
+# The CLI's own credential outranks the others for the terminal, so a dead
+# one there is worth naming even when a working credential exists elsewhere:
+# that combination is exactly "the chat works but the terminal asks me to
+# log in", and nothing else in the output would say so.
+cli_cred="${CLAUDE_CONFIG_DIR:-${HOME:-/data/home}/.claude}/.credentials.json"
+[ -r "$cli_cred" ] || cli_cred="${HOME:-/data/home}/.claude/.credentials.json"
+if [ -r "$cli_cred" ]; then
+    exp=$(jq -r '.claudeAiOauth.expiresAt // 0' "$cli_cred" 2>/dev/null)
+    case "$exp" in
+        ''|0|null) info "Claude CLI credential records no expiry" ;;
+        *)
+            if [ "$((exp / 1000))" -le "$(date +%s)" ]; then
+                warn "The Claude CLI's own credential EXPIRED $(date -d "@$((exp / 1000))" '+%Y-%m-%d %H:%M' 2>/dev/null || echo "at ${exp}") — the terminal prefers this one, so it will keep asking you to log in"
+                info "Fix: rm -f '$cli_cred' /data/.brain_auth_backup/.credentials.json && restart (the backup restores it otherwise)"
+            else
+                info "Claude CLI credential valid until $(date -d "@$((exp / 1000))" '+%Y-%m-%d %H:%M' 2>/dev/null || echo "${exp}")"
+            fi
+            ;;
+    esac
+fi
 if [ -f "$USAGE_FILE" ]; then
     uerr=$(jq -r '.error // empty' "$USAGE_FILE" 2>/dev/null)
     if [ "$uerr" = "api_key_has_no_usage_limits" ]; then

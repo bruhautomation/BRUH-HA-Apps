@@ -2,6 +2,48 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.19.4
+
+### Fixed
+
+- **"The chat works but the terminal asks me to log in, and the usage sensors are
+  dead."** One fault with three faces, and 1.19.3 fixed the wrong half of it.
+
+  Two functions resolve the same credential in opposite order. `engine.get_auth`
+  (the chat) reads the panel's store first and consults Claude Code's own
+  `.credentials.json` last. `brain-auth-env.sh` (the terminal) reads the CLI's
+  file *first* — and decided it was usable with a prefix test,
+  `startswith("sk-ant-")`, which says a token is shaped like a credential, not
+  that it is one.
+
+  So an expired CLI token won everywhere it mattered. The terminal deferred to
+  it, exported nothing, and let the CLI prompt for a login while a working panel
+  credential sat unread. The usage tracker walked the same order and got a 401.
+  Only the chat, with its own inverted order, kept working.
+
+  And it could not clear on its own: `run.sh` restores `.credentials.json` from
+  a backup whenever the live file goes missing, so deleting the dead token
+  brought it back on the next boot. The original reasoning — "worst case the
+  restored token is stale and the user logs in anyway" — was wrong, because the
+  CLI's file outranks every other store for the terminal.
+
+  Fixed by checking the expiry rather than the prefix, in all four places that
+  ask the question: `brain-auth-env.sh`, the usage tracker, `engine`'s
+  "signed in via the CLI" status, and the backup restore, which now discards an
+  expired backup instead of resurrecting it. The CLI's own login still wins when
+  it is actually live — a `claude /login` done in the terminal is the most recent
+  thing the person did there, and an older pasted token should not override it.
+
+- **A refused credential no longer speaks for the ones behind it.** The tracker
+  stopped at the first token it found. It now tries each store in turn and falls
+  through on a 401, so a stale token in one place cannot mask a working sign-in
+  in another. Anything that isn't a 401 stops the search, because that is about
+  the request rather than the credential.
+
+- **`ha selftest` names this failure directly.** It reports the CLI credential's
+  expiry, and when that has passed it says so and gives the two files to remove —
+  including the backup, without which the next restart puts it straight back.
+
 ## 1.19.3
 
 ### Fixed

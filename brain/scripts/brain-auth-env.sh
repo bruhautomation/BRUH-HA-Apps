@@ -12,11 +12,19 @@
 # the arrow now has to point both ways: a panel login must reach the CLI
 # too, or the terminal asks you to log in again for no reason.
 #
-# Resolution order mirrors the panel's own (engine.get_auth):
+# Resolution order:
 #   1. the CLI's own ~/.claude/.credentials.json  — it authenticates itself,
-#      so emit nothing and let it
+#      so emit nothing and let it, but only while that credential is still
+#      live (see below)
 #   2. the panel's store                          — a pasted token or API key
 #   3. the shared file on /config                 — written by `ha login`
+#
+# Note this is NOT the panel's order: engine.get_auth prefers its own store
+# and consults the CLI last. The two differ on purpose — a `claude /login`
+# done in this terminal is the most recent thing the person did here, and
+# overriding it with an older pasted token would be wrong. What is not
+# allowed is preferring a CLI credential that is *dead*, which is what step
+# 1 used to do.
 #
 # Emits nothing at all when there is no credential: an unset variable is
 # the correct state for "not signed in", and exporting an empty one makes
@@ -32,9 +40,25 @@ _brain_auth_cli="${_brain_auth_home}/.claude/.credentials.json"
 
 # 1. The CLI holds its own OAuth credential — it refreshes that itself, and
 #    injecting a stale token over the top would break the refresh.
+#
+#    Only while it is still live, though. `startswith("sk-ant-")` says a
+#    token is *shaped* like a credential, not that it is one: a revoked
+#    session, a container that was down past the expiry, or a refresh that
+#    errored mid-flight all leave a well-formed dead token behind. Deferring
+#    to it emits nothing, so the CLI tries the dead token and prompts for a
+#    login — while a working credential sits unread ten lines below. That is
+#    self-perpetuating, because run.sh restores .credentials.json from its
+#    backup whenever the live file goes missing.
+#
+#    A missing or zero expiresAt is treated as live: it means the file does
+#    not record one, not that the token is past it.
 if [ -r "$_brain_auth_cli" ] \
-    && jq -e '.claudeAiOauth.accessToken // "" | startswith("sk-ant-")' \
-        "$_brain_auth_cli" > /dev/null 2>&1; then
+    && jq -e --argjson now "$(date +%s)" '
+        (.claudeAiOauth // {}) as $o
+        | (($o.accessToken // "") | startswith("sk-ant-"))
+          and (($o.expiresAt // 0) <= 0
+               or (($o.expiresAt / 1000) > ($now + 60)))
+    ' "$_brain_auth_cli" > /dev/null 2>&1; then
     unset _brain_auth_home _brain_auth_local _brain_auth_shared _brain_auth_cli
     return 0 2>/dev/null || exit 0
 fi

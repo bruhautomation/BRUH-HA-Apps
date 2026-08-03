@@ -149,18 +149,31 @@ def _credentials_path() -> str:
 
 
 def _cli_credentials_present() -> bool:
-    """True when the Claude CLI holds a usable OAuth credential in its own store.
+    """True when the Claude CLI holds a *live* OAuth credential of its own.
 
     When this file exists under our HOME, `claude -p` authenticates by itself —
     no env token needed. It's also the most reliable SUCCESS signal for the
     guided sign-in: some CLI versions save the credential without printing a
     token to the terminal.
+
+    Expiry is checked because being shaped like a credential is not being
+    one. A revoked session or a container that was down past the expiry
+    leaves a well-formed dead token behind, and reporting that as "signed
+    in" makes the panel's auth chip say the opposite of what the terminal
+    is telling the same person. A missing expiry means the file records
+    none, not that the token is past it.
     """
     try:
         with open(_credentials_path(), "r", encoding="utf-8") as f:
             data = json.load(f)
-        token = (data.get("claudeAiOauth") or {}).get("accessToken", "")
-        return isinstance(token, str) and token.startswith("sk-ant-")
+        oauth = data.get("claudeAiOauth") or {}
+        token = oauth.get("accessToken", "")
+        if not (isinstance(token, str) and token.startswith("sk-ant-")):
+            return False
+        expires = oauth.get("expiresAt")
+        if isinstance(expires, (int, float)) and expires > 0:
+            return expires / 1000.0 > time.time() + 60
+        return True
     except (OSError, ValueError, AttributeError):
         return False
 

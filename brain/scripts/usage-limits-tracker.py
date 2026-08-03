@@ -37,6 +37,12 @@ POLL_INTERVAL = int(os.environ.get("USAGE_LIMITS_INTERVAL", "120"))  # seconds
 # usage_store.LIMITS_MAX_AGE_S, which is the panel's own staleness rule for
 # the same file — two answers to "is this still true" would be one too many.
 STALE_AFTER_S = 2 * 3600
+# Treat a credential expiring within the next minute as already gone, so a
+# token cannot die between being chosen and being used.
+EXPIRY_SKEW_S = 60
+# Statuses that are settled facts about the sign-in rather than weather.
+# These overwrite a good reading; a network blip does not.
+AUTH_PROBLEMS = ("no_oauth_token", "api_key_has_no_usage_limits", "http_401")
 
 ANTHROPIC_USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 
@@ -66,23 +72,26 @@ BRAIN_AUTH_PATHS = [
 # OAuth token discovery
 # ---------------------------------------------------------------------------
 
-def find_oauth_token(state=None):
-    """Find brAIn's OAuth access token, wherever it was signed in.
+def oauth_tokens(state=None):
+    """Yield every OAuth token brAIn could authenticate with, best first.
 
-    Returns the token, or None. **It returns the token and nothing else.**
-    Naming the store it came from is useful in the log, but a label that
-    rides home in the same tuple as a credential is a label nothing can
-    tell apart from the credential — not a reader skimming the call site,
-    not a scanner, and not whoever swaps the order in a year's time. So the
-    store is logged here, where it is a literal at the point it is known,
-    and never handed back. Why there is *no* token is a separate question
-    with a separate answer: see credential_problem().
+    Yields the token and nothing else. **It never yields a label beside
+    one.** Naming the store is useful in the log, but a label that travels
+    with a credential is a label nothing can tell apart from the credential
+    — not a reader skimming the call site, not a scanner, and not whoever
+    swaps the order in a year. So the store is logged here, where it is a
+    literal at the point it is known, and never handed out.
+
+    It yields *all* of them rather than the first, because "found a token"
+    and "found a token that works" are different claims and only the second
+    one matters. Why there is none at all is a separate question with a
+    separate answer: see credential_problem().
     """
     for path in CREDENTIAL_PATHS:
         token = _read_token_from_file(path)
         if token:
             _note_source(state, "claude cli")
-            return token
+            yield token
 
     for path, label in BRAIN_AUTH_PATHS:
         data = _load_brain_auth(path)
@@ -90,8 +99,12 @@ def find_oauth_token(state=None):
             value = _auth_value(data)
             if value:
                 _note_source(state, label)
-                return value
-    return None
+                yield value
+
+
+def find_oauth_token(state=None):
+    """The first credential worth trying, or None."""
+    return next(oauth_tokens(state), None)
 
 
 def credential_problem():
@@ -119,8 +132,26 @@ def _note_source(state, label):
         state["auth"] = label
 
 
+def _oauth_expired(oauth):
+    """True when this credential's own expiry has already passed.
+
+    Claude Code refreshes its token itself, but a revoked session, a
+    container that was down past the expiry, or a refresh that errored
+    mid-flight all leave a well-formed *dead* token on disk. Treating one
+    as authoritative because it is shaped right is what makes a working
+    credential in the next store unreachable.
+
+    A missing or zero expiry means the file does not record one — not that
+    the token is past it.
+    """
+    expires = oauth.get("expiresAt")
+    if not isinstance(expires, (int, float)) or expires <= 0:
+        return False
+    return expires / 1000.0 <= time.time() + EXPIRY_SKEW_S
+
+
 def _read_token_from_file(path):
-    """Read the OAuth access token from a credentials JSON file."""
+    """Read a live OAuth access token from a credentials JSON file."""
     try:
         with open(path) as fh:
             data = json.load(fh)
@@ -131,7 +162,7 @@ def _read_token_from_file(path):
 
     # Standard format: {"claudeAiOauth": {"accessToken": "sk-ant-oat01-..."}}
     oauth = data.get("claudeAiOauth")
-    if isinstance(oauth, dict):
+    if isinstance(oauth, dict) and not _oauth_expired(oauth):
         token = oauth.get("accessToken")
         if isinstance(token, str) and token.strip():
             return token.strip()
@@ -299,23 +330,41 @@ def _last_reading_is_fresh():
     return age < STALE_AFTER_S
 
 
+def _fetch_with_any_credential(state):
+    """Try each credential in turn until one is accepted → (data, error).
+
+    A 401 ends that credential, not the search. brAIn can hold a stale
+    token in one store and a working sign-in in another, and stopping at
+    the first refusal is what let the dead one speak for all of them.
+    Anything other than a 401 is about the request rather than the
+    credential, so it stops here.
+    """
+    data = error = None
+    for token in oauth_tokens(state):
+        data, error = fetch_usage_limits(token)
+        if error != "http_401":
+            return data, error
+        sys.stderr.write(
+            "usage-limits-tracker: that credential was refused, "
+            "trying the next store\n"
+        )
+    return data, (error or credential_problem())
+
+
 def run_once(state):
     """Fetch usage limits and write to file. Returns True on success."""
-    token = find_oauth_token(state)
-    if not token:
-        problem = credential_problem()
-        if state.get("auth") != problem:
+    data, error = _fetch_with_any_credential(state)
+
+    if data is None:
+        if error in AUTH_PROBLEMS and state.get("auth") != error:
             sys.stderr.write(
-                f"usage-limits-tracker: no usable OAuth credential ({problem}) — "
+                f"usage-limits-tracker: no usable OAuth credential ({error}) — "
                 "sign in from the panel, the terminal, or with `ha login`\n"
             )
-            state["auth"] = problem
-        write_error_status(problem)
-        return False
-
-    data, error = fetch_usage_limits(token)
-    if data is None:
-        if not _last_reading_is_fresh():
+            state["auth"] = error
+        # A settled fact about the sign-in is worth saying even over good
+        # numbers; a blip waits for the reading to age out instead.
+        if error in AUTH_PROBLEMS or not _last_reading_is_fresh():
             write_error_status(error)
         return False
 
