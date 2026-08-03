@@ -138,13 +138,25 @@ jobs:
             echo "builds locally and never pulls, so registry visibility is moot."
             exit 0
           fi
-          token=$(curl -fsSL \
+          # No `-f`, and no `set -e` reliance, on either call. A private
+          # package refuses at the *token* endpoint, so `curl -f` exited 22
+          # before the message below could be printed — the check failed for
+          # exactly the right reason and reported it as `curl: (22)`, which
+          # tells whoever is reading the log nothing about what to do. A
+          # guard whose whole value is its error message has to survive long
+          # enough to print it.
+          token=$(curl -sSL \
             "https://ghcr.io/token?scope=repository:${OWNER}/${IMAGE}:pull&service=ghcr.io" \
-            | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')
-          code=$(curl -sSL -o /dev/null -w "%{http_code}" \
-            -H "Authorization: Bearer ${token}" \
-            -H "Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.docker.distribution.manifest.v2+json" \
-            "https://ghcr.io/v2/${OWNER}/${IMAGE}/manifests/${TAG}")
+            | python3 -c 'import json,sys; print(json.load(sys.stdin).get("token",""))' \
+            2>/dev/null || true)
+          if [ -z "${token}" ]; then
+            code="401 (anonymous token refused)"
+          else
+            code=$(curl -sSL -o /dev/null -w "%{http_code}" \
+              -H "Authorization: Bearer ${token}" \
+              -H "Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.docker.distribution.manifest.v2+json" \
+              "https://ghcr.io/v2/${OWNER}/${IMAGE}/manifests/${TAG}")
+          fi
           if [ "$code" != "200" ]; then
             echo "::error::ghcr.io/${OWNER}/${IMAGE}:${TAG} answered HTTP ${code} to an anonymous pull. config.yaml points every install here, so this ships as a broken add-on. Set the package to Public at https://github.com/orgs/${OWNER}/packages"
             exit 1
