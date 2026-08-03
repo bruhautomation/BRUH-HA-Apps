@@ -94,7 +94,21 @@ jobs:
       # Supervisor expects ({arch}-<slug>:<version> plus :latest).
       - name: Build and publish
         if: steps.decide.outputs.build == 'true'
-        uses: home-assistant/builder@6aa51d57cae748bf94c85a154c1602c941cc36dd  # master @ 2026-08-03
+        # NOT pinnable to a commit, and CodeQL's unpinned-tag alert for this
+        # line is a false positive that has to stay. The action reads the last
+        # path segment of its own checkout directory — which is whatever ref
+        # it was used with — and uses that string as a *Docker image tag*:
+        #
+        #   input=$(echo "$GITHUB_ACTION_PATH" | rev | cut -d/ -f1 | rev)
+        #   if [[ "${input}" == "master" ]]; then input="2026.02.1"; fi
+        #   docker pull ghcr.io/home-assistant/amd64-builder:${input}
+        #
+        # So `@master` resolves to a real published builder image and a SHA
+        # resolves to a tag that was never pushed — `manifest unknown`, which
+        # is how all four image builds broke on main. A release tag is no help
+        # either: the action's own fallback comment calls 2026.02.1 "latest
+        # official release with builder image", so the newer tags have none.
+        uses: home-assistant/builder@master
         with:
           args: |
             --${{ matrix.arch }} \
