@@ -135,6 +135,26 @@ MAX_TURNS = int(os.environ.get("BRAIN_CHAT_MAX_TURNS", "400"))
 # How long to wait for a polite interrupt before killing the process.
 INTERRUPT_GRACE = 5.0
 
+# A tool call the permission set refused fails like any other tool call, and
+# "that broke" and "brAIn was not allowed to do that" are different things to
+# be told — the first sends you debugging, the second sends you to Settings.
+# Headless `-p` cannot prompt, so a refusal here is final: the call never
+# ran, and the next thing Claude says is written around a gap it could not
+# fill. The panel needs to be able to say which happened.
+#
+# The signal is the CLI's own wording, because nothing structured comes back
+# on this path. That makes the match deliberately narrow: **bare "permission
+# denied" is not on this list**, because that is what the kernel says when a
+# perfectly permitted `Bash` call touches a file it cannot read, and calling
+# an ordinary EACCES a policy decision is a worse lie than staying quiet. A
+# missed denial reads as an error, which is what it read as before.
+_DENIED_RE = re.compile(
+    r"requested permissions?"          # "Claude requested permissions to use Bash"
+    r"|n[o']t granted"                 # "…but you haven't granted it yet"
+    r"|not allowed to (?:use|run)",
+    re.I,
+)
+
 # Tool calls whose "arguments" are really the interesting content, so the
 # chip shows that rather than a JSON blob.
 _TOOL_SUMMARY_KEYS = (
@@ -667,10 +687,12 @@ def _normalise(event: dict) -> list[dict]:
                     if isinstance(part, dict) and part.get("type") == "text")
             else:
                 text = content if isinstance(content, str) else ""
+            failed = bool(block.get("is_error"))
             out.append({
                 "type": "tool_result",
                 "id": block.get("tool_use_id") or "",
-                "ok": not block.get("is_error"),
+                "ok": not failed,
+                "denied": failed and bool(_DENIED_RE.search(text)),
                 "text": _clip(text, MAX_RESULT_CHARS),
             })
         return out

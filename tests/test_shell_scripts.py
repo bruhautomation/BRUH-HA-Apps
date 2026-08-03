@@ -120,6 +120,50 @@ class TestNoDangerousPatterns(unittest.TestCase):
                     )
 
 
+class TestPermissionsDefaultFailsClosed(unittest.TestCase):
+    """`dangerously_skip_permissions` may only ever default to OFF.
+
+    brain-menu.sh initialised the flag to --dangerously-skip-permissions and
+    then read the env file with `${BRAIN_CLAUDE_PERMS_FLAG:-$PERMS_FLAG}`.
+    That failed open twice over: a missing env file meant "skip every
+    prompt", and `:-` cannot tell empty from unset — run.sh writes the
+    variable as "" for the OFF case, so the dangerous fallback fired on the
+    *normal* path. The option silently did nothing for anyone who reached
+    Claude through the session picker.
+    """
+
+    MENU = os.path.join(SCRIPTS_DIR, "brain-menu.sh")
+
+    def _code_lines(self, path):
+        return [ln.strip() for ln in read_file(path).split("\n")
+                if ln.strip() and not ln.strip().startswith("#")]
+
+    def test_the_picker_starts_from_no_flag(self):
+        inits = [ln for ln in self._code_lines(self.MENU)
+                 if re.match(r'PERMS_FLAG=', ln)]
+        self.assertTrue(
+            any(ln == 'PERMS_FLAG=""' for ln in inits),
+            "the permissions flag must be initialised empty; found: " + repr(inits))
+
+    def test_the_picker_never_defaults_to_skipping(self):
+        for line in self._code_lines(self.MENU):
+            self.assertNotRegex(
+                line, r'PERMS_FLAG=["\']?--dangerously-skip-permissions',
+                f"a security default may only fail closed: {line}")
+
+    def test_the_env_fallback_is_empty_not_the_flag(self):
+        """`:-` treats run.sh's OFF value ("") as unset, so whatever sits on
+        the right of it is what an OFF install actually gets."""
+        for line in self._code_lines(self.MENU):
+            if "BRAIN_CLAUDE_PERMS_FLAG" not in line or ":-" not in line:
+                continue
+            fallback = re.search(r'BRAIN_CLAUDE_PERMS_FLAG:-([^}]*)\}', line)
+            self.assertIsNotNone(fallback, f"unparsed expansion: {line}")
+            self.assertEqual(
+                fallback.group(1), "",
+                f"the fallback for an OFF install must be empty: {line}")
+
+
 class TestRunSh(unittest.TestCase):
     """Test the main run.sh entrypoint."""
 

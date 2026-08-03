@@ -1792,6 +1792,19 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
 .toolcall.running .tdot { background: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
 .toolcall.ok .tdot { background: var(--good); }
 .toolcall.bad .tdot { background: var(--critical); }
+/* Refused by the permission set, which is not the same as failed: amber
+   says "this was a decision", red says "this went wrong". */
+.toolcall.denied .tdot { background: var(--warning); }
+.toolcall .tnote {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--warning);
+  border-radius: 6px;
+  background: var(--surface-2);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
 .toolcall .tbody, .think .tbody { padding: 0 12px 10px; }
 .toolcall .tlabel {
   margin: 6px 0 4px;

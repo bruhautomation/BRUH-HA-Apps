@@ -16,13 +16,26 @@ TASK_DIR="/data/tasks"
 mkdir -p "$TASK_DIR"
 
 # Read the permissions flag from the shared env file written by run.sh.
-# Defaults to --dangerously-skip-permissions if the env file is missing
-# (backwards compatibility with older run.sh versions).
-PERMS_FLAG="--dangerously-skip-permissions"
+#
+# The default is empty — prompt for permission — and it has to be, in both
+# directions. This read used to default to --dangerously-skip-permissions
+# and take the env file's value with `${BRAIN_CLAUDE_PERMS_FLAG:-$PERMS_FLAG}`,
+# which fails open twice over:
+#
+#   * a missing env file silently meant "skip every prompt", so the safe
+#     state depended on a file existing, and
+#   * `:-` cannot tell empty from unset — and run.sh writes exactly
+#     `export BRAIN_CLAUDE_PERMS_FLAG=""` when the option is OFF. So the
+#     substitution fired on the *normal* path and the picker skipped every
+#     prompt no matter what the option said.
+#
+# A security default may only fail closed. If run.sh has something to say
+# it says it here; anything else means prompt.
+PERMS_FLAG=""
 if [ -r /data/.brain_env ]; then
     # shellcheck disable=SC1091
     source /data/.brain_env
-    PERMS_FLAG="${BRAIN_CLAUDE_PERMS_FLAG:-$PERMS_FLAG}"
+    PERMS_FLAG="${BRAIN_CLAUDE_PERMS_FLAG:-}"
 fi
 
 show_banner() {

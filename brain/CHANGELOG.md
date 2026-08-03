@@ -2,6 +2,44 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.19.5
+
+### Fixed
+
+- **`dangerously_skip_permissions: false` did nothing in the session picker.**
+  `brain-menu.sh` read the flag as
+  `PERMS_FLAG="${BRAIN_CLAUDE_PERMS_FLAG:-$PERMS_FLAG}"` with the variable
+  initialised to `--dangerously-skip-permissions`. That failed open twice over.
+  A missing `/data/.brain_env` meant "skip every prompt", so the safe state
+  depended on a file existing — and `:-` cannot tell empty from unset, while
+  `run.sh` writes exactly `export BRAIN_CLAUDE_PERMS_FLAG=""` when the option is
+  OFF. So the dangerous fallback fired on the *normal* path: every session
+  started from the picker ran with permission prompts disabled regardless of
+  what the option said.
+
+  Reachable whenever `auto_launch_claude` is off, which is what puts the picker
+  in front of you. The default `auto_launch_claude: true` path was never
+  affected — it takes the flag straight from `run.sh`.
+
+  The flag now starts empty and is only ever set to what `run.sh` says. A
+  security default may only fail closed.
+
+### Changed
+
+- **The chat says when a tool call was refused rather than broken.** Headless
+  `-p` cannot prompt, so a call outside the permission set never runs — but it
+  came back as a plain red Error, indistinguishable from a crash. It now renders
+  amber, labelled "Not permitted", with a line saying nothing is broken, that
+  asking again will not help, and that the terminal can approve a call like this
+  where the chat cannot.
+
+  The signal is the CLI's own wording, since nothing structured comes back on
+  that path, so the match is deliberately narrow. A bare `Permission denied` is
+  **not** treated as a refusal — that is what the kernel says when a perfectly
+  permitted `Bash` call touches a file it cannot read, and calling an ordinary
+  EACCES a policy decision would send people to change a setting that was never
+  in the way.
+
 ## 1.19.4
 
 ### Fixed
