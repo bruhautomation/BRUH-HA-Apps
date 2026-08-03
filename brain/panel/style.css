@@ -672,17 +672,26 @@ body.modal-open {
 .fbitem .txt { flex: 1; min-width: 0; word-break: break-word; }
 .fbitem .when { font-size: 11px; color: var(--ink-3); margin-top: 2px; }
 
-/* instant tooltips for icon-only controls ([data-tip], set via tip() in JS).
-   Native title bubbles are slow and easy to miss; these appear on hover and
-   keyboard focus, below the control so the pointer never covers them. */
-[data-tip] { position: relative; }
-[data-tip]::after {
-  content: attr(data-tip);
-  position: absolute;
-  top: calc(100% + 7px);
-  right: -4px;
+/* instant tooltips for [data-tip] controls, set via tip() in JS. Native title
+   bubbles are slow and easy to miss; these appear on hover and keyboard
+   focus, offset from the control so the pointer never covers them.
+
+   ONE element, position: fixed, placed by JS — not a ::after per control.
+   The ::after was `position: absolute; right: -4px` with a 240px max-width,
+   which means it hangs LEFT from the control's right edge: any control whose
+   right edge sits under ~236px from the viewport's left runs its tooltip off
+   the side of the screen. That is four of the six buttons on a finding at
+   390px, and still two of them at 1100px, because the findings list starts
+   at the left margin. It also cannot escape a scroll container, which is
+   what the .card .foot override was patching one case of.
+
+   Fixed positioning is the same reasoning as .chippop below: anchored to the
+   control as rendered, clamped to the viewport, and unclippable by any
+   ancestor. Placement is measured in JS because CSS cannot see the edge. */
+.tipbox {
+  position: fixed;
   z-index: 60;
-  max-width: 240px;
+  max-width: min(280px, calc(100vw - 16px));
   padding: 5px 9px;
   border-radius: 7px;
   background: var(--ink);
@@ -697,19 +706,8 @@ body.modal-open {
   opacity: 0;
   transform: translateY(-3px);
   transition: opacity 0.14s ease-out, transform 0.14s ease-out;
-  transition-delay: 0.15s;
 }
-[data-tip]:hover::after,
-[data-tip]:focus-visible::after {
-  opacity: 1;
-  transform: translateY(0);
-}
-/* card-footer controls sit at the card's bottom edge — open their tooltips
-   upward so they aren't clipped by the card boundary */
-.card .foot [data-tip]::after {
-  top: auto;
-  bottom: calc(100% + 7px);
-}
+.tipbox.on { opacity: 1; transform: translateY(0); }
 
 /* chip disclosure — what a status chip says when pressed.
    A popover rather than a tooltip, because the thing it explains (when a
@@ -797,6 +795,8 @@ body.modal-open {
 /* knowledge (memory) modal */
 .klist { display: flex; flex-direction: column; gap: 7px; margin-top: 4px; }
 .kempty { font-size: 13px; color: var(--ink-3); padding: 6px 2px; }
+/* What the capped list is not showing. The count above is the real one. */
+.kmore { font-size: 12.5px; color: var(--ink-3); padding: 8px 2px 2px; font-style: italic; }
 .kadd { display: flex; gap: 7px; margin: 4px 0 8px; }
 .kadd input {
   flex: 1;
@@ -963,9 +963,18 @@ body.modal-open {
 /* --------------------------------------------------------------- toast */
 .toast {
   position: fixed;
-  left: 50%;
+  /* Both edges, then auto margins — NOT `left: 50%` with a translate. A
+     fixed element's containing block is the viewport, so `left: 50%` leaves
+     it only the right-hand half to lay out in: on a 390px phone the toast
+     could never be wider than ~195px, and its text wrapped to four lines
+     inside a box with the whole screen to spare. Invisible until something
+     sat beside the text — which is what the Undo button is. */
+  left: 12px;
+  right: 12px;
+  margin: 0 auto;
+  width: fit-content;
+  max-width: calc(100% - 24px);
   bottom: 26px;
-  transform: translateX(-50%);
   background: var(--surface);
   border: 1px solid var(--hairline);
   color: var(--ink);
@@ -979,7 +988,34 @@ body.modal-open {
   pointer-events: none;
   transition: opacity 0.25s ease, transform 0.25s ease;
 }
-.toast.show { opacity: 1; transform: translateX(-50%) translateY(-4px); }
+.toast.show { opacity: 1; transform: translateY(-4px); }
+/* A toast you can press has to be pressable: the default is inert so it
+   never eats a click meant for what is behind it, and only the undoable
+   one takes pointer events back. */
+.toast.undoable {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding-right: 8px;
+}
+.toastundo {
+  flex: none;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--accent);
+  background: none;
+  border: 0;
+  border-radius: 8px;
+  /* 40px tall like every other chip-sized target — it is offered for a few
+     seconds on a phone, which is the worst case for a small one. */
+  min-height: 40px;
+  padding: 0 12px;
+  cursor: pointer;
+}
+.toastundo:hover { background: var(--surface-2); }
+.toastundo:disabled { opacity: 0.5; cursor: default; }
 
 .hidden { display: none !important; }
 

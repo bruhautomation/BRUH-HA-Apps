@@ -90,6 +90,7 @@ from __future__ import annotations
 
 import asyncio
 import fcntl
+import hashlib
 import json
 import logging
 import os
@@ -120,6 +121,7 @@ import prompt_store
 import run_sources
 import settings_store
 import terminal_proxy
+import undo_store
 import usage_store
 import user_categories
 from categories import CATEGORIES, SYSTEM_PROMPT, build_prompt, get_category
@@ -143,12 +145,18 @@ MEMORY_INBOX_DIR = Path(os.environ.get(
 SHARED_MEMORY_FILE = Path(os.environ.get(
     "BRAIN_MEMORY_FILE", "/config/.brain/memory/memory.md"))
 MAX_MEMORY_CHARS = 100_000
+# How much of the filing queue the Memory tab is sent, and how long one
+# queued fact may be on screen. The list is capped and the COUNT is not:
+# a truncated list that also truncated its own count would be the same
+# disagreement this list was rebuilt to end, in a subtler place.
+INBOX_LIST_MAX = 100
+MAX_INBOX_TEXT = 500
 # Touched by the consolidator at the end of every successful pass (including
-# a pass that found the inbox already empty). Its mtime is therefore the line
-# between "discovered, still queued" and "discovered, now in the document" —
-# which is what lets the Memory tab's discovery list drain without the panel
-# having to track filing itself, and without caring whether the pass was run
-# by the daemon, the CLI, or the button.
+# a pass that found the inbox already empty). Its mtime says when memory.md
+# last moved — which is what tells a stale error apart from a live one. It
+# used to carry more than that: the Memory tab derived its "still waiting"
+# list by keeping ledger facts newer than this mtime, which is a guess at
+# the queue rather than the queue. It reads the inbox now.
 MEMORY_MARKER_FILE = Path(os.environ.get(
     "BRAIN_MEMORY_MARKER", "/config/.brain/memory/.last_consolidated"))
 
@@ -1662,12 +1670,12 @@ async def h_findings(request: web.Request) -> web.Response:
 # it when it made the change) and saying it twice would be the duplicate.
 #
 # `noted` is the same ending when the homeowner typed a reason, and it is
-# deliberately not the same sentence. "Not a problem in this home: X" is a
-# verdict; a correction is evidence, and the thing worth remembering is
-# almost never the report — it is what they said about the house while
-# waving it off. So the line hands the consolidator both halves and says
-# which is which, and `source="correction"` is what tells it to record the
-# truth behind the reason rather than the exchange.
+# deliberately not the same sentence — nor is it the same KIND of thing at
+# every ending, which is why `source` is per-verb rather than "a note means
+# a correction". Waving a report off is evidence that brAIn has misread the
+# house, and the durable part is what they said about the house rather than
+# the report; saying how you fixed something corrects nothing, and is simply
+# more of the fact you were already recording.
 FINDING_VERBS = {
     # "You've got this wrong", or "that's normal here" — the same ending
     # either way, because both mean *stop reporting this*. The optional note
@@ -1675,10 +1683,17 @@ FINDING_VERBS = {
     "wrong": {"kind": "ignored",
               "memory": "Not a problem in this home: {text}",
               "noted": 'brAIn reported: "{text}". The homeowner says that is '
-                       "not a problem here, because: {note}"},
-    # "I already handled it myself" — the ending for anything needing hands.
+                       "not a problem here, because: {note}",
+              "source": "correction"},
+    # "I already handled it myself" — the ending for anything needing hands,
+    # and the one where what you did is worth more than that you did it. "I
+    # fixed it" leaves brAIn knowing a problem is over; "replaced the CR2032,
+    # it's a 3-monthly job on that sensor" leaves it knowing the house.
     "done": {"kind": "fixed",
-             "memory": "Fixed by the homeowner on {date}: {text}"},
+             "memory": "Fixed by the homeowner on {date}: {text}",
+             "noted": "Fixed by the homeowner on {date}: {text}. They said: "
+                      "{note}",
+             "source": "homeowner"},
     # "I've read what brAIn changed" — the ending for an automated fix,
     # which already wrote its own memory line when it made the change.
     "ack": {"kind": "fixed", "memory": ""},
@@ -1713,15 +1728,70 @@ async def h_finding_verb(request: web.Request) -> web.Response:
 
     payload = await asyncio.to_thread(settle)
     # A note only changes the sentence for endings that have a second one to
-    # offer. "I fixed it" plus a comment is still "I fixed it": falling back
-    # to `memory` is what stops a note silently costing the memory line.
-    corrected = bool(note and spec.get("noted"))
-    template = spec["noted"] if corrected else spec["memory"]
+    # offer. "Got it" plus a comment is still "Got it": falling back to
+    # `memory` is what stops a note silently costing the memory line.
+    template = spec["noted"] if note and spec.get("noted") else spec["memory"]
+    fact = ""
     if template:
-        await _submit_memory(
-            template.format(text=finding["text"], note=note,
-                            date=time.strftime("%Y-%m-%d")),
-            source="correction" if corrected else "homeowner")
+        fact = template.format(text=finding["text"], note=note,
+                               date=time.strftime("%Y-%m-%d"))
+        await _submit_memory(fact, source=spec.get("source", "homeowner"))
+    # Both endings delete the row, which is the point of them and also the
+    # reason this exists: they sit next to each other and mean opposite
+    # things, so a mis-tap is not hypothetical and there is nothing to put
+    # back by hand.
+    payload["undo"] = undo_store.record(
+        "finding", finding=finding, key=findings_store.normalize(finding["text"]),
+        fact=fact, fact_source=spec.get("source", "homeowner"))
+    return web.json_response(payload)
+
+
+async def h_undo(request: web.Request) -> web.Response:
+    """Put back what the last press took away.
+
+    Everything reversed here happened within the last few minutes and has
+    not been consolidated yet, which is what makes it reversible: the memory
+    line is still a line in the inbox, the settled key is still only
+    suppressing future runs, and the row's id is still free. Once a
+    consolidation has run the fact is in the document and this stops being
+    able to help — which is why the token expires, rather than pretending.
+
+    Not offered for Fix it: that starts a Claude run against the actual
+    house, and an "undo" that only took the card back would be a lie about
+    what it undid. Not offered for Remind me later either — it did not take
+    anything away, and it already has "Bring it back now".
+    """
+    entry = undo_store.take(request.match_info["token"])
+    if entry is None:
+        raise web.HTTPNotFound(text="that's expired — nothing to undo")
+
+    def reverse() -> tuple[bool, dict]:
+        if entry["kind"] == "finding":
+            # The row may have been re-reported in the meantime, in which
+            # case the list already holds a newer version of it and putting
+            # this one back would throw away whatever has happened since.
+            restored = findings_store.restore(entry["finding"]) is not None
+            if entry.get("key"):
+                findings_store.unsettle(entry["key"])
+        else:
+            restored = hypotheses.reopen(entry["ts"]) is not None
+            # A rejected guess also went into the ask-history as a dead end.
+            # Leaving that behind would put the claim back on the list and
+            # make it un-proposable for ever after.
+            for q in knowledge_store.list_questions():
+                if (entry.get("question")
+                        and knowledge_store.normalize(q["text"])
+                        == knowledge_store.normalize(entry["question"])):
+                    knowledge_store.remove_question(q["ts"])
+        # The memory line has not been consolidated (the token is younger
+        # than any pass), so it is still a line in the inbox and comes out
+        # the same way a queued fact does from the Memory tab.
+        if entry.get("fact"):
+            _drop_from_inbox(_inbox_id(entry["fact_source"], entry["fact"]))
+        return restored, _findings_payload()
+
+    restored, payload = await asyncio.to_thread(reverse)
+    payload["undone"] = restored
     return web.json_response(payload)
 
 
@@ -1838,14 +1908,19 @@ async def h_finding_fix(request: web.Request) -> web.Response:
 
 
 async def h_finding_delete(request: web.Request) -> web.Response:
-    """Forget it entirely — unlike Ignore, it can be reported again."""
+    """Forget it entirely — unlike Wrong, it can be reported again."""
     finding = _finding_or_404(request)
 
     def forget() -> dict:
         findings_store.remove(finding["ts"])
         return _findings_payload()
 
-    return web.json_response(await asyncio.to_thread(forget))
+    payload = await asyncio.to_thread(forget)
+    # No key and no fact: Dismiss teaches nothing, so there is nothing to
+    # unteach — only the row to put back.
+    payload["undo"] = undo_store.record("finding", finding=finding,
+                                        fact="", fact_source="")
+    return web.json_response(payload)
 
 
 # -- card tags --------------------------------------------------------------
@@ -1905,10 +1980,11 @@ def _queue_memory_fact(fact: str, source: str = "panel",
         log.debug("memory inbox write failed: %s", exc)
 
 
-def _queue_memory_removal(text: str) -> None:
-    """Ask the consolidator to drop a line (and its rewordings)."""
-    _queue_memory_fact(f"FORGET: {text}", source="panel-forget", confidence="high")
-
+# `FORGET:` lines are still a thing the consolidator understands — `brain
+# memory forget` writes them from the terminal — but the panel no longer
+# does. Its ✕ acts on the filing queue, where the fact has not reached the
+# document yet and there is nothing to strike from it; a line already in
+# memory.md is edited out of memory.md, in the editor beside the queue.
 
 
 def _retire_question_everywhere(text: str) -> None:
@@ -1993,50 +2069,134 @@ async def h_onboarding_reset(request: web.Request) -> web.Response:
     return web.json_response({"onboarded": False})
 
 
-def _inbox_pending() -> int:
-    """Facts waiting for the consolidator — the count the Memory tab's
-    "File into memory now" button puts on itself, so pressing it is an
-    informed choice rather than a hopeful one."""
-    total = 0
-    try:
-        for path in MEMORY_INBOX_DIR.glob("*.jsonl"):
-            try:
-                total += sum(1 for line in path.read_text(
-                    encoding="utf-8", errors="replace").splitlines() if line.strip())
-            except OSError:
-                continue
-    except OSError:
-        return 0
-    return total
-
-
 def _last_consolidated() -> int:
-    """When the consolidator last completed a pass (epoch seconds, 0 = never).
-
-    The panel does not track which discoveries have been filed — the marker
-    the consolidator touches already says it, for every caller of the
-    consolidator rather than just the button.
-    """
+    """When the consolidator last completed a pass (epoch seconds, 0 = never)."""
     try:
         return int(MEMORY_MARKER_FILE.stat().st_mtime)
     except OSError:
         return 0
 
 
-def _facts_with_filing() -> list[dict]:
-    """Discovered facts, each flagged with whether it is in the document yet.
+def _inbox_id(source: str, fact: str) -> str:
+    """A stable id for one queued line, derived from what it says.
 
-    A fact is queued to the memory inbox the moment it is discovered, so any
-    fact older than the last consolidation has been folded into memory.md.
-    Filed ones stop being a queue and become history — the Memory tab shows
-    them separately, so the list above the button is only what is actually
-    still waiting.
+    The inbox is append-only JSONL written by half a dozen callers, none of
+    which stamps an id, and `ts` is not unique — an insight run queues three
+    facts inside the same second. Content is what identifies a line here:
+    two lines that say the same thing from the same source ARE the same
+    fact, and deleting one should take both.
     """
-    cutoff = _last_consolidated()
-    facts = knowledge_store.list_facts()
-    for f in facts:
-        f["filed"] = bool(cutoff) and f["ts"] <= cutoff
-    return facts
+    return hashlib.sha256(
+        f"{source}\x00{fact}".encode("utf-8", "replace")).hexdigest()[:16]
+
+
+def _inbox_lines() -> list[tuple[Path, dict]]:
+    """Every queued line with the file it came from, oldest file first."""
+    out: list[tuple[Path, dict]] = []
+    try:
+        paths = sorted(MEMORY_INBOX_DIR.glob("*.jsonl"))
+    except OSError:
+        return out
+    for path in paths:
+        try:
+            raw = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except ValueError:
+                # A torn line is not a fact. It must not take the tab down,
+                # and it must not be counted as something waiting either.
+                continue
+            if isinstance(obj, dict) and str(obj.get("fact") or "").strip():
+                out.append((path, obj))
+    return out
+
+
+def _inbox_items(limit: int = INBOX_LIST_MAX) -> list[dict]:
+    """What is actually waiting for the consolidator, newest last.
+
+    This is THE queue — the same lines the consolidator will read, not a
+    reconstruction of them. The Memory tab used to derive its list from the
+    facts ledger instead, keeping anything whose `ts` postdated the last
+    consolidation, which is a different population entirely: the ledger only
+    holds what the ANALYST discovered, while the inbox holds that plus
+    corrections, confirmed guesses, facts taught from the panel, voice,
+    study sessions and anything another add-on dropped in /share. So the
+    count said nine and the list showed four, and neither was wrong — they
+    were answers to different questions.
+    """
+    seen: set[str] = set()
+    items: list[dict] = []
+    for _path, obj in _inbox_lines():
+        fact = str(obj["fact"]).strip()
+        source = str(obj.get("source") or "")
+        key = _inbox_id(source, fact)
+        if key in seen:
+            continue
+        seen.add(key)
+        items.append({
+            "id": key,
+            "ts": int(obj.get("ts") or 0),
+            "source": source,
+            "text": fact[:MAX_INBOX_TEXT],
+            "confidence": str(obj.get("confidence") or ""),
+        })
+    return items[-limit:]
+
+
+def _inbox_pending() -> int:
+    """How many DISTINCT facts are waiting — the number beside the button.
+
+    Distinct, because that is what the list shows and the two have to agree:
+    a fact queued twice (a study session re-filing what an insight run
+    already queued) is one thing waiting, not two.
+    """
+    return len({_inbox_id(str(o.get("source") or ""), str(o["fact"]).strip())
+                for _p, o in _inbox_lines()})
+
+
+def _drop_from_inbox(item_id: str) -> bool:
+    """Take a fact out of the queue before it reaches the document.
+
+    Nothing is queued for removal afterwards: an inbox line has by
+    definition never been filed (the consolidator archives what it consumes),
+    so there is nothing in memory.md to forget. That is the difference from
+    deleting a fact the document already holds.
+    """
+    kept: dict[Path, list[dict]] = {}
+    dropped: set[Path] = set()
+    for path, obj in _inbox_lines():
+        if _inbox_id(str(obj.get("source") or ""),
+                     str(obj["fact"]).strip()) == item_id:
+            dropped.add(path)
+        else:
+            kept.setdefault(path, []).append(obj)
+    if not dropped:
+        return False
+    # Only the files that actually held it are rewritten. Rewriting the rest
+    # would drop any torn line they carry, which _inbox_lines skips over —
+    # tidying a file we had no reason to touch is not this function's job.
+    for path in dropped:
+        lines = kept.get(path, [])
+        try:
+            if lines:
+                tmp = path.with_suffix(".tmp")
+                tmp.write_text("".join(
+                    json.dumps(o, ensure_ascii=False) + "\n" for o in lines),
+                    encoding="utf-8")
+                tmp.replace(path)
+            else:
+                path.unlink()
+        except OSError as exc:
+            # Best effort: a line we could not remove is filed at the next
+            # pass, which is the old behaviour and not a data loss.
+            log.debug("inbox rewrite failed for %s: %s", path, exc)
+    return True
 
 
 def _memory_state() -> dict:
@@ -2110,14 +2270,20 @@ async def h_knowledge(request: web.Request) -> web.Response:
     live on the Findings tab), but the budget is what the prompt builder
     asks for and the list is what `brain memory hypotheses` prints.
     """
+    def queue() -> tuple[list[dict], int]:
+        # One read for the list and its count, so the two cannot disagree —
+        # which is exactly how "9 things waiting" came to sit above 4 cards.
+        return _inbox_items(), _inbox_pending()
+
+    inbox, pending = await asyncio.to_thread(queue)
     return web.json_response({
-        "facts": await asyncio.to_thread(_facts_with_filing),
+        "inbox": inbox,
         "questions": knowledge_store.list_questions(),
         "hypotheses": hypotheses.list_all("open"),
         "hypothesis_budget": hypotheses.budget(),
         "shared_memory": _read_shared_memory(),
         "memory_state": await asyncio.to_thread(_memory_state),
-        "inbox_pending": await asyncio.to_thread(_inbox_pending),
+        "inbox_pending": pending,
     })
 
 
@@ -2266,7 +2432,11 @@ async def h_hypothesis_confirm(request: web.Request) -> web.Response:
     if not settled:
         raise web.HTTPNotFound(text="no such open hypothesis")
     await _submit_memory(settled["text"], source="confirmed")
-    return web.json_response(await asyncio.to_thread(_findings_payload))
+    payload = await asyncio.to_thread(_findings_payload)
+    payload["undo"] = undo_store.record("hypothesis", ts=ts,
+                                        fact=settled["text"],
+                                        fact_source="confirmed")
+    return web.json_response(payload)
 
 
 async def h_hypothesis_reject(request: web.Request) -> web.Response:
@@ -2297,11 +2467,18 @@ async def h_hypothesis_reject(request: web.Request) -> web.Response:
     settled = await asyncio.to_thread(settle)
     if not settled:
         raise web.HTTPNotFound(text="no such open hypothesis")
+    fact = ""
     if note:
-        await _submit_memory(
-            f'brAIn guessed: "{settled["text"]}". The homeowner says that is '
-            f"wrong, because: {note}", source="correction")
-    return web.json_response(await asyncio.to_thread(_findings_payload))
+        fact = (f'brAIn guessed: "{settled["text"]}". The homeowner says that '
+                f"is wrong, because: {note}")
+        await _submit_memory(fact, source="correction")
+    payload = await asyncio.to_thread(_findings_payload)
+    # `question` is the ledger entry reject() also wrote, so undo can retire
+    # the dead-end record too rather than leaving the claim un-askable.
+    payload["undo"] = undo_store.record("hypothesis", ts=ts, fact=fact,
+                                        fact_source="correction",
+                                        question=settled["text"])
+    return web.json_response(payload)
 
 
 async def h_knowledge_fact_add(request: web.Request) -> web.Response:
@@ -2345,23 +2522,26 @@ async def h_memory_put(request: web.Request) -> web.Response:
     return web.json_response({"saved": True})
 
 
-async def h_knowledge_fact_delete(request: web.Request) -> web.Response:
-    """Forget a fact: queue its removal from the memory document.
+async def h_inbox_delete(request: web.Request) -> web.Response:
+    """Drop a fact from the filing queue before it reaches the document.
 
-    The panel never edits memory.md itself — it asks the consolidator to,
-    which is what keeps a single writer on that file."""
-    try:
-        ts = int(request.match_info["ts"])
-    except ValueError:
-        raise web.HTTPBadRequest(text="bad fact id")
-    text = next((f["text"] for f in knowledge_store.list_facts()
-                 if f["ts"] == ts), "")
-    if not knowledge_store.remove_fact(ts):
-        raise web.HTTPNotFound(text="no such fact")
-    queued = bool(text)
-    if queued:
-        await asyncio.to_thread(_queue_memory_removal, text)
-    return web.json_response({"deleted": ts, "queued": queued})
+    Nothing is queued for removal afterwards, and that is the whole point of
+    acting on the queue rather than on the ledger: a line still in the inbox
+    has never been filed, so there is nothing in memory.md to forget. The
+    old ✕ deleted a ledger entry and asked the consolidator to strike the
+    text from a document that, more often than not, had never held it.
+    """
+    item_id = request.match_info["id"]
+
+    def drop() -> tuple[bool, list[dict], int]:
+        ok = _drop_from_inbox(item_id)
+        return ok, _inbox_items(), _inbox_pending()
+
+    ok, inbox, pending = await asyncio.to_thread(drop)
+    if not ok:
+        raise web.HTTPNotFound(text="nothing waiting under that")
+    return web.json_response({"deleted": item_id, "inbox": inbox,
+                              "inbox_pending": pending})
 
 
 async def h_knowledge_answer(request: web.Request) -> web.Response:
@@ -2774,6 +2954,7 @@ def make_app() -> web.Application:
     app.router.add_post("/api/finding/{ts}/discuss", h_finding_discuss)
     # Before the {ts} pattern, which would otherwise swallow it.
     app.router.add_post("/api/findings/unsettle", h_finding_unsettle)
+    app.router.add_post("/api/undo/{token}", h_undo)
     app.router.add_post("/api/finding/{ts}/{verb}", h_finding_verb)
     app.router.add_delete("/api/finding/{ts}", h_finding_delete)
     app.router.add_get("/api/insight/{id}/history", h_history_list)
@@ -2802,7 +2983,7 @@ def make_app() -> web.Application:
     app.router.add_post("/api/memory/consolidate", h_memory_consolidate)
     app.router.add_get("/api/memory/state", h_memory_state)
     app.router.add_post("/api/knowledge/fact", h_knowledge_fact_add)
-    app.router.add_delete("/api/knowledge/fact/{ts}", h_knowledge_fact_delete)
+    app.router.add_delete("/api/memory/inbox/{id}", h_inbox_delete)
     app.router.add_post("/api/knowledge/question/{ts}/answer", h_knowledge_answer)
     app.router.add_post("/api/knowledge/question/{ts}/dismiss", h_knowledge_dismiss)
     app.router.add_delete("/api/knowledge/question/{ts}", h_knowledge_question_delete)

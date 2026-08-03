@@ -610,6 +610,31 @@ def remove(ts: int) -> bool:
     return True
 
 
+def restore(shaped: dict) -> dict | None:
+    """Put a row back exactly as it was — the undo half of an ending.
+
+    Keyed on the original ``ts``, because that is the id the panel acted on
+    and a restored finding that came back under a new one would be a
+    different card to everything holding a reference to it (the chat's
+    action strip, a pending undo, an open menu).
+
+    Refuses when something already occupies that id: the analyst re-reporting
+    the problem in the meantime is the one case where the row on the list is
+    newer than the one being restored, and overwriting it would throw away
+    whatever has happened since.
+    """
+    ts = int(shaped.get("ts") or 0)
+    if not ts or not str(shaped.get("text") or "").strip():
+        return None
+    items = _load()
+    if any(int(f.get("ts") or 0) == ts for f in items):
+        return None
+    entry = {k: v for k, v in _shape(shaped).items()}
+    items.append(entry)
+    _write(_prune(items))
+    return _shape(entry)
+
+
 # ---------------------------------------------------------------------------
 # Prompt injection
 # ---------------------------------------------------------------------------

@@ -290,63 +290,152 @@ class TestAskBarLearns(PanelCase):
         self.assertEqual(list(onboarding.STUDY_REQUESTS_DIR.glob("*.json")), [])
 
 
-class TestDiscoveriesDrain(PanelCase):
-    """The Memory tab's discovery list is a queue, and a queue has to drain.
+class TestTheQueueIsTheCount(PanelCase):
+    """The Memory tab's filing queue is a queue, and the number beside it
+    has to be the length of it.
 
-    It didn't: the facts ledger is a dedup index, so every discovery stayed on
-    the list forever and filing them into the document changed nothing you
-    could see. Nothing may be deleted from the ledger (that is what stops the
-    analyst re-announcing), so what the panel needs is to know which entries
-    have already been folded in — and the consolidator's own marker file
-    already says, for the daemon and the CLI as much as for the button."""
+    It wasn't. The count read the memory INBOX — every fact any writer has
+    queued for the consolidator. The list read the facts LEDGER, minus
+    anything whose ts predated the consolidator's marker file. Those are
+    different populations: the ledger only holds what the analyst
+    discovered, while the inbox also carries corrections, confirmed
+    guesses, facts taught from the panel, voice, study sessions and
+    whatever another add-on dropped in /share. So the label said nine
+    things waiting above four cards, and neither number was wrong — they
+    were answers to different questions.
 
-    def test_a_discovery_is_queued_until_the_consolidator_has_run(self):
-        knowledge_store.add_fact("The hall sensor drops at 2 AM.")
+    The list is the inbox now, so there is one population and one read.
+    """
+
+    def _queue(self, *facts, source="panel", name="1-panel.jsonl"):
+        self.server.MEMORY_INBOX_DIR.mkdir(parents=True, exist_ok=True)
+        (self.server.MEMORY_INBOX_DIR / name).write_text(
+            "".join(json.dumps({"ts": 1750000000 + i, "source": source,
+                                "fact": f}) + "\n"
+                    for i, f in enumerate(facts)), encoding="utf-8")
+
+    def _knowledge(self):
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                return await (await client.get("/api/knowledge")).json()
+            finally:
+                await client.close()
+
+        return asyncio.run(run())
+
+    def test_the_list_and_the_count_are_the_same_read(self):
+        self._queue("The hall sensor drops at 2 AM.", "Movie nights dim to 20%.")
+        # A ledger fact that never reached the inbox must not inflate either
+        # number: what is waiting for the consolidator is what is in the
+        # inbox, and the ledger is a dedup index, not a queue.
+        knowledge_store.add_fact("Announced long ago, already in the document.")
+        data = self._knowledge()
+        self.assertEqual(len(data["inbox"]), 2)
+        self.assertEqual(data["inbox_pending"], 2)
+        self.assertEqual([f["text"] for f in data["inbox"]],
+                         ["The hall sensor drops at 2 AM.",
+                          "Movie nights dim to 20%."])
+
+    def test_everything_queued_is_listed_whoever_queued_it(self):
+        """The old list showed only what the analyst discovered, so a
+        correction, a confirmed guess or a fact you typed in yourself was
+        counted and never shown."""
+        self._queue("Discovered thing", source="insights", name="1-insights.jsonl")
+        self._queue("You said the porch sensor always reads on",
+                    source="correction", name="2-correction.jsonl")
+        self._queue("Taught from the panel", source="panel", name="3-panel.jsonl")
+        data = self._knowledge()
+        self.assertEqual(
+            sorted(f["source"] for f in data["inbox"]),
+            ["correction", "insights", "panel"])
+        self.assertEqual(data["inbox_pending"], 3)
+
+    def test_the_same_fact_queued_twice_is_one_thing_waiting(self):
+        """A study session re-filing what an insight run already queued is
+        one fact, on the list and in the count alike."""
+        self._queue("The hall sensor drops at 2 AM.",
+                    "The hall sensor drops at 2 AM.")
+        data = self._knowledge()
+        self.assertEqual(len(data["inbox"]), 1)
+        self.assertEqual(data["inbox_pending"], 1)
+
+    def test_a_torn_line_is_not_something_waiting(self):
+        """A writer that died mid-line must not wedge the tab, and must not
+        be counted as a fact either."""
+        self.server.MEMORY_INBOX_DIR.mkdir(parents=True, exist_ok=True)
+        (self.server.MEMORY_INBOX_DIR / "1-panel.jsonl").write_text(
+            json.dumps({"ts": 1, "source": "panel", "fact": "Real"}) + "\n"
+            + '{"ts": 2, "source": "pan\n', encoding="utf-8")
+        data = self._knowledge()
+        self.assertEqual([f["text"] for f in data["inbox"]], ["Real"])
+        self.assertEqual(data["inbox_pending"], 1)
+
+    def test_dropping_one_takes_it_out_of_both(self):
+        self._queue("Keep me", "Drop me")
+        data = self._knowledge()
+        target = next(f for f in data["inbox"] if f["text"] == "Drop me")
 
         async def run():
             client = self._client()
             await client.start_server()
             try:
-                facts = (await (await client.get("/api/knowledge")).json())["facts"]
-                self.assertEqual([f["filed"] for f in facts], [False])
+                resp = await client.delete(f"/api/memory/inbox/{target['id']}")
+                self.assertEqual(resp.status, 200)
+                body = await resp.json()
+                # The reply carries the fresh list AND the fresh count, so
+                # the row cannot vanish while the label still says two.
+                self.assertEqual([f["text"] for f in body["inbox"]], ["Keep me"])
+                self.assertEqual(body["inbox_pending"], 1)
+                # ...and it is really gone from the file the consolidator reads
+                self.assertEqual(resp.status, 200)
+                resp = await client.delete(f"/api/memory/inbox/{target['id']}")
+                self.assertEqual(resp.status, 404)
             finally:
                 await client.close()
 
         asyncio.run(run())
+        remaining = (self.server.MEMORY_INBOX_DIR / "1-panel.jsonl").read_text()
+        self.assertIn("Keep me", remaining)
+        self.assertNotIn("Drop me", remaining)
 
-    def test_consolidating_moves_older_discoveries_out_of_the_queue(self):
-        old, _ = knowledge_store.add_fact("Filed before the pass.")
-        self.server.MEMORY_MARKER_FILE.parent.mkdir(parents=True, exist_ok=True)
-        self.server.MEMORY_MARKER_FILE.touch()
-        os.utime(self.server.MEMORY_MARKER_FILE, (old["ts"] + 5, old["ts"] + 5))
-        fresh, _ = knowledge_store.add_fact("Discovered after it.")
-        # add_fact stamps with time.time(); force the ordering the names claim
-        data = json.loads(Path(knowledge_store.KNOWLEDGE_FILE).read_text())
-        data["facts"][1]["ts"] = old["ts"] + 10
-        Path(knowledge_store.KNOWLEDGE_FILE).write_text(json.dumps(data))
+    def test_dropping_the_last_line_removes_the_file(self):
+        self._queue("The only one")
+        data = self._knowledge()
 
         async def run():
             client = self._client()
             await client.start_server()
             try:
-                facts = (await (await client.get("/api/knowledge")).json())["facts"]
-                by_text = {f["text"]: f["filed"] for f in facts}
-                self.assertTrue(by_text["Filed before the pass."])
-                self.assertFalse(by_text["Discovered after it."])
+                await client.delete(f"/api/memory/inbox/{data['inbox'][0]['id']}")
             finally:
                 await client.close()
 
         asyncio.run(run())
+        self.assertEqual(
+            list(self.server.MEMORY_INBOX_DIR.glob("*.jsonl")), [])
 
-    def test_a_filed_discovery_is_still_there_to_be_forgotten(self):
-        """Filed ones leave the queue, not the panel: ✕ is the only one-click
-        way to make brAIn drop something it has already written down."""
-        entry, _ = knowledge_store.add_fact("Wrong about the garage.")
-        self.server.MEMORY_MARKER_FILE.parent.mkdir(parents=True, exist_ok=True)
-        self.server.MEMORY_MARKER_FILE.touch()
-        facts = self.server._facts_with_filing()
-        self.assertEqual([f["filed"] for f in facts], [True])
-        self.assertEqual(facts[0]["ts"], entry["ts"])
+    def test_dropping_a_queued_fact_asks_for_no_removal(self):
+        """The old ✕ deleted a ledger entry and queued `FORGET: ...` for the
+        consolidator — a request to strike from memory.md a line that, for
+        anything still in the queue, had never been written there. A queued
+        fact has by definition not been filed."""
+        self._queue("Never filed")
+        data = self._knowledge()
+
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                await client.delete(f"/api/memory/inbox/{data['inbox'][0]['id']}")
+            finally:
+                await client.close()
+
+        asyncio.run(run())
+        left = "".join(p.read_text() for p in
+                       self.server.MEMORY_INBOX_DIR.glob("*.jsonl"))
+        self.assertNotIn("FORGET", left)
 
 
 class TestManualConsolidation(PanelCase):

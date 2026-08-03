@@ -550,7 +550,11 @@ class TestKnowledgeEndpoints(InsightsServerCase):
                 resp = await client.get("/api/knowledge")
                 self.assertEqual(resp.status, 200)
                 data = await resp.json()
-                self.assertEqual(data["facts"], [])
+                # The taught fact is in the QUEUE — which is now what the tab
+                # lists, so the list and the count are the same read.
+                self.assertEqual([f["text"] for f in data["inbox"]],
+                                 ["Garage fridge runs 24/7"])
+                self.assertEqual(data["inbox_pending"], 1)
                 self.assertEqual(data["questions"][0]["status"], "open")
                 self.assertIn("a note", data["shared_memory"])
 
@@ -562,16 +566,27 @@ class TestKnowledgeEndpoints(InsightsServerCase):
                 data = (await (await client.get("/api/knowledge")).json())
                 self.assertEqual(data["questions"][0]["status"], "answered")
                 self.assertEqual(data["questions"][0]["answer"], "Yes, security")
-                # the answer became a fact — as a statement, not a Q/A pair
-                self.assertTrue(any("Yes, security" in f["text"] for f in data["facts"]))
-                self.assertFalse(any(f["text"].startswith("Q:") for f in data["facts"]))
+                # the answer became a fact — as a statement, not a Q/A pair —
+                # and it is waiting in the queue like everything else
+                self.assertTrue(
+                    any("Yes, security" in f["text"] for f in data["inbox"]))
+                self.assertTrue(
+                    any("Yes, security" in f["text"]
+                        for f in knowledge_store.list_facts()))
+                self.assertFalse(
+                    any(f["text"].startswith("Q:") for f in data["inbox"]))
 
-                # deleting it queues a removal for the consolidator
-                ts = data["facts"][0]["ts"]
-                resp = await client.delete(f"/api/knowledge/fact/{ts}")
+                # ✕ drops it from the queue, and the reply carries the fresh
+                # list and count together so the row cannot vanish while the
+                # label above it still counts it.
+                item = next(f for f in data["inbox"] if "Yes, security" in f["text"])
+                resp = await client.delete(f"/api/memory/inbox/{item['id']}")
                 self.assertEqual(resp.status, 200)
-                self.assertTrue((await resp.json())["queued"])
-                resp = await client.delete(f"/api/knowledge/fact/{ts}")
+                after = await resp.json()
+                self.assertEqual(len(after["inbox"]), after["inbox_pending"])
+                self.assertFalse(
+                    any("Yes, security" in f["text"] for f in after["inbox"]))
+                resp = await client.delete(f"/api/memory/inbox/{item['id']}")
                 self.assertEqual(resp.status, 404)
             finally:
                 await client.close()
@@ -811,28 +826,22 @@ class TestMemoryFile(InsightsServerCase):
         asyncio.run(run())
         self.assertEqual(self._queued_facts(), [])
 
-    def test_deleting_a_fact_queues_a_removal(self):
-        """Deletion asks the consolidator to drop the line; the panel never
-        edits the document itself.
+    def test_a_fact_the_document_already_holds_is_edited_out_of_it(self):
+        """The panel's ✕ used to delete a ledger entry and queue
+        `FORGET: ...` for the consolidator. It acts on the filing QUEUE now,
+        where the fact has not reached the document and there is nothing to
+        strike from it — and a line the document does hold is edited out in
+        the markdown editor beside the queue, which rewrites the file
+        through the same single writer.
 
-        Exercised through the handler's logic rather than an HTTP round-trip
-        — DELETE routing is already covered by the question-delete test.
+        `FORGET:` itself is unchanged and still understood: `brain memory
+        forget` writes one from the terminal.
         """
-        entry, _ = knowledge_store.add_fact("Hallway sensor drops offline nightly")
-        self.server.SHARED_MEMORY_FILE.write_text(
-            "# Home Memory\n\n## Device notes\n"
-            "- Hallway sensor drops offline nightly\n")
-
-        self.assertTrue(knowledge_store.remove_fact(entry["ts"]))
-        self.server._queue_memory_removal(entry["text"])
-
-        queued = self._queued_facts()
-        self.assertEqual(len(queued), 1)
-        self.assertEqual(queued[0]["fact"],
-                         "FORGET: Hallway sensor drops offline nightly")
-        # Still in the document — the consolidator removes it, not the panel.
-        self.assertIn("Hallway sensor",
-                      self.server.SHARED_MEMORY_FILE.read_text())
+        self.assertFalse(hasattr(self.server, "_queue_memory_removal"))
+        consolidator = (BASE_DIR / "brain" / "scripts" / "brain-memory-consolidate.sh").read_text()
+        self.assertIn('Lines beginning "FORGET: "', consolidator)
+        cli = (BASE_DIR / "brain" / "scripts" / "brain-memory.sh").read_text()
+        self.assertIn('append_inbox_fact "FORGET: $1"', cli)
 
     def test_answered_question_is_remembered_as_a_statement(self):
         """Not as "Q: ... -> A: ...", which is what made memory unreadable."""
