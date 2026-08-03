@@ -70,25 +70,33 @@ class TestCredentialDiscovery(unittest.TestCase):
                     {"claudeAiOauth": {"accessToken": "sk-ant-oat01-cli"}})
         self._write(os.path.join(self.secrets, "claude_auth.json"),
                     {"type": "oauth_token", "value": "sk-ant-oat01-panel"})
-        token, source = self.mod.find_oauth_token()
-        self.assertEqual(token, "sk-ant-oat01-cli")
-        self.assertEqual(source, "claude cli")
+        state = {}
+        self.assertEqual(self.mod.find_oauth_token(state), "sk-ant-oat01-cli")
+        self.assertEqual(state["auth"], "claude cli")
 
     def test_a_panel_login_is_found(self):
         """The case that was broken: no CLI credential file at all, because
         the person signed in through the panel."""
         self._write(os.path.join(self.secrets, "claude_auth.json"),
                     {"type": "oauth_token", "value": "sk-ant-oat01-panel"})
-        token, source = self.mod.find_oauth_token()
-        self.assertEqual(token, "sk-ant-oat01-panel")
-        self.assertEqual(source, "panel")
+        state = {}
+        self.assertEqual(self.mod.find_oauth_token(state), "sk-ant-oat01-panel")
+        self.assertEqual(state["auth"], "panel")
 
     def test_a_shared_ha_login_is_found(self):
         self._write(self.shared,
                     {"type": "oauth_token", "value": "sk-ant-oat01-shared"})
-        token, source = self.mod.find_oauth_token()
-        self.assertEqual(token, "sk-ant-oat01-shared")
-        self.assertEqual(source, "ha login")
+        state = {}
+        self.assertEqual(self.mod.find_oauth_token(state), "sk-ant-oat01-shared")
+        self.assertEqual(state["auth"], "ha login")
+
+    def test_the_token_is_returned_alone(self):
+        """A label riding home beside a credential is a label nothing can
+        tell apart from the credential — which is what CodeQL said about the
+        first version of this, and it was right to."""
+        self._write(self.shared,
+                    {"type": "oauth_token", "value": "sk-ant-oat01-shared"})
+        self.assertIsInstance(self.mod.find_oauth_token(), str)
 
     def test_an_api_key_says_so_rather_than_not_authenticated(self):
         """An API key bills per token and has no subscription window, so
@@ -96,23 +104,31 @@ class TestCredentialDiscovery(unittest.TestCase):
         "no_oauth_token" sends people to redo a sign-in that worked."""
         self._write(os.path.join(self.secrets, "claude_auth.json"),
                     {"type": "api_key", "value": "sk-ant-api03-xyz"})
-        token, reason = self.mod.find_oauth_token()
-        self.assertIsNone(token)
-        self.assertEqual(reason, "api_key_has_no_usage_limits")
+        self.assertIsNone(self.mod.find_oauth_token())
+        self.assertEqual(self.mod.credential_problem(),
+                         "api_key_has_no_usage_limits")
 
     def test_nothing_at_all_is_no_oauth_token(self):
-        token, reason = self.mod.find_oauth_token()
-        self.assertIsNone(token)
-        self.assertEqual(reason, "no_oauth_token")
+        self.assertIsNone(self.mod.find_oauth_token())
+        self.assertEqual(self.mod.credential_problem(), "no_oauth_token")
+
+    def test_the_problem_is_a_status_not_a_credential(self):
+        """credential_problem must never be able to leak a value: it reads
+        `type` and nothing else, whatever the store holds."""
+        self._write(os.path.join(self.secrets, "claude_auth.json"),
+                    {"type": "api_key", "value": "sk-ant-api03-secret"})
+        self.assertNotIn("secret", self.mod.credential_problem())
+        self.assertIn(self.mod.credential_problem(),
+                      ("no_oauth_token", "api_key_has_no_usage_limits"))
 
     def test_malformed_stores_are_skipped_not_fatal(self):
         with open(os.path.join(self.secrets, "claude_auth.json"), "w") as fh:
             fh.write("{not json")
         self._write(self.shared,
                     {"type": "oauth_token", "value": "sk-ant-oat01-shared"})
-        token, source = self.mod.find_oauth_token()
-        self.assertEqual(token, "sk-ant-oat01-shared")
-        self.assertEqual(source, "ha login")
+        state = {}
+        self.assertEqual(self.mod.find_oauth_token(state), "sk-ant-oat01-shared")
+        self.assertEqual(state["auth"], "ha login")
 
     def test_claude_config_dir_is_honoured(self):
         cfg = os.path.join(self.tmp.name, "cfg")
@@ -125,7 +141,7 @@ class TestCredentialDiscovery(unittest.TestCase):
         })
         self._write(os.path.join(cfg, ".credentials.json"),
                     {"claudeAiOauth": {"accessToken": "sk-ant-oat01-cfg"}})
-        self.assertEqual(mod.find_oauth_token()[0], "sk-ant-oat01-cfg")
+        self.assertEqual(mod.find_oauth_token(), "sk-ant-oat01-cfg")
 
 
 class TestFreshnessGuard(unittest.TestCase):

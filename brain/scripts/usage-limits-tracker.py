@@ -66,33 +66,57 @@ BRAIN_AUTH_PATHS = [
 # OAuth token discovery
 # ---------------------------------------------------------------------------
 
-def find_oauth_token():
+def find_oauth_token(state=None):
     """Find brAIn's OAuth access token, wherever it was signed in.
 
-    Returns (token, source) — source names the store it came from, for the
-    log — or (None, reason) when there is nothing usable. `reason` is the
-    string the sensors report, so it distinguishes "nobody has signed in"
-    from "signed in with an API key", which this endpoint cannot use.
+    Returns the token, or None. **It returns the token and nothing else.**
+    Naming the store it came from is useful in the log, but a label that
+    rides home in the same tuple as a credential is a label nothing can
+    tell apart from the credential — not a reader skimming the call site,
+    not a scanner, and not whoever swaps the order in a year's time. So the
+    store is logged here, where it is a literal at the point it is known,
+    and never handed back. Why there is *no* token is a separate question
+    with a separate answer: see credential_problem().
     """
     for path in CREDENTIAL_PATHS:
         token = _read_token_from_file(path)
         if token:
-            return token, "claude cli"
+            _note_source(state, "claude cli")
+            return token
 
-    saw_api_key = False
     for path, label in BRAIN_AUTH_PATHS:
-        token, kind = _read_brain_auth(path)
-        if kind == "oauth_token" and token:
-            return token, label
-        if kind == "api_key":
-            saw_api_key = True
+        data = _load_brain_auth(path)
+        if _auth_kind(data) == "oauth_token":
+            value = _auth_value(data)
+            if value:
+                _note_source(state, label)
+                return value
+    return None
 
-    if saw_api_key:
-        # An API key bills per token and has no subscription window, so
-        # there is no utilization to report and never will be. Say which
-        # thing is wrong rather than "not authenticated".
-        return None, "api_key_has_no_usage_limits"
-    return None, "no_oauth_token"
+
+def credential_problem():
+    """Why there is no usable OAuth credential, as a fixed status string.
+
+    Only ever called once find_oauth_token has come back empty, so nothing
+    on this path has read a credential value — it reads `type` and stops.
+    An API key is a different problem to no sign-in at all: it bills per
+    token and has no subscription window, so there is no utilization to
+    report and never will be, and telling someone to sign in again is
+    telling them to redo the thing that worked.
+    """
+    for path, _label in BRAIN_AUTH_PATHS:
+        if _auth_kind(_load_brain_auth(path)) == "api_key":
+            return "api_key_has_no_usage_limits"
+    return "no_oauth_token"
+
+
+def _note_source(state, label):
+    """Log which store answered, once, not every two minutes."""
+    if state is None:
+        return
+    if state.get("auth") != label:
+        sys.stderr.write(f"usage-limits-tracker: using the {label} credential\n")
+        state["auth"] = label
 
 
 def _read_token_from_file(path):
@@ -120,22 +144,36 @@ def _read_token_from_file(path):
     return None
 
 
-def _read_brain_auth(path):
-    """Read one of brAIn's own credential files → (value, type)."""
+def _load_brain_auth(path):
+    """One of brAIn's own credential files as a dict, or None.
+
+    Split from the two readers below so that asking *what kind* of
+    credential a store holds never goes near the value it holds.
+    """
     try:
         with open(path) as fh:
             data = json.load(fh)
     except (OSError, json.JSONDecodeError):
-        return None, None
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _auth_kind(data):
+    """"oauth_token" | "api_key" | None — the type, never the secret."""
     if not isinstance(data, dict):
-        return None, None
-    value = data.get("value")
+        return None
     kind = data.get("type")
-    if kind not in ("oauth_token", "api_key"):
-        return None, None
+    return kind if kind in ("oauth_token", "api_key") else None
+
+
+def _auth_value(data):
+    """The credential itself. Everything this returns is secret."""
+    if not isinstance(data, dict):
+        return None
+    value = data.get("value")
     if not isinstance(value, str) or not value.strip():
-        return None, None
-    return value.strip(), kind
+        return None
+    return value.strip()
 
 
 # ---------------------------------------------------------------------------
@@ -263,21 +301,17 @@ def _last_reading_is_fresh():
 
 def run_once(state):
     """Fetch usage limits and write to file. Returns True on success."""
-    token, detail = find_oauth_token()
+    token = find_oauth_token(state)
     if not token:
-        if state.get("auth") != detail:
+        problem = credential_problem()
+        if state.get("auth") != problem:
             sys.stderr.write(
-                f"usage-limits-tracker: no usable OAuth credential ({detail}) — "
+                f"usage-limits-tracker: no usable OAuth credential ({problem}) — "
                 "sign in from the panel, the terminal, or with `ha login`\n"
             )
-            state["auth"] = detail
-        write_error_status(detail)
+            state["auth"] = problem
+        write_error_status(problem)
         return False
-
-    if state.get("auth") != detail:
-        # Which store answered, never the token itself.
-        sys.stderr.write(f"usage-limits-tracker: using the {detail} credential\n")
-        state["auth"] = detail
 
     data, error = fetch_usage_limits(token)
     if data is None:
