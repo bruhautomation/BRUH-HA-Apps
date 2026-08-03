@@ -292,16 +292,32 @@ fi
 
 # --- 6. Claude auth & usage sensors ----------------------------------------
 hdr "Claude login & usage sensors"
-if [ -f "${HOME:-/data/home}/.claude/.credentials.json" ] \
-    || [ -f /data/.config/claude/.credentials.json ]; then
-    pass "Claude OAuth credentials found (logged in)"
+# All three stores, in the order engine.get_auth and brain-auth-env walk
+# them. Checking only the CLI's own file reports a panel sign-in as "not
+# logged in", which is the exact misdiagnosis this self-test exists to avoid.
+auth_where=""
+for candidate in \
+    "${CLAUDE_CONFIG_DIR:-/nonexistent}/.credentials.json:Claude CLI" \
+    "${HOME:-/data/home}/.claude/.credentials.json:Claude CLI" \
+    "/data/.config/claude/.credentials.json:Claude CLI" \
+    "${BRAIN_SECRETS:-/data/secrets}/claude_auth.json:panel sign-in" \
+    "${BRAIN_SHARED_AUTH:-/config/.brain/secrets/claude_auth.json}:ha login"; do
+    if [ -s "${candidate%:*}" ]; then
+        auth_where="${candidate##*:}"
+        break
+    fi
+done
+if [ -n "$auth_where" ]; then
+    pass "Claude credentials found (${auth_where})"
 else
-    warn "No Claude credentials found — run 'claude' and complete login for Assist/automations"
+    warn "No Claude credentials found — sign in from the panel, run 'claude', or use 'ha login'"
 fi
 if [ -f "$USAGE_FILE" ]; then
     uerr=$(jq -r '.error // empty' "$USAGE_FILE" 2>/dev/null)
-    if [ -n "$uerr" ]; then
-        warn "Usage sensors unavailable: ${uerr} (needs OAuth/subscription login, not an API key)"
+    if [ "$uerr" = "api_key_has_no_usage_limits" ]; then
+        warn "Usage sensors need a subscription login — an API key bills per token and has no usage window"
+    elif [ -n "$uerr" ]; then
+        warn "Usage sensors unavailable: ${uerr}"
     else
         sess=$(jq -r '.five_hour.utilization // "?"' "$USAGE_FILE" 2>/dev/null)
         pass "Usage limits fetched (session ${sess}%)"

@@ -34,8 +34,8 @@ class TestContextUsage(unittest.TestCase):
     """How full the conversation is, read off the CLI's own usage report.
 
     The prompt the CLI just sent IS the conversation so far, so the last
-    turn's input tokens are the context in use — a measurement rather than
-    an estimate. Cache reads count: a cached prompt still occupies the
+    model call's input tokens are the context in use — a measurement rather
+    than an estimate. Cache reads count: a cached prompt still occupies the
     window, it is only cheaper.
     """
 
@@ -52,36 +52,56 @@ class TestContextUsage(unittest.TestCase):
         s._emit = lambda *a, **k: None
         return s
 
-    def test_window_is_known_per_family_and_unknown_otherwise(self):
-        for model in ("claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"):
+    def test_the_window_follows_the_version_not_the_family(self):
+        """Opus and Sonnet went to 1M at 4.6, and Haiku did not.
+
+        A family-name lookup said 200K for every one of these, which is how
+        a real conversation came to report several hundred percent of a
+        window five times too small.
+        """
+        for model in ("claude-opus-5", "claude-sonnet-5", "claude-opus-4-8",
+                      "claude-opus-4-6", "claude-sonnet-4-6", "claude-fable-5"):
+            self.assertEqual(self.mod.context_window(model), 1_000_000, model)
+        for model in ("claude-haiku-4-5", "claude-haiku-4-5-20251001",
+                      "claude-opus-4-5-20251101", "claude-sonnet-4-5",
+                      "claude-3-5-sonnet-20241022"):
             self.assertEqual(self.mod.context_window(model), 200_000, model)
-        # A model we have no published figure for reports no window, so the
-        # panel shows a token count and no percentage. A percentage of a
-        # guessed denominator is worse than no percentage.
+
+    def test_a_trailing_date_stamp_is_not_a_version(self):
+        self.assertEqual(self.mod.model_version("claude-opus-4-20250514"), (4, 0))
+        self.assertEqual(
+            self.mod.model_version("claude-haiku-4-5-20251001"), (4, 5))
+        self.assertEqual(
+            self.mod.model_version("claude-3-5-sonnet-20241022"), (3, 5))
+
+    def test_an_unreadable_model_reports_no_window(self):
+        # A percentage of a guessed denominator is worse than no percentage,
+        # and the two candidate answers here are 5x apart.
         self.assertEqual(self.mod.context_window("some-future-model"), 0)
+        self.assertEqual(self.mod.context_window("claude-opus-latest"), 0)
         self.assertEqual(self.mod.context_window(""), 0)
 
     def test_cache_reads_count_toward_the_window(self):
         s = self._session()
-        s._take_context({"usage": {
+        s._take_context({
             "input_tokens": 1200,
             "cache_read_input_tokens": 40_000,
             "cache_creation_input_tokens": 800,
             "output_tokens": 900,     # not context until it comes back as input
-        }})
-        self.assertEqual(s.context, {"tokens": 42_000, "window": 200_000})
+        })
+        self.assertEqual(s.context, {"tokens": 42_000, "window": 1_000_000})
 
-    def test_a_result_without_usage_leaves_it_alone(self):
+    def test_usage_without_input_leaves_it_alone(self):
         s = self._session()
-        s.context = {"tokens": 5, "window": 200_000}
-        s._take_context({})
-        s._take_context({"usage": "nonsense"})
-        s._take_context({"usage": {"output_tokens": 10}})
-        self.assertEqual(s.context, {"tokens": 5, "window": 200_000})
+        s.context = {"tokens": 5, "window": 1_000_000}
+        s._take_context(None)
+        s._take_context("nonsense")
+        s._take_context({"output_tokens": 10})
+        self.assertEqual(s.context, {"tokens": 5, "window": 1_000_000})
 
     def test_an_unknown_model_still_reports_its_tokens(self):
         s = self._session(model="some-future-model")
-        s._take_context({"usage": {"input_tokens": 900}})
+        s._take_context({"input_tokens": 900})
         self.assertEqual(s.context, {"tokens": 900, "window": 0})
 
 
@@ -256,6 +276,29 @@ class ChatSessionCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tool["name"], "Read")
         result = next(e for e in events if e["type"] == "tool_result")
         self.assertEqual(result["id"], tool["id"])
+
+    async def test_context_is_one_model_call_not_the_whole_turn(self):
+        """The pill measures the conversation, not the work.
+
+        The fixture's turn is two model calls — 41.2k then 41.8k — and a
+        result envelope carrying their sum. Reading that envelope is what
+        made the pill claim more tokens than the window it was measuring
+        against, and it got worse the more tools a turn used.
+        """
+        await self.session.start()
+        task = asyncio.create_task(self._drain(
+            lambda evs: any(e.get("type") == "state" and e.get("state") == "ready"
+                            for e in evs[1:])))
+        await asyncio.sleep(0.05)
+        await self.session.send("why is the porch light off")
+        events = await task
+
+        contexts = [e for e in events if e.get("type") == "context"]
+        self.assertTrue(contexts, "the panel was never told how full the context is")
+        self.assertEqual(contexts[-1]["tokens"], 41_800)
+        self.assertEqual(self.session.context["tokens"], 41_800)
+        self.assertLess(self.session.context["tokens"],
+                        self.session.context["window"])
 
     async def test_the_transcript_survives_a_restart_but_the_deltas_dont(self):
         await self.session.start()

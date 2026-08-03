@@ -20,6 +20,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -40,6 +41,13 @@ _LOGGER = logging.getLogger(__name__)
 SCAN_INTERVAL = timedelta(seconds=30)
 
 USAGE_LIMITS_FILENAME = "usage_limits.json"
+
+# A reading the tracker stopped refreshing is not a reading. It polls every
+# two minutes, so anything this old means it is failing or not running, and
+# reporting last night's utilization as if it were now is the one answer
+# worse than "unavailable". Same window the panel's usage_store applies to
+# the same file.
+USAGE_STALE_AFTER = timedelta(hours=2)
 
 # Device that groups Anthropic usage limit sensors together.
 USAGE_DEVICE_INFO = DeviceInfo(
@@ -111,6 +119,14 @@ async def async_setup_entry(
             )
         )
 
+    # Why the four above are unavailable, when they are. Four entities that
+    # vanish with no stated reason send people to redo a working sign-in;
+    # this one never goes unavailable, because its whole job is to be
+    # readable at the moment the others are not.
+    entities.append(
+        BrainUsageTrackerSensor(config_entry=config_entry, usage_path=usage_path)
+    )
+
     # What brAIn knows, and when it last learned something.
     entities.append(BrainFactsSensor(config_entry))
     entities.append(BrainLastLearnedSensor(config_entry))
@@ -121,6 +137,14 @@ async def async_setup_entry(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _reading_age(data: dict[str, Any]) -> timedelta | None:
+    """How long ago the tracker wrote this file, or None if it won't say."""
+    when = _parse_timestamp(data.get("updated_at", ""))
+    if when is None:
+        return None
+    return datetime.now(timezone.utc) - when
+
 
 def _parse_timestamp(value: str) -> datetime | None:
     """Parse an ISO timestamp string to a timezone-aware datetime."""
@@ -180,12 +204,15 @@ class BruhClaudeUsageLimitSensor(SensorEntity):
 
     @property
     def available(self) -> bool:
-        """Return True if the usage data is available (no API errors)."""
+        """Return True if the usage data is available, current, and clean."""
         if not self._usage_data:
             return False
         if "error" in self._usage_data:
             return False
-        return self._period_key in self._usage_data
+        if self._period_key not in self._usage_data:
+            return False
+        age = _reading_age(self._usage_data)
+        return age is not None and age < USAGE_STALE_AFTER
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -246,6 +273,77 @@ class BruhClaudeUsageLimitSensor(SensorEntity):
         except (OSError, json.JSONDecodeError) as exc:
             _LOGGER.debug("Could not read usage limits: %s", exc)
             return None
+
+
+class BrainUsageTrackerSensor(SensorEntity):
+    """Whether the usage tracker is working, and what stopped it if not.
+
+    States are the tracker's own vocabulary, so the state answers the
+    question instead of prompting another one:
+
+      ``ok``                            reporting real numbers
+      ``no_oauth_token``                nobody has signed in yet
+      ``api_key_has_no_usage_limits``   signed in with an API key, which
+                                        bills per token and has no window
+      ``http_401``                      the token was found and refused
+      ``network_error`` / ``http_5xx``  Anthropic unreachable right now
+      ``stale``                         last reading is too old to trust
+      ``not_running``                   no file at all — tracker never wrote
+    """
+
+    _attr_has_entity_name = True
+    _attr_should_poll = True
+    _attr_name = "Usage tracker"
+    _attr_icon = "mdi:cloud-question-outline"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_device_info = USAGE_DEVICE_INFO
+
+    def __init__(self, config_entry: ConfigEntry, usage_path: str) -> None:
+        self._entry = config_entry
+        self._usage_path = usage_path
+        self._attr_unique_id = f"{DOMAIN}_usage_tracker_status"
+        self._attr_native_value = "not_running"
+        self._attrs: dict[str, Any] = {}
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return self._attrs
+
+    async def async_update(self) -> None:
+        data = await self.hass.async_add_executor_job(self._read)
+        if data is None:
+            self._attr_native_value = "not_running"
+            self._attrs = {"detail": "the tracker has not written a reading yet"}
+            return
+
+        attrs: dict[str, Any] = {}
+        updated = data.get("updated_at")
+        if updated:
+            attrs["last_updated"] = updated
+
+        error = data.get("error")
+        if error:
+            self._attr_native_value = str(error)
+            self._attrs = attrs
+            return
+
+        age = _reading_age(data)
+        if age is None or age >= USAGE_STALE_AFTER:
+            self._attr_native_value = "stale"
+        else:
+            self._attr_native_value = "ok"
+        self._attrs = attrs
+
+    def _read(self) -> dict | None:
+        if not os.path.isfile(self._usage_path):
+            return None
+        try:
+            with open(self._usage_path) as fh:
+                data = json.load(fh)
+        except (OSError, json.JSONDecodeError) as exc:
+            _LOGGER.debug("Could not read usage limits: %s", exc)
+            return None
+        return data if isinstance(data, dict) else None
 
 
 # ---------------------------------------------------------------------------

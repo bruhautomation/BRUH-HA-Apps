@@ -3109,11 +3109,13 @@ function chatRender(ev) {
 
 // Which model is answering, and how full the conversation is.
 //
-// The token figure is the CLI's own report of what it sent on the last turn,
-// which IS the conversation so far — so it is a measurement, not an
-// estimate. The percentage only appears for a model whose window we have a
-// published figure for; for anything else the count stands on its own,
-// because a percentage of a guessed denominator is worse than no percentage.
+// The token figure is the CLI's own report of what it sent on the last model
+// call, which IS the conversation so far — so it is a measurement, not an
+// estimate. One call, not the whole turn: a turn is many calls and adding
+// them up measures work done, not conversation size. The percentage only
+// appears for a model whose window we have a published figure for; for
+// anything else the count stands on its own, because a percentage of a
+// guessed denominator is worse than no percentage.
 function chatMeta() {
   const box = $("#chatMeta");
   if (!box) return;

@@ -103,26 +103,37 @@ for line in sys.stdin:
           "event": {"type": "content_block_delta",
                     "delta": {"type": "text_delta", "text": "ing…"}}})
 
+    # Per-call usage, on every assistant message. Two calls in this turn,
+    # each re-sending the conversation — so the second call's numbers are
+    # the context size and the two added together are not.
     emit({"type": "assistant", "message": {"role": "assistant", "content": [
         {"type": "thinking", "thinking": "The user said: " + text},
         {"type": "text", "text": "Looking at `automations.yaml`."},
         {"type": "tool_use", "id": "toolu_1", "name": "Read",
          "input": {"file_path": "/config/automations.yaml"}},
-    ]}})
+    ], "usage": {"input_tokens": 1200, "cache_read_input_tokens": 40_000,
+                 "output_tokens": 120}}})
     emit({"type": "user", "message": {"role": "user", "content": [
         {"type": "tool_result", "tool_use_id": "toolu_1",
          "content": [{"type": "text", "text": "- id: porch\n  alias: Porch"}]},
     ]}})
     emit({"type": "assistant", "message": {"role": "assistant", "content": [
         {"type": "text", "text": "You asked: " + text},
-    ]}})
+    ], "usage": {"input_tokens": 300, "cache_read_input_tokens": 41_500,
+                 "output_tokens": 40}}})
 
     if mode == "error":
         emit({"type": "result", "subtype": "error_max_turns", "is_error": True,
               "result": "", "duration_ms": 20, "num_turns": 9})
     else:
+        # The result envelope's usage is the whole turn added up — both
+        # calls — which is work done, not conversation size. Emitted here
+        # precisely so a test can prove the panel does not read it.
         emit({"type": "result", "subtype": "success", "is_error": False,
               "result": "You asked: " + text, "duration_ms": 1234,
-              "num_turns": 2, "total_cost_usd": 0.0123})
+              "num_turns": 2, "total_cost_usd": 0.0123,
+              "usage": {"input_tokens": 1500,
+                        "cache_read_input_tokens": 81_500,
+                        "output_tokens": 160}})
 
 time.sleep(0.05)
