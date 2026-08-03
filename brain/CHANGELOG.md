@@ -2,6 +2,52 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.19.6
+
+### Security
+
+- **The srcdoc height message had no origin check, and could not have had a
+  useful one.** Every insight card renders in a sandboxed `srcdoc` iframe, and
+  those all report their origin as the string `"null"` — so an origin
+  comparison cannot tell one card's frame from another's, or from any other
+  opaque-origin window that posts at the panel. The handler checks window
+  identity against the frame it is addressed to instead, which is the rule the
+  keyboard message from the terminal frame already followed.
+- **An insight id containing `</script>` would have escaped the snippet it was
+  embedded in.** The height-reporting script is built by interpolating the card
+  id through `JSON.stringify`, which does not escape `<`. It does now.
+- **The terminal handoff file was world-writable.** `/data/terminal-handoff.json`
+  was chmod `0o666` so the `claude` user could read and remove it; it is chowned
+  to that user and `0o600` now. Removing a file was always governed by the
+  directory it sits in, which that user already owns, so the write bit bought
+  nothing and granted it to everyone.
+- **Path containment is now proved where the path is built.** Insight ids,
+  history stamps and card names were already behind anchored allowlists that
+  cannot express a separator, so nothing was reachable — but the guarantee lived
+  in a regex somewhere up the call stack. `_under()` joins under a base
+  directory and refuses anything that did not stay there. `_unmirror_card` was
+  the one that had no allowlist at all, and its directory is under
+  `/config/www`, which Home Assistant serves.
+
+### Fixed
+
+- **The bundle collector and the memory writer no longer put exception text in
+  a response.** A bare `except Exception` was reporting whatever the Home
+  Assistant read hit, and an `OSError`'s text is an errno and a path. Both log
+  the detail and answer with the sentence the user can act on.
+- **A streaming conversation that ended without a result event had an
+  unreachable error branch.** The only way out of the request block without an
+  exception is past the status check that marks the stream accepted, so the
+  fallback to file IPC was always the right answer and the `RuntimeError` beside
+  it could never run.
+
+### Changed
+
+- Every deliberately silent exception handler in the add-on now says what is
+  lost when the exception is ignored — 60-odd of them, from a failed cache write
+  to a client that disconnected mid-stream. They were all intentional; none of
+  them said so.
+
 ## 1.19.5
 
 ### Fixed
