@@ -435,15 +435,16 @@ class TestGenerateLearns(InsightsServerCase):
 
     def test_hypotheses_queued_and_repeats_dropped(self):
         asyncio.run(self.server._generate("energy"))
-        self.assertEqual(self._stored()["questions"],
+        self.assertEqual([h["text"] for h in hypotheses.list_all("open")],
                          ["The garage fridge is meant to run 24/7 — right?"])
-        self.assertEqual(len(hypotheses.list_all("open")), 1)
+        # The queue is the only copy. A card used to carry one too, and
+        # answering on one surface left the other showing an open question.
+        self.assertNotIn("questions", self._stored())
 
         # Proposed again next run → dropped in code, not merely discouraged
         # by the prompt. A model that ignores the budget must not be able to
         # grow the queue anyway.
         asyncio.run(self.server._generate("energy"))
-        self.assertEqual(self._stored()["questions"], [])
         self.assertEqual(len(hypotheses.list_all("open")), 1)
 
     def test_queue_is_capped_regardless_of_what_the_model_returns(self):
@@ -451,9 +452,9 @@ class TestGenerateLearns(InsightsServerCase):
             hypotheses.propose(f"claim number {i}")
         self.assertEqual(len(hypotheses.list_all("open")), hypotheses.MAX_OPEN)
         self.assertEqual(hypotheses.budget(), 0)
-        # with no budget the card shows none, even though the stub offers one
+        # with no budget nothing new is accepted, even though the stub offers one
         asyncio.run(self.server._generate("energy"))
-        self.assertEqual(self._stored()["questions"], [])
+        self.assertEqual(len(hypotheses.list_all("open")), hypotheses.MAX_OPEN)
 
     def test_ledger_is_not_injected_but_dead_ends_are(self):
         knowledge_store.add_fact("The beacon is the office lamp")
@@ -620,84 +621,82 @@ class TestKnowledgeEndpoints(InsightsServerCase):
         stored = json.loads((Path(self.tmp.name) / "energy.json").read_text())
         self.assertEqual(stored["questions"], [])
 
-    def test_card_question_dismissed_as_not_relevant(self):
-        self.server.save_insight({
-            "id": "energy", "category": "energy", "title": "T",
-            "generated_at": "2026-07-20T10:00:00", "html": "<p>x</p>",
-            "questions": ["Is the attic fan broken?"]})
+    def test_confirming_a_guess_settles_it_and_answers_with_the_list(self):
+        """Guesses are answered on the Findings tab now, so the reply is the
+        Findings payload — the tab that asked has what it needs to redraw
+        without a second round trip."""
+        claim = "The garage fridge is meant to run 24/7"
+        entry = hypotheses.propose(claim, "energy")
 
         async def run():
             client = self._client()
             await client.start_server()
             try:
-                resp = await client.post("/api/questions/dismiss", json={
-                    "insight_id": "energy", "question": "Is the attic fan broken?"})
+                resp = await client.post(f"/api/hypothesis/{entry['ts']}/confirm")
                 self.assertEqual(resp.status, 200)
-                # unknown question → 404
-                resp = await client.post("/api/questions/dismiss", json={
-                    "insight_id": "energy", "question": "Never asked?"})
-                self.assertEqual(resp.status, 404)
+                return await resp.json()
             finally:
                 await client.close()
 
-        asyncio.run(run())
-        dismissed = knowledge_store.list_questions("dismissed")
-        self.assertEqual([q["text"] for q in dismissed], ["Is the attic fan broken?"])
-        stored = json.loads((Path(self.tmp.name) / "energy.json").read_text())
-        self.assertEqual(stored["questions"], [])
-        # the wrong-track signal reaches the prompt
-        block = knowledge_store.prompt_block()
-        self.assertIn("REJECTED", block)
-        self.assertIn("Is the attic fan broken?", block)
-
-    def test_confirming_from_a_card_settles_the_queue(self):
-        """Cards carry the claim's TEXT, not its id. Without resolving it in
-        the queue the card looked answered while the guess stayed open in
-        Memory until it expired a fortnight later."""
-        claim = "The garage fridge is meant to run 24/7 — right?"
-        hypotheses.propose(claim, "energy")
-        self.server.save_insight({
-            "id": "energy", "category": "energy", "title": "T",
-            "generated_at": "2026-07-20T10:00:00", "html": "<p>x</p>",
-            "questions": [claim]})
-
-        async def run():
-            client = self._client()
-            await client.start_server()
-            try:
-                resp = await client.post("/api/questions/answer", json={
-                    "insight_id": "energy", "question": claim, "answer": claim})
-                self.assertEqual(resp.status, 200)
-            finally:
-                await client.close()
-
-        asyncio.run(run())
-        self.assertEqual(hypotheses.list_all("open"), [])
+        payload = asyncio.run(run())
+        self.assertEqual(payload["hypotheses"], [])
+        self.assertIn("findings", payload)
         self.assertEqual([h["status"] for h in hypotheses.list_all()], ["confirmed"])
-        self.assertTrue(any(claim in f["text"] for f in knowledge_store.list_facts()))
+        # The claim is the durable part: it queues for the memory document.
+        facts = [json.loads(line)["fact"]
+                 for f in self.server.MEMORY_INBOX_DIR.glob("*.jsonl")
+                 for line in f.read_text().splitlines() if line.strip()]
+        self.assertIn(claim, facts)
 
-    def test_rejecting_from_a_card_settles_the_queue(self):
-        claim = "The attic fan is broken — right?"
-        hypotheses.propose(claim, "energy")
-        self.server.save_insight({
-            "id": "energy", "category": "energy", "title": "T",
-            "generated_at": "2026-07-20T10:00:00", "html": "<p>x</p>",
-            "questions": [claim]})
+    def test_rejecting_a_guess_without_a_reason_is_still_a_dead_end(self):
+        claim = "The attic fan is broken"
+        entry = hypotheses.propose(claim, "energy")
 
         async def run():
             client = self._client()
             await client.start_server()
             try:
-                resp = await client.post("/api/questions/dismiss", json={
-                    "insight_id": "energy", "question": claim})
+                resp = await client.post(f"/api/hypothesis/{entry['ts']}/reject")
                 self.assertEqual(resp.status, 200)
             finally:
                 await client.close()
 
         asyncio.run(run())
         self.assertEqual([h["status"] for h in hypotheses.list_all()], ["rejected"])
-        # and it becomes a dead end the analyst is told about
         self.assertIn(claim, knowledge_store.prompt_block())
+        # No reason, nothing to remember about the house.
+        self.assertEqual(list(self.server.MEMORY_INBOX_DIR.glob("*.jsonl")), [])
+
+    def test_a_reason_for_no_reaches_both_the_prompt_and_memory(self):
+        """"No" retires one claim. "No, that's the beer fridge and it cycles
+        all night" retires every guess built on the same misreading — so the
+        reason goes to the analyst AND to the consolidator, which decides
+        what durable truth is in it."""
+        claim = "The garage fridge is faulty"
+        entry = hypotheses.propose(claim, "energy")
+        why = "That's the beer fridge — it's meant to cycle all night."
+
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                resp = await client.post(
+                    f"/api/hypothesis/{entry['ts']}/reject", json={"note": why})
+                self.assertEqual(resp.status, 200)
+            finally:
+                await client.close()
+
+        asyncio.run(run())
+        self.assertIn(why, "\n".join(hypotheses.dead_ends()))
+        lines = [json.loads(line)
+                 for f in self.server.MEMORY_INBOX_DIR.glob("*.jsonl")
+                 for line in f.read_text().splitlines() if line.strip()]
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(lines[0]["source"], "correction")
+        self.assertIn(why, lines[0]["fact"])
+        # The rejected claim rides along as context. What the consolidator is
+        # being corrected ABOUT is half of what makes the correction legible.
+        self.assertIn(claim, lines[0]["fact"])
 
 
 class TestMemoryFile(InsightsServerCase):

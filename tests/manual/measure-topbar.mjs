@@ -65,11 +65,12 @@ function seed(mode) {
   // unlabelled circular arrow that queued a Claude run for every card, next
   // to the pill reporting the usage those runs spend.
   $('#settingsBtn').classList.remove('hidden');
-  // Both tab badges carrying a count: the busiest the tabs ever get.
-  ['#memBadge', '#findBadge'].forEach((s) => {
-    $(s).textContent = '3';
-    $(s).classList.remove('hidden');
-  });
+  // The one badge in the strip, carrying a count: the busiest the tabs ever
+  // get. Memory used to carry one too, for guesses waiting on a yes/no —
+  // those are decisions, they moved to Findings, and a Memory tab badged
+  // with work nobody has to do is how you learn to ignore this one.
+  $('#findBadge').textContent = '3';
+  $('#findBadge').classList.remove('hidden');
   if (mode === 'broken') {
     $('#authChip').classList.remove('hidden');
     $('#authChip').classList.add('bad');

@@ -177,7 +177,7 @@ class TestFindingsStore(StoreCase):
         block = findings_store.prompt_block()
         self.assertIn("ALREADY ON THE FINDINGS LIST", block)
         self.assertIn("Still open", block)
-        self.assertIn("DISMISSED", block)
+        self.assertIn("SAID WERE WRONG", block)
         self.assertIn("Waved off", block)
 
     def test_prompt_block_is_empty_when_nothing_is_known(self):
@@ -460,7 +460,7 @@ class TestFindingRoutes(ServerCase):
 
         asyncio.run(run())
 
-    def test_ignore_says_it_is_normal_here(self):
+    def test_wrong_with_no_reason_says_it_is_normal_here(self):
         """Dismissing is a different fact from fixing — this house is fine as
         it is — so it lands in memory in different words."""
         findings_store.add("Hallway light is on all night")
@@ -470,12 +470,110 @@ class TestFindingRoutes(ServerCase):
             client = self._client()
             await client.start_server()
             try:
-                data = await (await client.post(f"/api/finding/{ts}/ignore")).json()
+                data = await (await client.post(f"/api/finding/{ts}/wrong")).json()
                 self.assertEqual(data["findings"], [])
                 self.assertEqual(data["settled"][0]["kind"], "ignored")
                 queued = list(self.server.MEMORY_INBOX_DIR.glob("*.jsonl"))
                 self.assertIn("Not a problem in this home",
                               queued[0].read_text())
+            finally:
+                await client.close()
+
+        asyncio.run(run())
+
+    def test_ignore_is_still_routed_under_its_old_name(self):
+        """A panel served before the update is open in somebody's browser and
+        its buttons still say ignore. Same ending, same ledger kind."""
+        findings_store.add("Hallway light is on all night")
+        ts = findings_store.list_all()[0]["ts"]
+
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                resp = await client.post(f"/api/finding/{ts}/ignore")
+                self.assertEqual(resp.status, 200)
+                self.assertEqual((await resp.json())["settled"][0]["kind"],
+                                 "ignored")
+            finally:
+                await client.close()
+
+        asyncio.run(run())
+
+    def test_wrong_with_a_reason_hands_the_reason_on(self):
+        """The reason is the half that teaches. It goes to the consolidator
+        as a correction — which decides what durable truth is in it — and it
+        stays on the ledger entry so the analyst reads WHY, not just what."""
+        findings_store.add("Front porch sensor has been on for 8 days")
+        ts = findings_store.list_all()[0]["ts"]
+        why = "That sensor always reads on. It's not stuck."
+
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                resp = await client.post(f"/api/finding/{ts}/wrong",
+                                         json={"note": why})
+                self.assertEqual(resp.status, 200)
+                data = await resp.json()
+                self.assertEqual(data["findings"], [])
+                self.assertEqual(data["settled"][0]["note"], why)
+            finally:
+                await client.close()
+
+        asyncio.run(run())
+        queued = list(self.server.MEMORY_INBOX_DIR.glob("*.jsonl"))
+        line = json.loads(queued[0].read_text().splitlines()[0])
+        # A correction, not a fact: the report is NOT true of the house, and
+        # a consolidator handed it as one would file the thing being denied.
+        self.assertEqual(line["source"], "correction")
+        self.assertIn(why, line["fact"])
+        self.assertIn("Front porch sensor has been on for 8 days", line["fact"])
+        self.assertNotIn("Not a problem in this home", line["fact"])
+        # ...and the analyst is told the reason, not only the wording.
+        block = findings_store.prompt_block()
+        self.assertIn(why, block)
+
+    def test_a_note_on_an_ending_that_has_no_use_for_one_keeps_its_memory_line(self):
+        """"I fixed it" plus a comment is still "I fixed it". Falling through
+        to the ordinary line is what stops a note silently costing it."""
+        findings_store.add("Back Door battery is dead")
+        ts = findings_store.list_all()[0]["ts"]
+
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                resp = await client.post(f"/api/finding/{ts}/done",
+                                         json={"note": "swapped the cell"})
+                self.assertEqual(resp.status, 200)
+            finally:
+                await client.close()
+
+        asyncio.run(run())
+        queued = list(self.server.MEMORY_INBOX_DIR.glob("*.jsonl"))
+        line = json.loads(queued[0].read_text().splitlines()[0])
+        self.assertEqual(line["source"], "homeowner")
+        self.assertIn("Fixed by the homeowner", line["fact"])
+
+    def test_the_list_carries_the_guesses_too(self):
+        """One list of decisions, one badge that can read as done. The count
+        spans both, because "how much is waiting on me" is the only question
+        a badge on a work list answers."""
+        findings_store.add("Back Door battery is dead")
+        hypotheses.propose("The garage fridge is meant to run 24/7", "energy")
+
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                data = await (await client.get("/api/findings")).json()
+                self.assertEqual(len(data["findings"]), 1)
+                self.assertEqual([h["text"] for h in data["hypotheses"]],
+                                 ["The garage fridge is meant to run 24/7"])
+                self.assertEqual(data["open"], 2)
+                status = await (await client.get("/api/status")).json()
+                self.assertEqual(status["findings_open"], 2)
             finally:
                 await client.close()
 
@@ -686,25 +784,42 @@ class TestFindingsUI(unittest.TestCase):
         """One unlabelled-by-icon button in a row of icons reads as the odd
         one out rather than as the quiet one."""
         for label in ('"✦  Fix it"', '"💬  Discuss"', '"✓  I fixed it"',
-                      '"⏰  Remind me later"', '"⌫  Dismiss"', '"✕  Ignore"'):
+                      '"⏰  Remind me later"', '"⌫  Dismiss"', '"✕  Wrong"'):
             self.assertIn(label, self.js)
 
     def test_dismiss_clears_without_teaching_anything(self):
         """Three ways off the list, and they are not the same thing.
 
-        Ignore settles: the answer goes into memory and the analyst is told
+        Wrong settles: the answer goes into memory and the analyst is told
         never to raise it again. Dismiss just clears the row — no memory
         line, no ledger entry — so the next run is free to find it again.
         That is `forget`, which findings_store already separates from
-        `ignore` for exactly this reason, and it had no button.
+        `wrong` for exactly this reason, and it had no button.
         """
         self.assertIn('findAction(\n      f, "forget", "Cleared", btns)', self.js)
-        self.assertIn('"ignore", "Noted — brAIn won\'t raise it again"', self.js)
+        self.assertIn('f, "wrong",', self.js)
+
+    def test_wrong_asks_why_and_sends_what_it_is_told(self):
+        """The reason is the half that teaches. A button that only suppressed
+        a wording left brAIn knowing one sentence was unwanted and nothing
+        about the house — the next run made the same mistake in new words."""
+        self.assertIn("openNoteForm(card, actions", self.js)
+        self.assertIn("What's brAIn got wrong?", self.js)
+        # The note travels as a body on the same verb — not a second endpoint,
+        # because "wrong" and "wrong, because…" are one ending either way.
+        self.assertIn("...(note ? { body: JSON.stringify({ note }) } : {})", self.js)
+
+    def test_the_reason_is_offered_and_never_demanded(self):
+        """"Not a problem here" needs no essay. A required box turns a
+        one-press dismissal into a chore and fills up with "no"."""
+        self.assertNotIn("send.disabled = !ta.value", self.js)
+        self.assertIn("Optional", self.js)
 
     def test_the_endings_tooltips_stay_short(self):
         """These are read at a glance beside five other buttons. The old
         Ignore tooltip ran to two clauses and a caveat about wording."""
-        self.assertIn('"Normal in this house — brAIn won\'t raise it again."', self.js)
+        self.assertIn('"brAIn has this wrong, or it\'s normal here — say why, and it "',
+                      self.js)
         self.assertNotIn("in any wording", self.js)
 
     def test_there_is_no_archive_of_dismissed_cards(self):
@@ -787,6 +902,57 @@ class TestSettledLedger(StoreCase):
     def test_a_settlement_that_never_happened_is_none(self):
         self.assertIsNone(findings_store.settle_and_clear(999, "fixed"))
 
+    def test_the_reason_survives_the_row_it_was_typed_on(self):
+        """The row is deleted; the reason is the part worth keeping. Losing
+        it would leave a key that suppresses one wording and teaches the
+        analyst nothing about the house."""
+        findings_store.add("Front porch sensor stuck on for 8 days")
+        ts = findings_store.list_all()[0]["ts"]
+        settled = findings_store.settle_and_clear(
+            ts, "ignored", note="That sensor always reads on.")
+        self.assertEqual(settled["note"], "That sensor always reads on.")
+        self.assertEqual(findings_store.settled_listing()[0]["note"],
+                         "That sensor always reads on.")
+
+    def test_a_reason_is_rendered_with_the_finding_it_corrects(self):
+        """Verbatim and attributed. "They said: X" is evidence handed over;
+        an unattributed line reads as a rule the model has to obey, which is
+        not what a homeowner typing one sentence is doing."""
+        findings_store.add("Front porch sensor stuck on for 8 days")
+        ts = findings_store.list_all()[0]["ts"]
+        findings_store.settle_and_clear(
+            ts, "ignored", note="It watches the compressor — it's meant to.")
+        block = findings_store.prompt_block()
+        self.assertIn("Front porch sensor stuck on for 8 days", block)
+        self.assertIn("They said: It watches the compressor — it's meant to.",
+                      block)
+        # ...and it is offered as something to reason from, not as a filter.
+        self.assertIn("take it into account", block)
+
+    def test_a_dismissal_with_no_reason_renders_no_empty_line(self):
+        findings_store.add("Waved off")
+        ts = findings_store.list_all()[0]["ts"]
+        findings_store.settle_and_clear(ts, "ignored")
+        self.assertNotIn("They said:", findings_store.prompt_block())
+
+    def test_a_reason_is_capped(self):
+        findings_store.add("Long story")
+        ts = findings_store.list_all()[0]["ts"]
+        settled = findings_store.settle_and_clear(ts, "ignored", note="x" * 900)
+        self.assertEqual(len(settled["note"]), findings_store.MAX_NOTE)
+        self.assertEqual(len(findings_store.settled_listing()[0]["note"]),
+                         findings_store.MAX_NOTE)
+
+    def test_a_ledger_written_before_notes_existed_still_reads(self):
+        """An upgrade finds entries with no `note` key at all, and a prompt
+        that raises on one is a prompt that never builds again."""
+        findings_store.SETTLED_FILE.write_text(json.dumps({"settled": [
+            {"key": "waved off", "text": "Waved off", "kind": "ignored",
+             "ts": 1750000000}]}), encoding="utf-8")
+        block = findings_store.prompt_block()
+        self.assertIn("Waved off", block)
+        self.assertNotIn("They said:", block)
+
     def test_only_the_two_endings_are_settlements(self):
         findings_store.add("A")
         ts = findings_store.list_all()[0]["ts"]
@@ -803,7 +969,7 @@ class TestSettledLedger(StoreCase):
             findings_store.settle_and_clear(ts, kind)
         block = findings_store.prompt_block()
         self.assertIn("Still open", block)
-        self.assertIn("DISMISSED", block)
+        self.assertIn("SAID WERE WRONG", block)
         self.assertIn("Waved off", block)
         self.assertIn("ALREADY DEALT WITH", block)
         self.assertIn("Sorted out", block)

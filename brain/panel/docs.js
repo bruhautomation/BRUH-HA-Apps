@@ -75,12 +75,23 @@ A **finding** is something wrong with your house — a dying battery, a sensor t
 quietly stopped reporting three weeks ago, a device stuck unavailable, an automation
 whose trigger can never fire. brAIn files them on its own, and each one gets **Fix it**
 (it makes the change and reports back), **Discuss** (talk it over first, changing
-nothing), **Remind me later**, **I fixed it**, **Dismiss**, or **Ignore**.
+nothing), **Remind me later**, **I fixed it**, **Dismiss**, or **Wrong**.
 
-Those last two are endings, and ending one **removes it**. The answer goes into memory
-as a fact about your home and the wording is remembered, so the same problem is never
-raised at you twice — but there is no pile of dismissed cards left behind. A work list
-full of things nobody has to look at again is not a work list.
+**Wrong is the one that teaches it.** Press it and you can say *why* in a sentence —
+"that sensor always reads on, it isn't stuck" — and that sentence goes into memory and
+into what the next analysis knows about your house. It isn't a filter on a wording; it
+is a fact brAIn didn't have, and it is what stops the same misreading coming back in
+different words next week. The sentence is optional: if it really is just normal here,
+press it and say nothing.
+
+The Findings tab is also where brAIn's **guesses** wait — things it believes about your
+home and wants a yes or no on. Same list, because both are the same job: a decision only
+you can make. **No** asks why too.
+
+I fixed it and Wrong are endings, and ending one **removes it**. The answer goes into
+memory as a fact about your home and the wording is remembered, so the same problem is
+never raised at you twice — but there is no pile of dismissed cards left behind. A work
+list full of things nobody has to look at again is not a work list.
 
 ## It explains your house
 
@@ -312,7 +323,8 @@ narrow terminal too — one row of about twenty, spent on the date.
 ## Memory
 
 What brAIn knows about your home, and the queue behind it. See **Memory** in this guide.
-A number on the tab means brAIn has a guess waiting on a yes/no.
+Nothing on this tab is waiting on you — the queue files itself, and the document is
+there to read. Anything that needs an answer is on **Findings**.
 
 ## Docs
 
@@ -333,7 +345,7 @@ Three things sound similar and are not:
 | --- | --- | --- |
 | **Memory** | What is *true* of this home? | It's a document; it just gets better |
 | **Guesses** | What might brAIn have *wrong*? | Yes or No, once |
-| **Findings** | What is *broken* in this home? | Fixed, or dismissed |
+| **Findings** | What is *broken* in this home? | Fixed, or corrected |
 
 A finding is a work list item. A dead battery. A sensor that hasn't changed value in six
 days. A device stuck unavailable. An automation whose trigger entity was renamed, so it
@@ -342,6 +354,24 @@ can never fire again. Something is wrong and somebody has to do something about 
 Findings come from insight runs and from study sessions — the same passes that fill
 memory. brAIn only reports a problem **once**: the same finding in different words is
 recognised and dropped.
+
+## Guesses are on this list too
+
+The first two rows of that table stay different kinds of knowledge, but answering them
+is the same job — a decision only the person who lives here can make — so they are on
+one list. A guess sits at the top of **Needs you** with **✓ Yes** and **✕ No**:
+
+> The garage fridge is meant to run 24/7
+
+**Yes** files it as a plain fact in memory. **No** offers you the same box Wrong does,
+and the same thing is true of it: "no" retires one guess, and *"no, that's the beer
+fridge and it's meant to cycle all night"* retires every guess built on the same
+misreading. Never more than three are open at a time, and they expire after 14 days.
+
+They used to be answerable in two other places as well — under each insight card and in
+the Memory tab — with a badge that counted neither. Answering in one left the others
+showing an open question. One list, one badge, and when it says nothing is waiting,
+nothing is.
 
 ## The two ways out
 
@@ -374,10 +404,27 @@ in it: replacing a battery, re-pairing a device. brAIn marks findings like these
 you** rather than offering to fix them, because inventing a software substitute for a
 dead battery is worse than saying so.
 
-**✕ Ignore** — it was never a problem. It is normal in this house. If the
+**✕ Wrong** — brAIn has misread something, or it is simply normal in this house. If the
 garage freezer is *supposed* to sit at -30°C, one press ends that conversation for good:
 the answer is fed back into every future analysis, so brAIn stops raising it rather than
 raising it again next week for you to dismiss again.
+
+**Say why, if there is a why.** Pressing it opens a box for one sentence:
+
+> That sensor always reads on. It's not stuck.
+
+That sentence is worth more than the press. Without it, brAIn learns that one wording was
+unwanted, and reports the same misunderstanding again in different words. With it, it
+learns something about your house — and that goes two places: into your memory document
+at the next consolidation, and into what every future analysis is told about this home.
+
+It is not a rule brAIn obeys literally. It is handed over as *what you said*, and brAIn
+works out what follows from it — usually a standing fact about a device or a habit,
+sometimes nothing at all. That is on purpose: you shouldn't have to phrase a correction
+carefully for it to be useful.
+
+The box is optional. If it is just normal here and there is nothing to explain, press
+Send with it empty.
 
 Both endings do the same three things. The answer goes into memory as a plain fact about
 your home, the wording is remembered so the same problem is never reported at you twice,
@@ -390,10 +437,10 @@ of things nobody has to look at again is not a work list.
 so the next analysis is free to find the same thing again, and probably will if it is
 still there.
 
-That is the difference from Ignore, and it is why both exist. Ignore is a judgement about
-the problem: *this is normal here*. Dismiss is a judgement about the list: *not now, and I
-don't want to promise anything*. Use it when you're clearing the board rather than
-answering it.
+That is the difference from Wrong, and it is why both exist. Wrong is a judgement about
+the problem: *you've misread this*, or *this is normal here*. Dismiss is a judgement
+about the list: *not now, and I don't want to promise anything*. Use it when you're
+clearing the board rather than answering it.
 
 **💬 Discuss** opens it as a conversation in the Terminal tab, with everything brAIn
 knows about it already in the question: the detail, the fix it had in mind, the entity,
@@ -402,9 +449,10 @@ problem *in your house* — and told not to change anything, because "explain th
 and "go change my house" are different permissions.
 
 The decisions come with you. While you are discussing a finding, a strip above the
-message box keeps **Fix it**, **I fixed it**, **Later** and **Ignore**
+message box keeps **Fix it**, **I fixed it**, **Later** and **Wrong**
 one press away, so agreeing to the fix at the end of the conversation doesn't mean
-coming back here to find the card again.
+coming back here to find the card again. Wrong asks for its reason there too — telling
+Claude in the chat reaches *this* conversation, and the box reaches every future one.
 
 **⏰ Remind me later** is the answer for "yes, but not now" — an hour, tomorrow, next
 week, next month. It is not a decision and it does not settle anything: the finding
@@ -487,18 +535,15 @@ so, and the queue stays where it was.
 Manual edits are rewritten by a consolidation, so if you have unsaved edits in the
 markdown editor below it asks before filing.
 
-## Guesses, not questionnaires
+## Guesses live on Findings
 
-brAIn proposes things it believes and asks you to confirm:
+brAIn proposes things it believes and asks you to confirm — *"the garage fridge is meant
+to run 24/7"* — and a confirmed one becomes a line in the document beside this queue.
+But answering is a **decision**, and decisions are all in one place: the **Findings**
+tab. See that section for what Yes and No do.
 
-> The garage fridge is meant to run 24/7 — right?
-
-**Never more than three at once**, and they expire after 14 days. Confirming one files it
-as a plain fact and the guess is forgotten. Rejecting one records a dead end so that line
-of enquiry is not revisited.
-
-This replaced an open-ended question list that grew without limit and was never clearly
-part of memory.
+Nothing on this tab is waiting on you. The queue below files itself on a timer, and the
+document is here to read and edit.
 
 ## Seeing what changed
 
@@ -869,11 +914,13 @@ Delete the wrong line and brAIn is asked to drop it from the document too.
 
 ## It keeps flagging something that's fine
 
-Tell it once, in Memory:
+Press **✕ Wrong** on the finding and say why in the box:
 
-> The garage fridge is meant to run 24/7.
+> That sensor always reads on. It's not stuck.
 
-Or confirm/reject the guess it's already showing you.
+That reaches both your memory document and every future analysis, which is what stops
+the same misreading coming back in different words. Telling it in Memory works too, and
+so does answering the guess it's already showing you on **Findings**.
 
 ## Claude's login expired
 

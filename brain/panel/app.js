@@ -22,6 +22,11 @@ const state = {
   status: null,
   insights: [],
   findings: [],
+  // Guesses waiting to be confirmed. They come down the findings endpoint
+  // because they are the same job as a finding — something only the person
+  // who lives here can answer — and one list is what makes "nothing waiting"
+  // a thing the tab can ever say.
+  hypotheses: [],
   findFilter: "live",
   filter: "all",
   editingTags: null, // card id whose tag row is in edit mode
@@ -589,56 +594,6 @@ function makeFrame(insight) {
   return wrapper;
 }
 
-function makeQuestions(insight) {
-  // These are hypotheses, not open questions — same two-tap affordance as
-  // the Memory tab. A text box asked for an essay when the answer is yes or
-  // no, and the card is where you most likely have the context to settle it.
-  const wrap = el("div", "questions");
-  insight.questions.forEach((q) => {
-    const row = el("div", "qrow");
-    row.appendChild(el("div", "qtext", q));
-
-    const actions = el("div", "qform");
-    const yes = el("button", "btn small primary", "\u2713  Yes");
-    const no = el("button", "btn small", "\u2717  No");
-    yes.type = no.type = "button";
-    tip(yes, "Right — remember it as a fact");
-    tip(no, "Wrong — don't pursue this again");
-
-    const settle = async (route, body, done) => {
-      yes.disabled = no.disabled = true;
-      try {
-        await api(route, {
-          method: "POST",
-          body: JSON.stringify({ insight_id: insight.id, question: q, ...body }),
-        });
-        toast(done);
-        await refreshInsights();
-        renderIfChanged();
-        refreshMemoryBadge();
-      } catch (e) {
-        toast(e.message);
-        yes.disabled = no.disabled = false;
-      }
-    };
-
-    // The confirm route still takes an "answer": the claim is its own
-    // answer, since confirming it is what makes it a fact.
-    yes.addEventListener("click", () => settle(
-      "api/questions/answer", { answer: q },
-      "Filed — it lands in memory at the next consolidation"));
-    no.addEventListener("click", () => settle(
-      "api/questions/dismiss", {}, "Noted as a dead end"));
-
-    actions.appendChild(yes);
-    actions.appendChild(no);
-    row.appendChild(actions);
-    wrap.appendChild(row);
-  });
-  return wrap;
-}
-
-
 function makeHistoryControls(id, insight, view) {
   const wrap = el("span", "hist");
   const entries = state.history[id] ? historyEntries(id, insight) : null;
@@ -846,9 +801,11 @@ function makeCard(catInfo, insight, fallbackId) {
       });
       card.appendChild(hls);
     }
-    if (!view && insight && insight.questions && insight.questions.length) {
-      card.appendChild(makeQuestions(insight));
-    }
+    // A card used to end in a yes/no row for every guess the run raised.
+    // Those are decisions, and decisions live on the Findings tab — the
+    // same three claims were on the card, in the Memory tab, and counted
+    // by neither, so answering one left the other two on screen looking
+    // unanswered. The card reports; it no longer asks.
     card.appendChild(makeFrame(shown));
     // Tags belong to the card, not to the run being viewed — editing them
     // while pinned to March's run must still change the card's tags.
@@ -1033,7 +990,6 @@ function renderIfChanged() {
     // poll loop must not clobber it when the latest regenerates elsewhere
     gen: state.insights.map((i) => i.id
       + (state.viewing[i.id] ? "@" + state.viewing[i.id].ts : i.generated_at)
-      + ":q" + ((i.questions || []).length)
       + ":t" + effectiveTags(i).join(",")),
     view: Object.keys(state.viewing).map((k) => k + state.viewing[k].ts),
     cats: s && s.categories.map((c) =>
@@ -1742,13 +1698,15 @@ async function refreshFindings() {
   }
 }
 
-// Every findings endpoint answers with the same {findings, open, settled},
-// so there is one place that unpacks it. `settled` is deliberately dropped
-// on the floor: the ledger is a dedup index the server reads, not something
-// the panel renders — settling writes the answer into memory and deletes
-// the row, and memory is where that answer is read from afterwards.
+// Every findings endpoint answers with the same
+// {findings, hypotheses, open, settled}, so there is one place that unpacks
+// it. `settled` is deliberately dropped on the floor: the ledger is a dedup
+// index the server reads, not something the panel renders — settling writes
+// the answer into memory and deletes the row, and memory is where that
+// answer is read from afterwards.
 function takeFindings(data) {
   state.findings = data.findings || [];
+  state.hypotheses = data.hypotheses || [];
   updateFindBadge(data.open);
 }
 
@@ -1763,14 +1721,17 @@ function updateFindBadge(n) {
 }
 
 // Every finding button goes through here: all six endpoints answer with the
-// same {findings, open}, so there is one place that knows what to do with it.
-async function findAction(finding, verb, done, btns) {
+// same {findings, hypotheses, open}, so there is one place that knows what
+// to do with it. `note` is the homeowner's reason, sent with the endings
+// that have somewhere to put it.
+async function findAction(finding, verb, done, btns, note) {
   btns.forEach((b) => { b.disabled = true; });
   const del = verb === "forget";
   try {
     const data = await api(
       del ? `api/finding/${finding.ts}` : `api/finding/${finding.ts}/${verb}`,
-      { method: del ? "DELETE" : "POST" });
+      { method: del ? "DELETE" : "POST",
+        ...(note ? { body: JSON.stringify({ note }) } : {}) });
     takeFindings(data);
     renderFindings();
     toast(done);
@@ -1779,6 +1740,52 @@ async function findAction(finding, verb, done, btns) {
     toast(e.message);
     btns.forEach((b) => { b.disabled = false; });
   }
+}
+
+// The reason box. It opens in place of the card's buttons rather than in a
+// popover, because it is the only control on this tab you type into and a
+// floating box anchored to a button is a bad place to type a sentence on a
+// phone — and because what you are correcting has to stay on screen while
+// you write about it.
+//
+// Sending nothing is a first-class answer. "Not a problem here" needs no
+// explanation, so Send is never disabled: the note is offered, not demanded,
+// and a required field here would turn a one-press dismissal into a chore
+// and get filled with "no" forever after.
+function openNoteForm(card, actions, onSend, opts) {
+  const form = el("div", "findnote");
+  form.appendChild(el("p", "findnotehint", opts.hint));
+  const ta = document.createElement("textarea");
+  ta.className = "findnotebox";
+  ta.rows = 2;
+  ta.maxLength = 400;
+  ta.placeholder = opts.placeholder;
+  form.appendChild(ta);
+  const row = el("div", "findnoteactions");
+  const send = el("button", "btn small primary", opts.send);
+  const cancel = el("button", "btn small ghost", "Cancel");
+  row.appendChild(send);
+  row.appendChild(cancel);
+  form.appendChild(row);
+
+  actions.classList.add("hidden");
+  card.appendChild(form);
+  ta.focus();
+
+  send.addEventListener("click", () => {
+    send.disabled = cancel.disabled = true;
+    onSend(ta.value.trim(), [send, cancel]);
+  });
+  cancel.addEventListener("click", () => {
+    form.remove();
+    actions.classList.remove("hidden");
+  });
+  // Enter sends, Shift+Enter breaks the line — a two-row box is for one
+  // sentence, and reaching for a button after typing one is the friction
+  // that stops people typing them.
+  ta.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); send.click(); }
+  });
 }
 
 function findings_isSnoozed(f) {
@@ -1951,19 +1958,34 @@ function makeFinding(f) {
     // Off the list now, and free to come back. Not a judgement about the
     // problem — it clears the row without teaching the analyst anything, so
     // the next run may well raise it again. That is the difference from
-    // Ignore, and it is the whole reason both exist.
+    // Wrong, and it is the whole reason both exist.
     const dismiss = add(el("button", "btn small ghost", "⌫  Dismiss"));
     tip(dismiss, "Clear it for now. brAIn may raise it again.");
     dismiss.addEventListener("click", () => findAction(
       f, "forget", "Cleared", btns));
 
-    // Every other button on this row carries a glyph, so the one without
-    // read as the odd one out rather than as the quiet one. The label is a
-    // verb like its neighbours; what it *means* is the tooltip's job.
-    const ignore = add(el("button", "btn small ghost", "✕  Ignore"));
-    tip(ignore, "Normal in this house — brAIn won't raise it again.");
-    ignore.addEventListener("click", () => findAction(
-      f, "ignore", "Noted — brAIn won't raise it again", btns));
+    // This was "Ignore", which described what happened to the row and not
+    // what the person meant. Most of the time they do not mean "hide this",
+    // they mean "you have misread my house" — the sensor is not stuck, it
+    // is a door contact on a cupboard nobody opens — and the old button had
+    // nowhere to say so, so brAIn learned one wording was unwanted and
+    // nothing about why. It is the same ending; it now asks for the reason,
+    // and the reason is the half that stops the next four reports like it.
+    const wrong = add(el("button", "btn small ghost", "✕  Wrong"));
+    tip(wrong, "brAIn has this wrong, or it's normal here — say why, and it "
+      + "learns from that rather than just dropping the card.");
+    wrong.addEventListener("click", () => openNoteForm(card, actions,
+      (note, formBtns) => findAction(
+        f, "wrong",
+        note ? "Noted — brAIn will take that into account"
+             : "Noted — brAIn won't raise it again",
+        btns.concat(formBtns), note),
+      {
+        hint: "What's brAIn got wrong? Optional — it goes into memory and "
+          + "into what the next analysis knows about your house.",
+        placeholder: "That sensor always reads on — it's not stuck.",
+        send: "Send",
+      }));
   }
   if (findings_isSnoozed(f)) {
     const back = el("div", "findsnoozed");
@@ -1977,8 +1999,68 @@ function makeFinding(f) {
   return card;
 }
 
+// A guess waiting to be confirmed, on the same list and in the same shape as
+// a finding — but never wearing a severity, because nothing is wrong: brAIn
+// thinks something is true and wants to be told. Yes files it as a fact; No
+// asks why, for the same reason Wrong does, and for a guess the reason is
+// worth even more — a rejected claim with no explanation retires one
+// sentence, and "no, that's the beer fridge, it cycles all night" retires
+// every guess built on the same misreading.
+async function hypoAction(h, verb, done, btns, note) {
+  btns.forEach((b) => { b.disabled = true; });
+  try {
+    const data = await api(`api/hypothesis/${h.ts}/${verb}`, {
+      method: "POST",
+      ...(note ? { body: JSON.stringify({ note }) } : {}) });
+    takeFindings(data);
+    renderFindings();
+    toast(done);
+  } catch (e) {
+    toast(e.message);
+    btns.forEach((b) => { b.disabled = false; });
+  }
+}
+
+function makeHypothesis(h) {
+  const card = el("article", "finding hypo");
+  const line = el("div", "findmeta");
+  line.appendChild(el("span", "findsev", "Is this right?"));
+  line.appendChild(el("span", "findstate", "brAIn wants confirming"));
+  if (h.topic) line.appendChild(el("span", "findsrc", h.topic));
+  card.appendChild(line);
+  card.appendChild(el("h3", "findtitle", h.text));
+
+  const actions = el("div", "findactions");
+  const btns = [];
+  const yes = el("button", "btn small primary", "✓  Yes");
+  tip(yes, "Right — brAIn remembers it as a fact about your house");
+  const no = el("button", "btn small ghost", "✕  No");
+  tip(no, "Wrong — say why, and brAIn learns from that rather than just "
+    + "dropping the guess.");
+  btns.push(yes, no);
+  actions.appendChild(yes);
+  actions.appendChild(no);
+  card.appendChild(actions);
+
+  yes.addEventListener("click", () => hypoAction(
+    h, "confirm", "Filed — it lands in memory at the next consolidation", btns));
+  no.addEventListener("click", () => openNoteForm(card, actions,
+    (note, formBtns) => hypoAction(
+      h, "reject",
+      note ? "Noted — brAIn will take that into account" : "Noted as a dead end",
+      btns.concat(formBtns), note),
+    {
+      hint: "What's it got wrong? Optional — it goes into memory and into "
+        + "what the next analysis knows about your house.",
+      placeholder: "That's the beer fridge — it's meant to cycle all night.",
+      send: "Send",
+    }));
+  return card;
+}
+
 function findCount(f) {
-  return state.findings.filter(f.match).length;
+  return state.findings.filter(f.match).length
+    + (f.id === "live" ? state.hypotheses.length : 0);
 }
 
 function renderFindings() {
@@ -2001,13 +2083,20 @@ function renderFindings() {
   list.textContent = "";
   const active = FIND_FILTERS.find((f) => f.id === state.findFilter) || FIND_FILTERS[0];
   const shown = state.findings.filter(active.match);
-  if (!shown.length) {
+  // Guesses go at the top of the live list. They are two taps against a
+  // finding's read-and-decide, and burying the cheap decisions under the
+  // expensive ones is how a queue capped at three sat unanswered for a
+  // fortnight and expired.
+  const claims = state.findFilter === "live" ? state.hypotheses : [];
+  if (!shown.length && !claims.length) {
     list.appendChild(el("div", "findempty", state.findFilter === "live"
-      ? "Nothing's broken that brAIn can see. Findings appear here as insight "
-        + "runs and study sessions turn them up."
+      ? "Nothing waiting on you. Problems brAIn finds, and guesses it wants "
+        + "confirmed, both land here as insight runs and study sessions turn "
+        + "them up."
       : "Nothing here yet."));
     return;
   }
+  claims.forEach((h) => list.appendChild(makeHypothesis(h)));
   shown.forEach((f) => list.appendChild(makeFinding(f)));
 }
 
@@ -2060,49 +2149,11 @@ async function renderKnowledge() {
     return;
   }
 
-  // Hypotheses: two taps, not a text box. The whole point of replacing
-  // open questions is that answering costs nothing — a form to fill in is
-  // exactly the friction that let the old list pile up unanswered.
-  const openBoxEl = $("#kOpenQs");
-  openBoxEl.textContent = "";
-  const open = data.hypotheses || [];
-  if (!open.length) {
-    openBoxEl.appendChild(el("div", "kempty", "Nothing to confirm right now."));
-  }
-  open.slice().reverse().forEach((h) => {
-    const row = el("div", "qrow");
-    row.appendChild(el("div", "qtext", h.text));
-
-    const actions = el("div", "qform");
-    const yes = el("button", "btn small primary", "✓  Yes");
-    const no = el("button", "btn small", "✗  No");
-    yes.type = no.type = "button";
-    tip(yes, "Right — remember it as a fact");
-    tip(no, "Wrong — don't pursue this again");
-
-    const settle = async (verb, btn, done) => {
-      yes.disabled = no.disabled = true;
-      try {
-        await api(`api/hypothesis/${h.ts}/${verb}`, { method: "POST" });
-        toast(done);
-        await refreshInsights().catch(() => {});
-        renderIfChanged();
-        renderKnowledge();
-      } catch (e) {
-        toast(e.message);
-        yes.disabled = no.disabled = false;
-      }
-    };
-    yes.addEventListener("click", () => settle(
-      "confirm", yes, "Filed — it lands in memory at the next consolidation"));
-    no.addEventListener("click", () => settle(
-      "reject", no, "Noted as a dead end"));
-
-    actions.appendChild(yes);
-    actions.appendChild(no);
-    row.appendChild(actions);
-    openBoxEl.appendChild(row);
-  });
+  // Guesses waiting to be confirmed used to head this column. They are on
+  // the Findings tab now — a guess to confirm and a problem to settle are
+  // both "a decision only you can make", and two lists of those meant two
+  // badges, neither of which ever read as done. What is left here is one
+  // queue and one document, which is what this tab is for.
 
   // Discoveries still waiting for the document. Filed ones are not listed
   // anywhere: they are in the memory document on the right, which is the
@@ -2605,21 +2656,11 @@ function selectDocs(id) {
   renderDocsNav();
 }
 
-// Surface pending guesses on the tab itself. The whole point of two-tap
-// confirmation is that answering is cheap — but only if you know there is
-// something to answer without opening the tab to check.
-async function refreshMemoryBadge() {
-  const badge = $("#memBadge");
-  if (!badge) return;
-  try {
-    const data = await api("api/knowledge");
-    const n = (data.hypotheses || []).length;
-    badge.textContent = n ? String(n) : "";
-    badge.classList.toggle("hidden", !n);
-  } catch (e) {
-    badge.classList.add("hidden");
-  }
-}
+// The Memory tab used to carry a badge counting pending guesses, and it was
+// dropped with them: what is left on that tab is a queue that drains itself
+// on a timer and a document. Neither is waiting on anybody, and a badge that
+// counts work nobody has to do is a badge people learn to ignore — including
+// on the tab next to it, which counts work they do.
 
 function renderDocs() {
   if (!docsState.section) selectDocs((window.BRAIN_DOCS || [{}])[0].id);
@@ -2828,7 +2869,6 @@ function switchView(name) {
   }
   applyTermChrome();
   if (name === "memory") renderKnowledge();
-  if (name !== "memory") refreshMemoryBadge();
   if (name === "docs") renderDocs();
 }
 
@@ -3424,6 +3464,13 @@ document.querySelectorAll(".chatseeds .seed").forEach((btn) =>
 function setChatFinding(f) {
   chatState.finding = f || null;
   const bar = $("#chatFinding");
+  // The strip is one element reused for every finding, unlike the cards,
+  // which are rebuilt. A reason box left open on the one you just settled
+  // would greet the next one with its buttons hidden.
+  const openNote = bar.querySelector(".findnote");
+  if (openNote) openNote.remove();
+  const acts = bar.querySelector(".cfacts");
+  if (acts) acts.classList.remove("hidden");
   bar.classList.toggle("hidden", !f);
   if (!f) { prefSet("brain.chatFinding", ""); return; }
   $("#chatFindingText").textContent = f.text;
@@ -3445,11 +3492,12 @@ async function restoreChatFinding() {
   } catch (e) { /* the strip simply stays down */ }
 }
 
-async function chatFindingAction(verb, done) {
+async function chatFindingAction(verb, done, note, extraBtns) {
   const f = chatState.finding;
   if (!f) return;
-  const btns = [...$("#chatFinding").querySelectorAll("button")];
-  await findAction(f, verb, done, btns);
+  const btns = [...$("#chatFinding").querySelectorAll("button")]
+    .concat(extraBtns || []);
+  await findAction(f, verb, done, btns, note);
   // Settled: the discussion can carry on, but it is no longer a decision
   // waiting on you, so the bar goes.
   setChatFinding(null);
@@ -3460,8 +3508,24 @@ $("#chatFindingFix").addEventListener("click", () =>
   chatFindingAction("fix", "On it — brAIn is making the change"));
 $("#chatFindingDone").addEventListener("click", () =>
   chatFindingAction("done", "Fixed — written into memory"));
-$("#chatFindingIgnore").addEventListener("click", () =>
-  chatFindingAction("ignore", "Noted — brAIn won't raise it again"));
+// The same ending as the card's, and it asks the same question — the strip
+// exists so you don't have to go back to the tab to decide, and an ending
+// that quietly dropped the reason would make going back the better option.
+// Explaining it to Claude in the chat is not the same thing: that reaches
+// this conversation, and the note reaches every future one.
+$("#chatFindingWrong").addEventListener("click", () => openNoteForm(
+  $("#chatFinding"), $("#chatFinding").querySelector(".cfacts"),
+  (note, formBtns) => chatFindingAction(
+    "wrong",
+    note ? "Noted — brAIn will take that into account"
+         : "Noted — brAIn won't raise it again",
+    note, formBtns),
+  {
+    hint: "What's brAIn got wrong? Optional — it goes into memory and into "
+      + "what the next analysis knows about your house.",
+    placeholder: "That sensor always reads on — it's not stuck.",
+    send: "Send",
+  }));
 $("#chatFindingLater").addEventListener("click", (ev) => {
   const f = chatState.finding;
   if (!f) return;
@@ -4071,7 +4135,6 @@ document.addEventListener("visibilitychange", () => {
   await refreshOnboarding();
   render();
   fastPoll();
-  refreshMemoryBadge();
   refreshFindings();
   // resume a guided sign-in if one is mid-flight (page reload)
   try {

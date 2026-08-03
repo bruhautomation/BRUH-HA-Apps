@@ -38,6 +38,9 @@ HYPOTHESES_FILE = Path(
 MAX_OPEN = int(os.environ.get("BRAIN_MAX_HYPOTHESES", "3"))
 TTL_DAYS = int(os.environ.get("BRAIN_HYPOTHESIS_TTL_DAYS", "14"))
 MAX_TEXT_CHARS = 400
+# Why the homeowner said no. Same ceiling as a finding's correction note —
+# both are one sentence of context handed to a model, not a document.
+MAX_NOTE_CHARS = 400
 
 _WS_RE = re.compile(r"\s+")
 _PUNCT_RE = re.compile(r"[^\w\s]")
@@ -121,6 +124,7 @@ def list_all(status: str | None = None) -> list[dict]:
             "topic": str(e.get("topic") or ""),
             "status": st,
             "settled_at": int(e.get("settled_at") or 0),
+            "note": str(e.get("note") or "")[:MAX_NOTE_CHARS],
         })
     return out
 
@@ -173,14 +177,17 @@ def find_open(text: str) -> dict | None:
     return None
 
 
-def _settle(ts: int, status: str) -> dict | None:
+def _settle(ts: int, status: str, note: str = "") -> dict | None:
     entries = _read()
+    note = str(note or "").strip()[:MAX_NOTE_CHARS]
     for e in entries:
         if int(e.get("ts") or 0) == ts and e.get("status") == "open":
             e["status"] = status
             e["settled_at"] = int(time.time())
+            if note:
+                e["note"] = note
             _write(entries)
-            return {"ts": ts, "text": e["text"], "status": status}
+            return {"ts": ts, "text": e["text"], "status": status, "note": note}
     return None
 
 
@@ -190,11 +197,23 @@ def confirm(ts: int) -> dict | None:
     return _settle(ts, "confirmed")
 
 
-def reject(ts: int) -> dict | None:
-    return _settle(ts, "rejected")
+def reject(ts: int, note: str = "") -> dict | None:
+    """Turn a guess down, optionally saying why.
+
+    The reason is worth more than the rejection: "no" retires one claim,
+    and the sentence explaining it is usually true of the house and rules
+    out everything else built on the same mistake. It is kept on the entry
+    and rendered with it in ``dead_ends``.
+    """
+    return _settle(ts, "rejected", note=note)
 
 
 def dead_ends(limit: int = 20) -> list[str]:
     """Rejected claims, newest last — the only part of this queue worth
-    putting in a prompt."""
-    return [e["text"] for e in list_all("rejected")][-limit:]
+    putting in a prompt. A claim the homeowner explained comes with their
+    explanation: the correction is the part that generalises."""
+    out = []
+    for e in list_all("rejected")[-limit:]:
+        note = e.get("note") or ""
+        out.append(f"{e['text']} — they said: {note}" if note else e["text"])
+    return out

@@ -27,9 +27,14 @@ PUT  /api/insight/{id}       — rename an ad-hoc Ask card {name, icon}
 DELETE /api/card/{id}        — delete ANY card (shipped / user / ad-hoc): the
                                one the ✕ button calls
 PUT  /api/card/{id}/tags     — replace a card's visible tags {tags: [...]}
-GET  /api/findings           — the work list: what brAIn thinks is broken
+GET  /api/findings           — the decision list: what brAIn thinks is broken,
+                               plus the guesses it wants confirmed
 POST /api/finding/{ts}/fix   — go fix it (the one tool-enabled Claude run)
-POST /api/finding/{ts}/ignore — not a problem here; never raise it again
+POST /api/finding/{ts}/wrong  — you've got this wrong / not a problem here,
+                                optionally {note}: WHY, in your words, which
+                                is handed to the analyst and the consolidator
+                                rather than acted on literally
+                                (/ignore is the old name for the same thing)
 POST /api/finding/{ts}/done  — you fixed it yourself
 POST /api/finding/{ts}/ack   — you've read what brAIn's fix changed
                                 (all three END it: memory line, then the
@@ -56,8 +61,10 @@ POST /api/insight/{id}/feedback      — add feedback (steers future runs)
 DELETE /api/insight/{id}/feedback/{ts} — drop one feedback entry
 GET  /api/card_info          — dashboard-card /local mirror paths; also (re)syncs
                                the mirror
-GET  /api/questions          — open analyst questions across insights
-POST /api/questions/answer   — answer one (forwards to brain, if installed)
+POST /api/hypothesis/{ts}/confirm — yes, that's right: it becomes a memory line
+POST /api/hypothesis/{ts}/reject  — no, optionally {note}: why it's wrong
+                               (both answer with the Findings payload, because
+                                that is the one list they are shown in)
 GET  /api/knowledge          — learned facts + question ledger + shared memory.md
 POST /api/knowledge/fact     — teach a fact {text}; Claude merges it into memory.md
                                (its only home — never duplicated into the ledger)
@@ -65,7 +72,6 @@ DELETE /api/knowledge/fact/{ts}            — forget one fact
 POST /api/knowledge/question/{ts}/answer   — answer an open question {answer}
 POST /api/knowledge/question/{ts}/dismiss  — retire a question unanswered
 DELETE /api/knowledge/question/{ts}        — forget a question (askable again)
-POST /api/questions/dismiss  — dismiss from a card {insight_id, question} ("not relevant")
 PUT  /api/memory             — save a manual edit of the memory file {text}
 
 Runs on 0.0.0.0:8099. The HA Supervisor proxies the ingress URL into
@@ -724,15 +730,20 @@ async def _generate(insight_id: str) -> None:
             highlights = []
         # Hypotheses, not open questions. propose() enforces the cap and the
         # never-twice rule in code — the prompt states the budget, but a model
-        # that ignores it must not be able to grow the queue anyway. Anything
-        # it declines is dropped rather than shown, so the card never displays
-        # a guess the queue didn't accept.
-        questions = []
+        # that ignores it must not be able to grow the queue anyway.
+        #
+        # The queue is where they stay. A card used to carry a copy of every
+        # claim it raised and render yes/no under the chart, which put the
+        # same three decisions on the card, in the Memory tab and nowhere
+        # that counted them — three surfaces, one of which you had to
+        # scroll a visualization to find. They are decisions, and decisions
+        # are the Findings tab's job; the card reports, and that is all.
+        accepted = 0
         for claim in _clean_strings(obj.get("hypotheses"), 3, 300):
             if hypotheses.propose(claim, cat["id"]) is None:
                 log.info("dropping hypothesis (known, or queue full): %s", claim)
                 continue
-            questions.append(claim)
+            accepted += 1
         learned = _clean_strings(obj.get("learned"), 3, 500)
         # Findings are a work list, not part of the card: what this run
         # reported lives in the store, which is the one place that knows
@@ -753,7 +764,6 @@ async def _generate(insight_id: str) -> None:
             # a model miss, so a hard cap keeps cards scannable regardless
             "summary": str(obj.get("summary", ""))[:600],
             "highlights": highlights[:6],
-            "questions": questions,
             "learned": learned,
             "tags": tags,
             "focus_used": cat.get("focus", "") if question is None else "",
@@ -772,8 +782,9 @@ async def _generate(insight_id: str) -> None:
             if created:
                 await _submit_memory(fact)
         _set_job(insight_id, state="done", error="")
-        log.info("insight %s generated (%s)%s", insight_id, insight["title"],
-                 f", {len(filed)} new finding(s)" if filed else "")
+        log.info("insight %s generated (%s)%s%s", insight_id, insight["title"],
+                 f", {len(filed)} new finding(s)" if filed else "",
+                 f", {accepted} hypothesis(es) queued" if accepted else "")
     except Exception as exc:  # noqa: BLE001 — job errors surface in the UI
         log.warning("insight %s failed: %s", insight_id, exc)
         _set_job(insight_id, state="error", error=str(exc)[:500])
@@ -1093,8 +1104,12 @@ async def h_status(request: web.Request) -> web.Response:
         "settings": settings,
         "usage": usage_store.budget_state(settings),
         "categories": [_category_status(c, insights) for c in all_categories()],
-        # the Findings tab's badge: problems still waiting on a decision
-        "findings_open": findings_store.open_count(),
+        # The Findings tab's badge: everything still waiting on a decision —
+        # problems to settle and guesses to confirm, which are one list now.
+        # Counted here rather than off _findings_payload() because /api/status
+        # polls on a timer and open_count() reads raw entries without shaping
+        # 200 findings to throw all but the length away.
+        "findings_open": findings_store.open_count() + hypotheses.open_count(),
         # `question` lets the panel label an ad-hoc "Ask" card (and retry it)
         # while it's still generating, before any insight exists to read.
         "jobs": {jid: {k: j.get(k) for k in ("state", "error", "question")}
@@ -1604,13 +1619,34 @@ def _finding_or_404(request: web.Request) -> dict:
     return finding
 
 
+def _findings_payload() -> dict:
+    """What the Findings tab reads — and the ONLY thing it reads.
+
+    There is one list of things waiting on a person, and this is it. A
+    finding is something brAIn thinks is broken; a hypothesis is something
+    it thinks is true and wants confirmed. They are different kinds of
+    knowledge (see findings_store's header) and they are still stored apart,
+    but they are the same *job* — a decision only the homeowner can make —
+    and splitting that job across two tabs meant neither list was ever
+    empty and neither badge meant "you're done".
+
+    So the open count spans both: it is the answer to "how much is waiting
+    on me", which is the only question a badge on a work list can be asked.
+    """
+    payload = findings_store.listing()
+    open_claims = hypotheses.list_all("open")
+    payload["hypotheses"] = open_claims
+    payload["open"] += len(open_claims)
+    return payload
+
+
 async def h_findings(request: web.Request) -> web.Response:
     # The scheduler owns ingestion; sweeping here too is only about latency,
     # so opening the tab right after a study session finishes doesn't wait
     # out the tick. Both are idempotent, and an empty inbox costs one glob.
     def listing() -> dict:
         findings_store.sweep_inbox()
-        return findings_store.listing()
+        return _findings_payload()
 
     return web.json_response(await asyncio.to_thread(listing))
 
@@ -1624,11 +1660,22 @@ async def h_findings(request: web.Request) -> web.Response:
 # event on a list — `memory.md` is read by a model that has never seen this
 # tab. An empty one means the answer is already in memory (the fixer wrote
 # it when it made the change) and saying it twice would be the duplicate.
+#
+# `noted` is the same ending when the homeowner typed a reason, and it is
+# deliberately not the same sentence. "Not a problem in this home: X" is a
+# verdict; a correction is evidence, and the thing worth remembering is
+# almost never the report — it is what they said about the house while
+# waving it off. So the line hands the consolidator both halves and says
+# which is which, and `source="correction"` is what tells it to record the
+# truth behind the reason rather than the exchange.
 FINDING_VERBS = {
-    # "This is normal here." The strongest ending: it teaches the analyst
-    # that this is not a problem in this home, in any wording, forever.
-    "ignore": {"kind": "ignored",
-               "memory": "Not a problem in this home: {text}"},
+    # "You've got this wrong", or "that's normal here" — the same ending
+    # either way, because both mean *stop reporting this*. The optional note
+    # is why, in the homeowner's words, and it is the half that teaches.
+    "wrong": {"kind": "ignored",
+              "memory": "Not a problem in this home: {text}",
+              "noted": 'brAIn reported: "{text}". The homeowner says that is '
+                       "not a problem here, because: {note}"},
     # "I already handled it myself" — the ending for anything needing hands.
     "done": {"kind": "fixed",
              "memory": "Fixed by the homeowner on {date}: {text}"},
@@ -1639,6 +1686,9 @@ FINDING_VERBS = {
     # and still on disk) back on the list.
     "reopen": {"status": "open"},
 }
+# What it used to be called, kept because a panel served before an update
+# is still open in somebody's browser and its buttons must not 404.
+FINDING_VERBS["ignore"] = FINDING_VERBS["wrong"]
 
 
 async def h_finding_verb(request: web.Request) -> web.Response:
@@ -1647,24 +1697,31 @@ async def h_finding_verb(request: web.Request) -> web.Response:
     if spec is None:
         raise web.HTTPNotFound(text="no such action")
     finding = _finding_or_404(request)
+    body = await request.json() if request.can_read_body else {}
+    note = str((body or {}).get("note") or "").strip()[:findings_store.MAX_NOTE]
 
     if "status" in spec:
         def move() -> dict:
             findings_store.set_status(finding["ts"], spec["status"])
-            return findings_store.listing()
+            return _findings_payload()
 
         return web.json_response(await asyncio.to_thread(move))
 
     def settle() -> dict:
-        findings_store.settle_and_clear(finding["ts"], spec["kind"])
-        return findings_store.listing()
+        findings_store.settle_and_clear(finding["ts"], spec["kind"], note=note)
+        return _findings_payload()
 
     payload = await asyncio.to_thread(settle)
-    if spec["memory"]:
+    # A note only changes the sentence for endings that have a second one to
+    # offer. "I fixed it" plus a comment is still "I fixed it": falling back
+    # to `memory` is what stops a note silently costing the memory line.
+    corrected = bool(note and spec.get("noted"))
+    template = spec["noted"] if corrected else spec["memory"]
+    if template:
         await _submit_memory(
-            spec["memory"].format(text=finding["text"],
-                                  date=time.strftime("%Y-%m-%d")),
-            source="homeowner")
+            template.format(text=finding["text"], note=note,
+                            date=time.strftime("%Y-%m-%d")),
+            source="correction" if corrected else "homeowner")
     return web.json_response(payload)
 
 
@@ -1683,7 +1740,7 @@ async def h_finding_unsettle(request: web.Request) -> web.Response:
 
     def undo() -> tuple[bool, dict]:
         ok = findings_store.unsettle(key)
-        return ok, findings_store.listing()
+        return ok, _findings_payload()
 
     ok, payload = await asyncio.to_thread(undo)
     if not ok:
@@ -1722,7 +1779,7 @@ async def h_finding_snooze(request: web.Request) -> web.Response:
 
     def settle() -> dict:
         findings_store.snooze(finding["ts"], until)
-        return findings_store.listing()
+        return _findings_payload()
 
     return web.json_response(await asyncio.to_thread(settle))
 
@@ -1775,7 +1832,7 @@ async def h_finding_fix(request: web.Request) -> web.Response:
 
     def claim() -> dict:
         findings_store.set_status(finding["ts"], "fixing", result="")
-        return findings_store.listing()
+        return _findings_payload()
 
     return web.json_response(await asyncio.to_thread(claim))
 
@@ -1786,7 +1843,7 @@ async def h_finding_delete(request: web.Request) -> web.Response:
 
     def forget() -> dict:
         findings_store.remove(finding["ts"])
-        return findings_store.listing()
+        return _findings_payload()
 
     return web.json_response(await asyncio.to_thread(forget))
 
@@ -1805,83 +1862,6 @@ async def h_card_tags_put(request: web.Request) -> web.Response:
         raise web.HTTPBadRequest(text="tags must be a list of strings")
     tags = await asyncio.to_thread(card_tags.set_tags, card_id, insight, body["tags"])
     return web.json_response({"id": card_id, "tags": tags})
-
-
-# -- analyst questions ------------------------------------------------------
-
-async def h_questions(request: web.Request) -> web.Response:
-    out = []
-    for ins in load_insights():
-        for q in ins.get("questions") or []:
-            if isinstance(q, str) and q.strip():
-                out.append({
-                    "insight_id": ins["id"],
-                    "category_title": ins.get("category_title", ""),
-                    "question": q,
-                })
-    return web.json_response({"questions": out})
-
-
-async def h_answer_question(request: web.Request) -> web.Response:
-    body = await request.json()
-    insight_id = str(body.get("insight_id") or "")
-    question = str(body.get("question") or "").strip()
-    answer = str(body.get("answer") or "").strip()
-    if not question or not answer:
-        raise web.HTTPBadRequest(text="question and answer required")
-    if len(answer) > 1000:
-        raise web.HTTPBadRequest(text="answer too long")
-    path = _insight_path(insight_id)
-    try:
-        insight = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        raise web.HTTPNotFound(text="no such insight")
-    questions = [q for q in (insight.get("questions") or []) if isinstance(q, str)]
-    if question not in questions:
-        raise web.HTTPNotFound(text="no such open question")
-
-    # Cards carry the claim's text, not its id, so resolve it in the queue
-    # and settle it there too. Without this the card looked answered while
-    # the guess stayed open in Memory until it expired a fortnight later.
-    pending = hypotheses.find_open(question)
-    if pending:
-        hypotheses.confirm(pending["ts"])
-
-    knowledge_store.add_fact(f"{question.rstrip('?')}: {answer}",
-                             source="homeowner", category=insight.get("category", ""))
-    await _submit_answer(question, answer)
-    _retire_question_everywhere(question)
-    return web.json_response({"answered": True})
-
-
-async def h_dismiss_question_card(request: web.Request) -> web.Response:
-    """"Not relevant" from an insight card: retire the question everywhere
-    and mark it dismissed in the ledger so the analyst learns it was a
-    dead end and never asks it (or close variants) again."""
-    body = await request.json()
-    insight_id = str(body.get("insight_id") or "")
-    question = str(body.get("question") or "").strip()
-    if not question:
-        raise web.HTTPBadRequest(text="question required")
-    path = _insight_path(insight_id)
-    try:
-        insight = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        raise web.HTTPNotFound(text="no such insight")
-    questions = [q for q in (insight.get("questions") or []) if isinstance(q, str)]
-    if question not in questions:
-        raise web.HTTPNotFound(text="no such open question")
-    # Same as the confirm path: the card only knows the text, so look the
-    # claim up in the queue and reject it there.
-    pending = hypotheses.find_open(question)
-    if pending:
-        hypotheses.reject(pending["ts"])
-
-    entry = knowledge_store.record_question(question, insight.get("category", ""))
-    if entry and entry.get("status") != "answered":
-        knowledge_store.dismiss_question(entry["ts"])
-    _retire_question_everywhere(question)
-    return web.json_response({"dismissed": True})
 
 
 # -- knowledge (the analyst's viewable memory) ------------------------------
@@ -2123,7 +2103,13 @@ def _consolidation_stale_hours() -> float:
 
 
 async def h_knowledge(request: web.Request) -> web.Response:
-    """Everything the analyst has learned, in one payload for the panel."""
+    """Everything the analyst has learned, in one payload for the panel.
+
+    `hypotheses` is still here and is still the open queue — the Memory tab
+    no longer renders it (guesses to confirm are decisions, and decisions
+    live on the Findings tab), but the budget is what the prompt builder
+    asks for and the list is what `brain memory hypotheses` prints.
+    """
     return web.json_response({
         "facts": await asyncio.to_thread(_facts_with_filing),
         "questions": knowledge_store.list_questions(),
@@ -2264,6 +2250,11 @@ async def h_memory_consolidate(request: web.Request) -> web.Response:
     })
 
 
+# Both answers come back with the whole Findings payload, like every button
+# on that tab: the guesses live in the same list now, and a reply that only
+# said "confirmed" would leave the list to be re-fetched to find out what it
+# looks like afterwards.
+
 async def h_hypothesis_confirm(request: web.Request) -> web.Response:
     """Yes. The claim is the durable part, so it is queued as a plain memory
     fact and the guess itself is settled — no Q/A pair is kept anywhere."""
@@ -2271,29 +2262,46 @@ async def h_hypothesis_confirm(request: web.Request) -> web.Response:
         ts = int(request.match_info["ts"])
     except ValueError:
         raise web.HTTPBadRequest(text="bad hypothesis id")
-    settled = hypotheses.confirm(ts)
+    settled = await asyncio.to_thread(hypotheses.confirm, ts)
     if not settled:
         raise web.HTTPNotFound(text="no such open hypothesis")
     await _submit_memory(settled["text"], source="confirmed")
-    _retire_question_everywhere(settled["text"])
-    return web.json_response({"confirmed": ts, "budget": hypotheses.budget()})
+    return web.json_response(await asyncio.to_thread(_findings_payload))
 
 
 async def h_hypothesis_reject(request: web.Request) -> web.Response:
     """No. Recorded as a dead end so the same line of inquiry is not
-    revisited — that is the one part of the queue worth showing the model."""
+    revisited — that is the one part of the queue worth showing the model.
+
+    The optional note is the same offer the Findings cards make, for the
+    same reason: "no" retires one guess, and "no, that fridge is a beer
+    fridge and it cycles all night" is a fact about the house that retires
+    the next three. It goes to the consolidator as a correction, which is
+    what decides whether there is anything durable in it.
+    """
     try:
         ts = int(request.match_info["ts"])
     except ValueError:
         raise web.HTTPBadRequest(text="bad hypothesis id")
-    settled = hypotheses.reject(ts)
+    body = await request.json() if request.can_read_body else {}
+    note = str((body or {}).get("note") or "").strip()[:findings_store.MAX_NOTE]
+
+    def settle() -> dict | None:
+        done = hypotheses.reject(ts, note=note)
+        if done:
+            entry = knowledge_store.record_question(done["text"])
+            if entry:
+                knowledge_store.dismiss_question(entry["ts"])
+        return done
+
+    settled = await asyncio.to_thread(settle)
     if not settled:
         raise web.HTTPNotFound(text="no such open hypothesis")
-    entry = knowledge_store.record_question(settled["text"])
-    if entry:
-        knowledge_store.dismiss_question(entry["ts"])
-    _retire_question_everywhere(settled["text"])
-    return web.json_response({"rejected": ts, "budget": hypotheses.budget()})
+    if note:
+        await _submit_memory(
+            f'brAIn guessed: "{settled["text"]}". The homeowner says that is '
+            f"wrong, because: {note}", source="correction")
+    return web.json_response(await asyncio.to_thread(_findings_payload))
 
 
 async def h_knowledge_fact_add(request: web.Request) -> web.Response:
@@ -2781,9 +2789,6 @@ def make_app() -> web.Application:
     app.router.add_post("/api/insight/{id}/feedback", h_feedback_add)
     app.router.add_delete("/api/insight/{id}/feedback/{ts}", h_feedback_delete)
     app.router.add_get("/api/card_info", h_card_info)
-    app.router.add_get("/api/questions", h_questions)
-    app.router.add_post("/api/questions/answer", h_answer_question)
-    app.router.add_post("/api/questions/dismiss", h_dismiss_question_card)
     app.router.add_get("/api/onboarding", h_onboarding)
     app.router.add_post("/api/onboarding/learn", h_onboarding_learn)
     app.router.add_post("/api/onboarding/recommend", h_onboarding_recommend)
