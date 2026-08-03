@@ -2,6 +2,61 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.19.3
+
+### Fixed
+
+- **Every usage-limit sensor was unavailable if you signed in through the
+  panel.** The usage tracker looked for a credential in exactly one place —
+  Claude Code's own `.credentials.json` — and reported `no_oauth_token` when it
+  wasn't there. But brAIn keeps a credential in three places, and the panel is
+  the primary sign-in surface: a panel login is stored under `/data/secrets`,
+  and `ha login` shares one under `/config/.brain/secrets`. So the terminal, the
+  voice listener and the fixer were all authenticated off a login the tracker
+  insisted did not exist, and the sensors said "not authenticated" about the one
+  thing that wasn't wrong.
+
+  The tracker now resolves a credential the same way everything else in the
+  add-on does, in the same order, and runs as root because two of those three
+  stores are root-owned `0700` directories — running it as the `claude` user is
+  precisely what limited it to the one store it could read.
+
+- **A sign-in that cannot work now says which one it is.** An Anthropic API key
+  bills per token and has no subscription window, so there is no utilization to
+  report and never will be; that used to arrive as `no_oauth_token`, which reads
+  as "sign in again" and sends people to redo a login that worked.
+
+- **Four sensors going unavailable with no stated reason.** A new
+  `Usage tracker` diagnostic sensor sits beside them and never goes unavailable,
+  because its whole job is to be readable at the moment the others are not. It
+  reports `ok`, or what stopped it: `no_oauth_token`,
+  `api_key_has_no_usage_limits`, `http_401`, `network_error`, `stale`,
+  `not_running`.
+
+- **Stale utilization was reported as live.** A failed poll left the last
+  reading in place indefinitely, so a tracker that had stopped kept answering
+  with whatever it last saw. Readings now expire after two hours — the same
+  window the panel already applied to the same file — and a single failed poll
+  no longer blanks four working sensors, because a fresh reading is left alone
+  to age out instead of being overwritten with an error.
+
+- **The chat's context pill claimed more tokens than the window it measured
+  against.** Two separate mistakes, compounding:
+
+  The token count came from the `result` envelope, whose `usage` is the whole
+  turn added up — every model call the CLI made while working, each of which
+  re-sends the conversation. A turn that ran ten tools reported roughly ten
+  conversations' worth of tokens. It now reads the per-call `usage` on the
+  `assistant` event, so a turn reports the same size whether it took one tool
+  call or thirty.
+
+  The denominator was a table where every Opus and every Sonnet was 200K. That
+  was true when it was written and is now wrong for every model the add-on
+  actually runs — Opus and Sonnet went to 1M at 4.6. The window is read from the
+  model's version rather than its family name, so Opus and Sonnet from 4.6
+  onward are 1M, Haiku is 200K, and a model whose version can't be read reports
+  a token count and no percentage rather than a percentage of a guess.
+
 ## 1.19.2
 
 ### Fixed

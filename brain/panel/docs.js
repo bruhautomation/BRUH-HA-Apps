@@ -290,10 +290,11 @@ the list. What a new chat costs is that the next thing you say belongs to a sepa
 conversation, not that anything was forgotten.
 
 **Under the box: which model is answering, and how full the conversation is** — say
-\`42k / 200k context · 21%\`, going amber past 80%. The number is the CLI's own report of
-what it sent on the last turn, and what it sent *is* the conversation so far, so it is
-measured rather than estimated. Cached parts count: a cached prompt still takes up the
-window, it is only cheaper to send.
+\`42k / 1000k context · 4%\`, going amber past 80%. The number is the CLI's own report of
+what it sent on the last model call, and what it sent *is* the conversation so far, so it
+is measured rather than estimated. Cached parts count: a cached prompt still takes up the
+window, it is only cheaper to send. The window is the model's own published one, so it
+changes with the model you are on — Opus and Sonnet are 1M from 4.6 onward, Haiku is 200k.
 
 **A per-message price only appears if an API key is paying.** On a Pro or Max
 subscription those tokens are already bought, so there is nothing to charge and the

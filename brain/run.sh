@@ -1484,8 +1484,17 @@ start_usage_limits_tracker() {
     bashio::log.info "Starting Anthropic usage limits tracker..."
 
     if [ -f "/opt/scripts/usage-limits-tracker.py" ]; then
-        # Run as the claude user so it can read OAuth credentials from ~/.claude/
-        su-exec claude python3 /opt/scripts/usage-limits-tracker.py &
+        # The tracker has to read whichever store the person actually signed
+        # in to, and two of the three are root-owned 0700 directories: the
+        # panel's /data/secrets and the shared /config/.brain/secrets. Run as
+        # the claude user and it can read the CLI's own credential and
+        # nothing else — which is how a panel sign-in ended up reported as
+        # "not authenticated". Root reads all three; the claude user cannot
+        # be given the other two without opening the token files up.
+        export BRAIN_HOME="${BRAIN_HOME:-/data/home}"
+        export BRAIN_SECRETS="${BRAIN_SECRETS:-/data/secrets}"
+        export BRAIN_SHARED_AUTH="${BRAIN_SHARED_AUTH:-/config/.brain/secrets/claude_auth.json}"
+        python3 /opt/scripts/usage-limits-tracker.py &
         bashio::log.info "Usage limits tracker started (writes to /config/.brain/usage_limits.json)"
     else
         bashio::log.warning "Usage limits tracker script not found, skipping"

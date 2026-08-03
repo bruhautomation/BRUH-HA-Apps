@@ -39,6 +39,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -58,24 +59,69 @@ TRANSCRIPT_FILE = os.environ.get(
     "BRAIN_CHAT_TRANSCRIPT", "/data/chat_transcript.json")
 MAX_EVENTS = 600
 
-# Published context windows, by the substring that identifies the family in
-# a resolved model id. Used ONLY to turn a token count into a percentage —
-# an unknown model reports its tokens and no percentage, rather than a
-# percentage of a window we guessed at.
-CONTEXT_WINDOWS = (
-    ("haiku", 200_000),
-    ("sonnet", 200_000),
-    ("opus", 200_000),
-)
+# Published context windows. Used ONLY to turn a token count into a
+# percentage — an unknown model reports its tokens and no percentage, rather
+# than a percentage of a window we guessed at.
+#
+# **The window is a property of the model version, not of the family.** It
+# used to be a substring table where every Opus and every Sonnet was 200K,
+# which was true when it was written and is now wrong for every model the
+# add-on actually runs: Opus and Sonnet went to 1M at 4.6, so a real
+# conversation routinely reported "600k / 200k context · 300%". A family
+# name alone cannot answer this question, so the version is parsed too and a
+# model whose version we cannot read reports no window at all.
+WINDOW_1M = 1_000_000
+WINDOW_200K = 200_000
+
+# Families whose window depends on the version, and the version at which
+# they went to 1M. Haiku is deliberately absent: 4.5 is 200K and there is no
+# published 1M Haiku, so it is handled as a flat 200K below.
+LONG_CONTEXT_FAMILIES = ("opus", "sonnet", "fable", "mythos")
+LONG_CONTEXT_SINCE = (4, 6)
+
+_FAMILIES = "opus|sonnet|haiku|fable|mythos"
+# Two orders exist in the wild and both have to parse: `claude-opus-4-8`,
+# `claude-sonnet-5`, `claude-haiku-4-5-20251001` put the version *after* the
+# family; the 3.x ids (`claude-3-5-sonnet-20241022`) put it before. The minor
+# is capped at two digits and followed by a non-digit so a trailing date
+# stamp (`claude-opus-4-20250514`) reads as version 4, not version 4.20250514.
+_VER_AFTER = re.compile(rf"({_FAMILIES})-?(\d{{1,2}})(?:[-.](\d{{1,2}})(?![0-9]))?")
+_VER_BEFORE = re.compile(rf"(\d{{1,2}})(?:[-.](\d{{1,2}}))?-({_FAMILIES})")
+
+# Escape hatch for a model that ships before this table learns about it: set
+# it and the panel uses that number for every model. Not a config option —
+# the right answer is a code change, and this exists so nobody is stuck
+# waiting for one.
+WINDOW_OVERRIDE = int(os.environ.get("BRAIN_CONTEXT_WINDOW", "0") or 0)
+
+
+def model_version(model: str) -> tuple[int, int] | None:
+    """(major, minor) parsed out of a resolved model id, or None."""
+    lowered = (model or "").lower()
+    match = _VER_BEFORE.search(lowered)
+    if match:
+        return int(match.group(1)), int(match.group(2) or 0)
+    match = _VER_AFTER.search(lowered)
+    if match:
+        return int(match.group(2)), int(match.group(3) or 0)
+    return None
 
 
 def context_window(model: str) -> int:
     """The context window for a resolved model id, or 0 if we don't know."""
+    if WINDOW_OVERRIDE > 0:
+        return WINDOW_OVERRIDE
     lowered = (model or "").lower()
-    for token, size in CONTEXT_WINDOWS:
-        if token in lowered:
-            return size
-    return 0
+    if "haiku" in lowered:
+        return WINDOW_200K
+    if not any(family in lowered for family in LONG_CONTEXT_FAMILIES):
+        return 0
+    version = model_version(lowered)
+    if version is None:
+        # A family we know and a version we cannot read is still a guess, and
+        # the two candidate answers are 5× apart.
+        return 0
+    return WINDOW_1M if version >= LONG_CONTEXT_SINCE else WINDOW_200K
 
 # A single tool result can be a whole file. The panel shows a preview and
 # offers the rest on request, so what we keep is bounded too.
@@ -223,16 +269,24 @@ class ChatSession:
                 self._subs.discard(q)
         return event
 
-    def _take_context(self, event: dict) -> None:
-        """Record how full the context is, from the turn that just finished.
+    def _take_context(self, usage: object) -> None:
+        """Record how full the context is, from one model call's usage.
 
         The CLI reports what it *sent*, and what it sent is the conversation
-        so far — so the last turn's input tokens are the context in use.
-        Cache reads count: a cached prompt is still occupying the window,
-        it is just cheaper. Output does not, until it comes back as input on
-        the next turn, which it will and this will then say so.
+        so far — so that call's input tokens are the context in use. Cache
+        reads count: a cached prompt is still occupying the window, it is
+        just cheaper. Output does not, until it comes back as input on the
+        next call, which it will and this will then say so.
+
+        **One call, never the turn.** This used to read the `result` event,
+        whose `usage` is the whole turn added up — every model call the CLI
+        made while working, each of which re-sent the conversation. A turn
+        that ran ten tools therefore reported roughly ten conversations'
+        worth of tokens, which is how the pill came to claim several times
+        the window it was measuring against. The per-call number lives on
+        the `assistant` event, so that is what feeds this; a turn now
+        reports the same size whether it took one tool call or thirty.
         """
-        usage = event.get("usage")
         if not isinstance(usage, dict):
             return
         tokens = sum(
@@ -372,6 +426,11 @@ class ChatSession:
                                 if isinstance(name, str)])
                     elif event.get("subtype") == "commands_changed":
                         self._set_commands(event.get("commands") or [])
+                if event.get("type") == "assistant":
+                    # Per-call usage — see _take_context on why the turn's
+                    # own total is the wrong number here.
+                    self._take_context(
+                        (event.get("message") or {}).get("usage"))
                 for norm in _normalise(event):
                     # Deltas and run stats are live-only: the assistant event
                     # that follows carries the same text as a whole block, so
@@ -379,7 +438,6 @@ class ChatSession:
                     # transcript a reload repaints.
                     self._emit(norm, keep=norm.pop("_keep", True))
                 if event.get("type") == "result":
-                    self._take_context(event)
                     self._busy_since = 0.0
                     self._set_state("ready")
                     self._persist()
