@@ -6,6 +6,20 @@ on:
   pull_request:
     branches: [main]
 
+# Every job here checks out the repo and runs a linter or the test suite.
+# None of them calls the API, pushes, comments, or uploads an artifact — so
+# none of them needs a token that could. Without this block the jobs inherit
+# whatever the repository default is, which for an older repo is read/write
+# on every scope, and the blast radius of a compromised third-party action
+# is that default rather than what the job actually does.
+#
+# build.yml, codeql.yml and label-by-addon.yml already declare theirs and
+# widen it per job where it is genuinely needed (`packages: write` for the
+# registry push, `security-events: write` for the SARIF upload). Nothing
+# here needs widening.
+permissions:
+  contents: read
+
 jobs:
   tests:
     name: Python tests
