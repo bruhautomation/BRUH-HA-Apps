@@ -288,9 +288,16 @@ class BrainUsageTrackerSensor(SensorEntity):
       ``api_key_has_no_usage_limits``   signed in with an API key, which
                                         bills per token and has no window
       ``http_401``                      the token was found and refused
+      ``http_429``                      the usage endpoint is rate-limiting
+                                        the poll — nothing to do with the
+                                        account's own usage; brAIn backs off
       ``network_error`` / ``http_5xx``  Anthropic unreachable right now
       ``stale``                         last reading is too old to trust
       ``not_running``                   no file at all — tracker never wrote
+
+    A status the tracker can gloss arrives with a ``detail`` attribute, and
+    the codes that most need one are the codes people read as something
+    else: ``http_429`` is the endpoint's limit, not a usage cap.
     """
 
     _attr_has_entity_name = True
@@ -325,6 +332,9 @@ class BrainUsageTrackerSensor(SensorEntity):
 
         error = data.get("error")
         if error:
+            detail = data.get("detail")
+            if detail:
+                attrs["detail"] = str(detail)
             self._attr_native_value = str(error)
             self._attrs = attrs
             return

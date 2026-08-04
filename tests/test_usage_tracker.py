@@ -17,6 +17,7 @@ import tempfile
 import time
 import unittest
 from datetime import datetime, timedelta, timezone
+from email.utils import format_datetime
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -371,6 +372,153 @@ class TestFreshnessGuard(unittest.TestCase):
         with open(self.mod.USAGE_FILE, "w") as fh:
             fh.write("{nope")
         self.assertFalse(self.mod._last_reading_is_fresh())
+
+
+class TestOneCredentialOneRequest(unittest.TestCase):
+    """A credential reachable by four paths is still one credential.
+
+    This is the regression that took the sensors down. run.sh exports
+    CLAUDE_CONFIG_DIR as $BRAIN_HOME/.claude and symlinks
+    $BRAIN_HOME/.config/claude onto /data/.config/claude, so all four
+    CREDENTIAL_PATHS lead to one file — the first two are literally the same
+    string. With a retry-on-401 loop above it that meant one sign-in sent
+    the same rejected request four times in a row with no pause, every poll,
+    which is what gets a token flagged on an endpoint that answers 429 with
+    quota to spare.
+
+    Every other test in this file sets ``CLAUDE_CONFIG_DIR: None``, and that
+    variable *being set* is what creates the duplicate — so the suite could
+    not see the bug it was covering. This class sets the environment the way
+    run.sh actually does.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.home = os.path.join(self.tmp.name, "home")
+        self.secrets = os.path.join(self.tmp.name, "secrets")
+        self.shared = os.path.join(self.tmp.name, "shared", "claude_auth.json")
+        os.makedirs(os.path.join(self.home, ".claude"))
+        os.makedirs(os.path.join(self.home, ".config"))
+        os.makedirs(self.secrets)
+        os.makedirs(os.path.dirname(self.shared))
+        # What run.sh does: CLAUDE_CONFIG_DIR is $BRAIN_HOME/.claude, and
+        # $BRAIN_HOME/.config/claude is a symlink to the shared config dir.
+        os.symlink(os.path.join(self.home, ".claude"),
+                   os.path.join(self.home, ".config", "claude"))
+        self.mod = load_tracker({
+            "BRAIN_HOME": self.home,
+            "BRAIN_SECRETS": self.secrets,
+            "BRAIN_SHARED_AUTH": self.shared,
+            "CLAUDE_CONFIG_DIR": os.path.join(self.home, ".claude"),
+        })
+        self.cli = os.path.join(self.home, ".claude", ".credentials.json")
+
+    def _write_cli(self, token):
+        with open(self.cli, "w") as fh:
+            json.dump({"claudeAiOauth": {"accessToken": token}}, fh)
+
+    def test_the_paths_really_do_collide(self):
+        """Guards the premise: if this stops being true the test below is
+        passing for the wrong reason."""
+        self.assertGreater(len(self.mod.CREDENTIAL_PATHS),
+                           len({os.path.realpath(p)
+                                for p in self.mod.CREDENTIAL_PATHS}))
+
+    def test_one_sign_in_is_offered_once(self):
+        self._write_cli("sk-ant-oat01-cli")
+        self.assertEqual(list(self.mod.oauth_tokens()), ["sk-ant-oat01-cli"])
+
+    def test_a_refused_credential_is_not_retried_against_itself(self):
+        """The burst: four identical 401s per poll, no delay between them."""
+        self._write_cli("sk-ant-oat01-revoked")
+        tried = []
+
+        def fake_fetch(token):
+            tried.append(token)
+            return None, "http_401"
+
+        self.mod.fetch_usage_limits = fake_fetch
+        _, error = self.mod._fetch_with_any_credential({})
+        self.assertEqual(tried, ["sk-ant-oat01-revoked"])
+        self.assertEqual(error, "http_401")
+
+    def test_the_same_token_in_two_stores_is_one_credential(self):
+        """The three stores can hold one token that arrived by three routes,
+        so collapsing paths is not enough on its own."""
+        self._write_cli("sk-ant-oat01-same")
+        with open(os.path.join(self.secrets, "claude_auth.json"), "w") as fh:
+            json.dump({"type": "oauth_token", "value": "sk-ant-oat01-same"}, fh)
+        with open(self.shared, "w") as fh:
+            json.dump({"type": "oauth_token", "value": "sk-ant-oat01-same"}, fh)
+        self.assertEqual(list(self.mod.oauth_tokens()), ["sk-ant-oat01-same"])
+
+    def test_distinct_credentials_are_all_still_offered(self):
+        """Dedup must not cost the fall-through the retry loop exists for."""
+        self._write_cli("sk-ant-oat01-cli")
+        with open(os.path.join(self.secrets, "claude_auth.json"), "w") as fh:
+            json.dump({"type": "oauth_token", "value": "sk-ant-oat01-panel"}, fh)
+        with open(self.shared, "w") as fh:
+            json.dump({"type": "oauth_token", "value": "sk-ant-oat01-shared"}, fh)
+        self.assertEqual(list(self.mod.oauth_tokens()),
+                         ["sk-ant-oat01-cli", "sk-ant-oat01-panel",
+                          "sk-ant-oat01-shared"])
+
+
+class TestRateLimitBackoff(unittest.TestCase):
+    """Retrying a 429 is what sustains it, so a 429 buys real quiet."""
+
+    def setUp(self):
+        self.mod = load_tracker({})
+
+    def test_each_strike_lengthens_the_wait(self):
+        waits = [self.mod._rate_limit_delay(n, None) for n in (1, 2, 3)]
+        self.assertEqual(waits, sorted(waits))
+        self.assertEqual(len(set(waits)), 3)
+
+    def test_the_wait_stops_growing_at_the_cap(self):
+        capped = self.mod._rate_limit_delay(len(self.mod.RATE_LIMIT_BACKOFF_S),
+                                            None)
+        self.assertEqual(self.mod._rate_limit_delay(99, None), capped)
+
+    def test_a_polling_interval_is_never_the_answer_to_a_429(self):
+        self.assertGreater(self.mod._rate_limit_delay(1, None),
+                           self.mod.POLL_INTERVAL)
+
+    def test_retry_after_zero_does_not_mean_retry_now(self):
+        """The endpoint sends `Retry-After: 0` while still refusing
+        (anthropics/claude-code#30930). Obeying it is how a tracker retries
+        straight back into the limit it was just told about."""
+        self.assertEqual(self.mod._rate_limit_delay(1, 0),
+                         self.mod._rate_limit_delay(1, None))
+
+    def test_the_server_may_lengthen_the_wait(self):
+        floor = self.mod._rate_limit_delay(1, None)
+        self.assertEqual(self.mod._rate_limit_delay(1, floor + 600),
+                         floor + 600)
+
+    def test_an_absurd_retry_after_is_capped(self):
+        self.assertEqual(self.mod._rate_limit_delay(1, 10 ** 9),
+                         self.mod.RETRY_AFTER_MAX_S)
+
+    def test_retry_after_reads_seconds_and_dates(self):
+        self.assertEqual(self.mod._parse_retry_after({"Retry-After": "120"}), 120)
+        self.assertIsNone(self.mod._parse_retry_after({}))
+        self.assertIsNone(self.mod._parse_retry_after(None))
+        self.assertIsNone(self.mod._parse_retry_after({"Retry-After": "soon"}))
+        when = format_datetime(datetime.now(timezone.utc) + timedelta(minutes=10))
+        seconds = self.mod._parse_retry_after({"Retry-After": when})
+        self.assertIsNotNone(seconds)
+        self.assertGreater(seconds, 500)
+
+    def test_a_rate_limit_does_not_blank_a_working_reading(self):
+        """A 429 says nothing about the sign-in, so it must not overwrite
+        good numbers the way a settled auth fact does."""
+        self.assertNotIn("http_429", self.mod.AUTH_PROBLEMS)
+
+    def test_the_status_arrives_with_an_explanation(self):
+        detail = self.mod.ERROR_DETAIL.get("http_429", "")
+        self.assertIn("not your", detail.lower())
 
 
 if __name__ == "__main__":

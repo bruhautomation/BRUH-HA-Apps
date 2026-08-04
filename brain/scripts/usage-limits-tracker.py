@@ -15,8 +15,23 @@ Claude Code's own credentials file, then the panel's store, then the file
 through the panel — the primary sign-in surface — left the tracker
 reporting `no_oauth_token` and every usage sensor unavailable while the
 rest of the add-on was perfectly authenticated.
+
+**This endpoint is polled gently, and the reason is the endpoint.** It is
+undocumented, it is rate-limited far harder than anything else brAIn
+touches, and a token that gets hammered on it enters a state where it
+answers 429 with quota to spare — and keeps answering 429 after the window
+that supposedly caused it has passed (anthropics/claude-code#30930,
+#31021, #31637). Claude Code's own client calls it *on demand only*, from
+the `/usage` screen, never on a timer. So three rules hold here and are
+each a bug that happened: a credential is offered **once** however many
+paths lead to it, a 429 escalates into real minutes of silence rather than
+the ordinary retry cadence, and `Retry-After` may only ever lengthen that
+silence — the endpoint sends `Retry-After: 0` while still refusing, so
+obeying it literally is how a tracker retries straight back into the limit
+it was just told about.
 """
 
+import hashlib
 import json
 import os
 import sys
@@ -24,6 +39,7 @@ import time
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -32,7 +48,7 @@ from datetime import datetime, timezone
 CLAUDE_HOME = os.environ.get("BRAIN_HOME") or os.environ.get("HOME", "/data/home")
 CLAUDE_CONFIG_DIR = os.environ.get("CLAUDE_CONFIG_DIR", "")
 USAGE_FILE = "/config/.brain/usage_limits.json"
-POLL_INTERVAL = int(os.environ.get("USAGE_LIMITS_INTERVAL", "120"))  # seconds
+POLL_INTERVAL = int(os.environ.get("USAGE_LIMITS_INTERVAL", "300"))  # seconds
 # How long a reading stays usable when polls start failing. Matches
 # usage_store.LIMITS_MAX_AGE_S, which is the panel's own staleness rule for
 # the same file — two answers to "is this still true" would be one too many.
@@ -41,8 +57,30 @@ STALE_AFTER_S = 2 * 3600
 # token cannot die between being chosen and being used.
 EXPIRY_SKEW_S = 60
 # Statuses that are settled facts about the sign-in rather than weather.
-# These overwrite a good reading; a network blip does not.
+# These overwrite a good reading; a network blip does not. A 429 is
+# deliberately absent: it says nothing about the sign-in, so it must not
+# blank four working sensors — it lets the last reading age out instead.
 AUTH_PROBLEMS = ("no_oauth_token", "api_key_has_no_usage_limits", "http_401")
+# What to wait after consecutive 429s. Being rate-limited is not an error to
+# retry at the ordinary cadence: retrying is what sustains it, so each strike
+# buys real quiet, and the last value repeats forever rather than growing
+# without bound.
+RATE_LIMIT_BACKOFF_S = (900, 1800, 3600)
+# A ceiling on a server-supplied Retry-After, so one absurd header cannot
+# park the tracker for a day.
+RETRY_AFTER_MAX_S = 6 * 3600
+# What to wait after five consecutive failures that are *not* rate limits.
+FAILURE_BACKOFF_S = 900
+# What a status means, for the diagnostic sensor to show beside it. HA hides
+# an unavailable entity's attributes, so a code with no gloss is a code the
+# one person who needs it reads on a support thread instead.
+ERROR_DETAIL = {
+    "http_429": (
+        "Anthropic rate-limited the usage endpoint itself — this is not your "
+        "account's usage, and no amount of quota clears it. brAIn has backed "
+        "off and will pick the reading up again on its own."
+    ),
+}
 
 ANTHROPIC_USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 
@@ -86,18 +124,58 @@ def oauth_tokens(state=None):
     and "found a token that works" are different claims and only the second
     one matters. Why there is none at all is a separate question with a
     separate answer: see credential_problem().
+
+    **Each distinct credential is yielded once.** The caller retries the
+    next one on a 401, so a duplicate is not a second chance — it is the
+    same rejected request sent again with no pause, which is exactly what
+    gets a token flagged on an endpoint this sensitive. And duplicates were
+    the normal case, not the edge: run.sh exports CLAUDE_CONFIG_DIR as
+    $BRAIN_HOME/.claude, making the first two CREDENTIAL_PATHS the *same
+    string*, and symlinks $BRAIN_HOME/.config/claude onto /data/.config/claude,
+    making the other two the same file. One sign-in, four identical requests
+    per poll, every poll. Paths are collapsed by realpath and credentials by
+    digest, because the three stores can equally well hold one token that
+    arrived by three routes.
     """
+    seen_paths = set()
+    seen_tokens = set()
+
+    def unseen(token):
+        """True the first time this exact credential is offered.
+
+        Compared by digest rather than by value: recognising a repeat is
+        all this needs, and a set of live credentials kept for the length
+        of a poll is a copy of the secret that nothing asked for.
+        """
+        digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        if digest in seen_tokens:
+            return False
+        seen_tokens.add(digest)
+        return True
+
+    def unread(path):
+        """True the first time this file is read, symlinks resolved."""
+        real = os.path.realpath(path)
+        if real in seen_paths:
+            return False
+        seen_paths.add(real)
+        return True
+
     for path in CREDENTIAL_PATHS:
+        if not unread(path):
+            continue
         token = _read_token_from_file(path)
-        if token:
+        if token and unseen(token):
             _note_source(state, "claude cli")
             yield token
 
     for path, label in BRAIN_AUTH_PATHS:
+        if not unread(path):
+            continue
         data = _load_brain_auth(path)
         if _auth_kind(data) == "oauth_token":
             value = _auth_value(data)
-            if value:
+            if value and unseen(value):
                 _note_source(state, label)
                 yield value
 
@@ -124,7 +202,7 @@ def credential_problem():
 
 
 def _note_source(state, label):
-    """Log which store answered, once, not every two minutes."""
+    """Log which store answered, once, not every poll."""
     if state is None:
         return
     if state.get("auth") != label:
@@ -211,6 +289,49 @@ def _auth_value(data):
 # Anthropic API
 # ---------------------------------------------------------------------------
 
+# Where fetch_usage_limits leaves the server's Retry-After for the sleep at
+# the bottom of the loop to read. A module-level holder rather than a third
+# return value because the hint is advice about *waiting* and every caller
+# and test of fetch_usage_limits is about the (data, error) answer — widening
+# that pair everywhere to carry a number only one line reads is the worse
+# trade. Cleared at the start of each poll so a stale hint cannot outlive
+# the response it came with.
+_retry_after = {"seconds": None}
+
+
+def _parse_retry_after(headers):
+    """Retry-After as seconds from now, or None.
+
+    RFC 9110 allows either a delay in seconds or an HTTP-date, and both turn
+    up in the wild, so both are read. Anything unparseable is None: no hint
+    is a better answer than a wrong one, since the schedule works without it.
+    """
+    try:
+        raw = headers.get("Retry-After") if headers is not None else None
+    except AttributeError:
+        return None
+    if raw is None:
+        return None
+    raw = str(raw).strip()
+    if not raw:
+        return None
+
+    try:
+        return max(0.0, float(int(raw)))
+    except ValueError:
+        pass
+
+    try:
+        when = parsedate_to_datetime(raw)
+    except (TypeError, ValueError):
+        return None
+    if when is None:
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return max(0.0, (when - datetime.now(timezone.utc)).total_seconds())
+
+
 def fetch_usage_limits(token):
     """Fetch account usage limits from the Anthropic API.
 
@@ -244,6 +365,10 @@ def fetch_usage_limits(token):
         sys.stderr.write(
             f"usage-limits-tracker: HTTP {status} from Anthropic API: {body}\n"
         )
+        if status == 429:
+            _retry_after["seconds"] = _parse_retry_after(
+                getattr(exc, "headers", None)
+            )
         # 401 is its own answer: the token was found and refused, which is a
         # different thing to fix than a token that was never there.
         return None, f"http_{status}"
@@ -279,7 +404,7 @@ def write_usage(data):
         sys.stderr.write(f"usage-limits-tracker: write error: {exc}\n")
 
 
-def write_error_status(error_msg):
+def write_error_status(error_msg, detail=None):
     """Write an error status file so sensors know what's wrong."""
     os.makedirs(os.path.dirname(USAGE_FILE), exist_ok=True)
     output = {
@@ -287,6 +412,8 @@ def write_error_status(error_msg):
         "updated_at": datetime.now(timezone.utc).isoformat(),
         "error": error_msg,
     }
+    if detail:
+        output["detail"] = detail
     tmp = USAGE_FILE + ".tmp"
     try:
         with open(tmp, "w") as fh:
@@ -343,6 +470,7 @@ def _fetch_with_any_credential(state):
     Anything other than a 401 is about the request rather than the
     credential, so it stops here.
     """
+    _retry_after["seconds"] = None
     data = error = None
     for token in oauth_tokens(state):
         data, error = fetch_usage_limits(token)
@@ -356,7 +484,12 @@ def _fetch_with_any_credential(state):
 
 
 def run_once(state):
-    """Fetch usage limits and write to file. Returns True on success."""
+    """Fetch usage limits and write to file → (succeeded, error).
+
+    The error comes back rather than just a bool because the loop's next
+    sleep depends on *which* failure this was: a rate limit has to be waited
+    out, and everything else is retried at the ordinary cadence.
+    """
     data, error = _fetch_with_any_credential(state)
 
     if data is None:
@@ -369,18 +502,33 @@ def run_once(state):
         # A settled fact about the sign-in is worth saying even over good
         # numbers; a blip waits for the reading to age out instead.
         if error in AUTH_PROBLEMS or not _last_reading_is_fresh():
-            write_error_status(error)
-        return False
+            write_error_status(error, ERROR_DETAIL.get(error))
+        return False, error
 
     if "error" in data:
         sys.stderr.write(
             f"usage-limits-tracker: API error: {data.get('error')}\n"
         )
         write_error_status(str(data.get("error")))
-        return False
+        return False, str(data.get("error"))
 
     write_usage(data)
-    return True
+    return True, None
+
+
+def _rate_limit_delay(strikes, retry_after):
+    """How long to stay off the endpoint after `strikes` consecutive 429s.
+
+    The schedule is a floor the server may raise and never lower. This
+    endpoint answers `Retry-After: 0` while still refusing, so a tracker
+    that obeys the header literally retries straight back into the limit it
+    was just told about — and each of those retries is what keeps the limit
+    in place.
+    """
+    step = RATE_LIMIT_BACKOFF_S[min(strikes, len(RATE_LIMIT_BACKOFF_S)) - 1]
+    if isinstance(retry_after, (int, float)) and retry_after > step:
+        return min(float(retry_after), RETRY_AFTER_MAX_S)
+    return float(step)
 
 
 def main():
@@ -396,16 +544,20 @@ def main():
     time.sleep(initial_delay)
 
     consecutive_failures = 0
+    # Consecutive 429s. Separate from the count above because a rate limit
+    # is the one failure that retrying makes worse.
+    rate_limit_strikes = 0
     last_logged = None
     # Which credential store answered last time, so the log says so once
-    # rather than every two minutes.
+    # rather than every poll.
     state = {}
 
     while True:
         try:
-            success = run_once(state)
+            success, error = run_once(state)
             if success:
                 consecutive_failures = 0
+                rate_limit_strikes = 0
                 # Log only when the numbers change — an unconditional
                 # heartbeat every poll floods the add-on log (a third of
                 # its lines at the default interval).
@@ -429,22 +581,41 @@ def main():
                     pass
             else:
                 consecutive_failures += 1
+                if error == "http_429":
+                    rate_limit_strikes += 1
+                else:
+                    rate_limit_strikes = 0
                 # Announce the slowdown once, on the poll that causes it —
                 # `>=` here logged the same line every five minutes forever.
-                if consecutive_failures == 5:
+                # A rate limit says its own piece below, with a number.
+                if consecutive_failures == 5 and not rate_limit_strikes:
                     sys.stderr.write(
                         "usage-limits-tracker: 5 consecutive failures, "
-                        "backing off to 5-minute interval\n"
+                        f"backing off to {FAILURE_BACKOFF_S // 60} minutes\n"
                     )
         except Exception as exc:
             sys.stderr.write(f"usage-limits-tracker: error: {exc}\n")
             consecutive_failures += 1
+            rate_limit_strikes = 0
 
-        # Back off if failing repeatedly
-        if consecutive_failures >= 5:
-            time.sleep(300)  # 5 minutes
+        if rate_limit_strikes:
+            delay = _rate_limit_delay(rate_limit_strikes,
+                                      _retry_after["seconds"])
+            # Every strike up to the cap lengthens the wait, so each one is
+            # news; past the cap the number stops changing and so does the
+            # log, rather than repeating the same line forever.
+            if rate_limit_strikes <= len(RATE_LIMIT_BACKOFF_S):
+                sys.stderr.write(
+                    "usage-limits-tracker: rate-limited by the usage endpoint "
+                    f"(not your account's usage) — waiting {delay / 60:.0f} "
+                    "minutes before asking again\n"
+                )
+        elif consecutive_failures >= 5:
+            delay = FAILURE_BACKOFF_S
         else:
-            time.sleep(POLL_INTERVAL)
+            delay = POLL_INTERVAL
+
+        time.sleep(delay)
 
 
 if __name__ == "__main__":
