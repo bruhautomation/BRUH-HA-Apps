@@ -23,18 +23,21 @@ findings store from a request-handler thread (``asyncio.to_thread``) while
 run. It is what made ``test_fix_and_snooze_offer_no_undo`` fail about one
 run in three.
 
-The fix is a scratch name nobody else can pick — ``mkstemp`` in the target's
-own directory, so ``os.replace`` is still a same-filesystem rename and still
-atomic.
+The fix is a scratch name nobody else can pick — a random one, created
+``O_EXCL`` in the target's own directory, so ``os.replace`` is still a
+same-filesystem rename and still atomic.
 
 Two things this has to carry over from the old code, and both are the kind
 of regression that only shows up in somebody's log weeks later:
 
-* **Mode.** ``mkstemp`` creates ``0600``. ``Path.write_text`` created
-  ``0644`` under the add-on's umask, and several of these files are written
-  by root and read by the ``claude`` user. Silently narrowing them would
-  break the terminal, the listeners and the consolidator with a permission
-  error nothing reports.
+* **Mode.** ``Path.write_text`` created the file at ``0666`` and let the
+  umask narrow it — 0644 under the add-on's — and several of these files are
+  written by root and read by the ``claude`` user. So the scratch file is
+  opened the same way rather than chmod-ed to a fixed number: silently
+  narrowing them would break the terminal, the listeners and the
+  consolidator with a permission error nothing reports, and silently
+  *widening* them under a stricter umask would be its own surprise. An
+  existing file keeps whatever mode it already had.
 * **Owner.** ``os.replace`` swaps in a new inode, so a file that was
   ``claude``-owned comes back owned by whoever wrote it. ``run.sh`` creates
   ``/data/run-sources.jsonl`` claude-owned precisely so both halves can
@@ -47,40 +50,63 @@ from __future__ import annotations
 
 import json
 import os
-import tempfile
 from pathlib import Path
 
-# What a file gets when it does not exist yet. 0o644 rather than a umask
-# read, because reading the umask means setting it first and that is not
-# thread-safe — and 0o644 is what these files already are under the add-on's
-# umask of 022.
-DEFAULT_MODE = 0o644
+# What a NEW file is created with — the mode passed to open(), which the
+# process umask then narrows, exactly as it did for `Path.write_text`
+# (0o644 under the add-on's umask of 022). Deliberately not a chmod to a
+# fixed number: reading the umask means setting it first, which is not
+# thread-safe, and hard-coding the result would silently widen these files
+# for anyone running under a stricter one.
+CREATE_MODE = 0o666
 
 
-def _preserved(path: Path) -> tuple[int, int, int]:
-    """The mode, uid and gid the file already has, or the defaults."""
+def _preserved(path: Path) -> tuple[int | None, int, int]:
+    """The mode, uid and gid the file already has.
+
+    ``None`` for the mode when there is no file yet — meaning "let the open
+    mode and the umask decide", which is what the old code did by never
+    setting a mode at all.
+    """
     try:
         st = path.stat()
     except OSError:
-        return DEFAULT_MODE, -1, -1
+        return None, -1, -1
     return st.st_mode & 0o777, st.st_uid, st.st_gid
+
+
+def _scratch(directory: Path, name: str) -> tuple[int, str]:
+    """Create an empty file nobody else can have picked, and open it.
+
+    ``O_EXCL`` is what makes the name safe: two writers racing here both
+    propose a random name, and a collision fails rather than silently
+    sharing a file — which is the entire bug this module exists to remove.
+    """
+    while True:
+        candidate = directory / f".{name}.{os.urandom(8).hex()}.tmp"
+        try:
+            return os.open(
+                candidate, os.O_WRONLY | os.O_CREAT | os.O_EXCL, CREATE_MODE
+            ), str(candidate)
+        except FileExistsError:
+            continue        # 64 bits collided; ask for another name
 
 
 def write_text(path, text: str, *, encoding: str = "utf-8",
                mode: int | None = None) -> None:
     """Replace ``path``'s contents with ``text``, atomically.
 
-    Creates parent directories. ``mode`` forces the result's permissions;
-    the default preserves whatever the file already had (or 0o644 for a new
-    one). Raises OSError on failure, leaving the target untouched and no
-    scratch file behind — callers that treat a failed write as survivable
-    catch it themselves, as they already did.
+    Creates parent directories. ``mode`` forces the result's permissions; by
+    default an existing file keeps the ones it had, and a new one gets what
+    the umask allows — both of which is what the code this replaces did.
+    Raises OSError on failure, leaving the target untouched and no scratch
+    file behind; callers that treat a failed write as survivable catch it
+    themselves, as they already did.
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     keep_mode, uid, gid = _preserved(path)
-    fd, tmp = tempfile.mkstemp(dir=str(path.parent),
-                               prefix=f".{path.name}.", suffix=".tmp")
+    fd, tmp = _scratch(path.parent, path.name)
     try:
         with os.fdopen(fd, "w", encoding=encoding) as handle:
             handle.write(text)
@@ -90,7 +116,13 @@ def write_text(path, text: str, *, encoding: str = "utf-8",
             # and written at human speed.
             handle.flush()
             os.fsync(handle.fileno())
-        os.chmod(tmp, keep_mode if mode is None else mode)
+        # Only ever narrows or restores: an explicit mode from the caller,
+        # or the one the file already carried. A brand-new file is left at
+        # whatever the umask gave it above.
+        if mode is not None:
+            os.chmod(tmp, mode)
+        elif keep_mode is not None:
+            os.chmod(tmp, keep_mode)
         if uid >= 0:
             try:
                 os.chown(tmp, uid, gid)
@@ -106,6 +138,9 @@ def write_text(path, text: str, *, encoding: str = "utf-8",
         try:
             os.unlink(tmp)
         except OSError:
+            # Already gone, or never created — either way the cleanup this
+            # was going to do has happened. The original error is what the
+            # caller needs, so it is re-raised below regardless.
             pass
         raise
 

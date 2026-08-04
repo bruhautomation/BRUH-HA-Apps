@@ -29,6 +29,13 @@ sys.path.insert(0, str(BASE_DIR / "brain" / "panel"))
 import atomic_write  # noqa: E402
 
 
+def _umask() -> int:
+    """The process umask, read the only way POSIX offers: by setting it."""
+    current = os.umask(0o022)
+    os.umask(current)
+    return current
+
+
 class AtomicWriteCase(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -87,15 +94,19 @@ class TestPermissions(AtomicWriteCase):
     listeners and the consolidator with an error nothing reports."""
 
     def test_a_new_file_is_not_created_private(self):
+        """mkstemp would have made it 0600. The umask decides instead —
+        which is what Path.write_text did, umask and all."""
+        expect = atomic_write.CREATE_MODE & ~_umask()
         atomic_write.write_text(self.path, "x")
-        self.assertEqual(self.path.stat().st_mode & 0o777,
-                         atomic_write.DEFAULT_MODE)
+        self.assertEqual(self.path.stat().st_mode & 0o777, expect)
+        self.assertTrue(expect & 0o044,
+                        "the `claude` user has to be able to read what root wrote")
 
     def test_an_existing_file_keeps_its_mode(self):
         self.path.write_text("old")
-        os.chmod(self.path, 0o640)
+        os.chmod(self.path, 0o600)
         atomic_write.write_text(self.path, "new")
-        self.assertEqual(self.path.stat().st_mode & 0o777, 0o640)
+        self.assertEqual(self.path.stat().st_mode & 0o777, 0o600)
 
     def test_an_explicit_mode_wins(self):
         """The handoff file is 0600 on purpose — the terminal needs it and
