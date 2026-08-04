@@ -360,8 +360,11 @@ def build_prompt(
 
     parts.append(
         "\nHOME DATA SNAPSHOT (JSON). Sections: meta (now, timezone, location name), areas, "
-        "entities (e=entity_id, s=state, n=friendly name, a=area, u=unit, dc=device_class, "
-        "lc=last_changed, x=extra attributes), device_context (entities sharing a physical "
+        "entities (e=entity_id, s=state, n=friendly name — ABSENT when it is just the "
+        "entity_id prettified, so read the id in that case, a=area, u=unit, dc=device_class, "
+        "lc=MINUTES since it last changed, x=extra attributes; an unavailable or unknown "
+        "entity carries only e/s/a because it has no reading to describe), device_context "
+        "(entities sharing a physical "
         "device with a presence tracker — phone SSID/geocoded address/activity/battery; "
         "d=device name), history (per entity: h=[[time, value|state], ...] downsampled), "
         "statistics (per entity hourly sum/mean), context (optional notes about this home)."

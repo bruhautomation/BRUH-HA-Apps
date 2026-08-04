@@ -35,6 +35,24 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 
 ### Changed
 
+- **A card's data snapshot got 29% smaller, and lost nothing.** A question
+  sends every entity in the home, so a character on one row is 500 characters
+  on the prompt — and three fields were paying for something nobody read:
+
+  - `lc` is now **minutes since it last changed**, not a 19-character ISO
+    timestamp. Staleness is the only thing last_changed was ever read for, and
+    the model had to diff the timestamp against `meta.now` to get there.
+    Minutes rather than hours because "6 minutes ago" and "an hour ago" are
+    different facts and cost the same to say.
+  - `n` is **dropped when it is just the entity_id prettified**, which is what
+    Home Assistant names an entity by default — a second copy of a string
+    already on the row. A renamed entity still carries the name.
+  - an **unavailable entity keeps only its id, state and area**. Its unit and
+    device class describe a reading that isn't there.
+
+  Measured on a 500-entity home: 72,943 → 52,086 characters, roughly 5k fewer
+  input tokens on every card and every question.
+
 - **The docs now say what a card costs**, and which kind is expensive. A
   category card sends that category's slice of the home; a question typed
   into the ask bar sends *every* entity plus device context, because the

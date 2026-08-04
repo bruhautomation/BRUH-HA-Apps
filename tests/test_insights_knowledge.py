@@ -11,6 +11,7 @@ Covers:
 """
 
 import asyncio
+import datetime as dt
 import importlib
 import json
 import os
@@ -306,6 +307,103 @@ class TestDeviceContext(unittest.TestCase):
              "attributes": {"source_type": "gps", "battery_level": 81}}, None)
         self.assertEqual(slim["x"]["source_type"], "gps")
         self.assertEqual(slim["x"]["battery_level"], 81)
+
+    # -- the row is the prompt, so its encoding is a cost ------------------
+    #
+    # A question sends every entity in the home, so a character on a row is
+    # 500 characters on the prompt. Each of these keeps the signal the field
+    # carries and stops paying for the part that was never read.
+
+    def test_last_changed_is_minutes_not_a_timestamp(self):
+        """Staleness is what last_changed is for, and minutes say it.
+
+        Nineteen characters of absolute time cost three times what the
+        answer does, and made the model diff it against meta.now to get
+        there. Minutes rather than hours because "6 minutes ago" and "an
+        hour ago" are different facts and the two cost the same.
+        """
+        now = dt.datetime(2026, 8, 3, 21, 0, 0, tzinfo=dt.timezone.utc)
+
+        def lc(changed):
+            return self.ha_data.slim_state(
+                {"entity_id": "sensor.hall_temp", "state": "21.5",
+                 "last_changed": changed,
+                 "attributes": {"friendly_name": "Landing Sensor"}}, None, now)["lc"]
+
+        self.assertEqual(lc("2026-08-03T18:30:00+00:00"), 150)
+        # Elapsed minutes are floored, the way every "x minutes ago" is: HA
+        # stamps microseconds, so 149m59.9s is 149 and not a rounded 150.
+        self.assertEqual(lc("2026-08-03T18:30:00.123456+00:00"), 149)
+        self.assertEqual(lc("2026-08-03T20:59:30+00:00"), 0)
+        # A future stamp (a clock that stepped) floors at 0 rather than
+        # reporting a negative age nothing downstream expects.
+        self.assertEqual(lc("2026-08-03T23:00:00+00:00"), 0)
+
+    def test_an_unparseable_or_absent_stamp_leaves_the_field_out(self):
+        """Absent is what a row with no last_changed already looked like."""
+        now = dt.datetime(2026, 8, 3, 21, 0, 0, tzinfo=dt.timezone.utc)
+        for state in ({"entity_id": "sensor.x", "state": "1", "attributes": {}},
+                      {"entity_id": "sensor.x", "state": "1", "attributes": {},
+                       "last_changed": "not a timestamp"}):
+            self.assertNotIn("lc", self.ha_data.slim_state(state, None, now))
+        # No `now` to measure against — every existing caller that passes
+        # none keeps working, it just spends nothing on the field.
+        self.assertNotIn("lc", self.ha_data.slim_state(
+            {"entity_id": "sensor.x", "state": "1", "attributes": {},
+             "last_changed": "2026-08-03T18:30:00+00:00"}, None))
+
+    def test_a_default_friendly_name_is_not_sent_twice(self):
+        """HA names an entity by slugifying its name, so `n` is usually `e`."""
+        default = self.ha_data.slim_state(
+            {"entity_id": "sensor.back_door_battery", "state": "3",
+             "attributes": {"friendly_name": "Back Door Battery"}}, None)
+        self.assertNotIn("n", default)
+        # A renamed entity keeps its name — that is the case the field exists
+        # for, and dropping it there would lose what the homeowner calls it.
+        renamed = self.ha_data.slim_state(
+            {"entity_id": "sensor.zb_0x4c11_batt", "state": "3",
+             "attributes": {"friendly_name": "Back Door Battery"}}, None)
+        self.assertEqual(renamed["n"], "Back Door Battery")
+
+    def test_an_unavailable_entity_carries_only_that(self):
+        """Its unit and device class describe a reading that is not there.
+
+        "This exists and is down" is the whole of what the row has to say,
+        and a question bundle includes every one of them.
+        """
+        now = dt.datetime(2026, 8, 3, 21, 0, 0, tzinfo=dt.timezone.utc)
+        for value in ("unavailable", "unknown"):
+            slim = self.ha_data.slim_state(
+                {"entity_id": "sensor.zb_0x4c11_batt", "state": value,
+                 "last_changed": "2026-08-01T18:30:00+00:00",
+                 "attributes": {"friendly_name": "Back Door Battery",
+                                "unit_of_measurement": "%",
+                                "device_class": "battery"}}, "Hall", now)
+            self.assertEqual(slim, {"e": "sensor.zb_0x4c11_batt", "s": value,
+                                    "a": "Hall"})
+
+    def test_the_whole_home_costs_measurably_less(self):
+        """The saving is the point, so it is asserted rather than assumed."""
+        now = dt.datetime(2026, 8, 3, 21, 0, 0, tzinfo=dt.timezone.utc)
+        states, registries = [], {"entity_area": {}, "hidden": set(),
+                                  "entity_device": {}, "device_names": {},
+                                  "areas": ["Hall"]}
+        for i in range(200):
+            eid = f"sensor.upstairs_hall_temperature_{i}"
+            states.append({
+                "entity_id": eid, "state": "unavailable" if i % 12 == 0 else "21.5",
+                "last_changed": "2026-08-03T18:30:00+00:00",
+                "attributes": {"friendly_name": f"Upstairs Hall Temperature {i}",
+                               "unit_of_measurement": "°C",
+                               "device_class": "temperature"}})
+            registries["entity_area"][eid] = "Hall"
+        rows = self.ha_data.filter_states(states, registries, [], [],
+                                          include_unavailable=True, now=now)
+        self.assertEqual(len(rows), 200)
+        chars = len(json.dumps(rows, ensure_ascii=False, separators=(",", ":")))
+        # The pre-slimming encoding of the same 200 rows measured ~29,600
+        # chars; anything near that means an encoding has regressed.
+        self.assertLess(chars, 21_000, f"entity rows cost {chars} chars")
 
     def test_shrink_trims_device_context(self):
         bundle = {
