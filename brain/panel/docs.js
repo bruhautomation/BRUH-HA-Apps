@@ -861,14 +861,43 @@ Both come from your Anthropic account when you signed in with a subscription; wi
 API key there is no account usage to read, so the session figure falls back to an
 estimate of brAIn's own spending and the weekly one isn't shown.
 
+## What a card costs, and where to see it
+
+A card is not a chat message. Generating one posts a snapshot of your home to Claude and
+gets a whole rendered visualization back, so **a single card is typically 25k–45k
+tokens** — a few percent of a Pro session each, and several cards in a row is a real
+bite out of a 5-hour window.
+
+The size is mostly the snapshot, and **an asked question is the expensive kind**: a
+category card sends that category's slice of the home, while a question typed into the
+ask bar sends *every* entity (up to 500) plus device context, because the question could
+be about anything. That is why three answers can cost what a dozen category refreshes do.
+
+Three places now say so, and they say the same number:
+
+- **While it runs** — the card's spinner line reads \`500 entities · ~33k tokens sent\`,
+  so the size is visible before the answer is.
+- **After it runs** — the card's footer shows \`41.2k tokens\` beside the stopwatch.
+  Hover it for the input/output split. Seconds and tokens are different readings: a fast
+  card over the whole home outspends a slow one over eight thermostats.
+- **Across the window** — press the usage pill. Under the two windows is *What brAIn
+  spent, this session*, itemized per card. When the percentage is your account's live
+  figure it covers everything on your subscription — terminal, chat and voice included —
+  and the list underneath is only brAIn's own generation runs.
+
+The add-on log carries the same numbers, one line per run:
+\`custom-1785807758 cost 41.3k tokens (33.2k in + 8.1k out; 0 read from cache, free)\`.
+
 Biggest levers, in order:
 
-1. **Fixed daily times** on a card ("07:00, 19:00") instead of an interval.
-2. **Disable cards you don't read.** Each card's **⋯ → Edit** dialog has an Enabled
+1. **Ask fewer open questions, or turn the good ones into cards.** A repeated question is
+   cheaper as a scheduled card, which sends only the slice it needs.
+2. **Fixed daily times** on a card ("07:00, 19:00") instead of an interval.
+3. **Disable cards you don't read.** Each card's **⋯ → Edit** dialog has an Enabled
    switch.
-3. **A smaller model.** Settings → Claude model. Smaller models cost far fewer tokens;
+4. **A smaller model.** Settings → Claude model. Smaller models cost far fewer tokens;
    the bigger ones dig deeper.
-4. **Fewer history days.** Settings → History analyzed.
+5. **Fewer history days.** Settings → History analyzed.
 
 ## How deep it digs
 

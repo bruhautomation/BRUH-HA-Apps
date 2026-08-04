@@ -39,6 +39,7 @@ import findings_store  # noqa: E402
 import knowledge_store  # noqa: E402
 import prompt_store  # noqa: E402
 import settings_store  # noqa: E402
+import usage_store  # noqa: E402
 import user_categories  # noqa: E402
 
 
@@ -920,6 +921,11 @@ class InsightsServerCase(unittest.TestCase):
         findings_store.FINDINGS_FILE = Path(self.tmp.name) / "findings.json"
         findings_store.INBOX_DIR = Path(self.tmp.name) / "findings-inbox"
         card_tags.TAGS_FILE = Path(self.tmp.name) / "card_tags.json"
+        # Every generation books its tokens against the run ledger, so the
+        # ledger is part of the fixture — without this a test run writes to
+        # the real /data/usage.json and every case sees the last one's spend.
+        self._old_usage = usage_store.USAGE_FILE
+        usage_store.USAGE_FILE = os.path.join(self.tmp.name, "usage.json")
         self._old_www = self.server.WWW_CARD_DIR
         self.server.WWW_CARD_DIR = Path(self.tmp.name) / "www" / "bruh_insights"
         self.server.JOBS.clear()
@@ -936,6 +942,7 @@ class InsightsServerCase(unittest.TestCase):
         self.server.CARD_TOKEN_FILE = self._old_card_token
         knowledge_store.KNOWLEDGE_FILE = self._old_knowledge
         self.server.SHARED_MEMORY_FILE = self._old_shared_mem
+        usage_store.USAGE_FILE = self._old_usage
         self.server.WWW_CARD_DIR = self._old_www
         self.server.JOBS.clear()
         self.tmp.cleanup()
@@ -1317,6 +1324,59 @@ class TestGenerateFlow(InsightsServerCase):
         self.assertEqual(stored["icon"], "🧊")
         # user categories keep run history like shipped ones
         self.assertTrue((Path(self.tmp.name) / "history" / cat["id"]).exists())
+
+    def test_a_run_reports_what_it_cost(self):
+        """A card carries the price of the run that made it.
+
+        The token counts were always in the result envelope and the card
+        always stored the envelope — but only the stopwatch was ever
+        rendered, so an expensive card and a cheap one looked identical and
+        the only evidence either way was a percentage in the top bar
+        attributable to nothing.
+        """
+        engine.run_claude = lambda *a, **k: {
+            "ok": True, "text": json.dumps(self.reply), "error": "",
+            "meta": {"duration_ms": 5,
+                     "usage": {"input_tokens": 30_000, "output_tokens": 8_000,
+                               "cache_creation_input_tokens": 1_000,
+                               "cache_read_input_tokens": 12_000}}}
+        asyncio.run(self.server._generate("energy"))
+        cost = self._stored()["meta"]["cost"]
+        self.assertEqual(cost, {"input": 31_000, "output": 8_000,
+                                "cached": 12_000, "total": 39_000})
+        # The card and the budget read one number, derived once, server-side.
+        self.assertEqual(cost["total"], usage_store.window_tokens())
+        self.assertEqual(usage_store.window_breakdown()[0]["id"], "energy")
+
+    def test_a_running_job_says_what_it_is_sending(self):
+        """The size of the prompt is knowable before the answer is.
+
+        A generation is minutes of spinner; carrying the prompt size on the
+        job is what lets the card say how much of the home it just posted
+        while it is still waiting to hear back.
+        """
+        seen = {}
+
+        def capture(prompt, *a, **k):
+            seen["job"] = dict(self.server.JOBS["energy"])
+            seen["prompt"] = prompt
+            return {"ok": True, "text": json.dumps(self.reply), "error": "",
+                    "meta": {"duration_ms": 5}}
+
+        engine.run_claude = capture
+        asyncio.run(self.server._generate("energy"))
+        self.assertEqual(seen["job"]["state"], "generating")
+        self.assertEqual(seen["job"]["prompt_chars"], len(seen["prompt"]))
+        self.assertIn("entities", seen["job"])
+
+    def test_a_run_with_no_usage_block_still_finishes(self):
+        """Accounting never breaks the run it is accounting for."""
+        engine.run_claude = lambda *a, **k: {
+            "ok": True, "text": json.dumps(self.reply), "error": "", "meta": {}}
+        asyncio.run(self.server._generate("energy"))
+        self.assertEqual(self.server.JOBS["energy"]["state"], "done")
+        self.assertEqual(self._stored()["meta"]["cost"]["total"], 0)
+        self.assertEqual(usage_store.window_tokens(), 0)
 
 
 class TestCardsDoNotAsk(InsightsServerCase):

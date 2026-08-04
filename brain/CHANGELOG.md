@@ -2,6 +2,46 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.22.0
+
+### Added
+
+- **Every card now says what it cost.** Generating an insight is the most
+  expensive thing brAIn does — a snapshot of your home goes to Claude and a
+  whole rendered visualization comes back, typically 25k–45k tokens a card —
+  and until now the only evidence of that was the usage pill moving, with
+  nothing on screen saying which card moved it. The numbers were already
+  coming back from every run and were only ever used to add to a total.
+
+  They are now readable in four places, all reporting the same figure:
+
+  - **While it runs**, the card's spinner line reads `500 entities · ~33k
+    tokens sent`, so the size of a run is visible before its answer is.
+  - **After it runs**, the card's footer shows `41.2k tokens` beside the
+    stopwatch, with the input/output split behind a hover. Seconds and tokens
+    are different readings — a fast card over the whole home outspends a slow
+    one over eight thermostats.
+  - **Across the window**, the usage pill's popover itemizes *What brAIn
+    spent, this session*, per card, biggest first.
+  - **In the add-on log**, one line per run: `custom-1785807758 cost 41.3k
+    tokens (33.2k in + 8.1k out; 0 read from cache, free)`, plus the prompt's
+    size as it goes out.
+
+  The itemization is scoped and says so: these are brAIn's own generation,
+  fix and setup runs. When the percentage above it is your account's live
+  figure it covers your whole subscription — terminal, chat and voice
+  included — and a breakdown read as exhaustive is how you conclude a
+  terminal session is free.
+
+### Changed
+
+- **The docs now say what a card costs**, and which kind is expensive. A
+  category card sends that category's slice of the home; a question typed
+  into the ask bar sends *every* entity plus device context, because the
+  question could be about anything — which is why a few asked questions can
+  cost what a dozen scheduled refreshes do. Settings & cost lists it as the
+  first lever, above the scheduling ones.
+
 ## 1.21.0
 
 ### Added

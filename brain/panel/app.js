@@ -322,6 +322,15 @@ function fmtClock(epoch) {
     d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
+// Token counts, the way the panel says them everywhere: 41231 -> "41.2k".
+// One decimal under 100k and none above it — "412.3k" is three digits of
+// precision on a number nobody reads that closely.
+function fmtTokens(n) {
+  const v = Number(n) || 0;
+  if (v < 1000) return String(Math.round(v));
+  return (v / 1000).toFixed(v < 100000 ? 1 : 0) + "k";
+}
+
 // A weekly reset is days away, so a bare clock time is ambiguous — say which
 // day. Same short form the cards use for dates.
 function fmtDayClock(epoch) {
@@ -399,7 +408,57 @@ function fillUsagePop() {
         + `passes <b>${Math.round(u.budget_percent)}%</b>, leaving the rest of `
         + `your Claude account to you. Asking a question by hand always runs.</p>`);
   }
+  rows.push(spendRows(u));
   setChipPop($("#usageChip"), "Claude usage", rows.join(""));
+}
+
+// A run id, as the name of the thing that spent the tokens.
+//
+// The card usually still exists, so its own title is the best answer; a
+// deleted one falls back to the id it was recorded under rather than
+// disappearing from the list, because a row that vanishes takes its tokens
+// off a total that did not shrink.
+function spendLabel(id) {
+  if (!id) return "Everything else";
+  if (id === "onboarding") return "First-run setup";
+  if (id.startsWith("fix-")) return "Fix it (a finding)";
+  const insight = insightFor(id);
+  if (insight && insight.title) return insight.title;
+  const cat = (state.status && state.status.categories || []).find((c) => c.id === id);
+  if (cat && cat.title) return cat.title;
+  return id;
+}
+
+// Where the session went — the half of "you are at 41%" that the pill has
+// never been able to answer.
+//
+// The ledger has recorded a card id per run since the budget existed and
+// nothing ever read it back, so the only way to attribute a jump was to
+// remember what you had pressed. Deliberately scoped: these are brAIn's own
+// runs and the note says so, because when the figure above is the account's
+// (which covers the terminal, the chat and voice too) a breakdown read as
+// exhaustive is how you conclude a terminal session is free.
+function spendRows(u) {
+  const rows = u && u.breakdown;
+  if (!rows || !rows.length) return "";
+  const out = [`<div class="psub">What brAIn spent, this session</div>`];
+  rows.forEach((r) => {
+    const runs = r.runs > 1 ? `${r.runs} runs` : "1 run";
+    out.push(`<div class="prow"><span class="pname">`
+      + `${esc(r.rest ? "Everything else" : spendLabel(r.id))}`
+      + `<span class="pwhen">${esc(runs)}</span></span>`
+      + `<span class="pval">${esc(fmtTokens(r.tokens))}</span></div>`);
+  });
+  out.push(`<p class="pnote">`
+    + (u.source === "account"
+      ? `Insight, fix and setup runs only — the percentage above is your whole `
+        + `Anthropic account, so the terminal, the chat and voice are in that `
+        + `number and not in this list.`
+      : `Insight, fix and setup runs in the last 5 hours, against a rough `
+        + `<b>${esc(u.plan_label || "plan")}</b> allowance. Sign in with your Claude `
+        + `subscription for your account's real usage instead of this estimate.`)
+    + `</p>`);
+  return out.join("");
 }
 
 // Topbar chip that says WHY nothing is auto-generating — and undoes it.
@@ -451,6 +510,13 @@ function positionChipPop() {
   if (!chipPopFor) return;
   const pop = $("#chipPop");
   const a = chipPopFor.getBoundingClientRect();
+  // Height is bounded to what is left below the chip, and the overflow
+  // scrolls. It never mattered while this held two rows and a sentence; the
+  // spend breakdown is up to seven more, and a popover whose last rows are
+  // under the bottom of the screen is a list with no end — the same failure
+  // the tooltips had sideways, for the same reason: CSS cannot see the edge.
+  // Measured before the width, because a scrollbar appearing changes it.
+  pop.style.maxHeight = Math.max(180, window.innerHeight - a.bottom - 14) + "px";
   const w = pop.offsetWidth;
   const left = Math.max(8, Math.min(a.right - w, window.innerWidth - w - 8));
   pop.style.left = Math.round(left) + "px";
@@ -654,6 +720,23 @@ function phaseLabel(jobState) {
     parsing: "Rendering visualization…",
     fixing: "Working on the fix…",
   }[jobState] || "Working…";
+}
+
+// What the run is spending, while it is spending it.
+//
+// A generation is minutes of spinner, and the only thing that made it
+// visible afterwards was the usage pill moving with nothing on screen
+// saying which card moved it. The size is knowable the moment the prompt
+// exists, so it is said then: an ad-hoc question posts the WHOLE home
+// (every entity, not the category's slice), which is why one costs several
+// times what a category card costs, and that is a fact worth reading
+// before the answer arrives rather than inferring from a percentage later.
+function jobSentNote(job) {
+  if (!job || !job.prompt_chars) return "";
+  const parts = [];
+  if (job.entities) parts.push(`${job.entities} entities`);
+  parts.push(`~${fmtTokens(job.prompt_chars / 4)} tokens sent`);
+  return parts.join(" · ");
 }
 
 // ------------------------------------------------------- insight history
@@ -924,6 +1007,8 @@ function makeCard(catInfo, insight, fallbackId) {
     const phase = el("div", "phase");
     phase.appendChild(el("span", "orbit"));
     phase.appendChild(el("span", null, phaseLabel(job.state)));
+    const sent = jobSentNote(job);
+    if (sent) phase.appendChild(el("span", "phasecost", sent));
     card.appendChild(phase);
     card.appendChild(el("div", "viz-skel"));
   } else if (shown) {
@@ -964,6 +1049,20 @@ function makeCard(catInfo, insight, fallbackId) {
     foot.appendChild(el("span", "spacer"));
     if (shown.meta && shown.meta.duration_ms) {
       foot.appendChild(el("span", null, `${(shown.meta.duration_ms / 1000).toFixed(0)}s`));
+    }
+    // What this run cost, on the run it cost it. The number was already in
+    // the stored card and only the stopwatch was ever rendered — so the
+    // expensive card and the cheap one looked identical, and the only
+    // evidence either way was a percentage in the top bar attributable to
+    // nothing. Seconds and tokens are not the same reading: a fast card
+    // over the whole home outspends a slow one over eight thermostats.
+    const cost = shown.meta && shown.meta.cost;
+    if (cost && cost.total) {
+      const span = el("span", null, `${fmtTokens(cost.total)} tokens`);
+      tip(span, `${fmtTokens(cost.input)} in · ${fmtTokens(cost.output)} out`
+        + (cost.cached ? ` · ${fmtTokens(cost.cached)} read from cache (free)` : "")
+        + ". Counted against your 5-hour session window.");
+      foot.appendChild(span);
     }
     if (insight && catInfo) {
       foot.appendChild(makeHistoryControls(id, insight, view));

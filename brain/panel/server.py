@@ -364,6 +364,11 @@ CARD_TOKEN_FILE = Path(
     os.environ.get("BRAIN_SECRETS", "/data/secrets")) / "card_token"
 MAX_HTML_BYTES = 400_000
 MAX_CUSTOM_KEPT = 12
+# Characters per token, for the ONE number that has to exist before the run
+# does: what a prompt is about to cost. Approximate by nature — the real
+# count comes back in the result envelope and is what everything downstream
+# reports — so anywhere this is shown it is prefixed with "~".
+CHARS_PER_TOKEN = 4
 
 logging.basicConfig(
     level=getattr(logging, os.environ.get("BRAIN_LOG_LEVEL", "info").upper(), logging.INFO),
@@ -632,14 +637,35 @@ async def _submit_answer(question: str, answer: str) -> None:
 # Generation worker
 # ---------------------------------------------------------------------------
 
-def _record_usage(result: dict, insight_id: str) -> None:
-    """Book a finished Claude invocation's tokens against the session budget
-    (best-effort — usage accounting must never break a run)."""
+def _tok(n: int) -> str:
+    """A token count as a person would say it: 41231 -> "41.2k"."""
+    return f"{n / 1000:.1f}k" if n >= 1000 else str(int(n))
+
+
+def _record_usage(result: dict, insight_id: str) -> dict:
+    """Book a finished Claude invocation's tokens against the session budget,
+    and say out loud what it cost.
+
+    Every Claude run the panel makes lands here, which is why the log line
+    lives here rather than in each of the three callers. The add-on used to
+    log the size of the data it collected and then never mention the price
+    of the run it spent that data on — so the only visible evidence a card
+    was expensive was the usage pill moving, after the fact, with nothing
+    on screen attributing it. Best-effort throughout: usage accounting must
+    never break the run it is accounting for.
+    """
     try:
-        tokens = usage_store.tokens_from_meta(result.get("meta") or {})
-        usage_store.record_run(tokens, insight_id)
+        cost = usage_store.split_from_meta(result.get("meta") or {})
+        usage_store.record_run(cost["total"], insight_id)
+        if cost["total"]:
+            log.info("%s cost %s tokens (%s in + %s out; %s read from cache, free) "
+                     "— 5-hour window now %s", insight_id, _tok(cost["total"]),
+                     _tok(cost["input"]), _tok(cost["output"]), _tok(cost["cached"]),
+                     _tok(usage_store.window_tokens()))
+        return cost
     except Exception as exc:  # noqa: BLE001
         log.debug("usage recording failed: %s", exc)
+        return usage_store.split_from_meta({})
 
 
 def _clean_strings(value, max_items: int, max_chars: int) -> list[str]:
@@ -695,10 +721,7 @@ async def _generate(insight_id: str) -> None:
         import ha_data  # deferred so the module loads without aiohttp in tests
         bundle = await ha_data.collect_bundle(cat, eff_history_days(), question=question)
         n_entities = len(bundle.get("entities", []))
-        log.info("bundle for %s: %d entities, %d chars", insight_id, n_entities,
-                 len(json.dumps(bundle)))
 
-        _set_job(insight_id, state="generating")
         feedback = [] if question is not None else [
             f["text"] for f in feedback_store.list_feedback(insight_id)]
         # Continuity: what the analyst already knows, and what this card
@@ -718,11 +741,22 @@ async def _generate(insight_id: str) -> None:
                               hypothesis_budget=hypotheses.budget(),
                               knowledge=knowledge, previous=previous,
                               findings=findings_store.prompt_block())
+        # What this run is about to cost, before it costs it. The bundle is
+        # the bulk of the prompt but never all of it — memory, the findings
+        # block and the previous run ride along — so the bundle's size was
+        # an answer to a question nobody asked. The job carries the number
+        # too, because a generation is minutes of spinner and "how much of
+        # my home did it just send" is the one thing worth knowing during it.
+        _set_job(insight_id, state="generating",
+                 prompt_chars=len(prompt), entities=n_entities)
+        log.info("prompt for %s: %d entities, %d bundle chars, %d prompt chars "
+                 "(~%s tokens in)", insight_id, n_entities, len(json.dumps(bundle)),
+                 len(prompt), _tok(len(prompt) // CHARS_PER_TOKEN))
         result = await asyncio.to_thread(
             engine.run_claude, prompt, SYSTEM_PROMPT, eff_model(),
             eff_timeout_s(),
         )
-        _record_usage(result, insight_id)
+        cost = _record_usage(result, insight_id)
         if not result["ok"]:
             raise RuntimeError(result["error"] or "generation failed")
 
@@ -777,7 +811,12 @@ async def _generate(insight_id: str) -> None:
             "focus_used": cat.get("focus", "") if question is None else "",
             "html": html,
             "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "meta": result.get("meta", {}),
+            # `cost` is derived once, here, and stored — not recomputed in the
+            # panel from `usage`. Which fields count against a session window
+            # (and that a cache read does not) is a rule usage_store owns; a
+            # second copy of it in JavaScript is a second answer waiting to
+            # drift from the one the budget actually uses.
+            "meta": {**result.get("meta", {}), "cost": cost},
         }
         save_insight(insight)
         # Learn the durable discoveries: store NEW ones in our own knowledge
@@ -1120,7 +1159,10 @@ async def h_status(request: web.Request) -> web.Response:
         "findings_open": findings_store.open_count() + hypotheses.open_count(),
         # `question` lets the panel label an ad-hoc "Ask" card (and retry it)
         # while it's still generating, before any insight exists to read.
-        "jobs": {jid: {k: j.get(k) for k in ("state", "error", "question")}
+        # `prompt_chars`/`entities` are what the run is spending, carried so
+        # a card can say it while the spinner is still turning.
+        "jobs": {jid: {k: j.get(k) for k in
+                       ("state", "error", "question", "prompt_chars", "entities")}
                  for jid, j in JOBS.items()},
         "queue_size": QUEUE.qsize(),
     })
