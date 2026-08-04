@@ -31,7 +31,7 @@ jobs:
       issues: write
       discussions: write
     steps:
-      - uses: actions/github-script@v7
+      - uses: actions/github-script@v9
         with:
           script: |
             // Which label each dropdown option maps to. An option that
