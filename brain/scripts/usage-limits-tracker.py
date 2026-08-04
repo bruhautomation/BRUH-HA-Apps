@@ -31,7 +31,6 @@ obeying it literally is how a tracker retries straight back into the limit
 it was just told about.
 """
 
-import hashlib
 import json
 import os
 import sys
@@ -134,7 +133,7 @@ def oauth_tokens(state=None):
     string*, and symlinks $BRAIN_HOME/.config/claude onto /data/.config/claude,
     making the other two the same file. One sign-in, four identical requests
     per poll, every poll. Paths are collapsed by realpath and credentials by
-    digest, because the three stores can equally well hold one token that
+    value, because the three stores can equally well hold one token that
     arrived by three routes.
     """
     seen_paths = set()
@@ -143,14 +142,19 @@ def oauth_tokens(state=None):
     def unseen(token):
         """True the first time this exact credential is offered.
 
-        Compared by digest rather than by value: recognising a repeat is
-        all this needs, and a set of live credentials kept for the length
-        of a poll is a copy of the secret that nothing asked for.
+        Compared by value. This was a SHA-256 digest first, on the instinct
+        that a set of live credentials is a copy of the secret — and it is
+        not: a Python string goes into a set by reference, so the digest
+        bought no fewer copies of the token than the token does, and cost a
+        hash of a credential for it. CodeQL read that hash as password
+        storage, which it never was, but a scanner asking why a token is
+        being hashed at all is asking the right question of the wrong line.
+        The set is local to one pass, holds at most a handful of entries,
+        and dies with the generator.
         """
-        digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
-        if digest in seen_tokens:
+        if token in seen_tokens:
             return False
-        seen_tokens.add(digest)
+        seen_tokens.add(token)
         return True
 
     def unread(path):
