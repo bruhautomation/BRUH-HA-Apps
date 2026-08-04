@@ -25,9 +25,10 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 
 from categories import CATEGORIES, get_category
+
+import atomic_write
 
 OVERRIDES_FILE = os.environ.get("BRAIN_PROMPTS_FILE", "/data/prompt_overrides.json")
 
@@ -54,11 +55,7 @@ def load_overrides() -> dict:
 
 
 def _write(data: dict) -> None:
-    path = Path(OVERRIDES_FILE)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(path)
+    atomic_write.write_json(OVERRIDES_FILE, data)
 
 
 def save_override(cat_id: str, fields: dict) -> dict:

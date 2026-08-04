@@ -58,6 +58,8 @@ Stdlib only, so the test suite can import it without the add-on runtime.
 """
 from __future__ import annotations
 
+import atomic_write
+
 import json
 import os
 import re
@@ -131,11 +133,7 @@ def _load() -> list[dict]:
 
 
 def _write(items: list[dict]) -> None:
-    FINDINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = FINDINGS_FILE.with_suffix(".tmp")
-    tmp.write_text(json.dumps({"findings": items}, ensure_ascii=False),
-                   encoding="utf-8")
-    tmp.replace(FINDINGS_FILE)
+    atomic_write.write_json(FINDINGS_FILE, {"findings": items})
 
 
 def _unique_ts(used: set[int]) -> int:
@@ -527,11 +525,7 @@ def _load_settled() -> list[dict]:
 
 
 def _write_settled(items: list[dict]) -> None:
-    SETTLED_FILE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = SETTLED_FILE.with_suffix(".tmp")
-    tmp.write_text(json.dumps({"settled": items}, ensure_ascii=False),
-                   encoding="utf-8")
-    tmp.replace(SETTLED_FILE)
+    atomic_write.write_json(SETTLED_FILE, {"settled": items})
 
 
 def settled_listing() -> list[dict]:

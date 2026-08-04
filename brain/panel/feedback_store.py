@@ -19,7 +19,8 @@ from __future__ import annotations
 import json
 import os
 import time
-from pathlib import Path
+
+import atomic_write
 
 FEEDBACK_FILE = os.environ.get("BRAIN_FEEDBACK_FILE", "/data/feedback.json")
 
@@ -42,11 +43,7 @@ def _load() -> dict:
 
 
 def _write(data: dict) -> None:
-    path = Path(FEEDBACK_FILE)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(path)
+    atomic_write.write_json(FEEDBACK_FILE, data)
 
 
 def list_feedback(cat_id: str) -> list[dict]:

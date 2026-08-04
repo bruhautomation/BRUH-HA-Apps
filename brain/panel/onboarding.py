@@ -35,6 +35,8 @@ import hypotheses
 import settings_store
 import user_categories
 
+import atomic_write
+
 log = logging.getLogger("brain.onboarding")
 
 SHARED_DIR = Path(os.environ.get("BRAIN_SHARED_DIR", "/config/.brain"))
@@ -85,10 +87,7 @@ def _read_state() -> dict:
 
 
 def _write_state(data: dict) -> None:
-    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = STATE_FILE.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(STATE_FILE)
+    atomic_write.write_json(STATE_FILE, data)
 
 
 def _patch_state(**fields) -> dict:
@@ -150,9 +149,7 @@ def request_study(topic: str = "", tag: str = "ask") -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", topic.lower()).strip("-")[:40] or "stalest"
     now = int(time.time())
     path = STUDY_REQUESTS_DIR / f"{now}-{tag}-{slug}.json"
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps({"ts": now, "topic": topic}), encoding="utf-8")
-    tmp.replace(path)
+    atomic_write.write_json(path, {"ts": now, "topic": topic})
     return topic
 
 

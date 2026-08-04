@@ -47,6 +47,8 @@ from pathlib import Path
 
 import engine
 
+import atomic_write
+
 # Where the chat runs. /config so the project's settings.local.json (the
 # permission set) and CLAUDE.md (the description of this house) both apply —
 # the same working directory the listeners use.
@@ -239,12 +241,8 @@ class ChatSession:
     def _persist(self) -> None:
         path = Path(TRANSCRIPT_FILE)
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = path.with_suffix(".tmp")
-            tmp.write_text(json.dumps(
-                {"session_id": self.session_id, "events": self.events},
-                ensure_ascii=False), encoding="utf-8")
-            tmp.replace(path)
+            atomic_write.write_json(
+                path, {"session_id": self.session_id, "events": self.events})
         except OSError:
             pass  # a lost scrollback is not worth failing a turn over
 
@@ -783,10 +781,7 @@ def _open_in_terminal(session_id: str) -> bool:
     payload = json.dumps({"session_id": session_id, "ts": int(time.time())})
     try:
         path = Path(HANDOFF_FILE)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(payload, encoding="utf-8")
-        tmp.replace(path)
+        atomic_write.write_text(path, payload, mode=0o600)
         # The terminal runs as the claude user and this file is written by
         # the panel, which is root — so hand it over rather than opening it
         # up. 0o666 did the job by making it world-writable, which is a

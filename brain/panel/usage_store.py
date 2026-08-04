@@ -35,7 +35,8 @@ from __future__ import annotations
 import json
 import os
 import time
-from pathlib import Path
+
+import atomic_write
 
 USAGE_FILE = os.environ.get("BRAIN_USAGE_FILE", "/data/usage.json")
 
@@ -81,11 +82,7 @@ def _load_runs() -> list[dict]:
 
 
 def _write_runs(runs: list[dict]) -> None:
-    path = Path(USAGE_FILE)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps({"runs": runs}, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(path)
+    atomic_write.write_json(USAGE_FILE, {"runs": runs})
 
 
 def record_run(tokens: int, insight_id: str = "", now: float | None = None) -> None:
