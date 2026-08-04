@@ -124,7 +124,8 @@ import terminal_proxy
 import undo_store
 import usage_store
 import user_categories
-from categories import CATEGORIES, SYSTEM_PROMPT, build_prompt, get_category
+from categories import (ANALYST_SYSTEM, CATEGORIES, SYSTEM_PROMPT, build_orientation_prompt,
+                        build_prompt, get_category)
 
 HERE = Path(__file__).resolve().parent
 INSIGHTS_DIR = Path(os.environ.get("BRAIN_DIR", "/data/insights"))
@@ -305,6 +306,12 @@ def eff_model() -> str:
     return str(_opt("model", MODEL))
 
 
+def eff_gather_mode() -> str:
+    return settings_store.load().get("gather_mode", "search")
+
+
+
+
 def eff_timeout_s() -> int:
     return int(_opt("timeout_minutes", TIMEOUT_S / 60) * 60)
 
@@ -369,6 +376,12 @@ MAX_CUSTOM_KEPT = 12
 # count comes back in the result envelope and is what everything downstream
 # reports — so anywhere this is shown it is prefixed with "~".
 CHARS_PER_TOKEN = 4
+# Turns a searching run may take. Generous rather than tight, for the reason
+# the docs give about every other cap here: a run that hits its limit stops
+# mid-thought and produces nothing, so you pay for every token and get no
+# card — which makes a tight cap the most expensive setting there is. Twelve
+# is room for a handful of searches, a couple of history pulls, and the write.
+ANALYST_MAX_TURNS = 12
 
 logging.basicConfig(
     level=getattr(logging, os.environ.get("BRAIN_LOG_LEVEL", "info").upper(), logging.INFO),
@@ -704,6 +717,71 @@ def _model_findings(value, max_items: int = 3) -> list[dict]:
     return out
 
 
+async def _search_run(insight_id: str, cat: dict, framing: dict):
+    """Give Claude a map of the home and read-only tools, and let it look.
+
+    The cheap path, and the only one that can afford history on a typed
+    question. The map is a few hundred characters — domain counts, area
+    counts, a handful of anchors — where the snapshot is tens of thousands,
+    so what a run costs finally tracks what it actually needed rather than
+    being the same number whatever was asked.
+
+    Returns ``(result, cost)``, or ``(None, None)`` when the map itself
+    could not be collected — the caller then runs the snapshot path, which
+    is the floor under every mode.
+    """
+    import ha_data
+    try:
+        orientation = await ha_data.collect_orientation(question=framing["question"])
+    except Exception as exc:  # noqa: BLE001 — a failed map is a fallback, not an error
+        log.warning("%s: could not collect the orientation map (%s)", insight_id, exc)
+        return None, None
+    prompt = build_orientation_prompt(cat, orientation, **framing)
+    # `entities` is what the run has been GIVEN, and a search run is given
+    # none — the spinner says "searching" rather than claiming a number the
+    # snapshot path would have meant literally.
+    _set_job(insight_id, state="searching", prompt_chars=len(prompt), entities=0)
+    log.info("map for %s: %d entities exist across %d domains, %d prompt chars "
+             "(~%s tokens in) — searching", insight_id,
+             orientation.get("entity_count", 0), len(orientation.get("domains") or {}),
+             len(prompt), _tok(len(prompt) // CHARS_PER_TOKEN))
+    result = await asyncio.to_thread(
+        engine.run_analyst, prompt, ANALYST_SYSTEM, eff_model(),
+        eff_timeout_s(), ANALYST_MAX_TURNS,
+    )
+    return result, _record_usage(result, insight_id)
+
+
+async def _snapshot_run(insight_id: str, cat: dict, framing: dict):
+    """Post the whole slimmed home in one turn, with no tools at all.
+
+    Deterministic by construction: one prompt, one answer, nothing the model
+    can decide to go and read. That is why it is the fallback — a search run
+    depends on tools resolving and on the model choosing to stop, and a card
+    must still appear when either of those goes wrong.
+    """
+    import ha_data
+    bundle = await ha_data.collect_bundle(
+        cat, eff_history_days(), question=framing["question"])
+    n_entities = len(bundle.get("entities", []))
+    prompt = build_prompt(cat, bundle, **framing)
+    # What this run is about to cost, before it costs it. The bundle is the
+    # bulk of the prompt but never all of it — memory, the findings block
+    # and the previous run ride along — so the bundle's size was an answer
+    # to a question nobody asked. The job carries the number too, because a
+    # generation is minutes of spinner and "how much of my home did it just
+    # send" is the one thing worth knowing during it.
+    _set_job(insight_id, state="generating",
+             prompt_chars=len(prompt), entities=n_entities)
+    log.info("snapshot for %s: %d entities, %d bundle chars, %d prompt chars "
+             "(~%s tokens in)", insight_id, n_entities, len(json.dumps(bundle)),
+             len(prompt), _tok(len(prompt) // CHARS_PER_TOKEN))
+    result = await asyncio.to_thread(
+        engine.run_claude, prompt, SYSTEM_PROMPT, eff_model(), eff_timeout_s(),
+    )
+    return result, _record_usage(result, insight_id)
+
+
 async def _generate(insight_id: str) -> None:
     job = JOBS.get(insight_id, {})
     question = job.get("question")
@@ -718,9 +796,6 @@ async def _generate(insight_id: str) -> None:
     }
     try:
         _set_job(insight_id, state="collecting", error="")
-        import ha_data  # deferred so the module loads without aiohttp in tests
-        bundle = await ha_data.collect_bundle(cat, eff_history_days(), question=question)
-        n_entities = len(bundle.get("entities", []))
 
         feedback = [] if question is not None else [
             f["text"] for f in feedback_store.list_feedback(insight_id)]
@@ -737,26 +812,25 @@ async def _generate(insight_id: str) -> None:
                 # No previous run to diff against — which is what a first generation
                 # for this card looks like.
                 pass
-        prompt = build_prompt(cat, bundle, question=question, feedback=feedback,
-                              hypothesis_budget=hypotheses.budget(),
-                              knowledge=knowledge, previous=previous,
-                              findings=findings_store.prompt_block())
-        # What this run is about to cost, before it costs it. The bundle is
-        # the bulk of the prompt but never all of it — memory, the findings
-        # block and the previous run ride along — so the bundle's size was
-        # an answer to a question nobody asked. The job carries the number
-        # too, because a generation is minutes of spinner and "how much of
-        # my home did it just send" is the one thing worth knowing during it.
-        _set_job(insight_id, state="generating",
-                 prompt_chars=len(prompt), entities=n_entities)
-        log.info("prompt for %s: %d entities, %d bundle chars, %d prompt chars "
-                 "(~%s tokens in)", insight_id, n_entities, len(json.dumps(bundle)),
-                 len(prompt), _tok(len(prompt) // CHARS_PER_TOKEN))
-        result = await asyncio.to_thread(
-            engine.run_claude, prompt, SYSTEM_PROMPT, eff_model(),
-            eff_timeout_s(),
-        )
-        cost = _record_usage(result, insight_id)
+        framing = dict(question=question, feedback=feedback,
+                       hypothesis_budget=hypotheses.budget(),
+                       knowledge=knowledge, previous=previous,
+                       findings=findings_store.prompt_block())
+
+        result = cost = None
+        if eff_gather_mode() == "search":
+            result, cost = await _search_run(insight_id, cat, framing)
+        if result is None or not result["ok"]:
+            # The snapshot path is the floor, not a mode: whatever the setting
+            # says, a failed search must still produce a card. It costs more
+            # than the search did — which is why the fallback is logged rather
+            # than silent, and why a run that keeps falling back is a run
+            # worth reading the log about.
+            if result is not None:
+                log.warning("%s: search run failed (%s) — falling back to the "
+                            "full snapshot", insight_id,
+                            result.get("error") or "no result")
+            result, cost = await _snapshot_run(insight_id, cat, framing)
         if not result["ok"]:
             raise RuntimeError(result["error"] or "generation failed")
 

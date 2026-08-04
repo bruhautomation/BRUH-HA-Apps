@@ -710,12 +710,13 @@ function insightFor(id) {
   return state.insights.find((i) => i.id === id);
 }
 
-const ACTIVE_STATES = ["queued", "collecting", "generating", "parsing", "fixing"];
+const ACTIVE_STATES = ["queued", "collecting", "searching", "generating", "parsing", "fixing"];
 
 function phaseLabel(jobState) {
   return {
     queued: "Queued…",
     collecting: "Gathering your home's data…",
+    searching: "Looking up what this needs…",
     generating: "Claude is analyzing & designing…",
     parsing: "Rendering visualization…",
     fixing: "Working on the fix…",
@@ -734,6 +735,9 @@ function phaseLabel(jobState) {
 function jobSentNote(job) {
   if (!job || !job.prompt_chars) return "";
   const parts = [];
+  // A searching run is given no entities — it is given a map and goes and
+  // fetches what it needs — so it must not claim a count the snapshot path
+  // would have meant literally.
   if (job.entities) parts.push(`${job.entities} entities`);
   parts.push(`~${fmtTokens(job.prompt_chars / 4)} tokens sent`);
   return parts.join(" · ");
@@ -1689,6 +1693,7 @@ function renderModelField(data) {
 function renderSettingsForm(data) {
   $("#setEnabled").checked = data.settings.auto_enabled !== false;
   $("#setTerminalUi").value = data.settings.terminal_ui || "chat";
+  $("#setGatherMode").value = data.settings.gather_mode || "search";
   $("#setPlan").value = data.settings.plan || "pro";
   $("#setBudget").value = data.settings.budget_percent;
   $("#setBudgetVal").textContent = data.settings.budget_percent + "%";
@@ -1766,6 +1771,8 @@ $("#setEnabled").addEventListener("change", () =>
   saveSettings({ auto_enabled: $("#setEnabled").checked }));
 $("#setPlan").addEventListener("change", () =>
   saveSettings({ plan: $("#setPlan").value }));
+$("#setGatherMode").addEventListener("change", () =>
+  saveSettings({ gather_mode: $("#setGatherMode").value }));
 // Applied straight away rather than on the next status poll, so the Terminal
 // tab has already changed by the time the dialog is closed — and through the
 // same path as the tab's own switch, so changing it here carries the

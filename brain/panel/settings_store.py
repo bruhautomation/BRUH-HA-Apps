@@ -52,6 +52,12 @@ PLANS = ("pro", "max5", "max20")
 # still there, one press away, for everything a grid is actually for.
 TERMINAL_UIS = ("chat", "classic")
 
+# How a run gets its data. "search" is the default because posting five
+# hundred entities to answer a question about one room is the expensive
+# thing this add-on does; "snapshot" is the old single-turn path, kept as a
+# setting AND as the automatic fallback when a search run fails.
+GATHER_MODES = ("search", "snapshot")
+
 # Runtime-overridable add-on options: name → allowed integer range.
 # None (or absent) = use the value from the add-on's Configuration tab.
 OPTION_RANGES = {
@@ -69,6 +75,16 @@ DEFAULTS = {
     # generic "Climate" card on an unknown house says nothing useful.
     "onboarded": False,
     "auto_enabled": True,
+    # How an insight run gets its data.
+    #   "search" — Claude is given a MAP of the home (domain counts, areas, a
+    #              few anchors) plus read-only Home Assistant tools, and
+    #              fetches what the question actually needs. Far cheaper on a
+    #              targeted question, and the only path that can afford
+    #              history on one.
+    #   "snapshot" — the whole slimmed home is posted up front, one turn, no
+    #              tools. Deterministic and the fallback whenever a search
+    #              run fails, so nothing depends on the model behaving.
+    "gather_mode": "search",
     "plan": "pro",
     "budget_percent": 25,
     "terminal_ui": "chat",
@@ -102,6 +118,8 @@ def load() -> dict:
         out["plan"] = data["plan"]
     if data.get("terminal_ui") in TERMINAL_UIS:
         out["terminal_ui"] = data["terminal_ui"]
+    if data.get("gather_mode") in GATHER_MODES:
+        out["gather_mode"] = data["gather_mode"]
     pct = data.get("budget_percent")
     if isinstance(pct, int) and not isinstance(pct, bool) and 5 <= pct <= 100:
         out["budget_percent"] = pct
@@ -180,6 +198,11 @@ def save(fields: dict) -> dict:
         elif key == "plan":
             if value not in PLANS:
                 raise ValueError(f"plan must be one of {', '.join(PLANS)}")
+            clean[key] = value
+        elif key == "gather_mode":
+            if value not in GATHER_MODES:
+                raise ValueError(
+                    f"gather_mode must be one of {', '.join(GATHER_MODES)}")
             clean[key] = value
         elif key == "terminal_ui":
             if value not in TERMINAL_UIS:

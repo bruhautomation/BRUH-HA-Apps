@@ -33,6 +33,39 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
   included — and a breakdown read as exhaustive is how you conclude a
   terminal session is free.
 
+- **A card now fetches what it needs instead of being handed the house.**
+  ⚙ Settings → **How a card gets its data**, and Search is the new default.
+
+  Claude gets a *map* of your home — how many entities of each kind exist,
+  which areas they're in, a few anchors like people and thermostats — plus
+  **read-only** Home Assistant tools, and it goes and looks up what the card
+  actually needs: search by room or by name, read the few entities that
+  matter, pull their history. A question about the hallway costs the
+  hallway. Measured on a real run: a 1,449-character prompt where the old
+  path sent about 100,000.
+
+  It is also the only mode that can afford **history on a question you
+  type**. The one-shot path never could — there was no budget left after
+  five hundred entities — so typed questions have always been answered from
+  a single instant with no trend behind it.
+
+  **Snapshot** is the old behaviour, kept as a setting *and* as the
+  automatic fallback: if a search run fails or runs out of turns, brAIn
+  falls back to the full snapshot so a card always appears. The fallback is
+  logged rather than silent, because a run that keeps taking it is worth
+  knowing about.
+
+  **Insight runs can only read.** The analyst's tools are an explicit
+  allow-list of the reading half of the Home Assistant MCP server, and every
+  acting tool is explicitly denied as well — belt and braces, because
+  `--allowedTools` governs what runs without a prompt and a headless run
+  cannot be prompted, so an un-listed tool merely *fails* rather than being
+  forbidden. Those are not the same guarantee with a real house on the other
+  side. `tests/test_security.py` checks the deny list against the MCP
+  server's own tool list, so adding an acting tool and forgetting this fails
+  in CI rather than in somebody's home. The one path that changes anything
+  is still the Findings tab's **Fix it** button, which a person presses.
+
 ### Changed
 
 - **A card's data snapshot got 29% smaller, and lost nothing.** A question

@@ -1152,6 +1152,8 @@ class TestGenerateFlow(InsightsServerCase):
     def setUp(self):
         super().setUp()
         self._old_collect = self.ha_data.collect_bundle
+        self._old_orientation = getattr(self.ha_data, "collect_orientation", None)
+        self._old_analyst = engine.run_analyst
         self._old_run = engine.run_claude
         self._old_service = self.ha_data.call_service
 
@@ -1178,7 +1180,12 @@ class TestGenerateFlow(InsightsServerCase):
     def tearDown(self):
         self.ha_data.collect_bundle = self._old_collect
         engine.run_claude = self._old_run
+        engine.run_analyst = self._old_analyst
         self.ha_data.call_service = self._old_service
+        if self._old_orientation is None:
+            self.ha_data.__dict__.pop("collect_orientation", None)
+        else:
+            self.ha_data.collect_orientation = self._old_orientation
         super().tearDown()
 
     def _stored(self, insight_id="energy"):
@@ -1368,6 +1375,101 @@ class TestGenerateFlow(InsightsServerCase):
         self.assertEqual(seen["job"]["state"], "generating")
         self.assertEqual(seen["job"]["prompt_chars"], len(seen["prompt"]))
         self.assertIn("entities", seen["job"])
+
+    # -- the searching path -----------------------------------------------
+
+    def _stub_search(self, result=None, orientation=None, boom=False):
+        """Make both gather paths observable, and neither reach a real CLI."""
+        self.calls = []
+
+        async def fake_orientation(question=None):
+            if boom:
+                raise RuntimeError("HA is not answering")
+            return orientation or {"entity_count": 512, "domains": {"sensor": 300},
+                                   "areas": {"Hall": 12}, "anchors": []}
+
+        self.ha_data.collect_orientation = fake_orientation
+
+        def analyst(prompt, system, *a, **k):
+            self.calls.append(("analyst", prompt, system))
+            return result if result is not None else {
+                "ok": True, "text": json.dumps(self.reply), "error": "",
+                "meta": {"duration_ms": 4}}
+
+        def snapshot(prompt, system, *a, **k):
+            self.calls.append(("snapshot", prompt, system))
+            return {"ok": True, "text": json.dumps(self.reply), "error": "",
+                    "meta": {"duration_ms": 5}}
+
+        engine.run_analyst = analyst
+        engine.run_claude = snapshot
+
+    def test_a_question_searches_instead_of_being_posted_the_whole_home(self):
+        """The map is the prompt, not the territory.
+
+        Posting 500 entities to answer a question about one room is the
+        expensive thing this add-on does. The searching path sends what the
+        home CONTAINS and lets Claude fetch the rows it decides it needs.
+        """
+        self._stub_search()
+        self.server._set_job("custom-77", state="queued", question="Why cold?")
+        asyncio.run(self.server._generate("custom-77"))
+        self.assertEqual([c[0] for c in self.calls], ["analyst"])
+        prompt = self.calls[0][1]
+        self.assertIn("MAP OF THIS HOME", prompt)
+        self.assertNotIn("HOME DATA SNAPSHOT", prompt)
+        self.assertIn("QUESTION: Why cold?", prompt)
+        # The framing every run gets does not depend on how the data arrives.
+        self.assertIn("HYPOTHESIS BUDGET", prompt)
+        self.assertEqual(self.server.JOBS["custom-77"]["state"], "done")
+        # `entities` is what the run was GIVEN, and a search run is given none
+        # — claiming a count here would mean something the snapshot path
+        # means literally.
+        self.assertEqual(self.server.JOBS["custom-77"]["entities"], 0)
+
+    def test_a_failed_search_still_produces_a_card(self):
+        """The snapshot path is the floor, not a mode.
+
+        A search run depends on tools resolving and on the model choosing to
+        stop. Neither is guaranteed, and a card must appear anyway.
+        """
+        self._stub_search(result={"ok": False, "text": "", "meta": {},
+                                  "error": "max number of turns"})
+        self.server._set_job("custom-78", state="queued", question="Why cold?")
+        asyncio.run(self.server._generate("custom-78"))
+        self.assertEqual([c[0] for c in self.calls], ["analyst", "snapshot"])
+        self.assertIn("HOME DATA SNAPSHOT", self.calls[1][1])
+        self.assertEqual(self.server.JOBS["custom-78"]["state"], "done")
+        self.assertTrue(self._stored("custom-78")["title"])
+
+    def test_a_map_that_cannot_be_collected_falls_back_too(self):
+        """Not every failure is the model's. HA may simply not answer."""
+        self._stub_search(boom=True)
+        self.server._set_job("custom-79", state="queued", question="Why cold?")
+        asyncio.run(self.server._generate("custom-79"))
+        self.assertEqual([c[0] for c in self.calls], ["snapshot"])
+        self.assertEqual(self.server.JOBS["custom-79"]["state"], "done")
+
+    def test_snapshot_mode_never_searches(self):
+        """The setting is honoured, not merely preferred."""
+        settings_store.save({"gather_mode": "snapshot"})
+        self._stub_search()
+        self.server._set_job("custom-80", state="queued", question="Why cold?")
+        asyncio.run(self.server._generate("custom-80"))
+        self.assertEqual([c[0] for c in self.calls], ["snapshot"])
+
+    def test_the_two_paths_share_one_card_contract(self):
+        """Two preambles, one contract — a second 10 KB copy would drift."""
+        self._stub_search()
+        self.server._set_job("custom-81", state="queued", question="Why cold?")
+        asyncio.run(self.server._generate("custom-81"))
+        analyst_system = self.calls[0][2]
+        self.assertIn("OUTPUT CONTRACT", analyst_system)
+        self.assertIn("DESIGN SYSTEM", analyst_system)
+        # ...and the analyst is NOT told it has no tools, which is the whole
+        # difference between the two preambles.
+        self.assertNotIn("NO tools available", analyst_system)
+        self.assertIn("NO tools available", categories.SYSTEM_PROMPT)
 
     def test_a_run_with_no_usage_block_still_finishes(self):
         """Accounting never breaks the run it is accounting for."""

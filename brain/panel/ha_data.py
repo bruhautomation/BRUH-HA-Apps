@@ -517,6 +517,85 @@ def _shrink_to_budget(bundle: dict) -> dict:
     return bundle
 
 
+# An orientation is a map, not the territory: how many of each domain exist,
+# which areas they sit in, and the few singleton entities worth naming
+# outright. Anything longer defeats the point — the moment it enumerates
+# entity ids it is a full bundle wearing a smaller name.
+MAX_ORIENTATION_AREAS = 60
+MAX_ORIENTATION_DOMAINS = 30
+# Domains where naming every entity is cheaper than making Claude search for
+# them, because a home has a handful and they anchor almost every question.
+ANCHOR_DOMAINS = ("person", "climate", "weather", "alarm_control_panel")
+MAX_ANCHORS = 40
+
+
+async def collect_orientation(question: str | None = None) -> dict:
+    """What the home CONTAINS — the small bundle the searching path starts on.
+
+    The single-shot path posts every entity because it has one turn to work
+    with and cannot ask for more. This one posts the shape of the house:
+    domain counts, area names, and the handful of anchor entities almost
+    every question touches. Claude then calls the read-only MCP tools for
+    the rows it decides it needs.
+
+    That is the whole saving. An INDEX of every entity id would cost nearly
+    as much as the slimmed rows themselves — measured — so this deliberately
+    does not enumerate ids. Claude searches by domain and by name substring,
+    the way a person would.
+    """
+    now = dt.datetime.now().astimezone()
+    async with aiohttp.ClientSession() as session:
+        config, states, registries = await asyncio.gather(
+            _rest_get(session, "/config"),
+            _rest_get(session, "/states", timeout=60),
+            get_registries(session),
+        )
+
+    hidden = registries["hidden"]
+    ent_area = registries["entity_area"]
+    domains: dict[str, int] = {}
+    per_area: dict[str, int] = {}
+    unavailable = 0
+    anchors: list[dict] = []
+    for st in states:
+        eid = st.get("entity_id", "")
+        if not eid or eid in hidden:
+            continue
+        domain = eid.split(".")[0]
+        domains[domain] = domains.get(domain, 0) + 1
+        area = ent_area.get(eid)
+        if area:
+            per_area[area] = per_area.get(area, 0) + 1
+        if st.get("state") in ("unavailable", "unknown"):
+            unavailable += 1
+        if domain in ANCHOR_DOMAINS and len(anchors) < MAX_ANCHORS:
+            anchors.append(slim_state(st, area, now))
+
+    ranked_domains = dict(sorted(domains.items(), key=lambda kv: -kv[1])
+                          [:MAX_ORIENTATION_DOMAINS])
+    ranked_areas = dict(sorted(per_area.items(), key=lambda kv: -kv[1])
+                        [:MAX_ORIENTATION_AREAS])
+    out: dict[str, Any] = {
+        "meta": {
+            "now": now.isoformat()[:19],
+            "timezone": config.get("time_zone"),
+            "location": config.get("location_name"),
+            "ha_version": config.get("version"),
+        },
+        "entity_count": sum(domains.values()),
+        "unavailable_count": unavailable,
+        "domains": ranked_domains,
+        "areas": ranked_areas,
+        "anchors": anchors,
+    }
+    if question is not None:
+        out["question"] = question
+    context = _read_context()
+    if context:
+        out["context"] = context
+    return out
+
+
 async def collect_bundle(category: dict, history_days: int, question: str | None = None) -> dict:
     """Collect and slim everything the category needs into one prompt bundle."""
     now = dt.datetime.now().astimezone()

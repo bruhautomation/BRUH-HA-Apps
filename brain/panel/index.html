@@ -604,6 +604,21 @@
         anything that draws its own screen — a TUI, <code>htop</code>, an installer — or for
         running shell commands yourself. You can switch at any time from the Terminal tab.</p>
 
+      <label for="setGatherMode">How a card gets its data</label>
+      <select id="setGatherMode" class="selin">
+        <option value="search">Search — fetch only what the card needs</option>
+        <option value="snapshot">Snapshot — send the whole home every time</option>
+      </select>
+      <p class="hint"><b>Search</b> gives Claude a map of your home — how many entities of
+        each kind, which areas, a few anchors — plus read-only Home Assistant tools, and it
+        goes and looks up what the card actually needs. A question about one room costs a
+        room, not five hundred entities, and it's the only mode that can afford to pull
+        <em>history</em> for a question you type. <b>Snapshot</b> posts the whole slimmed
+        home in one turn with no tools: predictable, and typically several times the
+        tokens. Search falls back to Snapshot on its own if a lookup run fails, so a card
+        always appears either way. Neither mode can change anything in your house —
+        insight runs get reading tools only.</p>
+
       <label for="setPlan">Your Claude subscription</label>
       <select id="setPlan" class="selin">
         <option value="pro">Claude Pro</option>

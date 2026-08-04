@@ -210,5 +210,85 @@ class TestProperQuoting(unittest.TestCase):
                         )
 
 
+class TestAnalystCanOnlyRead(unittest.TestCase):
+    """Insight generation runs unattended. It must not be able to act.
+
+    Three Claude paths exist in the panel and only one may change the house:
+    ``run_agent``, behind the Findings "Fix it" button, which a person
+    presses. ``run_claude`` holds no tools at all. ``run_analyst`` sits in
+    between — it has Home Assistant tools so it can go and read what a
+    question needs — and it runs on a schedule and on any typed question,
+    with nobody watching. So its tool set is asserted here rather than left
+    to a flag's semantics.
+    """
+
+    # Tools that change something, act on the house, or cost real money.
+    # `fire_event` and `remember_fact` are the trap: both are shaped like
+    # reads and are not, so a rule sorted by name prefix would pass them.
+    MUST_BE_DENIED = (
+        "call_service", "fire_event", "remember_fact", "send_notification",
+        "activate_scene", "run_script", "reload_config", "render_template",
+        "get_camera_snapshot", "control_light", "control_climate",
+        "control_media_player", "control_cover", "control_fan",
+        "control_switch", "control_lock", "control_alarm", "control_vacuum",
+    )
+
+    def setUp(self):
+        import sys
+        sys.path.insert(0, os.path.join(ADDON_DIR, "panel"))
+        import engine
+        self.engine = engine
+
+    def test_no_write_tool_is_in_the_allow_list(self):
+        for name in self.MUST_BE_DENIED:
+            self.assertNotIn(f"{self.engine.MCP}{name}", self.engine.ANALYST_TOOLS,
+                             f"{name} would let an unattended run act")
+
+    def test_every_write_tool_is_named_in_the_deny_list(self):
+        """Allow-listing is not enough on its own.
+
+        ``--allowedTools`` governs what runs WITHOUT a prompt, and a headless
+        run cannot be prompted — so an un-listed tool fails rather than being
+        forbidden, and those are not the same guarantee with a real house on
+        the other side of it.
+        """
+        for name in self.MUST_BE_DENIED:
+            self.assertIn(f"{self.engine.MCP}{name}", self.engine.ANALYST_DENIED,
+                          f"{name} is not explicitly denied to the analyst")
+
+    def test_shell_and_file_tools_are_denied(self):
+        for name in ("Bash", "Write", "Edit", "NotebookEdit"):
+            self.assertIn(name, self.engine.ANALYST_DENIED)
+
+    def test_a_new_mcp_write_tool_cannot_be_missed(self):
+        """The deny list is checked against the MCP server's actual tools.
+
+        Adding a `control_*` or `set_*` tool to the MCP server and forgetting
+        this list is exactly the drift that would hand an unattended run the
+        ability to act, so it fails here rather than in somebody's house.
+        """
+        src = read_file(os.path.join(ADDON_DIR, "ha-mcp-server", "ha_mcp_server.py"))
+        declared = set(re.findall(r'"name":\s*"([a-z_0-9]+)"', src))
+        acting = {n for n in declared if re.match(
+            r"^(call_service|control_|send_|activate_|run_script|reload_|set_|"
+            r"create_|delete_|update_|render_template|fire_event|remember_)", n)}
+        self.assertTrue(acting, "no acting tools found — did the regex rot?")
+        missing = sorted(
+            n for n in acting
+            if f"{self.engine.MCP}{n}" not in self.engine.ANALYST_DENIED)
+        self.assertEqual(missing, [], f"acting MCP tools not denied: {missing}")
+
+    def test_the_analyst_is_not_told_it_has_no_tools(self):
+        """The two preambles differ in exactly this, and share the rest."""
+        import categories
+        self.assertNotIn("NO tools available", categories.ANALYST_SYSTEM)
+        self.assertIn("NO tools available", categories.SYSTEM_PROMPT)
+        self.assertIn("only READ", categories.ANALYST_SYSTEM)
+        # One contract, two preambles — not two copies of a 10 KB document.
+        for shared in ("OUTPUT CONTRACT", "DESIGN SYSTEM", "ANALYSIS RULES"):
+            self.assertIn(shared, categories.ANALYST_SYSTEM)
+            self.assertIn(shared, categories.SYSTEM_PROMPT)
+
+
 if __name__ == "__main__":
     unittest.main()
