@@ -861,14 +861,67 @@ Both come from your Anthropic account when you signed in with a subscription; wi
 API key there is no account usage to read, so the session figure falls back to an
 estimate of brAIn's own spending and the weekly one isn't shown.
 
+## What a card costs, and where to see it
+
+A card is not a chat message. Generating one posts a snapshot of your home to Claude and
+gets a whole rendered visualization back, so **a single card is typically 25k–45k
+tokens** — a few percent of a Pro session each, and several cards in a row is a real
+bite out of a 5-hour window.
+
+## How a card gets its data
+
+There are two ways, and ⚙ **Settings → How a card gets its data** picks between them.
+
+**Search** (the default) gives Claude a *map* of your home — how many entities of each
+kind exist, which areas they're in, a few anchors like people and thermostats — plus
+read-only Home Assistant tools. It then looks up what the card actually needs: search by
+room or by name, read the few entities that matter, pull their history. A question about
+the hallway costs the hallway. It is also the only mode that can afford **history on a
+question you type**, which the one-shot path never could.
+
+**Snapshot** posts the whole slimmed home in a single turn with no tools at all. It's
+predictable and it's the automatic fallback — if a search run fails or runs out of turns,
+brAIn falls back to the snapshot so a card always appears. That fallback is logged, so a
+run that keeps taking it is worth reading the log about.
+
+Neither mode can change anything in your house. Insight runs get **reading tools only** —
+no service calls, no controls, no shell. The one place brAIn changes things is the
+Findings tab's **Fix it** button, which you press.
+
+Why not a middle option, where Claude is handed a list of every entity and picks from it?
+Measured: the list costs about as much as the data does, because every entity id has to
+be in it. Searching by name skips that entirely.
+
+Under Snapshot, **an asked question is the expensive kind**: a category card sends that
+category's slice of the home, while a question sends *every* entity (up to 500) plus
+device context, because the question could be about anything. That is why, in Snapshot
+mode, three answers can cost what a dozen category refreshes do.
+
+Three places now say so, and they say the same number:
+
+- **While it runs** — the card's spinner line reads \`500 entities · ~33k tokens sent\`,
+  so the size is visible before the answer is.
+- **After it runs** — the card's footer shows \`41.2k tokens\` beside the stopwatch.
+  Hover it for the input/output split. Seconds and tokens are different readings: a fast
+  card over the whole home outspends a slow one over eight thermostats.
+- **Across the window** — press the usage pill. Under the two windows is *What brAIn
+  spent, this session*, itemized per card. When the percentage is your account's live
+  figure it covers everything on your subscription — terminal, chat and voice included —
+  and the list underneath is only brAIn's own generation runs.
+
+The add-on log carries the same numbers, one line per run:
+\`custom-1785807758 cost 41.3k tokens (33.2k in + 8.1k out; 0 read from cache, free)\`.
+
 Biggest levers, in order:
 
-1. **Fixed daily times** on a card ("07:00, 19:00") instead of an interval.
-2. **Disable cards you don't read.** Each card's **⋯ → Edit** dialog has an Enabled
+1. **Leave "How a card gets its data" on Search.** It is the single biggest one, and it is
+   the default.
+2. **Fixed daily times** on a card ("07:00, 19:00") instead of an interval.
+3. **Disable cards you don't read.** Each card's **⋯ → Edit** dialog has an Enabled
    switch.
-3. **A smaller model.** Settings → Claude model. Smaller models cost far fewer tokens;
+4. **A smaller model.** Settings → Claude model. Smaller models cost far fewer tokens;
    the bigger ones dig deeper.
-4. **Fewer history days.** Settings → History analyzed.
+5. **Fewer history days.** Settings → History analyzed.
 
 ## How deep it digs
 

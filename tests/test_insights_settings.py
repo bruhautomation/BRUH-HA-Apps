@@ -133,6 +133,67 @@ class TestUsageStore(TempStoresMixin, unittest.TestCase):
         self.assertEqual(usage_store.tokens_from_meta({}), 0)
         self.assertEqual(usage_store.tokens_from_meta({"usage": "x"}), 0)
 
+    def test_split_reports_the_same_total_the_budget_counts(self):
+        """The card, the log line and the budget are one reading of one run.
+
+        `total` must be `tokens_from_meta` and nothing else — three numbers
+        for one run that differ is how a usage figure stops being believed.
+        Cache reads are reported so they can be shown as free, and stay out
+        of the total so nothing on screen is inflated by tokens that were
+        never charged.
+        """
+        meta = {"usage": {"input_tokens": 100, "output_tokens": 50,
+                          "cache_creation_input_tokens": 25,
+                          "cache_read_input_tokens": 9999}}
+        split = usage_store.split_from_meta(meta)
+        self.assertEqual(split["total"], usage_store.tokens_from_meta(meta))
+        self.assertEqual(split["input"], 125)   # prompt + the copy written to cache
+        self.assertEqual(split["output"], 50)
+        self.assertEqual(split["cached"], 9999)
+        self.assertEqual(split["total"], 175)
+        # A run with no usage block reads as zeros, not as a missing dict:
+        # the callers render it, and `undefined` on a card is worse than 0.
+        self.assertEqual(usage_store.split_from_meta({}),
+                         {"input": 0, "output": 0, "cached": 0, "total": 0})
+
+    def test_breakdown_names_the_spenders_biggest_first(self):
+        now = time.time()
+        usage_store.record_run(30_000, "energy", now=now - 60)
+        usage_store.record_run(10_000, "energy", now=now - 120)
+        usage_store.record_run(90_000, "custom-1", now=now - 180)
+        usage_store.record_run(5_000, "climate", now=now - 6 * 3600)  # outside 5h
+        rows = usage_store.window_breakdown(now=now)
+        self.assertEqual([(r["id"], r["tokens"], r["runs"]) for r in rows],
+                         [("custom-1", 90_000, 1), ("energy", 40_000, 2)])
+
+    def test_a_long_tail_is_folded_in_rather_than_dropped(self):
+        """A breakdown that silently omits runs disagrees with the pill.
+
+        The list is capped and the window total is not, so whatever the cap
+        excludes has to come back as one row — otherwise the itemization
+        sums to less than the number it is explaining.
+        """
+        now = time.time()
+        for i in range(usage_store.MAX_BREAKDOWN + 4):
+            usage_store.record_run(1_000 * (i + 1), f"card-{i}", now=now - 60)
+        rows = usage_store.window_breakdown(now=now)
+        self.assertEqual(len(rows), usage_store.MAX_BREAKDOWN + 1)
+        self.assertTrue(rows[-1]["rest"])
+        self.assertEqual(sum(r["tokens"] for r in rows),
+                         usage_store.window_tokens(now=now))
+        self.assertEqual(sum(r["runs"] for r in rows),
+                         usage_store.MAX_BREAKDOWN + 4)
+
+    def test_budget_state_carries_the_breakdown(self):
+        now = time.time()
+        usage_store.record_run(40_000, "energy", now=now - 60)
+        st = usage_store.budget_state({"plan": "pro", "budget_percent": 25}, now=now)
+        self.assertEqual(st["runs"], 1)
+        self.assertEqual(st["breakdown"],
+                         [{"id": "energy", "tokens": 40_000, "runs": 1}])
+        self.assertEqual(sum(r["tokens"] for r in st["breakdown"]),
+                         st["window_tokens"])
+
     def test_budget_estimate_blocks(self):
         now = time.time()
         usage_store.record_run(100_000, "energy", now=now - 60)

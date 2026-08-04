@@ -2,6 +2,97 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.22.0
+
+### Added
+
+- **Every card now says what it cost.** Generating an insight is the most
+  expensive thing brAIn does — a snapshot of your home goes to Claude and a
+  whole rendered visualization comes back, typically 25k–45k tokens a card —
+  and until now the only evidence of that was the usage pill moving, with
+  nothing on screen saying which card moved it. The numbers were already
+  coming back from every run and were only ever used to add to a total.
+
+  They are now readable in four places, all reporting the same figure:
+
+  - **While it runs**, the card's spinner line reads `500 entities · ~33k
+    tokens sent`, so the size of a run is visible before its answer is.
+  - **After it runs**, the card's footer shows `41.2k tokens` beside the
+    stopwatch, with the input/output split behind a hover. Seconds and tokens
+    are different readings — a fast card over the whole home outspends a slow
+    one over eight thermostats.
+  - **Across the window**, the usage pill's popover itemizes *What brAIn
+    spent, this session*, per card, biggest first.
+  - **In the add-on log**, one line per run: `custom-1785807758 cost 41.3k
+    tokens (33.2k in + 8.1k out; 0 read from cache, free)`, plus the prompt's
+    size as it goes out.
+
+  The itemization is scoped and says so: these are brAIn's own generation,
+  fix and setup runs. When the percentage above it is your account's live
+  figure it covers your whole subscription — terminal, chat and voice
+  included — and a breakdown read as exhaustive is how you conclude a
+  terminal session is free.
+
+- **A card now fetches what it needs instead of being handed the house.**
+  ⚙ Settings → **How a card gets its data**, and Search is the new default.
+
+  Claude gets a *map* of your home — how many entities of each kind exist,
+  which areas they're in, a few anchors like people and thermostats — plus
+  **read-only** Home Assistant tools, and it goes and looks up what the card
+  actually needs: search by room or by name, read the few entities that
+  matter, pull their history. A question about the hallway costs the
+  hallway. Measured on a real run: a 1,449-character prompt where the old
+  path sent about 100,000.
+
+  It is also the only mode that can afford **history on a question you
+  type**. The one-shot path never could — there was no budget left after
+  five hundred entities — so typed questions have always been answered from
+  a single instant with no trend behind it.
+
+  **Snapshot** is the old behaviour, kept as a setting *and* as the
+  automatic fallback: if a search run fails or runs out of turns, brAIn
+  falls back to the full snapshot so a card always appears. The fallback is
+  logged rather than silent, because a run that keeps taking it is worth
+  knowing about.
+
+  **Insight runs can only read.** The analyst's tools are an explicit
+  allow-list of the reading half of the Home Assistant MCP server, and every
+  acting tool is explicitly denied as well — belt and braces, because
+  `--allowedTools` governs what runs without a prompt and a headless run
+  cannot be prompted, so an un-listed tool merely *fails* rather than being
+  forbidden. Those are not the same guarantee with a real house on the other
+  side. `tests/test_security.py` checks the deny list against the MCP
+  server's own tool list, so adding an acting tool and forgetting this fails
+  in CI rather than in somebody's home. The one path that changes anything
+  is still the Findings tab's **Fix it** button, which a person presses.
+
+### Changed
+
+- **A card's data snapshot got 29% smaller, and lost nothing.** A question
+  sends every entity in the home, so a character on one row is 500 characters
+  on the prompt — and three fields were paying for something nobody read:
+
+  - `lc` is now **minutes since it last changed**, not a 19-character ISO
+    timestamp. Staleness is the only thing last_changed was ever read for, and
+    the model had to diff the timestamp against `meta.now` to get there.
+    Minutes rather than hours because "6 minutes ago" and "an hour ago" are
+    different facts and cost the same to say.
+  - `n` is **dropped when it is just the entity_id prettified**, which is what
+    Home Assistant names an entity by default — a second copy of a string
+    already on the row. A renamed entity still carries the name.
+  - an **unavailable entity keeps only its id, state and area**. Its unit and
+    device class describe a reading that isn't there.
+
+  Measured on a 500-entity home: 72,943 → 52,086 characters, roughly 5k fewer
+  input tokens on every card and every question.
+
+- **The docs now say what a card costs**, and which kind is expensive. A
+  category card sends that category's slice of the home; a question typed
+  into the ask bar sends *every* entity plus device context, because the
+  question could be about anything — which is why a few asked questions can
+  cost what a dozen scheduled refreshes do. Settings & cost lists it as the
+  first lever, above the scheduling ones.
+
 ## 1.21.0
 
 ### Added

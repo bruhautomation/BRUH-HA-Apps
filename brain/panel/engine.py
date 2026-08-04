@@ -352,6 +352,84 @@ def run_claude(
         model, timeout, max_turns, f"Claude timed out after {timeout}s")
 
 
+# The analyst's tools: reading the home, and nothing else.
+#
+# This is an ALLOW-list of specific tool names rather than "everything that
+# isn't obviously a write", because two of the MCP server's `get_`-shaped
+# tools are not reads — `fire_event` fires a Home Assistant event, which can
+# trigger an automation, and `remember_fact` writes to memory. A rule that
+# sorted by prefix would have let both through.
+#
+# Left out on purpose, though they are genuine reads:
+#   get_camera_snapshot — returns images, which are the most expensive thing
+#     a run can ask for and answer no question about entity data
+#   get_error_log       — a log tail, not a fact about the home
+#   dashboards, services, supervisor info — not analysis inputs
+MCP = "mcp__home-assistant__"
+ANALYST_TOOLS = [
+    f"{MCP}get_all_states",       # the search: by domain, by name substring
+    f"{MCP}get_entity_state",     # one entity, in full
+    f"{MCP}get_history",
+    f"{MCP}get_statistics",
+    f"{MCP}get_logbook",
+    f"{MCP}get_areas",
+    f"{MCP}get_registry",
+    f"{MCP}get_automations",
+    f"{MCP}get_automation_trace",
+    f"{MCP}get_ha_config",
+    f"{MCP}get_weather_forecast",
+]
+# Named explicitly rather than left to the allow-list, because `--allowedTools`
+# governs what runs WITHOUT a prompt, and a headless run cannot be prompted:
+# an un-listed tool would fail rather than be forbidden, and those are not the
+# same guarantee. Insight generation must not be able to change the house even
+# if the permission model shifts under it.
+ANALYST_DENIED = [
+    "Bash", "Write", "Edit", "NotebookEdit", "WebFetch", "WebSearch",
+    f"{MCP}call_service", f"{MCP}fire_event", f"{MCP}remember_fact",
+    f"{MCP}send_notification", f"{MCP}activate_scene", f"{MCP}run_script",
+    f"{MCP}reload_config", f"{MCP}render_template", f"{MCP}get_camera_snapshot",
+    f"{MCP}control_light", f"{MCP}control_climate", f"{MCP}control_media_player",
+    f"{MCP}control_cover", f"{MCP}control_fan", f"{MCP}control_switch",
+    f"{MCP}control_lock", f"{MCP}control_alarm", f"{MCP}control_vacuum",
+]
+
+
+def run_analyst(
+    prompt: str,
+    system_prompt: str,
+    model: str = "",
+    timeout: int = 480,
+    max_turns: int = 12,
+) -> dict:
+    """Run `claude -p` with READ-ONLY Home Assistant tools. Same envelope.
+
+    The searching half of insight generation. ``run_claude`` posts the whole
+    home and asks a question about it; this posts what the home *contains*
+    and lets Claude go and get the rows it decides it needs — which for a
+    targeted question is thirty entities rather than five hundred, and can
+    include the history a single-shot question could never afford.
+
+    It sits between the other two on purpose. ``run_claude`` can change
+    nothing because it holds no tools; ``run_agent`` can change the house
+    because somebody pressed Fix. This runs unattended, on a schedule or on
+    a typed question, so it gets tools that only read — enforced from both
+    ends (see ANALYST_TOOLS and ANALYST_DENIED) rather than trusting one
+    flag's semantics with the house on the other side of it.
+
+    ``--append-system-prompt``, not ``--system-prompt``: replacing the CLI's
+    own prompt strips what it knows about calling tools, which is the entire
+    point of this path.
+    """
+    return _run_cli(
+        prompt,
+        ["--append-system-prompt", system_prompt,
+         "--allowedTools", ",".join(ANALYST_TOOLS),
+         "--disallowedTools", ",".join(ANALYST_DENIED)],
+        model, timeout, max_turns,
+        f"the analysis passed its {timeout}s limit and was stopped")
+
+
 def run_agent(
     prompt: str,
     system_prompt: str,

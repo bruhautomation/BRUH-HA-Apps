@@ -70,6 +70,7 @@ import settings_store    # noqa: E402
 import findings_store    # noqa: E402
 import knowledge_store   # noqa: E402
 import hypotheses        # noqa: E402
+import usage_store       # noqa: E402
 
 # Nothing here may reach a real Claude CLI.
 engine.run_claude = lambda *a, **k: {"ok": True, "text": "OK", "error": "", "meta": {}}
@@ -118,9 +119,20 @@ for c in demo.CARDS:
                           time.localtime(time.time() - c["minutes_ago"] * 60))
     rec = {k: v for k, v in c.items() if k != "minutes_ago"}
     rec["generated_at"] = stamp
-    rec["meta"] = {"duration_ms": 31000}
+    # A real card's cost, so the foot renders the tokens span and its
+    # tooltip — the measurement scripts can only check what is on screen.
+    rec["meta"] = {"duration_ms": 31000,
+                   "cost": {"input": 33_100, "output": 8_150,
+                            "cached": 0, "total": 41_250}}
     (DEMO / "insights" / f"{c['id']}.json").write_text(
         json.dumps(rec, ensure_ascii=False), encoding="utf-8")
+
+    # Book each demo card's cost against the run ledger too, so the usage
+    # pill's popover has a spend breakdown to itemize. A demo panel whose
+    # every card cost 41k and whose session reads "spent by nobody" is a
+    # screenshot of a bug that isn't there.
+    usage_store.record_run(41_250, c["id"],
+                           now=time.time() - c["minutes_ago"] * 60)
 
 findings_store.add_many(demo.FINDINGS)
 

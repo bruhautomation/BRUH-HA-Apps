@@ -457,6 +457,17 @@ html, body {
   font-size: 13px;
   font-weight: 600;
 }
+/* What the run is spending, beside the phase that is spending it. Quieter
+   than the phase text and pushed to the end of the row: it is a fact about
+   the run, not what the run is doing. It wraps rather than shrinking the
+   phase label, which is the part that has to stay readable. */
+.phase .phasecost {
+  margin-left: auto;
+  color: var(--ink-3);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.phase { flex-wrap: wrap; }
 .phase .orbit {
   width: 14px; height: 14px; flex: none;
   border-radius: 50%;
@@ -726,6 +737,10 @@ body.modal-open {
   box-shadow: var(--shadow);
   font-size: 13px;
   line-height: 1.45;
+  /* max-height is measured in positionChipPop from what is left below the
+     chip — CSS cannot see where the anchor ended up. */
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .chippop.hidden { display: none; }
 .chippop h4 {
@@ -768,6 +783,20 @@ body.modal-open {
   font-size: 12px;
 }
 .chippop .pnote b { color: var(--ink-2); font-weight: 600; }
+/* Heading for the spend breakdown. The popover holds two lists now — the
+   windows, and what filled them — and without a line between them the
+   token counts read as more percentages. */
+.chippop .psub {
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid var(--hairline);
+  color: var(--ink-3);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.chippop .psub + .prow { border-top: 0; }
 
 /* The Memory pane is a TAB, not a dialog — and it kept the dialog's
    scrolling when it was relocated out of one.

@@ -121,11 +121,80 @@ def tokens_from_meta(meta: dict) -> int:
     return total
 
 
+def split_from_meta(meta: dict) -> dict:
+    """One run's token counts, split the way a person reads a bill.
+
+    ``total`` is whatever ``tokens_from_meta`` counts and nothing else, so
+    the number on a card, the number in the log, and the number the budget
+    is measured against cannot disagree — three readings of one run that
+    differ is how a usage figure stops being believed.
+
+    ``cached`` is reported and deliberately left out of ``total``: a cache
+    read is nearly free against the session limit, and folding it in would
+    inflate every number on screen for tokens that were never charged.
+    """
+    usage = meta.get("usage") if isinstance(meta, dict) else None
+    usage = usage if isinstance(usage, dict) else {}
+
+    def count(key: str) -> int:
+        val = usage.get(key)
+        return val if isinstance(val, int) and val > 0 else 0
+
+    return {
+        # Cache creation is an input cost — it is the prompt, written down.
+        "input": count("input_tokens") + count("cache_creation_input_tokens"),
+        "output": count("output_tokens"),
+        "cached": count("cache_read_input_tokens"),
+        "total": tokens_from_meta(meta),
+    }
+
+
 def window_tokens(hours: float = SESSION_HOURS, now: float | None = None) -> int:
     """Tokens Insights spent in the trailing window."""
     now = time.time() if now is None else now
     cutoff = now - hours * 3600
     return sum(r["tokens"] for r in _load_runs() if r["ts"] >= cutoff)
+
+
+# How many spenders the breakdown names before folding the tail into one
+# row. The list is capped and the window total is not, so a long tail says
+# what it is not showing rather than quietly disagreeing with the pill.
+MAX_BREAKDOWN = 6
+
+
+def _breakdown(runs: list[dict], limit: int = MAX_BREAKDOWN) -> list[dict]:
+    """Per-card token totals out of already-loaded runs, biggest first.
+
+    "Why is my session gone?" is a question about *what spent it*, and the
+    run ledger has always known — it records an id per run and nothing ever
+    read it back. Rows are ``{"id", "tokens", "runs"}``; the tail past
+    ``limit`` collapses into one row flagged ``rest`` rather than being
+    dropped, because a breakdown that silently omits a third of the window
+    is worse than no breakdown at all.
+    """
+    totals: dict[str, dict] = {}
+    for run in runs:
+        key = str(run.get("id") or "")
+        row = totals.setdefault(key, {"id": key, "tokens": 0, "runs": 0})
+        row["tokens"] += run["tokens"]
+        row["runs"] += 1
+    ranked = sorted(totals.values(), key=lambda r: -r["tokens"])
+    if limit and len(ranked) > limit:
+        tail = ranked[limit:]
+        ranked = ranked[:limit] + [{
+            "id": "", "rest": True,
+            "tokens": sum(r["tokens"] for r in tail),
+            "runs": sum(r["runs"] for r in tail),
+        }]
+    return ranked
+
+
+def window_breakdown(hours: float = SESSION_HOURS, now: float | None = None,
+                     limit: int = MAX_BREAKDOWN) -> list[dict]:
+    """What spent the trailing window, biggest first."""
+    now = time.time() if now is None else now
+    cutoff = now - hours * 3600
+    return _breakdown([r for r in _load_runs() if r["ts"] >= cutoff], limit)
 
 
 def _parse_iso_epoch(value) -> int | None:
@@ -225,4 +294,12 @@ def budget_state(settings: dict, now: float | None = None) -> dict:
         "plan": plan,
         "plan_label": PLAN_LABELS[plan],
         "plan_session_tokens": PLAN_SESSION_TOKENS[plan],
+        # What brAIn itself spent the window on. Always brAIn's own runs,
+        # never the account's — when `source` is "account" the pill's
+        # percentage covers every Claude use on the subscription (terminal,
+        # chat, voice) and these rows are a subset of it. The panel says so;
+        # a breakdown read as exhaustive is how you conclude the terminal is
+        # free.
+        "runs": len(runs),
+        "breakdown": _breakdown(runs),
     }

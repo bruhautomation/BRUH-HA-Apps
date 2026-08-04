@@ -191,11 +191,12 @@ def get_category(cat_id: str) -> dict | None:
 # one hue light→dark for magnitude, blue↔red for polarity, reserved status
 # colors, one axis per chart, thin marks, legends for ≥2 series.
 
-SYSTEM_PROMPT = """You are brAIn, the AI analyst inside a Home Assistant add-on. You receive a JSON snapshot of the user's smart home and produce ONE insight card: a handful of sharp, specific data points plus one compact self-contained visualization.
-
-You have NO tools available. Never attempt to use tools. Respond with a single JSON object and absolutely nothing else — no markdown fences, no prose before or after.
-
-THE CARD IS A GLANCE, NOT A REPORT. The homeowner reads it in ten seconds on a phone. The highlights ARE the product: concrete numbers with names and times. The summary is one or two short sentences that add the single most important conclusion the numbers alone don't say. Anything long-winded is a failed run.
+# The card contract — the output shape, the design system, the analysis
+# rules — is one document with two preambles in front of it. How the data
+# arrived (posted whole, or fetched by the model) changes the first two
+# paragraphs and nothing else, and a second copy of a 10 KB contract is a
+# second copy that drifts.
+_CARD_CONTRACT = """THE CARD IS A GLANCE, NOT A REPORT. The homeowner reads it in ten seconds on a phone. The highlights ARE the product: concrete numbers with names and times. The summary is one or two short sentences that add the single most important conclusion the numbers alone don't say. Anything long-winded is a failed run.
 
 OUTPUT CONTRACT (strict JSON; title, summary, highlights, and html are required):
 {
@@ -257,6 +258,31 @@ ANALYSIS RULES:
 - Never invent data. Every number shown must come from the snapshot."""
 
 
+SYSTEM_PROMPT = """You are brAIn, the AI analyst inside a Home Assistant add-on. You receive a JSON snapshot of the user's smart home and produce ONE insight card: a handful of sharp, specific data points plus one compact self-contained visualization.
+
+You have NO tools available. Never attempt to use tools. Respond with a single JSON object and absolutely nothing else — no markdown fences, no prose before or after.
+
+""" + _CARD_CONTRACT
+
+
+ANALYST_SYSTEM = """You are brAIn, the AI analyst inside a Home Assistant add-on. You produce ONE insight card: a handful of sharp, specific data points plus one compact self-contained visualization.
+
+You do NOT receive the home up front. You receive a MAP of it — how many entities of each domain exist, which areas they sit in, and a few anchor entities — and you have read-only Home Assistant tools to go and fetch whatever the question actually needs. Work the way a person would: decide what you need, look it up, follow what you find.
+
+HOW TO GATHER
+1. Read the map and the question, and decide what data would answer it. Name it to yourself before you fetch anything.
+2. Search, don't enumerate. `get_all_states` takes a `domain` and a `name_filter` substring — "hall", "battery", "dryer" — and returns matching entities with their states. Two or three targeted searches beat one broad sweep, and a broad sweep of a large home is truncated anyway.
+3. Go deeper on the few that matter rather than shallow on hundreds. `get_entity_state` gives one entity in full; `get_history` and `get_statistics` give it over time; `get_logbook` says what happened around a moment; `get_automation_trace` says why an automation did what it did. Trend data is the thing a snapshot cannot give you — use it.
+4. STOP when you can answer. Every extra call costs the homeowner part of their Claude usage window, and a card built on twelve well-chosen entities beats one built on four hundred. Fetching everything is the failure mode this design exists to avoid.
+5. If a search comes back empty, try a different word before concluding the thing does not exist — homes name things unpredictably. If it genuinely is not there, say so in the summary rather than inventing it.
+
+You can only READ. There is no tool here that changes anything in the house, by design — if answering seems to need a change, that is a finding, not something you do.
+
+When you have what you need, respond with a single JSON object and absolutely nothing else — no markdown fences, no prose before or after.
+
+""" + _CARD_CONTRACT
+
+
 # ---------------------------------------------------------------------------
 # Prompt assembly
 # ---------------------------------------------------------------------------
@@ -286,29 +312,23 @@ def _previous_block(previous: dict) -> str:
     return "\n".join(lines)
 
 
-def build_prompt(
+def _framing(
     category: dict,
-    bundle: dict,
-    question: str | None = None,
-    feedback: list[str] | None = None,
-    knowledge: str | None = None,
-    previous: dict | None = None,
-    hypothesis_budget: int = 0,
-    findings: str | None = None,
-) -> str:
-    """Assemble the user prompt: analysis focus + the data bundle.
+    question: str | None,
+    feedback: list[str] | None,
+    knowledge: str | None,
+    findings: str | None,
+    hypothesis_budget: int,
+    previous: dict | None,
+) -> list[str]:
+    """Everything the analyst is told before it is told about the data.
 
-    ``feedback`` is the homeowner's standing feedback on earlier versions of
-    this card — injected as instructions the new insight must honor.
-    ``knowledge`` is the rendered knowledge-store block (rejected lines of
-    inquiry only — facts live in the memory document and are injected from
-    there). ``hypothesis_budget`` is how many guesses the analyst may still
-    propose; at zero it is told to propose none, which is what keeps the
-    queue from growing into the wall of open questions this replaced.
-    ``previous`` is the last stored run of this card, injected so the
-    analyst advances the story instead of regenerating it.
-    ``findings`` is the rendered findings block: what is already on the work
-    list, and what the homeowner dismissed as not a problem here.
+    Shared by both prompt builders on purpose: what the card is for, what the
+    homeowner has said about it, what is already known, what is already on
+    the work list and how many guesses are left do not depend on whether the
+    data was posted whole or fetched by the model. Only the section after
+    this differs, and keeping one copy is what stops the searching path
+    quietly losing a rule the single-shot path enforces.
     """
     parts: list[str] = []
     if question:
@@ -358,10 +378,42 @@ def build_prompt(
     if previous:
         parts.append("\n" + _previous_block(previous))
 
+    return parts
+
+
+def build_prompt(
+    category: dict,
+    bundle: dict,
+    question: str | None = None,
+    feedback: list[str] | None = None,
+    knowledge: str | None = None,
+    previous: dict | None = None,
+    hypothesis_budget: int = 0,
+    findings: str | None = None,
+) -> str:
+    """Assemble the user prompt: analysis focus + the data bundle.
+
+    ``feedback`` is the homeowner's standing feedback on earlier versions of
+    this card — injected as instructions the new insight must honor.
+    ``knowledge`` is the rendered knowledge-store block (rejected lines of
+    inquiry only — facts live in the memory document and are injected from
+    there). ``hypothesis_budget`` is how many guesses the analyst may still
+    propose; at zero it is told to propose none, which is what keeps the
+    queue from growing into the wall of open questions this replaced.
+    ``previous`` is the last stored run of this card, injected so the
+    analyst advances the story instead of regenerating it.
+    ``findings`` is the rendered findings block: what is already on the work
+    list, and what the homeowner dismissed as not a problem here.
+    """
+    parts = _framing(category, question, feedback, knowledge, findings,
+                     hypothesis_budget, previous)
     parts.append(
         "\nHOME DATA SNAPSHOT (JSON). Sections: meta (now, timezone, location name), areas, "
-        "entities (e=entity_id, s=state, n=friendly name, a=area, u=unit, dc=device_class, "
-        "lc=last_changed, x=extra attributes), device_context (entities sharing a physical "
+        "entities (e=entity_id, s=state, n=friendly name — ABSENT when it is just the "
+        "entity_id prettified, so read the id in that case, a=area, u=unit, dc=device_class, "
+        "lc=MINUTES since it last changed, x=extra attributes; an unavailable or unknown "
+        "entity carries only e/s/a because it has no reading to describe), device_context "
+        "(entities sharing a physical "
         "device with a presence tracker — phone SSID/geocoded address/activity/battery; "
         "d=device name), history (per entity: h=[[time, value|state], ...] downsampled), "
         "statistics (per entity hourly sum/mean), context (optional notes about this home)."
@@ -370,5 +422,46 @@ def build_prompt(
     parts.append(
         "\nNow produce the single JSON insight object per the contract. Remember: JSON only, "
         "no fences, no commentary."
+    )
+    return "\n".join(parts)
+
+
+def build_orientation_prompt(
+    category: dict,
+    orientation: dict,
+    question: str | None = None,
+    feedback: list[str] | None = None,
+    knowledge: str | None = None,
+    previous: dict | None = None,
+    hypothesis_budget: int = 0,
+    findings: str | None = None,
+) -> str:
+    """The searching path's prompt: the map, not the territory.
+
+    Every framing block is the same as ``build_prompt`` — the question, the
+    homeowner's feedback, what is already known, what is already on the work
+    list, the previous run — because none of that depends on how the data
+    arrives. What changes is the last section: a map of the home and an
+    instruction to go and get what answering it needs.
+    """
+    parts = _framing(category, question, feedback, knowledge, findings,
+                     hypothesis_budget, previous)
+    parts.append(
+        "\nMAP OF THIS HOME (JSON). NOT the data — the shape of it. Sections: meta (now, "
+        "timezone, location name), entity_count (how many entities exist in total), "
+        "unavailable_count, domains (domain -> how many entities of it exist), areas "
+        "(area name -> how many entities are in it), anchors (the few people/climate/"
+        "weather/alarm entities named in full, because nearly every question touches "
+        "them; same field shorthand as a snapshot row — e=entity_id, s=state, n=friendly "
+        "name when it is not just the id prettified, a=area, u=unit, dc=device_class, "
+        "lc=MINUTES since it last changed, x=extra attributes), context (optional notes "
+        "about this home)."
+    )
+    parts.append(json.dumps(orientation, ensure_ascii=False, separators=(",", ":")))
+    parts.append(
+        "\nUse your Home Assistant tools to fetch what answering this actually needs — "
+        "search by domain and by name, then go deep on the few entities that matter, "
+        "including their history. Then produce the single JSON insight object per the "
+        "contract. Remember: JSON only, no fences, no commentary."
     )
     return "\n".join(parts)

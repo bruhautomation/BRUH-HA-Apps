@@ -11,6 +11,7 @@ import asyncio
 import datetime as dt
 import json
 import os
+import re
 from typing import Any
 
 import aiohttp
@@ -189,15 +190,60 @@ def _num(value: Any) -> float | None:
         return None
 
 
-def slim_state(state: dict, area: str | None) -> dict:
+def _slug(text: str) -> str:
+    """Home Assistant's own object-id slugification, near enough."""
+    return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")
+
+
+def _minutes_since(stamp: str, now: dt.datetime | None) -> int | None:
+    """An ISO timestamp as whole minutes before ``now``.
+
+    None when it can't be parsed or ``now`` wasn't supplied — the field is
+    then simply absent, which is what a row with no last_changed already
+    looked like.
+    """
+    if not stamp or now is None:
+        return None
+    try:
+        when = dt.datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=now.tzinfo)
+    return max(0, int((now - when).total_seconds() // 60))
+
+
+def slim_state(state: dict, area: str | None,
+               now: dt.datetime | None = None) -> dict:
+    """One entity as the fewest characters that still carry every signal.
+
+    Three of the encodings here were chosen for size, and each keeps what
+    the field is actually read for:
+
+    * ``lc`` is minutes-since, not an ISO timestamp. Staleness is the only
+      thing last_changed is ever read for, and 19 characters of absolute
+      time cost three times what the answer does — while making the model
+      diff it against ``meta.now`` to get there. Minutes rather than hours
+      because "it changed 6 minutes ago" is a different fact from "it
+      changed an hour ago" and the two encodings cost the same.
+    * ``n`` is dropped when it is just the slugified entity_id, which is
+      what Home Assistant names an entity by default. It is a second copy
+      of a string already on the row; a renamed entity still carries it.
+    * an unavailable entity keeps only ``e``/``s``/``a``. Its unit, device
+      class and attributes describe a reading that is not there, and "this
+      exists and is down" is the whole of what the row has to say.
+    """
     attrs = state.get("attributes", {}) or {}
-    domain = state.get("entity_id", ".").split(".")[0]
-    out: dict[str, Any] = {
-        "e": state.get("entity_id"),
-        "s": state.get("state"),
-    }
+    entity_id = state.get("entity_id") or ""
+    domain = entity_id.split(".")[0]
+    value = state.get("state")
+    out: dict[str, Any] = {"e": entity_id, "s": value}
+    if value in ("unavailable", "unknown"):
+        if area:
+            out["a"] = area
+        return out
     name = attrs.get("friendly_name")
-    if name:
+    if name and _slug(str(name)) != entity_id.split(".", 1)[-1]:
         out["n"] = name
     if area:
         out["a"] = area
@@ -207,9 +253,9 @@ def slim_state(state: dict, area: str | None) -> dict:
     dc = attrs.get("device_class")
     if dc:
         out["dc"] = dc
-    lc = state.get("last_changed")
-    if lc:
-        out["lc"] = lc[:19]  # second precision is plenty
+    minutes = _minutes_since(state.get("last_changed") or "", now)
+    if minutes is not None:
+        out["lc"] = minutes
     extras = {}
     for key in EXTRA_ATTRS.get(domain, []):
         val = attrs.get(key)
@@ -228,6 +274,7 @@ def filter_states(
     domains: list[str],
     device_classes: list[str],
     include_unavailable: bool = False,
+    now: dt.datetime | None = None,
 ) -> list[dict]:
     """Category filter: match by domain OR device_class; empty filters = all."""
     ent_area = registries["entity_area"]
@@ -245,7 +292,7 @@ def filter_states(
         if domains or device_classes:
             if domain not in domains and (dc or "") not in device_classes:
                 continue
-        out.append(slim_state(st, ent_area.get(eid)))
+        out.append(slim_state(st, ent_area.get(eid), now))
     return out[:MAX_ENTITIES]
 
 
@@ -253,6 +300,7 @@ def related_device_entities(
     states: list[dict],
     registries: dict,
     present_ids: set[str],
+    now: dt.datetime | None = None,
 ) -> list[dict]:
     """Sibling entities of presence trackers — the phone context.
 
@@ -292,7 +340,7 @@ def related_device_entities(
             continue
         if len(by_device[device_id]) >= MAX_CONTEXT_PER_DEVICE:
             continue
-        slim = slim_state(st, ent_area.get(eid))
+        slim = slim_state(st, ent_area.get(eid), now)
         name = device_names.get(device_id)
         if name:
             slim["d"] = name
@@ -469,6 +517,85 @@ def _shrink_to_budget(bundle: dict) -> dict:
     return bundle
 
 
+# An orientation is a map, not the territory: how many of each domain exist,
+# which areas they sit in, and the few singleton entities worth naming
+# outright. Anything longer defeats the point — the moment it enumerates
+# entity ids it is a full bundle wearing a smaller name.
+MAX_ORIENTATION_AREAS = 60
+MAX_ORIENTATION_DOMAINS = 30
+# Domains where naming every entity is cheaper than making Claude search for
+# them, because a home has a handful and they anchor almost every question.
+ANCHOR_DOMAINS = ("person", "climate", "weather", "alarm_control_panel")
+MAX_ANCHORS = 40
+
+
+async def collect_orientation(question: str | None = None) -> dict:
+    """What the home CONTAINS — the small bundle the searching path starts on.
+
+    The single-shot path posts every entity because it has one turn to work
+    with and cannot ask for more. This one posts the shape of the house:
+    domain counts, area names, and the handful of anchor entities almost
+    every question touches. Claude then calls the read-only MCP tools for
+    the rows it decides it needs.
+
+    That is the whole saving. An INDEX of every entity id would cost nearly
+    as much as the slimmed rows themselves — measured — so this deliberately
+    does not enumerate ids. Claude searches by domain and by name substring,
+    the way a person would.
+    """
+    now = dt.datetime.now().astimezone()
+    async with aiohttp.ClientSession() as session:
+        config, states, registries = await asyncio.gather(
+            _rest_get(session, "/config"),
+            _rest_get(session, "/states", timeout=60),
+            get_registries(session),
+        )
+
+    hidden = registries["hidden"]
+    ent_area = registries["entity_area"]
+    domains: dict[str, int] = {}
+    per_area: dict[str, int] = {}
+    unavailable = 0
+    anchors: list[dict] = []
+    for st in states:
+        eid = st.get("entity_id", "")
+        if not eid or eid in hidden:
+            continue
+        domain = eid.split(".")[0]
+        domains[domain] = domains.get(domain, 0) + 1
+        area = ent_area.get(eid)
+        if area:
+            per_area[area] = per_area.get(area, 0) + 1
+        if st.get("state") in ("unavailable", "unknown"):
+            unavailable += 1
+        if domain in ANCHOR_DOMAINS and len(anchors) < MAX_ANCHORS:
+            anchors.append(slim_state(st, area, now))
+
+    ranked_domains = dict(sorted(domains.items(), key=lambda kv: -kv[1])
+                          [:MAX_ORIENTATION_DOMAINS])
+    ranked_areas = dict(sorted(per_area.items(), key=lambda kv: -kv[1])
+                        [:MAX_ORIENTATION_AREAS])
+    out: dict[str, Any] = {
+        "meta": {
+            "now": now.isoformat()[:19],
+            "timezone": config.get("time_zone"),
+            "location": config.get("location_name"),
+            "ha_version": config.get("version"),
+        },
+        "entity_count": sum(domains.values()),
+        "unavailable_count": unavailable,
+        "domains": ranked_domains,
+        "areas": ranked_areas,
+        "anchors": anchors,
+    }
+    if question is not None:
+        out["question"] = question
+    context = _read_context()
+    if context:
+        out["context"] = context
+    return out
+
+
 async def collect_bundle(category: dict, history_days: int, question: str | None = None) -> dict:
     """Collect and slim everything the category needs into one prompt bundle."""
     now = dt.datetime.now().astimezone()
@@ -485,15 +612,18 @@ async def collect_bundle(category: dict, history_days: int, question: str | None
             category.get("domains", []),
             category.get("device_classes", []),
             include_unavailable=include_unavail,
+            now=now,
         )
         # For ad-hoc questions, give Claude the whole (slimmed) home
         if question is not None:
-            entities = filter_states(states, registries, [], [], include_unavailable=True)
+            entities = filter_states(states, registries, [], [],
+                                     include_unavailable=True, now=now)
 
         device_context: list[dict] = []
         if category.get("device_context") or question is not None:
             present = {e["e"] for e in entities}
-            device_context = related_device_entities(states, registries, present)
+            device_context = related_device_entities(
+                states, registries, present, now=now)
 
         bundle: dict[str, Any] = {
             "meta": {

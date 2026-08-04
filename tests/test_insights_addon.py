@@ -39,6 +39,7 @@ import findings_store  # noqa: E402
 import knowledge_store  # noqa: E402
 import prompt_store  # noqa: E402
 import settings_store  # noqa: E402
+import usage_store  # noqa: E402
 import user_categories  # noqa: E402
 
 
@@ -920,6 +921,11 @@ class InsightsServerCase(unittest.TestCase):
         findings_store.FINDINGS_FILE = Path(self.tmp.name) / "findings.json"
         findings_store.INBOX_DIR = Path(self.tmp.name) / "findings-inbox"
         card_tags.TAGS_FILE = Path(self.tmp.name) / "card_tags.json"
+        # Every generation books its tokens against the run ledger, so the
+        # ledger is part of the fixture — without this a test run writes to
+        # the real /data/usage.json and every case sees the last one's spend.
+        self._old_usage = usage_store.USAGE_FILE
+        usage_store.USAGE_FILE = os.path.join(self.tmp.name, "usage.json")
         self._old_www = self.server.WWW_CARD_DIR
         self.server.WWW_CARD_DIR = Path(self.tmp.name) / "www" / "bruh_insights"
         self.server.JOBS.clear()
@@ -936,6 +942,7 @@ class InsightsServerCase(unittest.TestCase):
         self.server.CARD_TOKEN_FILE = self._old_card_token
         knowledge_store.KNOWLEDGE_FILE = self._old_knowledge
         self.server.SHARED_MEMORY_FILE = self._old_shared_mem
+        usage_store.USAGE_FILE = self._old_usage
         self.server.WWW_CARD_DIR = self._old_www
         self.server.JOBS.clear()
         self.tmp.cleanup()
@@ -1145,6 +1152,8 @@ class TestGenerateFlow(InsightsServerCase):
     def setUp(self):
         super().setUp()
         self._old_collect = self.ha_data.collect_bundle
+        self._old_orientation = getattr(self.ha_data, "collect_orientation", None)
+        self._old_analyst = engine.run_analyst
         self._old_run = engine.run_claude
         self._old_service = self.ha_data.call_service
 
@@ -1171,7 +1180,12 @@ class TestGenerateFlow(InsightsServerCase):
     def tearDown(self):
         self.ha_data.collect_bundle = self._old_collect
         engine.run_claude = self._old_run
+        engine.run_analyst = self._old_analyst
         self.ha_data.call_service = self._old_service
+        if self._old_orientation is None:
+            self.ha_data.__dict__.pop("collect_orientation", None)
+        else:
+            self.ha_data.collect_orientation = self._old_orientation
         super().tearDown()
 
     def _stored(self, insight_id="energy"):
@@ -1317,6 +1331,154 @@ class TestGenerateFlow(InsightsServerCase):
         self.assertEqual(stored["icon"], "🧊")
         # user categories keep run history like shipped ones
         self.assertTrue((Path(self.tmp.name) / "history" / cat["id"]).exists())
+
+    def test_a_run_reports_what_it_cost(self):
+        """A card carries the price of the run that made it.
+
+        The token counts were always in the result envelope and the card
+        always stored the envelope — but only the stopwatch was ever
+        rendered, so an expensive card and a cheap one looked identical and
+        the only evidence either way was a percentage in the top bar
+        attributable to nothing.
+        """
+        engine.run_claude = lambda *a, **k: {
+            "ok": True, "text": json.dumps(self.reply), "error": "",
+            "meta": {"duration_ms": 5,
+                     "usage": {"input_tokens": 30_000, "output_tokens": 8_000,
+                               "cache_creation_input_tokens": 1_000,
+                               "cache_read_input_tokens": 12_000}}}
+        asyncio.run(self.server._generate("energy"))
+        cost = self._stored()["meta"]["cost"]
+        self.assertEqual(cost, {"input": 31_000, "output": 8_000,
+                                "cached": 12_000, "total": 39_000})
+        # The card and the budget read one number, derived once, server-side.
+        self.assertEqual(cost["total"], usage_store.window_tokens())
+        self.assertEqual(usage_store.window_breakdown()[0]["id"], "energy")
+
+    def test_a_running_job_says_what_it_is_sending(self):
+        """The size of the prompt is knowable before the answer is.
+
+        A generation is minutes of spinner; carrying the prompt size on the
+        job is what lets the card say how much of the home it just posted
+        while it is still waiting to hear back.
+        """
+        seen = {}
+
+        def capture(prompt, *a, **k):
+            seen["job"] = dict(self.server.JOBS["energy"])
+            seen["prompt"] = prompt
+            return {"ok": True, "text": json.dumps(self.reply), "error": "",
+                    "meta": {"duration_ms": 5}}
+
+        engine.run_claude = capture
+        asyncio.run(self.server._generate("energy"))
+        self.assertEqual(seen["job"]["state"], "generating")
+        self.assertEqual(seen["job"]["prompt_chars"], len(seen["prompt"]))
+        self.assertIn("entities", seen["job"])
+
+    # -- the searching path -----------------------------------------------
+
+    def _stub_search(self, result=None, orientation=None, boom=False):
+        """Make both gather paths observable, and neither reach a real CLI."""
+        self.calls = []
+
+        async def fake_orientation(question=None):
+            if boom:
+                raise RuntimeError("HA is not answering")
+            return orientation or {"entity_count": 512, "domains": {"sensor": 300},
+                                   "areas": {"Hall": 12}, "anchors": []}
+
+        self.ha_data.collect_orientation = fake_orientation
+
+        def analyst(prompt, system, *a, **k):
+            self.calls.append(("analyst", prompt, system))
+            return result if result is not None else {
+                "ok": True, "text": json.dumps(self.reply), "error": "",
+                "meta": {"duration_ms": 4}}
+
+        def snapshot(prompt, system, *a, **k):
+            self.calls.append(("snapshot", prompt, system))
+            return {"ok": True, "text": json.dumps(self.reply), "error": "",
+                    "meta": {"duration_ms": 5}}
+
+        engine.run_analyst = analyst
+        engine.run_claude = snapshot
+
+    def test_a_question_searches_instead_of_being_posted_the_whole_home(self):
+        """The map is the prompt, not the territory.
+
+        Posting 500 entities to answer a question about one room is the
+        expensive thing this add-on does. The searching path sends what the
+        home CONTAINS and lets Claude fetch the rows it decides it needs.
+        """
+        self._stub_search()
+        self.server._set_job("custom-77", state="queued", question="Why cold?")
+        asyncio.run(self.server._generate("custom-77"))
+        self.assertEqual([c[0] for c in self.calls], ["analyst"])
+        prompt = self.calls[0][1]
+        self.assertIn("MAP OF THIS HOME", prompt)
+        self.assertNotIn("HOME DATA SNAPSHOT", prompt)
+        self.assertIn("QUESTION: Why cold?", prompt)
+        # The framing every run gets does not depend on how the data arrives.
+        self.assertIn("HYPOTHESIS BUDGET", prompt)
+        self.assertEqual(self.server.JOBS["custom-77"]["state"], "done")
+        # `entities` is what the run was GIVEN, and a search run is given none
+        # — claiming a count here would mean something the snapshot path
+        # means literally.
+        self.assertEqual(self.server.JOBS["custom-77"]["entities"], 0)
+
+    def test_a_failed_search_still_produces_a_card(self):
+        """The snapshot path is the floor, not a mode.
+
+        A search run depends on tools resolving and on the model choosing to
+        stop. Neither is guaranteed, and a card must appear anyway.
+        """
+        self._stub_search(result={"ok": False, "text": "", "meta": {},
+                                  "error": "max number of turns"})
+        self.server._set_job("custom-78", state="queued", question="Why cold?")
+        asyncio.run(self.server._generate("custom-78"))
+        self.assertEqual([c[0] for c in self.calls], ["analyst", "snapshot"])
+        self.assertIn("HOME DATA SNAPSHOT", self.calls[1][1])
+        self.assertEqual(self.server.JOBS["custom-78"]["state"], "done")
+        self.assertTrue(self._stored("custom-78")["title"])
+
+    def test_a_map_that_cannot_be_collected_falls_back_too(self):
+        """Not every failure is the model's. HA may simply not answer."""
+        self._stub_search(boom=True)
+        self.server._set_job("custom-79", state="queued", question="Why cold?")
+        asyncio.run(self.server._generate("custom-79"))
+        self.assertEqual([c[0] for c in self.calls], ["snapshot"])
+        self.assertEqual(self.server.JOBS["custom-79"]["state"], "done")
+
+    def test_snapshot_mode_never_searches(self):
+        """The setting is honoured, not merely preferred."""
+        settings_store.save({"gather_mode": "snapshot"})
+        self._stub_search()
+        self.server._set_job("custom-80", state="queued", question="Why cold?")
+        asyncio.run(self.server._generate("custom-80"))
+        self.assertEqual([c[0] for c in self.calls], ["snapshot"])
+
+    def test_the_two_paths_share_one_card_contract(self):
+        """Two preambles, one contract — a second 10 KB copy would drift."""
+        self._stub_search()
+        self.server._set_job("custom-81", state="queued", question="Why cold?")
+        asyncio.run(self.server._generate("custom-81"))
+        analyst_system = self.calls[0][2]
+        self.assertIn("OUTPUT CONTRACT", analyst_system)
+        self.assertIn("DESIGN SYSTEM", analyst_system)
+        # ...and the analyst is NOT told it has no tools, which is the whole
+        # difference between the two preambles.
+        self.assertNotIn("NO tools available", analyst_system)
+        self.assertIn("NO tools available", categories.SYSTEM_PROMPT)
+
+    def test_a_run_with_no_usage_block_still_finishes(self):
+        """Accounting never breaks the run it is accounting for."""
+        engine.run_claude = lambda *a, **k: {
+            "ok": True, "text": json.dumps(self.reply), "error": "", "meta": {}}
+        asyncio.run(self.server._generate("energy"))
+        self.assertEqual(self.server.JOBS["energy"]["state"], "done")
+        self.assertEqual(self._stored()["meta"]["cost"]["total"], 0)
+        self.assertEqual(usage_store.window_tokens(), 0)
 
 
 class TestCardsDoNotAsk(InsightsServerCase):
