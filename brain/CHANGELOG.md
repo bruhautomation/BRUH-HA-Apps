@@ -2,6 +2,45 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.22.2
+
+### Fixed
+
+- **The usage sensors reported a rate limit brAIn had caused itself.** They
+  went unavailable with `http_429`, which reads as "you have used up your
+  quota" and was nothing of the sort — the *usage endpoint* was refusing to
+  answer, with plenty of quota to spare.
+
+  brAIn was asking it six times per poll. The tracker tries each credential
+  store in turn, so a token the server refuses gives way to the next one
+  rather than speaking for a sign-in that would have worked. But it offered
+  a credential per *path*, and the paths are the same file: the add-on
+  exports `CLAUDE_CONFIG_DIR` as `/data/home/.claude`, which makes the first
+  two identical strings, and symlinks the other two together. One sign-in,
+  four identical requests with no pause between them, then two more from the
+  panel and `ha login` stores usually holding that same token — every two
+  minutes, all day.
+
+  That endpoint is undocumented and limited far harder than anything else
+  brAIn touches, and a token hammered on it starts answering 429 and keeps
+  answering 429 long after the window that supposedly caused it. Claude Code
+  itself only ever calls it when you open its `/usage` screen, never on a
+  timer.
+
+  A credential is now offered once however many paths lead to it, so an
+  ordinary poll is one request. A 429 is treated as the one failure that
+  retrying makes worse: it waits 15 minutes, then 30, then an hour, instead
+  of poking the endpoint every five minutes forever and keeping it tripped.
+  The endpoint sends `Retry-After: 0` while still refusing, so that header
+  can only ever make brAIn wait *longer*, never sooner. The poll itself
+  settles at five minutes.
+
+  A rate limit never blanks numbers that are still good — it says nothing
+  about your sign-in, so the last reading ages out normally. And the
+  **Usage tracker** sensor now carries a `detail` explaining that `http_429`
+  is the endpoint's limit and not your account's, because the code on its
+  own is read as the thing it isn't.
+
 ## 1.22.1
 
 ### Fixed
