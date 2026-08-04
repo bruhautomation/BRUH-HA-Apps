@@ -29,6 +29,8 @@ import time
 import unicodedata
 from pathlib import Path
 
+import atomic_write
+
 MEMORY_DIR = Path(os.environ.get("BRAIN_MEMORY_DIR", "/config/.brain/memory"))
 HYPOTHESES_FILE = Path(
     os.environ.get("BRAIN_HYPOTHESES_FILE", str(MEMORY_DIR / "hypotheses.jsonl")))
@@ -74,11 +76,7 @@ def _read() -> list[dict]:
 
 
 def _write(entries: list[dict]) -> None:
-    HYPOTHESES_FILE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = HYPOTHESES_FILE.with_suffix(".tmp")
-    tmp.write_text("".join(json.dumps(e, ensure_ascii=False) + "\n" for e in entries),
-                   encoding="utf-8")
-    tmp.replace(HYPOTHESES_FILE)
+    atomic_write.write_lines(HYPOTHESES_FILE, entries)
 
 
 def _unique_ts(used: set[int]) -> int:

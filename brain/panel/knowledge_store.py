@@ -37,7 +37,8 @@ import os
 import re
 import time
 import unicodedata
-from pathlib import Path
+
+import atomic_write
 
 KNOWLEDGE_FILE = os.environ.get("BRAIN_KNOWLEDGE_FILE", "/data/knowledge.json")
 
@@ -82,11 +83,7 @@ def _load() -> dict:
 
 
 def _write(data: dict) -> None:
-    path = Path(KNOWLEDGE_FILE)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(path)
+    atomic_write.write_json(KNOWLEDGE_FILE, data)
 
 
 def _unique_ts(used: set[int]) -> int:

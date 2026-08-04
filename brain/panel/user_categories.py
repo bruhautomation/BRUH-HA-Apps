@@ -26,9 +26,10 @@ from __future__ import annotations
 import json
 import os
 import time
-from pathlib import Path
 
 import settings_store
+
+import atomic_write
 
 USER_CATS_FILE = os.environ.get(
     "BRAIN_USER_CATS_FILE", "/data/user_categories.json")
@@ -54,12 +55,7 @@ def _load_raw() -> list[dict]:
 
 
 def _write(cats: list[dict]) -> None:
-    path = Path(USER_CATS_FILE)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(
-        json.dumps({"categories": cats}, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(path)
+    atomic_write.write_json(USER_CATS_FILE, {"categories": cats})
 
 
 def _as_category(entry: dict) -> dict:

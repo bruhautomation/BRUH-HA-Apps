@@ -41,7 +41,8 @@ from __future__ import annotations
 import json
 import os
 import re
-from pathlib import Path
+
+import atomic_write
 
 SETTINGS_FILE = os.environ.get("BRAIN_SETTINGS_FILE", "/data/settings.json")
 
@@ -225,11 +226,7 @@ def save(fields: dict) -> dict:
 
 def _write(merged: dict) -> None:
     """Persist the settings file atomically (tmp + replace)."""
-    path = Path(SETTINGS_FILE)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(merged, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(path)
+    atomic_write.write_json(SETTINGS_FILE, merged)
 
 
 def clean_schedule(value) -> list[str] | None:

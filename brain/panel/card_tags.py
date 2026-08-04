@@ -22,6 +22,8 @@ import json
 import os
 from pathlib import Path
 
+import atomic_write
+
 TAGS_FILE = Path(os.environ.get("BRAIN_CARD_TAGS_FILE", "/data/card_tags.json"))
 
 MAX_TAGS = 8
@@ -68,10 +70,7 @@ _load = load_edits
 
 
 def _write(cards: dict) -> None:
-    TAGS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = TAGS_FILE.with_suffix(".tmp")
-    tmp.write_text(json.dumps({"cards": cards}, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(TAGS_FILE)
+    atomic_write.write_json(TAGS_FILE, {"cards": cards})
 
 
 def base_tags(insight: dict) -> list[str]:

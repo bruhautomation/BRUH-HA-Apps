@@ -2,6 +2,38 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.22.1
+
+### Fixed
+
+- **Two things saving at once could lose one of them.** Every store in the
+  panel wrote its file the same way — write `findings.tmp`, then rename it
+  over `findings.json`. That is safe against a *reader*, and exactly wrong
+  against a second *writer*: the scratch name is derived from the target, so
+  every writer picks the same one. Two writers both create `findings.tmp`,
+  the first rename moves it, and the second finds its own file gone. One
+  raises, and **the other's write is silently lost** — its bytes went into a
+  file the winner had already renamed away.
+
+  It was reachable: pressing **Fix it** writes the findings store from the
+  web request while an insight run writes the same store from the
+  background worker. Those genuinely overlap, and the loser was whichever
+  got there first. The same pattern was in all seventeen places the panel
+  saves a file — settings, memory, findings, hypotheses, usage, tags,
+  prompts, the chat transcript, insight cards and their history.
+
+  Saving now uses a scratch name nobody else can pick, so concurrent saves
+  cannot collide. Two details came along with it, both of which the old code
+  got for free and a naive fix would have broken: the file keeps the
+  **permissions** it had (several are written by the add-on as root and read
+  by the `claude` user, so quietly narrowing them would break the terminal
+  and the listeners), and it keeps its **owner** where the add-on is allowed
+  to give it away — the old rename silently took `/data/run-sources.jsonl`
+  away from the `claude` user every time it pruned.
+
+  Files are also flushed to disk before the rename now, so a power cut
+  during a save can no longer leave a file that exists and is empty.
+
 ## 1.22.0
 
 ### Added

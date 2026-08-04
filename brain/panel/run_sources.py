@@ -27,6 +27,8 @@ import re
 import time
 from pathlib import Path
 
+import atomic_write
+
 # Persistent and add-on owned. Not under /config: it is bookkeeping about
 # our own processes, not something a person edits or backs up.
 LEDGER = Path(os.environ.get("BRAIN_RUN_SOURCES", "/data/run-sources.jsonl"))
@@ -116,19 +118,13 @@ def _maybe_prune() -> None:
     if len(entries) <= MAX_ENTRIES + PRUNE_SLACK:
         return
     keep = entries[-MAX_ENTRIES:]
-    tmp = LEDGER.with_suffix(".tmp")
     try:
-        tmp.write_text(
-            "".join(json.dumps(e, separators=(",", ":")) + "\n" for e in keep),
-            encoding="utf-8")
-        tmp.replace(LEDGER)
+        atomic_write.write_lines(LEDGER, keep, separators=(",", ":"))
     except OSError:
-        try:
-            tmp.unlink()
-        except OSError:
-            # This is the cleanup after a failed write. If the temp file is already
-            # gone, the cleanup is done.
-            pass
+        # Pruning is housekeeping: an over-long ledger still answers every
+        # question a short one does. The scratch file is cleaned up by the
+        # writer, so there is nothing left to tidy here.
+        pass
 
 
 def lookup(session_ids) -> dict[str, str]:

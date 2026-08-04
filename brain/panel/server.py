@@ -106,6 +106,7 @@ from aiohttp import web
 from aiohttp.abc import AbstractAccessLogger
 
 import addon_options
+import atomic_write
 import card_tags
 import chat_session
 import cli_commands
@@ -550,11 +551,8 @@ def load_insights() -> list[dict]:
 
 
 def save_insight(insight: dict) -> None:
-    INSIGHTS_DIR.mkdir(parents=True, exist_ok=True)
     path = _insight_path(insight["id"])
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(insight, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(path)
+    atomic_write.write_json(path, insight)
     _mirror_card(insight)  # keep the /local dashboard-card copy fresh
     # keep only the newest N custom insights
     customs = sorted(
@@ -588,10 +586,7 @@ def _write_history_copy(insight: dict) -> None:
         return
     hdir = _history_dir(insight["id"])
     try:
-        hdir.mkdir(parents=True, exist_ok=True)
-        tmp = hdir / f"{stamp}.tmp"
-        tmp.write_text(json.dumps(insight, ensure_ascii=False), encoding="utf-8")
-        tmp.replace(hdir / f"{stamp}.json")
+        atomic_write.write_json(hdir / f"{stamp}.json", insight)
     except OSError as exc:
         log.warning("could not store history run for %s: %s", insight["id"], exc)
         return
@@ -1340,9 +1335,7 @@ async def h_rename_insight(request: web.Request) -> web.Response:
     if "icon" in body:
         insight["icon"] = (str(body.get("icon") or "").strip()[:prompt_store.MAX_ICON]
                            or "✨")
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(insight, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(path)
+    atomic_write.write_json(path, insight)
     return web.json_response({
         "id": insight_id,
         "name": insight.get("category_title", ""),
@@ -1673,9 +1666,7 @@ def _mirror_card(insight: dict) -> None:
     if not isinstance(html, str) or not html or path is None:
         return
     try:
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(html + _CARD_RELOAD_SNIPPET, encoding="utf-8")
-        tmp.replace(path)
+        atomic_write.write_text(path, html + _CARD_RELOAD_SNIPPET)
     except OSError as exc:
         log.debug("card mirror write failed: %s", exc)
 
@@ -2066,10 +2057,7 @@ def _read_shared_memory() -> str:
 
 
 def _write_shared_memory(text: str) -> None:
-    SHARED_MEMORY_FILE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = SHARED_MEMORY_FILE.with_suffix(".tmp")
-    tmp.write_text(text, encoding="utf-8")
-    tmp.replace(SHARED_MEMORY_FILE)
+    atomic_write.write_text(SHARED_MEMORY_FILE, text)
 
 
 def _queue_memory_fact(fact: str, source: str = "panel",
@@ -2301,11 +2289,7 @@ def _drop_from_inbox(item_id: str) -> bool:
         lines = kept.get(path, [])
         try:
             if lines:
-                tmp = path.with_suffix(".tmp")
-                tmp.write_text("".join(
-                    json.dumps(o, ensure_ascii=False) + "\n" for o in lines),
-                    encoding="utf-8")
-                tmp.replace(path)
+                atomic_write.write_lines(path, lines)
             else:
                 path.unlink()
         except OSError as exc:
