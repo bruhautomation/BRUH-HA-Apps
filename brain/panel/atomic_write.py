@@ -30,14 +30,14 @@ same-filesystem rename and still atomic.
 Two things this has to carry over from the old code, and both are the kind
 of regression that only shows up in somebody's log weeks later:
 
-* **Mode.** ``Path.write_text`` created the file at ``0666`` and let the
-  umask narrow it — 0644 under the add-on's — and several of these files are
-  written by root and read by the ``claude`` user. So the scratch file is
-  opened the same way rather than chmod-ed to a fixed number: silently
-  narrowing them would break the terminal, the listeners and the
-  consolidator with a permission error nothing reports, and silently
-  *widening* them under a stricter umask would be its own surprise. An
-  existing file keeps whatever mode it already had.
+* **Mode.** Several of these files are written by root and read by the
+  ``claude`` user, so silently narrowing them would break the terminal, the
+  listeners and the consolidator with a permission error nothing reports.
+  An existing file keeps exactly the mode it had; a new one gets what the
+  umask allows, which is what ``Path.write_text`` produced and therefore
+  what all of them already carry. The scratch file itself is private until
+  the contents are complete — a half-written store is nobody's business,
+  and anything built on ``open(..., 'w')`` left it readable throughout.
 * **Owner.** ``os.replace`` swaps in a new inode, so a file that was
   ``claude``-owned comes back owned by whoever wrote it. ``run.sh`` creates
   ``/data/run-sources.jsonl`` claude-owned precisely so both halves can
@@ -52,31 +52,41 @@ import json
 import os
 from pathlib import Path
 
-# What a NEW file is created with — the mode passed to open(), which the
-# process umask then narrows, exactly as it did for `Path.write_text`
-# (0o644 under the add-on's umask of 022). Deliberately not a chmod to a
-# fixed number: reading the umask means setting it first, which is not
-# thread-safe, and hard-coding the result would silently widen these files
-# for anyone running under a stricter one.
-CREATE_MODE = 0o666
+# The scratch file is created private and opened up only once it is
+# complete. Nothing else has any business reading a half-written store, and
+# the old code — like anything built on open(..., 'w') — left the partial
+# file readable for the length of the write.
+SCRATCH_MODE = 0o600
+
+# What a file gets when there is no existing one to copy: whatever the
+# process umask allows, which is what `Path.write_text` produced and so is
+# what every one of these files already carries (0o644 under the add-on's
+# umask of 022).
+#
+# Read once, at import. Reading a umask means setting it and putting it
+# back, which is not thread-safe — and doing that on every write would race
+# the panel's own request threads. It is ambient process state that nothing
+# here changes after start-up, so once is both safe and correct.
+def _umask() -> int:
+    current = os.umask(0o022)
+    os.umask(current)
+    return current
 
 
-def _preserved(path: Path) -> tuple[int | None, int, int]:
-    """The mode, uid and gid the file already has.
+DEFAULT_MODE = 0o666 & ~_umask()
 
-    ``None`` for the mode when there is no file yet — meaning "let the open
-    mode and the umask decide", which is what the old code did by never
-    setting a mode at all.
-    """
+
+def _preserved(path: Path) -> tuple[int, int, int]:
+    """The mode, uid and gid the file already has, or the defaults."""
     try:
         st = path.stat()
     except OSError:
-        return None, -1, -1
+        return DEFAULT_MODE, -1, -1
     return st.st_mode & 0o777, st.st_uid, st.st_gid
 
 
 def _scratch(directory: Path, name: str) -> tuple[int, str]:
-    """Create an empty file nobody else can have picked, and open it.
+    """Create an empty private file nobody else can have picked, and open it.
 
     ``O_EXCL`` is what makes the name safe: two writers racing here both
     propose a random name, and a collision fails rather than silently
@@ -86,7 +96,7 @@ def _scratch(directory: Path, name: str) -> tuple[int, str]:
         candidate = directory / f".{name}.{os.urandom(8).hex()}.tmp"
         try:
             return os.open(
-                candidate, os.O_WRONLY | os.O_CREAT | os.O_EXCL, CREATE_MODE
+                candidate, os.O_WRONLY | os.O_CREAT | os.O_EXCL, SCRATCH_MODE
             ), str(candidate)
         except FileExistsError:
             continue        # 64 bits collided; ask for another name
@@ -116,13 +126,10 @@ def write_text(path, text: str, *, encoding: str = "utf-8",
             # and written at human speed.
             handle.flush()
             os.fsync(handle.fileno())
-        # Only ever narrows or restores: an explicit mode from the caller,
-        # or the one the file already carried. A brand-new file is left at
-        # whatever the umask gave it above.
-        if mode is not None:
-            os.chmod(tmp, mode)
-        elif keep_mode is not None:
-            os.chmod(tmp, keep_mode)
+        # Opened up only now that the contents are complete: an explicit
+        # mode from the caller, the one the file already carried, or the
+        # umask's answer for a file that did not exist yet.
+        os.chmod(tmp, keep_mode if mode is None else mode)
         if uid >= 0:
             try:
                 os.chown(tmp, uid, gid)

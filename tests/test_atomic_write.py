@@ -93,14 +93,36 @@ class TestPermissions(AtomicWriteCase):
     `claude` user, so silently narrowing them would break the terminal, the
     listeners and the consolidator with an error nothing reports."""
 
-    def test_a_new_file_is_not_created_private(self):
-        """mkstemp would have made it 0600. The umask decides instead —
-        which is what Path.write_text did, umask and all."""
-        expect = atomic_write.CREATE_MODE & ~_umask()
+    def test_a_new_file_gets_what_the_umask_allows(self):
+        """Which is what Path.write_text produced, so every one of these
+        files already carries it."""
+        expect = 0o666 & ~_umask()
+        self.assertEqual(atomic_write.DEFAULT_MODE, expect)
         atomic_write.write_text(self.path, "x")
         self.assertEqual(self.path.stat().st_mode & 0o777, expect)
         self.assertTrue(expect & 0o044,
                         "the `claude` user has to be able to read what root wrote")
+        self.assertFalse(expect & 0o022, "nothing here should be group/world writable")
+
+    def test_the_scratch_file_is_private_while_it_is_written(self):
+        """A half-written store is nobody's business. Anything built on
+        open(..., 'w') left the partial file readable for the whole write."""
+        seen = []
+        real_fsync = os.fsync
+
+        def spy(fd):
+            # Mid-write: the scratch file exists and holds partial contents.
+            for entry in self.dir.iterdir():
+                if entry != self.path:
+                    seen.append(entry.stat().st_mode & 0o777)
+            return real_fsync(fd)
+
+        os.fsync = spy
+        try:
+            atomic_write.write_text(self.path, "secret in flight")
+        finally:
+            os.fsync = real_fsync
+        self.assertEqual(seen, [atomic_write.SCRATCH_MODE])
 
     def test_an_existing_file_keeps_its_mode(self):
         self.path.write_text("old")
