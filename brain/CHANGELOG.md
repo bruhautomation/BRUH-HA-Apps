@@ -2,6 +2,35 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.22.3
+
+### Fixed
+
+- **The usage sensors worked all night and died by mid-morning.** 1.22.2 cut
+  the requests per poll from six to one and slowed the poll from two minutes
+  to five, and the sensors still hit a wall of 429s every day — recovering
+  at roughly the same hour each night.
+
+  That nightly recovery is the tell. A burst limit clears in minutes; a
+  limit that comes back at a fixed hour is a **daily allowance**. And the
+  arithmetic matches exactly: nine working hours at a two-minute poll is
+  about 270 requests, which is the reported window almost to the minute. The
+  previous fix stopped brAIn from *sustaining* a rate limit, which was real,
+  but against a per-day cap the only lever is how many requests a day costs.
+
+  The poll is now every **30 minutes** — 48 requests a day instead of 288,
+  or the ~4,300 the six-per-poll version could reach. What that costs is
+  resolution nobody can see: the five-hour window moves about 1% every three
+  minutes at a hard sprint, so a half-hourly reading is never more than a
+  percent or two behind, and a sensor slightly behind all day beats one that
+  is exact until 10am and unavailable after it.
+
+  The 429 backoff moved from 15/30/60 minutes to **1/2/4 hours** to match.
+  Every step must now exceed the poll interval, which is a rule with a test
+  behind it: lengthening the poll and leaving the backoff alone would have
+  meant a *failing* tracker asking more often than a working one — the exact
+  behaviour a daily cap punishes hardest.
+
 ## 1.22.2
 
 ### Fixed

@@ -485,6 +485,23 @@ class TestRateLimitBackoff(unittest.TestCase):
         self.assertGreater(self.mod._rate_limit_delay(1, None),
                            self.mod.POLL_INTERVAL)
 
+    def test_every_backoff_actually_backs_off(self):
+        """The invariant that broke when the poll interval was lengthened
+        and these were left alone: a step shorter than POLL_INTERVAL means
+        a failing tracker asks *more* often than a working one, which is
+        the opposite of a backoff and exactly what a daily cap punishes."""
+        for step in self.mod.RATE_LIMIT_BACKOFF_S:
+            self.assertGreater(step, self.mod.POLL_INTERVAL)
+        self.assertGreater(self.mod.FAILURE_BACKOFF_S, self.mod.POLL_INTERVAL)
+
+    def test_the_daily_request_budget_stays_small(self):
+        """The endpoint meters per day, so the number that matters is
+        requests per day, not the interval it is spelled with. Nine hours
+        of working sensors cost ~270 requests at the old two-minute poll;
+        whatever replaces this must stay far under that."""
+        per_day = 86400 / self.mod.POLL_INTERVAL
+        self.assertLessEqual(per_day, 60)
+
     def test_retry_after_zero_does_not_mean_retry_now(self):
         """The endpoint sends `Retry-After: 0` while still refusing
         (anthropics/claude-code#30930). Obeying it is how a tracker retries
