@@ -15,6 +15,12 @@ the panel's ⚙ dialog edits at runtime — no add-on restart needed:
                     rendered as messages) or "classic" (ttyd + tmux, the
                     character grid). Both drive the same CLI with the same
                     permissions; the difference is entirely presentation.
+  chat_model      — the chat terminal's own model, chosen from the chat
+                    itself. None means "follow the global model option":
+                    the chat is where a different model is most often
+                    wanted for one conversation, and making that choice
+                    global would silently change what every insight run
+                    costs.
 
 It can also hold the add-on's Configuration-tab options, but only as a
 FALLBACK: those six settings normally live in the add-on's own options via
@@ -95,6 +101,7 @@ DEFAULTS = {
     "history_keep_days": None,
     "model": None,
     "timeout_minutes": None,
+    "chat_model": None,
 }
 
 _TIME_RE = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
@@ -128,9 +135,10 @@ def load() -> dict:
         val = data.get(name)
         if isinstance(val, int) and not isinstance(val, bool) and lo <= val <= hi:
             out[name] = val
-    model = data.get("model")
-    if isinstance(model, str) and model.strip():
-        out["model"] = model.strip()[:MAX_MODEL_CHARS]
+    for key in ("model", "chat_model"):
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            out[key] = value.strip()[:MAX_MODEL_CHARS]
     return out
 
 
@@ -215,6 +223,13 @@ def save(fields: dict) -> dict:
                     or not 5 <= value <= 100:
                 raise ValueError("budget_percent must be an integer 5-100")
             clean[key] = value
+        elif key == "chat_model":
+            # A panel setting, not a Configuration-tab option: it never
+            # reaches the add-on's options, so an empty chat picker cannot
+            # blank the global model.
+            if value is not None and not isinstance(value, str):
+                raise ValueError("chat_model must be a string or null")
+            clean[key] = (value or "").strip()[:MAX_MODEL_CHARS] or None
         elif is_option(key):
             clean[key] = clean_option(key, value)
         else:

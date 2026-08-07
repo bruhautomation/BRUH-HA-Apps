@@ -18,6 +18,11 @@ Behaviour switches via env:
                                    out is killing it
                   crash            exit non-zero mid-turn
                   error            answer with an is_error result envelope
+                  noresume         refuse --resume the way the real CLI
+                                   refuses a session id its store no longer
+                                   holds: an error on stderr and a non-zero
+                                   exit before a single event is emitted.
+                                   Without --resume it behaves like ok.
   FAKE_CHAT_LOG   append each invocation's argv as a JSON line
 """
 
@@ -35,8 +40,18 @@ if log_path:
 
 mode = os.environ.get("FAKE_CHAT_MODE", "ok")
 
+# A CLI that cannot start at all — bad install, dead credential. Dies before
+# emitting a single event, whatever the argv, with its reason on stderr.
+if os.environ.get("FAKE_CHAT_BROKEN"):
+    print("Invalid API key · Please run /login", file=sys.stderr)
+    sys.exit(1)
+
 SESSION = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 if "--resume" in argv:
+    if mode == "noresume":
+        print(f"No conversation found with session ID: "
+              f"{argv[argv.index('--resume') + 1]}", file=sys.stderr)
+        sys.exit(1)
     SESSION = argv[argv.index("--resume") + 1]
 
 

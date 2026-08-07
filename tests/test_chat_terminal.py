@@ -246,6 +246,7 @@ class ChatSessionCase(unittest.IsolatedAsyncioTestCase):
         # mode, and "whatever the last test left" is not a fixture.
         os.environ["FAKE_CHAT_MODE"] = "ok"
         os.environ.pop("FAKE_CHAT_LOG", None)
+        os.environ.pop("FAKE_CHAT_BROKEN", None)
         import engine
         importlib.reload(engine)
         import chat_session
@@ -367,7 +368,10 @@ class ChatSessionCase(unittest.IsolatedAsyncioTestCase):
 
         await self.session.reset()
         self.assertEqual(self.session.events, [])
-        self.assertIsNone(self.session.session_id)
+        # No assertion that session_id is still None here: start() now waits
+        # for the CLI's first event, so by the time reset() returns the FRESH
+        # session may already have announced its own id. What "new chat"
+        # must mean is on the argv — no --resume — not in that race.
         invocations = await self._invocations(log, 2)
         self.assertNotIn("--resume", invocations[-1])
 
@@ -514,6 +518,92 @@ class ChatSessionCase(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(out["ok"])
         self.assertEqual(self.session.events[0]["type"], "notice")
 
+    async def test_a_working_resume_reports_that_it_resumed(self):
+        out = await self.session.resume("dead-beef", [])
+        self.assertTrue(out["resumed"])
+        self.assertEqual(out["session_id"], "dead-beef")
+
+    async def test_a_resume_the_cli_refuses_falls_back_to_a_fresh_session(self):
+        """The docstring always promised this fallback; it has to be real.
+
+        A conversation pruned from the CLI's store used to leave a chat tab
+        that spawned, died silently, and errored on every send — with the
+        restored resume id respawning the same failure forever. The spawn is
+        watched now: died-before-speaking with --resume on the argv drops
+        the id, says so in the transcript, and opens fresh.
+        """
+        os.environ["FAKE_CHAT_MODE"] = "noresume"
+        log = os.path.join(self.tmp.name, "argv.log")
+        os.environ["FAKE_CHAT_LOG"] = log
+        out = await self.session.resume("gone-forever",
+                                        [{"type": "user", "text": "old history"}])
+        self.assertTrue(out["ok"])
+        self.assertFalse(out["resumed"])
+        self.assertTrue(self.session.alive(), "no session to type into")
+        self.assertNotEqual(self.session.session_id, "gone-forever")
+        # Two spawns: the refused resume, then the fresh one without it.
+        invocations = await self._invocations(log, 2)
+        self.assertIn("--resume", invocations[0])
+        self.assertNotIn("--resume", invocations[1])
+        # The transcript keeps the replayed history AND says what happened —
+        # a pane that silently forgot its context is worse than one that
+        # admits it.
+        kinds = [e["type"] for e in self.session.events]
+        self.assertIn("user", kinds)
+        notice = next(e for e in self.session.events
+                      if e["type"] == "notice" and "resume" in e["text"])
+        self.assertIn("fresh", notice["text"])
+
+    async def test_a_fresh_spawn_that_dies_is_an_error_not_a_shrug(self):
+        """Died-before-speaking with nothing to resume is a startup failure,
+        and the stderr tail is the only witness — it must reach the state."""
+        os.environ["FAKE_CHAT_MODE"] = "noresume"
+        self.session.session_id = "gone-forever"
+        # Both spawns refuse: the fallback's fresh spawn dies too.
+        os.environ["FAKE_CHAT_BROKEN"] = "1"
+        try:
+            await self.session.start()
+        finally:
+            os.environ.pop("FAKE_CHAT_BROKEN", None)
+        self.assertEqual(self.session.state, "error")
+        self.assertTrue(self.session.error)
+
+    async def test_changing_the_model_restarts_with_resume(self):
+        """The model is an argv flag, so a live session keeps the one it was
+        started with — applying a new one is a stop and a --resume, the same
+        trick stopping an old CLI already relies on."""
+        log = os.path.join(self.tmp.name, "argv.log")
+        os.environ["FAKE_CHAT_LOG"] = log
+        await self.session.start()
+        await self.session.send("hello")
+        await self._drain(lambda evs: any(
+            e.get("type") == "state" and e.get("state") == "ready" for e in evs[1:]))
+        sid = self.session.session_id
+
+        out = await self.session.set_model("claude-opus-5")
+        self.assertTrue(out["restarted"])
+        self.assertTrue(self.session.alive())
+        invocations = await self._invocations(log, 2)
+        argv = invocations[-1]
+        self.assertIn("--model", argv)
+        self.assertEqual(argv[argv.index("--model") + 1], "claude-opus-5")
+        self.assertIn("--resume", argv, "the model change threw the conversation away")
+        self.assertEqual(argv[argv.index("--resume") + 1], sid)
+
+    async def test_setting_the_model_it_already_runs_is_a_no_op(self):
+        await self.session.start()
+        self.session.model = "claude-opus-5"
+        out = await self.session.set_model("claude-opus-5")
+        self.assertFalse(out["restarted"])
+
+    async def test_a_model_change_mid_answer_is_refused(self):
+        os.environ["FAKE_CHAT_MODE"] = "hang"
+        await self.session.start()
+        await self.session.send("thinking…")
+        await asyncio.sleep(0.3)
+        with self.assertRaises(RuntimeError):
+            await self.session.set_model("claude-opus-5")
+
     async def test_resuming_nothing_is_refused(self):
         with self.assertRaises(ValueError):
             await self.session.resume("", [])
@@ -570,6 +660,7 @@ class TestChatRoutes(unittest.IsolatedAsyncioTestCase):
             "BRAIN_DIR": os.path.join(self.tmp.name, "insights"),
             "BRAIN_SECRETS": os.path.join(self.tmp.name, "secrets"),
             "BRAIN_RUN_SOURCES": os.path.join(self.tmp.name, "run-sources.jsonl"),
+            "BRAIN_CHAT_TRASH": os.path.join(self.tmp.name, "chat-trash"),
         }.items():
             os.environ[key] = value
         os.environ.pop("FAKE_CHAT_MODE", None)
@@ -791,6 +882,78 @@ class TestChatRoutes(unittest.IsolatedAsyncioTestCase):
         out = await (await self.client.post("/api/chat/adopt")).json()
         self.assertTrue(out["adopted"])
         self.assertEqual(out["session_id"], "terminal-one")
+
+    async def test_the_chat_model_is_the_chats_own_choice(self):
+        """Picked from the chat, stored as the panel's chat_model — never
+        the global model option, which would silently change what every
+        insight run costs."""
+        snap = await (await self.client.get("/api/chat/state")).json()
+        self.assertTrue(snap["models"], "the picker has nothing to offer")
+        self.assertEqual(snap["chat_model"], "")
+
+        resp = await self.client.post("/api/chat/model",
+                                      json={"model": "claude-haiku-4-5"})
+        self.assertEqual(resp.status, 200)
+        self.assertEqual((await resp.json())["chat_model"], "claude-haiku-4-5")
+        snap = await (await self.client.get("/api/chat/state")).json()
+        self.assertEqual(snap["chat_model"], "claude-haiku-4-5")
+        settings = (await (await self.client.get("/api/settings")).json())["settings"]
+        self.assertFalse(settings["model"], "the chat's choice leaked global")
+
+        # Clearing it follows the global model again.
+        resp = await self.client.post("/api/chat/model", json={"model": None})
+        self.assertEqual(resp.status, 200)
+        self.assertEqual((await resp.json())["chat_model"], "")
+
+    async def test_the_chat_model_reaches_the_spawn(self):
+        log = os.path.join(self.tmp.name, "argv.log")
+        os.environ["FAKE_CHAT_LOG"] = log
+        try:
+            await self.client.post("/api/chat/model",
+                                   json={"model": "claude-haiku-4-5"})
+            await self.client.post("/api/chat/send", json={"text": "hi"})
+            await asyncio.sleep(0.6)
+            argv = [json.loads(l) for l in Path(log).read_text().splitlines()][-1]
+            self.assertIn("--model", argv)
+            self.assertEqual(argv[argv.index("--model") + 1], "claude-haiku-4-5")
+        finally:
+            os.environ.pop("FAKE_CHAT_LOG", None)
+
+    async def test_deleting_a_conversation_offers_a_working_undo(self):
+        self._fake_conversation("goner", "delete me please", age_s=60)
+        self._fake_conversation("keeper", "leave me alone")
+
+        resp = await self.client.post("/api/chat/conversation/goner/delete")
+        self.assertEqual(resp.status, 200)
+        out = await resp.json()
+        self.assertEqual(out["deleted"], "goner")
+        self.assertTrue(out["undo"])
+        data = await (await self.client.get(
+            "/api/chat/conversations?source=all")).json()
+        self.assertEqual([c["id"] for c in data["conversations"]], ["keeper"])
+
+        undo = await (await self.client.post(f"/api/undo/{out['undo']}")).json()
+        self.assertTrue(undo["undone"])
+        self.assertEqual(undo["restored_conversation"], "goner")
+        data = await (await self.client.get(
+            "/api/chat/conversations?source=all")).json()
+        self.assertEqual({c["id"] for c in data["conversations"]},
+                         {"goner", "keeper"})
+
+    async def test_deleting_the_open_conversation_is_refused(self):
+        """Deleting the ground the live session stands on either kills it or
+        quietly forks it — "start a new chat first" beats both."""
+        await self.client.post("/api/chat/send", json={"text": "hi"})
+        await asyncio.sleep(0.6)
+        current = (await (await self.client.get("/api/chat/state")).json())["session_id"]
+        path = self._fake_conversation(current, "the open one")
+        resp = await self.client.post(f"/api/chat/conversation/{current}/delete")
+        self.assertEqual(resp.status, 409)
+        self.assertTrue(path.is_file(), "refused, but deleted it anyway")
+
+    async def test_deleting_a_conversation_that_is_not_there_is_a_404(self):
+        resp = await self.client.post("/api/chat/conversation/never-was/delete")
+        self.assertEqual(resp.status, 404)
 
     async def test_the_terminal_ui_setting_round_trips(self):
         resp = await self.client.get("/api/settings")

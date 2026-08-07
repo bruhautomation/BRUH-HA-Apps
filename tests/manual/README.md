@@ -56,6 +56,25 @@ node tests/manual/measure-cardhead.mjs
 Run it after touching the card head. The title gets the row and wraps to two
 lines; the eyebrow is the part that gives way.
 
+## `measure-chatmeta.mjs`
+
+Renders the Terminal tab in chat mode at 14 widths and asserts the meta line
+under the composer — the model name and the context pill — is painted in
+full, using `elementFromPoint` rather than geometry, because the original bug
+was a line whose rectangle was in the right place while `.wrap`'s
+`overflow: hidden` clipped it.
+
+```bash
+node tests/manual/measure-chatmeta.mjs
+```
+
+Run it after touching `#viewTerminal`'s margins, `.wrap`'s padding, the
+`term-open` rules, or anything in `.chat`'s column. The failure it guards:
+`#viewTerminal` cancels `.wrap`'s padding with negative margins, and a
+negative *bottom* margin left there shortens `.wrap` — whose overflow then
+clips the bottom of the view, which is exactly where this line lives. Set
+`CHATMETA_SHOT_DIR=/some/dir` for PNGs at representative widths.
+
 ## `measure-tooltips.mjs`
 
 Hovers every visible `[data-tip]` control on the Findings tab at five widths

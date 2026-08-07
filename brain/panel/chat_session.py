@@ -137,6 +137,15 @@ MAX_TURNS = int(os.environ.get("BRAIN_CHAT_MAX_TURNS", "400"))
 # How long to wait for a polite interrupt before killing the process.
 INTERRUPT_GRACE = 5.0
 
+# How long a freshly spawned CLI gets to say its first word before we stop
+# watching. The CLI announces itself (system/init) within a couple of
+# seconds; a process that DIES inside this window died on startup — which
+# with `--resume` on the argv almost always means the conversation is gone
+# from the CLI's store (pruned by cleanupPeriodDays, or written by an
+# incompatible version). A slow start that merely outlives the window is
+# treated as fine, exactly as it was before the window existed.
+START_GRACE = float(os.environ.get("BRAIN_CHAT_START_GRACE", "10"))
+
 # A tool call the permission set refused fails like any other tool call, and
 # "that broke" and "brAIn was not allowed to do that" are different things to
 # be told — the first sends you debugging, the second sends you to Settings.
@@ -221,6 +230,13 @@ class ChatSession:
         self._lock = asyncio.Lock()
         self._reader: asyncio.Task | None = None
         self._busy_since = 0.0
+        # Set per spawn, the moment the CLI produces any event at all. A
+        # process that exits before this is a process that failed to start,
+        # which is a different fact from one that died mid-conversation.
+        self._first_event: asyncio.Event = asyncio.Event()
+        # True when the last start() had to abandon a --resume id and open a
+        # fresh session instead. resume() reads it to answer honestly.
+        self.resume_fell_back = False
         self._load()
 
     # -- transcript ------------------------------------------------------
@@ -376,23 +392,82 @@ class ChatSession:
         A resume that fails (the CLI's session store was cleared, or the
         conversation is from an incompatible version) is not fatal: it falls
         back to a fresh session, because a chat tab that refuses to open is
-        worse than one that has forgotten last week.
+        worse than one that has forgotten last week. That fallback is real,
+        not aspirational: the spawn is watched until the CLI says its first
+        word, and a process that dies before speaking while `--resume` was
+        on its argv has its id dropped and is respawned fresh — with a
+        notice in the transcript, because a conversation silently losing
+        its context is worse than one that says it has.
         """
         async with self._lock:
             if self.alive():
                 return
+            self.resume_fell_back = False
             self._set_state("starting")
-            try:
-                await self._spawn()
-            except FileNotFoundError:
-                self._set_state("error", "The Claude CLI was not found in this add-on.")
+            if not await self._spawn_watched():
                 return
-            except OSError as exc:
-                self._set_state("error", f"Could not start Claude: {exc}")
+            if not self._first_event.is_set() and self.session_id \
+                    and not self.alive():
+                # Died before speaking, with --resume on the argv: the CLI
+                # no longer has this conversation. Fall back to a fresh
+                # session rather than leaving a chat tab that cannot open.
+                detail = await self._stderr_tail(self.proc)
+                self.resume_fell_back = True
+                self.session_id = None
+                self._emit({"type": "notice", "text":
+                            "Claude Code could not resume this conversation"
+                            + (f" ({detail})" if detail else "")
+                            + ". The transcript above is still shown, but the "
+                            "next message starts a fresh session without its "
+                            "context."})
+                self._persist()
+                if not await self._spawn_watched():
+                    return
+            if not self.alive() and not self._first_event.is_set():
+                # Died before speaking with nothing to resume: a startup
+                # failure, and the stderr tail is the only witness.
+                detail = await self._stderr_tail(self.proc)
+                self._set_state(
+                    "error", detail or "Claude exited before it was ready.")
                 return
             self._set_state("ready")
 
+    async def _spawn_watched(self) -> bool:
+        """Spawn, then wait for the CLI's first event, its death, or a
+        deadline — whichever comes first. False only when the spawn itself
+        raised (the state is already set to say so)."""
+        try:
+            await self._spawn()
+        except FileNotFoundError:
+            self._set_state("error", "The Claude CLI was not found in this add-on.")
+            return False
+        except OSError as exc:
+            self._set_state("error", f"Could not start Claude: {exc}")
+            return False
+        proc = self.proc
+        assert proc is not None
+        waiters = [asyncio.ensure_future(self._first_event.wait()),
+                   asyncio.ensure_future(proc.wait())]
+        try:
+            await asyncio.wait(waiters, timeout=START_GRACE,
+                               return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for task in waiters:
+                task.cancel()
+        return True
+
+    async def _stderr_tail(self, proc) -> str:
+        """Whatever the CLI managed to say on stderr, bounded both ways."""
+        if proc is None or proc.stderr is None:
+            return ""
+        try:
+            raw = await asyncio.wait_for(proc.stderr.read(), 2)
+            return raw.decode("utf-8", "replace").strip()[-400:]
+        except (asyncio.TimeoutError, ValueError, OSError):
+            return ""
+
     async def _spawn(self) -> None:
+        self._first_event = asyncio.Event()
         self.proc = await asyncio.create_subprocess_exec(
             *self._argv(),
             cwd=WORK_DIR if os.path.isdir(WORK_DIR) else None,
@@ -402,9 +477,11 @@ class ChatSession:
             env=engine._claude_env(),
             limit=1024 * 1024,
         )
-        self._reader = asyncio.create_task(self._read_loop(self.proc))
+        self._reader = asyncio.create_task(
+            self._read_loop(self.proc, self._first_event))
 
-    async def _read_loop(self, proc: asyncio.subprocess.Process) -> None:
+    async def _read_loop(self, proc: asyncio.subprocess.Process,
+                         first_event: asyncio.Event) -> None:
         assert proc.stdout is not None
         try:
             while True:
@@ -426,6 +503,12 @@ class ChatSession:
                     continue
                 if not isinstance(event, dict):
                     continue
+                # Any parsed event proves the process came up. Not just
+                # init: which event a given CLI version sends first is its
+                # business, and the watcher only asks "did it speak". Bound
+                # per spawn, so a reader winding down after a respawn cannot
+                # vouch for a process it never read.
+                first_event.set()
                 sid = event.get("session_id")
                 if isinstance(sid, str) and sid:
                     self.session_id = sid
@@ -612,7 +695,35 @@ class ChatSession:
                         "this pane starts from here."})
         self._persist()
         await self.start()
-        return {"ok": True, "session_id": session_id, "events": len(replay)}
+        # start() may have discovered the CLI no longer holds this
+        # conversation and opened a fresh session instead. Saying so is the
+        # difference between "carrying on" and a pane that only looks like
+        # it is.
+        return {"ok": True, "session_id": self.session_id,
+                "resumed": not self.resume_fell_back, "events": len(replay)}
+
+    async def set_model(self, model: str) -> dict:
+        """Point the session at a different model, keeping the conversation.
+
+        The model is an argv flag, so a live process keeps the one it was
+        started with — changing it means a restart. The conversation
+        survives because the CLI persisted it and the respawn carries
+        ``--resume``; the same trick interrupt() already relies on. Refused
+        mid-answer, because a restart now would lose the answer being
+        written.
+        """
+        model = (model or "").strip()
+        if model == self.model:
+            return {"ok": True, "model": model, "restarted": False}
+        if self.state == "busy":
+            raise RuntimeError("Claude is still answering — stop it first")
+        self.model = model
+        if not self.alive():
+            # Nothing running: the next spawn simply takes the new flag.
+            return {"ok": True, "model": model, "restarted": False}
+        await self.stop()
+        await self.start()
+        return {"ok": True, "model": model, "restarted": True}
 
     async def reset(self) -> dict:
         """Start a genuinely new conversation.

@@ -238,5 +238,71 @@ class ConversationsCase(unittest.TestCase):
         self.assertIn("truncated", events[0]["text"])
 
 
+class DeleteCase(ConversationsCase):
+    """The one mutation this module offers: a person removing a whole
+    conversation, as a move into our trash — never a write into the CLI's
+    files — so the toast's Undo can put back exactly what was taken."""
+
+    def setUp(self):
+        super().setUp()
+        self.mod.TRASH_DIR = os.path.join(self.tmp.name, "trash")
+
+    def test_delete_moves_the_file_and_restore_moves_it_back(self):
+        # Padded past the listing's empty-session floor, like a real one.
+        path = self._write("goner", [user_entry("delete me"), "x" * 300 + "\n"])
+        entry = self.mod.delete(self.cwd, "goner")
+        self.assertEqual(entry["id"], "goner")
+        self.assertFalse(path.exists())
+        self.assertTrue(Path(entry["trash"]).is_file())
+        self.assertNotIn("goner", [c["id"] for c in self.mod.listing(self.cwd)])
+
+        self.assertTrue(self.mod.restore_deleted(entry))
+        self.assertTrue(path.is_file())
+        self.assertIn("delete me",
+                      [c["title"] for c in self.mod.listing(self.cwd)])
+
+    def test_deleting_nothing_says_so_instead_of_pretending(self):
+        self.assertIsNone(self.mod.delete(self.cwd, "never-existed"))
+
+    def test_a_delete_id_cannot_climb_out_of_the_directory(self):
+        outside = Path(self.tmp.name) / "secret.jsonl"
+        outside.write_text(user_entry("not yours"))
+        for bad in ("../secret", "/etc/passwd", "a/../../secret", ""):
+            self.assertIsNone(self.mod.delete(self.cwd, bad), bad)
+        self.assertTrue(outside.is_file())
+
+    def test_restore_refuses_to_overwrite(self):
+        """Session ids are UUIDs, so an occupied path means something else
+        went wrong — and losing it to an Undo would compound the mistake."""
+        path = self._write("goner", [user_entry("the original")])
+        entry = self.mod.delete(self.cwd, "goner")
+        path.write_text(user_entry("something newer"))
+        self.assertFalse(self.mod.restore_deleted(entry))
+        self.assertIn("something newer", path.read_text())
+
+    def test_restore_after_the_trash_was_pruned_reports_failure(self):
+        entry = {"id": "gone", "path": str(self.project / "gone.jsonl"),
+                 "trash": os.path.join(self.mod.TRASH_DIR, "gone.jsonl")}
+        self.assertFalse(self.mod.restore_deleted(entry))
+
+    def test_the_trash_is_a_grace_period_not_an_archive(self):
+        """Expired entries go, and the cap holds even against a deletion
+        spree — the delete button must not quietly keep what it promised
+        to remove."""
+        self._write("old-one", [user_entry("long gone")])
+        self.mod.delete(self.cwd, "old-one")
+        stale = Path(self.mod.TRASH_DIR) / "old-one.jsonl"
+        when = time.time() - self.mod.TRASH_TTL_S - 60
+        os.utime(stale, (when, when))
+
+        for n in range(self.mod.TRASH_MAX + 5):
+            self._write(f"s{n}", [user_entry(f"conversation {n}")])
+            self.assertIsNotNone(self.mod.delete(self.cwd, f"s{n}"))
+
+        remaining = list(Path(self.mod.TRASH_DIR).glob("*.jsonl"))
+        self.assertNotIn(stale, remaining, "an expired entry survived")
+        self.assertLessEqual(len(remaining), self.mod.TRASH_MAX)
+
+
 if __name__ == "__main__":
     unittest.main()

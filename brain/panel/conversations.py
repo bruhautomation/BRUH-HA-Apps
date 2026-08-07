@@ -10,10 +10,14 @@ the same message shapes it streams, so the panel can
   * replay one into the chat pane, so switching over shows the conversation
     instead of an empty box with a promise attached.
 
-We only ever READ this directory. It belongs to the CLI: the CLI decides
-what a conversation is, when it is written and when it is pruned, and a
-panel that started editing those files would be a second writer to the one
-thing that must have exactly one.
+We never EDIT anything in this directory. It belongs to the CLI: the CLI
+decides what a conversation is, when it is written and when it is pruned,
+and a panel that started editing those files would be a second writer to
+the one thing that must have exactly one. The single mutation offered is
+``delete`` — a person removing a whole conversation on purpose — and it is
+a *move* into a trash directory of ours, never a write into a file: the
+CLI treats a missing session like one it pruned itself, and the move is
+what makes the toast's Undo honest rather than hopeful.
 
 Two things here are inference rather than contract, and both fail soft:
 
@@ -37,6 +41,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import time
 from pathlib import Path
 
@@ -260,6 +265,82 @@ def source_counts(cwd: str, limit: int = 200) -> dict[str, int]:
         key = claimed.get(session_id, "you")
         counts[key] = counts.get(key, 0) + 1
     return counts
+
+
+# Where a deleted conversation waits out the toast. On /data with the rest
+# of our state, so the move stays on one filesystem in the shipped layout —
+# and shutil.move copes if a custom CLAUDE_CONFIG_DIR puts it on another.
+TRASH_DIR = os.environ.get("BRAIN_CHAT_TRASH", "/data/chat-trash")
+# Comfortably past the undo token's TTL, and a cap besides: the trash is a
+# grace period, not an archive, and an archive is exactly what the delete
+# button promises not to quietly keep.
+TRASH_TTL_S = 30 * 60
+TRASH_MAX = 40
+
+_SESSION_ID_RE = re.compile(r"[A-Za-z0-9._-]{1,120}")
+
+
+def delete(cwd: str, session_id: str) -> dict | None:
+    """Move one conversation out of Claude Code's store.
+
+    Returns {"id", "path", "trash"} — enough for ``restore_deleted`` to put
+    it back — or None when there is nothing under that id. The id is
+    validated the same way ``transcript`` validates it, because it becomes
+    a path either way.
+    """
+    if not _SESSION_ID_RE.fullmatch(session_id or ""):
+        return None
+    directory = project_dir(cwd)
+    if directory is None:
+        return None
+    path = directory / f"{session_id}.jsonl"
+    if not path.is_file():
+        return None
+    trash = Path(TRASH_DIR)
+    try:
+        trash.mkdir(parents=True, exist_ok=True)
+        _prune_trash(trash)
+        target = trash / f"{session_id}.jsonl"
+        shutil.move(str(path), str(target))
+    except OSError:
+        return None
+    return {"id": session_id, "path": str(path), "trash": str(target)}
+
+
+def restore_deleted(entry: dict) -> bool:
+    """Put a deleted conversation back where it came from.
+
+    Refuses over an occupied path rather than overwriting: session ids are
+    UUIDs, so a file already there means something else went badly wrong,
+    and losing it to an Undo would compound the mistake.
+    """
+    src = Path(str(entry.get("trash") or ""))
+    dst = Path(str(entry.get("path") or ""))
+    if not src.is_file() or not dst.name or dst.exists():
+        return False
+    try:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(src), str(dst))
+    except OSError:
+        return False
+    return True
+
+
+def _prune_trash(trash: Path) -> None:
+    """Expired entries out, and the oldest beyond the cap with them."""
+    try:
+        entries = sorted(trash.glob("*.jsonl"),
+                         key=lambda p: p.stat().st_mtime, reverse=True)
+    except OSError:
+        return
+    now = time.time()
+    for i, path in enumerate(entries):
+        try:
+            if i >= TRASH_MAX - 1 or path.stat().st_mtime + TRASH_TTL_S < now:
+                path.unlink()
+        except OSError:
+            # A file another prune got to first needs nothing more done.
+            pass
 
 
 def _age(when: float) -> str:
