@@ -3033,12 +3033,17 @@ async def h_chat_model(request: web.Request) -> web.Response:
         raise web.HTTPConflict(reason="finish or stop the current answer first")
     try:
         settings = settings_store.save({"chat_model": body.get("model")})
-    except ValueError as exc:
-        raise web.HTTPBadRequest(text=str(exc))
+    except ValueError:
+        # The one thing save() can reject here, said in fixed words rather
+        # than echoing exception text into a response (CodeQL reads that as
+        # information exposure, and the message is knowable anyway).
+        raise web.HTTPBadRequest(text="chat_model must be a string or null")
     try:
         out = await session.set_model(eff_chat_model())
-    except RuntimeError as exc:
-        raise web.HTTPConflict(reason=str(exc))
+    except RuntimeError:
+        # Only raised when a turn started between the busy check above and
+        # here — the same refusal, in the same words.
+        raise web.HTTPConflict(reason="finish or stop the current answer first")
     out["chat_model"] = settings.get("chat_model") or ""
     return web.json_response(out)
 
