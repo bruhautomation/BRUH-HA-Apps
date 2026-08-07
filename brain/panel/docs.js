@@ -300,10 +300,24 @@ ever picks up a conversation of yours.
 the list. What a new chat costs is that the next thing you say belongs to a separate
 conversation, not that anything was forgotten.
 
+**Every row can be renamed and deleted.** A conversation's title is its opening message
+until you give it a better one: **✎** turns the row into an editor — Enter saves, Escape
+cancels, and saving an empty name brings the opening message back. The name lives in
+brAIn, not in Claude Code's files, so nothing of the CLI's is edited. **✕** deletes the
+conversation, and the toast's **Undo** puts back exactly what was taken; the one you are
+in is refused ("start a new chat first"). If a conversation is old enough that Claude
+Code itself has pruned it, opening it shows the transcript and says plainly that the
+next message starts fresh without its context — the history you can read is real; the
+memory behind it is the CLI's to keep or let go.
+
 **Under the box: which model is answering, and how full the conversation is** — say
-\`42k / 1000k context · 4%\`, going amber past 80%. The number is the CLI's own report of
-what it sent on the last model call, and what it sent *is* the conversation so far, so it
-is measured rather than estimated. Cached parts count: a cached prompt still takes up the
+\`42k / 1000k context · 4%\`, going amber past 80%. The model name is also the picker:
+press it (or **⋯ → Model**) to choose a model for the chat alone, without touching the
+model your insight runs use. Before the first answer of a session the line shows the
+model brAIn is about to ask for; once the CLI announces the one it resolved, that takes
+over. The context number appears only after a first answer, because it is the CLI's own
+report of what it sent on the last model call — and what it sent *is* the conversation
+so far, so it is measured rather than estimated. Cached parts count: a cached prompt still takes up the
 window, it is only cheaper to send. The window is the model's own published one, so it
 changes with the model you are on — Opus and Sonnet are 1M from 4.6 onward, Haiku is 200k.
 

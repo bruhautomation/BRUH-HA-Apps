@@ -304,5 +304,43 @@ class DeleteCase(ConversationsCase):
         self.assertLessEqual(len(remaining), self.mod.TRASH_MAX)
 
 
+class RenameCase(ConversationsCase):
+    """Names for conversations are a panel-side overlay: Claude Code has no
+    title concept, so nothing of the CLI's is written — and the overlay is
+    capped, because the CLI prunes old sessions and nothing prunes this."""
+
+    def setUp(self):
+        super().setUp()
+        self.mod.TITLES_FILE = os.path.join(self.tmp.name, "titles.json")
+
+    def test_a_name_wins_over_the_derived_title_and_clearing_restores_it(self):
+        self._write("s1", [user_entry("why is the porch light off"),
+                           "x" * 300 + "\n"])
+        self.assertTrue(self.mod.set_title("s1", "  Porch   light saga  "))
+        row = self.mod.listing(self.cwd)[0]
+        self.assertEqual(row["title"], "Porch light saga")
+        self.assertTrue(row["renamed"])
+
+        self.assertTrue(self.mod.set_title("s1", ""))
+        row = self.mod.listing(self.cwd)[0]
+        self.assertEqual(row["title"], "why is the porch light off")
+        self.assertFalse(row["renamed"])
+
+    def test_a_rename_id_is_validated_like_every_other_id(self):
+        for bad in ("../secret", "/etc/passwd", ""):
+            self.assertFalse(self.mod.set_title(bad, "name"), bad)
+
+    def test_the_overlay_is_capped_and_drops_the_longest_untouched(self):
+        for n in range(self.mod.MAX_TITLES + 5):
+            self.assertTrue(self.mod.set_title(f"s{n}", f"name {n}"))
+        # Touching the oldest survivor moves it to the back of the queue.
+        oldest = next(iter(self.mod.custom_titles()))
+        self.assertTrue(self.mod.set_title(oldest, "still wanted"))
+        self.assertTrue(self.mod.set_title("brand-new", "one more"))
+        titles = self.mod.custom_titles()
+        self.assertLessEqual(len(titles), self.mod.MAX_TITLES)
+        self.assertEqual(titles[oldest], "still wanted")
+
+
 if __name__ == "__main__":
     unittest.main()

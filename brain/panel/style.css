@@ -2069,14 +2069,14 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
 }
 .convitem .cwhen { flex: none; font-size: 11.5px; color: var(--ink-3); }
 
-/* Deleting a conversation. A row is itself a button, and a button cannot
-   hold another — so every row sits in a wrapper and the ✕ floats over its
-   right edge. On the rail it appears on hover, because a column of ✕s
-   turns a list of conversations into a list of deletions; on touch there
-   is no hover, so it is simply there, and in the dialog — the touch path —
-   it gets a full-size target. */
+/* Deleting and renaming a conversation. A row is itself a button, and a
+   button cannot hold another — so every row sits in a wrapper and the two
+   controls (✎ then ✕) float over its right edge. On the rail they appear
+   on hover, because a column of them turns a list of conversations into a
+   list of chores; on touch there is no hover, so they are simply there,
+   and in the dialog — the touch path — they get full-size targets. */
 .crrow { position: relative; }
-.crrow > .critem, .crrow > .convitem { width: 100%; padding-right: 36px; }
+.crrow > .critem, .crrow > .convitem { width: 100%; padding-right: 64px; }
 .crdel {
   position: absolute;
   top: 50%;
@@ -2096,9 +2096,28 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
 }
 .crrow:hover .crdel, .crrow:focus-within .crdel { opacity: 1; }
 .crdel:hover { background: var(--surface-2); color: var(--critical); }
-.crrow > .convitem { padding-right: 52px; }
+.crren { right: 34px; }
+.crren:hover { color: var(--accent); }
+.crrow > .convitem { padding-right: 96px; }
 .crrow > .convitem ~ .crdel { width: 40px; height: 40px; right: 6px; opacity: 1; }
+.crrow > .convitem ~ .crren { right: 50px; }
 @media (pointer: coarse) { .crdel { opacity: 1; } }
+
+/* The rename editor, in place of the row it names. 16px, not the row's
+   13.5 — it is a text control and the touch floor applies to it the same
+   as everything else; the coarse-pointer block already covers it, and on a
+   desktop the row is briefly bigger, which reads as "being edited". */
+.crrename {
+  width: 100%;
+  min-height: 40px;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 16px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+}
 
 /* Session details, in the shared chip popover. */
 .chippop .mono {

@@ -2,6 +2,41 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.24.0
+
+### Added
+
+- **Conversations can be renamed.** A ✎ beside the ✕ on every row of the
+  Chats rail and the Conversations dialog turns the row into an editor:
+  Enter saves, Escape cancels, and saving an empty name brings the derived
+  title (the opening message) back. The name is panel-side metadata —
+  Claude Code has no title concept, so nothing of the CLI's is edited —
+  and the overlay is capped so it cannot accrete forever.
+
+### Fixed
+
+- **"Could not resume this conversation" was a coin flip, and the other
+  side of the coin was worse.** Claude Code 2.1.x refuses a `--resume` for
+  a session its store no longer holds by emitting an error *event* — "No
+  conversation found with session ID" — and sometimes staying alive a
+  moment before exiting. The 1.23.0 fallback watched only for the death,
+  so whichever of "the exit was observed" and "the event was parsed"
+  happened first decided what you got: the honest notice, or a cryptic
+  `error_during_execution` beside a doomed resume id that every later
+  spawn retried. The event is now the signal: the fallback is
+  deterministic, the notice carries the CLI's own reason, and the raw
+  error envelope no longer leaks into the transcript.
+
+- **The model line under the chat box was empty until the first answer.**
+  Claude Code 2.1.x holds its `init` event — the model announcement — back
+  until the first message of a session, so opening or resuming a
+  conversation showed no meta line at all, which also hid the model picker
+  exactly when picking costs nothing. The line now seeds from the model
+  the panel is about to ask for (the chat's own choice, else the global
+  one) and hands over to the CLI's resolved id when it announces one. How
+  full the context is still appears only once the CLI reports a real
+  measurement — a number known before any turn would be a guess.
+
 ## 1.23.0
 
 ### Added

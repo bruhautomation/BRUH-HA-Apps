@@ -3072,6 +3072,39 @@ async def h_chat_conversation_delete(request: web.Request) -> web.Response:
     })
 
 
+async def h_chat_conversation_rename(request: web.Request) -> web.Response:
+    """Name a conversation yourself, instead of living with its opener.
+
+    The name is a panel-side overlay (``conversations.set_title``) — Claude
+    Code has no title concept, so nothing of the CLI's is edited. An empty
+    title removes the override and the derived title comes back; renaming
+    something that does not exist is a 404, not a stored name for a ghost.
+    """
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise web.HTTPBadRequest(text="expected an object")
+    title = body.get("title")
+    if title is not None and not isinstance(title, str):
+        raise web.HTTPBadRequest(text="title must be a string or null")
+    session_id = request.match_info["id"]
+
+    def do() -> bool | None:
+        if not conversations.valid_id(session_id):
+            return None
+        directory = conversations.project_dir(chat_session.WORK_DIR)
+        if directory is None or not (directory / f"{session_id}.jsonl").is_file():
+            return None
+        return conversations.set_title(session_id, title or "")
+
+    ok = await asyncio.to_thread(do)
+    if ok is None:
+        raise web.HTTPNotFound(text="no such conversation")
+    if not ok:
+        raise web.HTTPInternalServerError(text="could not store the name")
+    return web.json_response({"renamed": session_id,
+                              "title": " ".join((title or "").split())[:120]})
+
+
 async def h_chat_resume(request: web.Request) -> web.Response:
     body = await request.json()
     if not isinstance(body, dict):
@@ -3190,6 +3223,8 @@ def make_app() -> web.Application:
     app.router.add_post("/api/chat/model", h_chat_model)
     app.router.add_post("/api/chat/conversation/{id}/delete",
                         h_chat_conversation_delete)
+    app.router.add_post("/api/chat/conversation/{id}/rename",
+                        h_chat_conversation_rename)
 
     # The terminal tab: /terminal/ is reverse-proxied through to ttyd
     # so the whole add-on lives behind one ingress port.

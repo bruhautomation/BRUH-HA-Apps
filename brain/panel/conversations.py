@@ -45,6 +45,7 @@ import shutil
 import time
 from pathlib import Path
 
+import atomic_write
 import run_sources
 
 # Where the CLI keeps its state. Same env var the add-on exports for every
@@ -221,14 +222,19 @@ def listing(cwd: str, limit: int = 30, exclude: str | None = None,
         if len(rows) >= (limit if wanted is None else MAX_FILTER_SCAN):
             break
     claimed = run_sources.lookup(row["id"] for row in rows)   # one read, not one per row
+    named = custom_titles()                                   # ditto
     out = []
     for row in rows:
         source = claimed.get(row["id"], "you")
         if wanted is not None and source not in wanted:
             continue
+        # A name someone gave it wins over the derived title — and skips
+        # the 400-line title scan for that row entirely.
+        custom = named.get(row["id"], "")
         out.append({
             "id": row["id"],
-            "title": title_of(row["path"]) or "(no opening message)",
+            "title": custom or title_of(row["path"]) or "(no opening message)",
+            "renamed": bool(custom),
             "modified": row["modified"],
             "age": _age(row["modified"]),
             "source": source,
@@ -267,6 +273,54 @@ def source_counts(cwd: str, limit: int = 200) -> dict[str, int]:
     return counts
 
 
+# Custom names for conversations, keyed by session id. An overlay of OURS,
+# not an edit of the CLI's files: Claude Code has no title concept — the
+# panel derives one from the first user message — so renaming is panel-side
+# metadata, the same shape as run_sources. Capped because it accretes
+# forever otherwise; the CLI prunes old sessions and nothing prunes this.
+TITLES_FILE = os.environ.get("BRAIN_CHAT_TITLES", "/data/chat-titles.json")
+MAX_TITLES = 500
+
+
+def custom_titles() -> dict[str, str]:
+    """Every rename anyone has made, id → name. Missing file = none."""
+    try:
+        data = json.loads(Path(TITLES_FILE).read_text("utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {k: v for k, v in data.items()
+            if isinstance(k, str) and isinstance(v, str) and v.strip()}
+
+
+def set_title(session_id: str, title: str) -> bool:
+    """Name (or, with an empty title, un-name) one conversation.
+
+    An empty title removes the override so the derived title — the first
+    user message — comes back; storing "" would pin every renamed-then-
+    cleared row to "(no opening message)".
+    """
+    if not _SESSION_ID_RE.fullmatch(session_id or ""):
+        return False
+    titles = custom_titles()
+    title = " ".join((title or "").split())[:MAX_TITLE_CHARS]
+    if title:
+        # Re-inserting moves the id to the end, so the cap below always
+        # drops the longest-untouched name rather than the one just made.
+        titles.pop(session_id, None)
+        titles[session_id] = title
+        while len(titles) > MAX_TITLES:
+            del titles[next(iter(titles))]
+    else:
+        titles.pop(session_id, None)
+    try:
+        atomic_write.write_json(TITLES_FILE, titles)
+    except OSError:
+        return False
+    return True
+
+
 # Where a deleted conversation waits out the toast. On /data with the rest
 # of our state, so the move stays on one filesystem in the shipped layout —
 # and shutil.move copes if a custom CLAUDE_CONFIG_DIR puts it on another.
@@ -278,6 +332,12 @@ TRASH_TTL_S = 30 * 60
 TRASH_MAX = 40
 
 _SESSION_ID_RE = re.compile(r"[A-Za-z0-9._-]{1,120}")
+
+
+def valid_id(session_id: str) -> bool:
+    """Whether this could be a session id at all. Every caller that turns an
+    id into a path checks this first — refusing beats sanitising."""
+    return bool(_SESSION_ID_RE.fullmatch(session_id or ""))
 
 
 def delete(cwd: str, session_id: str) -> dict | None:
