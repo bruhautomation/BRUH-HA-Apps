@@ -209,15 +209,23 @@ function toast(msg, undo) {
       btn.disabled = true;
       try {
         const data = await api(`api/undo/${undo}`, { method: "POST" });
-        takeFindings(data);
-        renderFindings();
+        // A conversation restore answers without the findings payload —
+        // feeding its response to takeFindings would blank the Findings
+        // tab and its badge over an undo that had nothing to do with them.
+        if (data.findings) {
+          takeFindings(data);
+          renderFindings();
+        }
+        if (data.restored_conversation) refreshConversationLists();
         t.classList.remove("show");
         // `undone: false` means the row could not go back — the analyst
         // re-reported it while the toast was up, so the list already holds
         // a newer version and overwriting it would lose what happened
         // since. Say which, rather than claiming a success.
         toast(data.undone ? "Put back"
-                          : "It's already back on the list — nothing to undo");
+                          : data.restored_conversation
+                            ? "It couldn't be restored"
+                            : "It's already back on the list — nothing to undo");
       } catch (e) {
         btn.disabled = false;
         toast(e.message);
@@ -510,17 +518,28 @@ function positionChipPop() {
   if (!chipPopFor) return;
   const pop = $("#chipPop");
   const a = chipPopFor.getBoundingClientRect();
-  // Height is bounded to what is left below the chip, and the overflow
-  // scrolls. It never mattered while this held two rows and a sentence; the
-  // spend breakdown is up to seven more, and a popover whose last rows are
-  // under the bottom of the screen is a list with no end — the same failure
-  // the tooltips had sideways, for the same reason: CSS cannot see the edge.
-  // Measured before the width, because a scrollbar appearing changes it.
-  pop.style.maxHeight = Math.max(180, window.innerHeight - a.bottom - 14) + "px";
+  // Height is bounded to what is left on the side it opens, and the
+  // overflow scrolls. It never mattered while this held two rows and a
+  // sentence; the spend breakdown is up to seven more, and a popover whose
+  // last rows are under the bottom of the screen is a list with no end —
+  // the same failure the tooltips had sideways, for the same reason: CSS
+  // cannot see the edge. Measured before the width, because a scrollbar
+  // appearing changes it.
+  //
+  // Below the anchor by default — every chip lives in the top bar — but
+  // flipped above when below cannot hold it and above holds more: the chat
+  // meta line's model button anchors one of these from the bottom edge of
+  // the screen, where "below" is no room at all.
+  const below = window.innerHeight - a.bottom - 14;
+  const above = a.top - 14;
+  const flip = below < 180 && above > below;
+  pop.style.maxHeight = Math.max(180, flip ? above : below) + "px";
   const w = pop.offsetWidth;
   const left = Math.max(8, Math.min(a.right - w, window.innerWidth - w - 8));
   pop.style.left = Math.round(left) + "px";
-  pop.style.top = Math.round(a.bottom + 6) + "px";
+  pop.style.top = flip
+    ? Math.round(Math.max(8, a.top - 6 - pop.offsetHeight)) + "px"
+    : Math.round(a.bottom + 6) + "px";
 }
 
 function closeChipPop() {
@@ -3268,6 +3287,9 @@ const chatState = {
   sessionId: null,   // the CLI's id for this conversation — what `--resume` takes
   info: {},          // model, cwd, version, api_key_source, from the CLI itself
   context: {},       // {tokens, window} — how full the conversation is
+  models: [],        // the same choices ⚙ offers, for the chat's own picker
+  chatModel: "",     // the stored chat override; "" = follow the global model
+  defaultModel: "",  // the global model the chat defers to when unset
   convs: [],         // past conversations, for the wide-screen sidebar
   commands: [],      // its slash commands, as it advertises them
   cli: [],           // the brain/ha dispatchers, parsed from their own help
@@ -3575,6 +3597,9 @@ function chatConnect() {
       chatState.info = ev.info || {};
       chatState.context = ev.context || {};
       chatState.commands = ev.commands || [];
+      chatState.models = ev.models || chatState.models;
+      chatState.chatModel = ev.chat_model || "";
+      chatState.defaultModel = ev.default_model || "";
       chatMeta();
       chatState.cli = ev.cli || chatState.cli;
       (ev.events || []).forEach(chatRender);
@@ -3921,14 +3946,49 @@ async function openConversations() {
   const rows = data.conversations || [];
   $("#convEmpty").classList.toggle("hidden", rows.length > 0);
   rows.forEach((c) => {
+    const row = el("div", "crrow");
     const btn = el("button", "convitem");
     btn.appendChild(el("span", "ctitle", c.title));
     const chip = sourceChip(c);
     if (chip) btn.appendChild(chip);
     btn.appendChild(el("span", "cwhen", c.age));
     btn.addEventListener("click", () => resumeConversation(c));
-    list.appendChild(btn);
+    row.appendChild(btn);
+    row.appendChild(deleteConvButton(c));
+    list.appendChild(row);
   });
+}
+
+// The ✕ beside a conversation. A row is itself a button, so this cannot be
+// its child — the wrapper the caller puts both in is what keeps them
+// siblings. Deleting hands back an undo token and the toast grows the
+// button, same as every other press that takes something away.
+function deleteConvButton(c) {
+  const del = el("button", "crdel", "✕");
+  del.type = "button";
+  tip(del, "Delete this conversation");
+  del.addEventListener("click", async (ev) => {
+    ev.stopPropagation();
+    del.disabled = true;
+    try {
+      const out = await api(
+        `api/chat/conversation/${encodeURIComponent(c.id)}/delete`,
+        { method: "POST" });
+      toast("Conversation deleted", out.undo);
+      refreshConversationLists();
+    } catch (e) {
+      del.disabled = false;
+      toast(e.message);
+    }
+  });
+  return del;
+}
+
+// Both surfaces onto the one list: the rail if it is on screen, and the ⋯
+// dialog if it is open.
+function refreshConversationLists() {
+  refreshChatRail();
+  if ($("#convModal").classList.contains("open")) openConversations();
 }
 
 // The wide-screen rail. Same list and same resume as the ⋯ dialog — one
@@ -3969,6 +4029,7 @@ function renderChatRail() {
     // The one you are in is marked rather than hidden: a list that silently
     // omits the current item makes you wonder where it went.
     const here = !!chatState.sessionId && c.id === chatState.sessionId;
+    const row = el("div", "crrow");
     const btn = el("button", "critem" + (here ? " active" : ""));
     btn.appendChild(el("span", "ctitle", c.title));
     const foot = el("div", "crfoot");
@@ -3978,7 +4039,11 @@ function renderChatRail() {
     btn.appendChild(foot);
     if (here) btn.setAttribute("aria-current", "true");
     else btn.addEventListener("click", () => resumeConversation(c));
-    list.appendChild(btn);
+    row.appendChild(btn);
+    // Not on the open one — the server refuses it anyway ("start a new
+    // chat first"), and a control that only ever answers no is clutter.
+    if (!here) row.appendChild(deleteConvButton(c));
+    list.appendChild(row);
   });
 }
 
@@ -3988,8 +4053,17 @@ async function resumeConversation(conv) {
   closeBox("#convModal");
   toast("Opening that conversation…");
   try {
-    await api("api/chat/resume", {
+    const out = await api("api/chat/resume", {
       method: "POST", body: JSON.stringify({ session_id: conv.id }) });
+    // The server verified the spawn: `resumed: false` means Claude Code no
+    // longer holds this conversation (its store prunes old sessions) and a
+    // fresh session opened instead. The transcript is on screen either
+    // way; what differs is whether Claude remembers it, and that is worth
+    // saying out loud rather than letting the next answer reveal it.
+    if (out && out.resumed === false) {
+      toast("Claude Code no longer has that conversation — the transcript "
+        + "is shown, but the next message starts fresh without its context.");
+    }
   } catch (e) {
     toast(e.message);
   }
@@ -4056,6 +4130,59 @@ $("#chatInfo").addEventListener("click", async () => {
     });
   }
 });
+
+// ------------------------------------------------------- the model picker
+//
+// Which model answers the chat, chosen from the chat. The choice is the
+// chat's own (`chat_model`, a panel setting): making it the global option
+// would silently change what every insight run costs. Two ways in — the
+// model name in the meta line, and ⋯ → Model before a first message has
+// put a meta line on screen. Applying it restarts the CLI with --resume,
+// so the conversation carries across the way it already does when an old
+// CLI has to be stopped.
+
+function openModelPick(anchor) {
+  if (chipPopFor === anchor) { closeChipPop(); return; }
+  closeChipPop();
+  const current = chatState.chatModel || "";
+  const def = chatState.defaultModel
+    ? prettyModel(chatState.defaultModel) : "the CLI's own choice";
+  // The list's own empty-id row ("CLI default") is dropped: in the chat,
+  // "" means "follow the model in ⚙ Settings", and the Default row above
+  // it is that — two rows with one value would both light up as current.
+  const rows = [{ id: "", label: `Default — ${def}`,
+                  hint: "follows the model in ⚙ Settings" }]
+    .concat((chatState.models || []).filter((m) => m.id));
+  const html = rows.map((m) =>
+    `<button type="button" class="mpick${(m.id || "") === current ? " on" : ""}"`
+    + ` data-model="${esc(m.id || "")}">${esc(m.label)}`
+    + (m.hint ? `<span class="mhint">${esc(m.hint)}</span>` : "")
+    + `</button>`).join("");
+  setChipPop(anchor, "Chat model", html);
+  document.querySelectorAll("#chipPopBody .mpick").forEach((btn) =>
+    btn.addEventListener("click", () => pickChatModel(btn.dataset.model)));
+}
+
+async function pickChatModel(id) {
+  closeChipPop();
+  try {
+    const out = await api("api/chat/model", {
+      method: "POST", body: JSON.stringify({ model: id || null }) });
+    chatState.chatModel = out.chat_model || "";
+    // A restart re-announces the session (init → info), which is what
+    // updates the name in the meta line; without one there is nothing
+    // running yet and the next spawn simply takes the flag.
+    toast(out.restarted
+      ? "Model changed — the conversation carries on"
+      : "Model set — it applies from the next message");
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+$("#chatModel").addEventListener("click", () => openModelPick($("#chatModel")));
+$("#chatModelPick").addEventListener("click", () =>
+  openModelPick($("#chatModelPick")));
 
 // Stopping our session first is the point, not a side effect: while the
 // panel holds the conversation open, the terminal is being asked to resume

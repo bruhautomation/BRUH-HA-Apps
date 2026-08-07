@@ -2,6 +2,49 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.23.0
+
+### Added
+
+- **The chat picks its own model.** Press the model name under the composer
+  — or ⋯ → Model before a first message has put it there — and choose from
+  the same list ⚙ Settings offers. The choice is the chat's own
+  (`chat_model`): it never touches the global model option, so the insight
+  runs and the listeners keep costing what the Configuration tab says.
+  Applying it restarts the CLI with `--resume`, so the conversation carries
+  straight across.
+
+- **Conversations can be deleted.** Every row in the Chats rail and the
+  Conversations dialog grows a ✕, and the toast grows an Undo — the file is
+  moved into a short-lived trash rather than unlinked, so a mis-tap puts
+  back exactly what was taken. The conversation that is open is refused
+  ("start a new chat first"), and nothing ever edits the CLI's own files:
+  deleting a whole conversation is the one mutation, and it is a move.
+
+### Fixed
+
+- **Opening an old conversation could leave a chat that errored on every
+  message.** Claude Code prunes old sessions from its store; resuming one
+  it no longer holds spawned a CLI that died silently, and the kept resume
+  id respawned the same failure forever — which surfaced as "sometimes old
+  conversations won't open". The spawn is watched until the CLI says its
+  first word now: a resume the CLI refuses drops the id, says so in the
+  transcript (the replayed history stays on screen), and opens a fresh
+  session, and the panel tells you the context is gone rather than letting
+  the next answer reveal it. A fresh session that dies on startup reports
+  the CLI's own stderr instead of a shrug.
+
+- **The model and context line under the chat was clipped — at every width,
+  and worst on a wide screen.** The Terminal view cancels the page padding
+  with negative margins, and a leftover negative *bottom* margin shortened
+  the page wrapper, whose `overflow: hidden` then swallowed the bottom
+  ~20px of the view: exactly where "Claude Sonnet 5 · 132k / 1000k context"
+  lives. A second 6px came from scoping those margins to the top bar's
+  breakpoint instead of the one the padding actually changes at. Both are
+  fixed, and `tests/manual/measure-chatmeta.mjs` now measures the line with
+  `elementFromPoint` — painted, not merely positioned — so it cannot
+  quietly go under again.
+
 ## 1.22.3
 
 ### Fixed

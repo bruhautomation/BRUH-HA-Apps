@@ -307,6 +307,16 @@ def eff_model() -> str:
     return str(_opt("model", MODEL))
 
 
+def eff_chat_model() -> str:
+    """The chat terminal's model: its own choice, else the global one.
+
+    A panel setting rather than an add-on option, because it is chosen from
+    inside the chat for the chat — the insight runs and the listeners keep
+    following the Configuration tab.
+    """
+    return str(settings_store.load().get("chat_model") or "") or eff_model()
+
+
 def eff_gather_mode() -> str:
     return settings_store.load().get("gather_mode", "search")
 
@@ -1872,6 +1882,14 @@ async def h_undo(request: web.Request) -> web.Response:
     if entry is None:
         raise web.HTTPNotFound(text="that's expired — nothing to undo")
 
+    if entry["kind"] == "conversation":
+        # A deleted conversation is a file in the trash, and putting it
+        # back is a move — none of the findings machinery below applies.
+        restored = await asyncio.to_thread(
+            conversations.restore_deleted, entry)
+        return web.json_response({"undone": restored,
+                                  "restored_conversation": entry["id"]})
+
     def reverse() -> tuple[bool, dict]:
         if entry["kind"] == "finding":
             # The row may have been re-reported in the meantime, in which
@@ -2827,9 +2845,10 @@ async def h_health(request: web.Request) -> web.Response:
 def _chat() -> "chat_session.ChatSession":
     session = chat_session.session()
     # Resolved per call rather than at startup: the model is editable from
-    # ⚙ Settings and from the Configuration tab, and a chat session started
-    # before an edit should not keep the old one for as long as it lives.
-    session.model = eff_model()
+    # ⚙ Settings, from the Configuration tab and from the chat's own model
+    # picker, and a chat session started before an edit should not keep the
+    # old one for as long as it lives.
+    session.model = eff_chat_model()
     return session
 
 
@@ -2996,6 +3015,58 @@ async def h_chat_adopt(request: web.Request) -> web.Response:
                               "title": newest["title"]})
 
 
+async def h_chat_model(request: web.Request) -> web.Response:
+    """Pick the chat's model, from the chat.
+
+    Stores the choice as the panel's ``chat_model`` (empty = follow the
+    global model option) and applies it to the live session, which means a
+    restart — the model is an argv flag — with ``--resume`` carrying the
+    conversation across, the same way stopping an old CLI already does.
+    """
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise web.HTTPBadRequest(text="expected an object")
+    session = chat_session.session()
+    if session.state == "busy":
+        # Refused before anything is saved: a choice that half-applies —
+        # stored but not running — reads as a picker that lies.
+        raise web.HTTPConflict(reason="finish or stop the current answer first")
+    try:
+        settings = settings_store.save({"chat_model": body.get("model")})
+    except ValueError as exc:
+        raise web.HTTPBadRequest(text=str(exc))
+    try:
+        out = await session.set_model(eff_chat_model())
+    except RuntimeError as exc:
+        raise web.HTTPConflict(reason=str(exc))
+    out["chat_model"] = settings.get("chat_model") or ""
+    return web.json_response(out)
+
+
+async def h_chat_conversation_delete(request: web.Request) -> web.Response:
+    """Delete one conversation from the list — with an Undo, not a shrug.
+
+    The file is moved into a trash directory rather than unlinked, so the
+    toast's Undo can put back exactly what was taken. The conversation that
+    is currently open is refused: deleting the ground the live session is
+    standing on either kills it or quietly forks it, and "start a new chat
+    first" is a better answer than either.
+    """
+    session = _chat()
+    session_id = request.match_info["id"]
+    if session.session_id == session_id:
+        raise web.HTTPConflict(
+            reason="that's the conversation that's open — start a new chat first")
+    entry = await asyncio.to_thread(
+        conversations.delete, chat_session.WORK_DIR, session_id)
+    if entry is None:
+        raise web.HTTPNotFound(text="no such conversation")
+    return web.json_response({
+        "deleted": session_id,
+        "undo": undo_store.record("conversation", **entry),
+    })
+
+
 async def h_chat_resume(request: web.Request) -> web.Response:
     body = await request.json()
     if not isinstance(body, dict):
@@ -3016,8 +3087,16 @@ def _chat_snapshot(session: "chat_session.ChatSession") -> dict:
     The `brain`/`ha` command list rides along here rather than on its own
     endpoint because it is wanted at exactly the moment the snapshot is —
     when the chat opens — and it is cached, so it costs nothing to include.
+    So does what the model picker needs: the same static choices ⚙ offers,
+    the stored chat override, and the global model it defers to — asking
+    /api/settings for those would drag a Supervisor round-trip into opening
+    a popover.
     """
-    return {**session.snapshot(), "cli": cli_commands.listing()}
+    settings = settings_store.load()
+    return {**session.snapshot(), "cli": cli_commands.listing(),
+            "models": engine.MODEL_CHOICES,
+            "chat_model": settings.get("chat_model") or "",
+            "default_model": eff_model()}
 
 
 async def h_chat_state(request: web.Request) -> web.Response:
@@ -3103,6 +3182,9 @@ def make_app() -> web.Application:
     app.router.add_get("/api/chat/conversations", h_chat_conversations)
     app.router.add_post("/api/chat/adopt", h_chat_adopt)
     app.router.add_post("/api/chat/resume", h_chat_resume)
+    app.router.add_post("/api/chat/model", h_chat_model)
+    app.router.add_post("/api/chat/conversation/{id}/delete",
+                        h_chat_conversation_delete)
 
     # The terminal tab: /terminal/ is reverse-proxied through to ttyd
     # so the whole add-on lives behind one ingress port.

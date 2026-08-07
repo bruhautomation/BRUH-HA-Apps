@@ -357,7 +357,11 @@
          questions you only ask when something feels off — a slow reply, a
          forgetful one — so they sit under the box rather than in the bar. -->
     <div id="chatMeta" class="chatmeta hidden">
-      <span id="chatModel" class="cmmodel"></span>
+      <!-- The model name is a button: pressing it opens the model picker,
+           because the place you notice the wrong model is the place its
+           name is written. -->
+      <button id="chatModel" class="cmmodel" type="button"
+              aria-haspopup="true" aria-expanded="false"></button>
       <span id="chatCtx" class="cmctx hidden"></span>
     </div>
   </section>
@@ -401,6 +405,13 @@
     <button id="chatInfo" class="tmitem" role="menuitem">
       <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8v.1"/></svg>
       <span>Session details</span>
+    </button>
+    <!-- The same picker the meta line's model name opens: before the first
+         turn there is no meta line yet, and a choice you can only make
+         after a message is a choice made one message too late. -->
+    <button id="chatModelPick" class="tmitem" role="menuitem">
+      <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M18.5 15.5l.9 2.6 2.6.9-2.6.9-.9 2.6-.9-2.6-2.6-.9 2.6-.9z"/></svg>
+      <span>Model…</span>
     </button>
     <button id="termMode" class="tmitem" role="menuitem">
       <svg viewBox="0 0 24 24" class="ico ico-in" aria-hidden="true"><path d="m5 8 4 4-4 4M13 16h6"/></svg>
