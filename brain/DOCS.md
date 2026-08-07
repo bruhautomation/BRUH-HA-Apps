@@ -221,8 +221,20 @@ same `/config`, with the same permissions — what differs is only how you see i
   neither can go stale.
 - **⋯ holds the rest** — *New chat*, *Conversations* (every conversation in `/config`,
   started here or in the classic terminal; picking one replays it and carries on),
-  *Session details*, and the switch to Classic. Two buttons float over the terminal,
-  not a column of them.
+  *Session details*, *Model*, and the switch to Classic. Two buttons float over the
+  terminal, not a column of them.
+- **The chat picks its own model.** Press the model name under the message box (or
+  ⋯ → *Model*) and choose — the current conversation carries straight on under the
+  new model. It's the chat's own setting: insights and voice keep following the
+  model on the Configuration tab, so a heavyweight model chosen for one
+  conversation never quietly raises what everything else costs. *Default* follows
+  the Configuration tab again.
+- **Conversations can be deleted.** Every row in the list grows a **✕**, and the
+  toast grows an **Undo** for the few minutes a mis-tap needs. The conversation
+  you're in is refused — start a new chat first. (Old conversations that Claude
+  Code itself has pruned can no longer be picked up mid-thought: reopening one
+  shows its transcript and says plainly that the next message starts fresh,
+  instead of erroring on every send.)
 - **Yours, and everyone else's.** brAIn runs Claude in `/config` for voice, automation
   tasks and filing memory, so those conversations live beside yours. The list shows
   yours by default and puts the rest behind a chip each — *Voice*, *Automation*,
