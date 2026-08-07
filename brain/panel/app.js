@@ -3515,7 +3515,15 @@ function chatRender(ev) {
 function chatMeta() {
   const box = $("#chatMeta");
   if (!box) return;
-  const model = (chatState.info && chatState.info.model) || "";
+  // The CLI's own resolved id when it has announced one — but a current CLI
+  // (2.1.x) holds its init event back until the first message of a session,
+  // so before that the line seeds from what the panel is going to ask for:
+  // the chat's model override, else the global one. Without the fallback,
+  // opening or resuming a conversation showed no meta line at all until the
+  // first answer landed — which also hid the model picker exactly when
+  // choosing a model costs nothing.
+  const model = (chatState.info && chatState.info.model)
+    || chatState.chatModel || chatState.defaultModel || "";
   const ctx = chatState.context || {};
   box.classList.toggle("hidden", !model && !ctx.tokens);
   $("#chatModel").textContent = model ? prettyModel(model) : "";
@@ -3954,6 +3962,7 @@ async function openConversations() {
     btn.appendChild(el("span", "cwhen", c.age));
     btn.addEventListener("click", () => resumeConversation(c));
     row.appendChild(btn);
+    row.appendChild(renameConvButton(c, row));
     row.appendChild(deleteConvButton(c));
     list.appendChild(row);
   });
@@ -3982,6 +3991,58 @@ function deleteConvButton(c) {
     }
   });
   return del;
+}
+
+// The ✎ beside the ✕. The name is a panel-side overlay — Claude Code has
+// no title concept, so the derived title is the first message and renaming
+// never edits the CLI's files.
+function renameConvButton(c, row) {
+  const btn = el("button", "crdel crren", "✎");
+  btn.type = "button";
+  tip(btn, "Rename this conversation");
+  btn.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    beginConvRename(row, c);
+  });
+  return btn;
+}
+
+// Renaming happens in place: the row becomes an input, Enter saves, Escape
+// or clicking away puts the list back unchanged. Saving an empty name
+// removes the override so the opening-message title returns — which is
+// also how a rename is undone.
+function beginConvRename(row, c) {
+  const input = el("input", "crrename");
+  input.type = "text";
+  input.value = c.renamed ? c.title : "";
+  input.placeholder = c.title;
+  input.maxLength = 120;
+  input.setAttribute("aria-label", "Conversation name");
+  let settled = false;
+  const finish = async (save) => {
+    // Enter saves and then blurs; the flag keeps the blur from turning
+    // that save into a second, cancelling pass.
+    if (settled) return;
+    settled = true;
+    if (save) {
+      try {
+        await api(`api/chat/conversation/${encodeURIComponent(c.id)}/rename`,
+          { method: "POST", body: JSON.stringify({ title: input.value }) });
+      } catch (e) {
+        toast(e.message);
+      }
+    }
+    refreshConversationLists();
+  };
+  input.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") { ev.preventDefault(); finish(true); }
+    else if (ev.key === "Escape") { ev.preventDefault(); finish(false); }
+  });
+  input.addEventListener("blur", () => finish(false));
+  row.textContent = "";
+  row.appendChild(input);
+  input.focus();
+  input.select();
 }
 
 // Both surfaces onto the one list: the rail if it is on screen, and the ⋯
@@ -4040,8 +4101,11 @@ function renderChatRail() {
     if (here) btn.setAttribute("aria-current", "true");
     else btn.addEventListener("click", () => resumeConversation(c));
     row.appendChild(btn);
-    // Not on the open one — the server refuses it anyway ("start a new
-    // chat first"), and a control that only ever answers no is clutter.
+    // Rename works on any row — a name is metadata, and the open one is
+    // the one whose opener you know best is wrong. Delete is not on the
+    // open one: the server refuses it anyway ("start a new chat first"),
+    // and a control that only ever answers no is clutter.
+    row.appendChild(renameConvButton(c, row));
     if (!here) row.appendChild(deleteConvButton(c));
     list.appendChild(row);
   });
@@ -4169,9 +4233,13 @@ async function pickChatModel(id) {
     const out = await api("api/chat/model", {
       method: "POST", body: JSON.stringify({ model: id || null }) });
     chatState.chatModel = out.chat_model || "";
-    // A restart re-announces the session (init → info), which is what
-    // updates the name in the meta line; without one there is nothing
-    // running yet and the next spawn simply takes the flag.
+    // On a restart the CLI re-announces the session (init → info) and that
+    // updates the meta line; a current CLI holds init back until the first
+    // message, and with nothing running the next spawn simply takes the
+    // flag — so the seeded name is repainted here either way, and the CLI's
+    // resolved id takes over whenever it does announce one.
+    delete chatState.info.model;
+    chatMeta();
     toast(out.restarted
       ? "Model changed — the conversation carries on"
       : "Model set — it applies from the next message");

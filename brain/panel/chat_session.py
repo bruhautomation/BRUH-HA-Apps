@@ -166,6 +166,31 @@ _DENIED_RE = re.compile(
     re.I,
 )
 
+# How a current CLI (2.1.x) refuses a --resume for a conversation its store
+# no longer holds: not by dying silently, but by emitting an error `result`
+# event on stdout — carrying this wording in `errors` — and only then
+# exiting (sometimes lingering a moment first). Watching for the death alone
+# made the fallback a coin flip: whichever of "the exit was observed" and
+# "the event was parsed" happened first decided whether the person got the
+# honest notice or a cryptic `error_during_execution` and a doomed resume id
+# that every later spawn retried. The event is the deterministic signal, so
+# it is matched by the CLI's own wording — same reasoning as _DENIED_RE.
+# Died-before-speaking stays as the second net, for older CLIs that do exit
+# without saying anything on stdout.
+_RESUME_GONE_RE = re.compile(r"No conversation found with session ID", re.I)
+
+
+def _result_errors(event: dict) -> str:
+    """Everything an error result envelope says about why, as one string."""
+    parts = []
+    errors = event.get("errors")
+    if isinstance(errors, list):
+        parts.extend(str(e) for e in errors if e)
+    result = event.get("result")
+    if isinstance(result, str) and result.strip():
+        parts.append(result.strip())
+    return " ".join(parts)
+
 # Tool calls whose "arguments" are really the interesting content, so the
 # chip shows that rather than a JSON blob.
 _TOOL_SUMMARY_KEYS = (
@@ -234,6 +259,9 @@ class ChatSession:
         # process that exits before this is a process that failed to start,
         # which is a different fact from one that died mid-conversation.
         self._first_event: asyncio.Event = asyncio.Event()
+        # The CLI's own words when it refused a --resume in-band (see
+        # _RESUME_GONE_RE); "" otherwise. Reset per spawn.
+        self._resume_rejected = ""
         # True when the last start() had to abandon a --resume id and open a
         # fresh session instead. resume() reads it to answer honestly.
         self.resume_fell_back = False
@@ -393,11 +421,12 @@ class ChatSession:
         conversation is from an incompatible version) is not fatal: it falls
         back to a fresh session, because a chat tab that refuses to open is
         worse than one that has forgotten last week. That fallback is real,
-        not aspirational: the spawn is watched until the CLI says its first
-        word, and a process that dies before speaking while `--resume` was
-        on its argv has its id dropped and is respawned fresh — with a
-        notice in the transcript, because a conversation silently losing
-        its context is worse than one that says it has.
+        not aspirational, and it has two triggers because CLIs refuse two
+        ways: a current one says so in-band (an error result matching
+        _RESUME_GONE_RE, the deterministic signal) and may even stay alive
+        afterwards; an older one dies before speaking. Either way the id is
+        dropped, the transcript says so — with the CLI's own reason when it
+        gave one — and a fresh session opens.
         """
         async with self._lock:
             if self.alive():
@@ -406,12 +435,18 @@ class ChatSession:
             self._set_state("starting")
             if not await self._spawn_watched():
                 return
-            if not self._first_event.is_set() and self.session_id \
-                    and not self.alive():
-                # Died before speaking, with --resume on the argv: the CLI
-                # no longer has this conversation. Fall back to a fresh
-                # session rather than leaving a chat tab that cannot open.
-                detail = await self._stderr_tail(self.proc)
+            if self.session_id and (
+                    self._resume_rejected
+                    or (not self._first_event.is_set() and not self.alive())):
+                # The CLI no longer has this conversation. Fall back to a
+                # fresh session rather than leaving a chat tab that cannot
+                # open — reaping first, because a CLI that refused in-band
+                # can still be running, and respawning over a live process
+                # would leak it.
+                rejected = self._resume_rejected
+                proc = self.proc
+                await self._reap()
+                detail = rejected or await self._stderr_tail(proc)
                 self.resume_fell_back = True
                 self.session_id = None
                 self._emit({"type": "notice", "text":
@@ -468,6 +503,7 @@ class ChatSession:
 
     async def _spawn(self) -> None:
         self._first_event = asyncio.Event()
+        self._resume_rejected = ""
         self.proc = await asyncio.create_subprocess_exec(
             *self._argv(),
             cwd=WORK_DIR if os.path.isdir(WORK_DIR) else None,
@@ -509,6 +545,18 @@ class ChatSession:
                 # per spawn, so a reader winding down after a respawn cannot
                 # vouch for a process it never read.
                 first_event.set()
+                if (event.get("type") == "result" and event.get("is_error")
+                        and self.session_id):
+                    # A refused --resume, said in-band. Swallow the event —
+                    # rendering it would put a cryptic "error_during_
+                    # execution" notice where start()'s honest one is about
+                    # to go — and set the flag in the same synchronous
+                    # stretch as first_event, so the start() that wakes on
+                    # the event cannot observe one without the other.
+                    detail = _result_errors(event)
+                    if _RESUME_GONE_RE.search(detail):
+                        self._resume_rejected = detail
+                        continue
                 sid = event.get("session_id")
                 if isinstance(sid, str) and sid:
                     self.session_id = sid
@@ -631,7 +679,13 @@ class ChatSession:
         await self.start()
         return {"ok": True, "method": "restart"}
 
-    async def stop(self) -> None:
+    async def _reap(self) -> None:
+        """End the current process without announcing a state.
+
+        The quiet half of stop(): start()'s resume fallback needs the
+        process gone but is mid-startup, and a broadcast "idle" from inside
+        it would be a lie about where things stand.
+        """
         proc, self.proc = self.proc, None
         if self._reader:
             self._reader.cancel()
@@ -644,6 +698,9 @@ class ChatSession:
                 # The process ended between the check and the kill. That is the
                 # outcome being asked for.
                 pass
+
+    async def stop(self) -> None:
+        await self._reap()
         self._busy_since = 0.0
         self._set_state("idle")
 

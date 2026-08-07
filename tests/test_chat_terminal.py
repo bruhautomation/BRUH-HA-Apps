@@ -554,6 +554,35 @@ class ChatSessionCase(unittest.IsolatedAsyncioTestCase):
                       if e["type"] == "notice" and "resume" in e["text"])
         self.assertIn("fresh", notice["text"])
 
+    async def test_a_resume_refused_in_band_falls_back_deterministically(self):
+        """A current CLI (2.1.x) refuses a --resume by emitting an error
+        `result` event — "No conversation found with session ID" — and may
+        stay alive a moment before exiting. Watching for the death alone
+        made the fallback a coin flip between the honest notice and a
+        cryptic `error_during_execution` beside a doomed resume id that
+        every later spawn retried. The event is the deterministic signal.
+        """
+        os.environ["FAKE_CHAT_MODE"] = "noresume-live"
+        log = os.path.join(self.tmp.name, "argv.log")
+        os.environ["FAKE_CHAT_LOG"] = log
+        out = await self.session.resume("gone-forever",
+                                        [{"type": "user", "text": "old history"}])
+        self.assertTrue(out["ok"])
+        self.assertFalse(out["resumed"])
+        self.assertTrue(self.session.alive(), "no session to type into")
+        invocations = await self._invocations(log, 2)
+        self.assertIn("--resume", invocations[0])
+        self.assertNotIn("--resume", invocations[1])
+        # The honest notice, carrying the CLI's own reason — and not the
+        # raw error envelope, which reads as a crash and names nothing.
+        notice = next(e for e in self.session.events
+                      if e["type"] == "notice" and "resume" in e["text"])
+        self.assertIn("No conversation found", notice["text"])
+        self.assertFalse(
+            [e for e in self.session.events
+             if e.get("text") == "error_during_execution"],
+            "the raw error envelope leaked into the transcript")
+
     async def test_a_fresh_spawn_that_dies_is_an_error_not_a_shrug(self):
         """Died-before-speaking with nothing to resume is a startup failure,
         and the stderr tail is the only witness — it must reach the state."""
@@ -661,6 +690,7 @@ class TestChatRoutes(unittest.IsolatedAsyncioTestCase):
             "BRAIN_SECRETS": os.path.join(self.tmp.name, "secrets"),
             "BRAIN_RUN_SOURCES": os.path.join(self.tmp.name, "run-sources.jsonl"),
             "BRAIN_CHAT_TRASH": os.path.join(self.tmp.name, "chat-trash"),
+            "BRAIN_CHAT_TITLES": os.path.join(self.tmp.name, "chat-titles.json"),
         }.items():
             os.environ[key] = value
         os.environ.pop("FAKE_CHAT_MODE", None)
@@ -954,6 +984,45 @@ class TestChatRoutes(unittest.IsolatedAsyncioTestCase):
     async def test_deleting_a_conversation_that_is_not_there_is_a_404(self):
         resp = await self.client.post("/api/chat/conversation/never-was/delete")
         self.assertEqual(resp.status, 404)
+
+    async def test_renaming_a_conversation_overlays_the_derived_title(self):
+        """The name is panel-side metadata: Claude Code has no title concept,
+        so the CLI's file is never touched — and clearing the name brings the
+        opening-message title back rather than pinning an empty one."""
+        path = self._fake_conversation("keeper", "the opening message")
+        before = path.read_bytes()
+
+        resp = await self.client.post(
+            "/api/chat/conversation/keeper/rename",
+            json={"title": "  Frame TV   automation  "})
+        self.assertEqual(resp.status, 200)
+        self.assertEqual((await resp.json())["title"], "Frame TV automation")
+        data = await (await self.client.get(
+            "/api/chat/conversations?source=all")).json()
+        row = next(c for c in data["conversations"] if c["id"] == "keeper")
+        self.assertEqual(row["title"], "Frame TV automation")
+        self.assertTrue(row["renamed"])
+        self.assertEqual(path.read_bytes(), before,
+                         "renaming edited the CLI's own file")
+
+        resp = await self.client.post(
+            "/api/chat/conversation/keeper/rename", json={"title": ""})
+        self.assertEqual(resp.status, 200)
+        data = await (await self.client.get(
+            "/api/chat/conversations?source=all")).json()
+        row = next(c for c in data["conversations"] if c["id"] == "keeper")
+        self.assertEqual(row["title"], "the opening message")
+        self.assertFalse(row["renamed"])
+
+    async def test_renaming_a_conversation_that_is_not_there_is_a_404(self):
+        """No stored names for ghosts — and no path is built from an id that
+        could not be one."""
+        resp = await self.client.post(
+            "/api/chat/conversation/never-was/rename", json={"title": "x"})
+        self.assertEqual(resp.status, 404)
+        resp = await self.client.post(
+            "/api/chat/conversation/..%2Fescape/rename", json={"title": "x"})
+        self.assertNotEqual(resp.status, 200)
 
     async def test_the_terminal_ui_setting_round_trips(self):
         resp = await self.client.get("/api/settings")

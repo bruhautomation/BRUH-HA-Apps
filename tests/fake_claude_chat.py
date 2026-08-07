@@ -18,11 +18,19 @@ Behaviour switches via env:
                                    out is killing it
                   crash            exit non-zero mid-turn
                   error            answer with an is_error result envelope
-                  noresume         refuse --resume the way the real CLI
-                                   refuses a session id its store no longer
-                                   holds: an error on stderr and a non-zero
+                  noresume         refuse --resume the way an older CLI
+                                   does: an error on stderr and a non-zero
                                    exit before a single event is emitted.
                                    Without --resume it behaves like ok.
+                  noresume-live    refuse --resume the way a current CLI
+                                   (2.1.x, observed) does: an in-band error
+                                   `result` event on stdout carrying "No
+                                   conversation found with session ID",
+                                   stderr repeating it, and a moment of
+                                   lingering before the exit — the shape
+                                   that made a death-watch alone a coin
+                                   flip. Without --resume it behaves like
+                                   ok.
   FAKE_CHAT_LOG   append each invocation's argv as a JSON line
 """
 
@@ -48,11 +56,22 @@ if os.environ.get("FAKE_CHAT_BROKEN"):
 
 SESSION = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 if "--resume" in argv:
+    rid = argv[argv.index("--resume") + 1]
     if mode == "noresume":
-        print(f"No conversation found with session ID: "
-              f"{argv[argv.index('--resume') + 1]}", file=sys.stderr)
+        print(f"No conversation found with session ID: {rid}",
+              file=sys.stderr)
         sys.exit(1)
-    SESSION = argv[argv.index("--resume") + 1]
+    if mode == "noresume-live":
+        print(json.dumps({
+            "type": "result", "subtype": "error_during_execution",
+            "is_error": True, "num_turns": 0, "session_id": rid,
+            "errors": [f"No conversation found with session ID: {rid}"],
+        }), flush=True)
+        print(f"No conversation found with session ID: {rid}",
+              file=sys.stderr)
+        time.sleep(0.3)
+        sys.exit(1)
+    SESSION = rid
 
 
 def emit(obj):
