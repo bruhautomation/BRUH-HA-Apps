@@ -18,17 +18,24 @@ rest of the add-on was perfectly authenticated.
 
 **This endpoint is polled gently, and the reason is the endpoint.** It is
 undocumented, it is rate-limited far harder than anything else brAIn
-touches, and a token that gets hammered on it enters a state where it
-answers 429 with quota to spare — and keeps answering 429 after the window
-that supposedly caused it has passed (anthropics/claude-code#30930,
-#31021, #31637). Claude Code's own client calls it *on demand only*, from
-the `/usage` screen, never on a timer. So three rules hold here and are
-each a bug that happened: a credential is offered **once** however many
-paths lead to it, a 429 escalates into real minutes of silence rather than
-the ordinary retry cadence, and `Retry-After` may only ever lengthen that
-silence — the endpoint sends `Retry-After: 0` while still refusing, so
-obeying it literally is how a tracker retries straight back into the limit
-it was just told about.
+touches, and a token that gets hammered on it answers 429 with quota to
+spare and keeps doing so long after the window that supposedly caused it
+(anthropics/claude-code#30930, #31021, #31637). Claude Code's own client
+calls it *on demand only*, from the `/usage` screen, never on a timer.
+
+**And it appears to meter per day, not per burst.** Polling every two
+minutes gave about nine working hours and then a wall of 429s until the
+small hours — a fixed nightly recovery, which is a daily allowance being
+spent by mid-morning and not a burst limit that would clear in minutes.
+That is why the interval is measured in half hours rather than minutes,
+and why the 429 backoff is measured in hours: against a daily cap the only
+lever is the total number of requests in a day. Four rules hold here, and
+each is a bug that happened — a credential is offered **once** however
+many paths lead to it; the poll is slow enough to fit a day inside the
+cap; a 429 buys hours of silence, never the ordinary cadence; and
+`Retry-After` may only ever lengthen that silence, because the endpoint
+sends `Retry-After: 0` while still refusing, so obeying it literally is
+how a tracker retries straight back into the limit it was just told about.
 """
 
 import json
@@ -47,7 +54,17 @@ from email.utils import parsedate_to_datetime
 CLAUDE_HOME = os.environ.get("BRAIN_HOME") or os.environ.get("HOME", "/data/home")
 CLAUDE_CONFIG_DIR = os.environ.get("CLAUDE_CONFIG_DIR", "")
 USAGE_FILE = "/config/.brain/usage_limits.json"
-POLL_INTERVAL = int(os.environ.get("USAGE_LIMITS_INTERVAL", "300"))  # seconds
+# Every 30 minutes — 48 requests a day. Not a comfort setting: the endpoint
+# appears to meter per *day*, not per burst. Polling every 2 minutes bought
+# roughly nine hours of working sensors and then a 429 wall until the small
+# hours, which is a day's allowance spent by mid-morning and is what a fixed
+# nightly recovery time means. Every 5 minutes is 288 requests and still
+# over. What this costs is resolution nobody can see: the five-hour window
+# moves about 1% every three minutes at a hard sprint, so a half-hourly
+# reading is never more than a percent or two behind the truth, and a
+# sensor that is slightly behind all day beats one that is exactly right
+# until 10am and unavailable after it.
+POLL_INTERVAL = int(os.environ.get("USAGE_LIMITS_INTERVAL", "1800"))  # seconds
 # How long a reading stays usable when polls start failing. Matches
 # usage_store.LIMITS_MAX_AGE_S, which is the panel's own staleness rule for
 # the same file — two answers to "is this still true" would be one too many.
@@ -63,13 +80,19 @@ AUTH_PROBLEMS = ("no_oauth_token", "api_key_has_no_usage_limits", "http_401")
 # What to wait after consecutive 429s. Being rate-limited is not an error to
 # retry at the ordinary cadence: retrying is what sustains it, so each strike
 # buys real quiet, and the last value repeats forever rather than growing
-# without bound.
-RATE_LIMIT_BACKOFF_S = (900, 1800, 3600)
+# without bound. Every step is longer than POLL_INTERVAL, or "backing off"
+# would mean asking sooner than usual — the reason these are hours and not
+# the 15/30/60 minutes they started as. Hours also suit what the evidence
+# says the limit is: if a day's allowance is gone, the next honest attempt
+# is a long way off, and four wasted requests spread over an evening is a
+# cheap way to notice the moment it comes back.
+RATE_LIMIT_BACKOFF_S = (3600, 7200, 14400)
 # A ceiling on a server-supplied Retry-After, so one absurd header cannot
 # park the tracker for a day.
 RETRY_AFTER_MAX_S = 6 * 3600
 # What to wait after five consecutive failures that are *not* rate limits.
-FAILURE_BACKOFF_S = 900
+# Also longer than POLL_INTERVAL, for the same reason.
+FAILURE_BACKOFF_S = 3600
 # What a status means, for the diagnostic sensor to show beside it. HA hides
 # an unavailable entity's attributes, so a code with no gloss is a code the
 # one person who needs it reads on a support thread instead.
