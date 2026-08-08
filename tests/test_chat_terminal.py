@@ -123,6 +123,19 @@ class TestNormalise(unittest.TestCase):
         self.assertEqual(out[0]["type"], "text_delta")
         self.assertFalse(out[0]["_keep"])
 
+    def test_thinking_deltas_stream_live_and_are_not_kept(self):
+        """Dropping these was most of "the chat doesn't show thinking": the
+        whole block only arrives when the message closes, so a long think
+        was minutes of dots followed by the reasoning after its conclusion."""
+        out = self.mod._normalise({
+            "type": "stream_event",
+            "event": {"delta": {"type": "thinking_delta", "thinking": "hm"}}})
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["type"], "thinking_delta")
+        self.assertEqual(out[0]["text"], "hm")
+        self.assertFalse(out[0]["_keep"],
+                         "the assistant event repeats the block whole")
+
     def test_an_assistant_message_can_carry_three_kinds_of_block(self):
         out = self.mod._normalise({"type": "assistant", "message": {"content": [
             {"type": "thinking", "thinking": "hmm"},
@@ -247,6 +260,7 @@ class ChatSessionCase(unittest.IsolatedAsyncioTestCase):
         os.environ["FAKE_CHAT_MODE"] = "ok"
         os.environ.pop("FAKE_CHAT_LOG", None)
         os.environ.pop("FAKE_CHAT_BROKEN", None)
+        os.environ.pop("FAKE_CHAT_NOPROMPTFLAG", None)
         import engine
         importlib.reload(engine)
         import chat_session
@@ -255,6 +269,14 @@ class ChatSessionCase(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self):
         await self.session.stop()
+        # Popped on the way out as well as in setUp: unittest runs methods
+        # alphabetically, so "whichever test happens to sort last" would
+        # otherwise pick what the NEXT class inherits — a FAKE_CHAT_LOG
+        # pointing into this test's deleted tmp dir kills every spawn the
+        # route tests make, three classes away from the cause.
+        for key in ("FAKE_CHAT_MODE", "FAKE_CHAT_LOG", "FAKE_CHAT_BROKEN",
+                    "FAKE_CHAT_NOPROMPTFLAG"):
+            os.environ.pop(key, None)
         self.tmp.cleanup()
 
     async def _invocations(self, log, count, timeout=5.0):
@@ -590,11 +612,79 @@ class ChatSessionCase(unittest.IsolatedAsyncioTestCase):
         self.assertIn("--resume", argv, "the model change threw the conversation away")
         self.assertEqual(argv[argv.index("--resume") + 1], sid)
 
-    async def test_setting_the_model_it_already_runs_is_a_no_op(self):
-        await self.session.start()
+    async def test_setting_the_model_the_process_runs_is_a_no_op(self):
         self.session.model = "claude-opus-5"
+        await self.session.start()
         out = await self.session.set_model("claude-opus-5")
         self.assertFalse(out["restarted"])
+
+    async def test_a_pick_is_compared_against_the_spawn_not_the_intent(self):
+        """The regression behind "the model switcher isn't working".
+
+        The server refreshes ``session.model`` from settings on every
+        request, so a ⚙ edit made intent agree with a pick the live process
+        had never seen — and set_model answered "already that model" about
+        a session still running the old one, forever, because a long-lived
+        process never respawns on its own.
+        """
+        log = os.path.join(self.tmp.name, "argv.log")
+        os.environ["FAKE_CHAT_LOG"] = log
+        await self.session.start()                  # spawned with no --model
+        self.session.model = "claude-opus-5"        # what server._chat() does
+        out = await self.session.set_model("claude-opus-5")
+        self.assertTrue(out["restarted"],
+                        "the process is not running opus; picking it must apply it")
+        invocations = await self._invocations(log, 2)
+        argv = invocations[-1]
+        self.assertEqual(argv[argv.index("--model") + 1], "claude-opus-5")
+
+    async def test_a_settings_model_change_applies_on_the_next_message(self):
+        """A ⚙ edit while the session is live must not wait for a crash to
+        take effect: the next send notices the drift and respawns with
+        --resume, which costs a moment and loses nothing."""
+        log = os.path.join(self.tmp.name, "argv.log")
+        os.environ["FAKE_CHAT_LOG"] = log
+        await self.session.start()
+        await asyncio.sleep(0.3)                    # let the init land
+        sid = self.session.session_id
+        self.session.model = "claude-haiku-4-5"     # the server's refresh
+        task = asyncio.create_task(self._drain(
+            lambda evs: any(e.get("type") == "state" and e.get("state") == "ready"
+                            for e in evs[1:])))
+        await asyncio.sleep(0.05)
+        await self.session.send("hello")
+        await task
+        invocations = await self._invocations(log, 2)
+        argv = invocations[-1]
+        self.assertEqual(argv[argv.index("--model") + 1], "claude-haiku-4-5")
+        self.assertIn("--resume", argv, "the restart threw the conversation away")
+        self.assertEqual(argv[argv.index("--resume") + 1], sid)
+
+    async def test_the_turn_cap_respawns_instead_of_dead_ending(self):
+        """A guard that refuses has to change the next attempt. The cap
+        spans the process, so "start a new chat to carry on" was asking the
+        person to pay for the guard with their conversation — a respawn
+        with --resume resets the counter and keeps it."""
+        os.environ["FAKE_CHAT_MODE"] = "error"
+        log = os.path.join(self.tmp.name, "argv.log")
+        os.environ["FAKE_CHAT_LOG"] = log
+        await self.session.start()
+        task = asyncio.create_task(self._drain(
+            lambda evs: any(e.get("type") == "notice" for e in evs)))
+        await asyncio.sleep(0.05)
+        await self.session.send("hit the cap")
+        notice = next(e for e in await task if e["type"] == "notice")
+        self.assertIn("carries on", notice["text"])
+
+        os.environ["FAKE_CHAT_MODE"] = "ok"
+        task = asyncio.create_task(self._drain(
+            lambda evs: any(e.get("type") == "result" for e in evs)))
+        await asyncio.sleep(0.05)
+        await self.session.send("and again")
+        await task
+        invocations = await self._invocations(log, 2)
+        self.assertIn("--resume", invocations[-1],
+                      "the respawn threw the conversation away")
 
     async def test_a_model_change_mid_answer_is_refused(self):
         os.environ["FAKE_CHAT_MODE"] = "hang"
@@ -607,6 +697,116 @@ class ChatSessionCase(unittest.IsolatedAsyncioTestCase):
     async def test_resuming_nothing_is_refused(self):
         with self.assertRaises(ValueError):
             await self.session.resume("", [])
+
+    # ---------------------------------------------------------------
+    # The approval round-trip.
+    #
+    # Headless -p cannot prompt on a TTY, but it can ask over its own
+    # control channel — the same wire the Agent SDK's canUseTool rides.
+    # A call outside the allow rules becomes a card with two buttons
+    # instead of a silent refusal Claude writes an answer around.
+    # ---------------------------------------------------------------
+
+    async def test_the_spawn_asks_for_the_permission_channel(self):
+        log = os.path.join(self.tmp.name, "argv.log")
+        os.environ["FAKE_CHAT_LOG"] = log
+        await self.session.start()
+        invocations = await self._invocations(log, 1)
+        argv = invocations[0]
+        self.assertIn("--permission-prompt-tool", argv)
+        self.assertEqual(argv[argv.index("--permission-prompt-tool") + 1],
+                         "stdio")
+
+    async def _ask_permission(self):
+        """Send a message in permission mode; return the permission event."""
+        os.environ["FAKE_CHAT_MODE"] = "permission"
+        await self.session.start()
+        task = asyncio.create_task(self._drain(
+            lambda evs: any(e.get("type") == "permission" for e in evs)))
+        await asyncio.sleep(0.05)
+        await self.session.send("delete that file")
+        got = await task
+        return next(e for e in got if e["type"] == "permission")
+
+    async def test_an_allowed_call_runs_and_the_turn_completes(self):
+        perm = await self._ask_permission()
+        self.assertEqual(perm["tool"], "Bash")
+        self.assertEqual(perm["summary"], "rm /tmp/x")
+        # A reload mid-question repaints the card from the snapshot.
+        self.assertEqual(self.session.snapshot()["permission"]["id"],
+                         perm["id"])
+        task = asyncio.create_task(self._drain(
+            lambda evs: any(e.get("type") == "state" and e.get("state") == "ready"
+                            for e in evs)))
+        await asyncio.sleep(0.05)
+        out = await self.session.respond_permission(perm["id"], True)
+        self.assertTrue(out["allow"])
+        got = await task
+        result = next(e for e in got
+                      if e["type"] == "tool_result" and e["id"] == "toolu_1")
+        self.assertTrue(result["ok"], "the allowed call did not run")
+        self.assertIsNone(self.session.pending_permission)
+
+    async def test_a_declined_call_reads_as_not_permitted_not_broken(self):
+        """The deny message is phrased so the eventual tool_result matches
+        _DENIED_RE — amber "not permitted", never a red crash that sends
+        somebody debugging a thing that worked exactly as told."""
+        perm = await self._ask_permission()
+        task = asyncio.create_task(self._drain(
+            lambda evs: any(e.get("type") == "tool_result" for e in evs)))
+        await asyncio.sleep(0.05)
+        await self.session.respond_permission(perm["id"], False)
+        got = await task
+        denied = next(e for e in got if e["type"] == "tool_result")
+        self.assertFalse(denied["ok"])
+        self.assertTrue(denied["denied"])
+
+    async def test_an_answer_is_taken_not_read(self):
+        """Two presses on one card must not answer twice."""
+        perm = await self._ask_permission()
+        await self.session.respond_permission(perm["id"], True)
+        with self.assertRaises(ValueError):
+            await self.session.respond_permission(perm["id"], True)
+
+    async def test_stopping_withdraws_the_question(self):
+        perm = await self._ask_permission()
+        self.assertTrue(self.session.pending_permission)
+        await self.session.stop()
+        self.assertIsNone(self.session.pending_permission, "a card for a "
+                          "process that cannot hear the answer")
+        with self.assertRaises(ValueError):
+            await self.session.respond_permission(perm["id"], True)
+
+    async def test_an_unanswered_question_declines_itself_eventually(self):
+        """A TTY has somebody in front of it by definition; a chat tab may
+        have been closed mid-turn, and a turn that can never end is worse
+        than a denial that says nobody answered."""
+        self.mod.PERMISSION_TIMEOUT = 0.3
+        try:
+            perm = await self._ask_permission()
+            task = asyncio.create_task(self._drain(
+                lambda evs: any(e.get("type") == "tool_result" for e in evs)))
+            got = await task
+            denied = next(e for e in got if e["type"] == "tool_result")
+            self.assertTrue(denied["denied"])
+            self.assertIsNone(self.session.pending_permission)
+            del perm
+        finally:
+            self.mod.PERMISSION_TIMEOUT = 600.0
+
+    async def test_a_cli_that_rejects_the_flag_loses_it_not_the_chat(self):
+        """An older CLI refuses `--permission-prompt-tool stdio` at startup
+        and names the flag on stderr. That must cost the round-trip, not
+        the chat tab: the respawn drops the flag and runs as before."""
+        os.environ["FAKE_CHAT_NOPROMPTFLAG"] = "1"
+        log = os.path.join(self.tmp.name, "argv.log")
+        os.environ["FAKE_CHAT_LOG"] = log
+        await self.session.start()
+        self.assertTrue(self.session.alive(), "no session to type into")
+        self.assertEqual(self.session.state, "ready")
+        invocations = await self._invocations(log, 2)
+        self.assertIn("--permission-prompt-tool", invocations[0])
+        self.assertNotIn("--permission-prompt-tool", invocations[1])
 
     async def test_the_handoff_leaves_the_terminal_something_to_pick_up(self):
         """The file is the contract — brain-terminal-start reads it on
@@ -663,7 +863,9 @@ class TestChatRoutes(unittest.IsolatedAsyncioTestCase):
             "BRAIN_CHAT_TRASH": os.path.join(self.tmp.name, "chat-trash"),
         }.items():
             os.environ[key] = value
-        os.environ.pop("FAKE_CHAT_MODE", None)
+        for key in ("FAKE_CHAT_MODE", "FAKE_CHAT_LOG", "FAKE_CHAT_BROKEN",
+                    "FAKE_CHAT_NOPROMPTFLAG"):
+            os.environ.pop(key, None)
         for name in ("engine", "settings_store", "run_sources", "conversations",
                      "chat_session", "server"):
             module = importlib.import_module(name)
@@ -919,6 +1121,44 @@ class TestChatRoutes(unittest.IsolatedAsyncioTestCase):
         finally:
             os.environ.pop("FAKE_CHAT_LOG", None)
 
+    async def test_an_approval_is_asked_and_answered_over_the_api(self):
+        """The whole loop at the panel's altitude: the snapshot carries the
+        pending card (a reload must repaint it), the button answers it, and
+        a second answer finds the question gone."""
+        os.environ["FAKE_CHAT_MODE"] = "permission"
+        try:
+            await self.client.post("/api/chat/send", json={"text": "risky"})
+            snap = {}
+            deadline = asyncio.get_running_loop().time() + 10
+            while asyncio.get_running_loop().time() < deadline:
+                snap = await (await self.client.get("/api/chat/state")).json()
+                if snap.get("permission"):
+                    break
+                await asyncio.sleep(0.1)
+            self.assertTrue(snap.get("permission"), "the question never surfaced")
+            self.assertEqual(snap["permission"]["tool"], "Bash")
+
+            resp = await self.client.post(
+                "/api/chat/permission",
+                json={"id": snap["permission"]["id"], "allow": True})
+            self.assertEqual(resp.status, 200)
+            self.assertTrue((await resp.json())["allow"])
+
+            deadline = asyncio.get_running_loop().time() + 10
+            while asyncio.get_running_loop().time() < deadline:
+                snap = await (await self.client.get("/api/chat/state")).json()
+                if snap["state"] == "ready" and not snap.get("permission"):
+                    break
+                await asyncio.sleep(0.1)
+            self.assertIsNone(snap.get("permission"))
+
+            resp = await self.client.post(
+                "/api/chat/permission",
+                json={"id": "answered-already", "allow": True})
+            self.assertEqual(resp.status, 404)
+        finally:
+            os.environ["FAKE_CHAT_MODE"] = "ok"
+
     async def test_deleting_a_conversation_offers_a_working_undo(self):
         self._fake_conversation("goner", "delete me please", age_s=60)
         self._fake_conversation("keeper", "leave me alone")
@@ -1014,6 +1254,26 @@ class TestChatChrome(unittest.TestCase):
         """A percentage of a guessed context window is worse than none."""
         self.assertIn("tokens of context", self.js)
         self.assertIn("if (ctx.window > 0)", self.js)
+
+    def test_the_status_line_says_what_and_for_how_long(self):
+        """Three dots that vanish on the first token leave a tool-heavy
+        minute looking hung; the line carries a verb and elapsed seconds
+        for the whole turn, like the native CLI's bottom line."""
+        for needle in ("chatverb", "chatelapsed", "thinking_delta",
+                       "Thinking…", "Waiting for your approval"):
+            self.assertIn(needle, self.js, needle)
+        self.assertIn(".chatwork .chatelapsed", self.css)
+
+    def test_the_approval_card_is_wired_to_its_route(self):
+        self.assertIn("api/chat/permission", self.js)
+        self.assertIn("Allow once", self.js)
+        self.assertIn(".permcard", self.css)
+
+    def test_the_popover_admits_what_the_phone_cannot_see(self):
+        """Remote Control is interactive-only, so chat sessions can never
+        show in the Claude app — an expectation the panel has to set,
+        because nothing brAIn does can meet it."""
+        self.assertIn("Remote Control", self.js)
 
 
 if __name__ == "__main__":
