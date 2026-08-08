@@ -653,7 +653,9 @@ class ChatSessionCase(unittest.IsolatedAsyncioTestCase):
                             for e in evs[1:])))
         await asyncio.sleep(0.05)
         await self.session.send("hello")
-        await task
+        drained = await task
+        self.assertTrue(any(e.get("state") == "ready" for e in drained[1:]),
+                        "the restarted session never answered")
         invocations = await self._invocations(log, 2)
         argv = invocations[-1]
         self.assertEqual(argv[argv.index("--model") + 1], "claude-haiku-4-5")
@@ -681,7 +683,9 @@ class ChatSessionCase(unittest.IsolatedAsyncioTestCase):
             lambda evs: any(e.get("type") == "result" for e in evs)))
         await asyncio.sleep(0.05)
         await self.session.send("and again")
-        await task
+        drained = await task
+        self.assertTrue(any(e.get("type") == "result" for e in drained),
+                        "the respawned session never answered")
         invocations = await self._invocations(log, 2)
         self.assertIn("--resume", invocations[-1],
                       "the respawn threw the conversation away")
