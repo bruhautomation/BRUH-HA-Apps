@@ -911,6 +911,8 @@ class ChatSession:
                                       f"'{subtype}' requests"},
             }) + "\n").encode())
         except (OSError, ConnectionResetError):
+            # The pipe is gone, so the process is too — the read loop is
+            # about to notice and set the state; nothing to add here.
             pass
 
     def _drop_pending_permission(self, answered: bool = False,

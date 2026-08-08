@@ -3104,8 +3104,11 @@ async def h_chat_permission(request: web.Request) -> web.Response:
             str(body.get("id") or ""), bool(body.get("allow")),
             answers=answers))
     except ValueError as exc:
+        # Fixed words, not the exception's text — CodeQL reads echoed
+        # exception text as information exposure, and both messages are
+        # knowable anyway.
         if "answer the questions" in str(exc):
-            raise web.HTTPBadRequest(text=str(exc))
+            raise web.HTTPBadRequest(text="answer the questions first")
         raise web.HTTPNotFound(text="that request is no longer waiting")
     except RuntimeError as exc:
         raise web.HTTPConflict(reason=_refusal(exc))
