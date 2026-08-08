@@ -2,6 +2,37 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.25.1
+
+### Fixed
+
+- **The model picker looked like it did nothing.** Choosing a model —
+  under the chat box, in ⋯ → Model, or in ⚙ Settings — always did change
+  the model that answered you. What it didn't change was the name printed
+  under the composer, which is the only place you can see which model is
+  running. The panel worked that name out with a pattern that dropped the
+  minor version, so Haiku 4.5 read as "Claude Haiku 4" and Sonnet 4.6 as
+  "Claude Sonnet 4": any two models of one family printed the same thing,
+  and swapping between them left the screen unchanged. (An older id like
+  `claude-3-5-sonnet` fared worse — it read the date stamp as the version
+  and reported "Claude Sonnet 2".) Names now come from the add-on itself,
+  off the model Claude Code reports it resolved.
+
+- **The context percentage kept the old model's window after a switch.**
+  Your conversation carries across a model change, so the token count is
+  still right — but the window it's measured against belongs to the model.
+  Switching to Haiku left the pill dividing by Sonnet's 1M and reporting
+  4% of a window it was 21% into, until some later reply happened to
+  correct it. It's recalculated the moment the new session starts.
+
+- **The picker's "Default" row named the wrong model.** It read the global
+  model once, when the Terminal tab opened. Change that model in ⚙ from
+  the same tab and the row — the highlighted one, whenever the chat has no
+  override of its own — went on naming the model you had just replaced.
+
+- **The model popover jumped to the corner of the screen** if the window
+  resized while it was open from ⋯ → Model. It closes instead.
+
 ## 1.25.0
 
 ### Added

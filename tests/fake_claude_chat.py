@@ -102,8 +102,15 @@ emit({"type": "system", "subtype": "commands_changed", "commands": [
      "argumentHint": ""},
     {"name": "__internal", "description": "plumbing nobody types", "argumentHint": ""},
 ]})
+# The init event announces the model the CLI actually resolved, which is the
+# one it was handed on --model. Reporting a fixed id whatever the argv is what
+# let two model bugs through: the meta line's name and the context window are
+# both derived from this field, and a fixture that never changes it cannot
+# tell "the flag was passed" from "the flag was read".
 emit({"type": "system", "subtype": "init", "tools": ["Read", "Bash"],
-      "model": "claude-sonnet-5", "cwd": os.getcwd(),
+      "model": (argv[argv.index("--model") + 1]
+                if "--model" in argv else "claude-sonnet-5"),
+      "cwd": os.getcwd(),
       "claude_code_version": "2.1.220",
       "apiKeySource": os.environ.get("FAKE_CHAT_APIKEY", "none"),
       "slash_commands": ["compact", "model", "context"]})
