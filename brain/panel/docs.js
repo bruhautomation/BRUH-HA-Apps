@@ -259,10 +259,28 @@ it.
 
 **Chat** is the default. Claude Code's output rendered as a conversation: text that
 reflows to your screen, code blocks that scroll inside their own box, tool calls folded
-into one line each (tap for the arguments and the result), reasoning behind a "Thinking"
-line, and a real text box so dictation and autocorrect behave. **⏹** stops an answer
-in progress and **＋** starts a new chat. It survives a reload, a locked phone, and the
-add-on restarting.
+into one line each (tap for the arguments and the result), reasoning streamed live into
+a "Thinking" line as it happens, and a real text box so dictation and autocorrect
+behave. While Claude works, a status line under the newest content says what it is doing
+— thinking, writing, which tool is running — and how long the turn has been at it, the
+same way the native CLI does. **⏹** stops an answer in progress and **＋** starts a new
+chat. It survives a reload, a locked phone, and the add-on restarting.
+
+**When Claude needs a permission you haven't granted, it asks.** A call outside the
+pre-approved set used to fail silently in the chat — headless Claude Code cannot put a
+prompt on a TTY — and the answer got written around the gap. Now the same question the
+classic terminal would ask arrives as a card in the conversation: what tool, aimed at
+what, **Allow once** or **Don't allow**. The turn waits for your answer (ten minutes,
+then it declines on your behalf and says so), a declined call shows amber as "not
+permitted" rather than red as an error, and everything already allowed in
+\`/config/.claude/settings.local.json\` still runs without asking.
+
+**One thing the chat can't do: appear in the Claude app on your phone.** The app's
+"connected" sessions ride Remote Control, which only supports interactive sessions —
+the chat drives Claude Code headlessly, and there is no flag that changes that (it's a
+Claude Code limitation, not a setting). The conversation itself is not stuck, though:
+switch to Classic and the same conversation moves into a real terminal session, which
+can register with the app like any other.
 
 **Type / for Claude Code's commands, or \`brain\` / \`ha\` for brAIn's own.** The palette
 lists what *your* install actually has — including anything you put in

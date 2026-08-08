@@ -2,6 +2,61 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.24.0
+
+### Added
+
+- **The chat asks for permission instead of failing silently.** Headless
+  Claude Code cannot put a prompt on a TTY, so a tool call outside the
+  pre-approved set never ran and the answer was written around the gap —
+  the main reason chat answers came up short of the terminal's. The same
+  question now arrives as a card in the conversation (what tool, aimed at
+  what, **Allow once** / **Don't allow**), carried over the CLI's own
+  control channel — the wire the Agent SDK rides. Everything already
+  allowed in `settings.local.json` still runs without asking; an
+  unanswered card declines itself after ten minutes and says so; a CLI too
+  old for the channel just gets the old behavior back.
+
+- **Thinking streams live.** The chat only rendered reasoning when the
+  message closed, so a long think was minutes of dots followed by the
+  reasoning delivered after its conclusion. Thinking deltas now stream
+  into the "Thinking" line as they happen, exactly like answer text.
+
+- **A status line for the whole turn.** The three dots vanished on the
+  first token, leaving a tool-heavy minute looking hung. The line now
+  stays for the turn and says what Claude is doing — thinking, writing,
+  which tool is running, waiting for your approval — with elapsed
+  seconds, like the native CLI's bottom line.
+
+- **The docs say why chat sessions don't show in the Claude app.** The
+  app's "connected" sessions ride Remote Control, which only supports
+  interactive sessions — a Claude Code limitation, not a setting. The
+  session popover and the guide now say so, and point at the face switch,
+  which moves the same conversation into a terminal session that can
+  register.
+
+### Fixed
+
+- **The chat's model picker could apply nothing.** "Is a restart needed"
+  was answered by comparing a pick against the panel's *intent*, which is
+  refreshed from settings on every request — so after a ⚙ edit the picker
+  said "already that model" about a live session still running the old
+  one, and a long-lived session never respawns on its own. Every model
+  question is now asked of the model the process was actually spawned
+  with; a change made anywhere lands on the next message at the latest,
+  and `--model` stays on the argv across `--resume`, because a resumed
+  session otherwise keeps the model it remembers.
+
+- **Hitting the session turn limit no longer dead-ends the conversation.**
+  The cap guards against runaway loops but spans the process, and the old
+  answer — "start a new chat to carry on" — charged the person's
+  conversation for it. The next message now restarts the CLI with
+  `--resume`: the counter resets, the conversation carries on.
+
+- **A session error with a stderr tail could crash the refusal.** The
+  message went into an HTTP reason line, which cannot carry newlines, so
+  "the session died" surfaced as a 500 about carriage returns.
+
 ## 1.23.0
 
 ### Added

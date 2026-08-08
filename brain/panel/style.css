@@ -1923,8 +1923,10 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   color: var(--ink-3);
 }
 
-/* "Working" while nothing is on screen yet. Three dots, because the honest
-   answer to "what is it doing" before the first token is "we don't know". */
+/* The status line, for as long as the turn runs: the pulse that says
+   something is alive, a verb saying what, and the elapsed seconds — the
+   same bottom line the native CLI keeps. Its predecessor was three bare
+   dots that vanished on the first token. */
 .chatwork {
   max-width: 760px;
   width: 100%;
@@ -1944,8 +1946,59 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
 }
 .chatwork i:nth-child(2) { animation-delay: .18s; }
 .chatwork i:nth-child(3) { animation-delay: .36s; }
+.chatwork .chatverb { margin-left: 3px; }
+.chatwork .chatelapsed {
+  color: var(--ink-3);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
 
 @keyframes pulse { 0%, 100% { opacity: .28; } 50% { opacity: 1; } }
+
+/* Thinking while it streams: open, and visibly in motion. */
+.think.live > summary { color: var(--ink-2); }
+
+/* The approval card — the chat's permission prompt. The turn is blocked on
+   it, so it carries the accent border a decision deserves rather than a
+   notice's whisper. */
+.permcard {
+  max-width: 760px;
+  width: 100%;
+  align-self: center;
+  padding: 10px 12px;
+  border: 1px solid var(--hairline);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 13px;
+}
+.permcard .permhead { font-weight: 600; color: var(--ink); }
+.permcard .permsum {
+  margin-top: 3px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+.permcard pre {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  max-height: 180px;
+  overflow: auto;
+  border-radius: 6px;
+  background: var(--surface-2);
+  font-size: 12px;
+}
+.permcard .permrow {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.permcard .permnote {
+  margin-top: 10px;
+  color: var(--ink-3);
+  font-size: 12.5px;
+}
 
 .chatempty {
   margin: auto;

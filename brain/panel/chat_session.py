@@ -146,6 +146,13 @@ INTERRUPT_GRACE = 5.0
 # treated as fine, exactly as it was before the window existed.
 START_GRACE = float(os.environ.get("BRAIN_CHAT_START_GRACE", "10"))
 
+# How long an approval card may sit unanswered before the call is declined
+# on the person's behalf. The interactive CLI waits forever, but a TTY has
+# somebody in front of it by definition — a chat tab may have been closed
+# mid-turn, and a turn that can never end is worse than a denial that says
+# who made it and why.
+PERMISSION_TIMEOUT = float(os.environ.get("BRAIN_CHAT_PERMISSION_TIMEOUT", "600"))
+
 # A tool call the permission set refused fails like any other tool call, and
 # "that broke" and "brAIn was not allowed to do that" are different things to
 # be told — the first sends you debugging, the second sends you to Settings.
@@ -237,6 +244,29 @@ class ChatSession:
         # True when the last start() had to abandon a --resume id and open a
         # fresh session instead. resume() reads it to answer honestly.
         self.resume_fell_back = False
+        # The model the LIVE process was actually spawned with. `self.model`
+        # is intent — the server refreshes it from settings on every request —
+        # and a long-lived process does not follow intent, it follows its
+        # argv. Comparing a pick against intent is how the picker learned to
+        # answer "already that model" about a process still running the old
+        # one; every "is a restart needed" question is asked of this instead.
+        self._spawned_model: str | None = None
+        # Set when the CLI reports a state only a respawn clears (the turn
+        # cap). The next send restarts with --resume first, so the counter
+        # resets and the conversation carries on.
+        self._respawn_pending = False
+        # The approval the turn is waiting on, if any: what the panel's card
+        # renders, and — via ``_pending_input`` — the untouched tool input the
+        # allow answer must hand back (the CLI validates it against the
+        # tool's schema, so the clipped display copy must never go).
+        self.pending_permission: dict | None = None
+        self._pending_input: dict = {}
+        self._permission_timer: asyncio.Task | None = None
+        # Cleared when the CLI rejects `--permission-prompt-tool stdio` at
+        # startup (a version from before the value existed): the chat then
+        # runs exactly as it did before the round-trip — refusals are final
+        # and amber — instead of not running at all.
+        self._prompt_tool_ok = True
         self._load()
 
     # -- transcript ------------------------------------------------------
@@ -272,6 +302,9 @@ class ChatSession:
             "info": self.info,
             "commands": self.commands,
             "context": self.context,
+            # A reload mid-approval must repaint the card, or the turn sits
+            # "busy" over a question that is no longer on anyone's screen.
+            "permission": self.pending_permission,
         }
 
     # -- subscribers -----------------------------------------------------
@@ -377,7 +410,20 @@ class ChatSession:
             "--include-partial-messages",
             "--max-turns", str(MAX_TURNS),
         ]
+        if self._prompt_tool_ok:
+            # "stdio" routes permission questions back up this pipe as
+            # `can_use_tool` control requests — the same wire the Agent SDK's
+            # canUseTool callback rides — so a call outside the allow-list
+            # becomes a question on the person's screen instead of a silent
+            # refusal Claude writes around. Rules still short-circuit: the
+            # CLI only asks where the interactive TUI would have prompted.
+            argv += ["--permission-prompt-tool", "stdio"]
         if self.model:
+            # Kept on the argv even when resuming: a resumed session
+            # otherwise continues on the model it remembers, which is the
+            # opposite of what a person who just picked one meant. Empty
+            # means "the CLI's own choice" — there is nothing to pass, so a
+            # resume then does keep the conversation's model.
             argv += ["--model", self.model]
         if self.session_id:
             argv += ["--resume", self.session_id]
@@ -406,12 +452,27 @@ class ChatSession:
             self._set_state("starting")
             if not await self._spawn_watched():
                 return
+            # A process's stderr can only be read once, and three branches
+            # below want it — so a dead spawn's tail is taken here and
+            # carried, not re-read.
+            detail = ""
+            if not self._first_event.is_set() and not self.alive():
+                detail = await self._stderr_tail(self.proc)
+                if self._prompt_tool_ok and "permission-prompt-tool" in detail:
+                    # A CLI from before `--permission-prompt-tool stdio`
+                    # existed refuses it at startup and names the flag on
+                    # stderr. That loses the approval round-trip, not the
+                    # chat: drop the flag for this add-on run and try again.
+                    self._prompt_tool_ok = False
+                    if not await self._spawn_watched():
+                        return
+                    detail = "" if self._first_event.is_set() or self.alive() \
+                        else await self._stderr_tail(self.proc)
             if not self._first_event.is_set() and self.session_id \
                     and not self.alive():
                 # Died before speaking, with --resume on the argv: the CLI
                 # no longer has this conversation. Fall back to a fresh
                 # session rather than leaving a chat tab that cannot open.
-                detail = await self._stderr_tail(self.proc)
                 self.resume_fell_back = True
                 self.session_id = None
                 self._emit({"type": "notice", "text":
@@ -425,8 +486,10 @@ class ChatSession:
                     return
             if not self.alive() and not self._first_event.is_set():
                 # Died before speaking with nothing to resume: a startup
-                # failure, and the stderr tail is the only witness.
-                detail = await self._stderr_tail(self.proc)
+                # failure, and the stderr tail is the only witness. (After a
+                # resume fallback this is a new process whose stderr is still
+                # unread; on the same process the earlier read is carried.)
+                detail = await self._stderr_tail(self.proc) or detail
                 self._set_state(
                     "error", detail or "Claude exited before it was ready.")
                 return
@@ -468,6 +531,8 @@ class ChatSession:
 
     async def _spawn(self) -> None:
         self._first_event = asyncio.Event()
+        self._drop_pending_permission()
+        self._respawn_pending = False
         self.proc = await asyncio.create_subprocess_exec(
             *self._argv(),
             cwd=WORK_DIR if os.path.isdir(WORK_DIR) else None,
@@ -477,8 +542,27 @@ class ChatSession:
             env=engine._claude_env(),
             limit=1024 * 1024,
         )
+        # What this process actually runs, as distinct from what the panel
+        # currently wants — see set_model() and send() for who compares them.
+        self._spawned_model = self.model
         self._reader = asyncio.create_task(
             self._read_loop(self.proc, self._first_event))
+        if self._prompt_tool_ok:
+            # The SDK's opening move, and what turns the permission flag on:
+            # without an initialize the CLI has no client it trusts to answer
+            # `can_use_tool`, so it never asks. Best effort — a CLI that
+            # ignores it simply never asks either, which is the old behavior.
+            try:
+                assert self.proc.stdin is not None
+                self.proc.stdin.write((json.dumps({
+                    "type": "control_request",
+                    "request_id": f"init-{int(time.time() * 1000)}",
+                    "request": {"subtype": "initialize"},
+                }) + "\n").encode())
+                await self.proc.stdin.drain()
+            except (OSError, ConnectionResetError, AssertionError):
+                # The process is already gone; start() is about to find out.
+                pass
 
     async def _read_loop(self, proc: asyncio.subprocess.Process,
                          first_event: asyncio.Event) -> None:
@@ -512,6 +596,23 @@ class ChatSession:
                 sid = event.get("session_id")
                 if isinstance(sid, str) and sid:
                     self.session_id = sid
+                # The permission round-trip rides the control channel, not
+                # the transcript: the CLI asks, a person answers, and only
+                # the tool call's eventual result is conversation.
+                if event.get("type") == "control_request":
+                    request = event.get("request") or {}
+                    if request.get("subtype") == "can_use_tool":
+                        self._take_permission_request(event)
+                    continue
+                if event.get("type") == "control_cancel_request":
+                    # The CLI withdrew the question (the turn was
+                    # interrupted, usually). A card for it would be a
+                    # question nobody is asking anymore.
+                    rid = str(event.get("request_id") or "")
+                    if self.pending_permission \
+                            and self.pending_permission.get("id") == rid:
+                        self._drop_pending_permission()
+                    continue
                 # Two events describe the session rather than the
                 # conversation. They are state, not transcript — kept on the
                 # session and sent live, so a reconnect gets them in the
@@ -539,6 +640,12 @@ class ChatSession:
                     # transcript a reload repaints.
                     self._emit(norm, keep=norm.pop("_keep", True))
                 if event.get("type") == "result":
+                    if event.get("subtype") == "error_max_turns":
+                        # The cap spans this process, however this CLI counts
+                        # turns — so only a respawn clears it. Marked here,
+                        # applied by the next send(): a restart with --resume
+                        # resets the counter and the conversation carries on.
+                        self._respawn_pending = True
                     self._busy_since = 0.0
                     self._set_state("ready")
                     self._persist()
@@ -548,6 +655,7 @@ class ChatSession:
             if proc is self.proc:
                 was_busy = self.state == "busy"
                 self._busy_since = 0.0
+                self._drop_pending_permission()
                 if was_busy:
                     # An exit while the user was waiting is a failed turn and
                     # has to say so, with whatever the CLI put on stderr.
@@ -574,6 +682,16 @@ class ChatSession:
             raise ValueError("empty message")
         if len(text) > MAX_TEXT_CHARS:
             raise ValueError("message too long")
+        if self.alive() and self.state == "busy":
+            raise RuntimeError("Claude is still answering — stop it first")
+        if self.alive() and (self._respawn_pending
+                             or self.model != self._spawned_model):
+            # The process no longer matches what the panel wants of it — a
+            # model chosen in ⚙ or the picker while it was live, or a turn
+            # cap only a respawn clears. Both are argv-shaped problems, and
+            # the CLI's own store carries the conversation across the
+            # restart, exactly as interrupt() already relies on.
+            await self.stop()
         if not self.alive():
             await self.start()
         if not self.alive():
@@ -597,6 +715,108 @@ class ChatSession:
         self._busy_since = time.time()
         self._set_state("busy")
         return {"ok": True}
+
+    # -- permissions -----------------------------------------------------
+
+    def _take_permission_request(self, event: dict) -> None:
+        """A `can_use_tool` control request: the CLI is asking a person.
+
+        One at a time by construction — the CLI blocks the turn on the
+        answer — so a second request while one is pending simply replaces
+        it (the first has by then been cancelled or answered).
+        """
+        request = event.get("request") or {}
+        request_id = str(event.get("request_id") or "")
+        if not request_id:
+            return
+        args = request.get("input") if isinstance(request.get("input"), dict) \
+            else {}
+        self._drop_pending_permission()
+        # The raw input is kept aside for the allow answer: the CLI
+        # validates `updatedInput` against the tool's schema, so the clipped
+        # display copy below must never be what goes back.
+        self._pending_input = args
+        self.pending_permission = {
+            "id": request_id,
+            "tool": request.get("tool_name") or "tool",
+            "summary": tool_summary(request.get("tool_name") or "", args),
+            "input": _clip(json.dumps(args, ensure_ascii=False, indent=2),
+                           MAX_RESULT_CHARS),
+        }
+        # Live-only: the answered question's tool result is the transcript.
+        self._emit({"type": "permission", **self.pending_permission},
+                   keep=False)
+        self._permission_timer = asyncio.create_task(
+            self._permission_expiry(request_id))
+
+    async def _permission_expiry(self, request_id: str) -> None:
+        await asyncio.sleep(PERMISSION_TIMEOUT)
+        if self.pending_permission \
+                and self.pending_permission.get("id") == request_id:
+            try:
+                await self.respond_permission(request_id, False, timed_out=True)
+            except (ValueError, RuntimeError):
+                # Answered or died in the same instant — either way the
+                # question is no longer waiting.
+                pass
+
+    async def respond_permission(self, request_id: str, allow: bool,
+                                 timed_out: bool = False) -> dict:
+        """Answer the pending approval, on the wire the CLI asked on.
+
+        An allow hands back the tool's own input untouched; a deny carries
+        a sentence the model reads, phrased so the eventual tool_result
+        matches ``_DENIED_RE`` and renders amber rather than as a crash.
+        """
+        pending = self.pending_permission
+        if not pending or pending.get("id") != request_id:
+            raise ValueError("that request is no longer waiting")
+        if not self.alive():
+            self._drop_pending_permission()
+            raise RuntimeError("the Claude session is not running")
+        if allow:
+            answer: dict = {"behavior": "allow",
+                            "updatedInput": self._pending_input}
+        else:
+            who = ("Nobody answered the approval request in time"
+                   if timed_out else "The person watching the chat declined")
+            answer = {"behavior": "deny", "message":
+                      f"{who} — Claude requested permissions to use "
+                      f"{pending.get('tool') or 'this tool'} and it was "
+                      "not granted."}
+        payload = json.dumps({
+            "type": "control_response",
+            "response": {"subtype": "success", "request_id": request_id,
+                         "response": answer},
+        }) + "\n"
+        try:
+            assert self.proc is not None and self.proc.stdin is not None
+            self.proc.stdin.write(payload.encode())
+            await self.proc.stdin.drain()
+        except (OSError, ConnectionResetError, AssertionError) as exc:
+            self._drop_pending_permission()
+            raise RuntimeError(f"could not reach the Claude session: {exc}") \
+                from exc
+        self._drop_pending_permission(answered=True, allowed=allow)
+        return {"ok": True, "id": request_id, "allow": allow}
+
+    def _drop_pending_permission(self, answered: bool = False,
+                                 allowed: bool = False) -> None:
+        """Clear the card everywhere a viewer might still be holding it."""
+        timer, self._permission_timer = self._permission_timer, None
+        if timer is not None:
+            try:
+                if timer is not asyncio.current_task():
+                    timer.cancel()
+            except RuntimeError:
+                # No running loop (a synchronous caller in a test): the
+                # timer never started ticking anywhere it could fire.
+                timer.cancel()
+        pending, self.pending_permission = self.pending_permission, None
+        self._pending_input = {}
+        if pending:
+            self._emit({"type": "permission_done", "id": pending.get("id"),
+                        "answered": answered, "allow": allowed}, keep=False)
 
     async def interrupt(self) -> dict:
         """Politely, then not.
@@ -633,6 +853,8 @@ class ChatSession:
 
     async def stop(self) -> None:
         proc, self.proc = self.proc, None
+        # A question the killed process asked can never be answered now.
+        self._drop_pending_permission()
         if self._reader:
             self._reader.cancel()
             self._reader = None
@@ -713,13 +935,18 @@ class ChatSession:
         written.
         """
         model = (model or "").strip()
-        if model == self.model:
-            return {"ok": True, "model": model, "restarted": False}
         if self.state == "busy":
             raise RuntimeError("Claude is still answering — stop it first")
         self.model = model
         if not self.alive():
             # Nothing running: the next spawn simply takes the new flag.
+            return {"ok": True, "model": model, "restarted": False}
+        if model == self._spawned_model:
+            # Compared against what the process actually runs, never against
+            # `self.model` — the server refreshes that from settings on every
+            # request, so a ⚙ edit made it agree with a pick the live process
+            # had never seen, and the picker answered "already that model"
+            # about a session still running the old one.
             return {"ok": True, "model": model, "restarted": False}
         await self.stop()
         await self.start()
@@ -751,8 +978,11 @@ class ChatSession:
 def _normalise(event: dict) -> list[dict]:
     """Turn one stream-json event into zero or more transcript events.
 
-    Everything that knows the CLI's wire shape is here. The panel only ever
-    sees: text, text_delta, thinking, tool, tool_result, result, notice.
+    Everything that knows the CLI's wire shape is here (the control channel
+    — permission requests and their answers — is the one exception, handled
+    in the read loop because it is state, not transcript). The panel only
+    ever sees: text, text_delta, thinking, thinking_delta, tool,
+    tool_result, result, notice.
     """
     etype = event.get("type")
 
@@ -763,6 +993,14 @@ def _normalise(event: dict) -> list[dict]:
             # block, so keeping deltas too would double every answer in the
             # transcript a reload repaints.
             return [{"type": "text_delta", "text": delta["text"], "_keep": False}]
+        if delta.get("type") == "thinking_delta" and delta.get("thinking"):
+            # Same contract as text deltas — live-only, sealed by the
+            # assistant event's whole thinking block. Dropping these was
+            # most of "the chat doesn't show thinking": the block only
+            # arrives when the message closes, so a long think was minutes
+            # of dots followed by reasoning delivered after its conclusion.
+            return [{"type": "thinking_delta", "text": delta["thinking"],
+                     "_keep": False}]
         return []
 
     if etype == "assistant":
@@ -852,8 +1090,8 @@ def _session_info(event: dict) -> dict:
 def _error_text(event: dict) -> str:
     subtype = event.get("subtype") or ""
     if subtype == "error_max_turns":
-        return ("Claude reached this session's turn limit. Start a new chat "
-                "to carry on.")
+        return ("Claude reached this session's turn limit. Your next message "
+                "restarts the session and the conversation carries on.")
     result = event.get("result")
     if isinstance(result, str) and result.strip():
         return _clip(result.strip(), 1000)

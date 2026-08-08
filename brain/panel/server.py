@@ -2894,6 +2894,17 @@ async def h_chat_stream(request: web.Request) -> web.StreamResponse:
     return resp
 
 
+def _refusal(exc: Exception) -> str:
+    """An exception message fit for an HTTP reason line.
+
+    A session error can carry a stderr tail, and a reason is a status-line
+    fragment: aiohttp (rightly) refuses newlines in one, so passing the
+    message through unwhitened turned "the session died" into a 500 about
+    carriage returns. One line, bounded, or the refusal cannot be sent.
+    """
+    return " ".join(str(exc).split())[:300] or "refused"
+
+
 async def h_chat_send(request: web.Request) -> web.Response:
     body = await request.json()
     if not isinstance(body, dict):
@@ -2901,9 +2912,9 @@ async def h_chat_send(request: web.Request) -> web.Response:
     try:
         return web.json_response(await _chat().send(body.get("text") or ""))
     except ValueError as exc:
-        raise web.HTTPBadRequest(reason=str(exc))
+        raise web.HTTPBadRequest(reason=_refusal(exc))
     except RuntimeError as exc:
-        raise web.HTTPConflict(reason=str(exc))
+        raise web.HTTPConflict(reason=_refusal(exc))
 
 
 async def h_chat_stop(request: web.Request) -> web.Response:
@@ -3048,6 +3059,28 @@ async def h_chat_model(request: web.Request) -> web.Response:
     return web.json_response(out)
 
 
+async def h_chat_permission(request: web.Request) -> web.Response:
+    """Answer the approval the turn is waiting on.
+
+    The chat's version of the TUI's permission prompt: the CLI asked over
+    its control channel, the panel drew a card, and this is the card's
+    button. The id must match the pending request — an answer to a question
+    that has been withdrawn, timed out or already answered is refused
+    rather than guessed about.
+    """
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise web.HTTPBadRequest(text="expected an object")
+    session = _chat()
+    try:
+        return web.json_response(await session.respond_permission(
+            str(body.get("id") or ""), bool(body.get("allow"))))
+    except ValueError:
+        raise web.HTTPNotFound(text="that request is no longer waiting")
+    except RuntimeError as exc:
+        raise web.HTTPConflict(reason=_refusal(exc))
+
+
 async def h_chat_conversation_delete(request: web.Request) -> web.Response:
     """Delete one conversation from the list — with an Undo, not a shrug.
 
@@ -3188,6 +3221,7 @@ def make_app() -> web.Application:
     app.router.add_post("/api/chat/adopt", h_chat_adopt)
     app.router.add_post("/api/chat/resume", h_chat_resume)
     app.router.add_post("/api/chat/model", h_chat_model)
+    app.router.add_post("/api/chat/permission", h_chat_permission)
     app.router.add_post("/api/chat/conversation/{id}/delete",
                         h_chat_conversation_delete)
 

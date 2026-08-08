@@ -23,6 +23,14 @@ Behaviour switches via env:
                                    holds: an error on stderr and a non-zero
                                    exit before a single event is emitted.
                                    Without --resume it behaves like ok.
+                  permission       ask `can_use_tool` over the control
+                                   channel before the tool runs, the way the
+                                   real CLI does with --permission-prompt-tool
+                                   stdio: allow → the tool runs; deny → a
+                                   tool_result error carrying the message
+  FAKE_CHAT_NOPROMPTFLAG  refuse --permission-prompt-tool at startup the way
+                                   a CLI from before the stdio value exists:
+                                   name the flag on stderr and die unspoken
   FAKE_CHAT_LOG   append each invocation's argv as a JSON line
 """
 
@@ -44,6 +52,15 @@ mode = os.environ.get("FAKE_CHAT_MODE", "ok")
 # emitting a single event, whatever the argv, with its reason on stderr.
 if os.environ.get("FAKE_CHAT_BROKEN"):
     print("Invalid API key · Please run /login", file=sys.stderr)
+    sys.exit(1)
+
+# A CLI from before `--permission-prompt-tool stdio` existed: refuses the
+# flag by name and dies before a single event, which is the shape the
+# session's fallback has to recognise.
+if os.environ.get("FAKE_CHAT_NOPROMPTFLAG") \
+        and "--permission-prompt-tool" in argv:
+    print("Error: tool stdio (passed via --permission-prompt-tool) "
+          "must be an MCP tool", file=sys.stderr)
     sys.exit(1)
 
 SESSION = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
@@ -78,39 +95,17 @@ emit({"type": "system", "subtype": "init", "tools": ["Read", "Bash"],
       "apiKeySource": os.environ.get("FAKE_CHAT_APIKEY", "none"),
       "slash_commands": ["compact", "model", "context"]})
 
-for line in sys.stdin:
-    line = line.strip()
-    if not line:
-        continue
-    try:
-        msg = json.loads(line)
-    except ValueError:
-        continue
-    if msg.get("type") == "control_request":
-        if mode == "deaf":
-            continue  # an older CLI: the request goes nowhere
-        # A polite interrupt: acknowledge and close the turn, which is what
-        # lets the session take the fast path instead of killing us.
-        emit({"type": "control_response",
-              "response": {"subtype": "success",
-                           "request_id": msg.get("request_id")}})
-        emit({"type": "result", "subtype": "success", "is_error": False,
-              "result": "stopped", "duration_ms": 10, "num_turns": 1})
-        continue
-    if msg.get("type") != "user":
-        continue
-
-    text = ""
-    for block in (msg.get("message") or {}).get("content") or []:
-        if isinstance(block, dict) and block.get("type") == "text":
-            text += block.get("text", "")
-
-    if mode in ("hang", "deaf"):
-        continue
-    if mode == "crash":
-        sys.exit(3)
-
-    # A partial-message delta, the way --include-partial-messages sends them.
+def finish_turn(text):
+    """One full turn: deltas, two model calls, a tool round-trip, a result."""
+    # A partial-message delta, the way --include-partial-messages sends them
+    # — thinking first, because that is the order the model produces them.
+    emit({"type": "stream_event",
+          "event": {"type": "content_block_delta",
+                    "delta": {"type": "thinking_delta",
+                              "thinking": "The user said: "}}})
+    emit({"type": "stream_event",
+          "event": {"type": "content_block_delta",
+                    "delta": {"type": "thinking_delta", "thinking": text}}})
     emit({"type": "stream_event",
           "event": {"type": "content_block_delta",
                     "delta": {"type": "text_delta", "text": "Look"}}})
@@ -150,5 +145,96 @@ for line in sys.stdin:
               "usage": {"input_tokens": 1500,
                         "cache_read_input_tokens": 81_500,
                         "output_tokens": 160}})
+
+
+# The can_use_tool question in flight, when mode == "permission":
+# request_id -> the user text the turn will answer once permission lands.
+asked = {}
+
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        msg = json.loads(line)
+    except ValueError:
+        continue
+    if msg.get("type") == "control_request":
+        if mode == "deaf":
+            continue  # an older CLI: the request goes nowhere
+        subtype = (msg.get("request") or {}).get("subtype")
+        if subtype == "initialize":
+            # The SDK handshake: acknowledged, and nothing else happens —
+            # a turn must NOT close here, or every spawn ends idle.
+            emit({"type": "control_response",
+                  "response": {"subtype": "success",
+                               "request_id": msg.get("request_id"),
+                               "response": {"commands": []}}})
+            continue
+        # A polite interrupt: acknowledge and close the turn, which is what
+        # lets the session take the fast path instead of killing us.
+        emit({"type": "control_response",
+              "response": {"subtype": "success",
+                           "request_id": msg.get("request_id")}})
+        emit({"type": "result", "subtype": "success", "is_error": False,
+              "result": "stopped", "duration_ms": 10, "num_turns": 1})
+        continue
+    if msg.get("type") == "control_response":
+        # The panel answering a can_use_tool question of ours.
+        response = (msg.get("response") or {})
+        request_id = response.get("request_id")
+        text = asked.pop(request_id, None)
+        if text is None:
+            continue
+        answer = response.get("response") or {}
+        if answer.get("behavior") == "allow":
+            # The real CLI validates updatedInput against the tool schema;
+            # the fixture at least insists it came back.
+            if not isinstance(answer.get("updatedInput"), dict):
+                emit({"type": "result", "subtype": "error_during_execution",
+                      "is_error": True, "result": "allow without updatedInput",
+                      "duration_ms": 5, "num_turns": 1})
+                continue
+            finish_turn(text)
+        else:
+            emit({"type": "user", "message": {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "toolu_perm",
+                 "is_error": True,
+                 "content": [{"type": "text",
+                              "text": answer.get("message") or "denied"}]},
+            ]}})
+            emit({"type": "result", "subtype": "success", "is_error": False,
+                  "result": "Understood — I won't run that.",
+                  "duration_ms": 15, "num_turns": 1})
+        continue
+    if msg.get("type") != "user":
+        continue
+
+    text = ""
+    for block in (msg.get("message") or {}).get("content") or []:
+        if isinstance(block, dict) and block.get("type") == "text":
+            text += block.get("text", "")
+
+    if mode in ("hang", "deaf"):
+        continue
+    if mode == "crash":
+        sys.exit(3)
+    if mode == "permission":
+        # Ask before touching the tool, the way the real CLI does when
+        # --permission-prompt-tool stdio is on the argv and the call is
+        # outside the allow rules.
+        request_id = f"perm-{len(asked) + 1}"
+        asked[request_id] = text
+        emit({"type": "assistant", "message": {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "toolu_perm", "name": "Bash",
+             "input": {"command": "rm /tmp/x"}},
+        ], "usage": {"input_tokens": 900, "output_tokens": 30}}})
+        emit({"type": "control_request", "request_id": request_id,
+              "request": {"subtype": "can_use_tool", "tool_name": "Bash",
+                          "input": {"command": "rm /tmp/x"},
+                          "tool_use_id": "toolu_perm"}})
+        continue
+
+    finish_turn(text)
 
 time.sleep(0.05)

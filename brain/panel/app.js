@@ -3280,7 +3280,14 @@ const chatState = {
   live: null,        // the message node partial text is streaming into
   liveText: "",
   tools: new Map(),  // tool_use id -> its <details>, so a result can find it
-  working: null,     // the "…" placeholder shown before the first token
+  working: null,     // the status line shown for as long as the turn runs
+  statusVerb: "",    // what the status line says it is doing
+  statusTimer: null, // the 1s tick that keeps its elapsed seconds honest
+  busyStart: 0,      // when this turn started, for those seconds
+  pendingSend: 0,    // a send is in flight but the busy state hasn't landed
+  liveThink: null,   // the think box thinking deltas are streaming into
+  thinkBoxes: [],    // streamed think boxes awaiting their final block
+  permCard: null,    // the approval card currently on screen, if any
   ready: false,      // has a snapshot been drawn
   session: "chat",   // "chat" | "classic"
   runState: "idle",
@@ -3377,23 +3384,151 @@ function chatToolResult(ev) {
   // that retrying cannot help, and that the fix is somewhere else entirely.
   if (ev.denied) {
     body.appendChild(el("div", "tnote",
-      "The permission set refused this, so it never ran — nothing is broken "
-      + "and asking again will not change it. The terminal can ask you to "
-      + "approve a call like this one; the chat cannot."));
+      "This call was declined — by a permission rule, or on the approval "
+      + "card — so it never ran. Nothing is broken, and asking again "
+      + "without allowing it will not change the answer."));
   }
   // A failure is the one case worth opening unasked — it is the reason the
   // next thing Claude says will look strange.
   if (!ev.ok) box.open = true;
 }
 
-function chatWorking(on) {
-  if (on && !chatState.working) {
-    const node = el("div", "chatwork");
+// The status line: a verb, the elapsed seconds, and the pulse that says
+// something is alive — the same bottom line the native CLI keeps for a whole
+// turn. Its predecessor was three dots that vanished on the first token, so
+// a tool-heavy minute looked hung with the only motion inside a collapsed
+// chip. It lives under the newest content for as long as the turn runs, and
+// each rendered event retells it what Claude is doing right now.
+function chatStatus(verb) {
+  // Replayed transcripts render the same events a live turn does; a status
+  // line for last Tuesday's tool call is a spinner that never stops.
+  if (chatState.runState !== "busy" && !chatState.pendingSend) return;
+  chatState.statusVerb = verb || chatState.statusVerb || "Working…";
+  let node = chatState.working;
+  if (!node) {
+    node = el("div", "chatwork");
     node.append(el("i"), el("i"), el("i"));
+    node.appendChild(el("span", "chatverb"));
+    node.appendChild(el("span", "chatelapsed"));
     chatState.working = chatAppend(node);
-  } else if (!on && chatState.working) {
+    if (!chatState.busyStart) chatState.busyStart = Date.now();
+    if (!chatState.statusTimer) {
+      chatState.statusTimer = setInterval(chatStatusTick, 1000);
+    }
+  } else if (node !== chatLog().lastElementChild) {
+    const stick = chatAtBottom();
+    chatLog().appendChild(node);
+    if (stick) chatScroll(true);
+  }
+  node.querySelector(".chatverb").textContent = chatState.statusVerb;
+  chatStatusTick();
+}
+
+function chatStatusTick() {
+  const node = chatState.working;
+  if (!node) return;
+  const s = Math.round((Date.now() - chatState.busyStart) / 1000);
+  node.querySelector(".chatelapsed").textContent = s >= 1 ? `${s}s` : "";
+}
+
+function chatStatusClear() {
+  if (chatState.statusTimer) {
+    clearInterval(chatState.statusTimer);
+    chatState.statusTimer = null;
+  }
+  if (chatState.working) {
     chatState.working.remove();
     chatState.working = null;
+  }
+  chatState.busyStart = 0;
+  chatState.statusVerb = "";
+}
+
+// Thinking streams into an open box as it happens — the native CLI shows
+// its reasoning live, and a chat that sits on dots for a minute and then
+// deals the reasoning out after its conclusion reads as a different, and
+// worse, model. The streamed box is kept in a queue: the assistant event
+// that closes the message repeats the block whole, and replaces the
+// streamed copy in place rather than adding a twin above it.
+function chatThinkDelta(text) {
+  let entry = chatState.liveThink;
+  if (!entry) {
+    const box = el("details", "think live");
+    box.open = true;
+    box.appendChild(el("summary", null, "Thinking…"));
+    const body = el("div", "tbody");
+    box.appendChild(body);
+    entry = { box, body, text: "" };
+    chatState.liveThink = entry;
+    chatState.thinkBoxes.push(entry);
+    chatAppend(box);
+  }
+  entry.text += text;
+  entry.body.innerHTML = renderMarkdown(entry.text);
+  chatScroll();
+}
+
+// The thinking ended — text or a tool call started. Fold the box up the way
+// the CLI folds its own, but keep it queued for the final block.
+function chatCloseLiveThink() {
+  const entry = chatState.liveThink;
+  if (!entry) return;
+  entry.box.classList.remove("live");
+  entry.box.open = false;
+  entry.box.querySelector("summary").textContent = "Thinking";
+  chatState.liveThink = null;
+}
+
+// The approval card: the chat's version of the TUI's permission prompt.
+// The CLI is blocked on this answer, so it renders where the eye already
+// is — under the tool chip that provoked it — with the two words that are
+// actually the decision.
+function chatPermission(ev) {
+  chatPermissionGone();
+  const card = el("div", "permcard");
+  card.dataset.id = ev.id || "";
+  card.appendChild(el("div", "permhead",
+    `Claude wants to use ${ev.tool || "a tool"}`));
+  if (ev.summary) card.appendChild(el("div", "permsum", ev.summary));
+  if (ev.input && ev.input !== "{}") {
+    const pre = el("pre");
+    pre.appendChild(el("code", null, ev.input));
+    card.appendChild(pre);
+  }
+  const row = el("div", "permrow");
+  const allow = el("button", "btn small primary", "Allow once");
+  const deny = el("button", "btn small", "Don't allow");
+  const answer = (ok) => {
+    allow.disabled = deny.disabled = true;
+    api("api/chat/permission", { method: "POST",
+      body: JSON.stringify({ id: ev.id, allow: ok }) })
+      .catch((e) => {
+        toast(e.message);
+        allow.disabled = deny.disabled = false;
+      });
+  };
+  allow.addEventListener("click", () => answer(true));
+  deny.addEventListener("click", () => answer(false));
+  row.append(allow, deny);
+  card.appendChild(row);
+  chatState.permCard = chatAppend(card);
+}
+
+function chatPermissionDone(ev) {
+  const card = chatState.permCard;
+  if (!card || (ev.id && card.dataset.id !== ev.id)) return;
+  const row = card.querySelector(".permrow");
+  if (row) {
+    row.replaceWith(el("div", "permnote",
+      ev.answered ? (ev.allow ? "Allowed" : "Not allowed") : "Withdrawn"));
+  }
+  chatState.permCard = null;
+}
+
+function chatPermissionGone() {
+  if (chatState.permCard) {
+    chatState.permCard.remove();
+    chatState.permCard = null;
   }
 }
 
@@ -3402,7 +3537,6 @@ function chatWorking(on) {
 // kept in the transcript — otherwise every answer would appear twice on the
 // next reload.
 function chatDelta(text) {
-  chatWorking(false);
   if (!chatState.live) {
     chatState.liveText = "";
     chatState.live = chatAppend(el("div", "msg bot"));
@@ -3430,17 +3564,33 @@ function chatRender(ev) {
       row.appendChild(el("div", "bubble", ev.text));
       chatAppend(row, true);
       chatScroll(true);
+      chatStatus();
       break;
     }
     case "text_delta":
+      chatCloseLiveThink();
       chatDelta(ev.text);
+      chatStatus("Writing…");
+      break;
+    case "thinking_delta":
+      chatThinkDelta(ev.text);
+      chatStatus("Thinking…");
       break;
     case "text":
-      chatWorking(false);
       if (!chatSealLive(ev.text)) chatAppend(chatMarkdown(ev.text));
+      chatStatus();
       break;
     case "thinking": {
-      chatWorking(false);
+      chatCloseLiveThink();
+      // The whole block, at message close. If it streamed in live it is
+      // already on screen — replace that copy in place rather than dealing
+      // a twin; the retro-insert is for replays and models that stream no
+      // thinking deltas.
+      const streamed = chatState.thinkBoxes.shift();
+      if (streamed) {
+        streamed.body.innerHTML = renderMarkdown(ev.text || "");
+        break;
+      }
       const box = el("details", "think");
       box.appendChild(el("summary", null, "Thinking"));
       const body = el("div", "tbody");
@@ -3450,20 +3600,30 @@ function chatRender(ev) {
       break;
     }
     case "tool": {
-      chatWorking(false);
+      chatCloseLiveThink();
       chatSealLive();
       const node = chatAppend(chatToolNode(ev));
       if (ev.id) chatState.tools.set(ev.id, node);
+      chatStatus(`Running ${ev.name || "a tool"}…`);
       break;
     }
     case "tool_result":
       chatToolResult(ev);
+      chatStatus("Working…");
+      break;
+    case "permission":
+      chatPermission(ev);
+      chatStatus("Waiting for your approval");
+      break;
+    case "permission_done":
+      chatPermissionDone(ev);
+      chatStatus("Working…");
       break;
     case "notice":
-      chatWorking(false);
       chatSealLive();
       chatAppend(el("div", "chatnotice" + (ev.level === "error" ? " error" : ""),
                     ev.text || ""));
+      chatStatus();
       break;
     case "result": {
       chatSealLive();
@@ -3554,10 +3714,13 @@ function chatBilledPerToken() {
 }
 
 function chatReset() {
+  chatStatusClear();
   chatLog().innerHTML = "";
   chatState.live = null;
   chatState.liveText = "";
-  chatState.working = null;
+  chatState.liveThink = null;
+  chatState.thinkBoxes = [];
+  chatState.permCard = null;
   chatState.tools.clear();
   $("#chatEmpty").classList.remove("hidden");
 }
@@ -3567,7 +3730,18 @@ function chatSetState(runState, error) {
   const busy = runState === "busy";
   $("#chatSend").classList.toggle("hidden", busy);
   $("#chatStop").classList.toggle("hidden", !busy);
-  if (!busy) { chatSealLive(); chatWorking(false); }
+  if (busy) {
+    chatState.pendingSend = 0;
+    chatStatus();
+  } else {
+    chatSealLive();
+    chatCloseLiveThink();
+    // Streamed boxes whose final block never came (an interrupted turn)
+    // stay on screen as they are; only the matching queue is dropped.
+    chatState.thinkBoxes = [];
+    chatState.pendingSend = 0;
+    chatStatusClear();
+  }
   const box = $("#chatErr");
   box.textContent = error || "";
   box.classList.toggle("hidden", !error);
@@ -3604,6 +3778,12 @@ function chatConnect() {
       chatState.cli = ev.cli || chatState.cli;
       (ev.events || []).forEach(chatRender);
       chatSetState(ev.state, ev.error);
+      if (ev.permission) {
+        // A reload mid-question: the turn is still blocked on this card,
+        // so it has to come back with the transcript it interrupted.
+        chatPermission(ev.permission);
+        chatStatus("Waiting for your approval");
+      }
       chatState.ready = true;
       chatScroll(true);
       renderChatRail();
@@ -3639,11 +3819,15 @@ async function chatSend(text) {
   input.value = "";
   $("#chatCmds").classList.add("hidden");
   chatGrow();
-  chatWorking(true);
+  // The busy state hasn't landed yet, but the person has let go of the
+  // message — the status line starts here so the send is visibly in flight.
+  chatState.pendingSend = Date.now();
+  chatStatus("Sending…");
   try {
     await api("api/chat/send", { method: "POST", body: JSON.stringify({ text }) });
   } catch (e) {
-    chatWorking(false);
+    chatState.pendingSend = 0;
+    chatStatusClear();
     // Put it back rather than losing what they typed.
     input.value = text;
     chatGrow();
@@ -4110,7 +4294,11 @@ $("#chatInfo").addEventListener("click", async () => {
     // id and the command are still here, for a shell that isn't this one.
     rows.push(`<p class="pnote">This conversation lives in Claude Code, not in
       brAIn — which is why switching to the classic terminal carries it with
-      you. Elsewhere (an SSH session, another machine), resume it by id.</p>`
+      you. Elsewhere (an SSH session, another machine), resume it by id.</p>
+      <p class="pnote">One thing the chat can't do: appear in the Claude app
+      on your phone. Remote Control only supports interactive sessions, and
+      the chat drives Claude Code headlessly — switch to the classic
+      terminal and this same conversation can register there.</p>`
       + `<div class="psid mono">${esc(chatState.sessionId)}</div>`
       + `<div class="prow pacts">`
       + `<button class="btn small" id="chatCopyResume">Copy the command</button>`
