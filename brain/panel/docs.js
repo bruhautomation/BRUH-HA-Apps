@@ -275,6 +275,14 @@ then it declines on your behalf and says so), a declined call shows amber as "no
 permitted" rather than red as an error, and everything already allowed in
 \`/config/.claude/settings.local.json\` still runs without asking.
 
+**When Claude has a question, you get the question — not a permission slip.** Claude
+Code sometimes asks multiple-choice questions mid-task (which zone did you mean, which
+approach do you prefer). Those used to arrive as "may I use AskUserQuestion?", and
+allowing it sent back an empty answer sheet that broke the turn. The chat now renders
+the questions themselves: tap an option, pick several where it allows it, or type your
+own answer — and **Don't answer** tells Claude to use its best judgement instead of
+asking again.
+
 **One thing the chat can't do: appear in the Claude app on your phone.** The app's
 "connected" sessions ride Remote Control, which only supports interactive sessions —
 the chat drives Claude Code headlessly, and there is no flag that changes that (it's a
@@ -317,6 +325,13 @@ ever picks up a conversation of yours.
 **Starting a new chat does not lose the old one.** Claude Code keeps it and it stays in
 the list. What a new chat costs is that the next thing you say belongs to a separate
 conversation, not that anything was forgotten.
+
+**Deleting takes one press, or one pass.** The **✕** on a row deletes that conversation,
+with an Undo in the toast for a few minutes. To clear several at once, press the
+checklist icon above the list (in the rail or in **⋯ → Conversations**): rows grow
+checkboxes, **Select all** takes everything but the chat you are in, and **Delete**
+removes the lot with a single Undo that puts them all back. The open conversation is
+never deleted — start a new chat first if you really mean it.
 
 **Under the box: which model is answering, and how full the conversation is** — say
 \`42k / 1000k context · 4%\`, going amber past 80%. The number is the CLI's own report of

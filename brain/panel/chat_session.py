@@ -169,9 +169,20 @@ PERMISSION_TIMEOUT = float(os.environ.get("BRAIN_CHAT_PERMISSION_TIMEOUT", "600"
 _DENIED_RE = re.compile(
     r"requested permissions?"          # "Claude requested permissions to use Bash"
     r"|n[o']t granted"                 # "…but you haven't granted it yet"
-    r"|not allowed to (?:use|run)",
+    r"|not allowed to (?:use|run)"
+    r"|declined to answer",            # a skipped question card — ours, below
     re.I,
 )
+
+# The one tool whose "permission request" is really the question itself.
+# Interactively the CLI draws its own picker for it; headlessly the request
+# arrives as `can_use_tool` like any other, and the *answers* ride back in
+# `updatedInput` — the CLI's own permission component does exactly this
+# (`{...input, answers: {"<question text>": "<answer>"}}`, multi-select
+# comma-separated), so a generic Allow button used to send the tool an empty
+# answer sheet and the turn fell over. The panel renders it as a question
+# card instead, and the allow path refuses to run without the answers.
+QUESTION_TOOL = "AskUserQuestion"
 
 # Tool calls whose "arguments" are really the interesting content, so the
 # chip shows that rather than a JSON blob.
@@ -184,6 +195,46 @@ _TOOL_SUMMARY_KEYS = (
 def _clip(text: str, limit: int) -> str:
     text = str(text)
     return text if len(text) <= limit else text[:limit] + "\n… (truncated)"
+
+
+def question_spec(args: dict) -> list[dict] | None:
+    """The questions inside an AskUserQuestion call, in display shape.
+
+    Defensive on purpose: the input is model-written and schema-validated by
+    the CLI, but this parses it a second time because a malformed question
+    must degrade to the ordinary permission card, never to a card the panel
+    cannot draw. None means "not renderable as questions" and the caller
+    falls back exactly there.
+    """
+    raw = args.get("questions")
+    if not isinstance(raw, list) or not raw:
+        return None
+    questions = []
+    for item in raw[:4]:
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("question") or "").strip()
+        if not text:
+            continue
+        options = []
+        for opt in (item.get("options") or [])[:8]:
+            if not isinstance(opt, dict):
+                continue
+            label = str(opt.get("label") or "").strip()
+            if not label:
+                continue
+            options.append({
+                "label": _clip(label, 200),
+                "description": _clip(
+                    str(opt.get("description") or "").strip(), 500),
+            })
+        questions.append({
+            "question": _clip(text, 1000),
+            "header": _clip(str(item.get("header") or "").strip(), 60),
+            "options": options,
+            "multi": bool(item.get("multiSelect")),
+        })
+    return questions or None
 
 
 def tool_summary(name: str, args: dict) -> str:
@@ -603,6 +654,13 @@ class ChatSession:
                     request = event.get("request") or {}
                     if request.get("subtype") == "can_use_tool":
                         self._take_permission_request(event)
+                    else:
+                        # Anything else the CLI asks over this channel gets
+                        # an honest error back, never silence: a control
+                        # request is a question the CLI is *waiting on*, and
+                        # dropping one from a newer CLI is how a turn hangs
+                        # forever on a feature this panel has never heard of.
+                        self._refuse_control(event)
                     continue
                 if event.get("type") == "control_cancel_request":
                     # The CLI withdrew the question (the turn was
@@ -736,12 +794,21 @@ class ChatSession:
         # validates `updatedInput` against the tool's schema, so the clipped
         # display copy below must never be what goes back.
         self._pending_input = args
+        tool = request.get("tool_name") or "tool"
+        # AskUserQuestion is a question wearing a permission request's
+        # clothes: render the questions, not a JSON blob with an Allow
+        # button that would answer them with nothing. A malformed one falls
+        # through to the ordinary card, which at least fails loudly.
+        questions = question_spec(args) if tool == QUESTION_TOOL else None
         self.pending_permission = {
             "id": request_id,
-            "tool": request.get("tool_name") or "tool",
-            "summary": tool_summary(request.get("tool_name") or "", args),
-            "input": _clip(json.dumps(args, ensure_ascii=False, indent=2),
-                           MAX_RESULT_CHARS),
+            "tool": tool,
+            "kind": "question" if questions else "permission",
+            "questions": questions or [],
+            "summary": "" if questions else tool_summary(tool, args),
+            "input": "" if questions else _clip(
+                json.dumps(args, ensure_ascii=False, indent=2),
+                MAX_RESULT_CHARS),
         }
         # Live-only: the answered question's tool result is the transcript.
         self._emit({"type": "permission", **self.pending_permission},
@@ -761,12 +828,20 @@ class ChatSession:
                 pass
 
     async def respond_permission(self, request_id: str, allow: bool,
-                                 timed_out: bool = False) -> dict:
+                                 timed_out: bool = False,
+                                 answers: dict | None = None) -> dict:
         """Answer the pending approval, on the wire the CLI asked on.
 
         An allow hands back the tool's own input untouched; a deny carries
         a sentence the model reads, phrased so the eventual tool_result
         matches ``_DENIED_RE`` and renders amber rather than as a crash.
+
+        A question card is the same wire with one addition: the person's
+        ``answers`` (question text → answer string, multi-select
+        comma-separated) go back inside ``updatedInput``, which is where the
+        CLI's own permission component puts them. Allowing a question with
+        no answers is refused here rather than sent — that is the exact
+        empty answer sheet this card exists to prevent.
         """
         pending = self.pending_permission
         if not pending or pending.get("id") != request_id:
@@ -774,9 +849,24 @@ class ChatSession:
         if not self.alive():
             self._drop_pending_permission()
             raise RuntimeError("the Claude session is not running")
-        if allow:
+        is_question = pending.get("kind") == "question"
+        if allow and is_question:
+            clean = {str(k): str(v) for k, v in (answers or {}).items()
+                     if str(k).strip() and str(v).strip()}
+            if not clean:
+                raise ValueError("answer the questions first")
             answer: dict = {"behavior": "allow",
-                            "updatedInput": self._pending_input}
+                            "updatedInput": {**self._pending_input,
+                                             "answers": clean}}
+        elif allow:
+            answer = {"behavior": "allow",
+                      "updatedInput": self._pending_input}
+        elif is_question:
+            who = ("Nobody was there to answer"
+                   if timed_out else "The person watching the chat")
+            answer = {"behavior": "deny", "message":
+                      f"{who} declined to answer the questions — carry on "
+                      "with your best judgement instead of asking again."}
         else:
             who = ("Nobody answered the approval request in time"
                    if timed_out else "The person watching the chat declined")
@@ -799,6 +889,29 @@ class ChatSession:
                 from exc
         self._drop_pending_permission(answered=True, allowed=allow)
         return {"ok": True, "id": request_id, "allow": allow}
+
+    def _refuse_control(self, event: dict) -> None:
+        """Decline a control request this panel does not implement.
+
+        The error goes back on the wire so the CLI can fail that one
+        feature and carry on with the turn — the alternative is a request
+        that never resolves, which from the chat looks like Claude thinking
+        forever. Best effort: if the pipe is gone the process is too, and
+        the read loop is about to notice.
+        """
+        request_id = event.get("request_id")
+        if not request_id or self.proc is None or self.proc.stdin is None:
+            return
+        subtype = str((event.get("request") or {}).get("subtype") or "unknown")
+        try:
+            self.proc.stdin.write((json.dumps({
+                "type": "control_response",
+                "response": {"subtype": "error", "request_id": request_id,
+                             "error": "the brAIn chat does not support "
+                                      f"'{subtype}' requests"},
+            }) + "\n").encode())
+        except (OSError, ConnectionResetError):
+            pass
 
     def _drop_pending_permission(self, answered: bool = False,
                                  allowed: bool = False) -> None:

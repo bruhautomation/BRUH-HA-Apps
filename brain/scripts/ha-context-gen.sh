@@ -417,7 +417,7 @@ safe-mode restart use core \`homeassistant.restart\` with \`safe_mode: true\`.
 - **Always run \`ha reload automations\` after editing automations.yaml**
 - **Always run \`ha reload scripts\` after editing scripts.yaml**
 - **Never modify secrets.yaml directly**
-- **YAML edits are auto-backed up via git** (if auto_backup is enabled)
+- **Edits are snapshotted before Claude makes them** — \`brain undo\` reviews and reverts them
 - **Test templates** using the \`render_template\` MCP tool before using them in automations
 CLAUDEMD
 

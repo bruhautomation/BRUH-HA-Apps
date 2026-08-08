@@ -28,6 +28,19 @@ Behaviour switches via env:
                                    real CLI does with --permission-prompt-tool
                                    stdio: allow → the tool runs; deny → a
                                    tool_result error carrying the message
+                  question         ask `can_use_tool` for AskUserQuestion.
+                                   The real CLI expects the answers back
+                                   INSIDE updatedInput (`answers`, question
+                                   text → answer string) — an allow without
+                                   them is answered with an error result,
+                                   which is the failure this fixture exists
+                                   to reproduce
+                  oddcontrol       send a control_request of a subtype the
+                                   panel has never heard of before answering,
+                                   and only proceed once it gets a
+                                   control_response back — a turn hangs on
+                                   silence, the way a real CLI waiting on
+                                   its control channel would
   FAKE_CHAT_NOPROMPTFLAG  refuse --permission-prompt-tool at startup the way
                                    a CLI from before the stdio value exists:
                                    name the flag on stderr and die unspoken
@@ -147,9 +160,18 @@ def finish_turn(text):
                         "output_tokens": 160}})
 
 
-# The can_use_tool question in flight, when mode == "permission":
-# request_id -> the user text the turn will answer once permission lands.
+# The control question in flight (permission / question / oddcontrol
+# modes): request_id -> (kind, the user text the turn will answer once the
+# control round-trip lands).
 asked = {}
+
+# What the question mode asks, in the real tool's input shape.
+QUESTIONS_INPUT = {"questions": [
+    {"question": "Which zone should this apply to?", "header": "Zone",
+     "options": [{"label": "Zone 3", "description": "The blackberries"},
+                 {"label": "All zones", "description": "Everything at once"}],
+     "multiSelect": False},
+]}
 
 for line in sys.stdin:
     line = line.strip()
@@ -180,25 +202,59 @@ for line in sys.stdin:
               "result": "stopped", "duration_ms": 10, "num_turns": 1})
         continue
     if msg.get("type") == "control_response":
-        # The panel answering a can_use_tool question of ours.
+        # The panel answering a control question of ours.
         response = (msg.get("response") or {})
         request_id = response.get("request_id")
-        text = asked.pop(request_id, None)
-        if text is None:
+        pending = asked.pop(request_id, None)
+        if pending is None:
+            continue
+        kind, text = pending
+        if kind == "odd":
+            # Any answer at all — success or error — unblocks the turn.
+            # Silence is the one thing that must not happen, and the test
+            # proves it did not by seeing the turn complete.
+            finish_turn(text)
             continue
         answer = response.get("response") or {}
         if answer.get("behavior") == "allow":
             # The real CLI validates updatedInput against the tool schema;
             # the fixture at least insists it came back.
-            if not isinstance(answer.get("updatedInput"), dict):
+            updated = answer.get("updatedInput")
+            if not isinstance(updated, dict):
                 emit({"type": "result", "subtype": "error_during_execution",
                       "is_error": True, "result": "allow without updatedInput",
                       "duration_ms": 5, "num_turns": 1})
                 continue
+            if kind == "question":
+                # The answers ride INSIDE updatedInput — the exact contract
+                # a generic Allow button breaks. An empty sheet is the bug.
+                answers = updated.get("answers")
+                if not isinstance(answers, dict) or not answers or not all(
+                        isinstance(k, str) and isinstance(v, str) and v
+                        for k, v in answers.items()):
+                    emit({"type": "result",
+                          "subtype": "error_during_execution",
+                          "is_error": True,
+                          "result": "AskUserQuestion allowed without answers",
+                          "duration_ms": 5, "num_turns": 1})
+                    continue
+                emit({"type": "user", "message": {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "toolu_q",
+                     "content": [{"type": "text",
+                                  "text": "User has answered your questions: "
+                                  + ", ".join(f'"{k}"="{v}"'
+                                              for k, v in answers.items())}]},
+                ]}})
+                emit({"type": "result", "subtype": "success",
+                      "is_error": False, "result": "Thanks — proceeding.",
+                      "duration_ms": 15, "num_turns": 1})
+                continue
             finish_turn(text)
         else:
             emit({"type": "user", "message": {"role": "user", "content": [
-                {"type": "tool_result", "tool_use_id": "toolu_perm",
+                {"type": "tool_result",
+                 "tool_use_id": "toolu_q" if kind == "question"
+                                else "toolu_perm",
                  "is_error": True,
                  "content": [{"type": "text",
                               "text": answer.get("message") or "denied"}]},
@@ -224,7 +280,7 @@ for line in sys.stdin:
         # --permission-prompt-tool stdio is on the argv and the call is
         # outside the allow rules.
         request_id = f"perm-{len(asked) + 1}"
-        asked[request_id] = text
+        asked[request_id] = ("perm", text)
         emit({"type": "assistant", "message": {"role": "assistant", "content": [
             {"type": "tool_use", "id": "toolu_perm", "name": "Bash",
              "input": {"command": "rm /tmp/x"}},
@@ -233,6 +289,31 @@ for line in sys.stdin:
               "request": {"subtype": "can_use_tool", "tool_name": "Bash",
                           "input": {"command": "rm /tmp/x"},
                           "tool_use_id": "toolu_perm"}})
+        continue
+    if mode == "question":
+        # AskUserQuestion rides the same wire as any permission ask; what
+        # differs is that the *answers* have to come back in updatedInput.
+        request_id = f"q-{len(asked) + 1}"
+        asked[request_id] = ("question", text)
+        emit({"type": "assistant", "message": {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "toolu_q", "name": "AskUserQuestion",
+             "input": QUESTIONS_INPUT},
+        ], "usage": {"input_tokens": 900, "output_tokens": 30}}})
+        emit({"type": "control_request", "request_id": request_id,
+              "request": {"subtype": "can_use_tool",
+                          "tool_name": "AskUserQuestion",
+                          "input": QUESTIONS_INPUT,
+                          "tool_use_id": "toolu_q"}})
+        continue
+    if mode == "oddcontrol":
+        # A control request from a feature the panel has never heard of.
+        # The turn does not move until SOMETHING comes back — the hang on
+        # silence is the point.
+        request_id = f"odd-{len(asked) + 1}"
+        asked[request_id] = ("odd", text)
+        emit({"type": "control_request", "request_id": request_id,
+              "request": {"subtype": "shiny_new_thing",
+                          "payload": {"anyone": "listening?"}}})
         continue
 
     finish_turn(text)

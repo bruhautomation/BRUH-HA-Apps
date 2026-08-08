@@ -1517,3 +1517,14 @@ def test_context_gen_preserves_user_notes_and_memory():
     for retired in ("ha-share-login", "ha-reload", "ha-backup", "ha-entity",
                     "ha-yaml-check", "ha-selftest"):
         assert retired not in content, f"CLAUDE.md still teaches {retired}"
+
+
+def test_context_gen_does_not_promise_git_backups():
+    """The git auto-backup was removed with `auto_backup`, and the generated
+    CLAUDE.md kept promising it — a vestigial claim Claude then repeats to
+    the person as if it were true. The snapshot hook + `brain undo` is the
+    real story, and the only one the context may tell."""
+    content = (ADDON / "scripts" / "ha-context-gen.sh").read_text()
+    assert "auto_backup" not in content
+    assert "git" not in content.lower().replace("github", "")
+    assert "brain undo" in content
