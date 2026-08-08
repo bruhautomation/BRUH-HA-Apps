@@ -2727,9 +2727,19 @@ async def h_knowledge_question_delete(request: web.Request) -> web.Response:
 # -- runtime settings (⚙ dialog) --------------------------------------------
 
 def _settings_payload(settings: dict) -> dict:
-    """The ⚙ dialog's view: panel settings + the live effective options."""
+    """The ⚙ dialog's view: panel settings + the live effective options.
+
+    ``model_label`` is here for the chat, not the dialog: ⚙ is reachable
+    from the Terminal tab, and the model picker's Default row names the
+    global model this saves. Without it that row kept whatever the stream's
+    opening snapshot said — so the row that was highlighted as *current*
+    named a model the server had already been told to stop using, which is
+    indistinguishable from a setting that did not save.
+    """
+    options = effective_options()
     return {
-        "settings": {**settings, **effective_options()},
+        "settings": {**settings, **options},
+        "model_label": chat_session.pretty_model(options["model"]),
         "usage": usage_store.budget_state(settings),
         "addon_defaults": addon_defaults(),
         "options_synced": addon_options.snapshot() is not None,
@@ -3201,13 +3211,17 @@ def _chat_snapshot(session: "chat_session.ChatSession") -> dict:
     So does what the model picker needs: the same static choices ⚙ offers,
     the stored chat override, and the global model it defers to — asking
     /api/settings for those would drag a Supervisor round-trip into opening
-    a popover.
+    a popover. The global model rides down named as well as identified,
+    because the picker's Default row prints the name and the parser that
+    produces one lives here.
     """
     settings = settings_store.load()
+    default = eff_model()
     return {**session.snapshot(), "cli": cli_commands.listing(),
             "models": engine.MODEL_CHOICES,
             "chat_model": settings.get("chat_model") or "",
-            "default_model": eff_model()}
+            "default_model": default,
+            "default_model_label": chat_session.pretty_model(default)}
 
 
 async def h_chat_state(request: web.Request) -> web.Response:
