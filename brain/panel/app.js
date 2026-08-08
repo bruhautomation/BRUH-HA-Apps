@@ -522,6 +522,13 @@ function positionChipPop() {
   if (!chipPopFor) return;
   const pop = $("#chipPop");
   const a = chipPopFor.getBoundingClientRect();
+  // An anchor with no box is an anchor that has gone: ⋯ → Model opens this
+  // from a menu item, and the same press closes the menu behind it. There
+  // is nothing left to measure against, so the next reposition would put
+  // the popover in the top-left corner of the screen — measured at (8, 6)
+  // after a resize. Same call as `scroll` makes: a popover that has lost
+  // the thing it points at is dismissed, not relocated.
+  if (!a.width && !a.height) { closeChipPop(); return; }
   // Height is bounded to what is left on the side it opens, and the
   // overflow scrolls. It never mattered while this held two rows and a
   // sentence; the spend breakdown is up to seven more, and a popover whose
@@ -1766,6 +1773,13 @@ async function saveSettings(fields, note) {
       state.status.settings = data.settings;
       state.status.usage = data.usage;
     }
+    // ⚙ is reachable from the Terminal tab, and the chat's picker names the
+    // global model on its Default row. That row only ever came from the
+    // stream's opening snapshot, so changing the model here left the
+    // *highlighted* row naming the model you had just replaced — which
+    // reads as a save that did not take.
+    chatState.defaultModel = data.settings.model || "";
+    chatState.defaultModelLabel = data.model_label || "";
     renderUsageChip();
     renderPausedChip();
     toast(note || "Saved");
@@ -3301,7 +3315,8 @@ const chatState = {
   models: [],        // the same choices ⚙ offers, for the chat's own picker
   chatModel: "",     // the stored chat override; "" = follow the global model
   defaultModel: "",  // the global model the chat defers to when unset
-  convs: [],         // past conversations, for the wide-screen sidebar
+  defaultModelLabel: "",  // …written out, for the picker's Default row
+  convs: [],       // past conversations, for the wide-screen sidebar
   commands: [],      // its slash commands, as it advertises them
   cli: [],           // the brain/ha dispatchers, parsed from their own help
   cmdIndex: 0,       // highlighted row in the command palette
@@ -3794,10 +3809,16 @@ function chatRender(ev) {
 function chatMeta() {
   const box = $("#chatMeta");
   if (!box) return;
-  const model = (chatState.info && chatState.info.model) || "";
+  const info = chatState.info || {};
+  const model = info.model || "";
   const ctx = chatState.context || {};
   box.classList.toggle("hidden", !model && !ctx.tokens);
-  $("#chatModel").textContent = model ? prettyModel(model) : "";
+  // The name is the server's — see chat_session.pretty_model. Parsing a
+  // model id needs its version read, and a second reading of that in here
+  // drifted from the one the context window already uses: it printed both
+  // Haiku 4.5 and a hypothetical Haiku 4.9 as "Claude Haiku 4", so picking
+  // between them changed nothing you could see.
+  $("#chatModel").textContent = info.model_label || model;
   const pill = $("#chatCtx");
   if (!ctx.tokens) { pill.classList.add("hidden"); return; }
   pill.classList.remove("hidden");
@@ -3815,14 +3836,6 @@ function chatMeta() {
     pill.textContent = `${k} tokens of context`;
     pill.classList.remove("warn");
   }
-}
-
-// `claude-opus-5-20260101` is not a thing anyone says out loud.
-function prettyModel(id) {
-  const m = /(opus|sonnet|haiku)[-\s]?([0-9](?:\.[0-9])?)?/i.exec(id || "");
-  if (!m) return id;
-  const name = m[1][0].toUpperCase() + m[1].slice(1).toLowerCase();
-  return m[2] ? `Claude ${name} ${m[2]}` : `Claude ${name}`;
 }
 
 // "none" means no API key is paying — a Pro/Max subscription, where the
@@ -3893,6 +3906,7 @@ function chatConnect() {
       chatState.models = ev.models || chatState.models;
       chatState.chatModel = ev.chat_model || "";
       chatState.defaultModel = ev.default_model || "";
+      chatState.defaultModelLabel = ev.default_model_label || "";
       chatMeta();
       chatState.cli = ev.cli || chatState.cli;
       (ev.events || []).forEach(chatRender);
@@ -4575,7 +4589,8 @@ function openModelPick(anchor) {
   closeChipPop();
   const current = chatState.chatModel || "";
   const def = chatState.defaultModel
-    ? prettyModel(chatState.defaultModel) : "the CLI's own choice";
+    ? (chatState.defaultModelLabel || chatState.defaultModel)
+    : "the CLI's own choice";
   // The list's own empty-id row ("CLI default") is dropped: in the chat,
   // "" means "follow the model in ⚙ Settings", and the Default row above
   // it is that — two rows with one value would both light up as current.

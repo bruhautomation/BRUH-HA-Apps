@@ -104,6 +104,94 @@ class TestContextUsage(unittest.TestCase):
         s._take_context({"input_tokens": 900})
         self.assertEqual(s.context, {"tokens": 900, "window": 0})
 
+    def test_a_model_change_rewindows_the_reading_it_already_has(self):
+        """The tokens survive a model change; the window is not theirs to keep.
+
+        --resume carries the conversation across, so the count is still
+        right — but the window belongs to the model, and moving from Sonnet
+        to Haiku left the pill dividing 42k by 1M and reporting 4% of a
+        window it fills 21% of. It stayed wrong until the next turn.
+        """
+        emitted = []
+        s = self._session()
+        s._emit = lambda ev, **k: emitted.append(ev)
+        s._take_context({"input_tokens": 42_000})
+        self.assertEqual(s.context["window"], 1_000_000)
+
+        s.info = {"model": "claude-haiku-4-5"}
+        s._rewindow()
+        self.assertEqual(s.context, {"tokens": 42_000, "window": 200_000})
+        self.assertEqual(emitted[-1]["type"], "context")
+
+    def test_rewindowing_an_unchanged_model_says_nothing(self):
+        emitted = []
+        s = self._session()
+        s._emit = lambda ev, **k: emitted.append(ev)
+        s._take_context({"input_tokens": 42_000})
+        emitted.clear()
+        s._rewindow()                      # same model
+        self.assertEqual(emitted, [])
+        s.context = {}                     # and nothing measured yet
+        s.info = {"model": "claude-haiku-4-5"}
+        s._rewindow()
+        self.assertEqual(emitted, [])
+
+
+class TestPrettyModel(unittest.TestCase):
+    """`claude-haiku-4-5-20251001` → `Claude Haiku 4.5`.
+
+    Derived server-side because it needs the version parsed, and that
+    parser already exists for the context window. The panel used to carry
+    its own regex, which dropped the minor version — every 4.x model of a
+    family printed the same name — and read the leading digits of a date
+    stamp as one. The label under the composer is the only confirmation a
+    model pick landed, so both failures read as a picker that does nothing.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import chat_session
+        cls.mod = chat_session
+
+    def test_the_minor_version_survives(self):
+        for model, label in (
+                ("claude-haiku-4-5", "Claude Haiku 4.5"),
+                ("claude-haiku-4-5-20251001", "Claude Haiku 4.5"),
+                ("claude-sonnet-4-6", "Claude Sonnet 4.6"),
+                ("claude-opus-4-8", "Claude Opus 4.8"),
+                ("claude-opus-5", "Claude Opus 5"),
+                ("claude-sonnet-5", "Claude Sonnet 5"),
+                ("claude-fable-5", "Claude Fable 5")):
+            self.assertEqual(self.mod.pretty_model(model), label, model)
+
+    def test_two_models_of_one_family_never_share_a_name(self):
+        # The failure exactly: picking between them changed the argv, the
+        # process and the answers, and nothing you could see.
+        names = {self.mod.pretty_model(m) for m in
+                 ("claude-haiku-4-5", "claude-opus-4-8", "claude-opus-5",
+                  "claude-sonnet-4-6", "claude-sonnet-5")}
+        self.assertEqual(len(names), 5, names)
+
+    def test_a_date_stamp_is_not_a_version(self):
+        self.assertEqual(
+            self.mod.pretty_model("claude-3-5-sonnet-20241022"),
+            "Claude Sonnet 3.5")
+        self.assertEqual(
+            self.mod.pretty_model("claude-opus-4-20250514"), "Claude Opus 4")
+
+    def test_a_tier_alias_has_no_version_to_print(self):
+        # `opus` is whatever the account resolves it to, and saying "Claude
+        # Opus 5" about it would be inventing the half nobody chose.
+        self.assertEqual(self.mod.pretty_model("opus"), "Claude Opus")
+        self.assertEqual(self.mod.pretty_model("haiku"), "Claude Haiku")
+
+    def test_an_unrecognised_id_is_printed_as_it_is(self):
+        # A made-up pretty name for an id we cannot read is worse than the id.
+        self.assertEqual(self.mod.pretty_model("some-future-model"),
+                         "some-future-model")
+        self.assertEqual(self.mod.pretty_model(""), "")
+        self.assertEqual(self.mod.pretty_model(None), "")
+
 
 class TestNormalise(unittest.TestCase):
     """The wire shape → the six event types the panel knows how to draw."""
@@ -1255,6 +1343,51 @@ class TestChatRoutes(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(argv[argv.index("--model") + 1], "claude-haiku-4-5")
         finally:
             os.environ.pop("FAKE_CHAT_LOG", None)
+
+    async def test_a_pick_changes_what_the_meta_line_says(self):
+        """The label under the composer is the only visible confirmation.
+
+        Every layer of this worked and the panel still printed the same
+        name either side of a pick, because it derived that name from a
+        regex of its own that dropped the minor version: Haiku 4.5 and
+        Sonnet 4.6 both came out "Claude Haiku 4" / "Claude Sonnet 4".
+        The label is the server's now, off the model the CLI announces.
+        """
+        await self.client.post("/api/chat/send", json={"text": "hi"})
+        await asyncio.sleep(0.6)
+        first = await (await self.client.get("/api/chat/state")).json()
+        self.assertEqual(first["info"]["model_label"], "Claude Sonnet 5")
+        self.assertEqual(first["context"]["window"], 1_000_000)
+
+        resp = await self.client.post("/api/chat/model",
+                                      json={"model": "claude-haiku-4-5"})
+        self.assertTrue((await resp.json())["restarted"])
+        await asyncio.sleep(0.6)
+        after = await (await self.client.get("/api/chat/state")).json()
+        self.assertEqual(after["info"]["model"], "claude-haiku-4-5")
+        self.assertEqual(after["info"]["model_label"], "Claude Haiku 4.5")
+        # And the window went with it, without waiting for the next turn:
+        # the tokens are still the conversation's, the denominator is not.
+        self.assertEqual(after["context"]["tokens"], first["context"]["tokens"])
+        self.assertEqual(after["context"]["window"], 200_000)
+
+    async def test_the_default_row_names_the_model_it_would_use(self):
+        """The picker's Default row is highlighted whenever no override is
+        set, so the name on it is read as the model in use. It came only
+        from the stream's opening snapshot, which the ⚙ dialog — reachable
+        from the same tab — does not reopen."""
+        snap = await (await self.client.get("/api/chat/state")).json()
+        self.assertEqual(snap["default_model_label"], "")
+
+        resp = await self.client.put("/api/settings",
+                                     json={"model": "claude-opus-4-8"})
+        self.assertEqual(resp.status, 200)
+        # The dialog's own response carries it, so the panel can refresh the
+        # picker without waiting for a reconnect.
+        self.assertEqual((await resp.json())["model_label"], "Claude Opus 4.8")
+        snap = await (await self.client.get("/api/chat/state")).json()
+        self.assertEqual(snap["default_model"], "claude-opus-4-8")
+        self.assertEqual(snap["default_model_label"], "Claude Opus 4.8")
 
     async def test_an_approval_is_asked_and_answered_over_the_api(self):
         """The whole loop at the panel's altitude: the snapshot carries the

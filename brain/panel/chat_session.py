@@ -109,6 +109,35 @@ def model_version(model: str) -> tuple[int, int] | None:
     return None
 
 
+def pretty_model(model: str) -> str:
+    """`claude-haiku-4-5-20251001` → `Claude Haiku 4.5`.
+
+    Derived here rather than in the panel because the version has to be
+    parsed to do it, and that parser already exists for the context window.
+    A second copy in JavaScript is a second answer waiting to drift from
+    this one, and it did: it read `claude-haiku-4-5` as "Claude Haiku 4"
+    and `claude-3-5-sonnet-20241022` as "Claude Sonnet 2" (the date's
+    leading digits, taken for a version). The label under the composer is
+    the only confirmation a model pick landed, so two models of one family
+    printing the same name reads exactly like a picker that does nothing.
+
+    A family we cannot find returns the id verbatim — a made-up pretty name
+    for a model id we do not recognise is worse than the id.
+    """
+    lowered = (model or "").strip().lower()
+    family = next((f for f in _FAMILIES.split("|") if f in lowered), "")
+    if not family:
+        return (model or "").strip()
+    version = model_version(lowered)
+    name = f"Claude {family.capitalize()}"
+    if version is None:
+        # A bare tier alias (`opus`) — no version to print, and it is the
+        # honest answer: the alias is whatever the account resolves it to.
+        return name
+    major, minor = version
+    return f"{name} {major}.{minor}" if minor else f"{name} {major}"
+
+
 def context_window(model: str) -> int:
     """The context window for a resolved model id, or 0 if we don't know."""
     if WINDOW_OVERRIDE > 0:
@@ -421,6 +450,28 @@ class ChatSession:
             self.context = context
             self._emit({"type": "context", **context}, keep=False)
 
+    def _rewindow(self) -> None:
+        """Re-derive the window after the CLI announces which model it is.
+
+        The token count is a fact about the conversation and survives a
+        model change — the conversation does, that is what --resume is for.
+        The *window* is a fact about the model, so a pick that moves from
+        Sonnet to Haiku leaves the pill dividing by 1M when the answer is
+        200K: it read "42k / 1000k · 4%" for a window it fills 21% of, and
+        it stayed wrong until the next turn happened to refresh it. A
+        percentage against the wrong denominator is the failure this pill
+        was rewritten to stop making, so it is corrected the moment the new
+        process says what it is.
+        """
+        tokens = self.context.get("tokens") or 0
+        if tokens <= 0:
+            return
+        window = context_window(self.info.get("model") or self.model or "")
+        if window == self.context.get("window"):
+            return
+        self.context = {"tokens": tokens, "window": window}
+        self._emit({"type": "context", **self.context}, keep=False)
+
     def _set_commands(self, commands: list) -> None:
         clean = []
         for item in commands:
@@ -680,6 +731,7 @@ class ChatSession:
                         self.info = _session_info(event)
                         self._emit({"type": "info", "session_id": self.session_id,
                                     **self.info}, keep=False)
+                        self._rewindow()
                         if not self.commands and event.get("slash_commands"):
                             self._set_commands([
                                 {"name": name} for name in event["slash_commands"]
@@ -1196,6 +1248,7 @@ def _session_info(event: dict) -> dict:
     """
     return {
         "model": event.get("model") or "",
+        "model_label": pretty_model(event.get("model") or ""),
         "cwd": event.get("cwd") or "",
         "version": event.get("claude_code_version") or "",
         "api_key_source": event.get("apiKeySource") or "none",
