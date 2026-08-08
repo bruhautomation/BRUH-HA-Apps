@@ -247,6 +247,48 @@ class TestNormalise(unittest.TestCase):
         self.assertEqual(summary, "ls")
 
 
+class TestQuestionSpec(unittest.TestCase):
+    """AskUserQuestion's input, parsed a second time on purpose.
+
+    The CLI schema-validates what the model wrote, but the panel parses it
+    again because a malformed question must degrade to the ordinary
+    permission card — None here — never to a card the panel cannot draw.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import chat_session
+        cls.mod = chat_session
+
+    def test_a_wellformed_ask_parses_to_display_shape(self):
+        spec = self.mod.question_spec({"questions": [{
+            "question": "Which one?", "header": "Pick",
+            "options": [{"label": "A", "description": "the first"},
+                        {"label": "B"}],
+            "multiSelect": True,
+        }]})
+        self.assertEqual(spec, [{
+            "question": "Which one?", "header": "Pick",
+            "options": [{"label": "A", "description": "the first"},
+                        {"label": "B", "description": ""}],
+            "multi": True,
+        }])
+
+    def test_malformed_asks_fall_back_to_the_permission_card(self):
+        for args in ({}, {"questions": []}, {"questions": "what"},
+                     {"questions": [{"header": "no question text"}]},
+                     {"questions": [42]}):
+            self.assertIsNone(self.mod.question_spec(args), args)
+
+    def test_optionless_questions_still_render(self):
+        # Free text is always offered, so a question with no options is
+        # still answerable — it must not be demoted to an Allow/Deny card.
+        spec = self.mod.question_spec(
+            {"questions": [{"question": "Describe the fault?"}]})
+        self.assertEqual(len(spec), 1)
+        self.assertEqual(spec[0]["options"], [])
+
+
 class ChatSessionCase(unittest.IsolatedAsyncioTestCase):
     """The lifecycle, against a real subprocess."""
 
@@ -812,6 +854,95 @@ class ChatSessionCase(unittest.IsolatedAsyncioTestCase):
         self.assertIn("--permission-prompt-tool", invocations[0])
         self.assertNotIn("--permission-prompt-tool", invocations[1])
 
+    # ---------------------------------------------------------------
+    # Questions. AskUserQuestion arrives on the same wire as any
+    # permission ask, but it IS the questions — and the answers have to
+    # ride back inside updatedInput, which is where the CLI's own
+    # permission component puts them. A generic Allow button sent the
+    # tool an empty answer sheet, and the turn fell over.
+    # ---------------------------------------------------------------
+
+    async def _ask_question(self):
+        """Send a message in question mode; return the permission event."""
+        os.environ["FAKE_CHAT_MODE"] = "question"
+        await self.session.start()
+        task = asyncio.create_task(self._drain(
+            lambda evs: any(e.get("type") == "permission" for e in evs)))
+        await asyncio.sleep(0.05)
+        await self.session.send("fix the irrigation")
+        got = await task
+        return next(e for e in got if e["type"] == "permission")
+
+    async def test_a_question_renders_as_questions_not_json(self):
+        perm = await self._ask_question()
+        self.assertEqual(perm["kind"], "question")
+        self.assertEqual(perm["tool"], "AskUserQuestion")
+        question = perm["questions"][0]
+        self.assertEqual(question["question"],
+                         "Which zone should this apply to?")
+        self.assertEqual(question["header"], "Zone")
+        self.assertEqual([o["label"] for o in question["options"]],
+                         ["Zone 3", "All zones"])
+        self.assertFalse(question["multi"])
+        # No JSON blob: the questions themselves are the display.
+        self.assertEqual(perm["input"], "")
+        # A reload mid-question repaints the same card from the snapshot.
+        self.assertEqual(self.session.snapshot()["permission"]["kind"],
+                         "question")
+
+    async def test_answers_ride_back_inside_updated_input(self):
+        perm = await self._ask_question()
+        task = asyncio.create_task(self._drain(
+            lambda evs: any(e.get("type") == "tool_result" for e in evs)))
+        await asyncio.sleep(0.05)
+        out = await self.session.respond_permission(
+            perm["id"], True,
+            answers={"Which zone should this apply to?": "Zone 3"})
+        self.assertTrue(out["allow"])
+        got = await task
+        result = next(e for e in got if e["type"] == "tool_result")
+        # The fixture rejects an allow whose updatedInput carries no
+        # answers, so an ok result here proves the contract end to end.
+        self.assertTrue(result["ok"], result.get("text"))
+        self.assertIn('"Zone 3"', result["text"])
+
+    async def test_a_question_cannot_be_allowed_with_an_empty_sheet(self):
+        """The failure this card exists to prevent: allowing the tool with
+        no answers is the empty answer sheet the turn used to die on."""
+        perm = await self._ask_question()
+        with self.assertRaises(ValueError):
+            await self.session.respond_permission(perm["id"], True)
+        with self.assertRaises(ValueError):
+            await self.session.respond_permission(perm["id"], True,
+                                                  answers={"": "  "})
+        # The refusal must not eat the question — the card is still waiting.
+        self.assertIsNotNone(self.session.pending_permission)
+
+    async def test_a_skipped_question_reads_as_declined_not_crashed(self):
+        perm = await self._ask_question()
+        task = asyncio.create_task(self._drain(
+            lambda evs: any(e.get("type") == "tool_result" for e in evs)))
+        await asyncio.sleep(0.05)
+        await self.session.respond_permission(perm["id"], False)
+        got = await task
+        denied = next(e for e in got if e["type"] == "tool_result")
+        self.assertFalse(denied["ok"])
+        self.assertTrue(denied["denied"], denied.get("text"))
+
+    async def test_an_unknown_control_request_is_answered_not_dropped(self):
+        """A control request is a question the CLI is *waiting on* — the
+        fixture refuses to move the turn until something comes back, so a
+        completed turn proves silence is no longer the answer."""
+        os.environ["FAKE_CHAT_MODE"] = "oddcontrol"
+        await self.session.start()
+        task = asyncio.create_task(self._drain(
+            lambda evs: any(e.get("type") == "result" for e in evs)))
+        await asyncio.sleep(0.05)
+        await self.session.send("try the new thing")
+        got = await task
+        self.assertTrue(any(e.get("type") == "result" for e in got),
+                        "the turn hung on an unanswered control request")
+
     async def test_the_handoff_leaves_the_terminal_something_to_pick_up(self):
         """The file is the contract — brain-terminal-start reads it on
         launch, so even a terminal that has never been opened comes up
@@ -1198,6 +1329,67 @@ class TestChatRoutes(unittest.IsolatedAsyncioTestCase):
     async def test_deleting_a_conversation_that_is_not_there_is_a_404(self):
         resp = await self.client.post("/api/chat/conversation/never-was/delete")
         self.assertEqual(resp.status, 404)
+
+    async def test_batch_delete_takes_several_and_one_undo_restores_all(self):
+        for n in range(3):
+            self._fake_conversation(f"bulk-{n}", f"chat {n}", age_s=60 * n)
+        self._fake_conversation("keeper", "leave me alone")
+
+        resp = await self.client.post(
+            "/api/chat/conversations/delete",
+            json={"ids": ["bulk-0", "bulk-1", "bulk-2", "never-was"]})
+        self.assertEqual(resp.status, 200)
+        out = await resp.json()
+        self.assertEqual(out["deleted"], ["bulk-0", "bulk-1", "bulk-2"])
+        # A row that was not there is reported, not a reason to fail the
+        # batch — the list may have moved under a stale page.
+        self.assertEqual(out["skipped"], ["never-was"])
+        self.assertTrue(out["undo"])
+        data = await (await self.client.get(
+            "/api/chat/conversations?source=all")).json()
+        self.assertEqual([c["id"] for c in data["conversations"]], ["keeper"])
+
+        undo = await (await self.client.post(f"/api/undo/{out['undo']}")).json()
+        self.assertTrue(undo["undone"])
+        self.assertEqual(undo["restored_count"], 3)
+        data = await (await self.client.get(
+            "/api/chat/conversations?source=all")).json()
+        self.assertEqual({c["id"] for c in data["conversations"]},
+                         {"bulk-0", "bulk-1", "bulk-2", "keeper"})
+
+    async def test_batch_delete_skips_the_open_conversation(self):
+        """Select-all with the open chat in it deletes the rest and says
+        what it skipped — refusing the whole batch teaches people to
+        deselect one row by trial and error."""
+        await self.client.post("/api/chat/send", json={"text": "hi"})
+        await asyncio.sleep(0.6)
+        current = (await (await self.client.get(
+            "/api/chat/state")).json())["session_id"]
+        open_path = self._fake_conversation(current, "the open one")
+        self._fake_conversation("bystander", "delete this one", age_s=60)
+
+        resp = await self.client.post(
+            "/api/chat/conversations/delete",
+            json={"ids": [current, "bystander"]})
+        self.assertEqual(resp.status, 200)
+        out = await resp.json()
+        self.assertEqual(out["deleted"], ["bystander"])
+        self.assertEqual(out["skipped"], [current])
+        self.assertTrue(open_path.is_file(), "skipped, but deleted it anyway")
+
+    async def test_batch_delete_refuses_junk_and_oversize(self):
+        resp = await self.client.post("/api/chat/conversations/delete",
+                                      json={"ids": []})
+        self.assertEqual(resp.status, 400)
+        resp = await self.client.post("/api/chat/conversations/delete",
+                                      json={"ids": "goner"})
+        self.assertEqual(resp.status, 400)
+        # More rows than the trash holds would silently make part of the
+        # batch unrestorable while the toast still offers to restore it.
+        too_many = [f"s{n}" for n in range(200)]
+        resp = await self.client.post("/api/chat/conversations/delete",
+                                      json={"ids": too_many})
+        self.assertEqual(resp.status, 400)
 
     async def test_the_terminal_ui_setting_round_trips(self):
         resp = await self.client.get("/api/settings")

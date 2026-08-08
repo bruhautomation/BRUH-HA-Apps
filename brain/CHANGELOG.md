@@ -2,6 +2,59 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.25.0
+
+### Added
+
+- **When Claude has a question, the chat shows the question.** Claude Code
+  sometimes asks multiple-choice questions mid-task (`AskUserQuestion` —
+  which zone did you mean, which approach do you prefer). Those arrived as
+  a generic "may I use AskUserQuestion?" permission card, and allowing it
+  sent the tool an empty answer sheet that broke the turn. The chat now
+  renders the questions themselves — tap an option, pick several where the
+  question allows it, or type your own answer — and the answers ride back
+  on the CLI's own wire (`updatedInput.answers`, the same contract its
+  interactive picker uses). **Don't answer** tells Claude to use its best
+  judgement, and renders amber, not as a crash.
+
+- **Unknown control requests are answered, never dropped.** A
+  `control_request` is a question the CLI is waiting on; one from a
+  feature this panel has never heard of used to disappear into silence,
+  which from the chat looked like Claude thinking forever. Anything the
+  panel does not implement now gets an error response back so the CLI can
+  fail that one feature and carry on with the turn.
+
+- **Delete several conversations in one pass.** A checklist button above
+  the chats list — in the rail and in ⋯ → Conversations — turns on
+  selection mode: checkboxes per row, **Select all**, and one **Delete**
+  with a single Undo that puts the whole batch back. The open conversation
+  is skipped and reported rather than failing the batch, and a batch is
+  capped at what the trash can restore.
+
+- **The self-test covers the parts that failed quietly.** `brain doctor`
+  now also checks: the panel and chat API are answering (with the chat's
+  error text when a session failed to spawn), the terminal's password gate
+  is actually on (an unauthenticated 200 on :7681 is a FAIL, not a
+  curiosity), the Claude CLI itself runs, the usage tracker / memory
+  consolidator / study watcher daemons are alive, the run-sources ledger
+  is claude-owned (root-owned means background runs get filed as yours,
+  silently), a crashed consolidation pass still holding the lock, disk
+  space on /data and /config, and how stale the usage reading is.
+
+### Fixed
+
+- **The generated `/config/CLAUDE.md` stopped promising git backups.** It
+  still told Claude "YAML edits are auto-backed up via git (if
+  auto_backup is enabled)" — a feature removed releases ago — so Claude
+  repeated it to people as if it were true. It now teaches what actually
+  exists: edits are snapshotted before Claude makes them, and `brain
+  undo` reviews and reverts them. (Regenerates on restart, or run
+  `ha context`.)
+
+- **The self-test's "tracker polls every ~2 min" hint** predated the
+  30-minute poll and sent people waiting on a cadence that no longer
+  exists.
+
 ## 1.24.0
 
 ### Added

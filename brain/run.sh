@@ -1,7 +1,8 @@
 #!/usr/bin/with-contenv bashio
 
 # brAIn - Enhanced startup script
-# Features: HA MCP server, auto-backup, context generation, config reload, log access
+# Features: HA MCP server, edit snapshots (brain undo), context generation,
+# config reload, log access
 
 set -e
 set -o pipefail

@@ -2000,6 +2000,73 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   font-size: 12.5px;
 }
 
+/* The question card — AskUserQuestion rendered as the questions themselves,
+   with the option grid and the free-text "other" the CLI's own picker
+   offers. Options are full-width rows, not chips: the description is half
+   the value of an option and a chip has no room to say it. */
+.qcard .qbox { margin-top: 10px; }
+.qcard .qbox + .qbox {
+  padding-top: 10px;
+  border-top: 1px solid var(--hairline);
+}
+.qcard .qhead {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.qcard .qchip {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.qcard .qtext { font-weight: 600; color: var(--ink); }
+.qcard .qopts {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+.qcard .qopt {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  width: 100%;
+  min-height: 40px;
+  padding: 7px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  text-align: left;
+  font-size: 13px;
+  cursor: pointer;
+}
+.qcard .qopt:hover { border-color: var(--accent); }
+.qcard .qopt.on {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+}
+.qcard .qopt .qlabel { font-weight: 600; }
+.qcard .qopt .qdesc { color: var(--ink-2); font-size: 12px; }
+.qcard .qother {
+  width: 100%;
+  margin-top: 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 13px;
+}
+
 .chatempty {
   margin: auto;
   padding: 24px 18px;
@@ -2152,6 +2219,59 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
 .crrow > .convitem { padding-right: 52px; }
 .crrow > .convitem ~ .crdel { width: 40px; height: 40px; right: 6px; opacity: 1; }
 @media (pointer: coarse) { .crdel { opacity: 1; } }
+
+/* Selection mode: several conversations in one press instead of one ✕
+   each. The checkbox anchors to the row (the button is the row, and a
+   button cannot hold another control), the selected row tints, and the
+   open conversation goes inert — the server refuses to delete it, so a
+   checkbox on it would only ever answer "skipped". */
+.crrow > .hascheck { padding-left: 36px; }
+.crcheck {
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 18px;
+  height: 18px;
+  border: 1.5px solid var(--ink-3);
+  border-radius: 5px;
+  background: var(--surface);
+}
+.crcheck.on {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+.crcheck.on::after {
+  content: "✓";
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-size: 12px;
+  line-height: 1;
+}
+.critem.sel, .convitem.sel {
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+}
+.critem.inert, .convitem.inert { opacity: 0.55; cursor: default; }
+.cselbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px 8px;
+  margin-bottom: 4px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+.cselbar .cselcount {
+  flex: 1;
+  min-width: 90px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
 
 /* Session details, in the shared chip popover. */
 .chippop .mono {

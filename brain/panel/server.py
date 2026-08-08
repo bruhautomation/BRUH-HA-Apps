@@ -1890,6 +1890,22 @@ async def h_undo(request: web.Request) -> web.Response:
         return web.json_response({"undone": restored,
                                   "restored_conversation": entry["id"]})
 
+    if entry["kind"] == "conversations":
+        # A batch delete's Undo: every row goes back, each by the same move
+        # the single restore makes. Partial success is reported as such —
+        # "undone" only when the whole batch made it, because "Put back"
+        # over a half-restored list is a lie about the other half.
+        def restore_all() -> int:
+            return sum(1 for e in entry["entries"]
+                       if conversations.restore_deleted(e))
+        count = await asyncio.to_thread(restore_all)
+        return web.json_response({
+            "undone": count == len(entry["entries"]),
+            "restored_conversation": count > 0,
+            "restored_count": count,
+            "restore_total": len(entry["entries"]),
+        })
+
     def reverse() -> tuple[bool, dict]:
         if entry["kind"] == "finding":
             # The row may have been re-reported in the meantime, in which
@@ -3071,11 +3087,28 @@ async def h_chat_permission(request: web.Request) -> web.Response:
     body = await request.json()
     if not isinstance(body, dict):
         raise web.HTTPBadRequest(text="expected an object")
+    # A question card's answers ride along: question text → answer string,
+    # exactly what respond_permission folds into updatedInput. Anything
+    # that is not a flat object of strings is refused here, before it can
+    # become a schema failure inside the CLI.
+    answers = body.get("answers")
+    if answers is not None:
+        if not isinstance(answers, dict) or not all(
+                isinstance(k, str) and isinstance(v, str)
+                for k, v in answers.items()):
+            raise web.HTTPBadRequest(
+                text="answers must map question text to an answer string")
     session = _chat()
     try:
         return web.json_response(await session.respond_permission(
-            str(body.get("id") or ""), bool(body.get("allow"))))
-    except ValueError:
+            str(body.get("id") or ""), bool(body.get("allow")),
+            answers=answers))
+    except ValueError as exc:
+        # Fixed words, not the exception's text — CodeQL reads echoed
+        # exception text as information exposure, and both messages are
+        # knowable anyway.
+        if "answer the questions" in str(exc):
+            raise web.HTTPBadRequest(text="answer the questions first")
         raise web.HTTPNotFound(text="that request is no longer waiting")
     except RuntimeError as exc:
         raise web.HTTPConflict(reason=_refusal(exc))
@@ -3103,6 +3136,46 @@ async def h_chat_conversation_delete(request: web.Request) -> web.Response:
         "deleted": session_id,
         "undo": undo_store.record("conversation", **entry),
     })
+
+
+async def h_chat_conversations_delete(request: web.Request) -> web.Response:
+    """Delete several conversations in one press — one Undo for the lot.
+
+    The single-delete's rules apply per row: each file moves to the trash,
+    and the conversation that is currently open is skipped rather than
+    failing the batch — a select-all that refuses outright because the open
+    chat was in it teaches people to deselect one row by trial and error.
+    What was skipped is reported, so the toast can say it.
+    """
+    body = await request.json()
+    if not isinstance(body, dict) or not isinstance(body.get("ids"), list):
+        raise web.HTTPBadRequest(text="expected {ids: [...]}")
+    ids = [str(i) for i in body["ids"] if isinstance(i, str) and i]
+    if not ids:
+        raise web.HTTPBadRequest(text="nothing selected")
+    if len(ids) > conversations.TRASH_MAX:
+        # The trash is the undo, and it caps at TRASH_MAX: accepting more
+        # than fits would silently make the oldest of THIS batch
+        # unrestorable while the toast still offers to restore it.
+        raise web.HTTPBadRequest(
+            text=f"at most {conversations.TRASH_MAX} at a time")
+    session = _chat()
+    deleted, entries, skipped = [], [], []
+    for session_id in dict.fromkeys(ids):     # de-duped, order kept
+        if session.session_id == session_id:
+            skipped.append(session_id)
+            continue
+        entry = await asyncio.to_thread(
+            conversations.delete, chat_session.WORK_DIR, session_id)
+        if entry is None:
+            skipped.append(session_id)
+            continue
+        deleted.append(session_id)
+        entries.append(entry)
+    payload: dict = {"deleted": deleted, "skipped": skipped}
+    if entries:
+        payload["undo"] = undo_store.record("conversations", entries=entries)
+    return web.json_response(payload)
 
 
 async def h_chat_resume(request: web.Request) -> web.Response:
@@ -3222,6 +3295,8 @@ def make_app() -> web.Application:
     app.router.add_post("/api/chat/resume", h_chat_resume)
     app.router.add_post("/api/chat/model", h_chat_model)
     app.router.add_post("/api/chat/permission", h_chat_permission)
+    app.router.add_post("/api/chat/conversations/delete",
+                        h_chat_conversations_delete)
     app.router.add_post("/api/chat/conversation/{id}/delete",
                         h_chat_conversation_delete)
 

@@ -221,11 +221,15 @@ function toast(msg, undo) {
         // `undone: false` means the row could not go back — the analyst
         // re-reported it while the toast was up, so the list already holds
         // a newer version and overwriting it would lose what happened
-        // since. Say which, rather than claiming a success.
+        // since. Say which, rather than claiming a success. A batch restore
+        // reports its count, and a partial one says both numbers — "put
+        // back" over a half-restored list would lie about the other half.
         toast(data.undone ? "Put back"
-                          : data.restored_conversation
-                            ? "It couldn't be restored"
-                            : "It's already back on the list — nothing to undo");
+                          : data.restore_total
+                            ? `Put back ${data.restored_count} of ${data.restore_total}`
+                            : data.restored_conversation
+                              ? "It couldn't be restored"
+                              : "It's already back on the list — nothing to undo");
       } catch (e) {
         btn.disabled = false;
         toast(e.message);
@@ -3482,9 +3486,36 @@ function chatCloseLiveThink() {
 // The approval card: the chat's version of the TUI's permission prompt.
 // The CLI is blocked on this answer, so it renders where the eye already
 // is — under the tool chip that provoked it — with the two words that are
-// actually the decision.
+// actually the decision. AskUserQuestion gets its own shape: the CLI is
+// not asking "may I", it is asking the questions themselves, and a generic
+// Allow would send them back an empty answer sheet.
 function chatPermission(ev) {
   chatPermissionGone();
+  const card = (ev.kind === "question" && (ev.questions || []).length)
+    ? chatQuestionCard(ev)
+    : chatApprovalCard(ev);
+  chatState.permCard = chatAppend(card);
+}
+
+function chatStatusForPermission(ev) {
+  return ev.kind === "question"
+    ? "Waiting for your answer" : "Waiting for your approval";
+}
+
+// One POST, shared by both cards. On failure the buttons come back —
+// except a 404, which means the question is no longer waiting (timed out,
+// withdrawn, or answered from another tab) and re-arming would invite a
+// second answer to a question nobody is asking.
+function chatPermissionPost(body, buttons, rearm) {
+  buttons.forEach((b) => { b.disabled = true; });
+  api("api/chat/permission", { method: "POST", body: JSON.stringify(body) })
+    .catch((e) => {
+      toast(e.message);
+      if (rearm) rearm(); else buttons.forEach((b) => { b.disabled = false; });
+    });
+}
+
+function chatApprovalCard(ev) {
   const card = el("div", "permcard");
   card.dataset.id = ev.id || "";
   card.appendChild(el("div", "permhead",
@@ -3498,20 +3529,105 @@ function chatPermission(ev) {
   const row = el("div", "permrow");
   const allow = el("button", "btn small primary", "Allow once");
   const deny = el("button", "btn small", "Don't allow");
-  const answer = (ok) => {
-    allow.disabled = deny.disabled = true;
-    api("api/chat/permission", { method: "POST",
-      body: JSON.stringify({ id: ev.id, allow: ok }) })
-      .catch((e) => {
-        toast(e.message);
-        allow.disabled = deny.disabled = false;
-      });
-  };
-  allow.addEventListener("click", () => answer(true));
-  deny.addEventListener("click", () => answer(false));
+  allow.addEventListener("click", () =>
+    chatPermissionPost({ id: ev.id, allow: true }, [allow, deny]));
+  deny.addEventListener("click", () =>
+    chatPermissionPost({ id: ev.id, allow: false }, [allow, deny]));
   row.append(allow, deny);
   card.appendChild(row);
-  chatState.permCard = chatAppend(card);
+  return card;
+}
+
+// The question card: the questions, their options, and a free-text "other"
+// per question — the same three affordances the CLI's own picker draws on
+// a TTY. Answers go back keyed by question text (multi-select joined with
+// commas), which is the wire shape the CLI's permission component uses.
+function chatQuestionCard(ev) {
+  const card = el("div", "permcard qcard");
+  card.dataset.id = ev.id || "";
+  card.dataset.kind = "question";
+  const qs = ev.questions || [];
+  card.appendChild(el("div", "permhead",
+    qs.length > 1 ? "Claude has some questions" : "Claude has a question"));
+
+  const picks = qs.map(() => ({ chosen: new Set(), other: "" }));
+  const row = el("div", "permrow");
+  const send = el("button", "btn small primary", "Send answers");
+  const skip = el("button", "btn small", "Don't answer");
+  send.disabled = true;
+  const arm = () => {
+    // Every question answered — by a pick or typed text — or the send
+    // stays down: a half-filled sheet is the empty sheet with extra steps.
+    send.disabled = !picks.every((p) => p.chosen.size || p.other.trim());
+    skip.disabled = false;
+  };
+
+  qs.forEach((q, i) => {
+    const box = el("div", "qbox");
+    const head = el("div", "qhead");
+    if (q.header) head.appendChild(el("span", "qchip", q.header));
+    head.appendChild(el("span", "qtext", q.question));
+    box.appendChild(head);
+    const opts = el("div", "qopts");
+    const other = el("input", "qother");
+    (q.options || []).forEach((o) => {
+      const b = el("button", "qopt");
+      b.type = "button";
+      b.appendChild(el("span", "qlabel", o.label));
+      if (o.description) b.appendChild(el("span", "qdesc", o.description));
+      b.addEventListener("click", () => {
+        const p = picks[i];
+        if (q.multi) {
+          if (p.chosen.has(o.label)) p.chosen.delete(o.label);
+          else p.chosen.add(o.label);
+          b.classList.toggle("on", p.chosen.has(o.label));
+        } else {
+          // Single-select: one option, and it displaces any typed answer —
+          // two answers to a pick-one question is not a thing to send.
+          p.chosen.clear();
+          p.chosen.add(o.label);
+          p.other = "";
+          other.value = "";
+          [...opts.children].forEach((c) =>
+            c.classList.toggle("on", c === b));
+        }
+        arm();
+      });
+      opts.appendChild(b);
+    });
+    box.appendChild(opts);
+    other.type = "text";
+    other.placeholder = q.multi
+      ? "Anything else? (optional)" : "Or type your own answer…";
+    other.addEventListener("input", () => {
+      const p = picks[i];
+      p.other = other.value;
+      if (!q.multi && other.value.trim()) {
+        p.chosen.clear();
+        [...opts.children].forEach((c) => c.classList.remove("on"));
+      }
+      arm();
+    });
+    box.appendChild(other);
+    card.appendChild(box);
+  });
+
+  send.addEventListener("click", () => {
+    const answers = {};
+    qs.forEach((q, i) => {
+      const p = picks[i];
+      const parts = [...p.chosen];
+      const typed = p.other.trim();
+      if (typed) parts.push(typed);
+      answers[q.question] = parts.join(", ");
+    });
+    chatPermissionPost({ id: ev.id, allow: true, answers }, [send, skip], arm);
+  });
+  skip.addEventListener("click", () =>
+    chatPermissionPost({ id: ev.id, allow: false }, [send, skip], arm));
+  row.append(send, skip);
+  card.appendChild(row);
+  return card;
 }
 
 function chatPermissionDone(ev) {
@@ -3519,8 +3635,11 @@ function chatPermissionDone(ev) {
   if (!card || (ev.id && card.dataset.id !== ev.id)) return;
   const row = card.querySelector(".permrow");
   if (row) {
+    const q = card.dataset.kind === "question";
     row.replaceWith(el("div", "permnote",
-      ev.answered ? (ev.allow ? "Allowed" : "Not allowed") : "Withdrawn"));
+      ev.answered ? (ev.allow ? (q ? "Answered" : "Allowed")
+                              : (q ? "Skipped" : "Not allowed"))
+                  : "Withdrawn"));
   }
   chatState.permCard = null;
 }
@@ -3613,7 +3732,7 @@ function chatRender(ev) {
       break;
     case "permission":
       chatPermission(ev);
-      chatStatus("Waiting for your approval");
+      chatStatus(chatStatusForPermission(ev));
       break;
     case "permission_done":
       chatPermissionDone(ev);
@@ -3782,7 +3901,7 @@ function chatConnect() {
         // A reload mid-question: the turn is still blocked on this card,
         // so it has to come back with the transcript it interrupted.
         chatPermission(ev.permission);
-        chatStatus("Waiting for your approval");
+        chatStatus(chatStatusForPermission(ev.permission));
       }
       chatState.ready = true;
       chatScroll(true);
@@ -4112,6 +4231,87 @@ function convQuery() {
   return `api/chat/conversations?source=${encodeURIComponent(convFilter.source)}`;
 }
 
+// Selection mode: several rows in one press instead of one ✕ each. One
+// mode across both surfaces — the rail and the ⋯ dialog show the same
+// list, and a selection that vanished when you opened the other view would
+// read as a different feature in each place.
+const convSel = { on: false, ids: new Set() };
+
+function convSelToggle(on) {
+  convSel.on = on === undefined ? !convSel.on : !!on;
+  if (!convSel.on) convSel.ids.clear();
+  renderChatRail();
+  renderConvModal();
+}
+
+function convSelFlip(id) {
+  if (convSel.ids.has(id)) convSel.ids.delete(id);
+  else convSel.ids.add(id);
+}
+
+// A row can be selected unless it is the open conversation — the server
+// refuses to delete that one, and offering a checkbox that always answers
+// "skipped" teaches nothing.
+function convSelectable(rows) {
+  return rows.filter((c) =>
+    !(chatState.sessionId && c.id === chatState.sessionId));
+}
+
+// The bar above a list in selection mode: the count, Select all, and the
+// one destructive verb. Rebuilt with the list it belongs to; every press
+// repaints from what is already fetched, never a request.
+function convSelBar(rows) {
+  const bar = el("div", "cselbar");
+  const selectable = convSelectable(rows);
+  const n = convSel.ids.size;
+  bar.appendChild(el("span", "cselcount",
+    n ? `${n} selected` : "Select conversations"));
+  const all = el("button", "btn small",
+    selectable.length && selectable.every((c) => convSel.ids.has(c.id))
+      ? "Select none" : "Select all");
+  all.type = "button";
+  all.addEventListener("click", () => {
+    const everything = selectable.length
+      && selectable.every((c) => convSel.ids.has(c.id));
+    if (everything) convSel.ids.clear();
+    else selectable.forEach((c) => convSel.ids.add(c.id));
+    renderChatRail();
+    renderConvModal();
+  });
+  const del = el("button", "btn small primary", "Delete");
+  del.type = "button";
+  del.disabled = !n;
+  del.addEventListener("click", () => deleteSelectedConvs(del));
+  const cancel = el("button", "btn small", "Cancel");
+  cancel.type = "button";
+  cancel.addEventListener("click", () => convSelToggle(false));
+  bar.append(all, del, cancel);
+  return bar;
+}
+
+async function deleteSelectedConvs(btn) {
+  const ids = [...convSel.ids];
+  if (!ids.length) return;
+  btn.disabled = true;
+  try {
+    const out = await api("api/chat/conversations/delete",
+      { method: "POST", body: JSON.stringify({ ids }) });
+    const n = (out.deleted || []).length;
+    const skipped = (out.skipped || []).length;
+    convSelToggle(false);
+    toast(`${n} conversation${n === 1 ? "" : "s"} deleted`
+      + (skipped ? ` — ${skipped} skipped` : ""), out.undo);
+    refreshConversationLists();
+  } catch (e) {
+    btn.disabled = false;
+    toast(e.message);
+  }
+}
+
+// What the ⋯ dialog is currently showing, kept so selection presses can
+// repaint without refetching the list out from under the checkboxes.
+let convModalRows = [];
+
 async function openConversations() {
   openBox("#convModal");
   const list = $("#convList");
@@ -4127,18 +4327,42 @@ async function openConversations() {
   convFilter.options = data.sources || [];
   renderConvFilter($("#convFilter"), () => {});
   $("#convCwd").textContent = (chatState.info && chatState.info.cwd) || "/config";
-  const rows = data.conversations || [];
+  convModalRows = data.conversations || [];
+  renderConvModal();
+}
+
+function renderConvModal() {
+  if (!$("#convModal").classList.contains("open")) return;
+  const list = $("#convList");
+  list.innerHTML = "";
+  const rows = convModalRows;
   $("#convEmpty").classList.toggle("hidden", rows.length > 0);
+  if (convSel.on && rows.length) list.appendChild(convSelBar(rows));
   rows.forEach((c) => {
+    const here = !!chatState.sessionId && c.id === chatState.sessionId;
     const row = el("div", "crrow");
     const btn = el("button", "convitem");
+    if (convSel.on && !here) {
+      btn.classList.add("hascheck");
+      btn.classList.toggle("sel", convSel.ids.has(c.id));
+      btn.appendChild(el("span",
+        "crcheck" + (convSel.ids.has(c.id) ? " on" : "")));
+    }
     btn.appendChild(el("span", "ctitle", c.title));
     const chip = sourceChip(c);
     if (chip) btn.appendChild(chip);
     btn.appendChild(el("span", "cwhen", c.age));
-    btn.addEventListener("click", () => resumeConversation(c));
+    if (convSel.on) {
+      if (here) btn.classList.add("inert");
+      else btn.addEventListener("click", () => {
+        convSelFlip(c.id);
+        renderConvModal();
+      });
+    } else {
+      btn.addEventListener("click", () => resumeConversation(c));
+    }
     row.appendChild(btn);
-    row.appendChild(deleteConvButton(c));
+    if (!convSel.on) row.appendChild(deleteConvButton(c));
     list.appendChild(row);
   });
 }
@@ -4209,12 +4433,19 @@ function renderChatRail() {
       ? "No past chats yet." : "Nothing here yet."));
     return;
   }
+  if (convSel.on) list.appendChild(convSelBar(chatState.convs));
   chatState.convs.forEach((c) => {
     // The one you are in is marked rather than hidden: a list that silently
     // omits the current item makes you wonder where it went.
     const here = !!chatState.sessionId && c.id === chatState.sessionId;
     const row = el("div", "crrow");
     const btn = el("button", "critem" + (here ? " active" : ""));
+    if (convSel.on && !here) {
+      btn.classList.add("hascheck");
+      btn.classList.toggle("sel", convSel.ids.has(c.id));
+      btn.appendChild(el("span",
+        "crcheck" + (convSel.ids.has(c.id) ? " on" : "")));
+    }
     btn.appendChild(el("span", "ctitle", c.title));
     const foot = el("div", "crfoot");
     const chip = sourceChip(c);
@@ -4222,16 +4453,26 @@ function renderChatRail() {
     foot.appendChild(el("span", "cwhen", c.age));
     btn.appendChild(foot);
     if (here) btn.setAttribute("aria-current", "true");
-    else btn.addEventListener("click", () => resumeConversation(c));
+    if (convSel.on) {
+      if (here) btn.classList.add("inert");
+      else btn.addEventListener("click", () => {
+        convSelFlip(c.id);
+        renderChatRail();
+      });
+    } else if (!here) {
+      btn.addEventListener("click", () => resumeConversation(c));
+    }
     row.appendChild(btn);
     // Not on the open one — the server refuses it anyway ("start a new
     // chat first"), and a control that only ever answers no is clutter.
-    if (!here) row.appendChild(deleteConvButton(c));
+    if (!here && !convSel.on) row.appendChild(deleteConvButton(c));
     list.appendChild(row);
   });
 }
 
 $("#chatRailNew").addEventListener("click", () => $("#chatNew").click());
+$("#chatRailSel").addEventListener("click", () => convSelToggle());
+$("#convSel").addEventListener("click", () => convSelToggle());
 
 async function resumeConversation(conv) {
   closeBox("#convModal");

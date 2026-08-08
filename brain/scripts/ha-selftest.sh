@@ -59,6 +59,25 @@ else
     fail "HA REST API not reachable (${HA_BASE_URL}/ → HTTP ${api_code:-none})"
 fi
 
+# Disk. A full /data fails in strange, distant ways — a transcript that
+# stops persisting, a memory pass that exits 0 having written nothing — so
+# it is named here, where the connection to the symptom is still visible.
+for mount in /data /config; do
+    used=$(df -P "$mount" 2>/dev/null | awk 'NR==2 {gsub("%","",$5); print $5}')
+    case "$used" in
+        ''|*[!0-9]*) warn "could not read disk usage for $mount" ;;
+        *)
+            if [ "$used" -ge 95 ]; then
+                fail "$mount is ${used}% full — writes are about to start failing silently"
+            elif [ "$used" -ge 85 ]; then
+                warn "$mount is ${used}% full"
+            else
+                pass "$mount has room (${used}% used)"
+            fi
+            ;;
+    esac
+done
+
 # --- 2. MCP config & permissions -------------------------------------------
 hdr "MCP config & tool permissions"
 if [ -f "$MCP_CONFIG" ]; then
@@ -178,6 +197,20 @@ else
     fail "missing binaries:${missing_bins} — ha-* commands will break mid-pipeline"
 fi
 
+# The Claude CLI itself. Everything above can be green while the one binary
+# the add-on exists to run is missing or broken — a bad self-update is
+# exactly the strange bug this test is for.
+if command -v claude >/dev/null 2>&1; then
+    cli_ver=$(claude --version 2>&1 | head -1)
+    if [ -n "$cli_ver" ]; then
+        pass "Claude CLI runs ($cli_ver)"
+    else
+        fail "Claude CLI is installed but 'claude --version' said nothing"
+    fi
+else
+    fail "Claude CLI not found — the terminal, chat, insights and listeners all need it"
+fi
+
 smoke() {
     local desc="$1"; shift
     if ! command -v "$1" >/dev/null 2>&1; then
@@ -206,6 +239,63 @@ smoke_yaml="$smoke_dir/smoke.yaml"
 printf 'homeassistant:\n  name: !secret home_name\nautomation: !include automations.yaml\n' > "$smoke_yaml"
 smoke "ha check (HA tags)"      ha check "$smoke_yaml"
 rm -rf "$smoke_dir"
+
+# --- 3b. panel, chat & terminal ---------------------------------------------
+# The panel is the ingress target — if it is down the add-on has no face at
+# all — and the chat's state endpoint carries the error text of a session
+# that failed to spawn, which is otherwise only in the add-on log.
+hdr "Panel, chat & terminal"
+panel_code=$(curl -s -m 5 -o /dev/null -w '%{http_code}' \
+    "http://127.0.0.1:8099/api/health" 2>/dev/null)
+if [ "$panel_code" = "200" ]; then
+    pass "Panel answering (:8099/api/health)"
+else
+    fail "Panel not answering (:8099/api/health → HTTP ${panel_code:-none}) — check the add-on log"
+fi
+
+chat_state=$(curl -s -m 5 "http://127.0.0.1:8099/api/chat/state" 2>/dev/null)
+if [ -n "$chat_state" ]; then
+    cstate=$(echo "$chat_state" | jq -r '.state // empty' 2>/dev/null)
+    cerror=$(echo "$chat_state" | jq -r '.error // empty' 2>/dev/null)
+    case "$cstate" in
+        error)
+            fail "Chat session in error state"
+            info "   ↳ ${cerror:-no detail recorded}"
+            ;;
+        idle|ready|busy|starting)
+            pass "Chat session state: ${cstate}"
+            ;;
+        "")
+            fail "Chat state endpoint answered without a state: $(echo "$chat_state" | head -c 120)"
+            ;;
+        *)
+            warn "Chat session in unexpected state '${cstate}'"
+            ;;
+    esac
+else
+    warn "Chat state endpoint not answering (panel down, or still starting)"
+fi
+
+# The terminal's credential gate. ttyd on 7681 must ask for a password —
+# an unauthenticated 200 means a root shell with /config and a signed-in
+# Claude is answering the LAN, which is the exact exposure the generated
+# credential exists to close.
+ttyd_code=$(curl -s -m 5 -o /dev/null -w '%{http_code}' \
+    "http://127.0.0.1:7681/" 2>/dev/null)
+case "$ttyd_code" in
+    401)
+        pass "Terminal credential gate on (:7681 asks for a password)"
+        ;;
+    200)
+        fail "Terminal on :7681 answers WITHOUT a password — restart the add-on; report this if it persists"
+        ;;
+    ''|000)
+        info "Terminal not answering on :7681 (enable_terminal off, or ttyd starting)"
+        ;;
+    *)
+        warn "Terminal on :7681 answered HTTP ${ttyd_code} (expected 401)"
+        ;;
+esac
 
 # --- 4. custom integration --------------------------------------------------
 hdr "Home Assistant custom integration"
@@ -239,6 +329,61 @@ if running automation-listener; then
     pass "automation-listener running"
 else
     warn "automation-listener not running (disabled in config, or check the add-on log)"
+fi
+# The three daemons run.sh always starts. Unlike the listeners these have
+# no config switch, so one missing is a crash, not a choice.
+if running usage-limits-tracker; then
+    pass "usage-limits tracker running"
+else
+    warn "usage-limits tracker not running — the usage sensors will go stale"
+fi
+if running brain-memory-consolidate; then
+    pass "memory consolidator running"
+else
+    warn "memory consolidator not running — queued facts will never reach memory.md"
+fi
+if running brain-study-watcher; then
+    pass "study watcher running"
+else
+    warn "study watcher not running — 'brain learn' requests will sit unprocessed"
+fi
+
+# --- 5c. memory & run-source plumbing ---------------------------------------
+hdr "Memory & run-source plumbing"
+# Written by root (the panel) AND the claude user (consolidator, study
+# watcher) — so it must be claude-owned, or the claude half fails silently
+# by design and the Chats rail slowly fills with machine runs labelled as
+# yours. This is the exact failure that went unnoticed once already.
+RUN_SOURCES=/data/run-sources.jsonl
+if [ -e "$RUN_SOURCES" ]; then
+    rs_owner=$(stat -c %u "$RUN_SOURCES" 2>/dev/null)
+    if [ "$rs_owner" = "1000" ]; then
+        pass "run-sources ledger claude-owned ($RUN_SOURCES)"
+    else
+        fail "run-sources ledger owned by uid ${rs_owner:-?}, not claude (1000) — background runs will show as yours in the Chats rail"
+        info "Fix: chown claude:claude $RUN_SOURCES (run.sh does this at startup)"
+    fi
+else
+    info "run-sources ledger not created yet (first background run makes it)"
+fi
+# A consolidation pass holds a lock; one that has outlived any plausible
+# pass (the Claude timeout is 480s) is a crashed pass still blocking the
+# queue — every later pass exits 75 and the Memory tab's button "does
+# nothing" with no error anywhere.
+CONSOLIDATE_LOCK=/config/.brain/memory/.consolidate.lock
+if [ -e "$CONSOLIDATE_LOCK" ]; then
+    lock_age=$(( $(date +%s) - $(stat -c %Y "$CONSOLIDATE_LOCK" 2>/dev/null || date +%s) ))
+    if [ "$lock_age" -gt 900 ]; then
+        warn "consolidator lock is ${lock_age}s old (a pass caps at ~480s) — if 'File into memory now' does nothing, restart the add-on and report this"
+    else
+        info "consolidator lock present (${lock_age}s old — a pass may be running)"
+    fi
+fi
+MEMORY_DOC=/config/.brain/memory/memory.md
+if [ -s "$MEMORY_DOC" ]; then
+    pass "memory.md present ($(wc -c < "$MEMORY_DOC") bytes)"
+else
+    info "memory.md not written yet (facts appear after the first consolidation)"
 fi
 
 # --- 5a. assist API (fast mode) ----------------------------------------------
@@ -338,12 +483,22 @@ if [ -f "$USAGE_FILE" ]; then
         warn "Usage sensors need a subscription login — an API key bills per token and has no usage window"
     elif [ -n "$uerr" ]; then
         warn "Usage sensors unavailable: ${uerr}"
+        udetail=$(jq -r '.detail // empty' "$USAGE_FILE" 2>/dev/null)
+        [ -n "$udetail" ] && info "   ↳ $udetail"
     else
         sess=$(jq -r '.five_hour.utilization // "?"' "$USAGE_FILE" 2>/dev/null)
-        pass "Usage limits fetched (session ${sess}%)"
+        # Readings expire after two hours (usage_store applies the same
+        # window), so a stale file means the sensors are about to blank —
+        # the tracker died, or every poll is failing quietly.
+        usage_age=$(( $(date +%s) - $(stat -c %Y "$USAGE_FILE" 2>/dev/null || date +%s) ))
+        if [ "$usage_age" -gt 7200 ]; then
+            warn "Usage reading is ${usage_age}s old (expires at 7200s) — the tracker may have died; check the add-on log"
+        else
+            pass "Usage limits fetched (session ${sess}%, ${usage_age}s old)"
+        fi
     fi
 else
-    info "Usage limits not fetched yet (tracker polls every ~2 min after login)"
+    info "Usage limits not fetched yet (the tracker polls every 30 min after login)"
 fi
 
 # --- summary ----------------------------------------------------------------
