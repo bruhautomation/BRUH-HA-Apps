@@ -16,6 +16,15 @@ RED='\033[0;31m'
 DIM='\033[2m'
 NC='\033[0m'
 
+# Background invocations lose the environment run.sh set up. Sourced above
+# every `${BRAIN_*:-default}` below: an option copied into a local name before
+# the source keeps its fallback for good, because the value arrives afterwards
+# under its own name and the alias is never re-read.
+if [ -r /data/.brain_env ]; then
+    # shellcheck disable=SC1091
+    . /data/.brain_env
+fi
+
 MEMORY_DIR="${BRAIN_MEMORY_DIR:-/config/.brain/memory}"
 MEMORY_FILE="$MEMORY_DIR/memory.md"
 # A real question about the home often needs live state, then history, then
@@ -26,12 +35,6 @@ MAX_TURNS="${BRAIN_ASK_MAX_TURNS:-30}"
 TIMEOUT="${BRAIN_ASK_TIMEOUT:-420}"
 MODEL="${BRAIN_ASK_MODEL:-${BRAIN_MODEL:-}}"
 MEMORY_BUDGET=4000
-
-# Background invocations lose the environment run.sh set up.
-if [ -r /data/.brain_env ]; then
-    # shellcheck disable=SC1091
-    . /data/.brain_env
-fi
 
 usage() {
     cat << 'EOF'

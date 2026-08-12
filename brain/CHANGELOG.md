@@ -2,6 +2,34 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.25.2
+
+### Fixed
+
+- **"Automation thinking limit" and "Voice thinking limit" did nothing.**
+  Whatever you set them to, automation tasks ran at 10 turns and voice ran
+  at 5 — the values the add-on falls back on when it can't read your
+  settings at all. The settings were saved correctly and written where the
+  listeners could find them; the listeners just read the number a moment
+  before that file was loaded, so they kept the fallback and never looked
+  again. The only visible sign was the `MaxTurns:` line in the automation
+  log, which reported the number actually used, not the one you chose.
+
+  This is why an agentic task — anything that searches the web, reads
+  several entities, then writes something — would stop early and answer
+  with whatever it had. Ten turns is tight for that kind of work, and
+  `automation_max_turns` now genuinely ships at 30.
+
+  Study sessions (`/learn` run from the terminal rather than on a
+  schedule) had the same fault, so `study_max_turns` and
+  `study_timeout_minutes` were ignored on that path.
+
+- **The fallbacks disagreed with the documented defaults.** If the add-on
+  ever can't read its saved environment, the listeners now fall back to
+  the same numbers `config.yaml` ships (30 and 8) rather than to older,
+  lower ones — one answer per setting instead of a second one that only
+  appears when nothing is watching.
+
 ## 1.25.1
 
 ### Fixed

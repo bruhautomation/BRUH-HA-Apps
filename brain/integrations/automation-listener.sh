@@ -24,6 +24,23 @@
 
 set -e
 
+# Source the Claude environment written by run.sh — FIRST, before anything
+# below copies a BRAIN_* option into a local name. The `with-contenv` shebang
+# reloads the s6 container environment and drops the exports run.sh made, so
+# this file is the only route an add-on option has into a listener.
+#
+# Order is load-bearing. A `${BRAIN_x:-default}` that runs before the source
+# freezes the fallback: the value arrives afterwards under its own name, but
+# the local alias already holds the default and nothing reads it again. That
+# is not a variable that is missing, it is a variable that is late — which is
+# why it went unnoticed for so long. `automation_max_turns` was pinned to 10
+# for everyone, whatever the option said, and the only visible trace was the
+# `MaxTurns:` line in the task log.
+if [ -r /data/.brain_env ]; then
+    # shellcheck disable=SC1091
+    source /data/.brain_env
+fi
+
 SUPERVISOR_TOKEN="${SUPERVISOR_TOKEN:-}"
 SHARED_DIR="/config/.brain"
 TASKS_DIR="$SHARED_DIR/tasks"
@@ -32,8 +49,11 @@ LOG_DIR="$SHARED_DIR/logs"
 
 # Automation tasks may need more turns than conversation requests (e.g.
 # multi-step config edits), so allow a higher limit than the assist listener.
-# Configurable via the add-on's automation_max_turns option.
-MAX_TURNS="${BRAIN_AUTOMATION_MAX_TURNS:-10}"
+# Configurable via the add-on's automation_max_turns option; the fallback
+# matches that option's default in config.yaml on purpose. A fallback that
+# disagrees with the shipped default is a second answer to one question, and
+# the one that wins is the one nobody configured.
+MAX_TURNS="${BRAIN_AUTOMATION_MAX_TURNS:-30}"
 
 # Default process-level timeout for claude -p commands (seconds), used when a
 # task doesn't carry its own timeout. The integration's task default (300s)
@@ -45,14 +65,6 @@ CLAUDE_TIMEOUT="${BRAIN_AUTOMATION_TIMEOUT:-300}"
 TIMEOUT_MARGIN=15
 
 mkdir -p "$TASKS_DIR" "$RESULTS_DIR" "$LOG_DIR"
-
-# Source the Claude environment written by run.sh
-# This ensures HOME, ANTHROPIC_CONFIG_DIR, etc. are set correctly
-# even when with-contenv shebang reloads the s6 container environment.
-if [ -r /data/.brain_env ]; then
-    # shellcheck disable=SC1091
-    source /data/.brain_env
-fi
 
 # Lets a task's transcript be labelled "Automation" in the Chats rail
 # instead of sitting there looking like something you typed. Optional: an
