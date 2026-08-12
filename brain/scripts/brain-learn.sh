@@ -31,6 +31,18 @@ CYAN='\033[0;36m'
 DIM='\033[2m'
 NC='\033[0m'
 
+# Background invocations lose the environment run.sh set up. Sourced here,
+# above every `${BRAIN_*:-default}` below, because an option read into a local
+# name before the source keeps the fallback for the life of the process — the
+# value lands afterwards and nothing looks at it again. Study sessions reach
+# this script two ways (the watcher, which exports these already, and a direct
+# `/learn` from the terminal, which does not), so only one of the two routes
+# ever honoured study_max_turns / study_timeout_minutes.
+if [ -r /data/.brain_env ]; then
+    # shellcheck disable=SC1091
+    . /data/.brain_env
+fi
+
 MEMORY_DIR="${BRAIN_MEMORY_DIR:-/config/.brain/memory}"
 INBOX_DIR="$MEMORY_DIR/inbox"
 HYPOTHESES_FILE="$MEMORY_DIR/hypotheses.jsonl"
@@ -55,11 +67,6 @@ MEMORY_BUDGET=4000
 # The hypothesis queue is deliberately tiny: a long list of open questions
 # is what made the old design unusable.
 MAX_OPEN_HYPOTHESES="${BRAIN_MAX_HYPOTHESES:-3}"
-
-if [ -r /data/.brain_env ]; then
-    # shellcheck disable=SC1091
-    . /data/.brain_env
-fi
 
 # topic-id|Human label|what to actually look at
 CURRICULUM=(

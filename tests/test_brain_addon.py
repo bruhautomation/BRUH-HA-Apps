@@ -1756,5 +1756,100 @@ class TestBackupNotice(unittest.TestCase):
         self.assertNotIn("--critical", block)
 
 
+class TestBrainEnvIsSourcedBeforeItIsRead(unittest.TestCase):
+    """`/data/.brain_env` is the only route an add-on option has into a
+    background process — the `with-contenv` shebang reloads the s6 container
+    environment and drops whatever run.sh exported. Sourcing it works; sourcing
+    it *late* does not, and the difference is invisible.
+
+    A `MAX_TURNS="${BRAIN_AUTOMATION_MAX_TURNS:-10}"` above the source keeps 10
+    forever: the real value lands a few lines later under its own name, and the
+    local alias is never read again. Nothing errors, nothing logs, and the only
+    trace is the number in the task log. `automation_max_turns` was pinned to
+    10 and `assist_max_turns` to 5 for every install this way.
+    """
+
+    # Everything that sources the env file. run.sh is excluded: it *writes*
+    # the file, and its own reads come after.
+    SOURCERS = [
+        ADDON_DIR / "integrations" / "automation-listener.sh",
+        ADDON_DIR / "integrations" / "assist-listener.sh",
+        SCRIPTS / "brain-ask.sh",
+        SCRIPTS / "brain-learn.sh",
+        SCRIPTS / "brain-memory-consolidate.sh",
+        SCRIPTS / "brain-study-watcher.sh",
+        SCRIPTS / "brain-menu.sh",
+        SCRIPTS / "ha-selftest.sh",
+    ]
+
+    @staticmethod
+    def _code_lines(path):
+        """Line-numbered source with whole-line comments dropped — several of
+        these files discuss BRAIN_* variables in prose above the code."""
+        return [
+            (n, line) for n, line in enumerate(path.read_text().splitlines(), 1)
+            if not line.strip().startswith("#")
+        ]
+
+    def test_every_sourcer_sources_before_its_first_option_read(self):
+        for path in self.SOURCERS:
+            with self.subTest(script=path.name):
+                lines = self._code_lines(path)
+                sourced = [n for n, line in lines
+                           if "/data/.brain_env" in line and
+                           (line.strip().startswith(". ") or "source " in line)]
+                self.assertTrue(sourced, f"{path.name} no longer sources the env file")
+
+                read = [n for n, line in lines if "${BRAIN_" in line and ":-" in line]
+                if not read:
+                    continue
+                self.assertLess(
+                    min(sourced), min(read),
+                    f"{path.name} reads a BRAIN_* option at line {min(read)} but "
+                    f"sources /data/.brain_env at line {min(sourced)} — the option "
+                    f"is frozen at its fallback and the add-on setting is ignored",
+                )
+
+    def test_the_ordering_actually_decides_the_value(self):
+        """The bug, reproduced in a shell, so the guard above is measured
+        against a demonstrated failure rather than a described one."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            env = Path(tmp) / "brain_env"
+            env.write_text('export BRAIN_AUTOMATION_MAX_TURNS="30"\n')
+
+            def run(script):
+                return subprocess.run(
+                    ["bash", "-c", script], capture_output=True, text=True,
+                ).stdout.strip()
+
+            late = run(f'MAX_TURNS="${{BRAIN_AUTOMATION_MAX_TURNS:-10}}"; '
+                       f'. "{env}"; echo "$MAX_TURNS"')
+            early = run(f'. "{env}"; '
+                        f'MAX_TURNS="${{BRAIN_AUTOMATION_MAX_TURNS:-10}}"; '
+                        f'echo "$MAX_TURNS"')
+
+            self.assertEqual(late, "10", "the old ordering should ignore the option")
+            self.assertEqual(early, "30", "the fixed ordering should honour it")
+
+    def test_fallbacks_agree_with_the_shipped_defaults(self):
+        """A fallback that disagrees with config.yaml is a second answer to one
+        question, and it wins exactly when nobody is looking — an unreadable
+        env file. Same failure as the ordering bug, one layer down."""
+        options = yaml.safe_load((ADDON_DIR / "config.yaml").read_text())["options"]
+        for path, var, option in (
+            (ADDON_DIR / "integrations" / "automation-listener.sh",
+             "BRAIN_AUTOMATION_MAX_TURNS", "automation_max_turns"),
+            (ADDON_DIR / "integrations" / "assist-listener.sh",
+             "BRAIN_ASSIST_MAX_TURNS", "assist_max_turns"),
+        ):
+            with self.subTest(option=option):
+                self.assertIn(
+                    f'"${{{var}:-{options[option]}}}"', path.read_text(),
+                    f"{path.name}'s fallback for {var} disagrees with "
+                    f"config.yaml's {option}: {options[option]}",
+                )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -36,6 +36,20 @@
 
 set -e
 
+# Source the Claude environment written by run.sh — FIRST, before anything
+# below copies a BRAIN_* option into a local name. The `with-contenv` shebang
+# reloads the s6 container environment and drops the exports run.sh made, so
+# this file is the only route an add-on option has into a listener.
+#
+# Order is load-bearing: see the same block in automation-listener.sh. A
+# `${BRAIN_x:-default}` above the source keeps the fallback forever, because
+# the value arrives afterwards under its own name and the alias is never read
+# again — which pinned assist_max_turns to 5 whatever the option said.
+if [ -r /data/.brain_env ]; then
+    # shellcheck disable=SC1091
+    source /data/.brain_env
+fi
+
 SUPERVISOR_TOKEN="${SUPERVISOR_TOKEN:-}"
 SHARED_DIR="/config/.brain"
 REQUESTS_DIR="$SHARED_DIR/requests"
@@ -56,9 +70,11 @@ AREA_MAP_TTL=300        # seconds before a background refresh is triggered
 AREA_MAP_MAX_BYTES=16000
 
 # Maximum number of agentic turns per request.
-# Configurable via the add-on's assist_max_turns option.
-# Default 5: enough for entity lookup + service call + follow-up + response.
-MAX_TURNS="${BRAIN_ASSIST_MAX_TURNS:-5}"
+# Configurable via the add-on's assist_max_turns option; the fallback matches
+# that option's default in config.yaml, so there is one answer per setting
+# rather than a second one that only shows up when /data/.brain_env is
+# unreadable. Enough for entity lookup + service call + follow-up + response.
+MAX_TURNS="${BRAIN_ASSIST_MAX_TURNS:-8}"
 
 # Default process-level timeout for claude -p commands (seconds), used when a
 # request doesn't carry its own timeout. Must be shorter than the
@@ -71,14 +87,6 @@ CLAUDE_TIMEOUT="${BRAIN_ASSIST_TIMEOUT:-105}"
 TIMEOUT_MARGIN=15
 
 mkdir -p "$REQUESTS_DIR" "$RESPONSES_DIR" "$SESSIONS_DIR" "$CACHE_DIR" "$LOG_DIR"
-
-# Source the Claude environment written by run.sh
-# This ensures HOME, ANTHROPIC_CONFIG_DIR, etc. are set correctly
-# even when with-contenv shebang reloads the s6 container environment.
-if [ -r /data/.brain_env ]; then
-    # shellcheck disable=SC1091
-    source /data/.brain_env
-fi
 
 # Voice already mints its own session ids (that is how a follow-up turn
 # resumes the same conversation), so labelling one costs a single call.
