@@ -425,6 +425,10 @@ class ChatSession:
                     q.get_nowait()
                     q.put_nowait({"event": "__overflow__"})
                 except (asyncio.QueueEmpty, asyncio.QueueFull):
+                    # Raced by the consumer waking up: either it drained the
+                    # queue (Empty) or refilled it (Full). Both mean it is
+                    # alive after all — no pill needed; unsubscribing was
+                    # already done and the stream ends on its own.
                     pass
         return event
 
