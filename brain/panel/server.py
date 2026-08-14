@@ -3138,6 +3138,9 @@ def _daemon_rollcall() -> dict:
                  - (MEMORY_DIR / ".last_consolidated").stat().st_mtime) / 3600
         out["memory_consolidator"]["last_pass_hours_ago"] = round(age_h, 1)
     except OSError:
+        # No marker file means no pass has ever landed — a real state on a
+        # fresh install, reported by the field's absence rather than a fake
+        # number.
         pass
     return out
 
