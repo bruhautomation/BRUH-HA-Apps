@@ -538,5 +538,134 @@ class TestRateLimitBackoff(unittest.TestCase):
         self.assertIn("not your", detail.lower())
 
 
+class TestFailureRecord(unittest.TestCase):
+    """A failed poll that leaves a fresh reading alone must still leave the
+    *reason* beside it. The bug these exist for: a 429's backoff waits are
+    longer than the two-hour staleness window on purpose, so during a wall
+    the reading always ages out and four sensors go unavailable — and the
+    why was only written on the poll *after* that, hours later. In between,
+    the diagnostic sensor said `stale` and nothing else, which is exactly
+    "keeps going unavailable for reasons I do not understand"."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.mod = load_tracker({})
+        self.mod.USAGE_FILE = os.path.join(self.tmp.name, "usage_limits.json")
+
+    def _write(self, payload):
+        with open(self.mod.USAGE_FILE, "w") as fh:
+            json.dump(payload, fh)
+
+    def _read(self):
+        with open(self.mod.USAGE_FILE) as fh:
+            return json.load(fh)
+
+    def _fresh_reading(self):
+        return {"updated_at": datetime.now(timezone.utc).isoformat(),
+                "five_hour": {"utilization": 12},
+                "seven_day": {"utilization": 34}}
+
+    def test_the_reason_rides_beside_untouched_numbers(self):
+        reading = self._fresh_reading()
+        self._write(reading)
+        self.mod._record_failure("http_429", 3600, strikes=1)
+        data = self._read()
+        self.assertEqual(data["five_hour"], reading["five_hour"])
+        self.assertEqual(data["updated_at"], reading["updated_at"])
+        self.assertEqual(data["last_error"], "http_429")
+        self.assertEqual(data["rate_limit_strikes"], 1)
+        self.assertIn("next_attempt_at", data)
+        self.assertIn("not your", data["last_error_detail"].lower())
+
+    def test_a_recorded_failure_does_not_blank_the_reading(self):
+        """The annotation must not look like an error status to any reader
+        of this file — the sensors and the panel both key on `error`."""
+        self._write(self._fresh_reading())
+        self.mod._record_failure("http_429", 3600, strikes=1)
+        self.assertTrue(self.mod._last_reading_is_fresh())
+        self.assertNotIn("error", self._read())
+
+    def test_a_successful_poll_clears_the_record(self):
+        self._write(self._fresh_reading())
+        self.mod._record_failure("http_429", 3600, strikes=2)
+        self.mod.write_usage({"five_hour": {"utilization": 15}})
+        data = self._read()
+        self.assertNotIn("last_error", data)
+        self.assertNotIn("next_attempt_at", data)
+        self.assertNotIn("rate_limit_strikes", data)
+
+    def test_a_failure_with_no_gloss_carries_no_stale_one(self):
+        self._write(self._fresh_reading())
+        self.mod._record_failure("http_429", 3600, strikes=1)
+        self.mod._record_failure("network_error", 1800)
+        data = self._read()
+        self.assertEqual(data["last_error"], "network_error")
+        self.assertNotIn("last_error_detail", data)
+        self.assertNotIn("rate_limit_strikes", data)
+
+
+class TestBackoffSurvivesRestart(unittest.TestCase):
+    """Backoff lived only in memory, so restarting the add-on — the first
+    thing anyone does when sensors go unavailable — polled immediately and
+    restarted the ladder from its first rung: retrying straight back into
+    the daily meter that caused the outage being investigated."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.mod = load_tracker({})
+        self.mod.USAGE_FILE = os.path.join(self.tmp.name, "usage_limits.json")
+
+    def _write(self, payload):
+        with open(self.mod.USAGE_FILE, "w") as fh:
+            json.dump(payload, fh)
+
+    def _in(self, seconds):
+        return (datetime.now(timezone.utc)
+                + timedelta(seconds=seconds)).isoformat()
+
+    def test_a_promised_quiet_is_honoured_across_a_restart(self):
+        self._write({"updated_at": self._in(-600),
+                     "five_hour": {"utilization": 12},
+                     "last_error": "http_429",
+                     "next_attempt_at": self._in(3000),
+                     "rate_limit_strikes": 2})
+        wait, strikes = self.mod._resume_backoff()
+        self.assertGreater(wait, 2900)
+        self.assertEqual(strikes, 2)
+
+    def test_an_expired_backoff_owes_nothing(self):
+        self._write({"last_error": "http_429",
+                     "next_attempt_at": self._in(-5)})
+        self.assertEqual(self.mod._resume_backoff(), (0.0, 0))
+
+    def test_only_a_rate_limit_is_resumed(self):
+        self._write({"last_error": "network_error",
+                     "next_attempt_at": self._in(3000)})
+        self.assertEqual(self.mod._resume_backoff(), (0.0, 0))
+
+    def test_an_error_status_file_resumes_too(self):
+        """Once the reading has aged out the file is the error-status shape
+        (`error`, not `last_error`) — a restart mid-wall usually finds it."""
+        self._write({"error": "http_429",
+                     "next_attempt_at": self._in(3000)})
+        wait, strikes = self.mod._resume_backoff()
+        self.assertGreater(wait, 2900)
+        self.assertEqual(strikes, 1)
+
+    def test_an_absurd_promise_is_capped(self):
+        self._write({"last_error": "http_429",
+                     "next_attempt_at": self._in(10 ** 8)})
+        wait, _ = self.mod._resume_backoff()
+        self.assertEqual(wait, self.mod.RETRY_AFTER_MAX_S)
+
+    def test_a_missing_or_broken_file_owes_nothing(self):
+        self.assertEqual(self.mod._resume_backoff(), (0.0, 0))
+        with open(self.mod.USAGE_FILE, "w") as fh:
+            fh.write("{nope")
+        self.assertEqual(self.mod._resume_backoff(), (0.0, 0))
+
+
 if __name__ == "__main__":
     unittest.main()

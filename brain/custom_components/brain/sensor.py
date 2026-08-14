@@ -43,10 +43,13 @@ SCAN_INTERVAL = timedelta(seconds=30)
 USAGE_LIMITS_FILENAME = "usage_limits.json"
 
 # A reading the tracker stopped refreshing is not a reading. It polls every
-# two minutes, so anything this old means it is failing or not running, and
+# half hour, so anything this old means it is failing or not running, and
 # reporting last night's utilization as if it were now is the one answer
 # worse than "unavailable". Same window the panel's usage_store applies to
-# the same file.
+# the same file. The tracker's 429 backoff waits are deliberately longer
+# than this window, so during a rate-limit wall these sensors WILL go
+# unavailable — the diagnostic sensor below reads the tracker's recorded
+# ``last_error`` so that moment arrives with its reason attached.
 USAGE_STALE_AFTER = timedelta(hours=2)
 
 # Device that groups Anthropic usage limit sensors together.
@@ -292,12 +295,24 @@ class BrainUsageTrackerSensor(SensorEntity):
                                         the poll — nothing to do with the
                                         account's own usage; brAIn backs off
       ``network_error`` / ``http_5xx``  Anthropic unreachable right now
-      ``stale``                         last reading is too old to trust
+      ``stale``                         last reading is too old to trust,
+                                        and the tracker recorded no reason
       ``not_running``                   no file at all — tracker never wrote
 
     A status the tracker can gloss arrives with a ``detail`` attribute, and
     the codes that most need one are the codes people read as something
     else: ``http_429`` is the endpoint's limit, not a usage cap.
+
+    A reading that went stale *because* the tracker is waiting out a
+    failure reports that failure, not ``stale``: the tracker leaves
+    ``last_error`` beside a reading it deliberately did not overwrite, and
+    the moment the reading ages out is exactly the moment the reason is
+    needed. During a 429 backoff — whose waits are longer than the
+    staleness window on purpose — that is the difference between four
+    sensors going unavailable with an explanation and without one. While
+    the reading is still fresh the failure is a ``note``, because the
+    numbers on show are still the honest answer. ``next_attempt_at`` says
+    when the tracker will ask again, in every state that has one.
     """
 
     _attr_has_entity_name = True
@@ -329,6 +344,9 @@ class BrainUsageTrackerSensor(SensorEntity):
         updated = data.get("updated_at")
         if updated:
             attrs["last_updated"] = updated
+        next_attempt = data.get("next_attempt_at")
+        if next_attempt:
+            attrs["next_attempt_at"] = next_attempt
 
         error = data.get("error")
         if error:
@@ -339,11 +357,29 @@ class BrainUsageTrackerSensor(SensorEntity):
             self._attrs = attrs
             return
 
+        last_error = data.get("last_error")
+        last_error = last_error if isinstance(last_error, str) else None
+        last_detail = data.get("last_error_detail")
+
         age = _reading_age(data)
         if age is None or age >= USAGE_STALE_AFTER:
-            self._attr_native_value = "stale"
+            # Stale with a recorded reason IS that reason — "stale" alone is
+            # the state that sent people here not understanding why.
+            if last_error:
+                self._attr_native_value = last_error
+                if last_detail:
+                    attrs["detail"] = str(last_detail)
+            else:
+                self._attr_native_value = "stale"
         else:
             self._attr_native_value = "ok"
+            if last_error:
+                attrs["note"] = (
+                    f"last poll failed ({last_error}); showing the previous "
+                    "reading until it ages out"
+                )
+                if last_detail:
+                    attrs["detail"] = str(last_detail)
         self._attrs = attrs
 
     def _read(self) -> dict | None:

@@ -2,6 +2,105 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.26.0
+
+### Fixed
+
+- **Usage sensors that went unavailable during a 429 wall now say why —
+  and a restart no longer makes the wall worse.** The tracker's rate-limit
+  backoff (1/2/4 hours) is deliberately longer than the two-hour window
+  after which a reading is too old to trust, so during any streak of 429s
+  the four usage sensors *will* go unavailable — that part is by design.
+  What was broken: the reason was only written down on the poll *after*
+  the reading went stale, which on a four-hour backoff rung is hours
+  later. In between, the `Usage tracker` diagnostic sensor said `stale`
+  and nothing else — "unavailable for reasons I do not understand". A
+  failed poll now records what failed and when it will ask again right
+  beside the reading it deliberately left showing, so the moment the
+  sensors blank, the diagnostic names the cause (`http_429`, with the
+  explanation that this is the endpoint's limit, not your account's
+  usage) and `next_attempt_at` says when it retries. And the backoff now
+  survives restarts: it lived only in memory, so restarting the add-on —
+  the first thing anyone does when sensors go dark — polled the endpoint
+  immediately and restarted the ladder from its first rung, retrying
+  straight back into the daily meter that caused the outage.
+
+- **A restricted voice assistant could sidestep its service restrictions.**
+  Deny-listing `cover.open_cover` did not stop
+  `homeassistant.turn_on {"entity_id": "cover.garage_door"}` — Home
+  Assistant's meta-services forward to the target entity's own domain, and
+  the deny check only matched the spelled name. Meta-calls are now checked
+  against their targets and refuse anything touching a restricted domain
+  (or targets the check cannot resolve, like whole areas). `fire_event` —
+  which can trigger any automation, including one that does exactly what
+  the deny-list forbids — is now refused entirely on restricted channels.
+  And the one-click deny options now include `brain.*`, so a restricted
+  agent can be kept away from the 65 registry-admin power tools
+  (including `brain.create_user`, which can mint an admin login).
+
+- **"Voice thinking limit" and "Voice tool access" did nothing in fast
+  mode — which is the default.** The worker pool never saw either option:
+  it read its environment directly and the values were only written to the
+  file the classic listeners re-source. Voice always ran at 5 turns
+  (config ships 8) whatever the slider said. Same class of bug as 1.25.2's
+  listener fix, in the one consumer that release didn't cover.
+
+- **Voice conversations no longer lose their memory to the pre-warmed
+  worker.** A follow-up turn whose worker had been reaped could be handed
+  the fresh spare process — which knows nothing — and the stored session
+  id was then overwritten, severing the conversation's context for good.
+  The spare now only serves conversations that genuinely start from
+  nothing; anything with history resumes it, as always promised.
+
+- **Deleting a chat conversation could destroy it while the toast still
+  offered Undo.** The trash judged expiry by file modification time, which
+  the move into the trash preserves — and a conversation's mtime is its
+  last-activity time, routinely older than the 30-minute grace period. A
+  just-deleted conversation could arrive "already expired" and be
+  unlinked by the very next delete, before Undo was ever pressed. Trash
+  entries are now stamped at deletion time, and restore puts the original
+  timestamp back so the row keeps its place in the rail.
+
+- **`brain_learned` logbook events now actually fire.** The watcher that
+  turns newly-learned facts into logbook entries (documented since it
+  shipped, automatable) was never started. Automations triggering on
+  `brain_learned` now work.
+
+- **`ha context` always failed.** The dispatcher ran delegated scripts
+  with `bash`, which ignores their `with-contenv bashio` shebang — so the
+  one delegated script that logs through bashio died with "command not
+  found" on its first line, every time. Both dispatchers now exec the
+  script itself so its shebang runs it.
+
+- **Automation task notifications never arrived.** The listener posted to
+  `notify.persistent_notification` with an `entity_id` key the notify
+  schema rejects, so a task with `notify: true` produced a silent 400 —
+  no push, no persistent notification, nothing in the log. The requested
+  `notify_entity` now picks the notify service, as documented.
+
+- **A failed study session no longer silently doubles its own cost.** The
+  study runner misread every failure's exit code as success-shaped, so a
+  session stopped by its own timeout triggered a full second session, and
+  every failure — auth, rate limit, crash — reported the same unhelpful
+  message with stderr thrown away. Failures now report the real reason
+  (timeouts by name, anything else with the CLI's own last line), and
+  only an old CLI rejecting the session label earns a retry.
+
+- Smaller fixes: two panel writers can no longer silently lose a findings
+  update to each other (the store is now locked across read-modify-write);
+  the run-sources prune no longer hands the ledger to root and break the
+  consolidator's claims until the next restart; the MCP watchdog no longer
+  rewrites arbitrary JSON files (chat transcripts included) that merely
+  mention `/api/mcp`; notebook edits are now snapshotted before Claude
+  changes them so `brain undo` covers them; a malformed terminal handoff
+  no longer kills the terminal session at open; a malformed JSON body to
+  the findings endpoints gets ignored instead of a 500; a chat stream that
+  falls behind now reconnects to a fresh snapshot instead of idling
+  forever; `brain.study` is unregistered with the rest when the last
+  config entry is removed; a multi-agent install can turn conversation off
+  on the entry that still owns the sensors; `memory_max_kb`'s fallback
+  agrees with the shipped default.
+
 ## 1.25.2
 
 ### Fixed

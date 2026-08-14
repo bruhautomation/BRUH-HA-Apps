@@ -109,6 +109,10 @@ CURATED_DENY_PATTERNS = [
     "script.*",
     "shell_command.*",
     "backup.create",
+    # The 65 BRUH Power Tools registry-admin services, including
+    # brain.create_user — which can mint an admin login. A restricted
+    # voice agent has no business administering the registry.
+    "brain.*",
 ]
 
 
@@ -435,7 +439,12 @@ class BruhClaudeOptionsFlowHandler(OptionsFlow):
 
             if is_only_entry and not enable_conv and not enable_sens:
                 errors["base"] = "no_features"
-            elif not is_only_entry and not enable_conv:
+            elif (not is_only_entry and not enable_conv
+                  and not current.get(CONF_ENABLE_SENSORS, False)):
+                # In a multi-entry install the sensors toggle is hidden and
+                # carried forward from `current` — an entry that still owns
+                # the sensors keeps a feature when conversation goes, so
+                # only refuse when nothing at all would remain.
                 errors["base"] = "no_features"
             else:
                 data = {**user_input}

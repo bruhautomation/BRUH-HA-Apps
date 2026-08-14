@@ -32,8 +32,12 @@ if [ -r "$HANDOFF_FILE" ]; then
     handoff=$(cat "$HANDOFF_FILE" 2>/dev/null)
     rm -f "$HANDOFF_FILE"
 
-    age=$(( $(date +%s) - $(printf '%s' "$handoff" \
-        | sed -n 's/.*"ts"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p') ))
+    # A handoff missing its ts must read as too old, not abort the shell:
+    # an empty substitution inside $(( )) is an arithmetic error, and this
+    # script opening is the terminal session starting.
+    ts=$(printf '%s' "$handoff" \
+        | sed -n 's/.*"ts"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p')
+    age=$(( $(date +%s) - ${ts:-0} ))
     candidate=$(printf '%s' "$handoff" \
         | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([A-Za-z0-9._-]*\)".*/\1/p')
 

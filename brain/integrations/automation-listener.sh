@@ -426,20 +426,24 @@ process_task() {
 
     bashio::log.info "Task completed [$task_id]"
 
-    # Send notification if requested
+    # Send notification if requested. notify_entity names the notify
+    # *service* ("notify.mobile_app_phone" or "mobile_app_phone"), so the
+    # entity picks the endpoint and the payload carries only the message —
+    # the old shape posted an extra entity_id key to persistent_notification,
+    # which HA's notify schema rejects with a 400 the `|| true` swallowed:
+    # no push, no persistent notification, nothing in the log.
     if [ "$notify" = "true" ] && [ -n "$notify_entity" ]; then
-        local message
+        local message notify_service notify_payload
         message=$(echo "$result" | head -10 | tr '\n' ' ')
-        local notify_payload
+        notify_service="${notify_entity#notify.}"
         notify_payload=$(jq -n \
-            --arg entity "$notify_entity" \
             --arg msg "Claude task completed: ${message}" \
-            '{"entity_id": $entity, "message": $msg}')
+            '{"message": $msg}')
         curl -s -X POST \
             -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
             -H "Content-Type: application/json" \
             -d "$notify_payload" \
-            "http://supervisor/core/api/services/notify/persistent_notification" 2>/dev/null || true
+            "http://supervisor/core/api/services/notify/${notify_service}" 2>/dev/null || true
     fi
 
     # Fire completion event on the HA event bus

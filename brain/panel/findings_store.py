@@ -60,9 +60,11 @@ from __future__ import annotations
 
 import atomic_write
 
+import functools
 import json
 import os
 import re
+import threading
 import time
 import unicodedata
 from pathlib import Path
@@ -122,6 +124,26 @@ def normalize(text: str) -> str:
 # ---------------------------------------------------------------------------
 # Storage
 # ---------------------------------------------------------------------------
+
+# atomic_write makes each individual write atomic; it does nothing for the
+# read-modify-write around it. The panel mutates this store from the event
+# loop (add_many in _generate, set_status in _run_fix) *and* from request
+# threads (the verb handlers run under asyncio.to_thread), so two operations
+# could both _load, both mutate, and the last _write wins — a fresh finding
+# silently vanishing under a user's "Wrong", or the reverse. Every mutator
+# holds this lock across its whole load→mutate→write; an RLock because
+# settle_and_clear writes both files through nested helpers.
+_LOCK = threading.RLock()
+
+
+def _mutates(fn):
+    """One store operation at a time, whole, whichever thread asks."""
+    @functools.wraps(fn)
+    def wrapped(*args, **kwargs):
+        with _LOCK:
+            return fn(*args, **kwargs)
+    return wrapped
+
 
 def _load() -> list[dict]:
     try:
@@ -191,6 +213,7 @@ def _shape(entry: dict) -> dict:
 # Inbox sweep (study sessions and other CLI-side producers)
 # ---------------------------------------------------------------------------
 
+@_mutates
 def sweep_inbox() -> int:
     """Fold `/config/.brain/findings/inbox/*.jsonl` into the store.
 
@@ -373,6 +396,7 @@ def _prune(items: list[dict]) -> list[dict]:
     return [f for f in items if id(f) not in drop][-MAX_FINDINGS:]
 
 
+@_mutates
 def add_many(objs: list[dict]) -> list[dict]:
     """Record a batch of wire-shaped findings in ONE read and ONE write.
 
@@ -403,6 +427,7 @@ def add_many(objs: list[dict]) -> list[dict]:
     return created
 
 
+@_mutates
 def add(text: str, **fields) -> tuple[dict | None, bool]:
     """Record one finding. Returns (entry, created); an already-known finding
     returns the existing entry untouched, whatever status it now holds.
@@ -421,6 +446,7 @@ def add(text: str, **fields) -> tuple[dict | None, bool]:
     return (created[0], True) if created else (None, False)
 
 
+@_mutates
 def set_status(ts: int, status: str, result: str = "",
                changed: list[str] | None = None) -> dict | None:
     """Move a finding along its lifecycle. Unknown ids return None."""
@@ -441,6 +467,7 @@ def set_status(ts: int, status: str, result: str = "",
     return None
 
 
+@_mutates
 def snooze(ts: int, until: int) -> dict | None:
     """Take a finding off the list until ``until`` (epoch seconds).
 
@@ -461,6 +488,7 @@ def snooze(ts: int, until: int) -> dict | None:
     return None
 
 
+@_mutates
 def settle_and_clear(ts: int, kind: str, note: str = "") -> dict | None:
     """Finish with a finding: remember the answer, drop the row.
 
@@ -533,6 +561,7 @@ def settled_listing() -> list[dict]:
     return sorted(_load_settled(), key=lambda e: e.get("ts") or 0, reverse=True)
 
 
+@_mutates
 def unsettle(key: str) -> bool:
     """Put an answered problem back in play.
 
@@ -548,6 +577,7 @@ def unsettle(key: str) -> bool:
     return True
 
 
+@_mutates
 def migrate_settled() -> int:
     """Fold pre-ledger dismissals into the ledger and drop their rows.
 
@@ -575,6 +605,7 @@ def migrate_settled() -> int:
     return len(moved)
 
 
+@_mutates
 def reconcile_running(reason: str) -> int:
     """Demote findings left mid-fix by a process that is no longer running.
 
@@ -595,6 +626,7 @@ def reconcile_running(reason: str) -> int:
     return len(stuck)
 
 
+@_mutates
 def remove(ts: int) -> bool:
     items = _load()
     kept = [f for f in items if int(f.get("ts") or 0) != ts]
@@ -604,6 +636,7 @@ def remove(ts: int) -> bool:
     return True
 
 
+@_mutates
 def restore(shaped: dict) -> dict | None:
     """Put a row back exactly as it was — the undo half of an ending.
 

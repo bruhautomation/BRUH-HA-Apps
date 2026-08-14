@@ -301,10 +301,20 @@ def delete(cwd: str, session_id: str) -> dict | None:
         trash.mkdir(parents=True, exist_ok=True)
         _prune_trash(trash)
         target = trash / f"{session_id}.jsonl"
+        mtime = path.stat().st_mtime
         shutil.move(str(path), str(target))
+        # The TTL is judged by mtime, and shutil.move preserves the
+        # *conversation's* mtime — its last-activity time, routinely older
+        # than the TTL, which made a just-deleted conversation "expired"
+        # on arrival: the very next prune (the second id of one batch
+        # delete, even) unlinked it while the toast still offered Undo.
+        # The trash file's mtime is its time of *deletion*; the original
+        # rides along for restore_deleted to put back.
+        os.utime(target)
     except OSError:
         return None
-    return {"id": session_id, "path": str(path), "trash": str(target)}
+    return {"id": session_id, "path": str(path), "trash": str(target),
+            "mtime": mtime}
 
 
 def restore_deleted(entry: dict) -> bool:
@@ -321,6 +331,11 @@ def restore_deleted(entry: dict) -> bool:
     try:
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(src), str(dst))
+        # Deletion stamped the trash copy's mtime; hand back the original
+        # so the restored row keeps its place in the rail's ordering.
+        mtime = entry.get("mtime")
+        if isinstance(mtime, (int, float)) and mtime > 0:
+            os.utime(dst, (mtime, mtime))
     except OSError:
         return False
     return True

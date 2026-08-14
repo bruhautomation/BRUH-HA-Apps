@@ -345,3 +345,72 @@ class TestServiceDenyList(unittest.TestCase):
         result = ha_mcp_server.control_lock("lock.front", "unlock")
         self.assertIn("error", result)
         mock_api.assert_not_called()
+
+    @patch("ha_mcp_server.ha_api_request")
+    def test_meta_service_cannot_bypass_an_entity_denial(self, mock_api):
+        """homeassistant.turn_on forwards to the target entity's own domain
+        service, so a cover.open_cover denial has to catch the same action
+        wearing the meta-service's name — this was the bypass."""
+        ha_mcp_server.DENIED_SERVICES = ["cover.open_cover"]
+        for service, payload in (
+            ("turn_on", {"entity_id": "cover.garage_door"}),
+            ("turn_on", {"entity_id": ["light.x", "cover.garage_door"]}),
+            ("toggle", {"target": {"entity_id": "cover.garage_door"}}),
+            ("turn_on", {"entity_id": "light.x, cover.garage_door"}),
+        ):
+            result = ha_mcp_server.call_service(
+                "homeassistant", service, payload)
+            self.assertIn("error", result)
+        mock_api.assert_not_called()
+
+    @patch("ha_mcp_server.ha_api_request")
+    def test_meta_service_on_unrestricted_entities_still_works(self, mock_api):
+        ha_mcp_server.DENIED_SERVICES = ["cover.open_cover"]
+        mock_api.return_value = {"ok": True}
+        ha_mcp_server.call_service(
+            "homeassistant", "turn_on",
+            {"entity_id": ["light.x", "switch.y"]})
+        mock_api.assert_called_once()
+
+    @patch("ha_mcp_server.ha_api_request")
+    def test_meta_service_with_unresolvable_targets_fails_closed(self, mock_api):
+        """Area/device/label targets and the no-target/"all" forms resolve
+        to entities inside HA where the deny-list cannot see them — a
+        restricted channel refuses rather than guesses."""
+        ha_mcp_server.DENIED_SERVICES = ["cover.open_cover"]
+        for payload in (
+            {"area_id": "garage"},
+            {"target": {"device_id": "abc123"}},
+            {"entity_id": "all"},
+            {},
+            None,
+        ):
+            result = ha_mcp_server.call_service(
+                "homeassistant", "turn_off", payload)
+            self.assertIn("error", result)
+        mock_api.assert_not_called()
+
+    @patch("ha_mcp_server.ha_api_request")
+    def test_meta_service_untouched_without_restrictions(self, mock_api):
+        ha_mcp_server.DENIED_SERVICES = []
+        mock_api.return_value = {"ok": True}
+        ha_mcp_server.call_service("homeassistant", "turn_off",
+                                   {"entity_id": "light.x"})
+        mock_api.assert_called_once()
+
+    @patch("ha_mcp_server.ha_api_request")
+    def test_fire_event_is_refused_on_a_restricted_channel(self, mock_api):
+        """An event can trigger any automation — including one doing exactly
+        what the deny-list forbids — and event names match no service
+        pattern, so a restricted channel gets no events at all."""
+        ha_mcp_server.DENIED_SERVICES = ["lock.unlock"]
+        result = ha_mcp_server.fire_event("custom_event", {"x": 1})
+        self.assertIn("error", result)
+        mock_api.assert_not_called()
+
+    @patch("ha_mcp_server.ha_api_request")
+    def test_fire_event_still_works_unrestricted(self, mock_api):
+        ha_mcp_server.DENIED_SERVICES = []
+        mock_api.return_value = {"ok": True}
+        ha_mcp_server.fire_event("custom_event")
+        mock_api.assert_called_once()

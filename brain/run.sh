@@ -314,6 +314,14 @@ MEMORYMD
     automation_max_turns=$(bashio::config 'automation_max_turns' '30')
     local assist_tool_access
     assist_tool_access=$(bashio::config 'assist_tool_access' 'mcp_only')
+    # Exported as well as written to the env file: the bash listeners
+    # re-source /data/.brain_env, but the worker pool — the *default*
+    # assist path — is plain python3 launched from this script and reads
+    # os.environ only. Without these exports assist_max_turns and
+    # assist_tool_access were dead options in fast mode.
+    export BRAIN_ASSIST_MAX_TURNS="$assist_max_turns"
+    export BRAIN_AUTOMATION_MAX_TURNS="$automation_max_turns"
+    export BRAIN_ASSIST_TOOL_ACCESS="$assist_tool_access"
 
     # Memory / learning options — exported here too (not just written to the
     # env file) so the worker pool and listeners launched by this script
@@ -321,7 +329,7 @@ MEMORYMD
     local assist_learning memory_injection memory_max_kb edit_journal_days
     assist_learning=$(bashio::config 'learning' 'true')
     memory_injection=$(bashio::config 'memory_injection' 'true')
-    memory_max_kb=$(bashio::config 'memory_max_kb' '8')
+    memory_max_kb=$(bashio::config 'memory_max_kb' '32')
     edit_journal_days=$(bashio::config 'edit_journal_days' '14')
     export BRAIN_ASSIST_LEARNING="$assist_learning"
     export BRAIN_MEMORY_INJECTION="$memory_injection"
@@ -1285,8 +1293,13 @@ start_mcp_watchdog() {
     (
         while true; do
             sleep 30
-            # Check all MCP/settings configs modified since last check
-            find /data /config /root -name "*.json" \
+            # Only files that can actually hold MCP server config. This
+            # was `-name "*.json"`, which swept up transcripts, stores and
+            # state files: a chat that merely *mentioned* /api/mcp got its
+            # transcript rewritten by root while the panel was writing it.
+            find /data /config /root \
+                \( -name ".mcp.json" -o -name ".claude.json" \
+                   -o -name "settings.json" -o -name "settings.local.json" \) \
                 -newer /tmp/.mcp_watchdog_marker \
                 -type f -print0 2>/dev/null | \
             while IFS= read -r -d '' f; do
@@ -1316,18 +1329,25 @@ WATCHDOG_MCP
                             bashio::log.info "MCP WATCHDOG: Rewrote $f clean"
                         fi
                     else
-                        # For settings/project files, clean with jq
+                        # For settings/project files, clean with jq — but
+                        # only when the offending string is actually in an
+                        # mcpServers entry; a mention elsewhere in the file
+                        # is not ours to rewrite.
                         local tmp
                         tmp=$(mktemp)
-                        if jq '
+                        if jq -e '.mcpServers | tostring | contains("/api/mcp")' \
+                                "$f" >/dev/null 2>&1 \
+                            && jq '
                             if .mcpServers then
                                 .mcpServers |= with_entries(
                                     select((.value | tostring) | contains("/api/mcp") | not)
                                 )
                             else . end
                         ' "$f" > "$tmp" 2>/dev/null; then
-                            mv "$tmp" "$f"
-                            chown claude:claude "$f" 2>/dev/null || true
+                            # cat, not mv: mv swaps the inode, which both
+                            # crosses filesystems from mktemp's /tmp and
+                            # hands the file to root whatever it was before.
+                            cat "$tmp" > "$f" && rm -f "$tmp"
                             bashio::log.info "MCP WATCHDOG: Cleaned /api/mcp from $f"
                         else
                             rm -f "$tmp"
