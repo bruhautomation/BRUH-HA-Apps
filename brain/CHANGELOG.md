@@ -2,6 +2,82 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.27.0
+
+### Added
+
+- **Findings can reach you now.** A critical finding discovered by the 3am
+  scheduler used to be completely silent until somebody opened the panel —
+  the store lives in the add-on's `/data`, which Home Assistant cannot
+  see. The add-on now publishes a mirror of the findings list to
+  `/config/.brain/findings_state.json` on every change, and the
+  integration builds three things on it: an **Open findings** sensor
+  (state = the open count; severity split and the texts as attributes, so
+  an automation can put what is actually broken on a lock screen), a
+  **`brain_finding` event** per newly-filed finding for automations and
+  the logbook, and an optional **push notification** — set
+  `findings_notify_service` to any `notify.*` service and
+  `findings_notify_min_severity` to the severity that is allowed to ring
+  your phone (default `serious`). The store dedupes across every status
+  and the settled ledger, so the same problem can never ring twice.
+
+- **`brain findings` — the Findings tab, scriptable.** `list`, `fix`,
+  `done`, `wrong`, `ack` and `snooze`, all through the panel's own API, so
+  a CLI ending writes the same memory line, settled-ledger key and undo
+  token the tab's buttons do. The chat's command palette picks the new
+  subcommands up automatically.
+
+- **`brain memory export` / `import` — the learned home, portable.** One
+  JSON file carrying the memory document, the findings work list, the
+  settled answers and the facts ledger (also downloadable from the Memory
+  tab's ⬇ Export button, `GET /api/memory/export`). Import is a
+  migration, not a sync: ledgers merge with existing entries winning, the
+  memory document replaces only an effectively-empty one unless you pass
+  `--replace-memory`, and importing the same file twice changes nothing
+  the second time.
+
+- **The scheduler reports itself.** Every category now carries `next_due`
+  in `/api/status`, rendered on the card foot ("next in 4 h") so "why did
+  my cards stop updating" has an answer on the card instead of one log
+  line printed once; `/api/status` also carries the active auto-refresh
+  gate (paused / budget reached / not signed in), and the countdown hides
+  while a gate holds rather than promising a run that will not come.
+
+- **`/api/health` calls the roll.** The watchdog's liveness endpoint now
+  also reports which background daemons are actually running (worker
+  pool, listeners, usage tracker, memory consolidator, study watcher,
+  ttyd) plus when the last consolidation pass landed — informational
+  only, so a dead sibling can never fail liveness and restart-loop the
+  add-on. `brain doctor` reads it and compares against its own view.
+
+- **Energy insights lean on Home Assistant's long-term statistics.** The
+  analyst is now told explicitly that `get_statistics` reaches back months
+  (day/week/month buckets, surviving recorder purges) and is the tool for
+  "compared to last week/month" — and the energy category asks for a
+  period-over-period anchor instead of extrapolating a month from a few
+  days. brAIn deliberately keeps no statistics store of its own: Home
+  Assistant already has the sums, so it looks them up.
+
+### Fixed
+
+- **Picking a chat model updates the label under the composer
+  immediately.** The label is the only confirmation a pick landed, but the
+  event that refreshes it (`init` → `info`) does not arrive until the next
+  message — a restarted `--resume` process says nothing until spoken to —
+  so the picker looked like it did nothing. The response now carries the
+  server-made label (same parser as the info event) and the meta line
+  updates on the spot.
+
+- **The four Playwright layout measures now run in CI** (the `layout`
+  job) instead of by documented human habit — the two bar shapes, the
+  44px target floor, the never-truncated card title, the painted chat
+  meta line and the on-screen tooltips are enforced on every PR.
+
+- The facts ledger no longer ships a `remove_fact` function: nothing may
+  be deleted from that ledger (deleting is how the analyst re-announces
+  what you have already seen), and the one function that could sat there
+  called by nothing.
+
 ## 1.26.0
 
 ### Fixed

@@ -830,6 +830,13 @@
         <div id="kMemStale" class="kstale hidden"></div>
         <div class="row kmemrow">
           <button id="kMemEdit" class="btn small">✎ Edit markdown</button>
+          <!-- A real link, not a fetch: the server sets Content-Disposition
+               and the browser does the rest, which survives the ingress
+               iframe where a scripted blob download may not. Import stays
+               CLI-only (`brain memory import`) — restoring is deliberate
+               work and the terminal is where deliberate work lives. -->
+          <a id="kMemExport" class="btn small ghost" href="api/memory/export" download
+             title="Download everything brAIn has learned — the memory document, findings and their answers — as one file. Restore it elsewhere with `brain memory import`.">⬇ Export</a>
           <button id="kMemSave" class="btn small primary hidden">Save</button>
           <button id="kMemCancel" class="btn small ghost hidden">Cancel</button>
           <span id="kMemDirty" class="kdirty hidden">unsaved edits</span>

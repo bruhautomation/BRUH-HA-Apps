@@ -8,6 +8,7 @@
 #
 # Usage:
 #   brain memory <action> [args]   Long-term home memory (add/list/edit/...)
+#   brain findings <action> [args] The work list (list/fix/done/wrong/...)
 #   brain learn [topic]            Run a study session on the home
 #   brain ask "<question>"         One-shot question, same engine as the Ask card
 #   brain undo [n]                 Review and revert Claude's file edits
@@ -38,6 +39,16 @@ Usage:
       confirm "<text>"           Confirm a pending guess
       reject "<text>"            Reject a pending guess
       consolidate                Fold pending facts in now
+      export [file]              Everything learned, as one portable file
+      import <file>              Fold an export back in
+
+  brain findings <action>        What brAIn thinks is broken
+      list                       Print the work list (default)
+      fix <id>                   Let Claude fix one
+      done <id> ["note"]         Mark one fixed by you
+      wrong <id> ["note"]        Not a problem here — never raise it again
+      ack <id>                   Acknowledge an automated fix
+      snooze <id> [when]         hour | tomorrow | week | month | now
 
   brain learn [topic]            Study the home and write down what it finds
   brain ask "<question>"         Ask about the home (same engine as the Ask card)
@@ -74,6 +85,7 @@ shift
 
 case "$action" in
     memory)     delegate brain-memory.sh "$@" ;;
+    findings)   delegate brain-findings.sh "$@" ;;
     learn)      delegate brain-learn.sh "$@" ;;
     ask)        delegate brain-ask.sh "$@" ;;
     undo)       delegate brain-undo.sh "$@" ;;

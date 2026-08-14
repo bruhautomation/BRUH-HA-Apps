@@ -99,6 +99,20 @@ configuration:
       How large the memory document may grow. When it is full, filing new
       facts means dropping old ones. This is not a speed setting — voice
       reads a separate 2 KB summary and never the full document.
+  findings_notify_service:
+    name: Send new findings to
+    description: >-
+      A notify service (like notify.mobile_app_your_phone) that gets a
+      message whenever brAIn files a new finding — something it thinks is
+      broken in your home. Leave empty for no notifications; the Findings
+      tab and the brain_finding event work either way.
+  findings_notify_min_severity:
+    name: Notify from severity
+    description: >-
+      Only findings at or above this severity are sent to the notify
+      service. "serious" (the default) means batteries about to die and
+      sensors gone silent ring your phone, while naming nitpicks wait on
+      the Findings tab.
   edit_journal_days:
     name: Keep undo history for
     description: >-

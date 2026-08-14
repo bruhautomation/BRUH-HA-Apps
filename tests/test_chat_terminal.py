@@ -735,6 +735,12 @@ class ChatSessionCase(unittest.IsolatedAsyncioTestCase):
         out = await self.session.set_model("claude-opus-5")
         self.assertTrue(out["restarted"])
         self.assertTrue(self.session.alive())
+        # The label rides back on the answer itself. The event that would
+        # refresh the meta line (init → info) does not arrive until the next
+        # message — a restarted --resume process says nothing until spoken
+        # to — so without this the pick looked like it did nothing, which is
+        # exactly the confirmation the meta line exists to give.
+        self.assertEqual(out["model_label"], "Claude Opus 5")
         invocations = await self._invocations(log, 2)
         argv = invocations[-1]
         self.assertIn("--model", argv)

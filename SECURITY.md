@@ -59,6 +59,12 @@ Things that are working as intended, and are documented rather than fixed:
 
 - An admin using the brAIn terminal can run anything the container can.
   That is what the terminal is.
+- brAIn has one role, not per-user roles. Every Home Assistant admin sees
+  the same panel, the same chat session, the same memory, and the same
+  **Fix it** button — the panel is `panel_admin: true`, and "admin" is
+  the entire access model. There is no per-admin separation to bypass,
+  so two admins seeing each other's chats is by design; if that matters
+  in your household, HA's own user roles are the boundary to use.
 - `dangerously_skip_permissions: true` removes Claude's confirmation
   prompts. The option says so, and defaults to off.
 - Minecraft plugins you install run with the server's full authority. The

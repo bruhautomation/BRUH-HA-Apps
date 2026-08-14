@@ -49,14 +49,19 @@ class StoreCase(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self._old = (findings_store.FINDINGS_FILE, findings_store.INBOX_DIR,
-                     findings_store.SETTLED_FILE)
+                     findings_store.SETTLED_FILE, findings_store.STATE_FILE)
         findings_store.FINDINGS_FILE = Path(self.tmp.name) / "findings.json"
         findings_store.INBOX_DIR = Path(self.tmp.name) / "inbox"
         findings_store.SETTLED_FILE = Path(self.tmp.name) / "settled.json"
+        # The mirror publishes only when its shared volume exists; pointing
+        # it under tmp WITHOUT creating "config" keeps the ordinary store
+        # tests from writing one, exactly like a dev checkout.
+        findings_store.STATE_FILE = (
+            Path(self.tmp.name) / "config" / ".brain" / "findings_state.json")
 
     def tearDown(self):
         (findings_store.FINDINGS_FILE, findings_store.INBOX_DIR,
-         findings_store.SETTLED_FILE) = self._old
+         findings_store.SETTLED_FILE, findings_store.STATE_FILE) = self._old
         self.tmp.cleanup()
 
 
@@ -258,13 +263,17 @@ class TestFindingsInbox(StoreCase):
                     {"text": "Hall motion offline nightly", "severity": "warning",
                      "fix": "Re-pair it", "fixable": False,
                      "source": "study:devices", "source_title": "Study: devices"})
-        self.assertEqual(findings_store.sweep_inbox(), 1)
+        swept = findings_store.sweep_inbox()
+        # The sweep returns the new rows themselves (the notify hook needs
+        # the entries, not a count), already shaped for the API.
+        self.assertEqual([f["text"] for f in swept],
+                         ["Hall motion offline nightly"])
         entry = findings_store.list_all()[0]
         self.assertEqual(entry["text"], "Hall motion offline nightly")
         self.assertEqual(entry["source"], "study:devices")
         self.assertFalse(entry["fixable"])
         # consumed, so a second sweep is a no-op rather than a duplicate
-        self.assertEqual(findings_store.sweep_inbox(), 0)
+        self.assertEqual(findings_store.sweep_inbox(), [])
         self.assertEqual(len(findings_store.list_all()), 1)
 
     def test_a_torn_line_does_not_wedge_the_tab(self):
@@ -274,11 +283,280 @@ class TestFindingsInbox(StoreCase):
         (findings_store.INBOX_DIR / "1.jsonl").write_text(
             json.dumps({"text": "Good one"}) + "\n{\"text\": \"tor",
             encoding="utf-8")
-        self.assertEqual(findings_store.sweep_inbox(), 1)
+        self.assertEqual(len(findings_store.sweep_inbox()), 1)
         self.assertEqual([f["text"] for f in findings_store.list_all()], ["Good one"])
 
     def test_missing_inbox_is_fine(self):
-        self.assertEqual(findings_store.sweep_inbox(), 0)
+        self.assertEqual(findings_store.sweep_inbox(), [])
+
+
+class TestFindingsStateMirror(StoreCase):
+    """The shared-volume mirror is how Home Assistant SEES findings.
+
+    The store lives in /data, which HA cannot read, and this mirror is what
+    the integration's sensor and event watcher run on — so it has to be
+    republished by every write, not by the writes somebody remembered."""
+
+    def setUp(self):
+        super().setUp()
+        # The shared volume exists in these tests (it is /config in
+        # production); the publish guard checks for its presence.
+        findings_store.STATE_FILE.parent.parent.mkdir(parents=True)
+
+    def _state(self):
+        return json.loads(findings_store.STATE_FILE.read_text(encoding="utf-8"))
+
+    def test_every_write_republishes(self):
+        findings_store.add("Hall battery dead", severity="critical")
+        state = self._state()
+        self.assertEqual(state["open"], 1)
+        self.assertEqual(state["by_severity"]["critical"], 1)
+        self.assertEqual(state["findings"][0]["text"], "Hall battery dead")
+
+        ts = findings_store.list_all()[0]["ts"]
+        findings_store.settle_and_clear(ts, "fixed")
+        state = self._state()
+        self.assertEqual(state["open"], 0)
+        self.assertEqual(state["findings"], [])
+
+    def test_snoozed_findings_leave_the_open_count(self):
+        findings_store.add("Porch light flaky")
+        ts = findings_store.list_all()[0]["ts"]
+        findings_store.snooze(ts, int(time.time()) + 3600)
+        state = self._state()
+        self.assertEqual(state["open"], 0)
+        # ...and the row itself waits off the mirror too: it is not asking.
+        self.assertEqual(state["findings"], [])
+
+    def test_no_shared_volume_means_no_mirror_and_no_error(self):
+        findings_store.STATE_FILE = (
+            Path(self.tmp.name) / "nowhere" / ".brain" / "state.json")
+        findings_store.add("A problem")   # must not raise
+        self.assertFalse(findings_store.STATE_FILE.exists())
+        # ...and the finding itself is safe regardless of the mirror.
+        self.assertEqual(findings_store.open_count(), 1)
+
+    def test_publish_state_republishes_on_demand(self):
+        findings_store.add("A problem")
+        findings_store.STATE_FILE.unlink()
+        findings_store.publish_state()
+        self.assertEqual(self._state()["open"], 1)
+
+
+class TestFindingsNotify(StoreCase):
+    """New findings can reach a phone, gated on severity.
+
+    The gate lives server-side in _announce_findings: only CREATED rows are
+    ever handed to it (add_many dedupes across every status and the settled
+    ledger), the notify target comes from the add-on option with an env
+    fallback, and a failed delivery is a log line — the finding is already
+    safe on the list by the time this runs."""
+
+    def setUp(self):
+        super().setUp()
+        self.server = importlib.import_module("server")
+        self.ha_data = importlib.import_module("ha_data")
+        self.sent = []
+        self._old_send = self.ha_data.send_notification
+
+        async def record(service, title, message, timeout=15):
+            self.sent.append((service, title, message))
+
+        self.ha_data.send_notification = record
+        os.environ.pop("BRAIN_FINDINGS_NOTIFY", None)
+        os.environ.pop("BRAIN_FINDINGS_NOTIFY_MIN_SEVERITY", None)
+
+    def tearDown(self):
+        self.ha_data.send_notification = self._old_send
+        os.environ.pop("BRAIN_FINDINGS_NOTIFY", None)
+        os.environ.pop("BRAIN_FINDINGS_NOTIFY_MIN_SEVERITY", None)
+        super().tearDown()
+
+    def _announce(self, created):
+        asyncio.run(self.server._announce_findings(created))
+
+    def test_no_target_means_no_notification(self):
+        created = findings_store.add_many([{"text": "X", "severity": "critical"}])
+        self._announce(created)
+        self.assertEqual(self.sent, [])
+
+    def test_severity_floor_holds(self):
+        os.environ["BRAIN_FINDINGS_NOTIFY"] = "mobile_app_phone"
+        created = findings_store.add_many([
+            {"text": "Nitpick", "severity": "info"},
+            {"text": "Battery dying", "severity": "serious"},
+        ])
+        self._announce(created)
+        self.assertEqual(len(self.sent), 1)
+        service, title, message = self.sent[0]
+        self.assertEqual(service, "mobile_app_phone")
+        self.assertIn("Battery dying", message)
+        self.assertNotIn("Nitpick", message)
+
+    def test_floor_is_configurable_and_bogus_values_fall_back(self):
+        os.environ["BRAIN_FINDINGS_NOTIFY"] = "mobile_app_phone"
+        os.environ["BRAIN_FINDINGS_NOTIFY_MIN_SEVERITY"] = "info"
+        created = findings_store.add_many([{"text": "Nitpick", "severity": "info"}])
+        self._announce(created)
+        self.assertEqual(len(self.sent), 1)
+
+        os.environ["BRAIN_FINDINGS_NOTIFY_MIN_SEVERITY"] = "apocalyptic"
+        _, sev = self.server._findings_notify_target()
+        self.assertEqual(sev, "serious")
+
+    def test_a_failed_delivery_is_swallowed(self):
+        os.environ["BRAIN_FINDINGS_NOTIFY"] = "mobile_app_phone"
+
+        async def boom(service, title, message, timeout=15):
+            raise RuntimeError("no such notify service")
+
+        self.ha_data.send_notification = boom
+        created = findings_store.add_many([{"text": "X", "severity": "critical"}])
+        self._announce(created)   # must not raise
+
+
+class TestExportImport(StoreCase):
+    """Everything learned, portable — and an import that merges, not clobbers.
+
+    The export is the durable knowledge (the memory document, the findings
+    work list, the settled ledger, the facts ledger). Import is a migration:
+    ledgers merge with existing entries winning, the document replaces only
+    an effectively-empty one unless told otherwise, and running the same
+    import twice must change nothing the second time."""
+
+    def setUp(self):
+        super().setUp()
+        self.server = importlib.import_module("server")
+        self._old_mem = self.server.SHARED_MEMORY_FILE
+        self._old_kn = knowledge_store.KNOWLEDGE_FILE
+        self.server.SHARED_MEMORY_FILE = Path(self.tmp.name) / "memory.md"
+        knowledge_store.KNOWLEDGE_FILE = str(
+            Path(self.tmp.name) / "knowledge.json")
+
+    def tearDown(self):
+        self.server.SHARED_MEMORY_FILE = self._old_mem
+        knowledge_store.KNOWLEDGE_FILE = self._old_kn
+        super().tearDown()
+
+    def _populate(self):
+        self.server.SHARED_MEMORY_FILE.write_text(
+            "# Home Memory\n- The garage fridge runs 24/7 on purpose\n",
+            encoding="utf-8")
+        findings_store.add("Back door battery dead", severity="serious",
+                           status="open")
+        findings_store.add("Porch sensor reads on all day")
+        porch = [f for f in findings_store.list_all()
+                 if "Porch" in f["text"]][0]
+        findings_store.settle_and_clear(porch["ts"], "ignored",
+                                        note="it watches the compressor")
+        knowledge_store.add_fact("The loft is unheated", category="climate")
+
+    def _fresh_install(self):
+        """Point every store at an empty directory — the machine being
+        migrated TO."""
+        fresh = Path(self.tmp.name) / "fresh"
+        fresh.mkdir()
+        findings_store.FINDINGS_FILE = fresh / "findings.json"
+        findings_store.SETTLED_FILE = fresh / "settled.json"
+        knowledge_store.KNOWLEDGE_FILE = str(fresh / "knowledge.json")
+        self.server.SHARED_MEMORY_FILE = fresh / "memory.md"
+
+    def _import(self, payload):
+        from aiohttp.test_utils import TestClient, TestServer
+
+        async def run():
+            client = TestClient(TestServer(self.server.make_app()))
+            await client.start_server()
+            try:
+                resp = await client.post("/api/memory/import", json=payload)
+                return resp.status, (await resp.json()
+                                     if resp.status == 200
+                                     else await resp.text())
+            finally:
+                await client.close()
+
+        return asyncio.run(run())
+
+    def test_export_carries_the_durable_knowledge(self):
+        self._populate()
+        payload = self.server._export_payload()
+        self.assertEqual(payload["brain_export"], self.server.EXPORT_VERSION)
+        self.assertIn("garage fridge", payload["memory_md"])
+        self.assertEqual([f["text"] for f in payload["findings"]],
+                         ["Back door battery dead"])
+        self.assertEqual(payload["settled"][0]["note"],
+                         "it watches the compressor")
+        self.assertEqual(payload["knowledge_facts"][0]["text"],
+                         "The loft is unheated")
+
+    def test_export_route_offers_a_download(self):
+        from aiohttp.test_utils import TestClient, TestServer
+
+        async def run():
+            client = TestClient(TestServer(self.server.make_app()))
+            await client.start_server()
+            try:
+                resp = await client.get("/api/memory/export")
+                self.assertEqual(resp.status, 200)
+                self.assertIn("attachment",
+                              resp.headers.get("Content-Disposition", ""))
+                return await resp.json()
+            finally:
+                await client.close()
+
+        data = asyncio.run(run())
+        self.assertIn("brain_export", data)
+
+    def test_import_is_a_migration_and_is_idempotent(self):
+        self._populate()
+        payload = self.server._export_payload()
+        self._fresh_install()
+
+        status, result = self._import(payload)
+        self.assertEqual(status, 200)
+        # empty document on the new install: the export's replaces it
+        self.assertEqual(result["memory"], "replaced")
+        self.assertEqual(result["findings"], 1)
+        self.assertEqual(result["settled"], 1)
+        self.assertEqual(result["knowledge_facts"], 1)
+        self.assertIn("garage fridge",
+                      self.server.SHARED_MEMORY_FILE.read_text())
+        # the live row kept its lifecycle, the answer kept its note
+        self.assertEqual(findings_store.list_all()[0]["status"], "open")
+        self.assertEqual(findings_store.settled_listing()[0]["note"],
+                         "it watches the compressor")
+        # the settled ledger still suppresses the dismissed wording
+        self.assertTrue(findings_store.is_known("Porch sensor reads on all day"))
+
+        status, again = self._import(payload)
+        self.assertEqual(status, 200)
+        self.assertEqual((again["findings"], again["settled"],
+                          again["knowledge_facts"]), (0, 0, 0))
+
+    def test_import_never_clobbers_a_real_document_uninvited(self):
+        self._populate()
+        payload = self.server._export_payload()
+        self._fresh_install()
+        self.server.SHARED_MEMORY_FILE.write_text(
+            "# Home Memory\n- This install already knows things\n",
+            encoding="utf-8")
+
+        status, result = self._import(payload)
+        self.assertEqual(status, 200)
+        self.assertEqual(result["memory"], "kept")
+        self.assertIn("already knows",
+                      self.server.SHARED_MEMORY_FILE.read_text())
+
+        status, result = self._import({**payload, "replace_memory": True})
+        self.assertEqual(status, 200)
+        self.assertEqual(result["memory"], "replaced")
+        self.assertIn("garage fridge",
+                      self.server.SHARED_MEMORY_FILE.read_text())
+
+    def test_import_refuses_what_is_not_an_export(self):
+        status, text = self._import({"memory_md": "sneaky"})
+        self.assertEqual(status, 400)
+        self.assertIn("brain_export", text)
 
 
 class TestFixParsing(unittest.TestCase):

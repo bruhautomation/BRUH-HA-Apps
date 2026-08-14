@@ -63,6 +63,37 @@ jobs:
       - name: Run ruff
         run: ruff check .
 
+  layout:
+    # The four Playwright measures used to be tests/manual/ only — every
+    # layout invariant CLAUDE.md calls load-bearing (two bar shapes and no
+    # third, no target under 44px, the title never truncated, the chat meta
+    # line actually painted, tooltips inside the viewport) was enforced by
+    # a documented human habit. They run headless against static fixtures,
+    # so the only thing keeping them out of CI was nobody promoting them.
+    name: Layout measures (Playwright)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # ubuntu-latest ships a current Node; the scripts resolve Playwright
+      # from the repo-root node_modules exactly as the README describes.
+      - name: Install Playwright
+        run: |
+          npm install playwright --no-fund --no-audit
+          npx playwright install --with-deps chromium
+
+      - name: Measure the top bar
+        run: node tests/manual/measure-topbar.mjs
+
+      - name: Measure the card head
+        run: node tests/manual/measure-cardhead.mjs
+
+      - name: Measure the chat meta line
+        run: node tests/manual/measure-chatmeta.mjs
+
+      - name: Measure the tooltips
+        run: node tests/manual/measure-tooltips.mjs
+
   hassfest:
     name: HA integration validation
     runs-on: ubuntu-latest

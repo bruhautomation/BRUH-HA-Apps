@@ -51,8 +51,12 @@ CATEGORIES: list[dict] = [
         "focus": (
             "Pull the key energy numbers: today's consumption vs the period average, the top 3 "
             "loads by kWh, baseline draw, and one anomaly (a spike with its time and likely "
-            "device) if the data shows one. Visualize ONE chart — the daily trend or the "
-            "top-consumers ranking, whichever carries this run's story."
+            "device) if the data shows one. Where you can reach long-term statistics, anchor "
+            "the story against a longer horizon — this week vs last week, or this month vs "
+            "last month — using Home Assistant's own daily/monthly sums rather than "
+            "extrapolating from a few days. Visualize ONE chart — the daily trend, the "
+            "top-consumers ranking, or the period-over-period comparison, whichever carries "
+            "this run's story."
         ),
     },
     {
@@ -273,6 +277,7 @@ HOW TO GATHER
 1. Read the map and the question, and decide what data would answer it. Name it to yourself before you fetch anything.
 2. Search, don't enumerate. `get_all_states` takes a `domain` and a `name_filter` substring — "hall", "battery", "dryer" — and returns matching entities with their states. Two or three targeted searches beat one broad sweep, and a broad sweep of a large home is truncated anyway.
 3. Go deeper on the few that matter rather than shallow on hundreds. `get_entity_state` gives one entity in full; `get_history` and `get_statistics` give it over time; `get_logbook` says what happened around a moment; `get_automation_trace` says why an automation did what it did. Trend data is the thing a snapshot cannot give you — use it.
+   Know which time tool answers which question. `get_history` is the recent fine grain and dies with the recorder's purge window (days). `get_statistics` is Home Assistant's long-term statistics — hourly/daily/weekly/monthly buckets, kept for months to years, surviving the purge — so it is THE tool for "compared to last week/month", seasonal patterns, and any energy total. Home Assistant already keeps those sums; fetch them rather than estimating from a few days, and never say "no long-term data" without having asked `get_statistics` with a `day` or `month` period and enough `days` back.
 4. STOP when you can answer. Every extra call costs the homeowner part of their Claude usage window, and a card built on twelve well-chosen entities beats one built on four hundred. Fetching everything is the failure mode this design exists to avoid.
 5. If a search comes back empty, try a different word before concluding the thing does not exist — homes name things unpredictably. If it genuinely is not there, say so in the summary rather than inventing it.
 

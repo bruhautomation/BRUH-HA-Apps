@@ -245,12 +245,26 @@ rm -rf "$smoke_dir"
 # all — and the chat's state endpoint carries the error text of a session
 # that failed to spawn, which is otherwise only in the add-on log.
 hdr "Panel, chat & terminal"
-panel_code=$(curl -s -m 5 -o /dev/null -w '%{http_code}' \
-    "http://127.0.0.1:8099/api/health" 2>/dev/null)
-if [ "$panel_code" = "200" ]; then
+panel_health=$(curl -s -m 5 "http://127.0.0.1:8099/api/health" 2>/dev/null)
+if [ "$(echo "$panel_health" | jq -r '.ok // empty' 2>/dev/null)" = "true" ]; then
     pass "Panel answering (:8099/api/health)"
+    # The panel's own roll-call of its sibling daemons. Section 5 below
+    # pgreps the same processes from this shell; the panel's view is the
+    # one an outside caller (or the HA integration) would see, so the two
+    # disagreeing is itself a finding.
+    consolidated_h=$(echo "$panel_health" \
+        | jq -r '.daemons.memory_consolidator.last_pass_hours_ago // empty' 2>/dev/null)
+    if [ -n "$consolidated_h" ]; then
+        info "last memory consolidation landed ${consolidated_h}h ago"
+    fi
+    dead=$(echo "$panel_health" | jq -r \
+        '.daemons // {} | to_entries | map(select(.value.running == false) | .key) | join(", ")' \
+        2>/dev/null)
+    if [ -n "$dead" ]; then
+        info "panel reports not running: ${dead} (fine if disabled in config — section 5 interprets)"
+    fi
 else
-    fail "Panel not answering (:8099/api/health → HTTP ${panel_code:-none}) — check the add-on log"
+    fail "Panel not answering (:8099/api/health) — check the add-on log"
 fi
 
 chat_state=$(curl -s -m 5 "http://127.0.0.1:8099/api/chat/state" 2>/dev/null)

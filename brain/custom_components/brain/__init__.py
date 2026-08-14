@@ -45,6 +45,7 @@ except ImportError:
     SupportsResponse = None  # type: ignore[assignment,misc]
 
 from .bridge import ClaudeBridge
+from .findings import FindingsWatcher
 from .learning import LearningWatcher
 from .const import (
     CONF_ENABLE_CONVERSATION,
@@ -229,10 +230,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         unsub_learning = async_track_time_interval(
             hass, watcher.async_poll, timedelta(seconds=60)
         )
+        # Findings ride the same account-wide slot: one store, one watcher,
+        # a brain_finding event per newly-reported problem. Primed for the
+        # same reason — a restart must not replay the open list on the bus.
+        findings_watcher = FindingsWatcher(hass)
+        await hass.async_add_executor_job(findings_watcher.prime)
+        unsub_findings = async_track_time_interval(
+            hass, findings_watcher.async_poll, timedelta(seconds=60)
+        )
         hass.data[DOMAIN]["_learning_watcher"] = entry.entry_id
 
         def _stop_learning() -> None:
             unsub_learning()
+            unsub_findings()
             hass.data[DOMAIN].pop("_learning_watcher", None)
 
         entry.async_on_unload(_stop_learning)
