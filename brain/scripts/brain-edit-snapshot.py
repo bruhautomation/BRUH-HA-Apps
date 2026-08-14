@@ -83,7 +83,11 @@ def main() -> int:
     if tool not in ("Write", "Edit", "NotebookEdit", "MultiEdit"):
         return 0
 
-    raw = (payload.get("tool_input") or {}).get("file_path")
+    tool_input = payload.get("tool_input") or {}
+    # NotebookEdit names its target notebook_path, not file_path — reading
+    # only file_path meant notebook edits matched the hook and were never
+    # snapshotted, so `brain undo` silently could not revert them.
+    raw = tool_input.get("file_path") or tool_input.get("notebook_path")
     if not raw:
         return 0
     path = Path(str(raw))

@@ -76,7 +76,10 @@ def claim_session(session_id: str) -> None:
         # the ledger could not be appended to.
         pass
 
-MAX_TURNS = os.environ.get("BRAIN_ASSIST_MAX_TURNS", "5")
+# Fallback matches config.yaml's default — a fallback that disagrees with
+# the shipped default is a second answer that wins exactly when nobody is
+# looking (run.sh exports the real value; this only applies without it).
+MAX_TURNS = os.environ.get("BRAIN_ASSIST_MAX_TURNS", "8")
 DEFAULT_TIMEOUT = int(os.environ.get("BRAIN_ASSIST_TIMEOUT", "105"))
 TIMEOUT_MARGIN = 15
 LIMIT_FLOOR = int(os.environ.get("BRAIN_ASSIST_LIMIT_FLOOR", "30"))
@@ -780,6 +783,13 @@ class Pool:
         self, conv_id: str, profile: tuple[str, str]
     ) -> tuple[Worker, str]:
         """Return (worker, mode) where mode is warm|spare|cold."""
+        # Looked up before the spare is considered: a conversation with a
+        # stored session must cold-spawn on --resume, never adopt the
+        # spare — the spare is a fresh process with no memory of the
+        # conversation, and handing it over used to *overwrite* the stored
+        # session id afterwards, severing the resume chain for good. The
+        # pre-warm is for conversations that genuinely start from nothing.
+        resume = self._stored_session(conv_id)
         with self.lock:
             worker = self.workers.get(conv_id)
             if worker and worker.alive() and worker.profile == profile:
@@ -798,7 +808,8 @@ class Pool:
                 self.workers.pop(conv_id, None)
 
             if (
-                self.spare is not None
+                resume is None
+                and self.spare is not None
                 and self.spare.alive()
                 and self.spare.profile == profile
             ):
@@ -809,7 +820,6 @@ class Pool:
                 return worker, "spare"
 
         # Cold spawn (outside the lock — process startup can take seconds).
-        resume = self._stored_session(conv_id)
         worker = Worker(profile, resume=resume)
         with self.lock:
             self.workers[conv_id] = worker
@@ -934,8 +944,11 @@ class Pool:
                 worker, mode = self._take_worker(conv_id, profile)
                 message = local_time_line() + text
                 # A truly fresh session can't see earlier turns — replay the
-                # transcript the integration sends (like the classic listener).
-                if mode == "cold" and req.get("conversation_history"):
+                # transcript the integration sends (like the classic
+                # listener). The spare is exactly as fresh as a cold spawn:
+                # it only ever goes to a conversation with no stored
+                # session, so sent history is all the context there is.
+                if mode in ("cold", "spare") and req.get("conversation_history"):
                     lines = [
                         f"{m.get('role', '?').upper()}: {m.get('content', '')}"
                         for m in req["conversation_history"]

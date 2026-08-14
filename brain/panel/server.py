@@ -68,7 +68,6 @@ POST /api/hypothesis/{ts}/reject  — no, optionally {note}: why it's wrong
 GET  /api/knowledge          — learned facts + question ledger + shared memory.md
 POST /api/knowledge/fact     — teach a fact {text}; Claude merges it into memory.md
                                (its only home — never duplicated into the ledger)
-DELETE /api/knowledge/fact/{ts}            — forget one fact
 POST /api/knowledge/question/{ts}/answer   — answer an open question {answer}
 POST /api/knowledge/question/{ts}/dismiss  — retire a question unanswered
 DELETE /api/knowledge/question/{ts}        — forget a question (askable again)
@@ -1823,13 +1822,30 @@ FINDING_VERBS = {
 FINDING_VERBS["ignore"] = FINDING_VERBS["wrong"]
 
 
+async def _json_body(request: web.Request) -> dict:
+    """The request body as a dict, or {} — never a crash.
+
+    A JSON array or string parses fine and is truthy, so the old
+    `(body or {}).get(...)` raised AttributeError on it — malformed client
+    input surfacing as an unhandled 500 instead of being ignored like an
+    absent body.
+    """
+    if not request.can_read_body:
+        return {}
+    try:
+        body = await request.json()
+    except ValueError:
+        return {}
+    return body if isinstance(body, dict) else {}
+
+
 async def h_finding_verb(request: web.Request) -> web.Response:
     verb = request.match_info["verb"]
     spec = FINDING_VERBS.get(verb)
     if spec is None:
         raise web.HTTPNotFound(text="no such action")
     finding = _finding_or_404(request)
-    body = await request.json() if request.can_read_body else {}
+    body = await _json_body(request)
     note = str((body or {}).get("note") or "").strip()[:findings_store.MAX_NOTE]
 
     if "status" in spec:
@@ -1944,7 +1960,7 @@ async def h_finding_unsettle(request: web.Request) -> web.Response:
     is still there. That is the honest version of "I changed my mind": if it
     really has stopped being true, nothing comes back.
     """
-    body = await request.json() if request.can_read_body else {}
+    body = await _json_body(request)
     key = str((body or {}).get("key") or "").strip()
     if not key:
         raise web.HTTPBadRequest(text="which one?")
@@ -1978,7 +1994,7 @@ async def h_finding_snooze(request: web.Request) -> web.Response:
     real problem you meant to come back to.
     """
     finding = _finding_or_404(request)
-    body = await request.json() if request.can_read_body else {}
+    body = await _json_body(request)
     choice = str((body or {}).get("for") or "tomorrow")
     if choice == "now":
         until = 0                      # bring it back immediately
@@ -2587,7 +2603,7 @@ async def h_hypothesis_reject(request: web.Request) -> web.Response:
         ts = int(request.match_info["ts"])
     except ValueError:
         raise web.HTTPBadRequest(text="bad hypothesis id")
-    body = await request.json() if request.can_read_body else {}
+    body = await _json_body(request)
     note = str((body or {}).get("note") or "").strip()[:findings_store.MAX_NOTE]
 
     def settle() -> dict | None:
@@ -2910,6 +2926,11 @@ async def h_chat_stream(request: web.Request) -> web.StreamResponse:
                 # keeps any intermediary from reaping an idle stream.
                 await resp.write(b": ping\n\n")
                 continue
+            if event.get("event") == "__overflow__":
+                # This stream fell behind and the session dropped it. End
+                # the response so the EventSource reconnects to a fresh
+                # snapshot, rather than idling on a queue nothing feeds.
+                break
             await send(event)
     except (ConnectionResetError, asyncio.CancelledError):
         # The viewer closed the tab, or the task was cancelled. Either way

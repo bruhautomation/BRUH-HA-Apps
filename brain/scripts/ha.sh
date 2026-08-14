@@ -55,6 +55,14 @@ delegate() {
         echo -e "${RED}Error: ${script} is not installed in this image${NC}" >&2
         exit 1
     fi
+    # Exec the file itself so its shebang runs it: `bash "$path"` ignored
+    # `#!/usr/bin/with-contenv bashio`, so `ha context` — the one delegated
+    # script that calls bashio:: functions — died with 127 on its first
+    # log line, every time, while startup generation (which invokes the
+    # script directly) kept working.
+    if [ -x "$path" ]; then
+        exec "$path" "$@"
+    fi
     exec bash "$path" "$@"
 }
 

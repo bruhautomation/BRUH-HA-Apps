@@ -302,32 +302,47 @@ if [ -r /opt/scripts/brain-run-source.sh ]; then
     [ -n "$learn_session" ] && session_args=(--session-id "$learn_session")
 fi
 
+# stderr is kept, not swallowed: a study session can fail for more than
+# one reason (timeout, auth, rate limit, an old CLI rejecting a flag) and
+# the last line of stderr is what tells them apart.
+err_file=$(mktemp 2>/dev/null || echo "/tmp/brain-learn-err.$$")
+
 run_study() {
     # shellcheck disable=SC2086
     printf '%s' "$prompt" | timeout "$TIMEOUT" \
         $claude_cmd -p "${turn_args[@]}" "$@" \
-        ${MODEL:+--model "$MODEL"} 2>/dev/null
+        ${MODEL:+--model "$MODEL"} 2>"$err_file"
 }
 
-if ! output=$(run_study "${session_args[@]}"); then
-    rc=$?
-    # An older CLI rejects --session-id outright. The label is optional;
-    # the study session is not.
-    if [ "${#session_args[@]}" -gt 0 ] && [ "$rc" -ne 124 ]; then
-        session_args=()
-        output=$(run_study) && rc=0
-    fi
+# `if ! output=$(...)` cannot see the exit code: inside the branch $? is
+# the *negation's* status, always 0 — so 124 was never 124, every failure
+# retried a full (expensive) second session, and the messages below were
+# unreachable. Capture rc directly.
+rc=0
+output=$(run_study "${session_args[@]}") || rc=$?
+# An older CLI rejects --session-id outright — usage text and a non-zero
+# exit. The label is optional; the study session is not. Only that failure
+# earns the retry: re-running a session that timed out or hit a rate limit
+# doubles the cost of the most expensive kind of run in the add-on.
+if [ "$rc" -ne 0 ] && [ "${#session_args[@]}" -gt 0 ] \
+    && grep -qi "unknown option\|unrecognized option" "$err_file" 2>/dev/null; then
+    session_args=()
+    rc=0
+    output=$(run_study) || rc=$?
 fi
-if [ "${rc:-0}" -ne 0 ]; then
+if [ "$rc" -ne 0 ]; then
     if [ "$rc" -eq 124 ]; then
         echo -e "${RED}Study session ran past its ${TIMEOUT}s limit and was stopped.${NC}" >&2
         echo -e "${DIM}Nothing was written. Raise BRAIN_LEARN_TIMEOUT for deeper sessions.${NC}" >&2
     else
-        echo -e "${RED}Study session failed — could not reach Claude.${NC}" >&2
-        echo -e "${DIM}Nothing was written. Check you're logged in and try again.${NC}" >&2
+        err_line=$(grep -v '^[[:space:]]*$' "$err_file" 2>/dev/null | tail -n 1 | cut -c1-200)
+        echo -e "${RED}Study session failed (Claude exited ${rc})${err_line:+ — ${err_line}}.${NC}" >&2
+        echo -e "${DIM}Nothing was written.${NC}" >&2
     fi
+    rm -f "$err_file"
     exit 1
 fi
+rm -f "$err_file"
 
 # Tolerate a stray code fence even though we asked for none.
 json=$(printf '%s' "$output" | sed -e 's/^```\(json\)\?$//' -e 's/^```$//' \

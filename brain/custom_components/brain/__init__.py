@@ -45,6 +45,7 @@ except ImportError:
     SupportsResponse = None  # type: ignore[assignment,misc]
 
 from .bridge import ClaudeBridge
+from .learning import LearningWatcher
 from .const import (
     CONF_ENABLE_CONVERSATION,
     CONF_ENABLE_SENSORS,
@@ -218,6 +219,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     if entry_type(entry) == ENTRY_TYPE_INSIGHT:
         _setup_insight_schedule(hass, entry)
+    elif not hass.data[DOMAIN].get("_learning_watcher"):
+        # One watcher account-wide (memory is one store, not per entry):
+        # fires a brain_learned logbook event per newly-learned fact, as
+        # the docs promise. Primed to the log's current tip so a restart
+        # does not replay the whole history into the logbook.
+        watcher = LearningWatcher(hass)
+        await hass.async_add_executor_job(watcher.prime)
+        unsub_learning = async_track_time_interval(
+            hass, watcher.async_poll, timedelta(seconds=60)
+        )
+        hass.data[DOMAIN]["_learning_watcher"] = entry.entry_id
+
+        def _stop_learning() -> None:
+            unsub_learning()
+            hass.data[DOMAIN].pop("_learning_watcher", None)
+
+        entry.async_on_unload(_stop_learning)
 
     # Check if the add-on deployed newer integration files that need a restart
     await _check_restart_required(hass)
@@ -296,6 +314,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 "run_insight",
                 "add_memory",
                 "answer_question",
+                "study",
                 *POWER_TOOL_SERVICES,
             ):
                 if hass.services.has_service(DOMAIN, service):

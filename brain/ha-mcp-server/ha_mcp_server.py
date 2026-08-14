@@ -60,6 +60,57 @@ def _service_denied(domain, service):
     return False
 
 
+# The homeassistant.* meta-services forward to the target entity's own
+# domain — homeassistant.turn_on on cover.garage_door opens the cover — so
+# matching them by their spelled name alone lets every entity-level denial
+# be rewritten as a meta-call: deny cover.open_cover and
+# `homeassistant.turn_on {"entity_id": "cover.garage_door"}` still opens
+# the garage. They are checked against their *targets* instead, and
+# conservatively: a meta-call touching any entity whose domain appears in a
+# denied pattern is refused outright, because the exact domain service a
+# meta-call resolves to is Home Assistant's mapping, not ours, and a
+# restricted channel failing closed beats one failing open. The entity's
+# own domain service remains the route for whatever is actually permitted.
+_META_SERVICES = ("turn_on", "turn_off", "toggle")
+
+
+def _meta_call_denied(payload):
+    """Why a homeassistant.* meta-service call is refused, or None."""
+    if not DENIED_SERVICES:
+        return None
+    payload = payload if isinstance(payload, dict) else {}
+    target = payload.get("target")
+    scopes = [payload] + ([target] if isinstance(target, dict) else [])
+
+    entity_ids = []
+    for scope in scopes:
+        raw = scope.get("entity_id")
+        if isinstance(raw, str):
+            entity_ids.extend(x.strip() for x in raw.split(",") if x.strip())
+        elif isinstance(raw, list):
+            entity_ids.extend(str(x) for x in raw)
+        # Area/device/label/floor targets resolve to entities inside HA,
+        # where this check cannot see them.
+        for key in ("area_id", "device_id", "label_id", "floor_id"):
+            if scope.get(key):
+                return ("it targets an area, device, label or floor, whose "
+                        "member entities cannot be checked against this "
+                        "assistant's restrictions")
+
+    if not entity_ids or any(e.lower() == "all" for e in entity_ids):
+        # No entity list (or the "all" sentinel) means every entity on the
+        # system, which certainly includes restricted ones.
+        return "it addresses all entities, including restricted ones"
+
+    denied_domains = {p.split(".", 1)[0] for p in DENIED_SERVICES}
+    for eid in entity_ids:
+        edomain = eid.split(".", 1)[0].lower()
+        if edomain in denied_domains:
+            return (f"it targets {eid}, and {edomain} services are "
+                    "restricted for this assistant")
+    return None
+
+
 def ha_api_request(endpoint, method="GET", data=None, accept=None):
     """Make a request to the Home Assistant API."""
     if endpoint.startswith("/api/"):
@@ -211,6 +262,15 @@ def call_service(domain, service, data=None, return_response=False):
             f"Service {domain}.{service} is not permitted for this assistant. "
             "Tell the user this action is restricted; do not retry."
         )}
+    if domain.lower() == "homeassistant" and service.lower() in _META_SERVICES:
+        reason = _meta_call_denied(data)
+        if reason:
+            return {"error": (
+                f"homeassistant.{service} is not permitted here because "
+                f"{reason}. Call the entity's own domain service instead; "
+                "if that is also refused, tell the user the action is "
+                "restricted and do not retry."
+            )}
     payload = data or {}
     if return_response:
         try:
@@ -1322,7 +1382,21 @@ def get_dashboard(url_path=None, view_index=None):
 
 
 def fire_event(event_type, event_data=None):
-    """Fire a Home Assistant event."""
+    """Fire a Home Assistant event.
+
+    Refused wholesale on a channel with any service restrictions: an event
+    can trigger any automation — including one that does exactly what the
+    deny-list forbids — and an event name is not a service name, so there
+    is nothing to match the patterns against. Fail closed, same rule as
+    the meta-services above.
+    """
+    if DENIED_SERVICES:
+        return {"error": (
+            "fire_event is not permitted for this assistant: its service "
+            "restrictions cannot be enforced on events, which can trigger "
+            "any automation. Tell the user this action is restricted; "
+            "do not retry."
+        )}
     result = ha_api_request(
         f"/api/events/{event_type}",
         method="POST",

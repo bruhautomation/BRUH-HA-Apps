@@ -413,7 +413,19 @@ class ChatSession:
             try:
                 q.put_nowait(event)
             except asyncio.QueueFull:
+                # A subscriber this far behind is not consuming. Dropping
+                # the queue alone left its stream awaiting a queue nothing
+                # would ever feed again — an open connection carrying only
+                # pings, which the client reads as "live" while receiving
+                # nothing. Swap its oldest buffered event for a poison pill
+                # so the stream ends and the client reconnects to a fresh
+                # snapshot.
                 self._subs.discard(q)
+                try:
+                    q.get_nowait()
+                    q.put_nowait({"event": "__overflow__"})
+                except (asyncio.QueueEmpty, asyncio.QueueFull):
+                    pass
         return event
 
     def _take_context(self, usage: object) -> None:

@@ -59,8 +59,16 @@ _brain_prune_sources() {
     local lines
     lines=$(wc -l < "$BRAIN_RUN_SOURCES" 2>/dev/null || echo 0)
     [ "$lines" -gt 5000 ] 2>/dev/null || return 0
+    # `cat > file`, never `mv`: mv swaps the inode, so a root caller's
+    # prune re-created the ledger root-owned 0644 and the claude-side
+    # writers (consolidator, study watcher) silently lost their claims
+    # until the next restart re-chowned it — the same regression CLAUDE.md
+    # records for the Python half's old prune. Truncating in place keeps
+    # the owner and mode run.sh set. The unlocked overwrite can race a
+    # concurrent append, same as the append path already accepts: a torn
+    # line costs one claim, and every reader skips lines it cannot parse.
     { tail -n 4000 "$BRAIN_RUN_SOURCES" > "${BRAIN_RUN_SOURCES}.tmp"; } 2>/dev/null \
-        && mv "${BRAIN_RUN_SOURCES}.tmp" "$BRAIN_RUN_SOURCES" 2>/dev/null
+        && { cat "${BRAIN_RUN_SOURCES}.tmp" > "$BRAIN_RUN_SOURCES"; } 2>/dev/null
     rm -f "${BRAIN_RUN_SOURCES}.tmp" 2>/dev/null
     return 0
 }

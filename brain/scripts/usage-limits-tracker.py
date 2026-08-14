@@ -44,7 +44,7 @@ import sys
 import time
 import urllib.request
 import urllib.error
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 
 # ---------------------------------------------------------------------------
@@ -431,6 +431,88 @@ def write_usage(data):
         sys.stderr.write(f"usage-limits-tracker: write error: {exc}\n")
 
 
+def _record_failure(error, delay_s, strikes=0):
+    """Leave the reason for a failed poll beside whatever the file holds.
+
+    A failure that leaves a fresh reading alone (deliberate — see run_once)
+    used to leave nothing at all: the reading aged out, four sensors went
+    unavailable, and the *why* was only written on the next attempt — which
+    during a four-hour 429 backoff is hours after the person is looking at
+    an unexplained "stale". These keys ride beside the reading without
+    touching the numbers or their timestamp, so staleness still ages from
+    the real reading; the diagnostic sensor can name the reason the moment
+    the reading goes stale; and a restart can honour a promise of quiet
+    made before it (see _resume_backoff). A successful poll rewrites the
+    file whole, which is what clears them.
+    """
+    try:
+        with open(USAGE_FILE) as fh:
+            data = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        data = None
+    if not isinstance(data, dict):
+        data = {}
+    now = datetime.now(timezone.utc)
+    data["last_error"] = error
+    data["last_error_at"] = now.isoformat()
+    data["next_attempt_at"] = (now + timedelta(seconds=delay_s)).isoformat()
+    detail = ERROR_DETAIL.get(error)
+    if detail:
+        data["last_error_detail"] = detail
+    else:
+        data.pop("last_error_detail", None)
+    if strikes:
+        data["rate_limit_strikes"] = strikes
+    else:
+        data.pop("rate_limit_strikes", None)
+    tmp = USAGE_FILE + ".tmp"
+    try:
+        os.makedirs(os.path.dirname(USAGE_FILE), exist_ok=True)
+        with open(tmp, "w") as fh:
+            json.dump(data, fh, indent=2)
+        os.replace(tmp, USAGE_FILE)
+    except OSError:
+        # Same rule as write_error_status: a failed write leaves whatever
+        # was there to age out.
+        pass
+
+
+def _resume_backoff():
+    """(seconds still owed to a pre-restart 429 backoff, strikes to resume).
+
+    Backoff used to live only in memory, so restarting the add-on — the
+    first thing anyone does when sensors go unavailable — polled the
+    endpoint immediately and restarted the ladder from its first rung,
+    which against a daily meter is retrying straight back into the limit.
+    Only a rate limit's quiet is resumed: every other failure is cheap to
+    re-ask about, and a restart asking straight away is the right default.
+    """
+    try:
+        with open(USAGE_FILE) as fh:
+            data = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return 0.0, 0
+    if not isinstance(data, dict):
+        return 0.0, 0
+    if "http_429" not in (data.get("last_error"), data.get("error")):
+        return 0.0, 0
+    raw = data.get("next_attempt_at")
+    if not isinstance(raw, str):
+        return 0.0, 0
+    try:
+        when = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return 0.0, 0
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    remaining = (when - datetime.now(timezone.utc)).total_seconds()
+    if remaining <= 0:
+        return 0.0, 0
+    strikes = data.get("rate_limit_strikes")
+    strikes = strikes if isinstance(strikes, int) and strikes > 0 else 1
+    return min(remaining, RETRY_AFTER_MAX_S), strikes
+
+
 def write_error_status(error_msg, detail=None):
     """Write an error status file so sensors know what's wrong."""
     os.makedirs(os.path.dirname(USAGE_FILE), exist_ok=True)
@@ -563,17 +645,25 @@ def main():
         f"usage-limits-tracker: starting (interval={POLL_INTERVAL}s)\n"
     )
 
+    # A rate-limit backoff promised before a restart is still owed after it.
+    resumed_delay, rate_limit_strikes = _resume_backoff()
     # Initial backoff for first attempt — give Claude Code time to authenticate
-    initial_delay = 10
-    sys.stderr.write(
-        f"usage-limits-tracker: waiting {initial_delay}s for Claude Code auth...\n"
-    )
+    initial_delay = max(10, resumed_delay)
+    if resumed_delay:
+        sys.stderr.write(
+            "usage-limits-tracker: resuming the rate-limit backoff from "
+            f"before the restart — waiting {initial_delay / 60:.0f} minutes\n"
+        )
+    else:
+        sys.stderr.write(
+            f"usage-limits-tracker: waiting {initial_delay}s for Claude Code auth...\n"
+        )
     time.sleep(initial_delay)
 
     consecutive_failures = 0
     # Consecutive 429s. Separate from the count above because a rate limit
-    # is the one failure that retrying makes worse.
-    rate_limit_strikes = 0
+    # is the one failure that retrying makes worse. Seeded by _resume_backoff
+    # so a restart mid-wall picks the ladder up where it left it.
     last_logged = None
     # Which credential store answered last time, so the log says so once
     # rather than every poll.
@@ -622,6 +712,7 @@ def main():
                     )
         except Exception as exc:
             sys.stderr.write(f"usage-limits-tracker: error: {exc}\n")
+            success, error = False, "tracker_error"
             consecutive_failures += 1
             rate_limit_strikes = 0
 
@@ -641,6 +732,12 @@ def main():
             delay = FAILURE_BACKOFF_S
         else:
             delay = POLL_INTERVAL
+
+        if not success:
+            # The reason and the next attempt, on disk, before the wait —
+            # not on the attempt after it.
+            _record_failure(error or "tracker_error", delay,
+                            rate_limit_strikes)
 
         time.sleep(delay)
 
