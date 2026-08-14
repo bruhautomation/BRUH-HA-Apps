@@ -33,12 +33,14 @@ Usage:
       list                       Print what it knows
       edit                       Open the memory file in $EDITOR
       forget "<text>"            Drop a remembered line
+      inbox                      Facts queued, not yet filed into memory
       log [n]                    What it learned recently
       undo [n]                   Revert a memory change
       hypotheses                 Pending guesses awaiting your yes/no
       confirm "<text>"           Confirm a pending guess
       reject "<text>"            Reject a pending guess
       consolidate                Fold pending facts in now
+      clear --confirm            Reset the document to an empty template
       export [file]              Everything learned, as one portable file
       import <file>              Fold an export back in
 

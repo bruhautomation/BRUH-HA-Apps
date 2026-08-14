@@ -74,11 +74,11 @@ DOCUMENTED_IN = [
     "brain/custom_components/brain/__init__.py",
 ]
 
-SITE_FILES = """    bruhautomation3/src/content/docs/brain/index.mdx
-    bruhautomation3/src/content/docs/brain/quickstart.mdx
-    bruhautomation3/src/content/docs/brain/reference.md
-    bruhautomation3/src/content/docs/brain/how-brain-controls-ha.mdx
-    bruhautomation3/src/content/docs/brain/power-tools/index.mdx"""
+SITE_FILES = """    bruhautomation3/apps/brain/index.mdx
+    bruhautomation3/apps/brain/quickstart.mdx
+    bruhautomation3/apps/brain/reference.md
+    bruhautomation3/apps/brain/how-brain-controls-ha.mdx
+    bruhautomation3/apps/brain/power-tools/index.mdx"""
 
 # "65 registry-management services", "65 admin-gated ...", "65 Power Tools",
 # "65 admin services", "65 services". The noun varies; the subject doesn't.
