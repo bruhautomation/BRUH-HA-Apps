@@ -62,12 +62,15 @@ import atomic_write
 
 import functools
 import json
+import logging
 import os
 import re
 import threading
 import time
 import unicodedata
 from pathlib import Path
+
+log = logging.getLogger("brain.findings")
 
 FINDINGS_FILE = Path(os.environ.get("BRAIN_FINDINGS_FILE", "/data/findings.json"))
 # Where `brain learn` (and anything else on the CLI side) leaves findings it
@@ -79,6 +82,15 @@ INBOX_DIR = Path(os.environ.get(
 # this one is an index that is never swept — see settle_and_clear.
 SETTLED_FILE = Path(os.environ.get(
     "BRAIN_FINDINGS_SETTLED", "/data/findings-settled.json"))
+# A compact mirror on the shared volume, for the HA integration. The store
+# itself lives in /data, which Home Assistant cannot see — so a critical
+# finding discovered at 3am was invisible until somebody opened the panel.
+# This file is what the integration's sensor reads and its event watcher
+# diffs; it is derived, never read back, and republished on every write.
+STATE_FILE = Path(os.environ.get(
+    "BRAIN_FINDINGS_STATE", "/config/.brain/findings_state.json"))
+# Plenty for a sensor attribute; the panel remains the place to work a list.
+STATE_MAX_ROWS = 50
 
 MAX_FINDINGS = 200
 # Far more than the list, because it is one short line each and losing the
@@ -156,6 +168,60 @@ def _load() -> list[dict]:
 
 def _write(items: list[dict]) -> None:
     atomic_write.write_json(FINDINGS_FILE, {"findings": items})
+    # Every write republishes the shared-volume mirror, so the two can never
+    # drift: there is no code path that changes the store without it.
+    _publish_state(items)
+
+
+def _publish_state(items: list[dict]) -> None:
+    """Mirror a summary of the live list onto the shared volume.
+
+    Best-effort by design, with the failure logged rather than raised: the
+    mirror is how Home Assistant *sees* findings, but a read-only /config
+    must not be able to lose the finding itself, which is already safe in
+    /data by the time this runs.
+
+    Skipped entirely when the shared volume's parent directory does not
+    exist — that is a dev checkout or a test, not a broken install, and
+    creating a stray /config on somebody's laptop would be worse than
+    skipping.
+    """
+    if not STATE_FILE.parent.parent.is_dir():
+        return
+    now = time.time()
+    shaped = [s for s in (_shape(e) for e in items) if s["text"]]
+    shaped.sort(key=lambda f: f["ts"], reverse=True)
+    live = [s for s in shaped
+            if s["status"] in LIVE_STATUSES and not is_snoozed(s, now)]
+    open_rows = [s for s in live if s["status"] in UNSETTLED_STATUSES]
+    try:
+        STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write.write_json(STATE_FILE, {
+            "ts": int(now),
+            "open": len(open_rows),
+            "by_severity": {sev: len([s for s in open_rows
+                                      if s["severity"] == sev])
+                            for sev in SEVERITIES},
+            "findings": [
+                {k: s[k] for k in ("ts", "text", "severity", "status",
+                                   "entity_id", "fixable", "source_title")}
+                for s in live[:STATE_MAX_ROWS]
+            ],
+        })
+    except OSError as exc:
+        log.warning("could not publish findings state to %s: %s",
+                    STATE_FILE, exc)
+
+
+@_mutates
+def publish_state() -> None:
+    """Republish the mirror from the store as it stands.
+
+    Called at startup so the integration has a current file to read even
+    when nothing has changed since the last boot — the alternative is a
+    sensor reporting last week until the first new finding lands.
+    """
+    _publish_state(_load())
 
 
 def _unique_ts(used: set[int]) -> int:
@@ -214,18 +280,22 @@ def _shape(entry: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 @_mutates
-def sweep_inbox() -> int:
+def sweep_inbox() -> list[dict]:
     """Fold `/config/.brain/findings/inbox/*.jsonl` into the store.
 
     Same contract as the memory inbox: append-only JSONL, one JSON object
     per line, consumed once. A torn or unparseable line is skipped rather
     than taking the whole file down — a study session that dies mid-write
     must not be able to wedge the Findings tab.
+
+    Returns the findings that were actually NEW — the callers that log a
+    count take a len(), and the notify hook needs the entries themselves,
+    because "3 findings arrived" is not a message anyone can act on.
     """
     try:
         files = sorted(INBOX_DIR.glob("*.jsonl"))
     except OSError:
-        return 0
+        return []
     pending: list[dict] = []
     swept: list[Path] = []
     for path in files:
@@ -247,7 +317,7 @@ def sweep_inbox() -> int:
     # One write for the whole sweep, not one per finding: a study session
     # that files five would otherwise rewrite the store five times, which on
     # an SD card is five erase cycles for one batch of results.
-    added = len(add_many(pending))
+    added = add_many(pending)
     for path in swept:
         try:
             path.unlink()
@@ -575,6 +645,74 @@ def unsettle(key: str) -> bool:
         return False
     _write_settled(kept)
     return True
+
+
+@_mutates
+def merge_rows(rows: list[dict]) -> int:
+    """Fold another install's exported findings in — for `brain memory
+    import`. Unlike add_many this preserves each row's lifecycle (status,
+    result, snooze, settled_at): a migration is moving live work, not
+    re-reporting it. Known texts are skipped in any status, and the settled
+    ledger still wins — an answer given on THIS install is never undone by
+    a row imported from another one."""
+    items = _load()
+    seen = {normalize(f.get("text", "")) for f in items}
+    seen |= {str(e.get("key") or "") for e in _load_settled()}
+    used = {int(f.get("ts") or 0) for f in items}
+    added = 0
+    for row in rows:
+        entry = coerce(row)
+        if entry is None or normalize(entry["text"]) in seen:
+            continue
+        status = row.get("status")
+        entry["status"] = status if status in STATUSES else "open"
+        entry["result"] = str(row.get("result") or "")[:MAX_RESULT]
+        entry["changed"] = _clean_changed(row.get("changed"))
+        entry["settled_at"] = int(row.get("settled_at") or 0)
+        entry["snoozed_until"] = int(row.get("snoozed_until") or 0)
+        # The original ts is the id everything exported alongside it refers
+        # to, so it is kept where it is free; a collision gets a fresh one.
+        ts = int(row.get("ts") or 0)
+        entry["ts"] = ts if ts > 0 and ts not in used else _unique_ts(used)
+        used.add(entry["ts"])
+        seen.add(normalize(entry["text"]))
+        items.append(entry)
+        added += 1
+    if added:
+        _write(_prune(items))
+    return added
+
+
+@_mutates
+def merge_settled(entries: list[dict]) -> int:
+    """Fold another install's settled ledger in — existing entries win.
+
+    The ledger is what stops the analyst re-reporting an answered problem,
+    so a migration that dropped it would replay every dismissal the old
+    install had already bought off.
+    """
+    ledger = _load_settled()
+    known = {str(e.get("key") or "") for e in ledger}
+    added = 0
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        key = normalize(str(entry.get("key") or entry.get("text") or ""))
+        if not key or key in known:
+            continue
+        kind = entry.get("kind")
+        ledger.append({
+            "key": key,
+            "text": str(entry.get("text") or "")[:MAX_TEXT],
+            "kind": kind if kind in ("fixed", "ignored") else "ignored",
+            "ts": int(entry.get("ts") or 0) or int(time.time()),
+            "note": str(entry.get("note") or "").strip()[:MAX_NOTE],
+        })
+        known.add(key)
+        added += 1
+    if added:
+        _write_settled(ledger[-MAX_SETTLED:])
+    return added
 
 
 @_mutates

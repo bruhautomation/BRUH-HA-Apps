@@ -336,6 +336,15 @@ MEMORYMD
     export BRAIN_MEMORY_MAX_KB="$memory_max_kb"
     export BRAIN_EDIT_JOURNAL_DAYS="$edit_journal_days"
 
+    # Findings notifications. The panel prefers the live Supervisor options
+    # (a Configuration-tab edit lands without a restart); these exports are
+    # its fallback for when the Supervisor cannot be read.
+    local findings_notify findings_notify_sev
+    findings_notify=$(bashio::config 'findings_notify_service' '')
+    findings_notify_sev=$(bashio::config 'findings_notify_min_severity' 'serious')
+    export BRAIN_FINDINGS_NOTIFY="$findings_notify"
+    export BRAIN_FINDINGS_NOTIFY_MIN_SEVERITY="$findings_notify_sev"
+
     # Study sessions are where depth actually matters, and --max-turns
     # truncates rather than degrading — a session that hits the cap files
     # nothing at all. Generous by default; 0 removes the cap entirely.

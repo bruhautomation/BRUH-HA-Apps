@@ -1121,19 +1121,28 @@ class ChatSession:
         if self.state == "busy":
             raise RuntimeError("Claude is still answering — stop it first")
         self.model = model
+        # The label rides back on every answer, because the meta line is the
+        # only confirmation a pick landed and the event that would refresh
+        # it (init → info) does not arrive until the NEXT message — a
+        # restarted `--resume` process says nothing until it is spoken to.
+        # Waiting for it is how the picker looked like it did nothing.
+        label = pretty_model(model)
         if not self.alive():
             # Nothing running: the next spawn simply takes the new flag.
-            return {"ok": True, "model": model, "restarted": False}
+            return {"ok": True, "model": model, "model_label": label,
+                    "restarted": False}
         if model == self._spawned_model:
             # Compared against what the process actually runs, never against
             # `self.model` — the server refreshes that from settings on every
             # request, so a ⚙ edit made it agree with a pick the live process
             # had never seen, and the picker answered "already that model"
             # about a session still running the old one.
-            return {"ok": True, "model": model, "restarted": False}
+            return {"ok": True, "model": model, "model_label": label,
+                    "restarted": False}
         await self.stop()
         await self.start()
-        return {"ok": True, "model": model, "restarted": True}
+        return {"ok": True, "model": model, "model_label": label,
+                "restarted": True}
 
     async def reset(self) -> dict:
         """Start a genuinely new conversation.

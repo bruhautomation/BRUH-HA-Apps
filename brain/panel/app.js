@@ -252,6 +252,15 @@ function timeAgo(iso) {
   return `${Math.round(secs / 86400)} d ago`;
 }
 
+// The other direction, for the scheduler's next_due (epoch seconds).
+function timeUntil(epochS) {
+  const mins = Math.round((epochS * 1000 - Date.now()) / 60000);
+  if (mins < 2) return "due now";
+  if (mins < 60) return `in ${mins} min`;
+  if (mins < 48 * 60) return `in ${Math.round(mins / 60)} h`;
+  return `in ${Math.round(mins / 1440)} d`;
+}
+
 // Height auto-sizing: a script appended to every srcdoc posts its content
 // height; sandboxed frames can't be measured from outside.
 
@@ -1080,6 +1089,17 @@ function makeCard(catInfo, insight, fallbackId) {
     const foot = el("div", "foot");
     foot.appendChild(el("span", null,
       view ? `Generated ${timeAgo(shown.generated_at)}` : `Updated ${timeAgo(shown.generated_at)}`));
+    // When the scheduler will come back for this card — the readback of the
+    // auto-refresh settings, on the thing they refresh. Suppressed while a
+    // global gate holds (paused, budget, no auth): those surfaces already
+    // say why nothing will run, and a countdown beside them would be a lie.
+    const gate = state.status && state.status.auto && state.status.auto.gate;
+    if (!view && catInfo && catInfo.next_due && !gate) {
+      const when = el("span", null, `· next ${timeUntil(catInfo.next_due)}`);
+      tip(when, "When auto-refresh regenerates this card. Change it under "
+        + "⋯ → Edit, or the default under ⚙ Settings.");
+      foot.appendChild(when);
+    }
     foot.appendChild(el("span", "spacer"));
     if (shown.meta && shown.meta.duration_ms) {
       foot.appendChild(el("span", null, `${(shown.meta.duration_ms / 1000).toFixed(0)}s`));
@@ -4613,9 +4633,18 @@ async function pickChatModel(id) {
     const out = await api("api/chat/model", {
       method: "POST", body: JSON.stringify({ model: id || null }) });
     chatState.chatModel = out.chat_model || "";
-    // A restart re-announces the session (init → info), which is what
-    // updates the name in the meta line; without one there is nothing
-    // running yet and the next spawn simply takes the flag.
+    // The meta line is the only confirmation a pick landed, and the event
+    // that would refresh it (init → info) does not arrive until the next
+    // message — a restarted --resume process says nothing until spoken to.
+    // So the response carries the server-made label (same parser as the
+    // info event; never a second regex here) and the line updates now. A
+    // pick that resolves to "let the CLI choose" has no name to show yet,
+    // so the Default label stands in until the next init says for sure.
+    chatState.info = Object.assign({}, chatState.info, {
+      model: out.model || "",
+      model_label: out.model_label || chatState.defaultModelLabel || "default",
+    });
+    chatMeta();
     toast(out.restarted
       ? "Model changed — the conversation carries on"
       : "Model set — it applies from the next message");

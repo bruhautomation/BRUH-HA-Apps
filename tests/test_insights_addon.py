@@ -514,6 +514,12 @@ class TestPanelServer(unittest.TestCase):
                     [c["id"] for c in data["categories"]],
                     [c["id"] for c in categories.CATEGORIES],
                 )
+                # The scheduler's readback: why auto-refresh is idle (the
+                # gate) and when each category will next regenerate.
+                self.assertIn("auto", data)
+                self.assertIn("gate", data["auto"])
+                for cat in data["categories"]:
+                    self.assertIn("next_due", cat)
 
                 resp = await client.post("/api/generate", json={"category": "bogus"})
                 self.assertEqual(resp.status, 400)
@@ -532,10 +538,82 @@ class TestPanelServer(unittest.TestCase):
 
                 resp = await client.get("/api/health")
                 self.assertEqual(resp.status, 200)
+                health = await resp.json()
+                # Liveness for the watchdog first: ok is the panel
+                # answering, never a judgement about sibling daemons.
+                self.assertTrue(health["ok"])
+                # The roll-call rides along for `brain doctor` — every
+                # known daemon gets a row with a boolean, and on this test
+                # machine none of them are running, which is a fact, not a
+                # failure.
+                daemons = health.get("daemons", {})
+                for name in self.server.DAEMON_MARKS:
+                    self.assertIn(name, daemons)
+                    self.assertIsInstance(daemons[name]["running"], bool)
             finally:
                 await client.close()
 
         asyncio.run(run())
+
+    def test_health_survives_a_broken_rollcall(self):
+        """The watchdog restarts the add-on when /api/health fails, so the
+        informational half must never be able to take liveness down."""
+        from aiohttp.test_utils import TestClient, TestServer
+
+        def boom():
+            raise RuntimeError("proc scan exploded")
+
+        original = self.server._daemon_rollcall
+        self.server._daemon_rollcall = boom
+        try:
+            async def run():
+                client = TestClient(TestServer(self.server.make_app()))
+                await client.start_server()
+                try:
+                    resp = await client.get("/api/health")
+                    self.assertEqual(resp.status, 200)
+                    body = await resp.json()
+                    self.assertTrue(body["ok"])
+                    self.assertNotIn("daemons", body)
+                finally:
+                    await client.close()
+
+            asyncio.run(run())
+        finally:
+            self.server._daemon_rollcall = original
+
+    def test_next_due_mirrors_refresh_due(self):
+        """_next_due is _refresh_due asked "when" instead of "now?" — the
+        two must agree, or the card foot lies about the scheduler."""
+        import time as _t
+        now = _t.time()
+        stamp = lambda offset: _t.strftime(  # noqa: E731
+            "%Y-%m-%dT%H:%M:%S", _t.localtime(now + offset))
+
+        # disabled and manual-only categories are never due
+        self.assertIsNone(self.server._next_due(
+            {"enabled": False, "refresh_hours": 6}, stamp(-7200), now))
+        self.assertIsNone(self.server._next_due(
+            {"enabled": True, "refresh_hours": 0}, stamp(-7200), now))
+
+        # a fresh card regenerates at gen + interval...
+        eff = {"enabled": True, "refresh_hours": 6}
+        nxt = self.server._next_due(eff, stamp(-3600), now)
+        self.assertAlmostEqual(nxt, now - 3600 + 6 * 3600, delta=2)
+        self.assertFalse(self.server._refresh_due(eff, stamp(-3600), now))
+
+        # ...an overdue one is due now, and _refresh_due agrees
+        nxt = self.server._next_due(eff, stamp(-7 * 3600), now)
+        self.assertAlmostEqual(nxt, now, delta=2)
+        self.assertTrue(self.server._refresh_due(eff, stamp(-7 * 3600), now))
+
+        # a schedule points at the next future occurrence
+        lt = _t.localtime(now + 2 * 3600)
+        eff = {"enabled": True, "schedule": [f"{lt.tm_hour:02d}:{lt.tm_min:02d}"]}
+        nxt = self.server._next_due(eff, stamp(-60), now)
+        self.assertIsNotNone(nxt)
+        self.assertGreater(nxt, now)
+        self.assertLessEqual(nxt - now, 2 * 3600 + 120)
 
     def test_generate_queue_dedup(self):
         async def run():

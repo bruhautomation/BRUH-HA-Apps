@@ -1,7 +1,11 @@
-# Manual checks
+# Browser checks
 
-Checks that need a real browser, so they can't run in CI alongside the pytest
-suite. Run them by hand when you touch what they measure.
+Checks that need a real browser, so they can't run inside the pytest suite.
+The four `measure-*.mjs` scripts run in CI as the **layout** job on every
+PR; run them by hand too when you touch what they measure — the failure
+output is far easier to read next to your editor than in a CI log. The
+screenshot pipeline (`demo_panel.py` + `shoot-panel.mjs`) stays manual: it
+produces the docs images, not a pass/fail.
 
 They all need Playwright, resolved from this repo's own `node_modules`:
 

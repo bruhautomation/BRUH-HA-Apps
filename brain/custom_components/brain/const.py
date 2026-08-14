@@ -46,6 +46,11 @@ DEFAULT_INSIGHT_TIMEOUT = 300
 
 # Event fired on the HA bus when an insight job finishes
 EVENT_INSIGHT_COMPLETE = "brain_insight_complete"
+# Event fired on the HA bus for each NEW finding the add-on files — the
+# automatable half of the Findings tab. The add-on publishes a mirror of
+# the findings list to FINDINGS_STATE_FILENAME on the shared volume; the
+# integration diffs it and fires one event per new row.
+EVENT_FINDING = "brain_finding"
 # Dispatcher signal (entry_id appended) for pushing results to the sensor
 SIGNAL_INSIGHT_UPDATE = "brain_insight_update_{}"
 
@@ -69,6 +74,10 @@ MEMORY_FILE = "memory.md"
 # runs `brain learn` and files whatever it finds through the inbox.
 STUDY_REQUESTS_DIR = "study_requests"
 QUESTIONS_FILE = "questions.jsonl"
+
+# Findings mirror the add-on republishes on every change (see the add-on's
+# findings_store._publish_state): {ts, open, by_severity, findings[]}.
+FINDINGS_STATE_FILENAME = "findings_state.json"
 
 # Internal HTTP API published by the add-on's worker pool (fast mode).
 # Endpoint + token are exchanged over the shared /config volume; the

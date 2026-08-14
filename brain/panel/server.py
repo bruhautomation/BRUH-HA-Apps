@@ -721,6 +721,56 @@ def _model_findings(value, max_items: int = 3) -> list[dict]:
     return out
 
 
+def _findings_notify_target() -> tuple[str, str]:
+    """Where new findings should be pushed, and from what severity up.
+
+    The add-on option is the source of truth (live via the options poller,
+    so a Configuration-tab edit lands without a restart); the environment
+    variables are the fallback run.sh exports for the same options, which is
+    what keeps this working when the Supervisor is unreachable.
+    """
+    opts = addon_options.snapshot() or {}
+    service = str(opts.get("findings_notify_service")
+                  or os.environ.get("BRAIN_FINDINGS_NOTIFY", "")).strip()
+    severity = str(opts.get("findings_notify_min_severity")
+                   or os.environ.get("BRAIN_FINDINGS_NOTIFY_MIN_SEVERITY",
+                                     "")).strip().lower()
+    if severity not in findings_store.SEVERITIES:
+        severity = "serious"
+    return service, severity
+
+
+async def _announce_findings(created: list[dict]) -> None:
+    """Push newly-created findings to the configured notify service.
+
+    Only ever handed the CREATED list — add_many dedupes against every
+    status and the settled ledger, so a re-reported problem cannot ring the
+    phone twice, and there is nothing to announce at startup because a
+    replayed store creates nothing.
+
+    A failed delivery is a log line, never an error: the finding is already
+    safe on the list, and the notification is the courtesy copy.
+    """
+    service, min_severity = _findings_notify_target()
+    if not service or not created:
+        return
+    floor = findings_store.SEVERITIES.index(min_severity)
+    worthy = [f for f in created
+              if findings_store.SEVERITIES.index(f["severity"]) >= floor]
+    if not worthy:
+        return
+    lines = [f"[{f['severity']}] {f['text']}" for f in worthy]
+    title = ("brAIn found a problem" if len(worthy) == 1
+             else f"brAIn found {len(worthy)} problems")
+    import ha_data
+    try:
+        await ha_data.send_notification(
+            service, title, "\n".join(lines)[:1500])
+        log.info("notified %s of %d new finding(s)", service, len(worthy))
+    except Exception as exc:  # noqa: BLE001 — a bad target can't fail the run
+        log.warning("findings notification via %s failed: %s", service, exc)
+
+
 async def _search_run(insight_id: str, cat: dict, framing: dict):
     """Give Claude a map of the home and read-only tools, and let it look.
 
@@ -872,6 +922,7 @@ async def _generate(insight_id: str) -> None:
         filed = findings_store.add_many([
             {**f, "source": cat["id"], "source_title": cat.get("title", "Insight")}
             for f in _model_findings(obj.get("findings"))])
+        await _announce_findings(filed)
         tags = card_tags.clean_tags(_clean_strings(obj.get("tags"), 4, 24))
         insight = {
             "id": insight_id,
@@ -962,10 +1013,11 @@ async def _run_fix(job_id: str) -> None:
                 source="fix")
         # Anything it noticed on the way in becomes its own finding rather
         # than an edit it was not asked to make.
-        findings_store.add_many([
+        noticed = findings_store.add_many([
             {"text": extra, "source": "fix",
              "source_title": f"Noticed while fixing “{finding['text']}”"}
             for extra in parsed["also_found"]])
+        await _announce_findings(noticed)
         _set_job(job_id, state="done", error="")
         log.info("finding %s → %s", ts, status)
     except Exception as exc:  # noqa: BLE001 — job errors surface in the UI
@@ -1019,6 +1071,59 @@ def _schedule_due(times: list[str], generated_at: str, now: float) -> bool:
     return gen is None or gen < last_scheduled
 
 
+# Why the scheduler is not scheduling, when it is not. Every gate already
+# has a control surface (the auth chip, the paused chip, the pill's budget
+# dot) — this is the READBACK, so "why did my cards stop updating" is a
+# field in /api/status instead of one log line printed once. `checked_at`
+# doubles as proof the loop itself is alive.
+AUTO_STATE: dict = {"gate": None, "detail": "", "checked_at": 0.0}
+
+
+def _set_gate(gate: str | None, detail: str = "") -> None:
+    AUTO_STATE.update(gate=gate, detail=detail, checked_at=time.time())
+
+
+def _next_due(eff: dict, generated_at: str, now: float) -> float | None:
+    """When auto-refresh will next regenerate this category, epoch seconds.
+
+    None means never (disabled, or interval 0 = manual only); a value at or
+    before `now` means it is due and will queue on the next tick — the two
+    read differently on a card and must not be conflated. Mirrors
+    _refresh_due exactly: this is the same arithmetic asked "when" instead
+    of "now?", and any drift between them makes the foot lie about the
+    scheduler.
+    """
+    if not eff.get("enabled", True):
+        return None
+    schedule = eff.get("schedule")
+    if isinstance(schedule, list) and schedule:
+        if _schedule_due(schedule, generated_at, now):
+            return now
+        lt = time.localtime(now)
+        future: list[float] = []
+        for t in schedule:
+            try:
+                hh, mm = t.split(":")
+                hh, mm = int(hh), int(mm)
+            except ValueError:
+                continue
+            for day_off in (0, 1):
+                stamp = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday + day_off,
+                                     hh, mm, 0, 0, 0, -1))
+                if stamp > now:
+                    future.append(stamp)
+        return min(future) if future else None
+    hours = eff.get("refresh_hours")
+    if hours is None:
+        hours = eff_refresh_hours()
+    if hours <= 0:
+        return None
+    gen = _parse_generated_at(generated_at) if generated_at else None
+    if gen is None:
+        return now
+    return max(now, gen + hours * 3600)
+
+
 def _refresh_due(eff: dict, generated_at: str, now: float) -> bool:
     """True when a category's stored insight should regenerate.
 
@@ -1061,21 +1166,28 @@ async def _scheduler() -> None:
         try:
             swept = await asyncio.to_thread(findings_store.sweep_inbox)
             if swept:
-                log.info("swept %d finding(s) from study sessions", swept)
+                log.info("swept %d finding(s) from study sessions", len(swept))
+                await _announce_findings(swept)
         except Exception as exc:  # never let this kill the loop
             log.debug("findings sweep failed: %s", exc)
         if not engine.get_auth():
+            _set_gate("no_auth")
             continue
         settings = settings_store.load()
         if not settings["auto_enabled"]:
+            _set_gate("paused")
             continue
         # Nothing is scheduled before onboarding: there are no cards, and
         # generating one would be the canned-defaults behaviour this
         # replaced.
         if not settings.get("onboarded"):
+            _set_gate("not_onboarded")
             continue
         budget = usage_store.budget_state(settings)
         if budget["blocked"]:
+            _set_gate("budget",
+                      f"session usage {budget['used_percent']:.0f}% ≥ "
+                      f"budget {budget['budget_percent']}%")
             if not budget_logged:
                 log.info(
                     "auto-refresh paused: session usage %.0f%% ≥ budget %d%% (%s)",
@@ -1084,6 +1196,7 @@ async def _scheduler() -> None:
                 budget_logged = True
             continue
         budget_logged = False
+        _set_gate(None)
         stored = {i["id"]: i.get("generated_at", "") for i in load_insights()}
         now = time.time()
         for cat in all_categories():
@@ -1177,6 +1290,7 @@ def _static(name: str, ctype: str):
 
 
 def _category_status(c: dict, insights: dict) -> dict:
+    now = time.time()
     if c.get("user"):
         return {
             "id": c["id"],
@@ -1190,6 +1304,7 @@ def _category_status(c: dict, insights: dict) -> dict:
             "enabled": c.get("enabled", True),
             "refresh_hours": c.get("refresh_hours"),
             "schedule": c.get("schedule"),
+            "next_due": _next_due(c, insights.get(c["id"]) or "", now),
             "user": True,
             "job": {k: JOBS.get(c["id"], {}).get(k) for k in ("state", "error")},
         }
@@ -1209,6 +1324,10 @@ def _category_status(c: dict, insights: dict) -> dict:
         "enabled": eff.get("enabled", True),
         "refresh_hours": eff.get("refresh_hours"),
         "schedule": eff.get("schedule"),
+        # When the scheduler will come for this card — the readback of
+        # _refresh_due, so the foot can say "next 7am" instead of leaving
+        # "why did this stop updating" to the add-on log.
+        "next_due": _next_due(eff, insights.get(c["id"]) or "", now),
         "job": {k: JOBS.get(c["id"], {}).get(k) for k in ("state", "error")},
     }
 
@@ -1228,6 +1347,9 @@ async def h_status(request: web.Request) -> web.Response:
         "history_days": eff_history_days(),
         "settings": settings,
         "usage": usage_store.budget_state(settings),
+        # Why auto-refresh is idle, when it is — the same gates the chips
+        # and the pill's dot report, readable as one field.
+        "auto": dict(AUTO_STATE),
         "categories": [_category_status(c, insights) for c in all_categories()],
         # The Findings tab's badge: everything still waiting on a decision —
         # problems to settle and guesses to confirm, which are one list now.
@@ -1768,11 +1890,15 @@ async def h_findings(request: web.Request) -> web.Response:
     # The scheduler owns ingestion; sweeping here too is only about latency,
     # so opening the tab right after a study session finishes doesn't wait
     # out the tick. Both are idempotent, and an empty inbox costs one glob.
-    def listing() -> dict:
-        findings_store.sweep_inbox()
-        return _findings_payload()
+    def listing() -> tuple[list[dict], dict]:
+        return findings_store.sweep_inbox(), _findings_payload()
 
-    return web.json_response(await asyncio.to_thread(listing))
+    swept, payload = await asyncio.to_thread(listing)
+    # The tab is open in front of somebody, but the phone still gets the
+    # courtesy copy: whoever configured the notify target may not be the
+    # person looking, and add_many's dedup means this can't ring twice.
+    await _announce_findings(swept)
+    return web.json_response(payload)
 
 
 # The lifecycle buttons. Three of them END a finding, and ending one is the
@@ -2672,6 +2798,95 @@ async def h_memory_put(request: web.Request) -> web.Response:
     return web.json_response({"saved": True})
 
 
+# What an export IS: the durable knowledge, portable. The memory document,
+# the findings work list, the settled ledger and the facts ledger are the
+# four things a rebuilt or second install cannot rediscover cheaply — the
+# rest (inbox, hypotheses, questions) is in-flight dialogue state that will
+# regenerate, and exporting state that import ignores just invites people
+# to expect it back.
+EXPORT_VERSION = 1
+
+
+def _export_payload() -> dict:
+    return {
+        "brain_export": EXPORT_VERSION,
+        "exported_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "memory_md": _read_shared_memory(),
+        "findings": findings_store.list_all(),
+        "settled": findings_store.settled_listing(),
+        "knowledge_facts": knowledge_store.list_facts(),
+    }
+
+
+async def h_memory_export(request: web.Request) -> web.Response:
+    """Everything brAIn has learned about this home, as one portable file."""
+    payload = await asyncio.to_thread(_export_payload)
+    stamp = time.strftime("%Y-%m-%d")
+    return web.json_response(payload, headers={
+        "Content-Disposition":
+            f'attachment; filename="brain-export-{stamp}.json"',
+    })
+
+
+async def h_memory_import(request: web.Request) -> web.Response:
+    """Fold an exported file back in — a migration, not a sync.
+
+    The ledgers MERGE (existing entries always win, so an answer given on
+    this install is never undone by an import), while the memory document
+    REPLACES — there is no honest textual merge of two markdown documents,
+    so it is written only when the local one is effectively empty or the
+    caller explicitly said replace. Everything reported back by count, so
+    the CLI can say what actually happened rather than "imported".
+    """
+    body = await request.json()
+    if not isinstance(body, dict) or "brain_export" not in body:
+        raise web.HTTPBadRequest(
+            text="not a brAIn export (missing brain_export marker)")
+    if int(body.get("brain_export") or 0) > EXPORT_VERSION:
+        raise web.HTTPBadRequest(
+            text="this export is from a newer brAIn — update the add-on first")
+    memory_md = body.get("memory_md")
+    if memory_md is not None and not isinstance(memory_md, str):
+        raise web.HTTPBadRequest(text="memory_md must be a string")
+    if memory_md and len(memory_md) > MAX_MEMORY_CHARS:
+        raise web.HTTPBadRequest(
+            text=f"memory too large (max {MAX_MEMORY_CHARS} chars)")
+    replace = bool(body.get("replace_memory"))
+
+    def fold() -> dict:
+        result = {"memory": "kept"}
+        if memory_md and memory_md.strip():
+            # "Effectively empty" covers the fresh-install template case a
+            # migration actually is; anything with content needs the flag.
+            if replace or not _read_shared_memory().strip():
+                _write_shared_memory(memory_md)
+                result["memory"] = "replaced"
+        rows = body.get("findings")
+        settled = body.get("settled")
+        facts = body.get("knowledge_facts")
+        result["findings"] = findings_store.merge_rows(
+            rows if isinstance(rows, list) else [])
+        result["settled"] = findings_store.merge_settled(
+            settled if isinstance(settled, list) else [])
+        added = 0
+        for fact in (facts if isinstance(facts, list) else []):
+            if not isinstance(fact, dict):
+                continue
+            _, created = knowledge_store.add_fact(
+                str(fact.get("text") or ""),
+                source=str(fact.get("source") or "import"),
+                category=str(fact.get("category") or ""))
+            added += int(created)
+        result["knowledge_facts"] = added
+        return result
+
+    result = await asyncio.to_thread(fold)
+    log.info("import: memory %s, %d finding(s), %d settled, %d fact(s)",
+             result["memory"], result["findings"], result["settled"],
+             result["knowledge_facts"])
+    return web.json_response(result)
+
+
 async def h_inbox_delete(request: web.Request) -> web.Response:
     """Drop a fact from the filing queue before it reaches the document.
 
@@ -2871,8 +3086,79 @@ async def h_setup_cancel(request: web.Request) -> web.Response:
     return web.json_response(engine.SETUP_FLOW.status())
 
 
+# The background processes run.sh starts, by the substring that identifies
+# each in /proc/*/cmdline. The panel is the foreground process and the
+# watchdog target, so "the panel is up" is implied by any answer at all —
+# these are the siblings whose death is otherwise invisible: the add-on
+# still shows "started", every tab still renders, and the first symptom is
+# a queue quietly not draining days later.
+DAEMON_MARKS = {
+    "ttyd": "ttyd",
+    "usage_tracker": "usage-limits-tracker.py",
+    "memory_consolidator": "brain-memory-consolidate.sh",
+    "study_watcher": "brain-study-watcher.sh",
+    "assist_worker_pool": "assist-worker-pool.py",
+    "assist_listener": "assist-listener.sh",
+    "automation_listener": "automation-listener.sh",
+}
+
+
+def _daemon_rollcall() -> dict:
+    """Which background processes are actually alive right now.
+
+    A /proc scan rather than pidfiles: run.sh restarts pieces, shells wrap
+    scripts, and a pidfile is one more thing to go stale — where the
+    process table is simply true. Descriptive, not judgemental: several of
+    these are optional (a disabled terminal has no ttyd, classic assist
+    mode has no pool), so "running: false" is a fact for `brain doctor` to
+    interpret against the config, not an alarm by itself.
+    """
+    found: set[str] = set()
+    try:
+        for entry in os.scandir("/proc"):
+            if not entry.name.isdigit():
+                continue
+            try:
+                with open(f"/proc/{entry.name}/cmdline", "rb") as fh:
+                    cmdline = fh.read().replace(b"\0", b" ").decode(
+                        "utf-8", errors="replace")
+            except OSError:
+                continue
+            for name, mark in DAEMON_MARKS.items():
+                if mark in cmdline:
+                    found.add(name)
+    except OSError:
+        return {}
+    out: dict = {name: {"running": name in found} for name in DAEMON_MARKS}
+    # The consolidator's heartbeat: when a pass last landed. A running
+    # process that never lands a pass is the failure the stale-queue check
+    # exists for, and this is the same number, readable from one place.
+    try:
+        age_h = (time.time()
+                 - (MEMORY_DIR / ".last_consolidated").stat().st_mtime) / 3600
+        out["memory_consolidator"]["last_pass_hours_ago"] = round(age_h, 1)
+    except OSError:
+        # No marker file means no pass has ever landed — a real state on a
+        # fresh install, reported by the field's absence rather than a fake
+        # number.
+        pass
+    return out
+
+
 async def h_health(request: web.Request) -> web.Response:
-    return web.json_response({"ok": True})
+    """Liveness for the watchdog, readiness for whoever asks nicely.
+
+    `ok` is the panel answering and NOTHING else — the Supervisor restarts
+    the add-on when this endpoint fails, so folding a dead sibling into it
+    would turn "the study watcher crashed" into a restart loop. The
+    roll-call rides along for `brain doctor` and anyone curious.
+    """
+    payload: dict = {"ok": True}
+    try:
+        payload["daemons"] = await asyncio.to_thread(_daemon_rollcall)
+    except Exception as exc:  # noqa: BLE001 — liveness must never depend on it
+        log.debug("daemon roll-call failed: %s", exc)
+    return web.json_response(payload)
 
 
 # ---------------------------------------------------------------------------
@@ -3255,9 +3541,11 @@ async def h_chat_state(request: web.Request) -> web.Response:
 # ---------------------------------------------------------------------------
 
 def make_app() -> web.Application:
-    # 256 KiB: leaves room for a full memory-file edit (MAX_MEMORY_CHARS
-    # plus JSON escaping) — everything else is far smaller
-    app = web.Application(client_max_size=1024 * 256)
+    # 1 MiB: leaves room for a full memory-file edit (MAX_MEMORY_CHARS plus
+    # JSON escaping) and for /api/memory/import, whose payload is a whole
+    # export — the document plus every ledger. Everything else is far
+    # smaller.
+    app = web.Application(client_max_size=1024 * 1024)
     app.router.add_get("/", h_index)
     app.router.add_get("/style.css", _static("style.css", "text/css"))
     app.router.add_get("/app.js", _static("app.js", "application/javascript"))
@@ -3307,6 +3595,8 @@ def make_app() -> web.Application:
     app.router.add_put("/api/memory", h_memory_put)
     app.router.add_post("/api/memory/consolidate", h_memory_consolidate)
     app.router.add_get("/api/memory/state", h_memory_state)
+    app.router.add_get("/api/memory/export", h_memory_export)
+    app.router.add_post("/api/memory/import", h_memory_import)
     app.router.add_post("/api/knowledge/fact", h_knowledge_fact_add)
     app.router.add_delete("/api/memory/inbox/{id}", h_inbox_delete)
     app.router.add_post("/api/knowledge/question/{ts}/answer", h_knowledge_answer)
@@ -3355,6 +3645,9 @@ def make_app() -> web.Application:
         if migrated:
             log.info("moved %d dismissed finding(s) into the settled ledger",
                      migrated)
+        # Republish the shared-volume mirror so the integration's findings
+        # sensor reads the current list, not the one from the last change.
+        await asyncio.to_thread(findings_store.publish_state)
         await _options_sync()
         app["worker"] = asyncio.create_task(_worker())
         app["scheduler"] = asyncio.create_task(_scheduler())

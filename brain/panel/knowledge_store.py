@@ -141,14 +141,10 @@ def add_fact(text: str, source: str = "insights", category: str = "") -> tuple[d
     return entry, True
 
 
-def remove_fact(ts: int) -> bool:
-    data = _load()
-    kept = [f for f in data["facts"] if int(f.get("ts") or 0) != ts]
-    if len(kept) == len(data["facts"]):
-        return False
-    data["facts"] = kept
-    _write(data)
-    return True
+# There is deliberately no remove_fact. The ledger is a dedup index —
+# deleting an entry is how the analyst comes to re-announce something the
+# homeowner has already seen — and the one function that could do it sat
+# here for months, called by nothing, waiting to be "helpfully" wired up.
 
 
 # ---------------------------------------------------------------------------

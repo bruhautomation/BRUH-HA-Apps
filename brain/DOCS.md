@@ -128,6 +128,16 @@ Each one gets a severity, a plain-English explanation, and what to do about it:
   future analysis, so the same non-problem is never raised at you twice. The garage
   fridge that runs 24/7 gets flagged once.
 
+Findings reach you outside the panel too. The integration exposes an
+**Open findings** sensor (the count, with the severity split and the texts as
+attributes) and fires a **`brain_finding` event** for each new one, so an
+automation can react the moment brAIn files something. And if you set
+`findings_notify_service` in the add-on configuration to one of your
+`notify.*` services, new findings at or above `findings_notify_min_severity`
+(default `serious`) are pushed straight to it — a dead battery rings your
+phone; a naming nitpick waits on the tab. The whole tab is also scriptable as
+`brain findings` (list / fix / done / wrong / ack / snooze) from the terminal.
+
 ### It explains your house to you
 
 The **Insights** dashboard is a set of cards, each one a small piece of analysis with
@@ -175,6 +185,14 @@ It never interrogates you with a questionnaire.
 "learn about the upstairs heating" in the ask bar. It digs through the registry,
 history and long-term statistics for minutes at a time, and what it finds lands in
 memory and in your findings list.
+
+And everything it has learned is **portable**: `brain memory export` writes one
+JSON file carrying the memory document, the findings list, the settled answers
+and the facts ledger (the Memory tab's ⬇ Export does the same), and
+`brain memory import` folds one back in on another install — ledgers merge with
+the local entries winning, and the document itself is only replaced when the
+local one is empty or you say `--replace-memory`. Migrating to new hardware no
+longer means starting the learning over.
 
 ### It answers when you talk to it
 
@@ -277,6 +295,9 @@ simply because you prefer it.
 - Insight jobs render to `sensor.<name>_insight` with the markdown and ready-to-paste
   card YAML as attributes, so a report can drive a template, a notification, or a
   dashboard.
+- Findings surface as `sensor.brain_open_findings` and a `brain_finding` event per
+  new one — and `findings_notify_service` pushes them to a phone with no automation
+  at all.
 
 ### Everything it does can be undone
 
@@ -336,6 +357,11 @@ brain memory list                  # what it knows
 brain memory edit                  # open the document in $EDITOR
 brain memory log                   # what it learned recently
 brain memory hypotheses            # pending guesses awaiting a yes/no
+brain memory export                # everything learned, as one portable file
+brain memory import backup.json    # fold an export back in
+brain findings                     # what it thinks is broken
+brain findings fix 1786715730      # let Claude fix one
+brain findings wrong 1786715730 "that sensor is meant to sit closed"
 brain learn energy                 # study a topic
 brain ask "why is the garage cold" # same engine as the Ask card
 brain undo                         # review and revert Claude's edits
@@ -402,6 +428,8 @@ the Terminal tab itself), because it changes nothing about how the add-on runs.
 | `memory_max_kb` | 1–64 | `32` | Size cap for the memory document. A pass that cannot fit under it files nothing, so this is the setting to raise when the log says the document is full. |
 | `study_max_turns` | 0–500 | `60` | Turn cap for `brain learn`. **`0` removes the cap.** See the note below. |
 | `study_timeout_minutes` | 2–120 | `30` | Wall-clock limit for a study session. |
+| `findings_notify_service` | string | *(empty)* | A `notify.*` service (with or without the prefix) that gets a push when brAIn files a new finding. Empty means no notifications — the Findings tab, the sensor and the `brain_finding` event work either way. |
+| `findings_notify_min_severity` | `info` \| `warning` \| `serious` \| `critical` | `serious` | Only findings at or above this severity are pushed. The default means dying batteries and silent sensors ring your phone while naming nitpicks wait on the tab. |
 
 > **Why the study limits are generous.** A turn cap is not a safety valve — it
 > *truncates*. A study session that hits it stops mid-thought and produces no

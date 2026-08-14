@@ -776,6 +776,11 @@ also surfaces where you already look:
 - **\`sensor.brain_last_learned\`** — when, with the facts as an attribute.
 - **\`binary_sensor.brain_waiting_on_you\`** — on when a guess needs a yes/no, with the
   text in \`pending\`.
+- **\`sensor.brain_open_findings\`** — how many findings are waiting on you, with the
+  severity split and the texts as attributes.
+- **A \`brain_finding\` event per new finding**, for automations and the logbook — and
+  the \`findings_notify_service\` add-on option pushes new findings to a phone with no
+  automation at all.
 
 That last one exists to be automated. A guess sitting in a panel nobody has open expires
 unanswered; pushed to a phone, it costs one tap:
@@ -818,6 +823,11 @@ also surfaces where you already look:
 - **\`sensor.brain_last_learned\`** — when, with the facts as an attribute.
 - **\`binary_sensor.brain_waiting_on_you\`** — on when a guess needs a yes/no, with the
   text in \`pending\`.
+- **\`sensor.brain_open_findings\`** — how many findings are waiting on you, with the
+  severity split and the texts as attributes.
+- **A \`brain_finding\` event per new finding**, for automations and the logbook — and
+  the \`findings_notify_service\` add-on option pushes new findings to a phone with no
+  automation at all.
 
 That last one exists to be automated. A guess sitting in a panel nobody has open expires
 unanswered; pushed to a phone it costs one tap:

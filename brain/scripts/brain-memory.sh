@@ -66,6 +66,10 @@ Usage:
   brain memory consolidate         Fold the inbox in now
   brain memory clear --confirm     Reset the document (a .bak is kept)
 
+  brain memory export [file]       Everything learned, as one portable file
+  brain memory import <file>       Fold an export back in (merges ledgers;
+                                   --replace-memory overwrites the document)
+
 The document is plain markdown and yours to edit — your edits are the
 source of truth. Everything else here is a queue or an audit trail.
 EOF
@@ -347,6 +351,58 @@ cmd_consolidate() {
 action="$1"
 shift
 
+# -- export / import --------------------------------------------------------
+# Both go through the panel's API rather than reading the stores directly:
+# the findings and knowledge ledgers live in the add-on's /data, which this
+# script cannot see, and the panel is the one writer that can merge safely.
+
+PANEL="${BRAIN_PANEL_URL:-http://127.0.0.1:8099}"
+
+cmd_export() {
+    local out="${1:-brain-export-$(date +%Y-%m-%d).json}"
+    if curl -s -f -m 30 "$PANEL/api/memory/export" -o "$out" 2>/dev/null; then
+        echo -e "${GREEN}Exported to ${out}${NC}"
+        jq -r '"  memory: \(.memory_md | length) chars · findings: \(.findings | length) · settled answers: \(.settled | length) · facts: \(.knowledge_facts | length)"' \
+            "$out" 2>/dev/null || true
+    else
+        echo -e "${RED}Export failed — is the panel running? (${PANEL})${NC}" >&2
+        exit 1
+    fi
+}
+
+cmd_import() {
+    local file="${1:-}" flag="${2:-}"
+    require_arg "$file" "give the export file to import: brain memory import <file>"
+    if [ ! -r "$file" ]; then
+        echo -e "${RED}Cannot read ${file}${NC}" >&2
+        exit 1
+    fi
+    local payload
+    if [ "$flag" = "--replace-memory" ]; then
+        payload=$(jq -c '. + {replace_memory: true}' "$file") || {
+            echo -e "${RED}${file} is not valid JSON${NC}" >&2; exit 1; }
+    else
+        payload=$(cat "$file")
+    fi
+    local response http_code
+    response=$(curl -s -m 60 -w '\n%{http_code}' -X POST \
+        -H "Content-Type: application/json" --data-binary "$payload" \
+        "$PANEL/api/memory/import" 2>/dev/null)
+    http_code="${response##*$'\n'}"
+    response="${response%$'\n'*}"
+    if [ "$http_code" = "200" ]; then
+        echo -e "${GREEN}Imported.${NC}"
+        echo "$response" | jq -r '"  memory: \(.memory) · findings added: \(.findings) · settled added: \(.settled) · facts added: \(.knowledge_facts)"' 2>/dev/null
+        if [ "$(echo "$response" | jq -r '.memory' 2>/dev/null)" = "kept" ]; then
+            echo -e "${DIM}The memory document here already has content, so it was kept."
+            echo -e "Re-run with --replace-memory to overwrite it with the export's.${NC}"
+        fi
+    else
+        echo -e "${RED}${response:-the panel is not answering on ${PANEL}}${NC}" >&2
+        exit 1
+    fi
+}
+
 case "$action" in
     add)          cmd_add "${1:-}" ;;
     forget)       cmd_forget "${1:-}" ;;
@@ -366,6 +422,8 @@ case "$action" in
         ;;
     undo)         cmd_undo "${1:-1}" ;;
     consolidate)  cmd_consolidate ;;
+    export)       cmd_export "${1:-}" ;;
+    import)       cmd_import "${1:-}" "${2:-}" ;;
     help|--help|-h) usage ;;
     *)
         echo -e "${RED}Unknown action: ${action}${NC}" >&2

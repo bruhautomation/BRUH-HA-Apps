@@ -96,6 +96,27 @@ async def call_service(service: str, data: dict, timeout: int = 15) -> Any:
             return await resp.json()
 
 
+async def send_notification(service: str, title: str, message: str,
+                            timeout: int = 15) -> None:
+    """Deliver one notification through a notify.<service> HA service.
+
+    ``service`` may arrive with or without the ``notify.`` prefix — people
+    paste both, and the insight-job option on the integration side already
+    tolerates both. Raises on failure; the caller decides whether a missed
+    notification is worth a log line or a retry.
+    """
+    service = str(service or "").strip().removeprefix("notify.")
+    if not service:
+        raise ValueError("no notify service given")
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            f"{CORE_API}/services/notify/{service}", headers=_headers(),
+            json={"title": title, "message": message},
+            timeout=aiohttp.ClientTimeout(total=timeout),
+        ) as resp:
+            resp.raise_for_status()
+
+
 async def _ws_commands(session: aiohttp.ClientSession, commands: list[dict]) -> list[Any]:
     """Run a list of WS API commands, returning results in order (None on error)."""
     # outer wait_for instead of ws timeout kwargs: the kwarg's type changed

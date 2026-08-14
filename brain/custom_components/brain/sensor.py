@@ -134,6 +134,9 @@ async def async_setup_entry(
     entities.append(BrainFactsSensor(config_entry))
     entities.append(BrainLastLearnedSensor(config_entry))
 
+    # What brAIn thinks is broken, countable from an automation.
+    entities.append(BrainOpenFindingsSensor(config_entry))
+
     async_add_entities(entities, update_before_add=True)
 
 
@@ -514,6 +517,73 @@ class BrainFactsSensor(SensorEntity):
             self._attr_native_value = total_learned(self.hass)
         except Exception:  # noqa: BLE001 — never take HA down over a sensor
             _LOGGER.debug("could not count learned facts", exc_info=True)
+
+
+class BrainOpenFindingsSensor(SensorEntity):
+    """How many findings are waiting on the homeowner, with what they are.
+
+    This exists to be *automatable* — the panel's badge answers the same
+    question, but a badge cannot ring a phone at a sensible hour or sit on
+    a dashboard. State is the open count; the attributes carry the severity
+    split and the texts, because an automation that only knows "3" cannot
+    put what is actually broken on a lock screen.
+
+    Reads the mirror the add-on republishes on every findings change
+    (`findings.py`); unavailable until the add-on has ever written one,
+    which is what tells a fresh install apart from a clean bill of health.
+    """
+
+    _attr_has_entity_name = True
+    _attr_should_poll = True
+    _attr_name = "Open findings"
+    _attr_icon = "mdi:home-alert"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = "findings"
+    _attr_device_info = DeviceInfo(
+        identifiers={(DOMAIN, "brain_findings")},
+        name="brAIn findings",
+        manufacturer="BRUH Automation",
+        model="Home findings",
+    )
+
+    def __init__(self, config_entry: ConfigEntry) -> None:
+        self._entry = config_entry
+        self._attr_unique_id = f"{DOMAIN}_open_findings"
+        self._attr_native_value = 0
+        self._state: dict[str, Any] | None = None
+
+    @property
+    def available(self) -> bool:
+        return self._state is not None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        state = self._state or {}
+        by_sev = state.get("by_severity") or {}
+        rows = state.get("findings") or []
+        return {
+            "critical": int(by_sev.get("critical") or 0),
+            "serious": int(by_sev.get("serious") or 0),
+            "warning": int(by_sev.get("warning") or 0),
+            "info": int(by_sev.get("info") or 0),
+            "findings": [str(f.get("text") or "") for f in rows[:20]],
+            "newest": str(rows[0].get("text") or "") if rows else None,
+        }
+
+    def update(self) -> None:
+        from .findings import read_findings_state
+        try:
+            state = read_findings_state(self.hass)
+        except Exception:  # noqa: BLE001 — never take HA down over a sensor
+            _LOGGER.debug("could not read the findings mirror", exc_info=True)
+            return
+        if state is None:
+            # Never written (fresh install / add-on predates the mirror):
+            # stay/go unavailable rather than claiming a clean house.
+            self._state = None
+            return
+        self._state = state
+        self._attr_native_value = int(state.get("open") or 0)
 
 
 class BrainLastLearnedSensor(SensorEntity):

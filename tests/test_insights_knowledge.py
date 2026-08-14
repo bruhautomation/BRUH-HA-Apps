@@ -72,14 +72,18 @@ class TestKnowledgeFacts(KnowledgeStoreCase):
         self.assertIsNone(entry)
         self.assertFalse(created)
 
-    def test_remove(self):
-        entry, _ = knowledge_store.add_fact("A fact", source="user", category="energy")
+    def test_fields_survive_the_round_trip(self):
+        knowledge_store.add_fact("A fact", source="user", category="energy")
         listed = knowledge_store.list_facts()
         self.assertEqual(listed[0]["source"], "user")
         self.assertEqual(listed[0]["category"], "energy")
-        self.assertTrue(knowledge_store.remove_fact(entry["ts"]))
-        self.assertFalse(knowledge_store.remove_fact(entry["ts"]))
-        self.assertEqual(knowledge_store.list_facts(), [])
+
+    def test_the_ledger_has_no_deleter(self):
+        """The facts ledger is a dedup index: nothing may be deleted from
+        it, or the analyst re-announces what you have already seen. A
+        remove_fact once existed, called by nothing — an invariant should
+        not ship its own violation as a public function."""
+        self.assertFalse(hasattr(knowledge_store, "remove_fact"))
 
     def test_cap_keeps_newest(self):
         old_max = knowledge_store.MAX_FACTS
