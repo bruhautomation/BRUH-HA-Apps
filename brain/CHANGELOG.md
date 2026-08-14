@@ -2,6 +2,19 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.27.1
+
+### Fixed
+
+- **`brain memory inbox` and `brain memory clear` are in `brain help` now.**
+  Both subcommands existed and were documented on the docs site, but the
+  dispatcher's usage text never listed them — and the chat palette is
+  parsed from what `brain help` prints, so they could never appear in it.
+  `clear` is listed with the `--confirm` it requires.
+- **`test_documented_counts.py` names the docs site's real paths.** Its
+  failure message pointed at five `src/content/docs/` files that moved to
+  `apps/` when the site repo was reorganised.
+
 ## 1.27.0
 
 ### Added
