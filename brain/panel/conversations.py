@@ -342,6 +342,70 @@ def source_counts(cwd: str, limit: int = 200,
     return counts
 
 
+# The one-time repair for transcripts written before their callers claimed
+# session ids. The claim contract deliberately never infers a source from a
+# person's wording — but these are OUR OWN shipped prompts, matched verbatim
+# at the opening line: the worker pool's reflection pass, and its one-shot
+# voice fallback (whose first genuine message is the local-time prefix, or
+# the history-replay wrapper). Nothing a person would ever type opens with
+# any of them.
+MACHINE_OPENERS = (
+    ("From this smart-home voice conversation, extract", "memory"),
+    ("(Local time: ", "voice"),
+    ("Previous conversation:", "voice"),
+)
+# Guarded by a marker: once the callers claim for themselves this scan
+# would only re-read every genuine chat's title on every boot, forever.
+BACKFILL_MARKER = os.environ.get("BRAIN_SOURCES_BACKFILL_MARKER",
+                                 "/data/.run-sources-backfilled")
+
+
+def backfill_sources(cwd: str, limit: int = MAX_FILTER_SCAN) -> int:
+    """Label old machine transcripts whose callers claimed nothing.
+
+    Before 1.28.2 the pool's reflection pass and one-shot voice fallback ran
+    with no ``--session-id`` at all, so every one of them sat in "Your
+    chats" — the rail's whole reason for existing, defeated by its own
+    plumbing. New runs claim for themselves now; this labels the backlog
+    once so the list is honest immediately rather than in a fortnight when
+    the CLI has pruned the old files. Returns how many were labelled.
+    """
+    marker = Path(BACKFILL_MARKER)
+    if marker.exists():
+        return 0
+    directory = project_dir(cwd)
+    count = 0
+    if directory is not None:
+        paths = []
+        for path in _iter_sessions(directory):
+            try:
+                if path.stat().st_size < 200:
+                    continue
+            except OSError:
+                continue
+            paths.append(path)
+            if len(paths) >= limit:
+                break
+        claimed = run_sources.lookup(p.stem for p in paths)
+        for path in paths:
+            if path.stem in claimed:
+                continue
+            title = title_of(path)
+            for prefix, source in MACHINE_OPENERS:
+                if title.startswith(prefix):
+                    if run_sources.record(path.stem, source):
+                        count += 1
+                    break
+    try:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(f"{int(time.time())}\n", encoding="utf-8")
+    except OSError:
+        # It will simply run again next boot — idempotent, because claims
+        # already made are skipped.
+        pass
+    return count
+
+
 # Where a deleted conversation waits out the toast. On /data with the rest
 # of our state, so the move stays on one filesystem in the shipped layout —
 # and shutil.move copes if a custom CLAUDE_CONFIG_DIR puts it on another.

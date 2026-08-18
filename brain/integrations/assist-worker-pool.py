@@ -63,18 +63,38 @@ WORK_DIR = os.environ.get("BRAIN_ASSIST_WORKDIR", "/config")
 RUN_SOURCES = os.environ.get("BRAIN_RUN_SOURCES", "/data/run-sources.jsonl")
 
 
-def claim_session(session_id: str) -> None:
-    """Record a session as voice's. Bookkeeping: never fails a turn."""
+def claim_session(session_id: str, source: str = "voice") -> None:
+    """Record a session as a face's. Bookkeeping: never fails a turn."""
     try:
         os.makedirs(os.path.dirname(RUN_SOURCES), exist_ok=True)
         with open(RUN_SOURCES, "a", encoding="utf-8") as fh:
-            fh.write(json.dumps({"id": session_id, "source": "voice",
+            fh.write(json.dumps({"id": session_id, "source": source,
                                  "ts": int(time.time())},
                                 separators=(",", ":")) + "\n")
     except OSError:
         # Bookkeeping for the Chats rail. A voice turn must never fail because
         # the ledger could not be appended to.
         pass
+
+
+def mint_claimed_session(source: str) -> tuple[str, list[str]]:
+    """A fresh session id, claimed BEFORE the run it labels.
+
+    For the pool's two one-shot spawns (the worker-error fallback and the
+    reflection pass), which used to run without ``--session-id`` at all —
+    every one of them landed in the Chats rail as an unclaimed transcript,
+    which is what "yours" means, so a person's own chats sat under a column
+    of "(Local time: …" voice turns and "From this smart-home voice
+    conversation, extract …" reflection prompts. Claimed before rather than
+    after, because a run that times out still leaves a transcript and it
+    should still be labelled as the run it was. Callers keep the plain cmd
+    too: a CLI from before ``--session-id`` refuses the flag by name, and
+    the retry without it is how the label stays optional while the run is
+    not (same contract as brain-run-source.sh and engine._run_cli).
+    """
+    session_id = str(uuid.uuid4())
+    claim_session(session_id, source)
+    return session_id, ["--session-id", session_id]
 
 # Fallback matches config.yaml's default — a fallback that disagrees with
 # the shipped default is a second answer that wins exactly when nobody is
@@ -553,14 +573,26 @@ def reflect_on_transcript(transcript: list) -> None:
             "--max-turns", "1",
             "--model", REFLECT_MODEL,
         ]
+        # Claimed as memory's: this is the memory pipeline's extraction
+        # step, and unclaimed it filed under "Your chats" — dozens of
+        # identical machine prompts burying the person's own conversations.
+        _, session_args = mint_claimed_session("memory")
+        prompt = REFLECTION_PROMPT + "\n\nConversation:\n" + convo
         proc = subprocess.run(
-            cmd,
-            input=REFLECTION_PROMPT + "\n\nConversation:\n" + convo,
+            cmd + session_args,
+            input=prompt,
             capture_output=True,
             text=True,
             timeout=REFLECT_TIMEOUT,
             cwd=WORK_DIR,
         )
+        if proc.returncode != 0 and "session-id" in (proc.stderr or ""):
+            # A CLI from before --session-id: the label is optional, the
+            # run is not.
+            proc = subprocess.run(
+                cmd, input=prompt, capture_output=True, text=True,
+                timeout=REFLECT_TIMEOUT, cwd=WORK_DIR,
+            )
         if proc.returncode != 0:
             return
         facts = []
@@ -1040,9 +1072,14 @@ class Pool:
             cmd += ["--model", model]
         env = dict(os.environ)
         env["BRAIN_DENIED_SERVICES"] = denied_csv
+        # The stream path claims its session off the CLI's own events; this
+        # path spawns fresh and has no events to read, so it claims a minted
+        # id up front like the bash listener does — unclaimed, every
+        # fallback turn filed under "Your chats".
+        _, session_args = mint_claimed_session("voice")
         try:
             proc = subprocess.run(
-                cmd,
+                cmd + session_args,
                 input=text,
                 capture_output=True,
                 text=True,
@@ -1050,6 +1087,17 @@ class Pool:
                 cwd=WORK_DIR,
                 env=env,
             )
+            if not (proc.stdout or "").strip() \
+                    and "session-id" in (proc.stderr or ""):
+                # A CLI from before --session-id: the label is optional,
+                # the voice answer is not.
+                remaining = int(deadline - time.time())
+                if remaining < 10:
+                    return None
+                proc = subprocess.run(
+                    cmd, input=text, capture_output=True, text=True,
+                    timeout=remaining, cwd=WORK_DIR, env=env,
+                )
             return proc.stdout.strip() or None
         except (subprocess.TimeoutExpired, OSError):
             return None
