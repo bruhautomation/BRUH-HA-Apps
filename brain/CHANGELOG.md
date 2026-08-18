@@ -4,6 +4,23 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 
 ## 1.28.1
 
+### Added
+
+- **Card and Fix runs are in the conversation list now, read-only.** Every
+  insight run — scheduled or a question you asked — and every Fix-it run is
+  a Claude conversation, and until now it was invisible: the engine runs
+  them from the add-on's own home directory, so Claude Code filed their
+  transcripts where the list never looked. They get chips of their own
+  (*Cards*, *Fixes*), and picking one opens a reader showing exactly what
+  brAIn sent to Claude about your house, every tool call the run made, and
+  what came back. Read-only on purpose: those turns ran under the analyst's
+  read-only scoping (or the fixer's), and continuing one under the chat's
+  permissions would change the conversation's rules mid-thread. Engine runs
+  claim their session ids in the run-sources ledger like every other
+  background caller — before the run, so a run that crashes still leaves a
+  labelled transcript — and the auth self-check's unclaimed probe is not
+  listed at all.
+
 ### Fixed
 
 - **Jumping between conversations can no longer land your messages in the
@@ -36,9 +53,7 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 - **The chats filter says what it means.** "Yours" is now **Your chats** —
   the conversations you started yourself, in the chat or the classic
   terminal — and the machine chips follow alphabetically: *Automation*,
-  *Memory*, *Study*, *Voice*. (Insight cards and Fix-it runs never appear
-  in this list: they run from the add-on's own home directory, not
-  `/config`.)
+  *Cards*, *Fixes*, *Memory*, *Study*, *Voice*.
 
 ## 1.28.0
 

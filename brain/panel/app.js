@@ -4285,10 +4285,12 @@ function convSelFlip(id) {
 
 // A row can be selected unless it is the open conversation — the server
 // refuses to delete that one, and offering a checkbox that always answers
-// "skipped" teaches nothing.
+// "skipped" teaches nothing. Card and fix runs are records in the engine's
+// own store, not files this list's delete can reach, so they are not
+// selectable either.
 function convSelectable(rows) {
-  return rows.filter((c) =>
-    !(chatState.sessionId && c.id === chatState.sessionId));
+  return rows.filter((c) => !c.view_only
+    && !(chatState.sessionId && c.id === chatState.sessionId));
 }
 
 // The bar above a list in selection mode: the count, Select all, and the
@@ -4379,7 +4381,7 @@ function renderConvModal() {
     const here = !!chatState.sessionId && c.id === chatState.sessionId;
     const row = el("div", "crrow");
     const btn = el("button", "convitem" + (here ? " active" : ""));
-    if (convSel.on && !here) {
+    if (convSel.on && !here && !c.view_only) {
       btn.classList.add("hascheck");
       btn.classList.toggle("sel", convSel.ids.has(c.id));
       btn.appendChild(el("span",
@@ -4391,16 +4393,18 @@ function renderConvModal() {
     btn.appendChild(el("span", "cwhen", c.age));
     if (here) btn.setAttribute("aria-current", "true");
     if (convSel.on) {
-      if (here) btn.classList.add("inert");
+      if (here || c.view_only) btn.classList.add("inert");
       else btn.addEventListener("click", () => {
         convSelFlip(c.id);
         renderConvModal();
       });
+    } else if (c.view_only) {
+      btn.addEventListener("click", () => viewConversation(c));
     } else if (!here) {
       btn.addEventListener("click", () => resumeConversation(c));
     }
     row.appendChild(btn);
-    if (!here && !convSel.on) row.appendChild(deleteConvButton(c));
+    if (!here && !convSel.on && !c.view_only) row.appendChild(deleteConvButton(c));
     list.appendChild(row);
   });
 }
@@ -4478,7 +4482,7 @@ function renderChatRail() {
     const here = !!chatState.sessionId && c.id === chatState.sessionId;
     const row = el("div", "crrow");
     const btn = el("button", "critem" + (here ? " active" : ""));
-    if (convSel.on && !here) {
+    if (convSel.on && !here && !c.view_only) {
       btn.classList.add("hascheck");
       btn.classList.toggle("sel", convSel.ids.has(c.id));
       btn.appendChild(el("span",
@@ -4492,18 +4496,22 @@ function renderChatRail() {
     btn.appendChild(foot);
     if (here) btn.setAttribute("aria-current", "true");
     if (convSel.on) {
-      if (here) btn.classList.add("inert");
+      if (here || c.view_only) btn.classList.add("inert");
       else btn.addEventListener("click", () => {
         convSelFlip(c.id);
         renderChatRail();
       });
+    } else if (c.view_only) {
+      // A card or fix run: a record to read, never a place to type.
+      btn.addEventListener("click", () => viewConversation(c));
     } else if (!here) {
       btn.addEventListener("click", () => resumeConversation(c));
     }
     row.appendChild(btn);
     // Not on the open one — the server refuses it anyway ("start a new
     // chat first"), and a control that only ever answers no is clutter.
-    if (!here && !convSel.on) row.appendChild(deleteConvButton(c));
+    // Not on card/fix runs either: they live in the engine's own store.
+    if (!here && !convSel.on && !c.view_only) row.appendChild(deleteConvButton(c));
     list.appendChild(row);
   });
 }
@@ -4531,6 +4539,73 @@ async function resumeConversation(conv) {
     toast(e.message);
   }
 }
+
+// A card or fix run opens as a record, not a conversation. Its turns ran
+// under the analyst's read-only scoping (or the fixer's), so the chat never
+// resumes one — what you get is exactly what brAIn sent to Claude about the
+// house and what came back, tool calls and all.
+async function viewConversation(conv) {
+  openBox("#convViewModal");
+  $("#convViewTitle").textContent = conv.source === "fix" ? "Fix run" : "Card run";
+  $("#convViewMeta").textContent = `${conv.title} · ${conv.age}`;
+  const log = $("#convViewLog");
+  log.textContent = "Loading…";
+  let data;
+  try {
+    data = await api(`api/chat/conversation/${encodeURIComponent(conv.id)}/view`);
+  } catch (e) {
+    log.textContent = e.message;
+    return;
+  }
+  log.textContent = "";
+  renderReplayInto(log, data.events || []);
+}
+
+// The replay's five event shapes, drawn with the same nodes the chat uses —
+// but into a given host, with the call→result pairing held locally, because
+// this renderer must never touch the live chat's state.
+function renderReplayInto(host, events) {
+  const tools = new Map();
+  events.forEach((ev) => {
+    if (ev.type === "user") {
+      const row = el("div", "msg user");
+      row.appendChild(el("div", "bubble", ev.text));
+      host.appendChild(row);
+    } else if (ev.type === "text") {
+      host.appendChild(chatMarkdown(ev.text));
+    } else if (ev.type === "thinking") {
+      const box = el("details", "think");
+      box.appendChild(el("summary", null, "Thinking"));
+      const body = el("div", "tbody");
+      body.innerHTML = renderMarkdown(ev.text || "");
+      box.appendChild(body);
+      host.appendChild(box);
+    } else if (ev.type === "tool") {
+      const node = chatToolNode(ev);
+      node.classList.remove("running");   // a record has no spinner to earn
+      host.appendChild(node);
+      if (ev.id) tools.set(ev.id, node);
+    } else if (ev.type === "tool_result") {
+      const box = tools.get(ev.id);
+      if (!box) return;
+      box.classList.add(ev.ok ? "ok" : "bad");
+      const body = box.querySelector(".tbody");
+      body.appendChild(el("div", "tlabel", ev.ok ? "Result" : "Error"));
+      const pre = el("pre");
+      pre.appendChild(el("code", null, ev.text || "(no output)"));
+      body.appendChild(pre);
+    }
+  });
+  if (!host.childElementCount) {
+    host.appendChild(el("div", "crempty",
+      "Nothing to show — this run left no readable transcript."));
+  }
+}
+
+$("#convViewClose").addEventListener("click", () => closeBox("#convViewModal"));
+$("#convViewModal").addEventListener("click", (ev) => {
+  if (ev.target === $("#convViewModal")) closeBox("#convViewModal");
+});
 
 $("#chatOpen").addEventListener("click", openConversations);
 $("#convClose").addEventListener("click", () => closeBox("#convModal"));

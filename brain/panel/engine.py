@@ -42,6 +42,9 @@ import subprocess
 import termios
 import threading
 import time
+import uuid
+
+import run_sources
 
 log = logging.getLogger("brain.auth")
 
@@ -338,6 +341,7 @@ def run_claude(
     model: str = "",
     timeout: int = 480,
     max_turns: int = 4,
+    source: str = "",
 ) -> dict:
     """Run `claude -p` headlessly. Returns {'ok', 'text', 'error', 'meta'}.
 
@@ -349,7 +353,8 @@ def run_claude(
     """
     return _run_cli(
         prompt, ["--disallowedTools", "*", "--system-prompt", system_prompt],
-        model, timeout, max_turns, f"Claude timed out after {timeout}s")
+        model, timeout, max_turns, f"Claude timed out after {timeout}s",
+        source)
 
 
 # The analyst's tools: reading the home, and nothing else.
@@ -401,6 +406,7 @@ def run_analyst(
     model: str = "",
     timeout: int = 480,
     max_turns: int = 12,
+    source: str = "",
 ) -> dict:
     """Run `claude -p` with READ-ONLY Home Assistant tools. Same envelope.
 
@@ -427,7 +433,7 @@ def run_analyst(
          "--allowedTools", ",".join(ANALYST_TOOLS),
          "--disallowedTools", ",".join(ANALYST_DENIED)],
         model, timeout, max_turns,
-        f"the analysis passed its {timeout}s limit and was stopped")
+        f"the analysis passed its {timeout}s limit and was stopped", source)
 
 
 def run_agent(
@@ -436,6 +442,7 @@ def run_agent(
     model: str = "",
     timeout: int = 900,
     max_turns: int = 30,
+    source: str = "",
 ) -> dict:
     """Run `claude -p` WITH its tools. Same envelope as ``run_claude``.
 
@@ -454,17 +461,26 @@ def run_agent(
     return _run_cli(
         prompt, ["--append-system-prompt", system_prompt],
         model, timeout, max_turns,
-        f"the fix run passed its {timeout}s limit and was stopped")
+        f"the fix run passed its {timeout}s limit and was stopped", source)
 
 
 def _run_cli(prompt: str, flags: list[str], model: str, timeout: int,
-             max_turns: int, timeout_message: str) -> dict:
+             max_turns: int, timeout_message: str, source: str = "") -> dict:
     """Invoke `claude -p` and parse its envelope.
 
     The su-exec drop to the non-root user, the credential injection, and the
     working directory are the fiddly parts, and they must not have two
     copies: a fix applied to one and not the other is how the tool-enabled
     path quietly stops authenticating the way the analysis path does.
+
+    ``source`` claims the run's transcript for a face ("card", "fix") the
+    way every other background caller does — a minted ``--session-id``,
+    recorded in run_sources *before* the run, because a run that times out
+    or crashes still left a transcript behind and it should still be
+    labelled as the run it was. The same fallback the consolidator has: a
+    CLI that rejects the flag names it on stderr and dies unspoken, and
+    then the run is retried without it — the label is optional, the run is
+    not. An unclaimed engine-directory transcript is simply not listed.
     """
     argv = _claude_argv() + [
         "-p",
@@ -473,6 +489,18 @@ def _run_cli(prompt: str, flags: list[str], model: str, timeout: int,
     ] + flags
     if model:
         argv += ["--model", model]
+    if source:
+        session_id = str(uuid.uuid4())
+        if run_sources.record(session_id, source):
+            result = _spawn_cli(argv + ["--session-id", session_id],
+                                prompt, timeout, timeout_message)
+            if result["ok"] or "session-id" not in (result.get("error") or ""):
+                return result
+    return _spawn_cli(argv, prompt, timeout, timeout_message)
+
+
+def _spawn_cli(argv: list[str], prompt: str, timeout: int,
+               timeout_message: str) -> dict:
     try:
         proc = subprocess.run(
             argv,

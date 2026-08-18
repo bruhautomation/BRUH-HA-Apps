@@ -801,7 +801,7 @@ async def _search_run(insight_id: str, cat: dict, framing: dict):
              len(prompt), _tok(len(prompt) // CHARS_PER_TOKEN))
     result = await asyncio.to_thread(
         engine.run_analyst, prompt, ANALYST_SYSTEM, eff_model(),
-        eff_timeout_s(), ANALYST_MAX_TURNS,
+        eff_timeout_s(), ANALYST_MAX_TURNS, "card",
     )
     return result, _record_usage(result, insight_id)
 
@@ -832,6 +832,7 @@ async def _snapshot_run(insight_id: str, cat: dict, framing: dict):
              len(prompt), _tok(len(prompt) // CHARS_PER_TOKEN))
     result = await asyncio.to_thread(
         engine.run_claude, prompt, SYSTEM_PROMPT, eff_model(), eff_timeout_s(),
+        source="card",
     )
     return result, _record_usage(result, insight_id)
 
@@ -990,7 +991,7 @@ async def _run_fix(job_id: str) -> None:
         prompt = fixer.build_prompt(finding, memory=memory)
         result = await asyncio.to_thread(
             engine.run_agent, prompt, fixer.FIX_SYSTEM, eff_model(),
-            FIX_TIMEOUT_S, FIX_MAX_TURNS)
+            FIX_TIMEOUT_S, FIX_MAX_TURNS, "fix")
         _record_usage(result, job_id)
         if not result["ok"]:
             raise RuntimeError(result["error"] or "the fix run failed")
@@ -2316,9 +2317,11 @@ async def h_onboarding_recommend(request: web.Request) -> web.Response:
         raise web.HTTPBadGateway(text="could not read Home Assistant")
 
     prompt = onboarding.build_prompt(memory, bundle)
+    # Claimed as a card run: it proposes the card set, and "everything
+    # brAIn sent to Claude about the house" should include it.
     result = await asyncio.to_thread(
         engine.run_claude, prompt, onboarding.RECOMMEND_SYSTEM, eff_model(),
-        TIMEOUT_S, 4)
+        TIMEOUT_S, 4, "card")
     _record_usage(result, "onboarding")
     if not result["ok"]:
         raise web.HTTPBadGateway(text=result.get("error") or "recommendation failed")
@@ -3281,19 +3284,38 @@ async def h_chat_conversations(request: web.Request) -> web.Response:
     session = _chat()
     wanted = request.query.get("source", "you")
     if wanted in ("", "all"):
-        sources = None
+        config_sources: tuple | None = None
+        engine_sources: tuple = tuple(sorted(run_sources.ENGINE_SOURCES))
     else:
-        sources = tuple(
-            s for s in wanted.split(",")
-            if s == "you" or run_sources.known(s)) or ("you",)
+        picked = [s for s in wanted.split(",")
+                  if s == "you" or run_sources.known(s)] or ["you"]
+        config_sources = tuple(
+            s for s in picked if s not in run_sources.ENGINE_SOURCES)
+        engine_sources = tuple(
+            s for s in picked if s in run_sources.ENGINE_SOURCES)
     # The open conversation is listed too — the panel marks it as "where
     # you are" rather than offering it. Hiding it made the row you had just
     # opened vanish from the rail, which read as the conversation being
     # lost; a list that silently omits the current item makes you wonder
     # where it went.
+    rows: list[dict] = []
+    if config_sources is None or config_sources:
+        rows += await asyncio.to_thread(
+            conversations.listing, chat_session.WORK_DIR, 30, config_sources)
+    if engine_sources:
+        # Card and fix runs live in the engine's own project directory (it
+        # runs from CLAUDE_HOME), and they are records, not places to go:
+        # `view_only` is what tells the panel to open a reader instead of
+        # resuming. Unclaimed ids there belong to nobody — see listing().
+        rows += [
+            {**row, "view_only": True}
+            for row in await asyncio.to_thread(
+                conversations.listing, engine.CLAUDE_HOME, 30,
+                engine_sources, "")
+        ]
+        rows.sort(key=lambda r: r["modified"], reverse=True)
     return web.json_response({
-        "conversations": await asyncio.to_thread(
-            conversations.listing, chat_session.WORK_DIR, 30, sources),
+        "conversations": rows[:30],
         "current": session.session_id,
         "sources": await asyncio.to_thread(_conversation_source_counts),
     })
@@ -3308,6 +3330,12 @@ def _conversation_source_counts() -> list[dict]:
     concept exists.
     """
     counts = conversations.source_counts(chat_session.WORK_DIR)
+    # The engine's directory holds the card and fix runs; its unclaimed
+    # rows count toward nobody (the "" default), so an auth self-check
+    # never inflates a chip.
+    for key, n in conversations.source_counts(
+            engine.CLAUDE_HOME, default_source="").items():
+        counts[key] = counts.get(key, 0) + n
     # "Your chats" leads because it is the default and the odd one out — it
     # is the absence of a claim, not a source. The machine faces follow in
     # alphabetical order, so the row of chips reads as a list rather than
@@ -3510,6 +3538,25 @@ async def h_chat_conversations_delete(request: web.Request) -> web.Response:
     return web.json_response(payload)
 
 
+async def h_chat_conversation_view(request: web.Request) -> web.Response:
+    """One card or fix run, replayed to be read — never resumed.
+
+    These transcripts live in the engine's project directory (insight and
+    fix runs execute from CLAUDE_HOME), and they are records: their turns
+    ran under the analyst's read-only scoping or the fixer's, with the card
+    contract as their brief, and continuing that under the chat's
+    permissions would change the conversation's rules mid-thread. So the
+    panel opens a reader instead — the same replay pipeline the resume path
+    uses, minus the process.
+    """
+    session_id = request.match_info["id"]
+    events = await asyncio.to_thread(
+        conversations.transcript, engine.CLAUDE_HOME, session_id)
+    if not events:
+        raise web.HTTPNotFound(text="no such run")
+    return web.json_response({"id": session_id, "events": events})
+
+
 async def h_chat_resume(request: web.Request) -> web.Response:
     body = await request.json()
     if not isinstance(body, dict):
@@ -3643,6 +3690,8 @@ def make_app() -> web.Application:
                         h_chat_conversations_delete)
     app.router.add_post("/api/chat/conversation/{id}/delete",
                         h_chat_conversation_delete)
+    app.router.add_get("/api/chat/conversation/{id}/view",
+                       h_chat_conversation_view)
 
     # The terminal tab: /terminal/ is reverse-proxied through to ttyd
     # so the whole add-on lives behind one ingress port.

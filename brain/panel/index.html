@@ -591,10 +591,31 @@
         started here or in the classic terminal, it makes no difference. Picking one
         replays it and carries on where it left off. brAIn runs Claude here too —
         voice, automations, filing memory — so those are behind their own chips
-        rather than mixed in with yours.</p>
+        rather than mixed in with yours. Card and fix runs have chips as well:
+        those open read-only, a record of exactly what was sent to Claude about
+        your house and what came back.</p>
       <div id="convFilter" class="crfilters"></div>
       <div id="convList" class="convlist"></div>
       <p id="convEmpty" class="kempty hidden">No other conversations yet.</p>
+    </div>
+  </div>
+</div>
+
+<!-- A card or fix run, replayed to be read. These are records of what brAIn
+     sent to Claude about the house and what came back — their turns ran
+     under the analyst's read-only scoping (or the fixer's), so the chat
+     never resumes one; this reader is the whole surface. -->
+<div id="convViewModal" class="modal" role="dialog" aria-modal="true">
+  <div class="box edit">
+    <header>
+      <span>▤</span>
+      <span id="convViewTitle">Run</span>
+      <div class="spacer"></div>
+      <button id="convViewClose" class="btn icon" data-tip="Close" aria-label="Close">✕</button>
+    </header>
+    <div class="edit-body">
+      <p class="hint tight" id="convViewMeta"></p>
+      <div id="convViewLog" class="viewlog"></div>
     </div>
   </div>
 </div>

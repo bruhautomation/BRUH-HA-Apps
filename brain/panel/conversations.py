@@ -193,7 +193,8 @@ def title_of(path: Path) -> str:
 
 
 def listing(cwd: str, limit: int = 30,
-            sources: tuple[str, ...] | None = None) -> list[dict]:
+            sources: tuple[str, ...] | None = None,
+            default_source: str = "you") -> list[dict]:
     """Recent conversations for this working directory, newest first.
 
     "Newest" means the newest thing anyone SAID, not the file's mtime: the
@@ -214,6 +215,12 @@ def listing(cwd: str, limit: int = 30,
     panel is what makes ``limit`` mean "this many rows you asked for": a
     house whose voice assistant makes a session per command would otherwise
     spend a whole page of 30 on machine chats and hand back four of yours.
+
+    ``default_source`` is what an unclaimed id means, and it depends on the
+    directory: in /config it means a person typed it ("you"), while in the
+    engine's directory nothing is anyone's typing — the caller passes ""
+    there, and an unclaimed row (the auth self-check, mostly) is dropped
+    rather than mislabelled.
     """
     directory = project_dir(cwd)
     if directory is None:
@@ -242,8 +249,8 @@ def listing(cwd: str, limit: int = 30,
     claimed = run_sources.lookup(row["id"] for row in rows)   # one read, not one per row
     out = []
     for row in rows:
-        source = claimed.get(row["id"], "you")
-        if wanted is not None and source not in wanted:
+        source = claimed.get(row["id"], default_source)
+        if not source or (wanted is not None and source not in wanted):
             continue
         out.append({
             "id": row["id"],
@@ -301,13 +308,17 @@ def _last_activity(path: Path, mtime: float) -> float:
     return mtime
 
 
-def source_counts(cwd: str, limit: int = 200) -> dict[str, int]:
+def source_counts(cwd: str, limit: int = 200,
+                  default_source: str = "you") -> dict[str, int]:
     """How many recent conversations belong to each face.
 
     Deliberately not ``listing()``: a count needs the id and nothing else,
     and listing reads up to 400 lines of every transcript to find its
     title. Paying for two hundred title scans to draw a number on a chip
     is how a filter row becomes the most expensive thing on the tab.
+
+    Same ``default_source`` contract as ``listing``: "" means an unclaimed
+    id counts toward nobody.
     """
     directory = project_dir(cwd)
     if directory is None:
@@ -325,8 +336,9 @@ def source_counts(cwd: str, limit: int = 200) -> dict[str, int]:
     claimed = run_sources.lookup(ids)
     counts: dict[str, int] = {}
     for session_id in ids:
-        key = claimed.get(session_id, "you")
-        counts[key] = counts.get(key, 0) + 1
+        key = claimed.get(session_id, default_source)
+        if key:
+            counts[key] = counts.get(key, 0) + 1
     return counts
 
 

@@ -1341,6 +1341,80 @@ class TestChatRoutes(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([s["id"] for s in data["sources"]], ["you", "voice"])
         self.assertEqual([s["count"] for s in data["sources"]], [1, 1])
 
+    def _fake_engine_conversation(self, session_id, text, source="card",
+                                  age_s=0):
+        """A transcript in the ENGINE's project directory — what an insight
+        or fix run leaves behind (engine runs from CLAUDE_HOME, so the CLI
+        files them apart from /config's). ``source`` claims it the way
+        engine._run_cli does; None leaves it unclaimed, which is the shape
+        of an auth self-check."""
+        import conversations
+        home = os.path.join(self.tmp.name, "engine-home")
+        self.engine.CLAUDE_HOME = home
+        project = (Path(self.tmp.name) / "projects"
+                   / re.sub(r"[^A-Za-z0-9]", "-", home))
+        project.mkdir(parents=True, exist_ok=True)
+        path = project / f"{session_id}.jsonl"
+        path.write_text(json.dumps({
+            "type": "user", "cwd": home,
+            "message": {"role": "user", "content": text}}) + "\n"
+            + "x" * 300 + "\n", encoding="utf-8")
+        if age_s:
+            when = time.time() - age_s
+            os.utime(path, (when, when))
+        conversations.CONFIG_DIR = self.tmp.name
+        if source:
+            self._claim(session_id, source)
+        return path
+
+    async def test_card_runs_are_listed_read_only_under_their_chip(self):
+        """The visibility half of "track everything sent to Claude": an
+        insight run's whole conversation is one press away, behind a Cards
+        chip — and marked view_only, because it is a record of a run made
+        under the analyst's scoping, not a conversation the chat resumes."""
+        self._fake_conversation("mine", "hello", age_s=60)
+        self._fake_engine_conversation("card-1", "Analyse the upstairs heating")
+
+        data = await (await self.client.get("/api/chat/conversations")).json()
+        self.assertEqual([c["id"] for c in data["conversations"]], ["mine"])
+        self.assertIn("card", [s["id"] for s in data["sources"]])
+
+        data = await (await self.client.get(
+            "/api/chat/conversations?source=card")).json()
+        rows = data["conversations"]
+        self.assertEqual([c["id"] for c in rows], ["card-1"])
+        self.assertEqual(rows[0]["source"], "card")
+        self.assertTrue(rows[0]["view_only"])
+
+        # ...and "all" carries both stores, newest first.
+        data = await (await self.client.get(
+            "/api/chat/conversations?source=all")).json()
+        self.assertEqual({c["id"] for c in data["conversations"]},
+                         {"mine", "card-1"})
+
+    async def test_an_unclaimed_engine_run_belongs_to_nobody(self):
+        """The auth self-check leaves a transcript in the engine's store
+        with no claim. It is a probe, not a conversation — defaulting it to
+        "you" would be a lie and to "card" a guess, so it is not listed."""
+        self._fake_conversation("mine", "hello")
+        self._fake_engine_conversation("probe", "Reply with exactly: OK",
+                                       source=None)
+        data = await (await self.client.get(
+            "/api/chat/conversations?source=all")).json()
+        self.assertEqual([c["id"] for c in data["conversations"]], ["mine"])
+        self.assertNotIn("card", [s["id"] for s in data["sources"]])
+
+    async def test_a_card_run_opens_as_a_readable_replay(self):
+        self._fake_engine_conversation("card-1", "Analyse the upstairs heating")
+        data = await (await self.client.get(
+            "/api/chat/conversation/card-1/view")).json()
+        self.assertEqual(data["id"], "card-1")
+        self.assertIn("Analyse the upstairs heating",
+                      [e.get("text") for e in data["events"]])
+
+        resp = await self.client.get("/api/chat/conversation/never-was/view")
+        self.assertEqual(resp.status, 404)
+
     async def test_the_chips_lead_with_your_chats_then_go_alphabetical(self):
         """"Yours" answered nothing — whose else would they be? — and the
         machine chips sat in whatever order the source table was written

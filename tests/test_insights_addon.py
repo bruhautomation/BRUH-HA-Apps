@@ -453,6 +453,63 @@ class TestClaudeClient(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertIn("boom", result["error"])
 
+    def test_a_sourced_run_claims_its_session_id_before_running(self):
+        """Card and fix runs claim their transcripts the way every other
+        background caller does: a minted --session-id, recorded in
+        run_sources before the run — so a run that times out or crashes
+        still left a transcript labelled as the run it was."""
+        import run_sources
+        log = Path(self.tmp.name) / "argv.log"
+        stub = Path(self.tmp.name) / "claude"
+        stub.write_text(
+            "#!/bin/sh\necho \"$@\" >> '%s'\ncat > /dev/null\n"
+            "echo '{\"type\":\"result\",\"result\":\"ok\",\"is_error\":false}'\n"
+            % log)
+        stub.chmod(0o755)
+        old_argv, old_ledger = engine._claude_argv, run_sources.LEDGER
+        engine._claude_argv = lambda: [str(stub)]
+        run_sources.LEDGER = Path(self.tmp.name) / "run-sources.jsonl"
+        try:
+            result = engine.run_claude("p", "s", timeout=20, source="card")
+            self.assertTrue(result["ok"])
+            argv = log.read_text().split()
+            self.assertIn("--session-id", argv)
+            session_id = argv[argv.index("--session-id") + 1]
+            self.assertEqual(run_sources.lookup([session_id]),
+                             {session_id: "card"})
+        finally:
+            engine._claude_argv = old_argv
+            run_sources.LEDGER = old_ledger
+
+    def test_a_cli_that_rejects_session_id_still_runs(self):
+        """The label is optional; the run is not — same contract as the
+        consolidator's fallback. A CLI from before --session-id names the
+        flag on stderr and dies; the run is retried without it."""
+        import run_sources
+        log = Path(self.tmp.name) / "argv.log"
+        stub = Path(self.tmp.name) / "claude"
+        stub.write_text(
+            "#!/bin/sh\necho \"$@\" >> '%s'\n"
+            "case \"$*\" in *--session-id*)\n"
+            "  echo \"error: unknown option '--session-id'\" >&2; exit 2;;\n"
+            "esac\ncat > /dev/null\n"
+            "echo '{\"type\":\"result\",\"result\":\"ok\",\"is_error\":false}'\n"
+            % log)
+        stub.chmod(0o755)
+        old_argv, old_ledger = engine._claude_argv, run_sources.LEDGER
+        engine._claude_argv = lambda: [str(stub)]
+        run_sources.LEDGER = Path(self.tmp.name) / "run-sources.jsonl"
+        try:
+            result = engine.run_claude("p", "s", timeout=20, source="card")
+            self.assertTrue(result["ok"], result)
+            invocations = log.read_text().splitlines()
+            self.assertEqual(len(invocations), 2)
+            self.assertIn("--session-id", invocations[0])
+            self.assertNotIn("--session-id", invocations[1])
+        finally:
+            engine._claude_argv = old_argv
+            run_sources.LEDGER = old_ledger
+
 
 class TestPanelServer(unittest.TestCase):
     @classmethod

@@ -2182,6 +2182,11 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
 /* The open conversation: marked, not hidden — and not a place to go. */
 .convitem.active { border-color: var(--accent); cursor: default; }
 .convitem.active .ctitle { color: var(--accent); }
+
+/* The run reader: the same message, think and tool nodes the chat draws,
+   read-only in a modal. Its own class rather than .chatlog, whose flex
+   sizing and floating-button padding belong to the chat pane. */
+.viewlog { display: flex; flex-direction: column; gap: 14px; margin-top: 10px; }
 .convitem .ctitle {
   flex: 1;
   min-width: 0;
