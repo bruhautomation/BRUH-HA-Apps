@@ -32,6 +32,11 @@ def load_pool_module(tmp_path: Path, monkeypatch, **extra_env):
     monkeypatch.setenv("BRAIN_ASSIST_WORKDIR", str(tmp_path))
     monkeypatch.setenv("BRAIN_CLAUDE_BIN", f"{sys.executable} {FAKE_CLAUDE}")
     monkeypatch.setenv("FAKE_CLAUDE_LOG", str(tmp_path / "argv.log"))
+    # The run-sources ledger the pool claims sessions in. Without this the
+    # module falls back to the real /data path, and a test suite that
+    # quietly writes /data/run-sources.jsonl on the machine running it is
+    # a test suite with a side effect.
+    monkeypatch.setenv("BRAIN_RUN_SOURCES", str(tmp_path / "run-sources.jsonl"))
     # No token -> area-map refresh is skipped; prompts use the no-map branch.
     monkeypatch.delenv("SUPERVISOR_TOKEN", raising=False)
     monkeypatch.delenv("FAKE_MODE", raising=False)
@@ -134,6 +139,14 @@ def test_new_conversation_adopts_prewarmed_spare(tmp_path, monkeypatch):
         shutdown(pool)
 
 
+def ledger_claims(mod) -> list[dict]:
+    try:
+        lines = Path(mod.RUN_SOURCES).read_text().splitlines()
+    except FileNotFoundError:
+        return []
+    return [json.loads(line) for line in lines if line.strip()]
+
+
 def test_worker_crash_falls_back_to_oneshot(tmp_path, monkeypatch):
     mod = load_pool_module(tmp_path, monkeypatch)
     monkeypatch.setenv("FAKE_MODE", "crash")
@@ -149,6 +162,64 @@ def test_worker_crash_falls_back_to_oneshot(tmp_path, monkeypatch):
         assert "convA" not in pool.workers, "crashed worker must be dropped"
     finally:
         shutdown(pool)
+
+
+def test_the_oneshot_fallback_claims_its_session_as_voice(tmp_path, monkeypatch):
+    """The stream path claims off the CLI's own events; the fallback spawns
+    fresh and has none, so it mints and claims up front. Unclaimed, every
+    fallback turn filed under "Your chats" titled "(Local time: …" — a
+    person's own conversations buried by the plumbing meant to sort them."""
+    mod = load_pool_module(tmp_path, monkeypatch)
+    monkeypatch.setenv("FAKE_MODE", "crash")
+    pool = mod.Pool()
+    try:
+        req = make_request("please survive", timeout=40)
+        pool.handle(req)
+        assert read_response(mod, req["id"]).startswith("ONESHOT:")
+        voice = [c for c in ledger_claims(mod) if c["source"] == "voice"]
+        assert voice, "the fallback run claimed nothing"
+        # ...and the one-shot spawn actually carried a claimed id, so the
+        # claim labels the transcript the CLI really wrote.
+        oneshots = [a for a in argv_log(tmp_path) if "--input-format" not in a]
+        assert oneshots and all("--session-id" in a for a in oneshots)
+        claimed_ids = {c["id"] for c in voice}
+        for argv in oneshots:
+            assert argv[argv.index("--session-id") + 1] in claimed_ids
+    finally:
+        shutdown(pool)
+
+
+def test_the_reflection_pass_claims_its_session_as_memorys(tmp_path, monkeypatch):
+    """The memory pipeline's extraction step is a Claude run like any other,
+    and unclaimed it was the single biggest source of machine rows in "Your
+    chats" — one per voice conversation worth remembering."""
+    mod = load_pool_module(tmp_path, monkeypatch)
+    mod.reflect_on_transcript(
+        [("call it the hype button", "Done."), ("thanks", "ok")])
+    claims = ledger_claims(mod)
+    assert [c["source"] for c in claims] == ["memory"]
+    runs = argv_log(tmp_path)
+    assert len(runs) == 1 and "--session-id" in runs[0]
+    assert runs[0][runs[0].index("--session-id") + 1] == claims[0]["id"]
+
+
+def test_reflection_survives_a_cli_that_rejects_session_id(tmp_path, monkeypatch):
+    """The label is optional; the run is not — the same fallback contract
+    as brain-run-source.sh and engine._run_cli."""
+    stub = tmp_path / "claude-old"
+    stub_log = tmp_path / "stub.log"
+    stub.write_text(
+        "#!/bin/sh\necho \"$@\" >> '%s'\n"
+        "case \"$*\" in *--session-id*)\n"
+        "  echo \"error: unknown option '--session-id'\" >&2; exit 2;;\n"
+        "esac\ncat > /dev/null\necho NONE\n" % stub_log)
+    stub.chmod(0o755)
+    mod = load_pool_module(tmp_path, monkeypatch, BRAIN_CLAUDE_BIN=str(stub))
+    mod.reflect_on_transcript([("a", "b"), ("c", "d")])
+    lines = stub_log.read_text().splitlines()
+    assert len(lines) == 2, lines
+    assert "--session-id" in lines[0]
+    assert "--session-id" not in lines[1]
 
 
 def test_auth_error_recycles_pool_and_gives_guidance(tmp_path, monkeypatch):

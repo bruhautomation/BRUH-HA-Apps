@@ -2,6 +2,25 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.28.2
+
+### Fixed
+
+- **"Your chats" is actually yours now.** Two of the worker pool's Claude
+  runs never claimed their session ids: the reflection pass that extracts
+  facts from voice conversations ("From this smart-home voice conversation,
+  extract 0-3 durable facts …") and the one-shot fallback that answers a
+  voice request when a stream worker errors ("(Local time: …"). An
+  unclaimed id is what "yours" means, so both piled into **Your chats** —
+  a person's own conversations buried by the very plumbing meant to sort
+  them. Both claim minted ids before running now (reflections under
+  *Memory*, fallback turns under *Voice*, with the usual retry for a CLI
+  that predates `--session-id`), and a one-time startup pass labels the
+  existing backlog by matching brAIn's own shipped prompt openers — your
+  list is honest immediately, not in a fortnight when the CLI prunes the
+  old files. Genuine chats are never touched: the backfill matches our
+  prompts verbatim, nothing a person would type.
+
 ## 1.28.1
 
 ### Added

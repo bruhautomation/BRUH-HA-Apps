@@ -268,6 +268,69 @@ class ConversationsCase(unittest.TestCase):
         self.assertIn("truncated", events[0]["text"])
 
 
+class BackfillCase(ConversationsCase):
+    """The one-time repair for machine transcripts that predate their
+    callers' claims. Matched by OUR OWN shipped prompt openers, verbatim —
+    never by inference over a person's wording, which is exactly what the
+    claim contract exists to avoid."""
+
+    def setUp(self):
+        super().setUp()
+        import run_sources
+        self.rs = run_sources
+        self._old_ledger = run_sources.LEDGER
+        run_sources.LEDGER = Path(self.tmp.name) / "run-sources.jsonl"
+        self.mod.BACKFILL_MARKER = os.path.join(self.tmp.name, ".backfilled")
+
+    def tearDown(self):
+        self.rs.LEDGER = self._old_ledger
+        super().tearDown()
+
+    def _pad(self):
+        return "x" * 300 + "\n"
+
+    def test_old_machine_transcripts_are_labelled_and_yours_are_not(self):
+        self._write("refl", [user_entry(
+            "From this smart-home voice conversation, extract 0-3 durable "
+            "facts worth remembering about the household."), self._pad()])
+        self._write("osv", [user_entry(
+            "(Local time: Tuesday 2026-08-18 14:00 America/Chicago)\n"
+            "turn off the frame TV"), self._pad()])
+        self._write("hist", [user_entry(
+            "Previous conversation:\nUSER: hi\n\nUSER: and the porch light"),
+            self._pad()])
+        self._write("mine", [user_entry("why is the porch light off"),
+                             self._pad()])
+        self.assertEqual(self.mod.backfill_sources(self.cwd), 3)
+        rows = {r["id"]: r["source"] for r in self.mod.listing(self.cwd)}
+        self.assertEqual(rows["refl"], "memory")
+        self.assertEqual(rows["osv"], "voice")
+        self.assertEqual(rows["hist"], "voice")
+        self.assertEqual(rows["mine"], "you")
+
+    def test_an_already_claimed_transcript_is_left_alone(self):
+        self._write("osv", [user_entry("(Local time: Tuesday) hi"),
+                            self._pad()])
+        self.rs.record("osv", "automation")   # somebody already claimed it
+        self.assertEqual(self.mod.backfill_sources(self.cwd), 0)
+        rows = {r["id"]: r["source"] for r in self.mod.listing(self.cwd)}
+        self.assertEqual(rows["osv"], "automation")
+
+    def test_the_backfill_runs_once(self):
+        """After the callers claim for themselves, this scan would only
+        re-read every genuine chat's title on every boot, forever — so the
+        marker ends it."""
+        self._write("osv", [user_entry("(Local time: Tuesday) hi"),
+                            self._pad()])
+        self.assertEqual(self.mod.backfill_sources(self.cwd), 1)
+        self._write("osv2", [user_entry("(Local time: Wednesday) hello"),
+                             self._pad()])
+        self.assertEqual(self.mod.backfill_sources(self.cwd), 0)
+        rows = {r["id"]: r["source"] for r in self.mod.listing(self.cwd)}
+        self.assertEqual(rows["osv2"], "you",
+                         "a post-backfill run is its caller's to claim")
+
+
 class DeleteCase(ConversationsCase):
     """The one mutation this module offers: a person removing a whole
     conversation, as a move into our trash — never a write into the CLI's

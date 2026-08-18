@@ -3716,6 +3716,14 @@ def make_app() -> web.Application:
         # Republish the shared-volume mirror so the integration's findings
         # sensor reads the current list, not the one from the last change.
         await asyncio.to_thread(findings_store.publish_state)
+        # Transcripts from before the pool's reflection pass and one-shot
+        # voice fallback claimed their ids sat in "Your chats". Label the
+        # backlog once, by our own shipped prompt openers (marker-guarded).
+        relabelled = await asyncio.to_thread(
+            conversations.backfill_sources, chat_session.WORK_DIR)
+        if relabelled:
+            log.info("labelled %d machine conversation(s) from before their "
+                     "callers claimed session ids", relabelled)
         await _options_sync()
         app["worker"] = asyncio.create_task(_worker())
         app["scheduler"] = asyncio.create_task(_scheduler())
