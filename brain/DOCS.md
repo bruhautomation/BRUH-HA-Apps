@@ -255,8 +255,9 @@ same `/config`, with the same permissions — what differs is only how you see i
   instead of erroring on every send.)
 - **Yours, and everyone else's.** brAIn runs Claude in `/config` for voice, automation
   tasks and filing memory, so those conversations live beside yours. The list shows
-  **Your chats** by default — everything you started yourself, in the chat or the
-  classic terminal — and puts the rest behind a chip each, alphabetically:
+  **Chats** by default — everything you started yourself, in the chat or the
+  classic terminal, including a finding you opened for discussion — and puts the
+  rest behind a chip each, alphabetically:
   *Automation*, *Cards*, *Fixes*, *Memory*, *Study*, *Voice* — with a count, and
   only for the ones your house actually uses. Each row's time is when something
   last *happened in* the conversation — opening one just to look at it doesn't

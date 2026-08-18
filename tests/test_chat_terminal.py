@@ -1418,8 +1418,8 @@ class TestChatRoutes(unittest.IsolatedAsyncioTestCase):
     async def test_the_chips_lead_with_your_chats_then_go_alphabetical(self):
         """"Yours" answered nothing — whose else would they be? — and the
         machine chips sat in whatever order the source table was written
-        in. "Your chats" says what the default list is, and the rest read
-        as a list because they are sorted like one."""
+        in. "Chats" names the default list — the blurb says whose they are
+        — and the rest read as a list because they are sorted like one."""
         self._fake_conversation("mine", "hello")
         for sid, source in (("a1", "automation"), ("m1", "memory"),
                             ("s1", "study"), ("v1", "voice")):
@@ -1427,7 +1427,7 @@ class TestChatRoutes(unittest.IsolatedAsyncioTestCase):
             self._claim(sid, source)
         data = await (await self.client.get("/api/chat/conversations")).json()
         self.assertEqual([s["label"] for s in data["sources"]],
-                         ["Your chats", "Automation", "Memory",
+                         ["Chats", "Automation", "Memory",
                           "Study", "Voice"])
 
     async def test_the_open_conversation_is_listed_marked_not_hidden(self):

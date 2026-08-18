@@ -3336,11 +3336,13 @@ def _conversation_source_counts() -> list[dict]:
     for key, n in conversations.source_counts(
             engine.CLAUDE_HOME, default_source="").items():
         counts[key] = counts.get(key, 0) + n
-    # "Your chats" leads because it is the default and the odd one out — it
-    # is the absence of a claim, not a source. The machine faces follow in
-    # alphabetical order, so the row of chips reads as a list rather than
-    # as an order somebody would have to already understand.
-    out = [{"id": "you", "label": "Your chats",
+    # "Chats" leads because it is the default and the odd one out — it is
+    # the absence of a claim, not a source. Just "Chats", not "Your chats":
+    # under a rail already headed CHATS the possessive answered a question
+    # nobody asked, and the blurb carries whose they are. The machine faces
+    # follow in alphabetical order, so the row of chips reads as a list
+    # rather than as an order somebody would have to already understand.
+    out = [{"id": "you", "label": "Chats",
             "blurb": "conversations you started — in this chat "
                      "or the classic terminal",
             "count": counts.get("you", 0)}]
@@ -3717,8 +3719,9 @@ def make_app() -> web.Application:
         # sensor reads the current list, not the one from the last change.
         await asyncio.to_thread(findings_store.publish_state)
         # Transcripts from before the pool's reflection pass and one-shot
-        # voice fallback claimed their ids sat in "Your chats". Label the
-        # backlog once, by our own shipped prompt openers (marker-guarded).
+        # voice fallback claimed their ids sat in the person's own Chats
+        # list. Label the backlog once, by our own shipped prompt openers
+        # (marker-guarded).
         relabelled = await asyncio.to_thread(
             conversations.backfill_sources, chat_session.WORK_DIR)
         if relabelled:

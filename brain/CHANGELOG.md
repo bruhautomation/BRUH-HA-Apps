@@ -2,6 +2,15 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.28.3
+
+### Changed
+
+- **"Your chats" is just "Chats".** Under a rail already headed CHATS, the
+  possessive answered a question nobody asked; the chip's own tooltip still
+  says whose they are (conversations you started — in this chat or the
+  classic terminal, including a finding opened for discussion).
+
 ## 1.28.2
 
 ### Fixed
