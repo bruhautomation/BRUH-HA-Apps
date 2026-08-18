@@ -12,6 +12,7 @@ failures: a wrong directory name falls back to asking the transcripts where
 they ran, and a conversation whose title cannot be found is still listed.
 """
 
+import datetime as dt
 import importlib
 import json
 import os
@@ -93,11 +94,40 @@ class ConversationsCase(unittest.TestCase):
         self.assertEqual(rows[0]["age"], "just now")
         self.assertEqual(rows[1]["age"], "2 h ago")
 
-    def test_the_current_conversation_is_not_offered_as_somewhere_to_go(self):
-        self._write("aaa", [user_entry("one"), "x" * 300 + "\n"])
-        self._write("bbb", [user_entry("two"), "x" * 300 + "\n"])
-        rows = self.mod.listing(self.cwd, exclude="bbb")
-        self.assertEqual([r["id"] for r in rows], ["aaa"])
+    @staticmethod
+    def _iso(age_s):
+        """An entry timestamp the way the CLI writes one, age_s ago."""
+        when = dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=age_s)
+        return when.isoformat().replace("+00:00", "Z")
+
+    def test_browsing_a_conversation_does_not_bump_it_to_the_top(self):
+        """The CLI touches a session file's mtime the moment it is resumed —
+        before a word is exchanged (verified on 2.1.234) — and the panel
+        resumes a conversation just to LOOK at it. Ordered by mtime, merely
+        browsing old conversations shuffled them all to the top stamped
+        "just now"; a row's place and age come from its newest stamped
+        entry instead. The untimestamped housekeeping lines the CLI closes
+        every file with (`last-prompt`, `mode`) are skipped, not trusted."""
+        self._write("new", [user_entry("fresh talk", timestamp=self._iso(60)),
+                            "x" * 300 + "\n"])
+        # Written second, so its mtime is the newest in the directory — the
+        # shape a just-browsed old conversation has.
+        self._write("old", [user_entry("ancient history",
+                                       timestamp=self._iso(7200)),
+                            entry(type="last-prompt"),
+                            entry(type="mode"),
+                            "x" * 300 + "\n"])
+        rows = self.mod.listing(self.cwd)
+        self.assertEqual([r["id"] for r in rows], ["new", "old"])
+        self.assertEqual(rows[0]["age"], "just now")
+        self.assertEqual(rows[1]["age"], "2 h ago")
+
+    def test_a_transcript_with_no_stamped_entries_still_has_a_time(self):
+        """Not every line carries a timestamp; a file whose tail offers none
+        falls back to its mtime rather than to no answer."""
+        self._write("aaa", [user_entry("undated"), "x" * 300 + "\n"],
+                    age_s=7200)
+        self.assertEqual(self.mod.listing(self.cwd)[0]["age"], "2 h ago")
 
     def test_an_empty_session_file_is_not_offered(self):
         """A session opened and never used is a dead end to resume into."""

@@ -4373,9 +4373,12 @@ function renderConvModal() {
   $("#convEmpty").classList.toggle("hidden", rows.length > 0);
   if (convSel.on && rows.length) list.appendChild(convSelBar(rows));
   rows.forEach((c) => {
+    // Same contract as the rail: the one you are in is marked rather than
+    // hidden, and neither resumable (it is already open) nor deletable
+    // (the server refuses to delete the ground the session stands on).
     const here = !!chatState.sessionId && c.id === chatState.sessionId;
     const row = el("div", "crrow");
-    const btn = el("button", "convitem");
+    const btn = el("button", "convitem" + (here ? " active" : ""));
     if (convSel.on && !here) {
       btn.classList.add("hascheck");
       btn.classList.toggle("sel", convSel.ids.has(c.id));
@@ -4386,17 +4389,18 @@ function renderConvModal() {
     const chip = sourceChip(c);
     if (chip) btn.appendChild(chip);
     btn.appendChild(el("span", "cwhen", c.age));
+    if (here) btn.setAttribute("aria-current", "true");
     if (convSel.on) {
       if (here) btn.classList.add("inert");
       else btn.addEventListener("click", () => {
         convSelFlip(c.id);
         renderConvModal();
       });
-    } else {
+    } else if (!here) {
       btn.addEventListener("click", () => resumeConversation(c));
     }
     row.appendChild(btn);
-    if (!convSel.on) row.appendChild(deleteConvButton(c));
+    if (!here && !convSel.on) row.appendChild(deleteConvButton(c));
     list.appendChild(row);
   });
 }

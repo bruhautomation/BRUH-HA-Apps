@@ -675,6 +675,57 @@ class ChatSessionCase(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(out["resumed"])
         self.assertEqual(out["session_id"], "dead-beef")
 
+    async def test_jumping_between_conversations_lands_on_the_last_click(self):
+        """Two quick picks in the rail must end on the second one, whole.
+
+        Unserialized, the second resume's stop() shot the first one's spawn
+        before it spoke, start() blamed the id the SECOND click had just set,
+        dropped it, and opened a fresh session — so the pane wore the second
+        conversation's transcript while everything typed went into a
+        conversation nobody could see. In the other interleaving the first
+        spawn's announcement overwrote the second click's session id, and
+        the typed messages landed in the FIRST conversation instead. Either
+        way: "jumping between old conversations overwrites one".
+        """
+        log = os.path.join(self.tmp.name, "argv.log")
+        os.environ["FAKE_CHAT_LOG"] = log
+        first, second = await asyncio.gather(
+            self.session.resume("aaaaaaaa-1111-2222-3333-444444444444",
+                                [{"type": "user", "text": "the first"}]),
+            self.session.resume("bbbbbbbb-1111-2222-3333-444444444444",
+                                [{"type": "user", "text": "the second"}]))
+        self.assertTrue(first["ok"] and second["ok"])
+        self.assertTrue(second["resumed"])
+        self.assertEqual(second["session_id"],
+                         "bbbbbbbb-1111-2222-3333-444444444444")
+        self.assertEqual(self.session.session_id,
+                         "bbbbbbbb-1111-2222-3333-444444444444")
+        self.assertTrue(self.session.alive(), "no session to type into")
+        # The pane shows the second conversation — not a mixture, and not a
+        # "could not resume" apology for a race of our own making.
+        self.assertEqual([e["text"] for e in self.session.events
+                          if e["type"] == "user"], ["the second"])
+        self.assertEqual([e for e in self.session.events
+                          if e["type"] == "notice"], [])
+        # And the live process was spawned on the last click's id.
+        invocations = await self._invocations(log, 2)
+        self.assertIn("bbbbbbbb-1111-2222-3333-444444444444", invocations[-1])
+
+    async def test_switching_conversations_mid_answer_is_refused(self):
+        """Switching stops the process, and losing an answer being written
+        is worse than being told to stop it first — the same refusal adopt
+        and the model picker already make."""
+        os.environ["FAKE_CHAT_MODE"] = "hang"
+        await self.session.start()
+        await self.session.send("one")
+        await asyncio.sleep(0.3)
+        self.assertEqual(self.session.state, "busy")
+        with self.assertRaises(RuntimeError):
+            await self.session.resume("dead-beef", [])
+        # The conversation being answered is untouched by the refusal.
+        self.assertEqual(self.session.state, "busy")
+        self.assertTrue(self.session.alive())
+
     async def test_a_resume_the_cli_refuses_falls_back_to_a_fresh_session(self):
         """The docstring always promised this fallback; it has to be real.
 
@@ -1289,6 +1340,49 @@ class TestChatRoutes(unittest.IsolatedAsyncioTestCase):
         data = await (await self.client.get("/api/chat/conversations")).json()
         self.assertEqual([s["id"] for s in data["sources"]], ["you", "voice"])
         self.assertEqual([s["count"] for s in data["sources"]], [1, 1])
+
+    async def test_the_chips_lead_with_your_chats_then_go_alphabetical(self):
+        """"Yours" answered nothing — whose else would they be? — and the
+        machine chips sat in whatever order the source table was written
+        in. "Your chats" says what the default list is, and the rest read
+        as a list because they are sorted like one."""
+        self._fake_conversation("mine", "hello")
+        for sid, source in (("a1", "automation"), ("m1", "memory"),
+                            ("s1", "study"), ("v1", "voice")):
+            self._fake_conversation(sid, f"a {source} run")
+            self._claim(sid, source)
+        data = await (await self.client.get("/api/chat/conversations")).json()
+        self.assertEqual([s["label"] for s in data["sources"]],
+                         ["Your chats", "Automation", "Memory",
+                          "Study", "Voice"])
+
+    async def test_the_open_conversation_is_listed_marked_not_hidden(self):
+        """It used to be excluded server-side while the panel carried the
+        code to mark it "where you are" — so the row you had just opened
+        vanished from the rail, which read as the conversation being lost.
+        A list that silently omits the current item makes you wonder where
+        it went."""
+        await self.client.post("/api/chat/send", json={"text": "hi"})
+        await asyncio.sleep(0.6)
+        current = (await (await self.client.get(
+            "/api/chat/state")).json())["session_id"]
+        self.assertTrue(current)
+        self._fake_conversation(current, "the conversation that is open")
+        self._fake_conversation("another", "an older one", age_s=60)
+
+        data = await (await self.client.get("/api/chat/conversations")).json()
+        self.assertIn(current, [c["id"] for c in data["conversations"]])
+        self.assertEqual(data["current"], current)
+
+    async def test_switching_conversations_mid_answer_is_refused_with_409(self):
+        self._fake_conversation("other-one", "somewhere to go")
+        self.chat_session.session().state = "busy"
+        try:
+            resp = await self.client.post(
+                "/api/chat/resume", json={"session_id": "other-one"})
+            self.assertEqual(resp.status, 409)
+        finally:
+            self.chat_session.session().state = "idle"
 
     async def test_a_full_page_of_machine_chats_still_returns_yours(self):
         """Filtering server-side is what makes the page size mean rows you

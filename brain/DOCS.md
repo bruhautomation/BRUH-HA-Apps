@@ -255,8 +255,13 @@ same `/config`, with the same permissions — what differs is only how you see i
   instead of erroring on every send.)
 - **Yours, and everyone else's.** brAIn runs Claude in `/config` for voice, automation
   tasks and filing memory, so those conversations live beside yours. The list shows
-  yours by default and puts the rest behind a chip each — *Voice*, *Automation*,
-  *Memory*, *Study* — with a count, and only for the ones your house actually uses.
+  **Your chats** by default — everything you started yourself, in the chat or the
+  classic terminal — and puts the rest behind a chip each, alphabetically:
+  *Automation*, *Memory*, *Study*, *Voice* — with a count, and only for the ones
+  your house actually uses. (Insight cards and Fix-it runs don't appear here at
+  all: they run from the add-on's own home directory, not `/config`.) Each row's
+  time is when something last *happened in* the conversation — opening one just
+  to look at it doesn't bump it to the top.
 - **The input is a real text box**, so dictation, autocorrect and selection behave.
 - **⏹ stops a running answer**, and **＋ starts a new chat**. The conversation
   survives a page reload, a phone locking, and the add-on restarting.

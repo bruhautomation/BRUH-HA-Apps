@@ -3286,10 +3286,14 @@ async def h_chat_conversations(request: web.Request) -> web.Response:
         sources = tuple(
             s for s in wanted.split(",")
             if s == "you" or run_sources.known(s)) or ("you",)
+    # The open conversation is listed too — the panel marks it as "where
+    # you are" rather than offering it. Hiding it made the row you had just
+    # opened vanish from the rail, which read as the conversation being
+    # lost; a list that silently omits the current item makes you wonder
+    # where it went.
     return web.json_response({
         "conversations": await asyncio.to_thread(
-            conversations.listing, chat_session.WORK_DIR, 30,
-            session.session_id, sources),
+            conversations.listing, chat_session.WORK_DIR, 30, sources),
         "current": session.session_id,
         "sources": await asyncio.to_thread(_conversation_source_counts),
     })
@@ -3304,10 +3308,16 @@ def _conversation_source_counts() -> list[dict]:
     concept exists.
     """
     counts = conversations.source_counts(chat_session.WORK_DIR)
-    out = [{"id": "you", "label": "Yours",
-            "blurb": "you, in the chat or the terminal",
+    # "Your chats" leads because it is the default and the odd one out — it
+    # is the absence of a claim, not a source. The machine faces follow in
+    # alphabetical order, so the row of chips reads as a list rather than
+    # as an order somebody would have to already understand.
+    out = [{"id": "you", "label": "Your chats",
+            "blurb": "conversations you started — in this chat "
+                     "or the classic terminal",
             "count": counts.get("you", 0)}]
-    for key, meta in run_sources.SOURCES.items():
+    for key, meta in sorted(run_sources.SOURCES.items(),
+                            key=lambda kv: kv[1]["label"].lower()):
         if counts.get(key):
             out.append({"id": key, "label": meta["label"],
                         "blurb": meta["blurb"], "count": counts[key]})
@@ -3344,7 +3354,7 @@ async def h_chat_adopt(request: web.Request) -> web.Response:
     if session.state == "busy":
         raise web.HTTPConflict(reason="finish or stop the current answer first")
     recent = await asyncio.to_thread(
-        conversations.listing, chat_session.WORK_DIR, 1, None, ("you",))
+        conversations.listing, chat_session.WORK_DIR, 1, ("you",))
     newest = recent[0] if recent else None
     if newest is None or newest["id"] == session.session_id:
         # Already the same conversation (or there is nothing to take up):
@@ -3353,7 +3363,12 @@ async def h_chat_adopt(request: web.Request) -> web.Response:
                                   "session_id": session.session_id})
     replay = await asyncio.to_thread(
         conversations.transcript, chat_session.WORK_DIR, newest["id"])
-    await session.resume(newest["id"], replay)
+    try:
+        await session.resume(newest["id"], replay)
+    except RuntimeError:
+        # A turn started between the busy check above and here — the same
+        # refusal, in the same words.
+        raise web.HTTPConflict(reason="finish or stop the current answer first")
     return web.json_response({"ok": True, "adopted": True,
                               "session_id": newest["id"],
                               "title": newest["title"]})
@@ -3507,6 +3522,10 @@ async def h_chat_resume(request: web.Request) -> web.Response:
         return web.json_response(await session.resume(session_id, replay))
     except ValueError as exc:
         raise web.HTTPBadRequest(reason=str(exc))
+    except RuntimeError as exc:
+        # Mid-answer: switching would kill the answer being written, the
+        # same refusal adopt and the model picker already make.
+        raise web.HTTPConflict(reason=_refusal(exc))
 
 
 def _chat_snapshot(session: "chat_session.ChatSession") -> dict:

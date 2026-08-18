@@ -38,6 +38,7 @@ every background caller claims its own session id before running.
 """
 from __future__ import annotations
 
+import datetime as dt
 import json
 import os
 import re
@@ -73,6 +74,16 @@ MAX_TEXT = 4000
 # reached when the filter is rejecting nearly everything, which is exactly
 # the case that must stay bounded.
 MAX_FILTER_SCAN = 400
+# How many sessions an UNFILTERED listing stats and tail-reads before
+# sorting. More than the page needs on purpose: the scan is ordered by
+# mtime, which the CLI bumps on a mere resume (see _last_activity), so a
+# margin keeps a browsed-but-idle conversation from squeezing a genuinely
+# newer one out of the scan before the honest sort happens.
+LIST_SCAN = 120
+# How far into a transcript's tail to look for the newest timestamped entry.
+# The untimestamped housekeeping lines at the end are small; the sized ones
+# (user/assistant) all carry a timestamp, so this is generous.
+TAIL_BYTES = 16384
 
 # Entries that are user-shaped but are not something a person typed.
 _NOT_A_PROMPT = (
@@ -181,9 +192,18 @@ def title_of(path: Path) -> str:
     return ""
 
 
-def listing(cwd: str, limit: int = 30, exclude: str | None = None,
+def listing(cwd: str, limit: int = 30,
             sources: tuple[str, ...] | None = None) -> list[dict]:
     """Recent conversations for this working directory, newest first.
+
+    "Newest" means the newest thing anyone SAID, not the file's mtime: the
+    CLI touches a session file the moment it is resumed, before a word is
+    exchanged (see ``_last_activity``), so ordering by mtime made merely
+    browsing old conversations shuffle them all to the top stamped "just
+    now". The scan is still mtime-ordered — a touch only ever moves a file
+    *up*, so the newest activity is always inside the top of an mtime scan
+    — but what a row reports, and where it sorts, is its last entry's own
+    timestamp.
 
     Each row carries the face that started it (``source``). Everything the
     add-on runs by itself claims its session id up front (run_sources), so
@@ -200,11 +220,12 @@ def listing(cwd: str, limit: int = 30, exclude: str | None = None,
         return []
     wanted = set(sources) if sources else None
     rows = []
-    scanned = 0
+    # Bounded even when the filter matches nothing: a directory of ten
+    # thousand voice sessions must not turn one listing into ten thousand
+    # title reads. Unfiltered still over-scans (LIST_SCAN, not limit) so
+    # the activity sort below has room to demote touched-but-idle files.
+    scan_cap = MAX_FILTER_SCAN if wanted is not None else LIST_SCAN
     for path in _iter_sessions(directory):
-        session_id = path.stem
-        if exclude and session_id == exclude:
-            continue
         try:
             stat = path.stat()
         except OSError:
@@ -213,13 +234,11 @@ def listing(cwd: str, limit: int = 30, exclude: str | None = None,
         # used; offering it as something to resume is a dead end.
         if stat.st_size < 200:
             continue
-        rows.append({"id": session_id, "path": path, "modified": stat.st_mtime})
-        scanned += 1
-        # Bounded even when the filter matches nothing: a directory of ten
-        # thousand voice sessions must not turn one listing into ten
-        # thousand title reads.
-        if len(rows) >= (limit if wanted is None else MAX_FILTER_SCAN):
+        rows.append({"id": path.stem, "path": path,
+                     "modified": _last_activity(path, stat.st_mtime)})
+        if len(rows) >= scan_cap:
             break
+    rows.sort(key=lambda r: r["modified"], reverse=True)
     claimed = run_sources.lookup(row["id"] for row in rows)   # one read, not one per row
     out = []
     for row in rows:
@@ -236,6 +255,50 @@ def listing(cwd: str, limit: int = 30, exclude: str | None = None,
         if len(out) >= limit:
             break
     return out
+
+
+def _last_activity(path: Path, mtime: float) -> float:
+    """When something last happened IN a conversation, not to its file.
+
+    Claude Code bumps a session file's mtime the moment it is resumed —
+    before any message is exchanged (verified against CLI 2.1.234: spawning
+    ``--resume`` and killing it without a turn leaves the size unchanged
+    and the mtime fresh). The panel resumes a conversation just to LOOK at
+    it, so mtime made the act of browsing rewrite the rail's own ordering.
+    The entries themselves are stamped as they are written; the newest
+    stamped one is the honest "last activity". The untimestamped lines at
+    the tail (``last-prompt``, ``mode``) are housekeeping, skipped.
+
+    Falls back to the mtime when no stamped entry is in the tail window —
+    an mtime that may be a touch is still better than no answer at all.
+    """
+    try:
+        with path.open("rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            size = fh.tell()
+            fh.seek(max(0, size - TAIL_BYTES))
+            tail = fh.read().decode("utf-8", errors="replace")
+    except OSError:
+        return mtime
+    lines = tail.splitlines()
+    if size > TAIL_BYTES and lines:
+        lines = lines[1:]           # the first line of a mid-file seek is torn
+    for line in reversed(lines):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            stamp = json.loads(line).get("timestamp")
+        except (ValueError, AttributeError):
+            continue
+        if not isinstance(stamp, str):
+            continue
+        try:
+            return dt.datetime.fromisoformat(
+                stamp.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            continue
+    return mtime
 
 
 def source_counts(cwd: str, limit: int = 200) -> dict[str, int]:
