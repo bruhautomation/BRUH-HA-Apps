@@ -2,6 +2,59 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.28.1
+
+### Added
+
+- **Card and Fix runs are in the conversation list now, read-only.** Every
+  insight run — scheduled or a question you asked — and every Fix-it run is
+  a Claude conversation, and until now it was invisible: the engine runs
+  them from the add-on's own home directory, so Claude Code filed their
+  transcripts where the list never looked. They get chips of their own
+  (*Cards*, *Fixes*), and picking one opens a reader showing exactly what
+  brAIn sent to Claude about your house, every tool call the run made, and
+  what came back. Read-only on purpose: those turns ran under the analyst's
+  read-only scoping (or the fixer's), and continuing one under the chat's
+  permissions would change the conversation's rules mid-thread. Engine runs
+  claim their session ids in the run-sources ledger like every other
+  background caller — before the run, so a run that crashes still leaves a
+  labelled transcript — and the auth self-check's unclaimed probe is not
+  listed at all.
+
+### Fixed
+
+- **Jumping between conversations can no longer land your messages in the
+  wrong one.** Two quick picks in the Chats rail raced each other: the
+  second pick killed the first one's still-starting process, and depending
+  on the interleaving the chat either quietly opened a fresh, invisible
+  session or stayed on the *first* conversation while the pane showed the
+  second — so everything typed went into a conversation nobody was looking
+  at. Switches are serialized now (the last click wins, whole), and
+  switching mid-answer is refused with "stop it first" instead of silently
+  killing the answer — the same refusal the face switch and the model
+  picker already made.
+- **Browsing old conversations no longer shuffles the list.** Claude Code
+  touches a session file the moment it is resumed, before a word is
+  exchanged — and the panel resumes a conversation just to show it. Ordered
+  by file time, merely looking at an old conversation shoved it to the top
+  stamped "just now". A row's place and age now come from the newest
+  timestamped entry in the transcript itself: opening one to look at it
+  changes nothing.
+- **The conversation you're in is listed again — marked, not hidden.** The
+  server excluded the open conversation from the list while the panel
+  carried the code to mark it "where you are", so the row you had just
+  opened vanished from the rail, which read as the conversation being
+  lost. It now shows in both the rail and the ⋯ dialog, highlighted, not
+  clickable, and without a delete ✕ (the server refuses that delete
+  anyway).
+
+### Changed
+
+- **The chats filter says what it means.** "Yours" is now **Your chats** —
+  the conversations you started yourself, in the chat or the classic
+  terminal — and the machine chips follow alphabetically: *Automation*,
+  *Cards*, *Fixes*, *Memory*, *Study*, *Voice*.
+
 ## 1.28.0
 
 ### Fixed

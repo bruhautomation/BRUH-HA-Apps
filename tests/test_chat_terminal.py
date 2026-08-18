@@ -675,6 +675,57 @@ class ChatSessionCase(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(out["resumed"])
         self.assertEqual(out["session_id"], "dead-beef")
 
+    async def test_jumping_between_conversations_lands_on_the_last_click(self):
+        """Two quick picks in the rail must end on the second one, whole.
+
+        Unserialized, the second resume's stop() shot the first one's spawn
+        before it spoke, start() blamed the id the SECOND click had just set,
+        dropped it, and opened a fresh session — so the pane wore the second
+        conversation's transcript while everything typed went into a
+        conversation nobody could see. In the other interleaving the first
+        spawn's announcement overwrote the second click's session id, and
+        the typed messages landed in the FIRST conversation instead. Either
+        way: "jumping between old conversations overwrites one".
+        """
+        log = os.path.join(self.tmp.name, "argv.log")
+        os.environ["FAKE_CHAT_LOG"] = log
+        first, second = await asyncio.gather(
+            self.session.resume("aaaaaaaa-1111-2222-3333-444444444444",
+                                [{"type": "user", "text": "the first"}]),
+            self.session.resume("bbbbbbbb-1111-2222-3333-444444444444",
+                                [{"type": "user", "text": "the second"}]))
+        self.assertTrue(first["ok"] and second["ok"])
+        self.assertTrue(second["resumed"])
+        self.assertEqual(second["session_id"],
+                         "bbbbbbbb-1111-2222-3333-444444444444")
+        self.assertEqual(self.session.session_id,
+                         "bbbbbbbb-1111-2222-3333-444444444444")
+        self.assertTrue(self.session.alive(), "no session to type into")
+        # The pane shows the second conversation — not a mixture, and not a
+        # "could not resume" apology for a race of our own making.
+        self.assertEqual([e["text"] for e in self.session.events
+                          if e["type"] == "user"], ["the second"])
+        self.assertEqual([e for e in self.session.events
+                          if e["type"] == "notice"], [])
+        # And the live process was spawned on the last click's id.
+        invocations = await self._invocations(log, 2)
+        self.assertIn("bbbbbbbb-1111-2222-3333-444444444444", invocations[-1])
+
+    async def test_switching_conversations_mid_answer_is_refused(self):
+        """Switching stops the process, and losing an answer being written
+        is worse than being told to stop it first — the same refusal adopt
+        and the model picker already make."""
+        os.environ["FAKE_CHAT_MODE"] = "hang"
+        await self.session.start()
+        await self.session.send("one")
+        await asyncio.sleep(0.3)
+        self.assertEqual(self.session.state, "busy")
+        with self.assertRaises(RuntimeError):
+            await self.session.resume("dead-beef", [])
+        # The conversation being answered is untouched by the refusal.
+        self.assertEqual(self.session.state, "busy")
+        self.assertTrue(self.session.alive())
+
     async def test_a_resume_the_cli_refuses_falls_back_to_a_fresh_session(self):
         """The docstring always promised this fallback; it has to be real.
 
@@ -1289,6 +1340,123 @@ class TestChatRoutes(unittest.IsolatedAsyncioTestCase):
         data = await (await self.client.get("/api/chat/conversations")).json()
         self.assertEqual([s["id"] for s in data["sources"]], ["you", "voice"])
         self.assertEqual([s["count"] for s in data["sources"]], [1, 1])
+
+    def _fake_engine_conversation(self, session_id, text, source="card",
+                                  age_s=0):
+        """A transcript in the ENGINE's project directory — what an insight
+        or fix run leaves behind (engine runs from CLAUDE_HOME, so the CLI
+        files them apart from /config's). ``source`` claims it the way
+        engine._run_cli does; None leaves it unclaimed, which is the shape
+        of an auth self-check."""
+        import conversations
+        home = os.path.join(self.tmp.name, "engine-home")
+        self.engine.CLAUDE_HOME = home
+        project = (Path(self.tmp.name) / "projects"
+                   / re.sub(r"[^A-Za-z0-9]", "-", home))
+        project.mkdir(parents=True, exist_ok=True)
+        path = project / f"{session_id}.jsonl"
+        path.write_text(json.dumps({
+            "type": "user", "cwd": home,
+            "message": {"role": "user", "content": text}}) + "\n"
+            + "x" * 300 + "\n", encoding="utf-8")
+        if age_s:
+            when = time.time() - age_s
+            os.utime(path, (when, when))
+        conversations.CONFIG_DIR = self.tmp.name
+        if source:
+            self._claim(session_id, source)
+        return path
+
+    async def test_card_runs_are_listed_read_only_under_their_chip(self):
+        """The visibility half of "track everything sent to Claude": an
+        insight run's whole conversation is one press away, behind a Cards
+        chip — and marked view_only, because it is a record of a run made
+        under the analyst's scoping, not a conversation the chat resumes."""
+        self._fake_conversation("mine", "hello", age_s=60)
+        self._fake_engine_conversation("card-1", "Analyse the upstairs heating")
+
+        data = await (await self.client.get("/api/chat/conversations")).json()
+        self.assertEqual([c["id"] for c in data["conversations"]], ["mine"])
+        self.assertIn("card", [s["id"] for s in data["sources"]])
+
+        data = await (await self.client.get(
+            "/api/chat/conversations?source=card")).json()
+        rows = data["conversations"]
+        self.assertEqual([c["id"] for c in rows], ["card-1"])
+        self.assertEqual(rows[0]["source"], "card")
+        self.assertTrue(rows[0]["view_only"])
+
+        # ...and "all" carries both stores, newest first.
+        data = await (await self.client.get(
+            "/api/chat/conversations?source=all")).json()
+        self.assertEqual({c["id"] for c in data["conversations"]},
+                         {"mine", "card-1"})
+
+    async def test_an_unclaimed_engine_run_belongs_to_nobody(self):
+        """The auth self-check leaves a transcript in the engine's store
+        with no claim. It is a probe, not a conversation — defaulting it to
+        "you" would be a lie and to "card" a guess, so it is not listed."""
+        self._fake_conversation("mine", "hello")
+        self._fake_engine_conversation("probe", "Reply with exactly: OK",
+                                       source=None)
+        data = await (await self.client.get(
+            "/api/chat/conversations?source=all")).json()
+        self.assertEqual([c["id"] for c in data["conversations"]], ["mine"])
+        self.assertNotIn("card", [s["id"] for s in data["sources"]])
+
+    async def test_a_card_run_opens_as_a_readable_replay(self):
+        self._fake_engine_conversation("card-1", "Analyse the upstairs heating")
+        data = await (await self.client.get(
+            "/api/chat/conversation/card-1/view")).json()
+        self.assertEqual(data["id"], "card-1")
+        self.assertIn("Analyse the upstairs heating",
+                      [e.get("text") for e in data["events"]])
+
+        resp = await self.client.get("/api/chat/conversation/never-was/view")
+        self.assertEqual(resp.status, 404)
+
+    async def test_the_chips_lead_with_your_chats_then_go_alphabetical(self):
+        """"Yours" answered nothing — whose else would they be? — and the
+        machine chips sat in whatever order the source table was written
+        in. "Your chats" says what the default list is, and the rest read
+        as a list because they are sorted like one."""
+        self._fake_conversation("mine", "hello")
+        for sid, source in (("a1", "automation"), ("m1", "memory"),
+                            ("s1", "study"), ("v1", "voice")):
+            self._fake_conversation(sid, f"a {source} run")
+            self._claim(sid, source)
+        data = await (await self.client.get("/api/chat/conversations")).json()
+        self.assertEqual([s["label"] for s in data["sources"]],
+                         ["Your chats", "Automation", "Memory",
+                          "Study", "Voice"])
+
+    async def test_the_open_conversation_is_listed_marked_not_hidden(self):
+        """It used to be excluded server-side while the panel carried the
+        code to mark it "where you are" — so the row you had just opened
+        vanished from the rail, which read as the conversation being lost.
+        A list that silently omits the current item makes you wonder where
+        it went."""
+        await self.client.post("/api/chat/send", json={"text": "hi"})
+        await asyncio.sleep(0.6)
+        current = (await (await self.client.get(
+            "/api/chat/state")).json())["session_id"]
+        self.assertTrue(current)
+        self._fake_conversation(current, "the conversation that is open")
+        self._fake_conversation("another", "an older one", age_s=60)
+
+        data = await (await self.client.get("/api/chat/conversations")).json()
+        self.assertIn(current, [c["id"] for c in data["conversations"]])
+        self.assertEqual(data["current"], current)
+
+    async def test_switching_conversations_mid_answer_is_refused_with_409(self):
+        self._fake_conversation("other-one", "somewhere to go")
+        self.chat_session.session().state = "busy"
+        try:
+            resp = await self.client.post(
+                "/api/chat/resume", json={"session_id": "other-one"})
+            self.assertEqual(resp.status, 409)
+        finally:
+            self.chat_session.session().state = "idle"
 
     async def test_a_full_page_of_machine_chats_still_returns_yours(self):
         """Filtering server-side is what makes the page size mean rows you

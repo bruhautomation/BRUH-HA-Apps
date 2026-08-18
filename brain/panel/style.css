@@ -2160,8 +2160,8 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
 }
 
 /* The conversation list. One row per conversation: what it opened with,
-   and when it was last touched — which between them are how anyone
-   recognises a conversation they had. */
+   and when anything last happened in it — which between them are how
+   anyone recognises a conversation they had. */
 .convlist { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
 .convitem {
   display: flex;
@@ -2179,6 +2179,14 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   cursor: pointer;
 }
 .convitem:hover { border-color: var(--accent); }
+/* The open conversation: marked, not hidden — and not a place to go. */
+.convitem.active { border-color: var(--accent); cursor: default; }
+.convitem.active .ctitle { color: var(--accent); }
+
+/* The run reader: the same message, think and tool nodes the chat draws,
+   read-only in a modal. Its own class rather than .chatlog, whose flex
+   sizing and floating-button padding belong to the chat pane. */
+.viewlog { display: flex; flex-direction: column; gap: 14px; margin-top: 10px; }
 .convitem .ctitle {
   flex: 1;
   min-width: 0;

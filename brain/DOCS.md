@@ -255,8 +255,20 @@ same `/config`, with the same permissions — what differs is only how you see i
   instead of erroring on every send.)
 - **Yours, and everyone else's.** brAIn runs Claude in `/config` for voice, automation
   tasks and filing memory, so those conversations live beside yours. The list shows
-  yours by default and puts the rest behind a chip each — *Voice*, *Automation*,
-  *Memory*, *Study* — with a count, and only for the ones your house actually uses.
+  **Your chats** by default — everything you started yourself, in the chat or the
+  classic terminal — and puts the rest behind a chip each, alphabetically:
+  *Automation*, *Cards*, *Fixes*, *Memory*, *Study*, *Voice* — with a count, and
+  only for the ones your house actually uses. Each row's time is when something
+  last *happened in* the conversation — opening one just to look at it doesn't
+  bump it to the top.
+- **Cards and Fixes open read-only.** Every insight run (scheduled or a question
+  you asked) and every Fix-it run is a Claude conversation too, and its chip lists
+  them all — pick one and it opens as a record: exactly what brAIn sent to Claude
+  about your house, every tool call it made, and what came back. Read-only on
+  purpose: those runs happen under the analyst's read-only tool scoping (or the
+  fixer's), and quietly continuing one under the chat's permissions would change
+  the conversation's rules mid-thread. Want to talk about what a run found? Ask
+  in the chat — memory and the findings list already carry what it learned.
 - **The input is a real text box**, so dictation, autocorrect and selection behave.
 - **⏹ stops a running answer**, and **＋ starts a new chat**. The conversation
   survives a page reload, a phone locking, and the add-on restarting.

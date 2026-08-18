@@ -33,21 +33,36 @@ import atomic_write
 # our own processes, not something a person edits or backs up.
 LEDGER = Path(os.environ.get("BRAIN_RUN_SOURCES", "/data/run-sources.jsonl"))
 
-# Every face that drives Claude Code *from /config*, and what to call it on
-# screen. The panel renders `label`; `blurb` is the one-line "what this is"
-# for the filter. "you" is not here on purpose — it is the absence of an
-# entry.
+# Every face that drives Claude Code, and what to call it on screen. The
+# panel renders `label`; `blurb` is the one-line "what this is" for the
+# filter. "you" is not here on purpose — it is the absence of an entry.
 #
-# Insight generation and the Findings fixer are absent for a different
-# reason: `engine` runs them from CLAUDE_HOME, so the CLI already files
-# them under a different project directory and they were never in this
-# listing to begin with. Nothing to label.
+# Most faces run from /config; the two marked `store: "engine"` run from
+# CLAUDE_HOME (`engine._run_cli`), so the CLI files their transcripts under
+# a different project directory and the panel lists them from there. They
+# are records to read, never conversations to resume: the CLI can in fact
+# resume by id across directories, but their earlier turns ran under the
+# analyst's read-only scoping (or the fixer's) with a card contract, and
+# quietly continuing that under the chat's permissions would change the
+# conversation's rules mid-thread. In the engine's directory an UNCLAIMED
+# id is dropped, not defaulted — nothing there is yours, and the odd
+# unclaimed run (the auth self-check) is a probe, not a conversation.
 SOURCES: dict[str, dict[str, str]] = {
     "voice": {"label": "Voice", "blurb": "Assist asked it something"},
     "automation": {"label": "Automation", "blurb": "an automation ran a task"},
     "memory": {"label": "Memory", "blurb": "filing the inbox into memory"},
     "study": {"label": "Study", "blurb": "a study session"},
+    "card": {"label": "Cards", "blurb":
+             "an insight run — scheduled, or a question you asked",
+             "store": "engine"},
+    "fix": {"label": "Fixes", "blurb": "a Fix it run at the house",
+            "store": "engine"},
 }
+
+# The sources whose transcripts live in the engine's project directory
+# rather than /config's. The server routes their listing there.
+ENGINE_SOURCES = frozenset(
+    key for key, meta in SOURCES.items() if meta.get("store") == "engine")
 
 # Newest entries kept. Generous — a busy house making a session every voice
 # command still takes weeks to roll a fortnight of chats out of the file.

@@ -315,6 +315,18 @@ class ChatSession:
         self._subs: set[asyncio.Queue] = set()
         self._seq = 0
         self._lock = asyncio.Lock()
+        # Serializes every stop-then-start swap (resume, reset, a model
+        # change, an interrupt's fallback, a send's respawn). `_lock` only
+        # guards one start(); it cannot stop a second resume from killing
+        # the process a first resume is still watching — which is exactly
+        # what jumping between conversations in the rail did: the first
+        # resume's spawn died unspoken, start() read the OTHER conversation's
+        # id off the session, decided the CLI no longer held it, dropped it,
+        # and opened a fresh session while the pane showed the transcript
+        # you had asked for. Everything typed then went into a conversation
+        # nobody could see. With this lock the swaps run whole, in click
+        # order, and the last click wins cleanly.
+        self._swap_lock = asyncio.Lock()
         self._reader: asyncio.Task | None = None
         self._busy_since = 0.0
         # Set per spawn, the moment the CLI produces any event at all. A
@@ -568,6 +580,11 @@ class ChatSession:
                 return
             self.resume_fell_back = False
             self._set_state("starting")
+            # What --resume will carry, if anything. The fallback below may
+            # only drop THIS id: deciding "the CLI no longer holds it" about
+            # an id this spawn never asked for is how a raced resume used to
+            # throw away the conversation the person had just picked.
+            attempted = self.session_id
             if not await self._spawn_watched():
                 return
             # A process's stderr can only be read once, and three branches
@@ -586,8 +603,8 @@ class ChatSession:
                         return
                     detail = "" if self._first_event.is_set() or self.alive() \
                         else await self._stderr_tail(self.proc)
-            if not self._first_event.is_set() and self.session_id \
-                    and not self.alive():
+            if not self._first_event.is_set() and attempted \
+                    and self.session_id == attempted and not self.alive():
                 # Died before speaking, with --resume on the argv: the CLI
                 # no longer has this conversation. Fall back to a fresh
                 # session rather than leaving a chat tab that cannot open.
@@ -808,39 +825,45 @@ class ChatSession:
             raise ValueError("empty message")
         if len(text) > MAX_TEXT_CHARS:
             raise ValueError("message too long")
-        if self.alive() and self.state == "busy":
-            raise RuntimeError("Claude is still answering — stop it first")
-        if self.alive() and (self._respawn_pending
-                             or self.model != self._spawned_model):
-            # The process no longer matches what the panel wants of it — a
-            # model chosen in ⚙ or the picker while it was live, or a turn
-            # cap only a respawn clears. Both are argv-shaped problems, and
-            # the CLI's own store carries the conversation across the
-            # restart, exactly as interrupt() already relies on.
-            await self.stop()
-        if not self.alive():
-            await self.start()
-        if not self.alive():
-            raise RuntimeError(self.error or "the Claude session is not running")
-        if self.state == "busy":
-            raise RuntimeError("Claude is still answering — stop it first")
+        # Under the swap lock: a send that lands while a resume is half way
+        # through its stop-then-start must wait for the swap to finish, or
+        # the message goes into whichever process happens to exist mid-swap.
+        async with self._swap_lock:
+            if self.alive() and self.state == "busy":
+                raise RuntimeError("Claude is still answering — stop it first")
+            if self.alive() and (self._respawn_pending
+                                 or self.model != self._spawned_model):
+                # The process no longer matches what the panel wants of it — a
+                # model chosen in ⚙ or the picker while it was live, or a turn
+                # cap only a respawn clears. Both are argv-shaped problems, and
+                # the CLI's own store carries the conversation across the
+                # restart, exactly as interrupt() already relies on.
+                await self.stop()
+            if not self.alive():
+                await self.start()
+            if not self.alive():
+                raise RuntimeError(self.error or "the Claude session is not running")
+            if self.state == "busy":
+                raise RuntimeError("Claude is still answering — stop it first")
 
-        self._emit({"type": "user", "text": text})
-        self._persist()
-        payload = json.dumps({
-            "type": "user",
-            "message": {"role": "user", "content": [{"type": "text", "text": text}]},
-        }) + "\n"
-        assert self.proc is not None and self.proc.stdin is not None
-        try:
-            self.proc.stdin.write(payload.encode())
-            await self.proc.stdin.drain()
-        except (OSError, ConnectionResetError) as exc:
-            self._set_state("error", f"Could not reach the Claude session: {exc}")
-            raise RuntimeError(self.error) from exc
-        self._busy_since = time.time()
-        self._set_state("busy")
-        return {"ok": True}
+            self._emit({"type": "user", "text": text})
+            self._persist()
+            payload = json.dumps({
+                "type": "user",
+                "message": {"role": "user",
+                            "content": [{"type": "text", "text": text}]},
+            }) + "\n"
+            assert self.proc is not None and self.proc.stdin is not None
+            try:
+                self.proc.stdin.write(payload.encode())
+                await self.proc.stdin.drain()
+            except (OSError, ConnectionResetError) as exc:
+                self._set_state("error",
+                                f"Could not reach the Claude session: {exc}")
+                raise RuntimeError(self.error) from exc
+            self._busy_since = time.time()
+            self._set_state("busy")
+            return {"ok": True}
 
     # -- permissions -----------------------------------------------------
 
@@ -1010,29 +1033,31 @@ class ChatSession:
         the CLI persists the conversation itself, respawning with --resume
         picks it back up where the last completed turn left it.
         """
-        if not self.alive():
-            return {"ok": True, "method": "none"}
-        try:
-            assert self.proc is not None and self.proc.stdin is not None
-            self.proc.stdin.write((json.dumps({
-                "type": "control_request",
-                "request_id": f"int-{int(time.time() * 1000)}",
-                "request": {"subtype": "interrupt"},
-            }) + "\n").encode())
-            await self.proc.stdin.drain()
-        except (OSError, ConnectionResetError, AssertionError):
-            # The pipe is already closed, so the interrupt cannot be delivered —
-            # which is what the kill-and-resume below exists for.
-            pass
-        deadline = time.time() + INTERRUPT_GRACE
-        while time.time() < deadline:
-            if self.state != "busy":
-                return {"ok": True, "method": "interrupt"}
-            await asyncio.sleep(0.2)
-        await self.stop()
-        self._emit({"type": "notice", "text": "Stopped."})
-        await self.start()
-        return {"ok": True, "method": "restart"}
+        async with self._swap_lock:
+            if not self.alive():
+                return {"ok": True, "method": "none"}
+            try:
+                assert self.proc is not None and self.proc.stdin is not None
+                self.proc.stdin.write((json.dumps({
+                    "type": "control_request",
+                    "request_id": f"int-{int(time.time() * 1000)}",
+                    "request": {"subtype": "interrupt"},
+                }) + "\n").encode())
+                await self.proc.stdin.drain()
+            except (OSError, ConnectionResetError, AssertionError):
+                # The pipe is already closed, so the interrupt cannot be
+                # delivered — which is what the kill-and-resume below exists
+                # for.
+                pass
+            deadline = time.time() + INTERRUPT_GRACE
+            while time.time() < deadline:
+                if self.state != "busy":
+                    return {"ok": True, "method": "interrupt"}
+                await asyncio.sleep(0.2)
+            await self.stop()
+            self._emit({"type": "notice", "text": "Stopped."})
+            await self.start()
+            return {"ok": True, "method": "restart"}
 
     async def stop(self) -> None:
         proc, self.proc = self.proc, None
@@ -1061,9 +1086,10 @@ class ChatSession:
         both: the id has to be known to the person typing it, and *we* have
         to stop holding the session open.
         """
-        session_id = self.session_id
-        cwd = self.info.get("cwd") or WORK_DIR
-        await self.stop()
+        async with self._swap_lock:
+            session_id = self.session_id
+            cwd = self.info.get("cwd") or WORK_DIR
+            await self.stop()
         opened = _open_in_terminal(session_id) if session_id else False
         return {
             "ok": True,
@@ -1081,31 +1107,42 @@ class ChatSession:
         ``replay`` is its stored transcript rendered into our event shapes,
         so the pane shows what was said instead of an empty box promising
         that Claude remembers.
+
+        Refused mid-answer — switching conversations would kill the answer
+        being written, and losing it silently is worse than being told to
+        stop it first. Serialized by the swap lock besides: two clicks in
+        quick succession run whole and in order, so the second one lands on
+        a settled session instead of shooting the first one's spawn — which
+        used to end with a fresh, invisible conversation wearing the second
+        one's transcript.
         """
         if not session_id:
             raise ValueError("no conversation given")
-        await self.stop()
-        self.session_id = session_id
-        self.info = {}
-        self.context = {}
-        self.events = []
-        self._seq = 0
-        # Live viewers repaint from here: clear first, then the history.
-        self._emit({"type": "cleared"}, keep=False)
-        for event in replay:
-            self._emit(dict(event))
-        if not replay:
-            self._emit({"type": "notice", "text":
-                        "Resumed. Claude has this conversation's history — "
-                        "this pane starts from here."})
-        self._persist()
-        await self.start()
-        # start() may have discovered the CLI no longer holds this
-        # conversation and opened a fresh session instead. Saying so is the
-        # difference between "carrying on" and a pane that only looks like
-        # it is.
-        return {"ok": True, "session_id": self.session_id,
-                "resumed": not self.resume_fell_back, "events": len(replay)}
+        async with self._swap_lock:
+            if self.state == "busy":
+                raise RuntimeError("Claude is still answering — stop it first")
+            await self.stop()
+            self.session_id = session_id
+            self.info = {}
+            self.context = {}
+            self.events = []
+            self._seq = 0
+            # Live viewers repaint from here: clear first, then the history.
+            self._emit({"type": "cleared"}, keep=False)
+            for event in replay:
+                self._emit(dict(event))
+            if not replay:
+                self._emit({"type": "notice", "text":
+                            "Resumed. Claude has this conversation's history — "
+                            "this pane starts from here."})
+            self._persist()
+            await self.start()
+            # start() may have discovered the CLI no longer holds this
+            # conversation and opened a fresh session instead. Saying so is
+            # the difference between "carrying on" and a pane that only looks
+            # like it is.
+            return {"ok": True, "session_id": self.session_id,
+                    "resumed": not self.resume_fell_back, "events": len(replay)}
 
     async def set_model(self, model: str) -> dict:
         """Point the session at a different model, keeping the conversation.
@@ -1118,31 +1155,34 @@ class ChatSession:
         written.
         """
         model = (model or "").strip()
-        if self.state == "busy":
-            raise RuntimeError("Claude is still answering — stop it first")
-        self.model = model
-        # The label rides back on every answer, because the meta line is the
-        # only confirmation a pick landed and the event that would refresh
-        # it (init → info) does not arrive until the NEXT message — a
-        # restarted `--resume` process says nothing until it is spoken to.
-        # Waiting for it is how the picker looked like it did nothing.
-        label = pretty_model(model)
-        if not self.alive():
-            # Nothing running: the next spawn simply takes the new flag.
+        async with self._swap_lock:
+            if self.state == "busy":
+                raise RuntimeError("Claude is still answering — stop it first")
+            self.model = model
+            # The label rides back on every answer, because the meta line is
+            # the only confirmation a pick landed and the event that would
+            # refresh it (init → info) does not arrive until the NEXT message
+            # — a restarted `--resume` process says nothing until it is
+            # spoken to. Waiting for it is how the picker looked like it did
+            # nothing.
+            label = pretty_model(model)
+            if not self.alive():
+                # Nothing running: the next spawn simply takes the new flag.
+                return {"ok": True, "model": model, "model_label": label,
+                        "restarted": False}
+            if model == self._spawned_model:
+                # Compared against what the process actually runs, never
+                # against `self.model` — the server refreshes that from
+                # settings on every request, so a ⚙ edit made it agree with a
+                # pick the live process had never seen, and the picker
+                # answered "already that model" about a session still running
+                # the old one.
+                return {"ok": True, "model": model, "model_label": label,
+                        "restarted": False}
+            await self.stop()
+            await self.start()
             return {"ok": True, "model": model, "model_label": label,
-                    "restarted": False}
-        if model == self._spawned_model:
-            # Compared against what the process actually runs, never against
-            # `self.model` — the server refreshes that from settings on every
-            # request, so a ⚙ edit made it agree with a pick the live process
-            # had never seen, and the picker answered "already that model"
-            # about a session still running the old one.
-            return {"ok": True, "model": model, "model_label": label,
-                    "restarted": False}
-        await self.stop()
-        await self.start()
-        return {"ok": True, "model": model, "model_label": label,
-                "restarted": True}
+                    "restarted": True}
 
     async def reset(self) -> dict:
         """Start a genuinely new conversation.
@@ -1151,16 +1191,17 @@ class ChatSession:
         make "New chat" mean "same conversation, blank screen", which is the
         one thing it must not mean.
         """
-        await self.stop()
-        self.session_id = None
-        self.events = []
-        self.info = {}
-        self.context = {}
-        self._seq = 0
-        self._persist()
-        self._emit({"type": "cleared"}, keep=False)
-        await self.start()
-        return {"ok": True}
+        async with self._swap_lock:
+            await self.stop()
+            self.session_id = None
+            self.events = []
+            self.info = {}
+            self.context = {}
+            self._seq = 0
+            self._persist()
+            self._emit({"type": "cleared"}, keep=False)
+            await self.start()
+            return {"ok": True}
 
 
 # ---------------------------------------------------------------------------
