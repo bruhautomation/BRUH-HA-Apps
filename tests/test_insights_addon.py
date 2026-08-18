@@ -1037,17 +1037,26 @@ class InsightsServerCase(unittest.TestCase):
         return TestClient(TestServer(self.server.make_app()))
 
 
+# History fixtures are stamped *yesterday*, computed at import. The prune
+# measures a run's age against the wall clock (`eff_keep_days`, default 30),
+# so a literal date in these tests is a lit fuse: the hard-coded stamps this
+# replaced went red the morning they turned 31 days old, on a PR whose diff
+# had nothing to do with history. Yesterday is always inside the window, and
+# localtime because that is the clock the prune itself reads.
+FRESH_DAY = time.strftime("%Y-%m-%d", time.localtime(time.time() - 86400))
+
+
 class TestInsightHistory(InsightsServerCase):
     def test_history_copy_written_and_invisible_to_load(self):
-        self._save("energy", "2026-07-18T10:00:00")
-        run_file = Path(self.tmp.name) / "history" / "energy" / "2026-07-18T10-00-00.json"
+        self._save("energy", f"{FRESH_DAY}T10:00:00")
+        run_file = Path(self.tmp.name) / "history" / "energy" / f"{FRESH_DAY}T10-00-00.json"
         self.assertTrue(run_file.exists())
         # load_insights must not see the history subdir
         loaded = self.server.load_insights()
         self.assertEqual([i["id"] for i in loaded], ["energy"])
 
     def test_custom_cards_excluded_from_history(self):
-        self._save("custom-1234", "2026-07-18T10:00:00", category="custom")
+        self._save("custom-1234", f"{FRESH_DAY}T10:00:00", category="custom")
         self.assertFalse((Path(self.tmp.name) / "history" / "custom-1234").exists())
 
     def test_bad_stamp_skipped(self):
@@ -1058,7 +1067,7 @@ class TestInsightHistory(InsightsServerCase):
         old = self.server.HISTORY_KEEP_RUNS
         self.server.HISTORY_KEEP_RUNS = 0
         try:
-            self._save("energy", "2026-07-18T10:00:00")
+            self._save("energy", f"{FRESH_DAY}T10:00:00")
         finally:
             self.server.HISTORY_KEEP_RUNS = old
         self.assertFalse((Path(self.tmp.name) / "history" / "energy").exists())
@@ -1068,24 +1077,24 @@ class TestInsightHistory(InsightsServerCase):
         self.server.HISTORY_KEEP_RUNS = 3
         try:
             for i in range(6):
-                self._save("energy", f"2026-07-18T10:00:{i:02d}")
+                self._save("energy", f"{FRESH_DAY}T10:00:{i:02d}")
         finally:
             self.server.HISTORY_KEEP_RUNS = old
         files = sorted(p.stem for p in
                        (Path(self.tmp.name) / "history" / "energy").glob("*.json"))
-        self.assertEqual(files, ["2026-07-18T10-00-03", "2026-07-18T10-00-04",
-                                 "2026-07-18T10-00-05"])
+        self.assertEqual(files, [f"{FRESH_DAY}T10-00-03", f"{FRESH_DAY}T10-00-04",
+                                 f"{FRESH_DAY}T10-00-05"])
 
     def test_prune_drops_runs_older_than_keep_days(self):
         self._save("energy", "2020-01-01T00:00:00")
-        self._save("energy", "2026-07-18T10:00:00")
+        self._save("energy", f"{FRESH_DAY}T10:00:00")
         stems = [p.stem for p in
                  (Path(self.tmp.name) / "history" / "energy").glob("*.json")]
-        self.assertEqual(stems, ["2026-07-18T10-00-00"])
+        self.assertEqual(stems, [f"{FRESH_DAY}T10-00-00"])
 
     def test_history_endpoints(self):
-        self._save("energy", "2026-07-18T09:00:00")
-        self._save("energy", "2026-07-18T10:00:00")
+        self._save("energy", f"{FRESH_DAY}T09:00:00")
+        self._save("energy", f"{FRESH_DAY}T10:00:00")
 
         async def run():
             client = self._client()
@@ -1095,15 +1104,16 @@ class TestInsightHistory(InsightsServerCase):
                 self.assertEqual(resp.status, 200)
                 runs = (await resp.json())["runs"]
                 self.assertEqual([r["ts"] for r in runs],
-                                 ["2026-07-18T10-00-00", "2026-07-18T09-00-00"])
+                                 [f"{FRESH_DAY}T10-00-00", f"{FRESH_DAY}T09-00-00"])
                 for r in runs:
                     self.assertNotIn("html", r)
                     self.assertTrue(r["title"])
 
-                resp = await client.get("/api/insight/energy/history/2026-07-18T09-00-00")
+                resp = await client.get(
+                    f"/api/insight/energy/history/{FRESH_DAY}T09-00-00")
                 self.assertEqual(resp.status, 200)
                 full = await resp.json()
-                self.assertEqual(full["generated_at"], "2026-07-18T09:00:00")
+                self.assertEqual(full["generated_at"], f"{FRESH_DAY}T09:00:00")
                 self.assertIn("html", full)
 
                 # bad ids / stamps rejected before touching the filesystem
@@ -1116,12 +1126,14 @@ class TestInsightHistory(InsightsServerCase):
                 resp = await client.get("/api/insight/energy/history/2026-01-01T00-00-00")
                 self.assertEqual(resp.status, 404)
 
-                resp = await client.delete("/api/insight/energy/history/2026-07-18T09-00-00")
+                resp = await client.delete(
+                    f"/api/insight/energy/history/{FRESH_DAY}T09-00-00")
                 self.assertEqual(resp.status, 200)
                 resp = await client.get("/api/insight/energy/history")
                 runs = (await resp.json())["runs"]
-                self.assertEqual([r["ts"] for r in runs], ["2026-07-18T10-00-00"])
-                resp = await client.delete("/api/insight/energy/history/2026-07-18T09-00-00")
+                self.assertEqual([r["ts"] for r in runs], [f"{FRESH_DAY}T10-00-00"])
+                resp = await client.delete(
+                    f"/api/insight/energy/history/{FRESH_DAY}T09-00-00")
                 self.assertEqual(resp.status, 404)
             finally:
                 await client.close()
@@ -1652,8 +1664,10 @@ class TestUserCategoryEndpoints(InsightsServerCase):
                 resp = await client.post("/api/generate_all")
                 self.assertIn(cat["id"], (await resp.json())["queued"])
 
-                # delete cleans up definition, insight, history, feedback
-                self._save(cat["id"], "2026-07-18T10:00:00")
+                # delete cleans up definition, insight, history, feedback.
+                # A fresh stamp, or the prune empties history first and the
+                # "history removed" assert below passes without testing it.
+                self._save(cat["id"], f"{FRESH_DAY}T10:00:00")
                 feedback_store.add_feedback(cat["id"], "note")
                 resp = await client.delete(f"/api/user_category/{cat['id']}")
                 self.assertEqual(resp.status, 200)

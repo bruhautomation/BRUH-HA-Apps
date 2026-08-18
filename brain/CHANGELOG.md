@@ -2,6 +2,25 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.28.0
+
+### Fixed
+
+- **The usage sensors update every 5 minutes again, and the 429 walls are
+  gone with the User-Agent that caused them.** Anthropic's usage endpoint
+  sorts callers into rate-limit buckets by User-Agent: the UA Claude Code
+  itself sends gets the bucket the whole statusline-tool ecosystem polls
+  sustainably, and everything else gets the one that answers 429 after a
+  few hours and keeps answering it. The tracker introduced itself as
+  `brain/1.0`, which is what every "usage cap nobody hit" actually was —
+  and what the 30-minute poll was (wrongly) slowed down to accommodate.
+  It now sends the installed CLI's own UA (`claude-cli/<version>
+  (external, cli)`, probed from `claude --version`, verified against the
+  CLI bundle's `getUserAgent()`), and the poll returns to every 5 minutes,
+  so the session percentage tracks within a percent or two of live instead
+  of up to half an hour behind. The hour-scale 429 backoff stays as the
+  safety net — in the right bucket a 429 is rare enough to mean something.
+
 ## 1.27.1
 
 ### Fixed

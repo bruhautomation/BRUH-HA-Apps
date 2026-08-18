@@ -494,13 +494,14 @@ class TestRateLimitBackoff(unittest.TestCase):
             self.assertGreater(step, self.mod.POLL_INTERVAL)
         self.assertGreater(self.mod.FAILURE_BACKOFF_S, self.mod.POLL_INTERVAL)
 
-    def test_the_daily_request_budget_stays_small(self):
-        """The endpoint meters per day, so the number that matters is
-        requests per day, not the interval it is spelled with. Nine hours
-        of working sensors cost ~270 requests at the old two-minute poll;
-        whatever replaces this must stay far under that."""
-        per_day = 86400 / self.mod.POLL_INTERVAL
-        self.assertLessEqual(per_day, 60)
+    def test_the_poll_keeps_a_respectful_floor(self):
+        """The poll is minutes, never seconds. With the CLI's own UA the
+        endpoint serves minute-scale polling sustainably (it is what the
+        statusline ecosystem does), but Claude Code itself only asks on
+        demand — a timer is already more than the endpoint was built for,
+        so the cadence stays at the gentle end of what is known to work,
+        and far above anything that reads as hammering."""
+        self.assertGreaterEqual(self.mod.POLL_INTERVAL, 180)
 
     def test_retry_after_zero_does_not_mean_retry_now(self):
         """The endpoint sends `Retry-After: 0` while still refusing
@@ -536,6 +537,76 @@ class TestRateLimitBackoff(unittest.TestCase):
     def test_the_status_arrives_with_an_explanation(self):
         detail = self.mod.ERROR_DETAIL.get("http_429", "")
         self.assertIn("not your", detail.lower())
+
+
+class TestUserAgent(unittest.TestCase):
+    """The endpoint buckets rate limits by User-Agent, and only the CLI's
+    own UA gets the bucket that answers a poll. `brain/1.0` — the tracker's
+    old UA, straight from the repo's own naming rule — is what put every
+    install in the hostile bucket: a 429 wall after a few hours that read,
+    from the sensors, as a daily meter nobody could name."""
+
+    def _load(self, env=None):
+        return load_tracker({"BRAIN_CLI_VERSION": None, **(env or {})})
+
+    def test_a_pinned_version_is_used_verbatim(self):
+        mod = self._load({"BRAIN_CLI_VERSION": "9.9.9"})
+        self.assertEqual(mod.user_agent(), "claude-cli/9.9.9 (external, cli)")
+
+    def test_an_unprobeable_cli_falls_back_to_a_real_version(self):
+        """The fallback must be a version Claude Code actually shipped —
+        a made-up one is a UA nobody else sends, which is the failure mode
+        this whole class exists to prevent."""
+        mod = self._load()
+        mod.CLI_PROBE_COMMANDS = (os.path.join(tempfile.gettempdir(),
+                                                "no-such-claude-binary"),)
+        self.assertEqual(
+            mod.user_agent(),
+            f"claude-cli/{mod.UA_FALLBACK_CLI_VERSION} (external, cli)",
+        )
+
+    def test_the_ua_is_shaped_exactly_like_the_clis(self):
+        """Verified against the CLI bundle's getUserAgent():
+        `claude-cli/<version> (external, <entrypoint>)`. Anything else —
+        including anything brain-named — risks the stranger bucket."""
+        mod = self._load({"BRAIN_CLI_VERSION": "1.2.3"})
+        ua = mod.user_agent()
+        self.assertRegex(ua, r"^claude-cli/\d+\.\d+\.\d+ \(external, cli\)$")
+        self.assertNotIn("brain", ua.lower())
+
+    def test_the_request_actually_carries_it(self):
+        """The header on the wire is the fix; a correct constant nothing
+        sends is the bug with better paperwork."""
+        from unittest import mock
+
+        mod = self._load({"BRAIN_CLI_VERSION": "9.9.9"})
+
+        class _Resp:
+            def read(self):
+                return b'{"five_hour": {"utilization": 12}}'
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        with mock.patch("urllib.request.urlopen",
+                        return_value=_Resp()) as opened:
+            data, error = mod.fetch_usage_limits("sk-ant-oat01-token")
+        self.assertIsNone(error)
+        self.assertEqual(data, {"five_hour": {"utilization": 12}})
+        request = opened.call_args[0][0]
+        self.assertEqual(request.get_header("User-agent"),
+                         "claude-cli/9.9.9 (external, cli)")
+
+    def test_the_probe_is_asked_once_per_process(self):
+        """The probe spawns the CLI binary, and once is all the answer can
+        change: run.sh updates the CLI before the tracker starts."""
+        mod = self._load({"BRAIN_CLI_VERSION": "9.9.9"})
+        first = mod.user_agent()
+        mod.PINNED_CLI_VERSION = "8.8.8"
+        self.assertEqual(mod.user_agent(), first)
 
 
 class TestFailureRecord(unittest.TestCase):
