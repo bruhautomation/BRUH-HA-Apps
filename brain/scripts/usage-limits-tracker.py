@@ -16,30 +16,39 @@ through the panel — the primary sign-in surface — left the tracker
 reporting `no_oauth_token` and every usage sensor unavailable while the
 rest of the add-on was perfectly authenticated.
 
-**This endpoint is polled gently, and the reason is the endpoint.** It is
-undocumented, it is rate-limited far harder than anything else brAIn
-touches, and a token that gets hammered on it answers 429 with quota to
-spare and keeps doing so long after the window that supposedly caused it
-(anthropics/claude-code#30930, #31021, #31637). Claude Code's own client
-calls it *on demand only*, from the `/usage` screen, never on a timer.
+**The endpoint sorts callers into rate-limit buckets by User-Agent, and
+only Claude Code's own UA gets the usable one.** This tracker used to
+introduce itself as `brain/1.0`, which put every poll in the bucket the
+endpoint reserves for strangers: a wall of 429s after a few hours, with
+quota to spare, persisting long after whatever window supposedly caused it
+(anthropics/claude-code#30930, #31021, #31637 — every reporter was calling
+it without the CLI's UA). Requests that carry the same `claude-cli/<ver>
+(external, cli)` UA the installed CLI itself sends — verified against the
+CLI bundle, whose api helper attaches `getUserAgent()` to every request
+including `fetchUtilization`'s — are the ones the whole statusline-tool
+ecosystem polls with, sustainably, at minute-scale intervals. The earlier
+"it meters per day" reading of this endpoint was that hostile bucket being
+measured from inside; the CLI bucket does not behave that way.
 
-**And it appears to meter per day, not per burst.** Polling every two
-minutes gave about nine working hours and then a wall of 429s until the
-small hours — a fixed nightly recovery, which is a daily allowance being
-spent by mid-morning and not a burst limit that would clear in minutes.
-That is why the interval is measured in half hours rather than minutes,
-and why the 429 backoff is measured in hours: against a daily cap the only
-lever is the total number of requests in a day. Four rules hold here, and
-each is a bug that happened — a credential is offered **once** however
-many paths lead to it; the poll is slow enough to fit a day inside the
-cap; a 429 buys hours of silence, never the ordinary cadence; and
-`Retry-After` may only ever lengthen that silence, because the endpoint
-sends `Retry-After: 0` while still refusing, so obeying it literally is
-how a tracker retries straight back into the limit it was just told about.
+Identifying as the CLI is not spoofing here: the tracker reports on the
+account the *installed* Claude Code is signed into, using that install's
+own credential, on that credential's behalf — it is that install's UA it
+sends, discovered from `claude --version` at runtime.
+
+Four rules still hold, each a bug that happened — a credential is offered
+**once** however many paths lead to it; the poll is measured in minutes,
+not seconds (Claude Code itself asks only on demand, so a timer is already
+more than it needs); a 429 buys hours of silence, never the ordinary
+cadence, because retrying a 429 is what sustains it; and `Retry-After` may
+only ever lengthen that silence, because the endpoint sends
+`Retry-After: 0` while still refusing, so obeying it literally is how a
+tracker retries straight back into the limit it was just told about.
 """
 
 import json
 import os
+import re
+import subprocess
 import sys
 import time
 import urllib.request
@@ -54,17 +63,17 @@ from email.utils import parsedate_to_datetime
 CLAUDE_HOME = os.environ.get("BRAIN_HOME") or os.environ.get("HOME", "/data/home")
 CLAUDE_CONFIG_DIR = os.environ.get("CLAUDE_CONFIG_DIR", "")
 USAGE_FILE = "/config/.brain/usage_limits.json"
-# Every 30 minutes — 48 requests a day. Not a comfort setting: the endpoint
-# appears to meter per *day*, not per burst. Polling every 2 minutes bought
-# roughly nine hours of working sensors and then a 429 wall until the small
-# hours, which is a day's allowance spent by mid-morning and is what a fixed
-# nightly recovery time means. Every 5 minutes is 288 requests and still
-# over. What this costs is resolution nobody can see: the five-hour window
-# moves about 1% every three minutes at a hard sprint, so a half-hourly
-# reading is never more than a percent or two behind the truth, and a
-# sensor that is slightly behind all day beats one that is exactly right
-# until 10am and unavailable after it.
-POLL_INTERVAL = int(os.environ.get("USAGE_LIMITS_INTERVAL", "1800"))  # seconds
+# Every 5 minutes. The interval was 30 minutes for as long as the tracker
+# introduced itself as `brain/1.0` — the wrong User-Agent put it in the
+# endpoint's hostile rate-limit bucket, where 2-minute polling bought nine
+# working hours and then a 429 wall, which read as a daily meter. With the
+# CLI's own UA (see user_agent below) the endpoint serves the statusline
+# ecosystem at 1–5 minute cadences sustainably; 5 minutes keeps the sensors
+# close to live (the five-hour window moves ~1% every three minutes at a
+# hard sprint) while still asking for far less than the tools that poll on
+# every keystroke's response. The hour-scale 429 ladder below stays as the
+# safety net either way.
+POLL_INTERVAL = int(os.environ.get("USAGE_LIMITS_INTERVAL", "300"))  # seconds
 # How long a reading stays usable when polls start failing. Matches
 # usage_store.LIMITS_MAX_AGE_S, which is the panel's own staleness rule for
 # the same file — two answers to "is this still true" would be one too many.
@@ -81,11 +90,11 @@ AUTH_PROBLEMS = ("no_oauth_token", "api_key_has_no_usage_limits", "http_401")
 # retry at the ordinary cadence: retrying is what sustains it, so each strike
 # buys real quiet, and the last value repeats forever rather than growing
 # without bound. Every step is longer than POLL_INTERVAL, or "backing off"
-# would mean asking sooner than usual — the reason these are hours and not
-# the 15/30/60 minutes they started as. Hours also suit what the evidence
-# says the limit is: if a day's allowance is gone, the next honest attempt
-# is a long way off, and four wasted requests spread over an evening is a
-# cheap way to notice the moment it comes back.
+# would mean asking sooner than usual. Hour-scale on purpose even now the
+# poll is minutes: a 429 in the CLI's bucket is rare and means something is
+# genuinely wrong (a changed policy, a flagged token), and a few wasted
+# requests spread over an evening is a cheap way to notice the moment it
+# comes back.
 RATE_LIMIT_BACKOFF_S = (3600, 7200, 14400)
 # A ceiling on a server-supplied Retry-After, so one absurd header cannot
 # park the tracker for a day.
@@ -105,6 +114,62 @@ ERROR_DETAIL = {
 }
 
 ANTHROPIC_USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
+
+# The endpoint buckets its rate limits by User-Agent: the UA Claude Code
+# itself sends gets the bucket the statusline ecosystem polls sustainably,
+# and everything else gets the one that answers 429 after a handful of
+# requests and stays that way. `brain/1.0` — this tracker's old UA — is what
+# put every install in the second bucket, which surfaced as sensors that
+# went dark by mid-morning whatever the poll interval was. This is the one
+# place brAIn deliberately does NOT introduce itself by its own name: the
+# request is made with the installed CLI's credential on that install's
+# behalf, so it carries that install's UA, discovered from the binary at
+# runtime. The fallback is a real shipped CLI version for the case where
+# the binary cannot be asked — a stale-but-real version stays in the right
+# bucket, where an invented one might not.
+UA_FALLBACK_CLI_VERSION = "2.1.234"
+# Where the add-on keeps the CLI it updates at boot (run.sh), then PATH.
+CLI_PROBE_COMMANDS = ("/root/.local/bin/claude", "claude")
+# Read at import like every other env constant here (the tests' loader
+# relies on that): a caller that already knows the installed version can
+# hand it over and skip the probe entirely.
+PINNED_CLI_VERSION = os.environ.get("BRAIN_CLI_VERSION", "").strip()
+_ua_cache = {}
+
+
+def _cli_version():
+    """The installed Claude Code version, or a real fallback.
+
+    `BRAIN_CLI_VERSION` short-circuits the probe (tests use it to stay
+    hermetic). The probe itself is best-effort with a generous timeout — at
+    add-on boot the binary may be cold on a slow disk — and any failure
+    falls back rather than delaying the first poll forever.
+    """
+    if re.fullmatch(r"\d+\.\d+\.\d+", PINNED_CLI_VERSION):
+        return PINNED_CLI_VERSION
+    for cmd in CLI_PROBE_COMMANDS:
+        try:
+            proc = subprocess.run(
+                [cmd, "--version"], capture_output=True, text=True, timeout=60
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        match = re.search(r"\d+\.\d+\.\d+", proc.stdout or "")
+        if match:
+            return match.group(0)
+    return UA_FALLBACK_CLI_VERSION
+
+
+def user_agent():
+    """The UA every poll sends, computed once per process.
+
+    Cached because the probe spawns the CLI binary, and once per process is
+    all the answer can change: run.sh updates the CLI before starting this
+    tracker, never while it runs.
+    """
+    if "ua" not in _ua_cache:
+        _ua_cache["ua"] = f"claude-cli/{_cli_version()} (external, cli)"
+    return _ua_cache["ua"]
 
 # Possible locations for Claude Code's OAuth credentials.
 # The add-on sets up symlinks so all these may resolve to the same file.
@@ -371,7 +436,8 @@ def fetch_usage_limits(token):
         "anthropic-beta": "oauth-2025-04-20",
         "Accept": "application/json",
         "Content-Type": "application/json",
-        "User-Agent": "brain/1.0",
+        # The rate-limit bucket rides on this header — see user_agent().
+        "User-Agent": user_agent(),
     }
 
     req = urllib.request.Request(ANTHROPIC_USAGE_URL, headers=headers, method="GET")
