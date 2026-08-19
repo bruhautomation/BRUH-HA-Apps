@@ -4362,7 +4362,6 @@ async function openConversations() {
   }
   convFilter.options = data.sources || [];
   renderConvFilter($("#convFilter"), () => {});
-  $("#convCwd").textContent = (chatState.info && chatState.info.cwd) || "/config";
   convModalRows = data.conversations || [];
   renderConvModal();
 }
