@@ -1646,7 +1646,12 @@ class TestSnoozeAndDiscussRoutes(ServerCase):
         asyncio.run(run())
         self.assertEqual(len(sent), 1)
         prompt = sent[0]
-        self.assertIn("Porch light never comes on", prompt)
+        # The first line is the conversation's title in the Chats rail —
+        # "Discussing: <the finding>", not a sentence every discussion
+        # shares.
+        self.assertTrue(
+            prompt.startswith("Discussing: Porch light never comes on"),
+            prompt.splitlines()[0])
         self.assertIn("The trigger cannot fire", prompt)
         self.assertIn("Invert the condition", prompt)
         self.assertIn("light.porch", prompt)

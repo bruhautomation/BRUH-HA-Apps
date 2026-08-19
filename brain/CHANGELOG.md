@@ -2,6 +2,21 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.28.3
+
+### Changed
+
+- **"Your chats" is just "Chats".** Under a rail already headed CHATS, the
+  possessive answered a question nobody asked; the chip's own tooltip still
+  says whose they are (conversations you started — in this chat or the
+  classic terminal, including a finding opened for discussion).
+- **A finding discussion is titled "Discussing: <the finding>".** A
+  conversation's title is its first message, and the discuss prompt used to
+  open with the same sentence every time — so a rail of three discussions
+  was three copies of "I want to talk about something you flagged…" with
+  the finding buried mid-message. The prompt now leads with the finding
+  itself, in the rail and in the chat bubble alike.
+
 ## 1.28.2
 
 ### Fixed
