@@ -2142,15 +2142,20 @@ async def h_finding_snooze(request: web.Request) -> web.Response:
 # touch": the discussion is for understanding the thing, and Fix it is still
 # the only button that authorises a change — which stays on screen while you
 # talk, so agreeing to it is one press away rather than a trip back.
-DISCUSS_PROMPT = """I want to talk about something you flagged as broken in my home.
-
-**{text}**
+# The first line is load-bearing twice over: it is what the chat bubble
+# leads with, and — because a conversation's title is its first genuine
+# user message — it is what the Chats rail calls the conversation. The old
+# opener ("I want to talk about something you flagged…") titled every
+# discussion identically, so a rail of three discussions was three copies
+# of the same sentence with the finding buried mid-message.
+DISCUSS_PROMPT = """Discussing: {text}
 {detail}{fix}{entity}
 Severity: {severity}
 
-Look into it and tell me what is actually going on — check the current state
-and the history before you answer, and say plainly whether you think it is
-really a problem here. Do not change anything yet; I will decide."""
+You flagged this as broken in my home. Look into it and tell me what is
+actually going on — check the current state and the history before you
+answer, and say plainly whether you think it is really a problem here. Do
+not change anything yet; I will decide."""
 
 
 async def h_finding_discuss(request: web.Request) -> web.Response:
