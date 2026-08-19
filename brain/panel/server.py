@@ -2154,8 +2154,8 @@ Severity: {severity}
 
 You flagged this as broken in my home. Look into it and tell me what is
 actually going on — check the current state and the history before you
-answer, and say plainly whether you think it is really a problem here. Do
-not change anything yet; I will decide."""
+answer, and say plainly whether you think it is really a problem here.
+Do not change anything yet; I will decide."""
 
 
 async def h_finding_discuss(request: web.Request) -> web.Response:
