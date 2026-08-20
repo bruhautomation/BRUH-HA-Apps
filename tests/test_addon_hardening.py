@@ -318,13 +318,38 @@ class TestBackupsExcludeCredentials(unittest.TestCase):
 class TestWatchdog(unittest.TestCase):
     """A hung panel is a dead add-on that still reads as started."""
 
-    def test_every_addon_has_a_watchdog(self):
+    def test_every_addon_is_watched_by_something(self):
+        """Either the Supervisor polls a URL, or run.sh polls the panel
+        itself — but nobody ships a panel nothing watches.
+
+        BRigt is the second kind. `watchdog:` needs a port number written
+        into config.yaml, and BRigt's port is the Supervisor's to assign
+        (`ingress_port: 0`, because host_network made a pinned port a
+        collision on somebody's box), so the only honest watcher is the one
+        inside the container that knows which port it got.
+        """
         for slug, addon_dir in ADDONS.items():
             with self.subTest(addon=slug):
-                self.assertIn("watchdog", load_config(addon_dir))
+                config = load_config(addon_dir)
+                if "watchdog" in config:
+                    continue
+                with open(os.path.join(addon_dir, "run.sh")) as f:
+                    run_sh = f.read()
+                self.assertIn("/api/health", run_sh,
+                              f"{slug} has neither a watchdog URL nor a "
+                              f"health poll of its own")
+
+    def test_a_watchdog_url_never_pins_a_port_the_addon_gave_away(self):
+        """`[PORT:8095]` beside `ingress_port: 0` polls whatever stranger
+        holds 8095 on the host, and restarts the add-on on its behalf."""
+        for slug, addon_dir in ADDONS.items():
+            with self.subTest(addon=slug):
+                config = load_config(addon_dir)
+                if config.get("ingress_port") == 0:
+                    self.assertNotIn("watchdog", config)
 
     def test_the_watchdog_target_is_a_real_route(self):
-        """Both watchdogs poll /api/health; both panels must serve it."""
+        """Every watcher polls /api/health; every panel must serve it."""
         panels = {
             "brain": os.path.join(ADDONS["brain"], "panel", "server.py"),
             "bruh_minecraft_server": os.path.join(
@@ -334,7 +359,8 @@ class TestWatchdog(unittest.TestCase):
         for slug, path in panels.items():
             with self.subTest(addon=slug):
                 config = load_config(ADDONS[slug])
-                self.assertIn("/api/health", config["watchdog"])
+                if "watchdog" in config:
+                    self.assertIn("/api/health", config["watchdog"])
                 with open(path) as f:
                     self.assertIn('add_get("/api/health"', f.read())
 

@@ -7,25 +7,30 @@ Routes
 GET  /                      — panel HTML
 GET  /style.css, /app.js    — static assets
 GET  /favicon.svg           — the BRigt tile
-GET  /api/health            — liveness for the Supervisor watchdog (public)
+GET  /api/health            — liveness, polled by run.sh over loopback
 GET  /api/status            — version + options snapshot for the UI
 
-Runs as the `brigt` user on 0.0.0.0:8095. The HA Supervisor proxies the
-ingress URL into /api/hassio_ingress/<token>/...; we therefore use only
-relative links in the HTML and let aiohttp serve at /.
+Runs as the `brigt` user on 0.0.0.0, on the port `panel_port.resolve()`
+answers with — the Supervisor assigns it (config.yaml asks with
+`ingress_port: 0`) because on a host-network add-on a port written into a
+manifest is a port somebody else's box may already own. The HA Supervisor
+proxies the ingress URL into /api/hassio_ingress/<token>/...; we therefore
+use only relative links in the HTML and let aiohttp serve at /.
 
 Why 0.0.0.0 is not the same as "public"
 ---------------------------------------
 This add-on sets `host_network: true` (LIFX discovery is a UDP broadcast,
-and cue latency is the product), so binding 0.0.0.0:8095 puts this server
+and cue latency is the product), so binding 0.0.0.0 puts this server
 on the *host's* network — reachable from every device on the LAN, with no
 Home Assistant login in front of it. Ingress is a proxy, not a gate: it
 authenticates its own callers and has no say over anyone who types the IP
 directly. That is the exposure Home Assistant documented in
 GHSA-gh5m-4m97-c95h, and it is why the `_lan_gate` middleware below allows
-the Supervisor's own networks and loopback and nothing else — except
-`/api/health`, which the Supervisor watchdog polls and which reports
-liveness only.
+the Supervisor's own networks and loopback and nothing else. Nothing at all
+is public: `/api/health` used to be, for the Supervisor watchdog polling it
+from off-network, and that watchdog is gone (config.yaml says why). The
+health poll that replaced it runs inside this container, over loopback,
+which the gate already trusts.
 """
 from __future__ import annotations
 
@@ -53,6 +58,7 @@ if str(HERE) not in sys.path:
 import atomic_write  # noqa: E402
 import ha_client  # noqa: E402
 import jobs  # noqa: E402
+import panel_port  # noqa: E402
 from analyzer import library, pipeline  # noqa: E402
 from calibrate import correlate, reference  # noqa: E402
 from lifx import engine as lifx_engine  # noqa: E402
@@ -71,7 +77,8 @@ SUPERVISOR_API_URL = os.environ.get("SUPERVISOR_API_URL", "http://supervisor")
 SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 
 BIND_HOST = "0.0.0.0"
-BIND_PORT = 8095
+# Resolved in main(), not here: importing this module (the tests do) must
+# never reach for the Supervisor, and the answer is the same either way.
 
 log = logging.getLogger("brigt.panel")
 
@@ -92,9 +99,11 @@ _ALLOWED_NETWORKS = tuple(
     )
 )
 
-# Paths that answer anyone. Health is a liveness bit for the Supervisor
-# watchdog and exposes no state.
-_PUBLIC_PREFIXES = ("/api/health",)
+# Paths that answer anyone — deliberately none. A prefix belongs here only
+# for a caller that cannot come from the Supervisor's networks or loopback,
+# and since the port became the Supervisor's to assign there is no such
+# caller left: run.sh polls /api/health on 127.0.0.1.
+_PUBLIC_PREFIXES: tuple[str, ...] = ()
 
 
 def _peer_ip(request: web.Request) -> str | None:
@@ -833,9 +842,17 @@ def build_app() -> web.Application:
 def main() -> None:
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(name)s %(levelname)s %(message)s")
-    log.info("BRigt panel v%s listening on %s:%s", ADDON_VERSION, BIND_HOST, BIND_PORT)
-    web.run_app(build_app(), host=BIND_HOST, port=BIND_PORT,
-                access_log=None, print=None)
+    port = panel_port.resolve()
+    # Bound before the "listening" line, because the old order announced a
+    # port it then failed to take — every log this add-on has ever written
+    # about port 8095 says it was listening on it.
+    try:
+        sock = panel_port.bind(BIND_HOST, port)
+    except panel_port.PortInUse as exc:
+        log.error("%s", exc.strerror or exc)
+        raise SystemExit(1) from None
+    log.info("BRigt panel v%s listening on %s:%s", ADDON_VERSION, BIND_HOST, port)
+    web.run_app(build_app(), sock=sock, access_log=None, print=None)
 
 
 if __name__ == "__main__":

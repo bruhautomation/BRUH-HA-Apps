@@ -1,7 +1,7 @@
 ---
 name: "BRigt"
 description: "Music-driven light show director: analyzes your local music, choreographs LIFX bulbs over the LAN plus switch-driven party lights, and keeps it all in sync with the speaker"
-version: "0.8.0"
+version: "0.8.1"
 slug: "brigt"
 init: false
 
@@ -30,11 +30,15 @@ boot: auto
 startup: services
 stage: stable
 
-# Restart the add-on if the panel stops answering. /api/health is the one
-# endpoint the LAN gate lets through unauthenticated (it reports liveness
-# and nothing else), so the watchdog does not depend on where it is called
-# from.
-watchdog: "http://[HOST]:[PORT:8095]/api/health"
+# No `watchdog:` URL here, and that is not an oversight. The Supervisor's
+# placeholder syntax needs a port number written into this file
+# ([PORT:8095]) and this add-on no longer owns one — `ingress_port: 0` below
+# hands the choice to the Supervisor. A watchdog still pinned to 8095 would
+# poll whatever service actually holds 8095 on the host and restart BRigt on
+# a stranger's behalf, which is worse than not watching at all. A hung panel
+# is still caught: run.sh polls /api/health on loopback, where it knows the
+# real port, and takes the add-on down so the Supervisor's restart-on-stop
+# brings it back.
 
 # Compiled shows and analysis caches are regenerable build output — a backup
 # that carries them is bigger for nothing. Paths are relative to /data.
@@ -46,11 +50,17 @@ homeassistant: "2023.6.0"
 
 # Web interface configuration (ingress panel).
 #
-# 8095, not 8099: with host_network the panel binds a REAL host port, and
-# BRUH Minecraft (also host_network) already owns 8099 on the same box.
-# Two add-ons racing for one host port is one add-on that fails to start.
+# ingress_port: 0 means "Supervisor, pick a free host port and tell me which
+# one" — the documented arrangement for an add-on on the host network, and
+# the only one that is true on every box. With host_network the panel binds a
+# REAL host port, so any number written here is a number some other add-on or
+# service may already own: 8099 is BRUH Minecraft's, and 8095 — this add-on's
+# first answer to that — turned out to be somebody else's on a real install,
+# which crash-looped the panel on `[Errno 98] address in use` with no way
+# out. The panel reads the assigned port back from /addons/self/info at
+# startup; panel/panel_port.py is the one place that lookup lives.
 ingress: true
-ingress_port: 8095
+ingress_port: 0
 panel_icon: mdi:track-light
 panel_title: "BRigt"
 panel_admin: true
@@ -63,7 +73,9 @@ panel_admin: true
 # straight onto the LAN with no NAT translation in the path. Ingress (the
 # panel) still works because the Supervisor proxies it internally — but the
 # panel is then reachable from the LAN too, which is why panel/server.py
-# gates every route on the socket's peer address (see _lan_gate).
+# gates EVERY route on the socket's peer address (see _lan_gate) — with the
+# watchdog gone, nothing outside Home Assistant has a reason to reach the
+# panel, so no prefix is public any more.
 host_network: true
 
 # ============================================================================
