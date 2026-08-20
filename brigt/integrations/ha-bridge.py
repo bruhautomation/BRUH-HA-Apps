@@ -81,13 +81,25 @@ async def handle(request: dict[str, Any]) -> dict[str, Any]:
         try:
             return _panel_post(f"/api/show/{kind}", payload)
         except urllib.error.HTTPError as exc:
+            # The panel's body carries the sentence; the status carries a
+            # number. Reporting the number is how "no analyzed tracks in
+            # /media/music — run the Library tab first" reached an
+            # automation as "panel answered HTTP 409", which is the same
+            # failure the Calibrate tab used to have one layer in.
+            detail = ""
+            try:
+                body = json.loads(exc.read().decode() or "{}")
+                detail = str(body.get("error", "") or "")
+            except (ValueError, OSError, UnicodeDecodeError):
+                detail = ""
+            if detail:
+                return {"ok": False, "error": detail}
             if exc.code == 404:
-                return {
-                    "ok": False,
-                    "error": "this build of BRigt does not run shows yet — "
-                             "it is the installable skeleton",
-                }
-            return {"ok": False, "error": f"panel answered HTTP {exc.code}"}
+                return {"ok": False,
+                        "error": f"BRigt's panel has no /api/show/{kind} "
+                                 f"route — is the add-on up to date?"}
+            return {"ok": False, "error": f"panel answered HTTP {exc.code} "
+                                          f"with no reason in it"}
         except (urllib.error.URLError, OSError) as exc:
             return {"ok": False, "error": f"panel unreachable: {exc}"}
 

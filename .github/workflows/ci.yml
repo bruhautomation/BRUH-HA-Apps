@@ -94,6 +94,9 @@ jobs:
       - name: Measure the tooltips
         run: node tests/manual/measure-tooltips.mjs
 
+      - name: Measure BRigt's light map
+        run: node tests/manual/measure-lightmap.mjs
+
   hassfest:
     name: HA integration validation
     runs-on: ubuntu-latest

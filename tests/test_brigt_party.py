@@ -165,6 +165,56 @@ class TestBridge(unittest.TestCase):
         self.assertEqual({"ok": True, "queue": 3}, result)
         self.assertEqual([("/api/show/party_mode", {"vibe": "rave"})], calls)
 
+    def test_the_panels_reason_survives_the_trip(self):
+        """The panel's body carries the sentence and its status carries a
+        number. Reporting the number is how "no analyzed tracks in
+        /media/music — run the Library tab first" reached an automation as
+        "panel answered HTTP 409"."""
+        import io
+        import urllib.error
+
+        def refusing_post(path, payload):
+            raise urllib.error.HTTPError(
+                "http://127.0.0.1/api/show/party_mode", 409, "Conflict", {},
+                io.BytesIO(json.dumps({
+                    "error": "no analyzed tracks in /media/music — run the "
+                             "Library tab first"}).encode()))
+
+        self.bridge._panel_post = refusing_post
+        result = asyncio.run(self.bridge.handle({"kind": "party_mode"}))
+        self.assertFalse(result["ok"])
+        self.assertIn("Library tab", result["error"])
+        self.assertNotIn("409", result["error"])
+
+    def test_a_refusal_with_no_reason_still_says_something(self):
+        import io
+        import urllib.error
+
+        def refusing_post(path, payload):
+            raise urllib.error.HTTPError(
+                "http://127.0.0.1/api/show/stop_show", 500, "Server Error", {},
+                io.BytesIO(b"not json at all"))
+
+        self.bridge._panel_post = refusing_post
+        result = asyncio.run(self.bridge.handle({"kind": "stop_show"}))
+        self.assertFalse(result["ok"])
+        self.assertIn("500", result["error"])
+
+    def test_a_missing_route_no_longer_claims_to_be_a_skeleton_build(self):
+        """That wording was true in 0.1.0 and has been a lie since 0.5."""
+        import io
+        import urllib.error
+
+        def missing(path, payload):
+            raise urllib.error.HTTPError(
+                "http://127.0.0.1/api/show/start_show", 404, "Not Found", {},
+                io.BytesIO(b"{}"))
+
+        self.bridge._panel_post = missing
+        result = asyncio.run(self.bridge.handle({"kind": "start_show"}))
+        self.assertNotIn("skeleton", result["error"])
+        self.assertIn("up to date", result["error"])
+
     def test_unknown_kinds_answer_instead_of_hanging(self):
         result = asyncio.run(self.bridge.handle({"kind": "format_disk"}))
         self.assertFalse(result["ok"])

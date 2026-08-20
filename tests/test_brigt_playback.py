@@ -211,7 +211,7 @@ class TestAShowThatCannotStartSaysSo(unittest.TestCase):
             run.engine = engine
             run.clock = ShowClock()
             run._snapshot = {}
-            run._task = run._poller = None
+            run._task = run._poller = run._verify = None
             run.state = {"status": "idle"}
 
             restored = []

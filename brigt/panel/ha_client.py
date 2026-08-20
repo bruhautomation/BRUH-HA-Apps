@@ -54,19 +54,53 @@ def ha_api_request(endpoint: str, method: str = "GET", data: dict | None = None,
         return {"error": f"non-JSON answer from {endpoint}"}
 
 
-def get_states(domain: str | None = None, *, opener=urllib.request.urlopen) -> list[dict]:
+def states_or_error(domain: str | None = None, *,
+                    opener=urllib.request.urlopen) -> tuple[list[dict], str]:
+    """Every state, or the reason there are none.
+
+    `get_states` answers `[]` for an unreachable Home Assistant and for a
+    home with nothing in it, and a picker built on it cannot tell those
+    apart — so "you have no media players" is what BRigt said when the
+    truth was "I could not ask". Two different sentences, and only one of
+    them is about the speakers.
+    """
     states = ha_api_request("/states", opener=opener)
+    if isinstance(states, dict) and states.get("error"):
+        return [], str(states["error"])
     if not isinstance(states, list):
-        return []
+        return [], "Home Assistant answered something that is not a list of states"
     if domain:
         prefix = f"{domain}."
         states = [s for s in states if s.get("entity_id", "").startswith(prefix)]
+    return states, ""
+
+
+def get_states(domain: str | None = None, *, opener=urllib.request.urlopen) -> list[dict]:
+    """States, with a failure flattened to none of them.
+
+    Kept for the callers that genuinely cannot act on the difference (the
+    latency probe's own reads). Anything a person is waiting on should ask
+    `states_or_error` instead.
+    """
+    states, _ = states_or_error(domain, opener=opener)
     return states
 
 
 def get_state(entity_id: str, *, opener=urllib.request.urlopen) -> dict:
     state = ha_api_request(f"/states/{entity_id}", opener=opener)
     return state if isinstance(state, dict) else {"error": "no state"}
+
+
+def get_config(*, opener=urllib.request.urlopen) -> dict:
+    """Core's own config: `internal_url`, `external_url`, version, and the
+    rest of what /api/config carries.
+
+    The two URLs are here for one reason: they decide what host Core puts in
+    front of the media path it signs, and a speaker that cannot reach that
+    host plays nothing while every call in this file reports success.
+    """
+    config = ha_api_request("/config", opener=opener)
+    return config if isinstance(config, dict) else {"error": "no config"}
 
 
 def call_service(domain: str, service: str, data: dict | None = None,
@@ -167,6 +201,10 @@ def latency_probe(entity_id: str, rounds: int = 6, *,
 # ---------------------------------------------------------------------------
 async def async_get_states(domain: str | None = None) -> list[dict]:
     return await asyncio.to_thread(get_states, domain)
+
+
+async def async_states_or_error(domain: str | None = None) -> tuple[list[dict], str]:
+    return await asyncio.to_thread(states_or_error, domain)
 
 
 async def async_latency_probe(entity_id: str, rounds: int = 6) -> dict:

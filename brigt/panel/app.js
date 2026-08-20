@@ -213,25 +213,111 @@
   };
   let mapData = { fixtures: [], roles: [] };
 
+  // Which light is selected. A dot used to carry a role glyph and a `title`,
+  // which is no name at all on a phone — you dragged an anonymous circle and
+  // found out afterwards what you had moved. Selection is what ties the dot,
+  // its name, and the row below it together.
+  let selectedFixture = null;
+
+  // A dot is 44px wide and hangs half outside its own coordinate, so a light
+  // at x=0 rendered half off the floor — clipped, and hard to grab, which is
+  // the corner of a room somebody is most likely to have put a light in. The
+  // clamp moves the *drawing* inward and never the stored position.
+  function placeDot(dot, x, y) {
+    dot.style.left = "clamp(24px, " + (x * 100) + "%, calc(100% - 24px))";
+    dot.style.top = "clamp(24px, " + (y * 100) + "%, calc(100% - 42px))";
+  }
+
+  function fixtureById(id) {
+    return mapData.fixtures.find((f) => f.id === id) || null;
+  }
+
+  function selectFixture(id) {
+    selectedFixture = id;
+    renderSelection();
+    for (const dot of $("mapFloor").querySelectorAll(".map-dot")) {
+      dot.classList.toggle("selected", dot.dataset.id === id);
+    }
+    for (const row of $("mapList").querySelectorAll(".row")) {
+      row.classList.toggle("selected", row.dataset.id === id);
+    }
+  }
+
+  function renderSelection() {
+    const bar = $("mapSelection");
+    const fixture = selectedFixture ? fixtureById(selectedFixture) : null;
+    bar.innerHTML = "";
+    if (!fixture) {
+      const hint = document.createElement("span");
+      hint.className = "muted small";
+      hint.textContent = mapData.fixtures.length
+        ? "Tap a light to select it, then drag it into place."
+        : "No lights yet — add discovered bulbs or a switch light.";
+      bar.appendChild(hint);
+      return;
+    }
+    const name = document.createElement("strong");
+    name.textContent = fixture.label;
+    const where = document.createElement("span");
+    where.className = "muted small";
+    where.textContent = fixture.id +
+      (fixture.reachable === false ? " · unreachable" : "");
+    const pick = document.createElement("select");
+    pick.className = "role-pick";
+    for (const role of mapData.roles) {
+      const option = document.createElement("option");
+      option.value = role;
+      option.textContent = role;
+      option.selected = role === fixture.role;
+      pick.appendChild(option);
+    }
+    pick.addEventListener("change", () => {
+      fixture.role = pick.value;
+      saveFixture(fixture);
+    });
+    const remove = document.createElement("button");
+    remove.className = "btn small";
+    remove.textContent = "Remove this light";
+    remove.addEventListener("click", () => removeFixture(fixture.id));
+    bar.appendChild(name);
+    bar.appendChild(where);
+    bar.appendChild(pick);
+    bar.appendChild(remove);
+  }
+
   function renderMap() {
     const floor = $("mapFloor");
     floor.innerHTML = "";
+    if (selectedFixture && !fixtureById(selectedFixture)) selectedFixture = null;
     for (const fixture of mapData.fixtures) {
       const dot = document.createElement("div");
-      dot.className = "map-dot" +
-        (fixture.reachable === false ? " unreachable" : "");
-      dot.style.left = (fixture.x * 100) + "%";
-      dot.style.top = (fixture.y * 100) + "%";
-      dot.textContent = ROLE_GLYPH[fixture.role] || "?";
-      dot.title = fixture.label + " (" + fixture.role + ")";
+      // The name hangs under the dot and is wider than it. Near an edge it
+      // would hang off the floor, which clips — so at the edges it hangs
+      // inward instead. A clipped name is a name nobody can read.
+      const edge = fixture.x > 0.85 ? " edge-right"
+        : fixture.x < 0.15 ? " edge-left" : "";
+      dot.className = "map-dot" + edge +
+        (fixture.reachable === false ? " unreachable" : "") +
+        (fixture.id === selectedFixture ? " selected" : "");
+      placeDot(dot, fixture.x, fixture.y);
       dot.dataset.id = fixture.id;
+      const glyph = document.createElement("span");
+      glyph.className = "dot-glyph";
+      glyph.textContent = ROLE_GLYPH[fixture.role] || "?";
+      // The name rides ON the map, not in a tooltip: a tooltip is nothing
+      // at all on the device most likely to be doing the dragging.
+      const name = document.createElement("span");
+      name.className = "dot-name";
+      name.textContent = fixture.label;
+      dot.appendChild(glyph);
+      dot.appendChild(name);
       floor.appendChild(dot);
     }
     const list = $("mapList");
     list.innerHTML = "";
     for (const fixture of mapData.fixtures) {
       const row = document.createElement("div");
-      row.className = "row";
+      row.className = "row" + (fixture.id === selectedFixture ? " selected" : "");
       row.dataset.id = fixture.id;
       row.innerHTML = '<div class="row-main"><strong></strong>' +
         '<span class="muted small"></span></div>' +
@@ -250,6 +336,22 @@
       }
       list.appendChild(row);
     }
+    renderSelection();
+  }
+
+  async function removeFixture(id) {
+    try {
+      const response = await fetch("api/map/fixture/" + encodeURIComponent(id),
+                                   { method: "DELETE" });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error || ("HTTP " + response.status));
+      }
+      if (selectedFixture === id) selectedFixture = null;
+      loadMap();
+    } catch (error) {
+      $("mapStatus").textContent = "could not remove it: " + error.message;
+    }
   }
 
   async function loadMap() {
@@ -266,35 +368,66 @@
       .catch((error) => { $("mapStatus").textContent = error.message; });
   }
 
-  // Dragging dots around the floor.
+  // Dragging dots around the floor — and selecting one, which is the same
+  // gesture until it moves. A press that never travels is a tap: it selects
+  // and saves nothing, so tapping a light to see what it is cannot nudge it
+  // half a pixel and rewrite the map.
   (function () {
+    const MOVED_PX = 4;
     let dragging = null;
+    let startedAt = null;
+    let travelled = false;
     const floor = $("mapFloor");
+
+    function positionIn(event) {
+      const rect = floor.getBoundingClientRect();
+      return {
+        x: Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)),
+        y: Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height)),
+      };
+    }
+
     floor.addEventListener("pointerdown", (event) => {
       const dot = event.target.closest(".map-dot");
       if (!dot) return;
       dragging = dot;
+      startedAt = { x: event.clientX, y: event.clientY };
+      travelled = false;
+      selectFixture(dot.dataset.id);
       dot.setPointerCapture(event.pointerId);
     });
     floor.addEventListener("pointermove", (event) => {
       if (!dragging) return;
-      const rect = floor.getBoundingClientRect();
-      const x = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
-      const y = Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height));
-      dragging.style.left = (x * 100) + "%";
-      dragging.style.top = (y * 100) + "%";
+      if (Math.abs(event.clientX - startedAt.x) > MOVED_PX ||
+          Math.abs(event.clientY - startedAt.y) > MOVED_PX) {
+        travelled = true;
+      }
+      if (!travelled) return;
+      const at = positionIn(event);
+      placeDot(dragging, at.x, at.y);
     });
     floor.addEventListener("pointerup", (event) => {
       if (!dragging) return;
-      const fixture = mapData.fixtures.find((f) => f.id === dragging.dataset.id);
+      const fixture = fixtureById(dragging.dataset.id);
+      const moved = travelled;
       dragging = null;
-      if (!fixture) return;
-      const rect = floor.getBoundingClientRect();
-      fixture.x = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
-      fixture.y = Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height));
+      travelled = false;
+      if (!fixture || !moved) return;
+      const at = positionIn(event);
+      fixture.x = at.x;
+      fixture.y = at.y;
       saveFixture(fixture);
     });
   })();
+
+  // Selecting from the list selects on the map, because they are one thing
+  // seen twice — a list disconnected from the picture is what made removing
+  // the right light a guess.
+  $("mapList").addEventListener("click", (event) => {
+    if (event.target.closest("button, select")) return;
+    const row = event.target.closest(".row");
+    if (row) selectFixture(row.dataset.id);
+  });
 
   $("mapList").addEventListener("change", (event) => {
     const pick = event.target.closest(".role-pick");
@@ -307,17 +440,10 @@
     }
   });
 
-  $("mapList").addEventListener("click", async (event) => {
+  $("mapList").addEventListener("click", (event) => {
     const button = event.target.closest('button[data-act="remove"]');
     if (!button) return;
-    const id = button.closest(".row").dataset.id;
-    try {
-      await fetch("api/map/fixture/" + encodeURIComponent(id),
-                  { method: "DELETE" });
-      loadMap();
-    } catch (error) {
-      $("mapStatus").textContent = error.message;
-    }
+    removeFixture(button.closest(".row").dataset.id);
   });
 
   $("btnImportLifx").addEventListener("click", async () => {
@@ -634,6 +760,81 @@
     }
   }
 
+  // The folder browser. /media as the filesystem, because these have to be
+  // folders BRigt can read — what Home Assistant will serve out of them is a
+  // different question, and Test playback is the one that asks it.
+  async function loadTree(path) {
+    const tree = $("mediaTree");
+    const crumb = $("mediaCrumb");
+    tree.innerHTML = '<p class="muted">Reading…</p>';
+    try {
+      const body = await api("api/media/tree?path=" + encodeURIComponent(path || ""));
+      crumb.textContent = body.root + (body.path ? "/" + body.path : "");
+      tree.innerHTML = "";
+      if (body.parent !== null && body.parent !== undefined) {
+        const up = document.createElement("button");
+        up.className = "btn small";
+        up.textContent = "↑ up a folder";
+        up.addEventListener("click", () => loadTree(body.parent));
+        tree.appendChild(up);
+      }
+      if (!body.folders.length) {
+        const none = document.createElement("p");
+        none.className = "muted";
+        none.textContent = "No folders in here.";
+        tree.appendChild(none);
+      }
+      for (const folder of body.folders) {
+        const row = document.createElement("div");
+        row.className = "row";
+        const main = document.createElement("div");
+        main.className = "row-main";
+        const name = document.createElement("strong");
+        name.textContent = folder.name;
+        const note = document.createElement("div");
+        note.className = "small muted";
+        note.textContent = folder.audio_files
+          ? folder.audio_files + " track(s) directly inside"
+          : "no tracks directly inside";
+        if (folder.scanned && !folder.picked) {
+          note.textContent += " · already covered by a folder above";
+        }
+        main.appendChild(name);
+        main.appendChild(note);
+        const actions = document.createElement("div");
+        actions.className = "row-actions";
+        const open = document.createElement("button");
+        open.className = "btn small";
+        open.textContent = "Open";
+        open.addEventListener("click", () => loadTree(folder.path));
+        const pick = document.createElement("button");
+        pick.className = "btn small";
+        pick.textContent = folder.picked ? "Stop scanning" : "Scan this";
+        pick.addEventListener("click", async () => {
+          pick.disabled = true;
+          try {
+            await post("api/media/folder",
+                       { path: folder.path, add: !folder.picked });
+            await loadTree(body.path);
+            scanLibrary();
+          } catch (error) {
+            $("mediaCrumb").textContent = "failed: " + error.message;
+          }
+        });
+        actions.appendChild(open);
+        actions.appendChild(pick);
+        row.appendChild(main);
+        row.appendChild(actions);
+        tree.appendChild(row);
+      }
+    } catch (error) {
+      tree.innerHTML = '<p class="muted">could not read the media folder: ' +
+        error.message + "</p>";
+    }
+  }
+
+  $("btnBrowseMedia").addEventListener("click", () => loadTree(""));
+
   $("btnScanLibrary").addEventListener("click", scanLibrary);
 
   $("btnAnalyzeAll").addEventListener("click", async () => {
@@ -667,13 +868,102 @@
   // ------------------------------------------------------------------
   const RECORD_SECONDS = 14;
 
+  // "Nothing plays" has half a dozen causes and they live in different
+  // machines. The server walks them in order; this renders what it found,
+  // marking the one that broke rather than making somebody read six lines
+  // to find it.
+  const STEP_MARK = { true: "✓", false: "✕", null: "!" };
+
+  function renderPlaybackCheck(report) {
+    const box = $("playbackCheck");
+    box.innerHTML = "";
+    for (const step of report.steps || []) {
+      const row = document.createElement("div");
+      row.className = "row check-step" +
+        (step.ok === false ? " bad" : step.ok === null ? " warn" : " good");
+      const mark = document.createElement("span");
+      mark.className = "check-mark";
+      mark.textContent = STEP_MARK[String(step.ok)];
+      const text = document.createElement("div");
+      text.className = "row-main";
+      const name = document.createElement("strong");
+      name.textContent = step.name;
+      const detail = document.createElement("div");
+      detail.className = "small";
+      detail.textContent = step.detail;
+      text.appendChild(name);
+      text.appendChild(detail);
+      if (step.fix) {
+        const fix = document.createElement("div");
+        fix.className = "small check-fix";
+        fix.textContent = step.fix;
+        text.appendChild(fix);
+      }
+      row.appendChild(mark);
+      row.appendChild(text);
+      box.appendChild(row);
+    }
+    const verdict = document.createElement("p");
+    verdict.className = report.ok ? "muted" : "check-verdict";
+    verdict.textContent = report.summary || "";
+    box.appendChild(verdict);
+  }
+
+  $("btnManualOffset").addEventListener("click", async () => {
+    const status = $("manualStatus");
+    const entityId = $("calPlayer").value;
+    if (!entityId) {
+      status.textContent = "Pick a media player first.";
+      return;
+    }
+    try {
+      const body = await post("api/calibrate/manual", {
+        media_player: entityId,
+        offset_ms: Number($("manualOffset").value),
+      });
+      status.textContent = "Saved: " + entityId + " at " +
+        body.profile.effective_offset_ms + "ms (manual). Shows can run now.";
+      loadProfiles();
+    } catch (error) {
+      status.textContent = "failed: " + error.message;
+    }
+  });
+
+  $("btnTestPlayback").addEventListener("click", async () => {
+    const entityId = $("calPlayer").value;
+    const box = $("playbackCheck");
+    if (!entityId) {
+      box.innerHTML = '<p class="muted">Pick a media player first.</p>';
+      return;
+    }
+    box.innerHTML = '<p class="muted">Testing — this plays a few seconds of ' +
+      'clicks and watches what the speaker does…</p>';
+    try {
+      renderPlaybackCheck(await post("api/playback/check",
+                                     { media_player: entityId }));
+    } catch (error) {
+      box.innerHTML = "";
+      const failed = document.createElement("p");
+      failed.className = "check-verdict";
+      failed.textContent = "could not run the test: " + error.message;
+      box.appendChild(failed);
+    }
+  });
+
   $("btnLoadPlayers").addEventListener("click", async () => {
     const select = $("calPlayer");
     select.innerHTML = '<option value="">loading…</option>';
     try {
       const body = await api("api/ha/entities?domain=media_player");
-      select.innerHTML = '<option value="">— pick a media player —</option>';
-      for (const entity of body.entities || []) {
+      const found = body.entities || [];
+      // An empty picker used to be the answer to both "you have no
+      // speakers" and "I could not ask" — the server tells those apart now,
+      // and this says the first one out loud rather than showing a list
+      // with nothing in it.
+      select.innerHTML = found.length
+        ? '<option value="">— pick a media player —</option>'
+        : '<option value="">no media players in Home Assistant</option>';
+      for (const entity of found) {
         const option = document.createElement("option");
         option.value = entity.entity_id;
         option.textContent = entity.name + " (" + entity.entity_id + ")";
