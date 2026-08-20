@@ -89,7 +89,7 @@ class TestPartyLoop(unittest.TestCase):
             result = await run.start_party(
                 ["hash-one", "hash-two"],
                 media_player="media_player.living",
-                loader=lambda h: _tiny_show(h),
+                loader=_tiny_show,
                 preparer=prepared.append)
             self.assertTrue(result["ok"], result)
             await asyncio.wait_for(run._task, 10)
