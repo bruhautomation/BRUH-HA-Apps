@@ -1,0 +1,112 @@
+# BRigt
+
+> ## ⚠️ Under active development
+> **BRigt is not finished.** Features described below may be partial,
+> missing, or broken, and updates may change behavior without ceremony.
+> Treat every release as a preview until this banner goes away.
+
+Music-driven light show director: local music in, compiled light shows out,
+everything in sync with the speaker actually playing the music.
+
+## Options
+
+### `music_folder`
+
+Where your music lives, under Home Assistant's `/media` folder (default
+`/media/music`). BRigt scans it for tracks to analyze and plays the same
+files through your media player during a show.
+
+### `director_mode`
+
+Who choreographs each track:
+
+- `auto` (default) — Claude designs the show when **brAIn** is installed
+  (BRigt delegates through brAIn's task interface, so there is no second
+  login); the built-in algorithmic choreographer is the fallback and the
+  floor, so a show always compiles.
+- `algorithmic` — never call Claude.
+- `claude` — Claude only; compiling fails with the reason rather than
+  silently downgrading.
+
+### `enable_ha_integration`
+
+Deploys the companion `brigt` integration: the `brigt.party_mode`,
+`brigt.start_show` and `brigt.stop_show` services and a show-status sensor.
+
+### `log_level`
+
+Verbosity of the add-on's own logging.
+
+## Networking
+
+BRigt runs with `host_network: true` — LIFX discovery is a UDP broadcast on
+port 56700 and cue latency is the whole product, so the container sits on
+the LAN directly. The panel (port 8095) is therefore reachable from the LAN
+too; it refuses every caller except Home Assistant itself (the Supervisor's
+networks and loopback). Open it from the Home Assistant sidebar.
+
+The panel binds 8095 rather than the family's usual 8099 because BRUH
+Minecraft also runs on the host network and already owns 8099.
+
+## The Library
+
+Point `music_folder` at your music and press **Analyze new tracks** on the
+Library tab. Each track is analyzed once — tempo and beat grid, song
+sections and drops, synced lyrics from LRCLIB when they exist — and cached
+by content (renaming files doesn't re-analyze). Analysis runs as a
+background job with per-track progress; one bad file is reported and
+skipped, never the end of the folder.
+
+## Calibration
+
+Every speaker adds latency between "play" and audible sound — AirPlay
+around two seconds, and no API reports it. The Calibrate tab measures it:
+
+1. Open the panel **on your phone**, in the room with the speaker.
+2. Pick the media player and press **Play clicks & listen**. The add-on
+   plays a 13-second click track; your phone records it; the offset is
+   computed by cross-correlation and stored for that player.
+3. No microphone access (plain-HTTP setups)? Use **Play clicks & tap** and
+   tap along — coarser (your reaction time rides in), but workable.
+
+Run it once per speaker, and again if a show ever feels consistently early
+or late (speakers can renegotiate their buffers between sessions). The
+stored profile keeps a median across runs plus a fine-tune nudge you can
+set per player.
+
+## Services
+
+- `brigt.party_mode` — every analyzed track in the folder, shuffled, each
+  with its own show; the next track's choreography compiles while the
+  current one plays. Optional `media_player` (defaults to the most
+  recently calibrated), `folder` (defaults to the `music_folder` option),
+  and `vibe` (a steer for the Claude director, e.g. "halloween").
+- `brigt.start_show` — one track (`track` path under /media or, from the
+  panel, a track hash; optional `media_player`).
+- `brigt.stop_show` — stop and restore every light to its pre-show state.
+
+An automation that starts the party on a voice phrase or a button:
+
+```yaml
+automation:
+  - alias: "Start party mode"
+    triggers:
+      - trigger: conversation
+        command: "start party mode"
+    actions:
+      - action: brigt.party_mode
+        data:
+          media_player: media_player.living_room
+```
+
+## The order things want to happen in
+
+1. **Lab** — discover your bulbs, probe their round-trip times, measure a
+   switch's service latency, run the waveform demo.
+2. **Calibrate** — once per speaker, phone in hand.
+3. **Library** — analyze the music folder.
+4. **Light Map** — place the lights, set roles.
+5. **Shows** — compile, play one, judge it in the room ("Sync proof" in
+   the Lab plays a bare metronome show when you want the chain without
+   the choreography).
+6. **Party** — one button, or one automation.

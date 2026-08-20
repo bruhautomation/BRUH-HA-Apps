@@ -110,6 +110,7 @@ class TestWorkflowCoversEveryOption(unittest.TestCase):
         mapped = workflow_map_keys()
         self.assertIn("brAIn", mapped)
         self.assertIn("BRUH Minecraft", mapped)
+        self.assertIn("BRigt", mapped)
 
 
 class TestBodyParsing(unittest.TestCase):

@@ -1,0 +1,122 @@
+---
+name: "BRigt"
+description: "Music-driven light show director: analyzes your local music, choreographs LIFX bulbs over the LAN plus switch-driven party lights, and keeps it all in sync with the speaker"
+version: "0.8.0"
+slug: "brigt"
+init: false
+
+# No `image:` yet, deliberately. The publish flow is two steps (see the note
+# at the top of .github/workflows/build.yml): merge the workflow addition and
+# let it publish ghcr.io/bruhautomation/{arch}-brigt for both architectures,
+# set the package public, and only then point installs at it. Until then the
+# Supervisor builds locally, which works on day one.
+
+# Supported architectures
+arch:
+  - aarch64
+  - amd64
+
+# External resources
+url: "https://github.com/bruhautomation/BRUH-HA-Apps/tree/main/brigt"
+
+# AppArmor profile — see apparmor.txt next to this file. Same shape as the
+# other add-ons': deny the host-escape set, allow the add-on's own work.
+# Worth more than usual here because host_network puts this container on
+# the LAN itself.
+apparmor: true
+
+# Boot policy
+boot: auto
+startup: services
+stage: stable
+
+# Restart the add-on if the panel stops answering. /api/health is the one
+# endpoint the LAN gate lets through unauthenticated (it reports liveness
+# and nothing else), so the watchdog does not depend on where it is called
+# from.
+watchdog: "http://[HOST]:[PORT:8095]/api/health"
+
+# Compiled shows and analysis caches are regenerable build output — a backup
+# that carries them is bigger for nothing. Paths are relative to /data.
+backup_exclude:
+  - shows/**
+  - cache/**
+
+homeassistant: "2023.6.0"
+
+# Web interface configuration (ingress panel).
+#
+# 8095, not 8099: with host_network the panel binds a REAL host port, and
+# BRUH Minecraft (also host_network) already owns 8099 on the same box.
+# Two add-ons racing for one host port is one add-on that fails to start.
+ingress: true
+ingress_port: 8095
+panel_icon: mdi:track-light
+panel_title: "BRigt"
+panel_admin: true
+
+# LIFX networking.
+# host_network: true is REQUIRED for direct LIFX LAN control — discovery is
+# a UDP broadcast on port 56700 and the replies come back to the sender's
+# own address, and Docker's bridge network drops both directions. Host
+# networking is also what makes the latency story true: cue packets go
+# straight onto the LAN with no NAT translation in the path. Ingress (the
+# panel) still works because the Supervisor proxies it internally — but the
+# panel is then reachable from the LAN too, which is why panel/server.py
+# gates every route on the socket's peer address (see _lan_gate).
+host_network: true
+
+# ============================================================================
+# App configuration options
+# ----------------------------------------------------------------------------
+# Every option below is documented inline for whoever edits this file; the
+# text users actually see lives in translations/en.yaml. Validation rules
+# are in the `schema:` block.
+# ============================================================================
+options:
+  # music_folder: where the music library lives, under HA's /media mount.
+  # BRigt scans this folder for tracks to analyze, and hands the same files
+  # to the media player through media-source URLs when a show runs.
+  music_folder: /media/music
+
+  # director_mode: who choreographs a track's show.
+  #   auto        — Claude designs the show when a Claude Code login is
+  #                 available, and the built-in algorithmic choreographer is
+  #                 the fallback (recommended).
+  #   algorithmic — never call Claude; rule-based choreography only.
+  #   claude      — Claude only; compiling fails without a working login
+  #                 rather than silently downgrading.
+  director_mode: auto
+
+  # enable_ha_integration: deploy the companion `brigt` custom integration
+  # and run the file-IPC bridge, exposing brigt.party_mode / start_show /
+  # stop_show services and a show-status sensor to Home Assistant.
+  enable_ha_integration: true
+
+  # log_level: verbosity of the add-on's own logging.
+  log_level: info
+schema:
+  music_folder: "match(^/media(/.*)?$)"
+  director_mode: "list(auto|algorithmic|claude)"
+  enable_ha_integration: bool
+  log_level: "list(trace|debug|info|notice|warning|error|fatal)"
+
+# Volume mappings. /config carries the custom integration deploy and the
+# shared IPC dir; /media carries the music library and the calibration
+# reference track (which the media player has to be able to fetch).
+map:
+  - type: homeassistant_config
+    read_only: false
+    path: /config
+  - media:rw
+
+# API access for the Home Assistant integration
+hassio_api: true
+hassio_role: default
+homeassistant_api: true
+auth_api: false
+
+# Auto-discovery: registers "brigt" with the Supervisor so HA Core can
+# offer to set up the companion integration.
+discovery:
+  - brigt

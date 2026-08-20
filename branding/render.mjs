@@ -64,6 +64,25 @@ const APPS = [
 		],
 	},
 	{
+		name: 'BRigt',
+		tile: 'brigt/brigt-tile-dark.svg',
+		logo: 'brigt/brigt-logo-ondark.svg',
+		squares: [
+			['brigt/icon.png', 256],
+			['brigt/custom_components/brigt/brand/icon.png', 256],
+			['brigt/custom_components/brigt/brand/icon@2x.png', 512],
+			['brands/custom_integrations/brigt/icon.png', 256],
+			['brands/custom_integrations/brigt/icon@2x.png', 512],
+		],
+		lockups: [
+			['brigt/logo.png', 512, 384],
+			['brigt/custom_components/brigt/brand/logo.png', 341, 256],
+			['brigt/custom_components/brigt/brand/logo@2x.png', 682, 512],
+			['brands/custom_integrations/brigt/logo.png', 341, 256],
+			['brands/custom_integrations/brigt/logo@2x.png', 682, 512],
+		],
+	},
+	{
 		name: 'BRUH Minecraft',
 		tile: 'minecraft/bruh-minecraft-tile-dark.svg',
 		logo: 'minecraft/bruh-minecraft-logo-ondark.svg',

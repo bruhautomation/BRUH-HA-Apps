@@ -1,0 +1,31 @@
+---
+# Option labels and help text for BRigt's configuration UI.
+#
+# config.yaml documents every option inline and none of it reaches the
+# person filling in the form. This file is that documentation, moved to
+# where it is read.
+configuration:
+  music_folder:
+    name: Music folder
+    description: >-
+      Where your music lives, under Home Assistant's /media folder
+      (e.g. /media/music). BRigt scans this folder for tracks to analyze
+      and plays the same files through your media player during a show.
+  director_mode:
+    name: Show director
+    description: >-
+      Who choreographs each track. "auto" lets Claude design the show when
+      a Claude Code login is available and falls back to the built-in
+      algorithmic choreographer; "algorithmic" never calls Claude;
+      "claude" requires a working login and fails rather than downgrading.
+  enable_ha_integration:
+    name: Home Assistant integration
+    description: >-
+      Deploy the companion brigt integration, which adds the
+      brigt.party_mode, brigt.start_show and brigt.stop_show services and
+      a show-status sensor so automations can run the lights.
+  log_level:
+    name: Log level
+    description: >-
+      Verbosity of the add-on's own logging. "info" is normal; use
+      "debug" when diagnosing a problem.

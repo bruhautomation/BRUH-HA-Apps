@@ -28,6 +28,7 @@ BASE_DIR = os.path.join(os.path.dirname(__file__), "..")
 ADDONS = {
     "brain": os.path.join(BASE_DIR, "brain"),
     "bruh_minecraft_server": os.path.join(BASE_DIR, "bruh-minecraft-server"),
+    "brigt": os.path.join(BASE_DIR, "brigt"),
 }
 
 
@@ -328,6 +329,7 @@ class TestWatchdog(unittest.TestCase):
             "brain": os.path.join(ADDONS["brain"], "panel", "server.py"),
             "bruh_minecraft_server": os.path.join(
                 ADDONS["bruh_minecraft_server"], "panel", "server.py"),
+            "brigt": os.path.join(ADDONS["brigt"], "panel", "server.py"),
         }
         for slug, path in panels.items():
             with self.subTest(addon=slug):
@@ -392,6 +394,8 @@ class TestIntegrationManifests(unittest.TestCase):
         "bruh_minecraft": os.path.join(
             ADDONS["bruh_minecraft_server"], "custom_components",
             "bruh_minecraft", "manifest.json"),
+        "brigt": os.path.join(
+            ADDONS["brigt"], "custom_components", "brigt", "manifest.json"),
     }
 
     def _load(self, path):

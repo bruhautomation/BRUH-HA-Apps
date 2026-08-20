@@ -1,0 +1,178 @@
+/* BRigt panel. Dark stage, azure family accent. Touch targets ≥44px, and no
+   text control under 16px on touch — iOS Safari zooms in on focus below that
+   and never zooms back out inside an ingress iframe. */
+:root {
+  --bg: #0B1016;
+  --panel: #121a24;
+  --ink: #F4F8FB;
+  --muted: #8fa3b5;
+  --azure: #1E9FE0;
+  --azure-light: #5AC4F2;
+  --line: #1f2c3a;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+.topbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 8px 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand-tile { width: 32px; height: 32px; border-radius: 7px; }
+.brand-name { font-weight: 700; font-size: 18px; letter-spacing: .02em; }
+.brand-sub { color: var(--muted); font-size: 13px; }
+
+.tabs { display: flex; flex-wrap: wrap; gap: 4px; }
+.tab {
+  min-height: 44px;
+  padding: 10px 14px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 15px;
+  cursor: pointer;
+}
+.tab:hover { color: var(--ink); background: rgba(90, 196, 242, 0.08); }
+.tab.active { color: var(--ink); background: rgba(30, 159, 224, 0.18); }
+
+.wrap { max-width: 1080px; margin: 0 auto; padding: 20px 16px 40px; }
+.pane { display: none; }
+.pane.active { display: block; }
+.pane h2 { margin: 8px 0 6px; font-size: 20px; }
+.muted { color: var(--muted); max-width: 62ch; }
+
+.foot { margin-top: 40px; color: var(--muted); font-size: 13px; }
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin: 14px 0;
+}
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.card-head h3 { margin: 0; font-size: 16px; }
+.small { font-size: 13px; }
+
+.btn {
+  min-height: 44px;
+  padding: 8px 14px;
+  border: 1px solid var(--azure);
+  border-radius: 8px;
+  background: rgba(30, 159, 224, 0.14);
+  color: var(--ink);
+  font-size: 15px;
+  cursor: pointer;
+}
+.btn:hover { background: rgba(30, 159, 224, 0.28); }
+.btn:disabled { opacity: 0.5; cursor: default; }
+.btn.small { min-height: 40px; padding: 6px 10px; font-size: 14px; }
+
+.demo-controls {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 10px 0;
+}
+.demo-controls label { color: var(--muted); font-size: 14px; }
+.demo-controls input, .demo-controls select {
+  background: var(--bg);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 16px;
+  min-height: 44px;
+}
+.demo-controls input[type="number"] { width: 90px; }
+.demo-controls select { max-width: 100%; }
+
+.list .row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+.row-main { display: flex; flex-direction: column; gap: 2px; min-width: 200px; }
+.row-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.rtt { color: var(--azure-light); }
+
+.report {
+  overflow-x: auto;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  font-size: 13px;
+}
+
+#haProbeResult { margin-top: 8px; color: var(--azure-light); }
+
+.cal-status { margin-top: 10px; color: var(--azure-light); min-height: 1.4em; }
+
+.map-floor {
+  position: relative;
+  width: 100%;
+  height: 340px;
+  margin: 10px 0;
+  background:
+    linear-gradient(var(--line) 1px, transparent 1px) 0 0 / 40px 40px,
+    linear-gradient(90deg, var(--line) 1px, transparent 1px) 0 0 / 40px 40px,
+    var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  touch-action: none; /* the dots are draggable; the page must not scroll */
+  overflow: hidden;
+}
+.map-dot {
+  position: absolute;
+  width: 44px;
+  height: 44px;
+  margin: -22px 0 0 -22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  background: rgba(30, 159, 224, 0.25);
+  border: 2px solid var(--azure);
+  border-radius: 50%;
+  cursor: grab;
+  user-select: none;
+}
+.map-dot.unreachable { border-color: var(--muted); opacity: 0.55; }
+.tap-btn {
+  display: block;
+  width: 100%;
+  min-height: 120px;
+  margin-top: 10px;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+}
+
+@media (pointer: coarse) {
+  /* One floor for everything added later, not a per-control patch. */
+  input, select, textarea, button { font-size: 16px; }
+}

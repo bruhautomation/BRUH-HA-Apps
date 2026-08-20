@@ -1,5 +1,6 @@
 aiofiles
 aiohttp
+numpy
 pillow
 pytest
 pyyaml

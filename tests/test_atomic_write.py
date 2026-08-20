@@ -264,15 +264,15 @@ class TestEveryStoreUsesIt(unittest.TestCase):
         exactly how this comes back, and it comes back silent — a race that
         shows up as one failed CI run in three.
         """
-        panel = BASE_DIR / "brain" / "panel"
         offenders = []
-        for path in sorted(panel.glob("*.py")):
-            if path.name == "atomic_write.py":
-                continue  # the one file allowed to talk about scratch files
-            text = path.read_text(encoding="utf-8")
-            for lineno, line in enumerate(text.split("\n"), 1):
-                if 'with_suffix(".tmp")' in line or '.tmp"' in line:
-                    offenders.append(f"{path.name}:{lineno}: {line.strip()}")
+        for panel in (BASE_DIR / "brain" / "panel", BASE_DIR / "brigt" / "panel"):
+            for path in sorted(panel.glob("*.py")):
+                if path.name == "atomic_write.py":
+                    continue  # the one file allowed to talk about scratch files
+                text = path.read_text(encoding="utf-8")
+                for lineno, line in enumerate(text.split("\n"), 1):
+                    if 'with_suffix(".tmp")' in line or '.tmp"' in line:
+                        offenders.append(f"{path.name}:{lineno}: {line.strip()}")
         self.assertEqual(offenders, [], "use atomic_write instead:\n"
                          + "\n".join(offenders))
 
