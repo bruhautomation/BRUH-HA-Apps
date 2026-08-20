@@ -55,6 +55,7 @@ import jobs  # noqa: E402
 from analyzer import library, pipeline  # noqa: E402
 from calibrate import correlate, reference  # noqa: E402
 from lifx import engine as lifx_engine  # noqa: E402
+from playback import conductor as conductor_mod  # noqa: E402
 from stores import calibration as calibration_store  # noqa: E402
 
 STATIC = HERE
@@ -408,6 +409,81 @@ async def h_track_analysis(request: web.Request) -> web.Response:
 
 
 # ---------------------------------------------------------------------------
+# Shows — Phase 5: the metronome proof; the director replaces its cues later
+# ---------------------------------------------------------------------------
+CONDUCTOR: conductor_mod.Conductor | None = None
+
+
+def _conductor() -> conductor_mod.Conductor:
+    global CONDUCTOR
+    if CONDUCTOR is None:
+        CONDUCTOR = conductor_mod.Conductor(ENGINE)
+    return CONDUCTOR
+
+
+async def _start_show_for(hash_hex: str, media_player: str) -> tuple[int, dict]:
+    try:
+        show = await asyncio.to_thread(
+            conductor_mod.load_show_for_track, hash_hex, ENGINE.devices,
+            ENGINE.source)
+    except ValueError:
+        return 400, {"error": "not a track hash"}
+    if show is None:
+        return 404, {"error": "track not analyzed — run the Library tab first"}
+    if not show["cues"]:
+        return 409, {"error": "no LIFX bulbs known — run Lab discovery first"}
+    if show["media_content_id"] is None:
+        return 409, {"error": "track is outside /media, so the player "
+                              "cannot be handed it"}
+    result = await _conductor().start(
+        show["cues"], media_player=media_player,
+        media_content_id=show["media_content_id"], title=show["title"],
+        duration_s=show["duration_s"])
+    return (200 if result.get("ok") else 409), result
+
+
+async def h_show_start(request: web.Request) -> web.Response:
+    body = await _json_body(request)
+    media_player = _entity(body)
+    if media_player is None:
+        media_player = calibration_store.best_entity()
+    if media_player is None:
+        return web.json_response(
+            {"error": "no media_player given and none calibrated yet"},
+            status=400)
+    track = str(body.get("track", ""))
+    hash_hex = str(body.get("track_hash", ""))
+    if track and not hash_hex:
+        path = Path(track)
+        if not path.is_file():
+            return web.json_response({"error": f"no such track: {track}"},
+                                     status=404)
+        hash_hex = await asyncio.to_thread(library.track_hash, path)
+    if not hash_hex:
+        return web.json_response({"error": "track or track_hash required"},
+                                 status=400)
+    status, payload = await _start_show_for(hash_hex, media_player)
+    return web.json_response(payload, status=status)
+
+
+async def h_show_stop(request: web.Request) -> web.Response:
+    result = await _conductor().stop(restore=True)
+    return web.json_response(result)
+
+
+async def h_show_state(request: web.Request) -> web.Response:
+    return web.json_response(_conductor().state)
+
+
+async def h_show_party(request: web.Request) -> web.Response:
+    return web.json_response(
+        {"ok": False,
+         "error": "party mode arrives with the director — for now, "
+                  "start_show plays one track's show"},
+        status=501)
+
+
+# ---------------------------------------------------------------------------
 # Calibration — how long the speaker takes, measured, never configured
 # ---------------------------------------------------------------------------
 MEDIA_DIR = Path(os.environ.get("BRIGT_MEDIA", "/media"))
@@ -604,6 +680,12 @@ def build_app() -> web.Application:
     app.router.add_post("/api/ha/latency-probe", h_ha_latency_probe)
     app.router.add_get("/api/job/{job_id}", h_job)
     app.router.add_get("/api/lab/report", h_lab_report)
+    # Shows (the bridge forwards brigt.* service calls to /api/show/*)
+    app.router.add_post("/api/show/start_show", h_show_start)
+    app.router.add_post("/api/show/metronome", h_show_start)
+    app.router.add_post("/api/show/stop_show", h_show_stop)
+    app.router.add_post("/api/show/party_mode", h_show_party)
+    app.router.add_get("/api/show/state", h_show_state)
     # Library
     app.router.add_get("/api/library", h_library)
     app.router.add_post("/api/library/analyze", h_library_analyze)

@@ -66,6 +66,24 @@
 
     <div class="card">
       <div class="card-head">
+        <h3>Sync proof — the metronome show</h3>
+        <button id="btnLoadSync" class="btn">Load choices</button>
+      </div>
+      <p class="muted small">Plays an analyzed track on a calibrated speaker
+        while every discovered bulb pulses on the beat — no choreography,
+        just the whole sync chain end to end. If this hits the beat, shows
+        will. Stop restores the lights.</p>
+      <div class="demo-controls">
+        <select id="syncTrack"><option value="">— analyzed track —</option></select>
+        <select id="syncPlayer"><option value="">— calibrated player —</option></select>
+        <button id="btnSyncStart" class="btn">Start</button>
+        <button id="btnSyncStop" class="btn">Stop &amp; restore</button>
+      </div>
+      <div id="syncStatus" class="cal-status"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
         <h3>Latency report</h3>
         <button id="btnReport" class="btn">Refresh</button>
       </div>

@@ -206,6 +206,66 @@
   });
 
   // ------------------------------------------------------------------
+  // Lab: sync proof (metronome show)
+  // ------------------------------------------------------------------
+  $("btnLoadSync").addEventListener("click", async () => {
+    try {
+      const [lib, profiles] = await Promise.all([
+        api("api/library"),
+        api("api/calibrate/profiles"),
+      ]);
+      const trackSelect = $("syncTrack");
+      trackSelect.innerHTML = '<option value="">— analyzed track —</option>';
+      for (const track of (lib.tracks || []).filter((t) => t.analyzed)) {
+        const option = document.createElement("option");
+        option.value = track.hash;
+        option.textContent = track.name;
+        trackSelect.appendChild(option);
+      }
+      const playerSelect = $("syncPlayer");
+      playerSelect.innerHTML = '<option value="">— calibrated player —</option>';
+      for (const profile of profiles.profiles || []) {
+        const option = document.createElement("option");
+        option.value = profile.entity_id;
+        option.textContent = profile.entity_id + " (" +
+          profile.effective_offset_ms + "ms)";
+        playerSelect.appendChild(option);
+      }
+    } catch (error) {
+      $("syncStatus").textContent = "failed: " + error.message;
+    }
+  });
+
+  $("btnSyncStart").addEventListener("click", async () => {
+    const status = $("syncStatus");
+    const hash = $("syncTrack").value;
+    const player = $("syncPlayer").value;
+    if (!hash || !player) {
+      status.textContent = "Pick an analyzed track and a calibrated player.";
+      return;
+    }
+    try {
+      const result = await post("api/show/metronome", {
+        track_hash: hash, media_player: player,
+      });
+      status.textContent = "Running: " + result.cues + " cues, anchored " +
+        Math.round(result.offset_ms) + "ms after the play command. " +
+        "Watch the bulbs against the beat.";
+    } catch (error) {
+      status.textContent = "failed: " + error.message;
+    }
+  });
+
+  $("btnSyncStop").addEventListener("click", async () => {
+    try {
+      await post("api/show/stop_show", {});
+      $("syncStatus").textContent = "Stopped; lights restored.";
+    } catch (error) {
+      $("syncStatus").textContent = "stop failed: " + error.message;
+    }
+  });
+
+  // ------------------------------------------------------------------
   // Library
   // ------------------------------------------------------------------
   function trackSummary(track) {

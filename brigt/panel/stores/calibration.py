@@ -32,13 +32,16 @@ def _path(entity_id: str) -> Path:
     if not _ENTITY_RE.fullmatch(entity_id):
         raise ValueError(f"not an entity id: {entity_id!r}")
     safe = entity_id.replace(".", "_")
-    path = (CALIBRATION_DIR / f"{safe}.json").resolve()
     # Belt and suspenders: the strict pattern above cannot produce a
     # separator, so this containment check never fires in practice — it is
-    # here so the guarantee survives someone loosening the pattern.
-    if path.parent != CALIBRATION_DIR.resolve():
+    # here so the guarantee survives someone loosening the pattern. Pure
+    # string arithmetic (normpath + prefix), because a check that touches
+    # the filesystem to validate a path has already used the path.
+    base = str(CALIBRATION_DIR)
+    candidate = os.path.normpath(os.path.join(base, f"{safe}.json"))
+    if not candidate.startswith(base + os.sep):
         raise ValueError(f"path escaped the calibration dir: {entity_id!r}")
-    return path
+    return Path(candidate)
 
 
 def load(entity_id: str) -> dict:

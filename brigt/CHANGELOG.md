@@ -5,6 +5,36 @@ All notable changes to the **BRigt** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.5.0
+
+The playback engine, proven with a metronome. Sync is demonstrated end to
+end — calibrated speaker, anchored clock, cues on the wire — before any
+choreography exists to blame or credit.
+
+### Added
+- **The show clock**: track time 0 = play command + the speaker's measured
+  offset, on a monotonic clock. Drift corrections *slew* (max 8ms per
+  second) and never step — a step is every light stuttering at once.
+- **Drift correction**, gated three ways: only players the calibration
+  wizard proved report a usable position, never on a single report, never
+  inside a 60ms deadband, and a wildly implausible report is treated as a
+  lie (paused player, stale attribute) rather than a drift.
+- **The conductor**: one show at a time from a compiled cue list — sleeps
+  to each cue's send moment (its `t` minus its own lead time), stamps a
+  live sequence number into the pre-built packet, sends fire-and-forget
+  (idempotent scene cues go twice, 30ms apart, to survive UDP loss).
+  Snapshots every fixture before the show and restores it on stop or end.
+- **The metronome show** (Lab → "Sync proof"): every discovered bulb
+  pulses on the analyzed beat grid of a real track — one `SetWaveform`
+  per 8 beats, so the network carries ~2 packets a minute per bulb while
+  the bulb keeps the time. This is the moment to stand in the room and
+  judge the whole chain.
+- `brigt.start_show` and `brigt.stop_show` are now LIVE end to end (HA
+  service → file bridge → panel → lights): `start_show` plays a track's
+  show (the metronome until the director lands), `stop_show` stops and
+  restores. `party_mode` still answers honestly that it needs the
+  director.
+
 ## 0.4.0
 
 The analyzer — everything the director will choreograph from, computed
