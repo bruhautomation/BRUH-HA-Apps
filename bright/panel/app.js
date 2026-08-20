@@ -38,6 +38,14 @@
     });
   }
 
+  function put(path, payload) {
+    return api(path, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload || {}),
+    });
+  }
+
   // Fire-and-poll: a POST answers {job: id}; poll until it settles.
   async function awaitJob(jobId, onTick) {
     for (;;) {
@@ -547,6 +555,20 @@
 
   $("btnShowsRefresh").addEventListener("click", loadShows);
 
+  $("showList").addEventListener("click", (event) => {
+    // Anywhere but the buttons opens that track's show file. The list and
+    // the editor are one thing seen twice, the same way the light map and
+    // its rows are.
+    if (event.target.closest("button")) return;
+    const row = event.target.closest(".row");
+    if (row) {
+      for (const other of $("showList").querySelectorAll(".row")) {
+        other.classList.toggle("selected", other === row);
+      }
+      openScript(row.dataset.hash, row.querySelector("strong").textContent);
+    }
+  });
+
   $("showList").addEventListener("click", async (event) => {
     const button = event.target.closest("button[data-act]");
     if (!button) return;
@@ -562,6 +584,7 @@
         out.textContent = "compiled: " + result.tier + " · " +
           result.palette + " · " + result.stats.cues + " cues (peak " +
           result.stats.peak_per_device_hz + "/s per bulb)";
+        openScript(row.dataset.hash, row.querySelector("strong").textContent);
       } else if (button.dataset.act === "play") {
         const player = $("showPlayer").value;
         if (!player) {
@@ -573,6 +596,7 @@
         });
         status.textContent = "Playing (" + result.cues + " cues, anchored " +
           Math.round(result.offset_ms) + "ms after play).";
+        pollRunState();
       }
     } catch (error) {
       out.textContent = "failed: " + error.message;
@@ -583,8 +607,13 @@
 
   $("btnShowStop").addEventListener("click", async () => {
     try {
-      await post("api/show/stop_show", {});
+      const stopped = await post("api/show/stop_show", {});
+      pollRunState();
       $("showStatus").textContent = "Stopped; lights restored.";
+      if (stopped.scene) {
+        $("showStatus").textContent =
+          "Stopped; " + stopped.scene + " called.";
+      }
     } catch (error) {
       $("showStatus").textContent = "stop failed: " + error.message;
     }
@@ -609,34 +638,21 @@
     }
   });
 
-  let partyPoll = null;
-  function pollPartyState() {
-    if (partyPoll) clearInterval(partyPoll);
-    partyPoll = setInterval(async () => {
-      try {
-        const state = await api("api/show/state");
-        const pre = $("partyState");
-        pre.hidden = false;
-        pre.textContent = JSON.stringify(state, null, 2);
-        if (state.status === "idle") {
-          clearInterval(partyPoll);
-          partyPoll = null;
-        }
-      } catch (error) { /* transient; keep polling */ }
-    }, 3000);
-  }
-
   $("btnPartyStart").addEventListener("click", async () => {
     const status = $("partyStatus");
     try {
+      // A saved party carries its own speaker, folder, vibe, lights and
+      // end scene; anything typed here still wins over it, which is what
+      // "the usual thing, but on the kitchen speaker" means.
       const result = await post("api/show/party_mode", {
+        party: $("partySaved").value || undefined,
         media_player: $("partyPlayer").value || undefined,
         vibe: $("partyVibe").value || undefined,
       });
       status.textContent = "Party on: " + result.queue +
         " tracks queued, anchored " + Math.round(result.offset_ms) +
         "ms after each play.";
-      pollPartyState();
+      pollRunState();
     } catch (error) {
       status.textContent = "failed: " + error.message;
     }
@@ -644,8 +660,13 @@
 
   $("btnPartyStop").addEventListener("click", async () => {
     try {
-      await post("api/show/stop_show", {});
+      const stopped = await post("api/show/stop_show", {});
+      pollRunState();
       $("partyStatus").textContent = "Party over; lights restored.";
+      if (stopped.scene) {
+        $("partyStatus").textContent =
+          "Stopped; " + stopped.scene + " called.";
+      }
     } catch (error) {
       $("partyStatus").textContent = "stop failed: " + error.message;
     }
@@ -697,6 +718,7 @@
       status.textContent = "Running: " + result.cues + " cues, anchored " +
         Math.round(result.offset_ms) + "ms after the play command. " +
         "Watch the bulbs against the beat.";
+      pollRunState();
     } catch (error) {
       status.textContent = "failed: " + error.message;
     }
@@ -704,8 +726,13 @@
 
   $("btnSyncStop").addEventListener("click", async () => {
     try {
-      await post("api/show/stop_show", {});
+      const stopped = await post("api/show/stop_show", {});
+      pollRunState();
       $("syncStatus").textContent = "Stopped; lights restored.";
+      if (stopped.scene) {
+        $("syncStatus").textContent =
+          "Stopped; " + stopped.scene + " called.";
+      }
     } catch (error) {
       $("syncStatus").textContent = "stop failed: " + error.message;
     }
@@ -1205,5 +1232,970 @@
     } catch (error) {
       $("labReport").textContent = "failed: " + error.message;
     }
+  });
+
+  // ------------------------------------------------------------------
+  // What the lights are doing right now.
+  //
+  // One poller for the whole panel, because "is a show running" has one
+  // answer and three buttons used to guess at it separately. A Stop
+  // button that is always there is a button nobody trusts: it renders
+  // only while the add-on says a run is actually in progress, which is
+  // `active` in the state file — the conductor's own answer, not a
+  // string comparison against the words that happen to mean running.
+  // ------------------------------------------------------------------
+  const showState = { data: { status: "idle", active: false }, timer: null };
+  const stopButtons = ["btnShowStop", "btnPartyStop", "btnSyncStop"];
+
+  function renderRunState() {
+    const state = showState.data || {};
+    const running = Boolean(state.active);
+    for (const id of stopButtons) {
+      const button = $(id);
+      if (button) button.hidden = !running;
+    }
+    const now = $("partyNow");
+    if (now) {
+      if (!running) {
+        now.textContent = "";
+      } else {
+        const bits = [];
+        if (state.party) bits.push("Party: " + state.party);
+        if (state.track) bits.push("Playing: " + state.track);
+        if (state.queue_left) bits.push(state.queue_left + " tracks left");
+        if (state.cues_total) {
+          bits.push((state.lights_busy ? "cue " : "cues done — ") +
+            (state.lights_busy
+              ? (state.cues_sent || 0) + " of " + state.cues_total
+              : state.cues_total + " sent"));
+        }
+        if (state.playback_warning) bits.push("⚠ " + state.playback_warning);
+        now.textContent = bits.join(" · ");
+      }
+    }
+    const pre = $("partyState");
+    if (pre) {
+      pre.hidden = !running;
+      if (running) pre.textContent = JSON.stringify(state, null, 2);
+    }
+  }
+
+  async function pollRunState() {
+    try {
+      showState.data = await api("api/show/state");
+    } catch (error) {
+      // A transient failure is not news, and blanking the buttons on one
+      // missed poll would make Stop flicker mid-party.
+      return;
+    }
+    renderRunState();
+  }
+
+  function watchRunState() {
+    if (showState.timer) return;
+    pollRunState();
+    showState.timer = setInterval(() => {
+      if (!document.hidden) pollRunState();
+    }, 2500);
+  }
+  watchRunState();
+
+  // ------------------------------------------------------------------
+  // Light Map: add one discovered bulb at a time
+  // ------------------------------------------------------------------
+  async function loadBulbCandidates() {
+    const select = $("bulbCandidate");
+    const roles = $("bulbRole");
+    try {
+      const body = await api("api/map/candidates");
+      select.innerHTML = "";
+      if (!(body.candidates || []).length) {
+        const option = document.createElement("option");
+        option.value = "";
+        option.textContent = body.discovered
+          ? "— every discovered bulb is already on the map —"
+          : "— no bulbs discovered yet (Lab → Discover) —";
+        select.appendChild(option);
+      } else {
+        const first = document.createElement("option");
+        first.value = "";
+        first.textContent = "— pick a bulb —";
+        select.appendChild(first);
+        for (const bulb of body.candidates) {
+          const option = document.createElement("option");
+          option.value = bulb.serial;
+          option.textContent = bulb.label + " (" + bulb.serial + ")";
+          select.appendChild(option);
+        }
+      }
+      if (!roles.options.length) {
+        for (const role of body.roles || []) {
+          const option = document.createElement("option");
+          option.value = role;
+          option.textContent = role;
+          option.selected = role === "lamp";
+          roles.appendChild(option);
+        }
+      }
+    } catch (error) {
+      select.innerHTML = '<option value="">failed: ' + error.message +
+        "</option>";
+    }
+  }
+
+  $("btnRefreshBulbs").addEventListener("click", loadBulbCandidates);
+
+  $("btnAddBulb").addEventListener("click", async () => {
+    const serial = $("bulbCandidate").value;
+    if (!serial) {
+      $("mapStatus").textContent = "Pick a bulb from the list first.";
+      return;
+    }
+    const label = $("bulbCandidate").selectedOptions[0].textContent
+      .replace(/\s*\([0-9a-f]{12}\)$/, "");
+    try {
+      await post("api/map/add-lifx", {
+        serial,
+        role: $("bulbRole").value,
+        zone: $("bulbZone").value,
+        label,
+        // Dropped near the middle but not ON it, so two bulbs added in a
+        // row do not land on top of each other and look like one light.
+        x: 0.35 + Math.random() * 0.3,
+        y: 0.35 + Math.random() * 0.3,
+      });
+      $("mapStatus").textContent = label +
+        " added — drag it to where it actually is.";
+      $("bulbZone").value = "";
+      await Promise.all([loadMap(), loadBulbCandidates()]);
+    } catch (error) {
+      $("mapStatus").textContent = error.message;
+    }
+  });
+
+  // ------------------------------------------------------------------
+  // Effects: the builder
+  // ------------------------------------------------------------------
+  const fxState = {
+    catalog: [], byType: {}, fixtures: [], palettes: [], presets: [],
+    selection: new Set(), params: {}, preview: null, playing: false,
+    frame: 0, raf: null, lastTick: 0,
+  };
+
+  // HSV (what a bulb takes) to a CSS colour (what a screen takes). The
+  // conversion is here rather than server-side because the preview frames
+  // ARE bulb colours — turning them into CSS on the way out would mean
+  // the picture and the packets stopped being the same numbers.
+  function hsvCss(hue, sat, val) {
+    const l = val * (1 - sat / 2);
+    const s = (l === 0 || l === 1) ? 0 : (val - l) / Math.min(l, 1 - l);
+    return "hsl(" + Math.round(hue) + " " + Math.round(s * 100) + "% " +
+      Math.round(l * 100) + "%)";
+  }
+
+  function fxSpec() {
+    return fxState.byType[$("fxType").value] || null;
+  }
+
+  function renderFxParams() {
+    const spec = fxSpec();
+    const box = $("fxParams");
+    box.innerHTML = "";
+    if (!spec) return;
+    $("fxBlurb").textContent = spec.blurb;
+    for (const param of spec.params) {
+      const label = document.createElement("label");
+      label.className = "fx-param";
+      const name = document.createElement("span");
+      name.textContent = param.name.replace(/_/g, " ");
+      label.appendChild(name);
+      let input;
+      if (param.kind === "bool") {
+        input = document.createElement("input");
+        input.type = "checkbox";
+        input.checked = Boolean(fxState.params[param.name] ?? param.default);
+      } else if (param.kind === "choice") {
+        input = document.createElement("select");
+        for (const option of param.options) {
+          const el = document.createElement("option");
+          el.value = option;
+          el.textContent = option;
+          el.selected = option === (fxState.params[param.name] ?? param.default);
+          input.appendChild(el);
+        }
+      } else {
+        input = document.createElement("input");
+        input.type = "number";
+        input.min = param.min;
+        input.max = param.max;
+        input.step = param.kind === "int" ? 1 : 0.05;
+        input.value = fxState.params[param.name] ?? param.default;
+        const range = document.createElement("span");
+        range.className = "muted small";
+        range.textContent = param.min + "–" + param.max;
+        label.appendChild(range);
+      }
+      input.dataset.param = param.name;
+      input.dataset.kind = param.kind;
+      label.appendChild(input);
+      box.appendChild(label);
+    }
+  }
+
+  function readFxParams() {
+    const params = {};
+    for (const input of $("fxParams").querySelectorAll("[data-param]")) {
+      if (input.dataset.kind === "bool") {
+        params[input.dataset.param] = input.checked;
+      } else if (input.dataset.kind === "choice") {
+        params[input.dataset.param] = input.value;
+      } else {
+        params[input.dataset.param] = Number(input.value);
+      }
+    }
+    return params;
+  }
+
+  function currentEffect() {
+    const spec = fxSpec();
+    return {
+      type: $("fxType").value,
+      name: $("fxName").value || (spec ? spec.label.toLowerCase() : "effect"),
+      order: $("fxOrder").value,
+      align: $("fxAlign").value,
+      respect_roles: $("fxRespectRoles").checked,
+      select: { ids: Array.from(fxState.selection) },
+      params: readFxParams(),
+    };
+  }
+
+  function renderFxFixtures() {
+    const box = $("fxFixtures");
+    box.innerHTML = "";
+    if (!fxState.fixtures.length) {
+      box.innerHTML = '<p class="muted">No lights on the map yet — the ' +
+        "Light Map tab is where an effect gets something to drive.</p>";
+      return;
+    }
+    for (const fixture of fxState.fixtures) {
+      const label = document.createElement("label");
+      label.className = "fx-fixture" +
+        (fixture.reachable === false ? " unreachable" : "");
+      const box2 = document.createElement("input");
+      box2.type = "checkbox";
+      box2.dataset.id = fixture.id;
+      box2.checked = fxState.selection.has(fixture.id);
+      const text = document.createElement("span");
+      text.textContent = fixture.label + " · " + fixture.role +
+        (fixture.zone ? " · " + fixture.zone : "") +
+        (fixture.reachable === false ? " · unreachable" : "");
+      label.appendChild(box2);
+      label.appendChild(text);
+      box.appendChild(label);
+    }
+  }
+
+  function renderFxQuick() {
+    const box = $("fxRoleQuick");
+    box.innerHTML = "";
+    const groups = new Map();
+    for (const fixture of fxState.fixtures) {
+      groups.set(fixture.role, (groups.get(fixture.role) || 0) + 1);
+    }
+    for (const [role, count] of groups) {
+      const button = document.createElement("button");
+      button.className = "btn small";
+      button.textContent = role + " (" + count + ")";
+      button.dataset.role = role;
+      box.appendChild(button);
+    }
+  }
+
+  $("fxRoleQuick").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-role]");
+    if (!button) return;
+    const role = button.dataset.role;
+    const ids = fxState.fixtures.filter((f) => f.role === role).map((f) => f.id);
+    const allOn = ids.every((id) => fxState.selection.has(id));
+    for (const id of ids) {
+      if (allOn) fxState.selection.delete(id);
+      else fxState.selection.add(id);
+    }
+    renderFxFixtures();
+  });
+
+  $("fxFixtures").addEventListener("change", (event) => {
+    const box = event.target.closest("input[data-id]");
+    if (!box) return;
+    if (box.checked) fxState.selection.add(box.dataset.id);
+    else fxState.selection.delete(box.dataset.id);
+  });
+
+  $("btnFxAll").addEventListener("click", () => {
+    for (const fixture of fxState.fixtures) fxState.selection.add(fixture.id);
+    renderFxFixtures();
+  });
+  $("btnFxNone").addEventListener("click", () => {
+    fxState.selection.clear();
+    renderFxFixtures();
+  });
+
+  $("fxType").addEventListener("change", () => {
+    fxState.params = {};
+    renderFxParams();
+  });
+
+  async function loadEffects() {
+    if (fxState.catalog.length) {
+      // Fixtures can change while the tab is open (somebody adds a bulb),
+      // and a builder listing lights that are gone is a builder that
+      // silently drives nothing.
+      await refreshFxFixtures();
+      return;
+    }
+    try {
+      const body = await api("api/effects/catalog");
+      fxState.catalog = body.catalog || [];
+      fxState.byType = {};
+      for (const spec of fxState.catalog) fxState.byType[spec.type] = spec;
+      fxState.fixtures = body.fixtures || [];
+      fxState.palettes = body.palettes || [];
+      fxState.presets = body.presets || [];
+
+      const type = $("fxType");
+      type.innerHTML = "";
+      for (const spec of fxState.catalog) {
+        const option = document.createElement("option");
+        option.value = spec.type;
+        option.textContent = spec.label + " — " + spec.channel;
+        type.appendChild(option);
+      }
+      fillOptions($("fxOrder"), body.orders || []);
+      fillOptions($("fxAlign"), body.alignments || []);
+      const palette = $("fxPalette");
+      palette.innerHTML = "";
+      for (const entry of fxState.palettes) {
+        const option = document.createElement("option");
+        option.value = entry.name;
+        option.textContent = entry.name;
+        palette.appendChild(option);
+      }
+      palette.value = "club";
+      type.value = "chase";
+      renderFxParams();
+      renderFxQuick();
+      renderFxFixtures();
+      renderPresets();
+    } catch (error) {
+      $("fxStatus").textContent = "could not load the effect list: " +
+        error.message;
+    }
+  }
+
+  async function refreshFxFixtures() {
+    try {
+      const body = await api("api/effects/catalog");
+      fxState.fixtures = body.fixtures || [];
+      for (const id of Array.from(fxState.selection)) {
+        if (!fxState.fixtures.some((f) => f.id === id)) {
+          fxState.selection.delete(id);
+        }
+      }
+      renderFxQuick();
+      renderFxFixtures();
+    } catch (error) { /* the builder keeps what it has */ }
+  }
+
+  function fillOptions(select, values) {
+    select.innerHTML = "";
+    for (const value of values) {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = value.replace(/_/g, " ");
+      select.appendChild(option);
+    }
+  }
+
+  function previewBody() {
+    return {
+      effects: [currentEffect()],
+      bpm: Number($("fxBpm").value) || 120,
+      duration_s: Number($("fxSeconds").value) || 12,
+      palette_name: $("fxPalette").value,
+    };
+  }
+
+  $("btnFxPreview").addEventListener("click", async () => {
+    const status = $("fxStatus");
+    status.textContent = "rendering…";
+    try {
+      const body = await post("api/effects/preview", previewBody());
+      fxState.preview = body.preview;
+      fxState.frame = 0;
+      drawTimeline();
+      drawFrame(0);
+      $("fxScrub").max = String(Math.max(0, body.preview.frames.length - 1));
+      $("fxScrub").value = "0";
+      const cost = $("fxCost");
+      cost.textContent = body.cues + " cues · peak " +
+        body.peak_per_device_hz + "/s at one bulb (budget " +
+        body.budget_hz + "/s)" +
+        (body.effects[0] ? " · " + body.effects[0].fixtures + " lights driven"
+          : "");
+      cost.className = "cal-status" + (body.over_budget ? " warn" : "");
+      status.textContent = body.over_budget
+        ? "Over the per-bulb message budget — it will not compile into a " +
+          "show until it is slowed down or narrowed."
+        : "";
+      playPreview(true);
+    } catch (error) {
+      status.textContent = "preview failed: " + error.message;
+    }
+  });
+
+  function drawFrame(index) {
+    const preview = fxState.preview;
+    if (!preview) return;
+    const floor = $("fxFloor");
+    const frame = preview.frames[Math.min(index, preview.frames.length - 1)];
+    if (!floor.dataset.built) {
+      floor.innerHTML = "";
+      preview.fixtures.forEach((fixture, i) => {
+        const dot = document.createElement("div");
+        dot.className = "map-dot preview-dot";
+        dot.style.left = "clamp(24px, " + (fixture.x * 100) +
+          "%, calc(100% - 24px))";
+        dot.style.top = "clamp(24px, " + (fixture.y * 100) +
+          "%, calc(100% - 42px))";
+        dot.dataset.slot = String(i);
+        const name = document.createElement("span");
+        name.className = "dot-name";
+        name.textContent = fixture.label;
+        dot.appendChild(name);
+        floor.appendChild(dot);
+      });
+      floor.dataset.built = "1";
+    }
+    for (const dot of floor.querySelectorAll(".preview-dot")) {
+      const colour = frame[Number(dot.dataset.slot)];
+      if (!colour) continue;
+      dot.style.background = hsvCss(colour[0], colour[1], colour[2]);
+      // A bulb at 2% is off, and an unlit dot on a dark floor plan is
+      // invisible — the ring is what keeps a dark light legible as a
+      // light rather than as nothing.
+      dot.style.boxShadow = "0 0 " + Math.round(4 + colour[2] * 26) +
+        "px " + hsvCss(colour[0], colour[1], colour[2]);
+    }
+  }
+
+  function drawTimeline() {
+    const preview = fxState.preview;
+    const canvas = $("fxTimeline");
+    if (!preview || !canvas.getContext) return;
+    const rows = preview.fixtures.length || 1;
+    const width = canvas.clientWidth || 800;
+    const rowHeight = Math.max(10, Math.min(28, 220 / rows));
+    canvas.width = width;
+    canvas.height = Math.round(rows * rowHeight);
+    const ctx = canvas.getContext("2d");
+    const frames = preview.frames.length;
+    const columnWidth = width / frames;
+    for (let f = 0; f < frames; f += 1) {
+      for (let r = 0; r < rows; r += 1) {
+        const colour = preview.frames[f][r];
+        ctx.fillStyle = hsvCss(colour[0], colour[1], colour[2]);
+        ctx.fillRect(f * columnWidth, r * rowHeight,
+                     Math.ceil(columnWidth), rowHeight - 1);
+      }
+    }
+    canvas.dataset.rowHeight = String(rowHeight);
+  }
+
+  function drawPlayhead(index) {
+    const canvas = $("fxTimeline");
+    const preview = fxState.preview;
+    if (!preview || !canvas.getContext) return;
+    // Redrawing the whole strip every frame is cheap at these sizes and
+    // means the playhead never leaves a trail behind it.
+    drawTimeline();
+    const ctx = canvas.getContext("2d");
+    const x = (index / preview.frames.length) * canvas.width;
+    ctx.fillStyle = "rgba(255,255,255,0.85)";
+    ctx.fillRect(x, 0, 2, canvas.height);
+  }
+
+  function playPreview(start) {
+    fxState.playing = Boolean(start);
+    $("btnFxPlay").textContent = fxState.playing ? "⏸ Pause" : "▶ Play";
+    if (fxState.raf) cancelAnimationFrame(fxState.raf);
+    if (!fxState.playing || !fxState.preview) return;
+    const fps = fxState.preview.fps || 15;
+    fxState.lastTick = performance.now();
+    const step = (now) => {
+      if (!fxState.playing || !fxState.preview) return;
+      const advance = Math.floor((now - fxState.lastTick) / (1000 / fps));
+      if (advance > 0) {
+        fxState.lastTick = now;
+        fxState.frame = (fxState.frame + advance) %
+          fxState.preview.frames.length;
+        drawFrame(fxState.frame);
+        drawPlayhead(fxState.frame);
+        $("fxScrub").value = String(fxState.frame);
+      }
+      fxState.raf = requestAnimationFrame(step);
+    };
+    fxState.raf = requestAnimationFrame(step);
+  }
+
+  $("btnFxPlay").addEventListener("click", () => playPreview(!fxState.playing));
+
+  $("fxScrub").addEventListener("input", () => {
+    if (!fxState.preview) return;
+    playPreview(false);
+    fxState.frame = Number($("fxScrub").value);
+    drawFrame(fxState.frame);
+    drawPlayhead(fxState.frame);
+  });
+
+  $("btnFxLive").addEventListener("click", async () => {
+    const status = $("fxStatus");
+    status.textContent = "running it on the lights…";
+    try {
+      const result = await post("api/effects/preview-live", {
+        ...previewBody(), label: currentEffect().name,
+      });
+      status.textContent = "Running on " + result.cues + " cues — the " +
+        "lights go back to how they were when it ends.";
+      pollRunState();
+    } catch (error) {
+      status.textContent = "could not run it: " + error.message;
+    }
+  });
+
+  // -- presets ---------------------------------------------------------
+  function renderPresets() {
+    const list = $("fxPresets");
+    list.innerHTML = "";
+    if (!fxState.presets.length) {
+      list.innerHTML = '<p class="muted">Nothing saved yet.</p>';
+      return;
+    }
+    for (const preset of fxState.presets) {
+      const row = document.createElement("div");
+      row.className = "row";
+      row.dataset.name = preset.name;
+      row.innerHTML = '<div class="row-main"><strong></strong>' +
+        '<span class="muted small"></span></div>' +
+        '<div class="row-actions">' +
+        '<button class="btn small" data-act="load">Load</button>' +
+        '<button class="btn small" data-act="drop">Delete</button></div>';
+      row.querySelector("strong").textContent = preset.name;
+      const effect = preset.effect || {};
+      row.querySelector(".muted").textContent = effect.type + " · " +
+        ((effect.select && effect.select.ids || []).length || "all") +
+        " lights · travels " + effect.order;
+      list.appendChild(row);
+    }
+  }
+
+  $("btnFxSave").addEventListener("click", async () => {
+    const name = $("fxPresetName").value.trim() || $("fxName").value.trim();
+    if (!name) {
+      $("fxStatus").textContent = "Give it a name first.";
+      return;
+    }
+    try {
+      const body = await post("api/effects/presets",
+                              { name, effect: currentEffect() });
+      fxState.presets = body.presets || [];
+      renderPresets();
+      $("fxStatus").textContent = "Saved as " + name + ".";
+    } catch (error) {
+      $("fxStatus").textContent = "could not save it: " + error.message;
+    }
+  });
+
+  $("fxPresets").addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-act]");
+    if (!button) return;
+    const name = button.closest(".row").dataset.name;
+    if (button.dataset.act === "drop") {
+      try {
+        const response = await fetch("api/effects/presets/" +
+          encodeURIComponent(name), { method: "DELETE" });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body.error || response.status);
+        fxState.presets = body.presets || [];
+        renderPresets();
+      } catch (error) {
+        $("fxStatus").textContent = error.message;
+      }
+      return;
+    }
+    const preset = fxState.presets.find((p) => p.name === name);
+    if (!preset) return;
+    const effect = preset.effect || {};
+    $("fxType").value = effect.type;
+    fxState.params = effect.params || {};
+    renderFxParams();
+    $("fxName").value = effect.name || preset.name;
+    $("fxOrder").value = effect.order || "x";
+    $("fxAlign").value = effect.align || "beat";
+    $("fxRespectRoles").checked = effect.respect_roles !== false;
+    fxState.selection = new Set((effect.select && effect.select.ids) || []);
+    renderFxFixtures();
+    $("fxPresetName").value = preset.name;
+    $("fxStatus").textContent = "Loaded " + preset.name + ".";
+  });
+
+  // -- putting an effect into a show -----------------------------------
+  async function loadFxShowTracks() {
+    try {
+      const lib = await api("api/library");
+      const select = $("fxShowTrack");
+      const previous = select.value;
+      select.innerHTML = '<option value="">— compiled track —</option>';
+      for (const track of (lib.tracks || []).filter((t) => t.show)) {
+        const option = document.createElement("option");
+        option.value = track.hash;
+        option.textContent = track.name;
+        option.selected = track.hash === previous;
+        select.appendChild(option);
+      }
+    } catch (error) { /* the picker stays as it was */ }
+  }
+
+  $("fxShowTrack").addEventListener("change", async () => {
+    const select = $("fxShowScene");
+    select.innerHTML = '<option value="">— scene —</option>';
+    const hash = $("fxShowTrack").value;
+    if (!hash) return;
+    try {
+      const body = await api("api/show/" + hash + "/script");
+      const scenes = (body.script && body.script.scenes) || [];
+      scenes.forEach((scene, index) => {
+        const option = document.createElement("option");
+        option.value = String(index);
+        option.textContent = index + ": " + (scene.mood || scene.kind) +
+          " (" + Math.round(scene.start) + "–" + Math.round(scene.end) + "s)";
+        select.appendChild(option);
+      });
+    } catch (error) {
+      $("fxAddStatus").textContent = error.message;
+    }
+  });
+
+  $("btnFxAddToShow").addEventListener("click", async () => {
+    const hash = $("fxShowTrack").value;
+    const index = $("fxShowScene").value;
+    const status = $("fxAddStatus");
+    if (!hash || index === "") {
+      status.textContent = "Pick a compiled track and one of its scenes.";
+      return;
+    }
+    try {
+      const current = await api("api/show/" + hash + "/script");
+      const script = current.script;
+      if (!script) throw new Error("that track has no show script yet");
+      const scene = script.scenes[Number(index)];
+      scene.effects = (scene.effects || []).concat([currentEffect()]);
+      const saved = await put("api/show/" + hash + "/script", { script });
+      status.textContent = "Added — recompiled to " + saved.stats.cues +
+        " cues (peak " + saved.stats.peak_per_device_hz + "/s per bulb).";
+      loadShows();
+    } catch (error) {
+      status.textContent = "could not add it: " + error.message;
+    }
+  });
+
+  // ------------------------------------------------------------------
+  // Shows: the script editor — the whole show, as the file it is
+  // ------------------------------------------------------------------
+  let scriptTrack = null;
+
+  async function openScript(hash, name) {
+    scriptTrack = hash;
+    const status = $("scriptStatus");
+    status.textContent = "loading…";
+    try {
+      const body = await api("api/show/" + hash + "/script");
+      $("scriptWhich").textContent = body.title +
+        (body.file ? " · " + body.file : " · not compiled yet");
+      $("scriptText").value = body.script
+        ? JSON.stringify(body.script, null, 2)
+        : "";
+      renderScriptEffects(body);
+      status.textContent = body.compiled
+        ? "Compiled: " + body.stats.cues + " cues, peak " +
+          body.stats.peak_per_device_hz + "/s per bulb."
+        : "No show compiled for this track yet — press Compile above first.";
+      $("showCues").hidden = true;
+    } catch (error) {
+      status.textContent = "could not open it: " + error.message;
+    }
+  }
+
+  function renderScriptEffects(body) {
+    const list = $("scriptEffects");
+    list.innerHTML = "";
+    for (const entry of body.effects || []) {
+      const row = document.createElement("div");
+      row.className = "row";
+      row.innerHTML = '<div class="row-main"><strong></strong>' +
+        '<span class="muted small"></span></div>';
+      row.querySelector("strong").textContent =
+        (entry.name || entry.type) + " (" + entry.type + ")";
+      row.querySelector(".muted").textContent = entry.where + " · " +
+        entry.fixtures + " lights · " + entry.actions + " moves · busiest " +
+        "light gets " + entry.busiest_fixture;
+      list.appendChild(row);
+    }
+  }
+
+  $("btnScriptSave").addEventListener("click", async () => {
+    const status = $("scriptStatus");
+    if (!scriptTrack) {
+      status.textContent = "Open a track's show first.";
+      return;
+    }
+    let script;
+    try {
+      script = JSON.parse($("scriptText").value);
+    } catch (error) {
+      status.textContent = "That is not valid JSON — " + error.message;
+      return;
+    }
+    status.textContent = "compiling…";
+    try {
+      const body = await put("api/show/" + scriptTrack + "/script", { script });
+      status.textContent = "Saved and compiled: " + body.stats.cues +
+        " cues, peak " + body.stats.peak_per_device_hz + "/s per bulb.";
+      renderScriptEffects(body);
+      loadShows();
+    } catch (error) {
+      status.textContent = error.message;
+    }
+  });
+
+  $("btnScriptReload").addEventListener("click", async () => {
+    const status = $("scriptStatus");
+    if (!scriptTrack) {
+      status.textContent = "Open a track's show first.";
+      return;
+    }
+    status.textContent = "reading the file…";
+    try {
+      const body = await post("api/show/" + scriptTrack + "/script/import", {});
+      $("scriptText").value = JSON.stringify(body.script, null, 2);
+      renderScriptEffects(body);
+      status.textContent = "Read from " + body.file + " and compiled: " +
+        body.stats.cues + " cues.";
+      loadShows();
+    } catch (error) {
+      status.textContent = error.message;
+    }
+  });
+
+  $("btnShowCues").addEventListener("click", async () => {
+    const pre = $("showCues");
+    if (!scriptTrack) {
+      $("scriptStatus").textContent = "Open a track's show first.";
+      return;
+    }
+    if (!pre.hidden) {
+      pre.hidden = true;
+      return;
+    }
+    try {
+      const body = await api("api/show/" + scriptTrack + "/cues?limit=400");
+      pre.hidden = false;
+      pre.textContent = body.cues.map((cue) =>
+        cue.t.toFixed(2).padStart(8) + "s  " + cue.ch.padEnd(4) + " " +
+        String(cue.target).padEnd(14) + " " + cue.desc).join("\n") +
+        (body.total > body.cues.length
+          ? "\n… " + (body.total - body.cues.length) + " more"
+          : "");
+    } catch (error) {
+      $("scriptStatus").textContent = error.message;
+    }
+  });
+
+  // ------------------------------------------------------------------
+  // Party: saved evenings
+  // ------------------------------------------------------------------
+  let partyEditing = null;
+
+  async function loadParties() {
+    try {
+      const body = await api("api/parties");
+      const list = $("partyList");
+      const picker = $("partySaved");
+      const previous = picker.value;
+      picker.innerHTML = '<option value="">— ad-hoc party —</option>';
+      list.innerHTML = "";
+      if (!(body.parties || []).length) {
+        list.innerHTML = '<p class="muted">No saved parties yet.</p>';
+      }
+      for (const party of body.parties || []) {
+        const option = document.createElement("option");
+        option.value = party.name;
+        option.textContent = party.name;
+        option.selected = party.name === previous;
+        picker.appendChild(option);
+
+        const row = document.createElement("div");
+        row.className = "row";
+        row.dataset.name = party.name;
+        row.innerHTML = '<div class="row-main"><strong></strong>' +
+          '<span class="muted small"></span></div>' +
+          '<div class="row-actions">' +
+          '<button class="btn small" data-act="start">▶ Start</button>' +
+          '<button class="btn small" data-act="edit">Edit</button>' +
+          '<button class="btn small" data-act="drop">Delete</button></div>';
+        row.querySelector("strong").textContent = party.name;
+        const bits = [];
+        if (party.media_player) bits.push(party.media_player);
+        if (party.folder) bits.push(party.folder);
+        if (party.vibe) bits.push('"' + party.vibe + '"');
+        const count = (party.fixtures || []).length;
+        bits.push(count ? count + (count === 1 ? " light" : " lights")
+          : "all lights");
+        if (party.end_scene) bits.push("ends with " + party.end_scene);
+        row.querySelector(".muted").textContent = bits.join(" · ");
+        list.appendChild(row);
+      }
+    } catch (error) {
+      $("partyStatus").textContent = "could not read the parties: " +
+        error.message;
+    }
+  }
+
+  async function fillPartyForm(party) {
+    partyEditing = party ? party.name : null;
+    $("partyForm").hidden = false;
+    $("pfName").value = party ? party.name : "";
+    $("pfVibe").value = (party && party.vibe) || "";
+    $("pfFolder").value = (party && party.folder) || "";
+    $("pfShuffle").checked = !party || party.shuffle !== false;
+    try {
+      const [profiles, scenes, catalog] = await Promise.all([
+        api("api/calibrate/profiles"),
+        api("api/ha/entities?domain=scene").catch(() => ({ entities: [] })),
+        api("api/effects/catalog"),
+      ]);
+      const players = $("pfPlayer");
+      players.innerHTML = '<option value="">— calibrated player —</option>';
+      for (const profile of profiles.profiles || []) {
+        const option = document.createElement("option");
+        option.value = profile.entity_id;
+        option.textContent = profile.entity_id;
+        option.selected = party && profile.entity_id === party.media_player;
+        players.appendChild(option);
+      }
+      const sceneSelect = $("pfScene");
+      sceneSelect.innerHTML =
+        '<option value="">— put the lights back as they were —</option>';
+      for (const entity of scenes.entities || []) {
+        const option = document.createElement("option");
+        option.value = entity.entity_id;
+        option.textContent = entity.name;
+        option.selected = party && entity.entity_id === party.end_scene;
+        sceneSelect.appendChild(option);
+      }
+      const chosen = new Set((party && party.fixtures) || []);
+      const box = $("pfFixtures");
+      box.innerHTML = "";
+      for (const fixture of catalog.fixtures || []) {
+        const label = document.createElement("label");
+        label.className = "fx-fixture";
+        const check = document.createElement("input");
+        check.type = "checkbox";
+        check.dataset.id = fixture.id;
+        check.checked = chosen.has(fixture.id);
+        const text = document.createElement("span");
+        text.textContent = fixture.label + " · " + fixture.role;
+        label.appendChild(check);
+        label.appendChild(text);
+        box.appendChild(label);
+      }
+    } catch (error) {
+      $("pfStatus").textContent = error.message;
+    }
+  }
+
+  $("btnPartyNew").addEventListener("click", () => fillPartyForm(null));
+  $("btnPartyCancel").addEventListener("click", () => {
+    $("partyForm").hidden = true;
+    partyEditing = null;
+  });
+
+  $("btnPartySave").addEventListener("click", async () => {
+    const fixtures = Array.from(
+      $("pfFixtures").querySelectorAll("input[data-id]:checked"))
+      .map((input) => input.dataset.id);
+    try {
+      await post("api/parties", {
+        name: $("pfName").value,
+        media_player: $("pfPlayer").value,
+        folder: $("pfFolder").value,
+        vibe: $("pfVibe").value,
+        end_scene: $("pfScene").value,
+        shuffle: $("pfShuffle").checked,
+        fixtures,
+      });
+      $("partyForm").hidden = true;
+      partyEditing = null;
+      $("pfStatus").textContent = "";
+      loadParties();
+    } catch (error) {
+      $("pfStatus").textContent = error.message;
+    }
+  });
+
+  $("partyList").addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-act]");
+    if (!button) return;
+    const name = button.closest(".row").dataset.name;
+    const status = $("partyStatus");
+    if (button.dataset.act === "start") {
+      try {
+        const result = await post("api/show/start_party", { party: name });
+        status.textContent = "Party on: " + result.queue + " tracks queued.";
+        pollRunState();
+      } catch (error) {
+        status.textContent = error.message;
+      }
+    } else if (button.dataset.act === "edit") {
+      try {
+        const body = await api("api/parties");
+        fillPartyForm((body.parties || []).find((p) => p.name === name));
+      } catch (error) {
+        status.textContent = error.message;
+      }
+    } else if (button.dataset.act === "drop") {
+      try {
+        const response = await fetch("api/parties/" + encodeURIComponent(name),
+                                     { method: "DELETE" });
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}));
+          throw new Error(body.error || response.status);
+        }
+        loadParties();
+      } catch (error) {
+        status.textContent = error.message;
+      }
+    }
+  });
+
+  // Load each tab's data when it first opens.
+  tabs.addEventListener("click", (event) => {
+    const button = event.target.closest(".tab");
+    if (!button) return;
+    if (button.dataset.tab === "map") loadBulbCandidates();
+    if (button.dataset.tab === "effects") {
+      loadEffects();
+      loadFxShowTracks();
+    }
+    if (button.dataset.tab === "party") loadParties();
   });
 })();

@@ -19,6 +19,7 @@ from .bridge import send_request
 from .const import (
     DOMAIN,
     SERVICE_PARTY_MODE,
+    SERVICE_START_PARTY,
     SERVICE_START_SHOW,
     SERVICE_STOP_SHOW,
 )
@@ -58,9 +59,25 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 # ---------------------------------------------------------------------------
 PARTY_MODE_SCHEMA = vol.Schema(
     {
+        vol.Optional("party"): cv.string,
         vol.Optional("media_player"): cv.entity_id,
         vol.Optional("folder"): cv.string,
         vol.Optional("vibe"): cv.string,
+        vol.Optional("end_scene"): cv.entity_id,
+        vol.Optional("shuffle"): cv.boolean,
+    }
+)
+
+# Named parties get their own service rather than a field on party_mode,
+# because they are a different ask: party_mode is "run something", and
+# this is "run the evening I set up". The name is required here, which is
+# what makes an automation fail loudly on a typo instead of quietly
+# playing the default folder.
+START_PARTY_SCHEMA = vol.Schema(
+    {
+        vol.Required("party"): cv.string,
+        vol.Optional("media_player"): cv.entity_id,
+        vol.Optional("end_scene"): cv.entity_id,
     }
 )
 
@@ -68,6 +85,16 @@ START_SHOW_SCHEMA = vol.Schema(
     {
         vol.Required("track"): cv.string,
         vol.Optional("media_player"): cv.entity_id,
+    }
+)
+
+STOP_SHOW_SCHEMA = vol.Schema(
+    {
+        # A scene instead of restoring: the show WAS the evening, and what
+        # comes next is a room somebody has already described in Home
+        # Assistant. Restoring would put the lights back to whatever they
+        # were at 6pm, which is nobody's idea of "stop the party".
+        vol.Optional("scene"): cv.entity_id,
     }
 )
 
@@ -109,13 +136,22 @@ def _register_services(hass: HomeAssistant) -> None:
     async def handle_start_show(call: ServiceCall) -> None:
         await _forward(SERVICE_START_SHOW, dict(call.data))
 
+    async def handle_start_party(call: ServiceCall) -> None:
+        await _forward(SERVICE_START_PARTY, dict(call.data))
+
     async def handle_stop_show(call: ServiceCall) -> None:
-        await _forward(SERVICE_STOP_SHOW, {})
+        await _forward(SERVICE_STOP_SHOW, dict(call.data))
 
     hass.services.async_register(
         DOMAIN, SERVICE_PARTY_MODE, handle_party_mode, schema=PARTY_MODE_SCHEMA
     )
     hass.services.async_register(
+        DOMAIN, SERVICE_START_PARTY, handle_start_party,
+        schema=START_PARTY_SCHEMA
+    )
+    hass.services.async_register(
         DOMAIN, SERVICE_START_SHOW, handle_start_show, schema=START_SHOW_SCHEMA
     )
-    hass.services.async_register(DOMAIN, SERVICE_STOP_SHOW, handle_stop_show)
+    hass.services.async_register(
+        DOMAIN, SERVICE_STOP_SHOW, handle_stop_show, schema=STOP_SHOW_SCHEMA
+    )

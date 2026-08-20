@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Set up BRight",
-        "description": "This integration talks to the BRight add-on running on this Home Assistant host. It adds the party_mode, start_show and stop_show services and a show-status sensor."
+        "description": "This integration talks to the BRight add-on running on this Home Assistant host. It adds the party_mode, start_party, start_show and stop_show services and a show-status sensor."
       },
       "confirm": {
         "title": "BRight discovered",
@@ -37,6 +37,18 @@
         "vibe": {
           "name": "Vibe",
           "description": "Optional steer for the director, e.g. \"chill\", \"rave\", \"halloween\"."
+        },
+        "party": {
+          "name": "Saved party",
+          "description": "Name of a party saved in the BRight panel. Its speaker, folder, vibe, light selection and end scene are used; anything given here wins over what the party saved."
+        },
+        "end_scene": {
+          "name": "End scene",
+          "description": "A scene to call when the party stops, instead of restoring every light to how it was before."
+        },
+        "shuffle": {
+          "name": "Shuffle",
+          "description": "Play the folder in a random order. On by default."
         }
       }
     },
@@ -56,7 +68,31 @@
     },
     "stop_show": {
       "name": "Stop the show",
-      "description": "Stop playback and restore every light to its pre-show state."
+      "description": "Stop playback and put the room back — restoring every light to its pre-show state, or calling a scene if one is given (or if the running party named one).",
+      "fields": {
+        "scene": {
+          "name": "End scene",
+          "description": "Call this scene instead of restoring the lights. Use it when the show was the evening and what comes next is bedtime."
+        }
+      }
+    },
+    "start_party": {
+      "name": "Start a saved party",
+      "description": "Run a party saved in the BRight panel, by name — its speaker, music folder, vibe, lights and end scene were set up once and are reused.",
+      "fields": {
+        "party": {
+          "name": "Party",
+          "description": "The saved party's name, as it appears in the panel's Party tab."
+        },
+        "media_player": {
+          "name": "Media player",
+          "description": "Override the speaker this party normally plays on."
+        },
+        "end_scene": {
+          "name": "End scene",
+          "description": "Override the scene called when this party stops."
+        }
+      }
     }
   }
 }

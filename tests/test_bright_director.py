@@ -70,18 +70,50 @@ class TestChoreographer(unittest.TestCase):
         self.assertEqual(3, len(script["scenes"]))
         self.assertEqual("lift", script["scenes"][1]["mood"])
 
-    def test_drops_become_features(self):
+    def test_a_drop_gets_a_build_into_it_and_a_hit_on_it(self):
         script = choreographer.write_script(analysis_fixture(), FIXTURES)
-        self.assertEqual(1, len(script["features"]))
-        self.assertEqual("drop_hit", script["features"][0]["type"])
-        self.assertIn("laser", script["features"][0]["roles"])
+        drop_t = analysis_fixture()["drops"][0]["t"]
+        kinds = {m["effect"]["type"] for m in script["moments"]}
+        self.assertIn("build", kinds)
+        self.assertIn("stab", kinds)
+        build = next(m for m in script["moments"]
+                     if m["effect"]["type"] == "build")
+        # The build ends ON the drop and starts before it — tension is
+        # the part that crosses the section boundary.
+        self.assertAlmostEqual(drop_t, build["effect"]["end"], places=3)
+        self.assertLess(build["t"], drop_t)
+        hit = next(m for m in script["moments"]
+                   if m["effect"]["type"] == "stab")
+        self.assertIn("laser", hit["effect"]["select"]["roles"])
 
     def test_candles_never_pulse(self):
         script = choreographer.write_script(analysis_fixture(), FIXTURES)
         for scene in script["scenes"]:
-            for motif in scene["motifs"]:
-                if motif["type"] == "beat_pulse":
-                    self.assertNotIn("candle", motif["roles"])
+            for effect in scene["effects"]:
+                if effect["type"] in ("pulse", "chase", "strobe", "theater"):
+                    self.assertNotIn(
+                        "candle", effect.get("select", {}).get("roles", []))
+
+    def test_the_chase_reads_the_map(self):
+        """Order is a map question, and the map is what answers it."""
+        many = FIXTURES + [
+            {"id": f"lifx-d07000000{i}", "kind": "lifx",
+             "serial": f"d07000000{i}0", "label": f"Lamp {i}", "role": "lamp",
+             "zone": "", "x": i / 10.0, "y": 0.5} for i in range(3, 7)]
+        script = choreographer.write_script(analysis_fixture(), many)
+        peak = next(s for s in script["scenes"] if s["kind"] == "peak")
+        chase = next(e for e in peak["effects"] if e["type"] == "chase")
+        self.assertIn(chase["order"], ("x", "-x", "center_out", "snake",
+                                       "zone"))
+
+    def test_two_lights_answer_each_other_instead_of_chasing(self):
+        """A chase across two bulbs is a flicker. The room's size is a
+        creative constraint, not a parameter to ignore."""
+        script = choreographer.write_script(analysis_fixture(), FIXTURES)
+        peak = next(s for s in script["scenes"] if s["kind"] == "peak")
+        types = {e["type"] for e in peak["effects"]}
+        self.assertIn("theater", types)
+        self.assertNotIn("chase", types)
 
     def test_its_own_output_validates(self):
         script = choreographer.write_script(analysis_fixture(), FIXTURES)
@@ -98,11 +130,26 @@ class TestScriptValidator(unittest.TestCase):
         self.assertTrue(choreographer.validate_script({"features": []}))
 
     def test_rejects_unknown_motifs(self):
+        """The v1 vocabulary is still validated — scripts are files people
+        keep, and a show compiled last year must still be readable."""
         script = choreographer.write_script(analysis_fixture(), FIXTURES)
-        script["scenes"][0]["motifs"].append(
-            {"type": "hyperdrive", "roles": ["lamp"]})
+        script["scenes"][0]["motifs"] = [
+            {"type": "hyperdrive", "roles": ["lamp"]}]
         problems = choreographer.validate_script(script)
         self.assertTrue(any("unknown type" in p for p in problems))
+
+    def test_rejects_an_unknown_effect_type(self):
+        script = choreographer.write_script(analysis_fixture(), FIXTURES)
+        script["scenes"][0]["effects"].append(
+            {"type": "hyperdrive", "select": {"roles": ["lamp"]}})
+        problems = choreographer.validate_script(script)
+        self.assertTrue(any("hyperdrive" in p for p in problems), problems)
+
+    def test_rejects_an_unusable_moment(self):
+        script = choreographer.write_script(analysis_fixture(), FIXTURES)
+        script["moments"].append({"t": "whenever",
+                                  "effect": {"type": "stab"}})
+        self.assertTrue(choreographer.validate_script(script))
 
     def test_rejects_a_scene_that_ends_before_it_starts(self):
         script = choreographer.write_script(analysis_fixture(), FIXTURES)
@@ -158,8 +205,12 @@ class TestCompiler(unittest.TestCase):
     def test_the_drop_gets_a_blackout_then_a_hit(self):
         show = self._show()
         drop_t = analysis_fixture()["drops"][0]["t"]
-        blackouts = [c for c in show["cues"] if c["desc"] == "pre-drop blackout"]
-        hits = [c for c in show["cues"] if c["desc"] == "drop hit"]
+        # Every cue names the effect that asked for it, which is how a
+        # 900-cue timeline is readable at all — and how this test asks
+        # about the drop rather than about a moment in time.
+        blackouts = [c for c in show["cues"]
+                     if c["desc"] == "drop hit \u00b7 pre-stab dip"]
+        hits = [c for c in show["cues"] if c["desc"] == "drop hit \u00b7 stab"]
         self.assertTrue(blackouts and hits)
         self.assertAlmostEqual(drop_t - 0.4, blackouts[0]["t"], places=3)
         self.assertAlmostEqual(drop_t, hits[0]["t"], places=3)

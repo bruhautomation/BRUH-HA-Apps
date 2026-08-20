@@ -42,7 +42,8 @@ PANEL_URL = f"http://127.0.0.1:{panel_port.resolve()}"
 POLL_INTERVAL = 0.5
 MIRROR_INTERVAL = 5
 
-KNOWN_KINDS = ("party_mode", "start_show", "stop_show")
+KNOWN_KINDS = ("party_mode", "start_party", "start_show", "stop_show",
+               "list_parties")
 
 
 def _log(msg: str) -> None:

@@ -13,6 +13,18 @@ that knows how a scene becomes packets. Its obligations:
 * The 20 msgs/s/device ceiling is enforced HERE: a script that would
   exceed it fails to compile, loudly — never a runtime surprise in a dark
   room full of guests.
+
+Scripts speak effects
+---------------------
+A scene is a window with a palette, a base level and a list of EFFECTS
+(`director/effects.py`). The compiler resolves each effect to actions and
+renders actions to packets; it does not know what a chase is, and adding
+one more effect type never touches this file.
+
+Scripts written against the older vocabulary still compile. `motifs` are
+translated into their effect equivalents on the way in (`_from_motif`),
+because a script somebody wrote — or a show compiled last week and kept
+— must not stop working when the vocabulary grows.
 """
 from __future__ import annotations
 
@@ -23,6 +35,7 @@ import time
 from pathlib import Path
 
 from lifx import packets
+from . import effects as fx
 from . import palettes
 
 HA_LATENCY_FILE = (Path(os.environ.get("BRIGHT_STATE", "/data"))
@@ -31,7 +44,15 @@ DEFAULT_HA_LEAD_MS = 350.0
 DEFAULT_LIFX_LEAD_MS = 5.0
 MAX_RATE_HZ = 18.0  # compile-time budget: under LIFX's 20 with margin
 
-SHOW_VERSION = 1
+SHOW_VERSION = 2
+
+_SHAPE_CODES = {
+    "saw": packets.WAVEFORM_SAW,
+    "sine": packets.WAVEFORM_SINE,
+    "half_sine": packets.WAVEFORM_HALF_SINE,
+    "triangle": packets.WAVEFORM_TRIANGLE,
+    "pulse": packets.WAVEFORM_PULSE,
+}
 
 
 class CompileError(ValueError):
@@ -122,8 +143,108 @@ class _Cues:
         })
 
 
-def _beats_in(beats: list[float], start: float, end: float) -> list[float]:
-    return [b for b in beats if start <= b < end]
+def render_actions(actions: list[dict], out: _Cues) -> None:
+    """Actions → packets. The only place the two vocabularies meet."""
+    for action in actions:
+        fixture = action["fixture"]
+        if action["kind"] == "set":
+            out.set_color(fixture, action["t"], action["hue"], action["sat"],
+                          action["bri"], action["fade_ms"], action["desc"],
+                          resend=bool(action.get("resend")))
+        elif action["kind"] == "wave":
+            # A PULSE's duty cycle is LIFX's skew_ratio, an i16 where 0 is
+            # an even square: 0.5 duty is 0, and either side of it walks
+            # toward the ends of the range.
+            skew = int((action["duty"] - 0.5) * 2 * 32767) if \
+                action["shape"] == "pulse" else 0
+            out.waveform(fixture, action["t"], action["hue"], action["sat"],
+                         action["bri"], action["period_ms"], action["cycles"],
+                         action["desc"],
+                         shape=_SHAPE_CODES.get(action["shape"],
+                                                packets.WAVEFORM_SINE),
+                         skew_ratio=max(-32768, min(32767, skew)))
+        elif action["kind"] == "aux":
+            out.ha(fixture, action["t"],
+                   "homeassistant.turn_on" if action["on"]
+                   else "homeassistant.turn_off", action["desc"])
+
+
+# ---------------------------------------------------------------------------
+# The older vocabulary, translated
+# ---------------------------------------------------------------------------
+def _from_motif(motif: dict, depth_default: float) -> dict | None:
+    """A v1 `motif` as the effect it always meant.
+
+    Kept because scripts are files people edit and shows are artifacts
+    people keep: a vocabulary that grows must not invalidate what was
+    written against it.
+    """
+    roles = [r for r in (motif.get("roles") or []) if isinstance(r, str)]
+    kind = motif.get("type")
+    if kind == "beat_pulse":
+        return {"type": "pulse", "name": "beat pulse", "select": {"roles": roles},
+                "params": {"every_beats": motif.get("beats", 1),
+                           "depth": motif.get("depth", depth_default),
+                           "shape": motif.get("shape", "sine")}}
+    if kind == "sweep":
+        return {"type": "sweep", "name": "sweep", "select": {"roles": roles},
+                "order": "x" if motif.get("axis", "x") == "x" else "y",
+                "params": {"period_beats": motif.get("period_beats", 8)}}
+    if kind == "breathe":
+        return {"type": "breathe", "name": "breathe", "select": {"roles": roles},
+                "params": {"period_beats": motif.get("period_beats", 16),
+                           "depth": motif.get("depth", 0.15)}}
+    if kind == "aux_on":
+        return {"type": "aux", "name": "aux on", "select": {"roles": roles},
+                "params": {"state": "on"}}
+    return None
+
+
+def _from_feature(feature: dict) -> dict | None:
+    """A v1 `feature` (a moment) as an effect at a moment."""
+    roles = [r for r in (feature.get("roles") or []) if isinstance(r, str)]
+    if feature.get("type") == "drop_hit":
+        return {"type": "stab", "name": "drop hit", "select": {"roles": roles},
+                "params": {"strength": feature.get("strength", 0.8),
+                           "blackout_before_ms":
+                               feature.get("blackout_before_ms", 400)}}
+    if feature.get("type") == "lyric_moment":
+        return {"type": "stab", "name": "lyric moment", "select": {"roles": roles},
+                "respect_roles": True,
+                "params": {"strength": 0.4, "blackout_before_ms": 0,
+                           "hold_ms": 900, "white": False, "shape": "half_sine"}}
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Compile
+# ---------------------------------------------------------------------------
+def _scene_effects(scene: dict) -> list[dict]:
+    """Everything a scene asks for, as clean effects, in running order.
+
+    The base wash comes first and can be turned off (`"base": false`) by
+    a scene that means to leave the room where the last one left it — a
+    hand-written script's way of writing a cross-section fade.
+    """
+    _, depth_default = palettes.SECTION_LEVELS.get(
+        scene.get("kind", "mid"), palettes.SECTION_LEVELS["mid"])
+    out: list[dict] = []
+    if scene.get("base", True):
+        out.append(fx.clean_effect({
+            "type": "wash",
+            "name": f"scene {scene.get('mood') or scene.get('kind') or ''}".strip(),
+            "params": {"brightness": scene.get("brightness", 0.5),
+                       "fade_ms": scene.get("base_fade_ms", 900)},
+        }))
+    for motif in scene.get("motifs") or []:
+        if not isinstance(motif, dict):
+            continue
+        translated = _from_motif(motif, depth_default)
+        if translated is not None:
+            out.append(fx.clean_effect(translated))
+    for effect in scene.get("effects") or []:
+        out.append(fx.clean_effect(effect))
+    return out
 
 
 def compile_show(script: dict, fixtures: list[dict], analysis: dict,
@@ -131,143 +252,97 @@ def compile_show(script: dict, fixtures: list[dict], analysis: dict,
     """Render the script. Raises CompileError on an impossible ask."""
     if not fixtures:
         raise CompileError("the light map has no reachable fixtures")
-    beats = analysis.get("beats") or []
-    intervals = sorted(b - a for a, b in zip(beats, beats[1:])) or [0.5]
-    beat_ms = int(intervals[len(intervals) // 2] * 1000)
-
-    by_role: dict[str, list[dict]] = {}
-    for fixture in fixtures:
-        by_role.setdefault(fixture["role"], []).append(fixture)
-    for role_fixtures in by_role.values():
-        role_fixtures.sort(key=lambda f: (f.get("x", 0.5), f["id"]))
+    grid = fx.Grid(analysis.get("beats"), analysis.get("downbeats"),
+                   analysis.get("bpm"))
+    duration = float((analysis.get("tags") or {}).get("duration")
+                     or ((analysis.get("beats") or [0])[-1] + 5))
 
     out = _Cues(source, _ha_leads())
-    aux_on: set[str] = set()
+    breakdown: list[dict] = []
+    used_aux: set[str] = set()
 
-    for scene in script.get("scenes") or []:
-        start, end = float(scene["start"]), float(scene["end"])
-        palette = scene["palette"]
+    def _run(effect: dict, window: tuple[float, float], palette: list,
+             base: float, where: str) -> None:
+        try:
+            actions = fx.actions_for(effect, fixtures, grid, window=window,
+                                     palette=palette, base_brightness=base)
+        except fx.EffectError as exc:
+            raise CompileError(f"{where}: {exc}") from None
+        render_actions(actions, out)
+        for action in actions:
+            if action["kind"] == "aux" and action["on"]:
+                used_aux.add(action["fixture"]["entity_id"])
+            elif action["kind"] == "aux":
+                used_aux.discard(action["fixture"]["entity_id"])
+        breakdown.append({
+            "where": where, "type": effect["type"],
+            "name": effect.get("name"), **fx.summarise(actions)})
+
+    for index, scene in enumerate(script.get("scenes") or []):
+        if not isinstance(scene, dict):
+            raise CompileError(f"scene {index} is not an object")
+        try:
+            window = (float(scene["start"]), float(scene["end"]))
+        except (KeyError, TypeError, ValueError):
+            raise CompileError(f"scene {index} has no usable start/end") from None
+        palette = scene.get("palette") or [[40, 0.6]]
         base = float(scene.get("brightness", 0.5))
-        scene_beats = _beats_in(beats, start, end)
+        label = scene.get("mood") or scene.get("kind") or f"scene {index}"
+        for effect in _scene_effects(scene):
+            _run(effect, window, palette, base, f"scene {index} ({label})")
 
-        # Scene base: every color fixture gets a palette color, spread so
-        # neighbours differ; roles cap their own brightness.
-        spread = 0
-        for role, role_fixtures in sorted(by_role.items()):
-            rules = palettes.ROLE_RULES[role]
-            if rules["switch"]:
-                wanted_on = any(role in (m.get("roles") or [])
-                                for m in scene.get("motifs") or []
-                                if m["type"] == "aux_on")
-                for fixture in role_fixtures:
-                    entity = fixture["entity_id"]
-                    if wanted_on and entity not in aux_on:
-                        out.ha(fixture, start, "homeassistant.turn_on",
-                               f"{role} on for {scene.get('mood')}")
-                        aux_on.add(entity)
-                    elif not wanted_on and entity in aux_on:
-                        out.ha(fixture, start, "homeassistant.turn_off",
-                               f"{role} off")
-                        aux_on.discard(entity)
-                continue
-            for fixture in role_fixtures:
-                hue, sat = palette[spread % len(palette)]
-                spread += 1
-                out.set_color(fixture, start, hue, sat,
-                              min(base, rules["max_brightness"]),
-                              duration_ms=900, desc=f"scene {scene.get('mood')}")
-
-        # Motifs that ride waveforms.
-        for motif in scene.get("motifs") or []:
-            roles = [r for r in motif.get("roles") or []
-                     if r in by_role and not palettes.ROLE_RULES[r]["switch"]]
-            if motif["type"] == "beat_pulse":
-                depth = float(motif.get("depth", 0.3))
-                for role in roles:
-                    if not palettes.ROLE_RULES[role]["pulses"]:
-                        continue
-                    for i, fixture in enumerate(by_role[role]):
-                        hue, sat = palette[i % len(palette)]
-                        for anchor in scene_beats[::8]:
-                            out.waveform(
-                                fixture, anchor, hue, sat,
-                                min(base + depth,
-                                    palettes.ROLE_RULES[role]["max_brightness"]),
-                                period_ms=beat_ms, cycles=8.0,
-                                desc="beat pulse x8")
-            elif motif["type"] == "sweep":
-                period_beats = int(motif.get("period_beats", 8))
-                sweep_fixtures = [f for role in roles for f in by_role[role]]
-                if not sweep_fixtures or not scene_beats:
-                    continue
-                period_s = beat_ms / 1000.0 * period_beats
-                for i, fixture in enumerate(sweep_fixtures):
-                    phase = (i / len(sweep_fixtures)) * period_s
-                    hue, sat = palette[(i + 1) % len(palette)]
-                    for anchor in scene_beats[::period_beats * 4]:
-                        out.waveform(
-                            fixture, anchor + phase, hue, sat,
-                            min(base + 0.3, 1.0),
-                            period_ms=int(period_s * 1000), cycles=4.0,
-                            desc="sweep")
-            elif motif["type"] == "breathe":
-                period_beats = int(motif.get("period_beats", 16))
-                depth = float(motif.get("depth", 0.15))
-                for role in roles:
-                    cap = palettes.ROLE_RULES[role]["max_brightness"]
-                    for i, fixture in enumerate(by_role[role]):
-                        hue, sat = palette[i % len(palette)]
-                        period_ms = beat_ms * period_beats
-                        length_s = end - start
-                        cycles = max(1.0, length_s * 1000 / period_ms)
-                        out.waveform(fixture, start, hue, sat,
-                                     min(base + depth, cap),
-                                     period_ms=period_ms, cycles=cycles,
-                                     desc="breathe")
-
-    # Features: the moments everything aims at.
-    color_fixtures = [f for f in fixtures
-                      if not palettes.ROLE_RULES[f["role"]]["switch"]]
+    # Moments: an effect pinned to a time rather than to a section. Both
+    # the old `features` list and the new `moments` one land here.
+    moments: list[tuple[float, dict]] = []
     for feature in script.get("features") or []:
-        t = float(feature["t"])
-        if feature.get("type") == "drop_hit":
-            blackout_s = float(feature.get("blackout_before_ms", 400)) / 1000.0
-            strength = float(feature.get("strength", 0.8))
-            for fixture in color_fixtures:
-                out.set_color(fixture, t - blackout_s, 0, 0.0, 0.02,
-                              duration_ms=int(blackout_s * 700),
-                              desc="pre-drop blackout", resend=False)
-                out.waveform(fixture, t, 0, 0.0,
-                             min(1.0, 0.7 + strength * 0.3),
-                             period_ms=max(120, beat_ms // 4), cycles=8.0,
-                             desc="drop hit",
-                             shape=packets.WAVEFORM_PULSE, skew_ratio=-20000)
-            for fixture in fixtures:
-                if palettes.ROLE_RULES[fixture["role"]]["switch"]:
-                    if fixture["entity_id"] not in aux_on:
-                        out.ha(fixture, t, "homeassistant.turn_on", "drop")
-                        aux_on.add(fixture["entity_id"])
-        elif feature.get("type") == "lyric_moment":
-            for i, fixture in enumerate(color_fixtures):
-                out.waveform(fixture, t, 45, 0.15, 1.0,
-                             period_ms=900, cycles=1.0,
-                             desc="lyric moment")
+        if not isinstance(feature, dict):
+            continue
+        translated = _from_feature(feature)
+        if translated is None:
+            continue
+        try:
+            moments.append((float(feature["t"]), translated))
+        except (KeyError, TypeError, ValueError):
+            raise CompileError("a feature has no usable time") from None
+    for moment in script.get("moments") or []:
+        if not isinstance(moment, dict):
+            continue
+        effect = moment.get("effect") if isinstance(moment.get("effect"), dict) \
+            else moment
+        try:
+            at = float(moment.get("t", effect.get("start", 0.0)))
+        except (TypeError, ValueError):
+            raise CompileError("a moment has no usable time") from None
+        moments.append((at, effect))
 
-    # Aux lights end the show off.
-    duration = float((analysis.get("tags") or {}).get("duration")
-                     or (beats[-1] + 5 if beats else 60))
+    default_palette = ((script.get("scenes") or [{}])[0] or {}).get(
+        "palette") or [[40, 0.6]]
+    for at, raw in moments:
+        effect = fx.clean_effect(raw)
+        effect["start"] = at
+        effect.setdefault("end", at + float(
+            effect["params"].get("hold_ms", 800)) / 1000.0 + 1.0)
+        _run(effect, (at, effect["end"]), effect.get("palette")
+             or _palette_at(script, at) or default_palette, 0.5,
+             f"moment {at:.1f}s")
+
+    # Aux lights end the show off. They are switches: nothing else turns
+    # them back off, and a laser left on after the music stops is the one
+    # failure a guest actually notices.
     for fixture in fixtures:
-        if (palettes.ROLE_RULES[fixture["role"]]["switch"]
-                and fixture["entity_id"] in aux_on):
+        if (palettes.ROLE_RULES.get(fixture.get("role"), {}).get("switch")
+                and fixture.get("entity_id") in used_aux):
             out.ha(fixture, duration, "homeassistant.turn_off", "show end")
 
     cues = sorted(out.cues, key=lambda c: c["t"] - c.get("lead_ms", 0) / 1000.0)
-    peak = _peak_rate(cues)
+    peak, worst_serial = _peak_rate(cues)
     if peak > MAX_RATE_HZ:
         raise CompileError(
-            f"compiled to {peak:.0f} msgs/s at some device — over the "
-            f"budget of {MAX_RATE_HZ:.0f}/s (LIFX ceiling is 20). The "
-            "script asks for more motion than the wire can carry.")
+            f"compiled to {peak:.0f} msgs/s at one device "
+            f"({worst_serial}) — over the budget of {MAX_RATE_HZ:.0f}/s "
+            f"(LIFX ceiling is 20). Something is stepping too fast: raise "
+            f"an effect's step_beats, narrow its selection, or drop one of "
+            f"the effects stacked on that light.")
 
     return {
         "version": SHOW_VERSION,
@@ -277,29 +352,80 @@ def compile_show(script: dict, fixtures: list[dict], analysis: dict,
         "compiled_at": time.time(),
         "duration_s": duration,
         "cues": cues,
+        "effects": breakdown,
         "stats": {
             "cues": len(cues),
             "lifx_cues": sum(1 for c in cues if c["ch"] == "lifx"),
             "ha_cues": sum(1 for c in cues if c["ch"] == "ha"),
             "peak_per_device_hz": round(peak, 2),
             "fixtures": len(fixtures),
+            "effects": len(breakdown),
         },
     }
 
 
-def _peak_rate(cues: list[dict]) -> float:
+def _palette_at(script: dict, t: float) -> list | None:
+    """The palette the scene covering `t` is wearing, so a moment that
+    names no colours of its own belongs to the section it lands in."""
+    for scene in script.get("scenes") or []:
+        try:
+            if float(scene["start"]) <= t < float(scene["end"]):
+                return scene.get("palette")
+        except (KeyError, TypeError, ValueError):
+            continue
+    return None
+
+
+def compile_preview(effects: list[dict], fixtures: list[dict], *,
+                    grid: fx.Grid, duration_s: float, palette: list,
+                    base_brightness: float = 0.35,
+                    source: int = 0) -> dict:
+    """One or more effects, on the bench: actions, cues and frames.
+
+    The Effects tab's whole answer in one call — the picture it animates,
+    the packets it would send if you pressed "run it on the lights", and
+    the rate figure that says whether that is allowed.
+    """
+    actions: list[dict] = []
+    breakdown = []
+    for raw in effects:
+        effect = fx.clean_effect(raw)
+        rendered = fx.actions_for(effect, fixtures, grid,
+                                  window=(0.0, duration_s), palette=palette,
+                                  base_brightness=base_brightness)
+        actions.extend(rendered)
+        breakdown.append({"type": effect["type"], "name": effect.get("name"),
+                          **fx.summarise(rendered)})
+    out = _Cues(source, _ha_leads())
+    render_actions(actions, out)
+    cues = sorted(out.cues, key=lambda c: c["t"])
+    peak, worst = _peak_rate(cues)
+    return {
+        "cues": cues,
+        "effects": breakdown,
+        "peak_per_device_hz": round(peak, 2),
+        "over_budget": peak > MAX_RATE_HZ,
+        "busiest_device": worst,
+        "actions": actions,
+    }
+
+
+def _peak_rate(cues: list[dict]) -> tuple[float, str | None]:
     worst = 0.0
+    worst_serial = None
     by_device: dict[str, list[float]] = {}
     for cue in cues:
         if cue.get("ch") != "lifx":
             continue
         sends = 2 if cue.get("resend") else 1
         by_device.setdefault(cue["serial"], []).extend([cue["t"]] * sends)
-    for times in by_device.values():
+    for serial, times in by_device.items():
         times.sort()
         for i in range(len(times)):
             j = i
             while j + 1 < len(times) and times[j + 1] - times[i] < 1.0:
                 j += 1
-            worst = max(worst, float(j - i + 1))
-    return worst
+            if float(j - i + 1) > worst:
+                worst = float(j - i + 1)
+                worst_serial = serial
+    return worst, worst_serial

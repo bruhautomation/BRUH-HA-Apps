@@ -10,7 +10,7 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
-from .const import DOMAIN, SCAN_INTERVAL, STATE_FILE
+from .const import DOMAIN, PARTIES_FILE, SCAN_INTERVAL, STATE_FILE
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -27,13 +27,23 @@ class BrightCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
 
     async def _async_update_data(self) -> dict[str, Any]:
-        def _load() -> dict[str, Any]:
-            path = Path(STATE_FILE)
+        def _read(path_str: str) -> dict[str, Any]:
+            path = Path(path_str)
             if not path.is_file():
                 return {}
             try:
-                return json.loads(path.read_text())
+                data = json.loads(path.read_text())
             except (json.JSONDecodeError, OSError):
+                # A mirror caught mid-write, or an add-on that has not
+                # started yet. Both are "nothing to report this poll",
+                # never an unavailable entity.
                 return {}
+            return data if isinstance(data, dict) else {}
+
+        def _load() -> dict[str, Any]:
+            state = _read(STATE_FILE)
+            parties = _read(PARTIES_FILE).get("parties")
+            return {**state,
+                    "parties": parties if isinstance(parties, list) else []}
 
         return await asyncio.to_thread(_load)

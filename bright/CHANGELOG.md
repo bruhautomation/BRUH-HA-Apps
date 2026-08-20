@@ -5,6 +5,107 @@ All notable changes to the **BRight** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.9.0
+
+The add-on's own name, spelled right — and the thing a light show is
+actually made of, opened up: effects you build, watch, and edit.
+
+### Changed
+- **BRigt is BRight.** The name was misspelled from the first commit. This
+  is a new slug, a new integration domain and a new `/data`, because Home
+  Assistant identifies an add-on by its slug and there is no renaming an
+  installed one: **remove BRigt, install BRight, and set the integration up
+  again from its discovery card.** Music and calibration survive (they live
+  under `/media` and are re-measured per speaker in a minute); analysis and
+  compiled shows are regenerable build output and will rebuild on the next
+  scan. On first start BRight removes the old add-on's deployed
+  `custom_components/brigt`, which cannot work once BRigt is gone, and
+  leaves everything else in `/config` alone.
+- **The mark was redrawn, not retitled.** The lockup is the BRUH ligature,
+  the family gable, and the app's own small caps — and those caps read
+  `IGT`. They are `IGHT` now, drawn to the same rule and laid across the
+  same span, so the roof still sits over its word.
+
+### Added
+- **An effect builder** (`director/effects.py`, the new Effects tab).
+  Fifteen effect types — wash, fade, build, pulse, strobe, chase, sweep,
+  breathe, sparkle, colour cycle, rainbow, theater chase, stab, blackout and
+  aux — each with typed parameters, a fixture selection, a travel order and
+  a beat alignment. **Everything an effect does not select is left exactly
+  as the rest of the show left it**, which is the whole reason for building
+  effects rather than scenes: most of the room is usually meant to stay
+  still.
+- **The map is what an effect travels through.** Order comes from the light
+  map — left to right, out from the middle, reading-order through the zones,
+  or a seeded shuffle that is the same every night. The automatic director
+  reads it too: three or more moving lights get a chase, two get alternation,
+  because a chase across two bulbs is a flicker.
+- **A preview, drawn from the same render as the packets.** The room
+  animated on the floor plan you placed the lights on, plus the whole effect
+  as a strip — one row per light, time left to right — which is the view
+  that says whether a chase actually chases. Both come from ONE render of
+  the effect; a preview built from a second implementation of what an effect
+  does is a preview of the second implementation. Underneath: the cue count
+  and the busiest bulb's messages per second against the budget, before
+  anything reaches a bulb. **Run it on the lights** does exactly that, with
+  no music, and restores the room afterwards.
+- **The show file, opened.** Every show is a script — scenes with palettes
+  and effects, moments pinned to the drops — and the Shows tab now opens the
+  whole thing as text. Edit and **Save & compile** and it goes through the
+  same validator, compiler and per-bulb budget the director's own output
+  does; a script that would flood a bulb is refused with the reason and the
+  show you had is untouched. Every compile also mirrors the script to
+  `/config/.bright/shows/<track>-<hash>.json` for the Home Assistant file
+  editor, and **Reload from file** reads it back. Broken JSON is reported
+  with the parser's own line number.
+- **Every cue names the effect that made it.** `Show the cue list` prints
+  when, which light, and which effect asked for it — the only thread from a
+  packet in a two-thousand-cue timeline back to the line in the script a
+  person wrote.
+- **Saved effects and saved parties.** A preset keeps its *lights* as well as
+  its settings, because "kitchen chase" is the chase and the three lights it
+  runs across. A party keeps the speaker, the folder, the vibe, which lights
+  may join in and what the room looks like afterwards — startable from the
+  panel, from `bright.start_party`, or by voice.
+- **An end scene.** Stopping restores every light to how it was, which is
+  right when the show interrupted an evening and wrong at 1am. A party (or a
+  `bright.stop_show` call) may name a Home Assistant scene to call instead. A
+  scene that fails to run falls back to restoring, so the room never keeps
+  the party colours.
+- **Bulbs added one at a time.** The Light Map has a picker of every
+  discovered bulb that is not on the map yet, with a role and a room chosen
+  as it goes on. "Add discovered bulbs" is still there and is still the right
+  button exactly once — six lamps dropped on the middle of the floor plan
+  named after their serials is not a map.
+- `bright.start_party` (a saved party by name, required, so a typo fails
+  loudly instead of quietly playing the default folder), and `party`,
+  `end_scene` and `shuffle` on `bright.party_mode`. The status sensor now
+  carries `active`, `lights_busy`, `party`, `queue_left`, `cues_sent`/
+  `cues_total` and the list of saved parties, so a dashboard can key on the
+  add-on's own answer rather than on a state string.
+
+### Fixed
+- **The Stop button is gone when nothing is running.** All three of them —
+  Party, Shows and the Lab's sync proof — used to sit there whatever the
+  lights were doing, and a button that is always present is a button nobody
+  trusts. They follow `active` in the conductor's own state now, and the
+  line beside them says what is playing and how far through the queue it is.
+
+### Internal
+- The script language is version 2: scenes carry `effects`, and `moments`
+  pin an effect to an instant. Version 1 scripts still compile — `motifs`
+  and `features` are translated into their effect equivalents on the way in,
+  because scripts are files people keep.
+- One rendering, two consumers: every effect renders to *actions*, the
+  compiler turns actions into packets and `simulate()` turns the same
+  actions into preview frames. Adding an effect type is a catalog entry and
+  one render function; it touches neither the compiler nor the UI, which
+  builds its whole form from the catalog.
+- `tests/manual/bright_demo_panel.py` boots the real panel against a seeded
+  house, and `tests/manual/measure-effects.mjs` drives it in a browser —
+  the preview is a canvas, and "the timeline painted" is not something a
+  server can answer.
+
 ## 0.8.4
 
 Why nothing plays, said out loud — plus folders you can pick, a light map

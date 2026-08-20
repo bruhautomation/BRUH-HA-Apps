@@ -139,6 +139,102 @@ def _load_bridge():
     return module
 
 
+class TestWhoJoinsInAndHowItEnds(unittest.TestCase):
+    """A party may name the lights it uses and the scene it ends with —
+    the two things that turn "run something" into "run my evening"."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self._cal_dir = calibration.CALIBRATION_DIR
+        calibration.CALIBRATION_DIR = Path(self.tmp.name)
+        calibration.add_run("media_player.living", 100.0, method="mic")
+        self._state = conductor_mod.STATE_FILE
+        conductor_mod.STATE_FILE = Path(self.tmp.name) / "state.json"
+        self._play = ha_client.play_media
+        self._call = ha_client.call_service
+        self.calls = []
+        ha_client.play_media = lambda *a, **kw: []
+        ha_client.call_service = lambda domain, service, data=None, **kw: (
+            self.calls.append((domain, service, data)) or [])
+
+    def tearDown(self):
+        calibration.CALIBRATION_DIR = self._cal_dir
+        conductor_mod.STATE_FILE = self._state
+        ha_client.play_media = self._play
+        ha_client.call_service = self._call
+        self.tmp.cleanup()
+
+    def test_only_the_named_lights_are_driven(self):
+        cues = [
+            {"t": 0.0, "ch": "lifx", "serial": "aa" * 6, "lead_ms": 0},
+            {"t": 0.0, "ch": "lifx", "serial": "bb" * 6, "lead_ms": 0},
+            {"t": 0.0, "ch": "ha", "service": "homeassistant.turn_on",
+             "data": {"entity_id": "switch.laser"}, "lead_ms": 0},
+        ]
+        kept = conductor_mod.filter_cues(
+            cues, {"lifx-" + "aa" * 6, "switch.laser"})
+        self.assertEqual(2, len(kept))
+        self.assertNotIn("bb" * 6, [c.get("serial") for c in kept])
+
+    def test_no_restriction_means_every_light(self):
+        cues = [{"t": 0.0, "ch": "lifx", "serial": "aa" * 6, "lead_ms": 0}]
+        self.assertEqual(cues, conductor_mod.filter_cues(cues, None))
+        self.assertEqual(cues, conductor_mod.filter_cues(cues, set()))
+
+    def test_an_end_scene_is_called_instead_of_restoring(self):
+        async def scenario():
+            run = conductor_mod.Conductor(_FakeEngine())
+            run._snapshot = {"aa" * 6: {"hue": 1, "saturation": 2,
+                                        "brightness": 3, "kelvin": 3500}}
+            run.set_end_scene("scene.good_night")
+            await run.stop(restore=True)
+            return run
+
+        run = asyncio.run(scenario())
+        self.assertIn(("scene", "turn_on", {"entity_id": "scene.good_night"}),
+                      self.calls)
+        self.assertEqual({}, run._snapshot,
+                         "the snapshot was applied as well as the scene")
+
+    def test_a_scene_that_fails_falls_back_to_restoring(self):
+        """The room must never keep the party colours because a scene was
+        deleted last week."""
+        def boom(domain, service, data=None, **kw):
+            raise RuntimeError("no such scene")
+
+        ha_client.call_service = boom
+
+        async def scenario():
+            engine = _FakeEngine()
+            run = conductor_mod.Conductor(engine)
+            run._snapshot = {"aa" * 6: {"hue": 1, "saturation": 2,
+                                        "brightness": 3, "kelvin": 3500}}
+            run.set_end_scene("scene.gone")
+            await run.stop(restore=True)
+            return engine
+
+        engine = asyncio.run(scenario())
+        self.assertEqual(["aa" * 6], engine.sent,
+                         "the lights were left where the show put them")
+
+    def test_state_says_when_a_run_is_actually_in_progress(self):
+        async def scenario():
+            run = conductor_mod.Conductor(_FakeEngine())
+            self.assertFalse(run.state["active"])
+            result = await run.start_party(
+                ["hash-one"], media_player="media_player.living",
+                loader=_tiny_show, name="Saturday")
+            self.assertTrue(result["ok"], result)
+            self.assertTrue(run.state["active"])
+            self.assertEqual("Saturday", run.state["party"])
+            await asyncio.wait_for(run._task, 10)
+            return run
+
+        run = asyncio.run(scenario())
+        self.assertFalse(run.state["active"],
+                         "an ended party would still show a Stop button")
+
+
 class TestBridge(unittest.TestCase):
     def setUp(self):
         self.bridge = _load_bridge()

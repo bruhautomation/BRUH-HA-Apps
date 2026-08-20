@@ -263,3 +263,110 @@ select { max-width: 100%; }
 .check-step.warn { border-left: 3px solid var(--warn); }
 .check-fix { margin-top: 4px; color: var(--muted); }
 .check-verdict { font-weight: 600; margin: 8px 0 0; }
+
+/* ---------------------------------------------------------------------------
+   The effect builder
+   ---------------------------------------------------------------------------
+   A form generated from the effect catalog, a fixture list you tick, and a
+   preview that is two views of one render: the room, animated, and the whole
+   effect as a strip you can read at a glance. */
+
+.fx-params {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 10px 14px;
+  margin-top: 10px;
+}
+.fx-param {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.fx-param > span:first-child { color: var(--ink); }
+.fx-param input[type="number"], .fx-param select { min-height: 40px; }
+.fx-param input[type="checkbox"] { width: 22px; height: 22px; }
+
+.fx-flag {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  min-height: 44px;
+  color: var(--muted);
+}
+.fx-flag input { width: 22px; height: 22px; }
+
+.fx-quick { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+
+/* Ticking lights is the most-used control on this tab, so the rows are
+   real targets rather than a dense list — and they wrap into columns so a
+   twelve-bulb house is not twelve lines of scrolling. */
+.fx-fixtures {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 4px 12px;
+}
+.fx-fixture {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 0 8px;
+  border-radius: 8px;
+}
+.fx-fixture:hover { background: rgba(90, 196, 242, 0.08); }
+.fx-fixture input { width: 20px; height: 20px; flex: none; }
+.fx-fixture.unreachable span { color: var(--muted); }
+
+/* The preview floor is the light map's floor without the dragging: same
+   picture, so what you design and what you placed are visibly the same
+   room. */
+.preview-floor { height: 260px; touch-action: auto; }
+.preview-dot {
+  background: #0b1016;
+  border-color: rgba(255, 255, 255, 0.25);
+  cursor: default;
+  transition: background 80ms linear, box-shadow 80ms linear;
+}
+
+/* One row per light, time running left to right. The animation shows what
+   an instant looks like; this shows the shape of the whole effect, which is
+   the part you are actually judging. */
+.fx-timeline {
+  display: block;
+  width: 100%;
+  margin-top: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+}
+.fx-scrub { width: 100%; margin-top: 8px; min-height: 44px; }
+.cal-status.warn { color: var(--warn); }
+
+/* The show file. A monospaced editor big enough to see a scene without
+   scrolling, and it may grow — a show script is a document. */
+.script-editor {
+  width: 100%;
+  min-height: 320px;
+  margin-top: 10px;
+  padding: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  resize: vertical;
+  tab-size: 2;
+}
+
+.party-form {
+  margin: 10px 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+}

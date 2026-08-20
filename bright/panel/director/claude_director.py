@@ -45,30 +45,65 @@ _SCHEMA_CONTRACT = """\
 Answer with ONE JSON object and nothing else — no prose, no code fences.
 
 {
-  "version": 1,
+  "version": 2,
   "scenes": [
     {
       "start": <seconds>, "end": <seconds>,   // cover the track, in order
       "mood": "<one word>",
       "palette": [[<hue 0-360>, <saturation 0-1>], ...],  // 2-4 pairs
       "brightness": <0-1>,                    // the scene's base level
-      "motifs": [
-        {"type": "beat_pulse", "roles": [...], "depth": <0-1>},
-        {"type": "sweep", "roles": [...], "period_beats": <int>},
-        {"type": "breathe", "roles": [...], "period_beats": <int>, "depth": <0-1>},
-        {"type": "aux_on", "roles": ["party"|"laser"]}
-      ]
+      "effects": [ <effect>, ... ]            // what MOVES in this scene
     }
   ],
-  "features": [
-    {"t": <seconds>, "type": "drop_hit", "roles": [...], "strength": <0-1>,
-     "blackout_before_ms": <int>},
-    {"t": <seconds>, "type": "lyric_moment", "roles": [...]}
+  "moments": [
+    {"t": <seconds>, "effect": <effect>}      // one hit, at one instant
   ]
 }
 
-Motif types and feature types are EXACTLY the ones shown. Roles may only
-be roles the fixture list below actually has."""
+An <effect> is:
+
+{
+  "type": "<one of the types below>",
+  "name": "<short label, shown on every cue it makes>",
+  "select": {"roles": [...], "ids": [...], "zones": [...]},  // WHO it drives
+  "order": "x" | "-x" | "y" | "-y" | "center_out" | "edges_in" | "snake"
+           | "zone" | "random",               // the path it travels
+  "params": { ... }                           // see each type
+}
+
+`select` decides which lights the effect owns; every light it does not
+name is left exactly as the scene put it. An empty `select` means all of
+them. Only use roles the fixture list below actually has.
+
+TYPES and their params:
+%s
+
+Types and parameter names are EXACTLY as listed. Out-of-range numbers are
+clamped rather than rejected, and any parameter you leave out takes its
+default — write the two or three that matter and skip the rest."""
+
+
+def _catalog_lines() -> str:
+    """The effect vocabulary, generated from the catalog itself.
+
+    Written out rather than summarised because the model has to answer in
+    this language exactly, and a hand-maintained copy of the parameter
+    list is a second answer that drifts the first time an effect gains a
+    parameter."""
+    from . import effects as fx
+
+    lines = []
+    for name, spec in fx.CATALOG.items():
+        params = ", ".join(
+            f"{pname} ({rule['kind']}"
+            + (f" {rule['min']}..{rule['max']}" if "min" in rule else "")
+            + (f" one of {'|'.join(rule['options'])}" if "options" in rule else "")
+            + f", default {rule['default']})"
+            for pname, rule in spec["params"].items())
+        lines.append(f"  {name} [{spec['channel']}] — {spec['blurb']}\n"
+                     f"      {params}")
+    return "\n".join(lines)
+
 
 _DIRECTION = """\
 You are the lighting director for a home light show. Design the show for
@@ -83,6 +118,14 @@ Principles:
 - Candles are ambience: warm, low, never flashing. Lamps and downlights
   carry the beat. Strips carry motion (sweeps). Party lights and lasers
   are aux switches — save them for peaks and drops or they mean nothing.
+- The fixture list gives every light an x position, left to right. Use it:
+  a chase, a sweep or a build travels through the room in the order you
+  choose, and "left to right" or "out from the middle" is a real choice
+  about the room the lights are actually in. With fewer than three moving
+  lights a chase is a flicker — alternate them instead (theater).
+- Effects can own different parts of the room at once. A chase across the
+  lamps while the strip holds a wash is one scene with two effects and
+  two selections, and it reads far better than one effect over everything.
 - Pick palettes that fit the song's feel, and CHANGE them meaningfully
   between sections — a chorus should look different from its verse.
 - If synced lyrics are given, choose up to 4 lyric_moment features at the
@@ -96,7 +139,7 @@ def _digest(analysis: dict, fixtures: list[dict],
     lines = [
         _DIRECTION,
         "",
-        _SCHEMA_CONTRACT,
+        _SCHEMA_CONTRACT % _catalog_lines(),
         "",
     ]
     if vibe:

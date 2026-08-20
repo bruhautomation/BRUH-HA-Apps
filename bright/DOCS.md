@@ -105,9 +105,81 @@ floor all highlight together, and the selected light can be re-roled or
 removed right there. Every dot carries its name on the map — you never drag
 an anonymous circle.
 
-Bulbs discovered in the Lab arrive with **Add discovered bulbs** (it never
-overwrites a light you have already placed). Party lights and lasers on
+Two ways to get bulbs onto the map, and they are for different moments.
+The **picker** below the floor lists every discovered bulb that is not on the
+map yet: choose one, give it a role and a room, add it. That is the one to
+use after the first run — six bulbs dropped on the middle of the floor
+plan named after their serials is not a map. **Add discovered bulbs** adds
+every unmapped bulb at once, which is the right button exactly once. Neither
+ever overwrites a light you have already placed. Party lights and lasers on
 switches are added by entity with **Add a switch light…**.
+
+The map is not decoration: it is what an effect travels *through*. A chase
+ordered by `x` runs left to right across the room you drew, `center_out`
+starts in the middle, and `zone` walks room by room. Getting the positions
+roughly right is what makes the automatic shows look deliberate.
+
+### Effects — what the lights actually do
+
+An **effect** is a thing some of your lights do for a stretch of music: a
+chase across the room, a build into the drop, a strobe on the last four bars.
+It is the unit everything else in BRight is made of — the automatic director
+writes effects, this tab builds them by hand, and a show script is a list of
+them. There is no private vocabulary the automatic show can use and you
+cannot.
+
+Every effect has four parts:
+
+1. **What it does** — one of the types below, with its own parameters.
+2. **Which lights it owns** — ticked individually, or by role. *Everything
+   you do not tick is left exactly as the rest of the show left it.* That is
+   the whole reason for building effects rather than scenes: most of the room
+   is usually meant to stay still.
+3. **How it travels** — the order it moves through those lights, taken from
+   the Light Map: `x` (left to right), `-x`, `y`, `center_out`, `edges_in`,
+   `snake` (reading order through the room), `zone`, `random` (seeded, so it
+   is the same every night), or `listed`.
+4. **What it locks to** — `beat`, `downbeat`, or plain `time`. Everything
+   that steps, steps on the beat grid, which is why a chase stays with the
+   music when the tempo is not a round number.
+
+| Effect | What it is for |
+|---|---|
+| `wash` | Hold a colour. The still ground everything else moves against. |
+| `fade` | Travel from one level to another across the window — a section transition that reads as intent rather than a cut. |
+| `build` | Tension: climb in stages, optionally lighting one more fixture per stage, so the drop has somewhere to land. |
+| `pulse` | The beat itself. One packet carries eight beats of motion. |
+| `strobe` | Hard flashing for a short burst — one packet per bulb however fast it runs. |
+| `chase` | Jump between bulbs in order. Width and bounce make it a runner, a comet or a ping-pong. |
+| `sweep` | One wave travelling across the room, phase-shifted by where each light stands. |
+| `breathe` | Slow rise and fall under everything else. |
+| `sparkle` | A few random lights catch each beat. Texture, not pattern. |
+| `colour_cycle` | Rotate the palette through the lights — motion without brightness. |
+| `rainbow` | Hue spread across the room, turning slowly. |
+| `theater` | Alternating groups answering each other. |
+| `stab` | One hit, at one moment. |
+| `blackout` | Take the selected lights down. Silence is a lighting cue. |
+| `aux` | Party lights and lasers: on, off, or flashed on the beat. |
+
+**Preview** renders the effect and shows it two ways: the room, animated on
+the same floor plan you placed the lights on, and the whole effect as a
+strip — one row per light, time running left to right — which is the view
+that tells you whether a chase actually chases. Both are drawn from the same
+render the compiler turns into packets, so a preview that looks wrong is an
+effect that is wrong. Scrub with the slider; play and pause with ▶.
+
+Underneath, the price: how many cues it costs and the busiest bulb's messages
+per second against the 18/s budget. **Run it on the lights** does exactly
+that — no music, the real bulbs, restored afterwards.
+
+**Keep role manners** (on by default) is what stops a candle strobing and
+holds each light under its role's brightness ceiling. Turn it off when an
+effect means to own a fixture outright.
+
+Saved effects keep their **lights** as well as their settings, because
+"kitchen chase" is the chase *and* the three lights it runs across — which is
+the part that took the time. **Put it in a show** drops the effect into one
+scene of one track's show and recompiles.
 
 ### Library — the music, analyzed ahead of time
 
@@ -127,12 +199,68 @@ folders is one track.
   (analysis is CPU-bound; two at once just thrash), reporting progress per
   track. One bad file is reported and skipped, never the end of the folder.
 
-### Shows — compiled choreography
+### Shows — compiled choreography, and the file it comes from
 
 One show per track, compiled ahead of time so playback is nothing but a clock
 and a cue list. Compile after changing the Light Map — the show is built for
 the lights that existed when it was compiled. Playing needs a calibrated
 speaker.
+
+**The show file.** Select a track and the whole script opens as text: scenes
+with their palettes, brightness and effects, and moments pinned to the drops.
+This is the entire show — there is nothing else. Edit it here and press
+**Save & compile**, and it goes through exactly the same door the director's
+own output goes through: validated, compiled, and checked against the
+per-bulb message budget before anything is kept. A script that would flood a
+bulb is refused with the reason and the show you had is untouched.
+
+Every compile also writes the script to
+`/config/.bright/shows/<track>-<hash>.json`, where the Home Assistant file
+editor can open it. Edit it there and press **Reload from file**. The mirror
+is a copy, not the record — editing it changes nothing until you import it,
+which is deliberate: a half-typed JSON file being picked up by a party at
+11pm is not a feature. Broken JSON is reported with the parser's own
+complaint, line and all.
+
+**Show the cue list** prints the compiled timeline: when, which light, and
+which effect asked for it. Every cue carries the name of the effect that
+produced it, which is what makes a two-thousand-cue timeline readable.
+
+A hand-written script is a first-class show. The minimum is a scene with a
+window, a palette and a list of effects:
+
+```json
+{
+  "version": 2,
+  "palette_name": "club",
+  "scenes": [
+    {
+      "start": 0, "end": 48, "mood": "roll", "kind": "mid",
+      "palette": [[200, 0.9], [300, 0.8]],
+      "brightness": 0.5,
+      "effects": [
+        {"type": "pulse", "name": "beat", "select": {"roles": ["lamp"]},
+         "params": {"every_beats": 1, "depth": 0.35}},
+        {"type": "chase", "name": "kitchen runner", "order": "x",
+         "select": {"zones": ["kitchen"]},
+         "params": {"step_beats": 0.5, "width": 2, "bounce": true}}
+      ]
+    }
+  ],
+  "moments": [
+    {"t": 48, "effect": {"type": "stab", "name": "drop",
+                         "select": {"roles": ["lamp", "laser"]},
+                         "params": {"strength": 0.9}}}
+  ]
+}
+```
+
+Parameters are forgiving on purpose: anything you leave out takes its
+default, and anything out of range is clamped rather than rejected. A show
+that refused to compile over `depth: 1.2` would be a worse tool than one that
+reads it as `1`. Set `"base": false` on a scene to stop it washing every
+light at its start — that is how a scene is written to leave the room where
+the last one left it.
 
 ### Calibrate — how long your speaker takes
 
@@ -172,6 +300,29 @@ if it did. BRight creates that folder at startup.
 ### Party — the sentence the add-on was built for
 
 Pick a calibrated player, type a vibe if you want one, press the button.
+The Stop button is not there when nothing is running: a button that is
+always present is a button nobody trusts, so it renders only while the
+add-on says a run is actually in progress, and the line beside it says what
+is playing and how far through the queue it is.
+
+**Saved parties** are the evening set up once — the speaker, the folder, the
+vibe, which lights may join in, and what the room should look like when it
+stops. Start one from the list, from an automation with
+`bright.start_party`, or by voice. Anything given at the time still wins
+over what the party saved, so "the usual thing, but on the kitchen speaker"
+works.
+
+The **end scene** is the part that is not obvious. Stopping normally restores
+every light to what it was before the show started, which is right when the
+show interrupted an evening and wrong at 1am — what people want then is
+"everything off" or "night lights", which is a Home Assistant scene they
+already have. Name one and stopping calls it *instead* of restoring. A scene
+that fails to run falls back to restoring, so the room never keeps the party
+colours.
+
+A party that names lights uses only those; everything else on the map is left
+alone for the night.
+
 Every analyzed track in the scanned folders, shuffled, each played with its
 own show and its own clock anchor — playlist sync never depends on predicting
 a track boundary through an AirPlay buffer. While one track plays, the next
@@ -242,6 +393,21 @@ Every analyzed track, shuffled, each with its own show.
 | `media_player` | no | Defaults to the most recently calibrated speaker |
 | `folder` | no | One folder under `/media` for this party; defaults to every scanned folder |
 | `vibe` | no | A steer for the Claude director, e.g. `chill`, `rave`, `halloween` |
+| `party` | no | The name of a saved party; its settings fill in anything not given here |
+| `end_scene` | no | A scene to call when it stops, instead of restoring the lights |
+| `shuffle` | no | Play the folder in order instead, with `false` |
+
+### `bright.start_party`
+
+Run a saved party by name. The name is **required** here, which is what makes
+an automation fail loudly on a typo instead of quietly playing the default
+folder.
+
+| Field | Required | Meaning |
+|---|---|---|
+| `party` | yes | The saved party's name, as it appears in the Party tab |
+| `media_player` | no | Override the speaker this party normally plays on |
+| `end_scene` | no | Override the scene called when it stops |
 
 ### `bright.start_show`
 
@@ -252,7 +418,14 @@ Every analyzed track, shuffled, each with its own show.
 
 ### `bright.stop_show`
 
-Stops the show and restores every light to the state it was in beforehand.
+Stops the show and puts the room back.
+
+| Field | Required | Meaning |
+|---|---|---|
+| `scene` | no | Call this scene instead of restoring the lights |
+
+With no `scene`, every light goes back to the state it was in beforehand —
+unless the running party named one, which is then used.
 
 A service that cannot do what you asked **fails with the reason** — "no
 analyzed tracks in /media/music — run the Library tab first" appears in the
@@ -271,12 +444,46 @@ automation:
           vibe: "rave"
 ```
 
+```yaml
+automation:
+  - alias: "Saturday night, and lights out afterwards"
+    triggers:
+      - trigger: conversation
+        command: "start saturday night"
+    actions:
+      - action: bright.start_party
+        data:
+          party: "Saturday Night"
+```
+
 ### Entities
 
 The integration adds a show-status sensor reporting what is playing, the
 media player it is on, and the position within the track. A show that failed
 to start reports `error` with the reason in its attributes rather than
 claiming to be running.
+
+Its attributes are what a dashboard should key on rather than the state
+string: `active` is the add-on's own answer to "is a run in progress" and
+`lights_busy` to "are cues still going out", so a template button can offer
+Stop exactly when the panel does. `party` names the running party,
+`queue_left` counts the tracks after this one, `cues_sent`/`cues_total`
+track progress, and `parties` lists every saved party's name.
+
+```yaml
+type: button
+name: Stop the party
+tap_action:
+  action: perform-action
+  perform_action: bright.stop_show
+  data:
+    scene: scene.good_night
+visibility:
+  - condition: state
+    entity: sensor.bright_show_status
+    attribute: active
+    state: true
+```
 
 ---
 
@@ -409,6 +616,9 @@ Starting BRight panel on 0.0.0.0:8124
 | `/data/calibration/` | One profile per speaker |
 | `/data/light-map.json` | The lights, their roles and positions |
 | `/data/music-folders.json` | Folders ticked in the Library tab |
+| `/data/effect-presets.json` | Effects saved in the Effects tab |
+| `/data/parties.json` | Saved parties |
+| `/config/.bright/shows/` | Every show script, mirrored where you can edit it |
 
 Everything under `/data/shows` and `/data/cache` is regenerable build output
 and is excluded from Home Assistant backups deliberately — a backup that

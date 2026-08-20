@@ -48,4 +48,18 @@ class BrightShowStatusSensor(CoordinatorEntity[BrightCoordinator], SensorEntity)
             "track": data.get("track"),
             "media_player": data.get("media_player"),
             "position_s": data.get("position_s"),
+            # `active` is the add-on's own answer to "is a run in
+            # progress", and `lights_busy` to "are cues still going out".
+            # A template that wants to offer a Stop button reads these
+            # rather than comparing the state string to a list of the
+            # words that happen to mean running today.
+            "active": bool(data.get("active")),
+            "lights_busy": bool(data.get("lights_busy")),
+            "party": data.get("party"),
+            "queue_left": data.get("queue_left"),
+            "cues_sent": data.get("cues_sent"),
+            "cues_total": data.get("cues_total"),
+            "parties": data.get("parties") or [],
+            "playback_warning": data.get("playback_warning"),
+            "error": data.get("error"),
         }

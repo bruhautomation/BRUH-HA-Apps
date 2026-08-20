@@ -43,6 +43,12 @@ class Conductor:
     """Owns the current run. One at a time — a second `start` stops the
     first, because two shows on one set of lights is neither."""
 
+    # Declared on the class as well as set in __init__: "no end scene" is
+    # the meaning of an unset one, and a default that only exists inside
+    # __init__ makes that true of a fully built conductor and of nothing
+    # else.
+    _end_scene: str | None = None
+
     def __init__(self, engine) -> None:
         self.engine = engine
         self.clock = ShowClock()
@@ -50,12 +56,19 @@ class Conductor:
         self._poller: asyncio.Task | None = None
         self._verify: asyncio.Task | None = None
         self._snapshot: dict[str, dict] = {}
+        self._end_scene: str | None = None
         self.state: dict[str, Any] = {"status": "idle"}
         self._write_state()
 
     # -- state the bridge mirrors to HA -------------------------------------
     def _write_state(self, **extra) -> None:
-        self.state = {"status": "idle", **extra} if extra else {"status": "idle"}
+        # `active` is what the panel hides its Stop button on, and what the
+        # integration's binary sensor reports. It is written here, beside
+        # the status, so "idle" can never arrive still claiming to be
+        # running — the two used to be a status string and a guess.
+        base = {"status": "idle", "active": False, "lights_busy": False,
+                "cues_sent": 0, "cues_total": 0}
+        self.state = {**base, **extra}
         try:
             atomic_write.write_json(STATE_FILE, self.state)
         except OSError:
@@ -83,8 +96,10 @@ class Conductor:
         if isinstance(result, dict) and result.get("error"):
             raise RuntimeError(result["error"])
         self.clock.anchor(play_call, offset_ms / 1000.0)
-        self._update_state(status=status, track=title,
-                           media_player=media_player, position_s=0.0)
+        self._update_state(status=status, track=title, active=True,
+                           lights_busy=True, cues_total=len(cues),
+                           cues_sent=0, media_player=media_player,
+                           position_s=0.0)
         # Home Assistant accepting the command is not the speaker playing:
         # it resolves the media, signs a URL and hands it over, and the
         # speaker fetches it afterwards, on its own, over the network. The
@@ -128,8 +143,9 @@ class Conductor:
 
     async def start(self, cues: list[dict], *, media_player: str,
                     media_content_id: str, title: str,
-                    duration_s: float) -> dict:
+                    duration_s: float, end_scene: str | None = None) -> dict:
         await self.stop(restore=True)
+        self.set_end_scene(end_scene)
         offset_ms = self._calibrated_offset(media_player)
         if offset_ms is None:
             return {"ok": False,
@@ -167,10 +183,12 @@ class Conductor:
             return
         log.error("show stopped: %s", error)
         self._update_state(status="error", error=str(error))
-        asyncio.get_running_loop().create_task(self._restore_snapshot())
+        asyncio.get_running_loop().create_task(self._restore())
 
     async def start_party(self, queue: list[str], *, media_player: str,
-                          loader, preparer=None) -> dict:
+                          loader, preparer=None, name: str | None = None,
+                          end_scene: str | None = None,
+                          allow: set[str] | None = None) -> dict:
         """The autonomous evening: a queue of track hashes, each played
         with its own show and its own anchor. `loader(hash)` returns the
         playable show; `preparer(hash)` (optional, blocking — run in a
@@ -178,6 +196,7 @@ class Conductor:
         plays, so a Claude-designed show is ready by the time it's needed.
         """
         await self.stop(restore=True)
+        self.set_end_scene(end_scene)
         offset_ms = self._calibrated_offset(media_player)
         if offset_ms is None:
             return {"ok": False,
@@ -197,10 +216,13 @@ class Conductor:
                     # simply plays its floor show.
                     asyncio.create_task(
                         asyncio.to_thread(preparer, queue[index + 1]))
-                self._update_state(status="party", queue_left=len(queue) - index)
+                self._update_state(status="party", active=True,
+                                   party=name,
+                                   queue_left=len(queue) - index)
                 try:
                     await self._play_one(
-                        show["cues"], media_player=media_player,
+                        filter_cues(show["cues"], allow),
+                        media_player=media_player,
                         media_content_id=show["media_content_id"],
                         title=show["title"],
                         duration_s=show["duration_s"],
@@ -215,9 +237,67 @@ class Conductor:
             self._write_state()
 
         self._write_state()
-        self._update_state(status="party", queue_left=len(queue))
+        self._update_state(status="party", active=True, party=name,
+                           queue_left=len(queue))
         self._task = asyncio.create_task(_party())
-        return {"ok": True, "queue": len(queue), "offset_ms": offset_ms}
+        return {"ok": True, "queue": len(queue), "offset_ms": offset_ms,
+                "party": name}
+
+    async def run_cues(self, cues: list[dict], *, duration_s: float,
+                       label: str) -> dict:
+        """A cue list with no music behind it — the Effects tab's "run it
+        on the real lights".
+
+        Same loop, same snapshot-and-restore, anchored at now instead of
+        at a play command. A preview on a screen is a drawing of what an
+        effect should do; this is the effect, on the bulbs in the room,
+        which is the only place some of these questions get answered.
+        """
+        await self.stop(restore=True)
+        self.set_end_scene(None)
+        if not cues:
+            return {"ok": False, "error": "that effect drives no lights — "
+                                          "check its selection"}
+        await self.engine.start()
+        await self._take_snapshot(cues)
+        self.clock.anchor(time.monotonic(), 0.0)
+        self._write_state()
+        self._update_state(status="preview", active=True, lights_busy=True,
+                           track=label, cues_total=len(cues), cues_sent=0)
+        self._task = asyncio.create_task(
+            self._run(sorted(cues, key=self._send_time), duration_s))
+        self._task.add_done_callback(self._show_ended)
+        return {"ok": True, "cues": len(cues), "duration_s": duration_s}
+
+    def set_end_scene(self, entity_id: str | None) -> None:
+        """The scene to call instead of restoring, for the run in progress.
+
+        Restoring puts every light back exactly as the show found it,
+        which is right when the show interrupted an evening and wrong
+        when it *was* the evening: at 1am nobody wants the lounge back at
+        4pm's brightness. A party that names a scene gets that scene, and
+        the snapshot is dropped rather than applied afterwards — two
+        answers to "put the room back" would fight, and the configured
+        one wins.
+        """
+        self._end_scene = entity_id or None
+
+    async def _restore(self) -> None:
+        if self._end_scene:
+            entity = self._end_scene
+            try:
+                await asyncio.to_thread(ha_client.call_service, "scene",
+                                        "turn_on", {"entity_id": entity})
+                self._snapshot = {}
+                self._update_state(ended_with_scene=entity)
+                return
+            except Exception as exc:  # noqa: BLE001 — fall back to restoring
+                # A scene that cannot be called must not leave the room in
+                # party colours: the snapshot is still here, so use it and
+                # say what happened.
+                log.warning("end scene %s failed (%s); restoring the "
+                            "lights instead", entity, exc)
+        await self._restore_snapshot()
 
     async def stop(self, restore: bool = True) -> dict:
         for task in (self._task, self._poller, self._verify):
@@ -228,8 +308,8 @@ class Conductor:
                 except (asyncio.CancelledError, Exception):  # noqa: BLE001
                     pass
         self._task = self._poller = self._verify = None
-        if restore and self._snapshot:
-            await self._restore_snapshot()
+        if restore and (self._snapshot or self._end_scene):
+            await self._restore()
         self._write_state()
         return {"ok": True}
 
@@ -240,7 +320,7 @@ class Conductor:
 
     async def _run(self, cues: list[dict], duration_s: float) -> None:
         try:
-            for cue in cues:
+            for index, cue in enumerate(cues):
                 wait = self.clock.sleep_needed(self._send_time(cue))
                 if wait > 0:
                     await asyncio.sleep(wait)
@@ -248,12 +328,18 @@ class Conductor:
                     await self._dispatch(cue)
                 except Exception as exc:  # noqa: BLE001 — one cue, not the show
                     log.warning("cue at %.2fs failed: %s", cue["t"], exc)
-                self._update_state(position_s=round(max(0.0, self.clock.now()), 1))
+                self._update_state(cues_sent=index + 1,
+                                   position_s=round(max(0.0, self.clock.now()), 1))
+            # The cue list is spent: the lights are holding whatever the
+            # last cue left them at until the track ends. That is not the
+            # same as running, and a Stop button is a different offer in
+            # each case — which is what `lights_busy` is for.
+            self._update_state(lights_busy=False)
             # Let the track play out, then put the room back.
             tail = self.clock.sleep_needed(duration_s)
             if tail > 0:
                 await asyncio.sleep(tail)
-            await self._restore_snapshot()
+            await self._restore()
             self._write_state()
         except asyncio.CancelledError:
             raise
@@ -401,6 +487,24 @@ def peak_rate_per_device(cues: list[dict]) -> float:
                 j += 1
             worst = max(worst, float(j - i + 1))
     return worst
+
+
+def filter_cues(cues: list[dict], allow: set[str] | None) -> list[dict]:
+    """Only the cues for lights this run is allowed to touch.
+
+    A party can name the lights it may use, and everything else stays out
+    of it — the bedroom does not join in because the show was compiled
+    from the whole map. Filtering here rather than at compile time is
+    deliberate: one compiled show serves every party, and a show cached
+    per fixture-subset would be a cache keyed on something nobody can
+    see. `None` means no restriction, which is the usual case.
+    """
+    if not allow:
+        return cues
+    return [cue for cue in cues
+            if (cue.get("serial") or cue.get("data", {}).get("entity_id")
+                or "") in allow
+            or f"lifx-{cue.get('serial', '')}" in allow]
 
 
 def load_show_for_track(hash_hex: str, devices: dict[str, dict],

@@ -62,6 +62,21 @@ def build_show(hash_hex: str, devices: dict[str, dict], source: int,
     if script is None:
         script = choreographer.write_script(analysis, fixtures)
 
+    return compile_and_save(hash_hex, script, analysis, fixtures, source)
+
+
+def compile_and_save(hash_hex: str, script: dict, analysis: dict,
+                     fixtures: list[dict], source: int) -> dict:
+    """Compile a script that already exists and persist both halves.
+
+    The tier ladder above chooses a script; this is what happens to one
+    afterwards — and it is also the whole of "save my edits", which is
+    why it is a function rather than three lines inside build_show. A
+    hand-edited script goes through the same compiler, the same rate
+    budget and the same mirror as one the director wrote, because a
+    script is a script whoever typed it.
+    """
     show = compiler.compile_show(script, fixtures, analysis, source)
-    library.save_show(hash_hex, script, show)
+    title = (analysis.get("tags") or {}).get("title") or ""
+    library.save_show(hash_hex, script, show, title)
     return show

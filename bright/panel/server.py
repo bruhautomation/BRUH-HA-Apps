@@ -67,11 +67,17 @@ from calibrate import correlate, reference  # noqa: E402
 from lifx import engine as lifx_engine  # noqa: E402
 from director import build as director_build  # noqa: E402
 from director import claude_director  # noqa: E402
+from director import choreographer  # noqa: E402
+from director import compiler  # noqa: E402
+from director import palettes as director_palettes  # noqa: E402
 from director.compiler import CompileError  # noqa: E402
 from playback import conductor as conductor_mod  # noqa: E402
+from director import effects as fx  # noqa: E402
 from stores import calibration as calibration_store  # noqa: E402
+from stores import effect_presets  # noqa: E402
 from stores import folders as folders_store  # noqa: E402
 from stores import light_map  # noqa: E402
+from stores import parties as parties_store  # noqa: E402
 
 STATIC = HERE
 DATA_DIR = Path(os.environ.get("BRIGHT_STATE", "/data"))
@@ -83,6 +89,10 @@ OPTIONS_FILE = Path(os.environ.get("BRIGHT_OPTIONS", "/data/options.json"))
 # add-on hands a media player has to live under it — the folders it scans
 # for music, and the calibration click track it writes.
 MEDIA_DIR = Path(os.environ.get("BRIGHT_MEDIA", "/media"))
+# The one directory Home Assistant Core and this add-on can both see.
+# /data is ours alone, so anything Core needs is mirrored here — derived,
+# never read back.
+SHARED_DIR = Path(os.environ.get("BRIGHT_SHARED", "/config/.bright"))
 ADDON_VERSION = os.environ.get("ADDON_VERSION", "dev")
 SUPERVISOR_API_URL = os.environ.get("SUPERVISOR_API_URL", "http://supervisor")
 SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
@@ -740,6 +750,289 @@ async def h_map_import_lifx(request: web.Request) -> web.Response:
     return web.json_response({"added": added})
 
 
+async def h_map_candidates(request: web.Request) -> web.Response:
+    """Discovered bulbs that are not on the map yet.
+
+    "Add discovered bulbs" adds every one of them at once, which is the
+    right button for a first run and the wrong one after that: it drops
+    six lamps on the middle of the floor plan named after their serials.
+    This is what the picker reads — one bulb at a time, with a role and a
+    zone chosen as it goes on.
+    """
+    known = {f.get("serial") for f in light_map.load()["fixtures"]
+             if f.get("kind") == "lifx"}
+    candidates = [
+        {"serial": serial,
+         "label": device.get("label") or serial,
+         "ip": device.get("ip"),
+         "rtt": device.get("rtt")}
+        for serial, device in sorted(ENGINE.devices.items())
+        if serial not in known
+    ]
+    return web.json_response({"candidates": candidates,
+                             "discovered": len(ENGINE.devices),
+                             "roles": list(light_map.ROLES)})
+
+
+async def h_map_add_lifx(request: web.Request) -> web.Response:
+    """Put one discovered bulb on the map, where the picker chose."""
+    body = await _json_body(request)
+    serial = str(body.get("serial", "")).lower()
+    device = ENGINE.devices.get(serial)
+    if device is None:
+        return web.json_response(
+            {"error": "that bulb has not been discovered — run Lab "
+                      "discovery first"}, status=404)
+    try:
+        fixture = light_map.upsert({
+            "kind": "lifx",
+            "serial": serial,
+            "label": str(body.get("label") or device.get("label") or serial),
+            "role": body.get("role", "lamp"),
+            "zone": body.get("zone", ""),
+            "x": _number(body, "x", 0.5, 0.0, 1.0),
+            "y": _number(body, "y", 0.5, 0.0, 1.0),
+        })
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    return web.json_response({"fixture": fixture})
+
+
+# ---------------------------------------------------------------------------
+# Effects — the builder, its preview, and the presets it saves
+# ---------------------------------------------------------------------------
+def _map_fixtures() -> list[dict]:
+    """Every fixture on the map, annotated with whether it can be reached.
+
+    The builder works on the map, not on what answered a broadcast three
+    minutes ago: an effect is designed for a room, and a bulb being off
+    right now is not a reason to leave it out of the design. Reachability
+    rides along so the preview can say which dots are hypothetical.
+    """
+    devices = ENGINE.devices
+    out = []
+    for fixture in light_map.load()["fixtures"]:
+        if fixture.get("kind") == "lifx":
+            device = devices.get(fixture.get("serial", ""))
+            out.append({**fixture, "reachable": device is not None,
+                        "rtt": (device or {}).get("rtt")})
+        else:
+            out.append({**fixture, "reachable": True})
+    return out
+
+
+def _preview_grid(body: dict) -> fx.Grid:
+    """A beat grid from a BPM, because the bench has no track.
+
+    Every effect that steps does so on beats, and a preview that ran on
+    wall-clock seconds would be a preview of something the show never
+    does. The BPM box in the builder is that grid.
+    """
+    bpm = _number(body, "bpm", 120, 30, 300)
+    duration = _number(body, "duration_s", 12, 2, 60)
+    beat_s = 60.0 / bpm
+    beats = [round(i * beat_s, 4) for i in range(int(duration / beat_s) + 2)]
+    return fx.Grid(beats, beats[::4], bpm)
+
+
+def _preview_palette(body: dict) -> list:
+    palette = body.get("palette")
+    cleaned = []
+    if isinstance(palette, list):
+        for pair in palette:
+            if isinstance(pair, (list, tuple)) and len(pair) == 2:
+                try:
+                    cleaned.append([float(pair[0]) % 360.0,
+                                    min(1.0, max(0.0, float(pair[1])))])
+                except (TypeError, ValueError):
+                    continue
+    if cleaned:
+        return cleaned
+    name = str(body.get("palette_name", "") or "")
+    for entry_name, entry in director_palettes.PALETTES:
+        if entry_name == name:
+            return [list(pair) for pair in entry]
+    return [list(pair) for pair in director_palettes.PALETTES[3][1]]
+
+
+def _effects_from(body: dict) -> list[dict]:
+    raw = body.get("effects")
+    if isinstance(raw, dict):
+        raw = [raw]
+    if not isinstance(raw, list) or not raw:
+        raise ValueError("send an effect (or a list of them) to preview")
+    return raw[:24]
+
+
+async def h_effects_catalog(request: web.Request) -> web.Response:
+    """Everything the builder needs to draw itself, in one read."""
+    fixtures = _map_fixtures()
+    zones = sorted({(f.get("zone") or "").strip()
+                    for f in fixtures if (f.get("zone") or "").strip()})
+    return web.json_response({
+        "catalog": fx.catalog_payload(),
+        "orders": list(fx.ORDERS),
+        "alignments": list(fx.ALIGNMENTS),
+        "shapes": list(fx.SHAPES),
+        "roles": list(light_map.ROLES),
+        "zones": zones,
+        "fixtures": fixtures,
+        "palettes": [{"name": name, "colours": [list(p) for p in colours]}
+                     for name, colours in director_palettes.PALETTES],
+        "presets": effect_presets.load(),
+    })
+
+
+async def h_effects_preview(request: web.Request) -> web.Response:
+    """One or more effects, rendered on the bench.
+
+    Answers with frames (what the panel animates), the cue figures (what
+    it would cost on the wire) and the rate verdict — all from the same
+    render, so the picture and the packets cannot disagree.
+    """
+    body = await _json_body(request)
+    try:
+        effects = _effects_from(body)
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    fixtures = _map_fixtures()
+    if not fixtures:
+        return web.json_response(
+            {"error": "the light map is empty — add some lights first, "
+                      "because an effect is a thing lights do"}, status=409)
+    duration = _number(body, "duration_s", 12, 2, 60)
+    grid = _preview_grid(body)
+    palette = _preview_palette(body)
+    try:
+        rendered = await asyncio.to_thread(
+            compiler.compile_preview, effects, fixtures, grid=grid,
+            duration_s=duration, palette=palette,
+            base_brightness=_number(body, "base_brightness", 0.35, 0, 1),
+            source=ENGINE.source)
+    except fx.EffectError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    frames = await asyncio.to_thread(
+        fx.simulate, rendered["actions"], fixtures, duration_s=duration,
+        fps=int(_number(body, "fps", 15, 4, 30)))
+    return web.json_response({
+        "preview": frames,
+        "effects": rendered["effects"],
+        "cues": len(rendered["cues"]),
+        "peak_per_device_hz": rendered["peak_per_device_hz"],
+        "over_budget": rendered["over_budget"],
+        "budget_hz": compiler.MAX_RATE_HZ,
+        "busiest_device": rendered["busiest_device"],
+    })
+
+
+async def h_effects_live(request: web.Request) -> web.Response:
+    """Run the effect on the actual bulbs, with no music behind it."""
+    body = await _json_body(request)
+    try:
+        effects = _effects_from(body)
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    fixtures = [f for f in _map_fixtures() if f.get("reachable")]
+    if not fixtures:
+        return web.json_response(
+            {"error": "none of the mapped lights are reachable — run Lab "
+                      "discovery, or preview it on screen instead"},
+            status=409)
+    duration = _number(body, "duration_s", 12, 2, 60)
+    try:
+        rendered = await asyncio.to_thread(
+            compiler.compile_preview, effects, fixtures,
+            grid=_preview_grid(body), duration_s=duration,
+            palette=_preview_palette(body),
+            base_brightness=_number(body, "base_brightness", 0.35, 0, 1),
+            source=ENGINE.source)
+    except fx.EffectError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    if rendered["over_budget"]:
+        return web.json_response(
+            {"error": f"that would send {rendered['peak_per_device_hz']:.0f} "
+                      f"messages a second to one bulb — the ceiling is "
+                      f"{compiler.MAX_RATE_HZ:.0f}. Slow it down or narrow "
+                      f"what it runs on."}, status=422)
+    label = str(body.get("label") or "effect preview")[:60]
+    result = await _conductor().run_cues(
+        rendered["cues"], duration_s=duration + 1.0, label=label)
+    return web.json_response(result, status=200 if result.get("ok") else 409)
+
+
+async def h_effect_presets(request: web.Request) -> web.Response:
+    return web.json_response({"presets": effect_presets.load()})
+
+
+async def h_effect_preset_save(request: web.Request) -> web.Response:
+    body = await _json_body(request)
+    try:
+        effect = fx.clean_effect(body.get("effect"))
+        preset = effect_presets.save(body.get("name", ""), effect,
+                                     body.get("note", ""))
+    except (ValueError, fx.EffectError) as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    return web.json_response({"preset": preset,
+                              "presets": effect_presets.load()})
+
+
+async def h_effect_preset_remove(request: web.Request) -> web.Response:
+    if effect_presets.remove(request.match_info["name"]):
+        return web.json_response({"ok": True, "presets": effect_presets.load()})
+    return web.json_response({"error": "no preset by that name"}, status=404)
+
+
+# ---------------------------------------------------------------------------
+# Parties — a saved evening, startable by name
+# ---------------------------------------------------------------------------
+async def h_parties(request: web.Request) -> web.Response:
+    return web.json_response({"parties": parties_store.load()})
+
+
+async def h_party_save(request: web.Request) -> web.Response:
+    body = await _json_body(request)
+    try:
+        party = parties_store.save(body)
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    _publish_parties()
+    return web.json_response({"party": party,
+                              "parties": parties_store.load()})
+
+
+async def h_party_remove(request: web.Request) -> web.Response:
+    if parties_store.remove(request.match_info["name"]):
+        _publish_parties()
+        return web.json_response({"ok": True,
+                                  "parties": parties_store.load()})
+    return web.json_response({"error": "no party by that name"}, status=404)
+
+
+async def h_party_list_for_bridge(request: web.Request) -> web.Response:
+    """The same list, over POST, because the bridge only speaks POST."""
+    return web.json_response({"ok": True,
+                              "parties": [p["name"] for p in parties_store.load()]})
+
+
+def _publish_parties() -> None:
+    """Mirror the party names where Home Assistant can see them.
+
+    /data is invisible to Core, and "which parties exist" is a question a
+    dashboard asks. The mirror is derived and never read back — the store
+    under /data is the record.
+    """
+    target = SHARED_DIR / "parties.json"
+    if not SHARED_DIR.parent.is_dir():
+        return
+    try:
+        SHARED_DIR.mkdir(parents=True, exist_ok=True)
+        atomic_write.write_json(
+            target, {"parties": [p["name"] for p in parties_store.load()],
+                     "updated_at": time.time()}, indent=2)
+    except OSError as exc:
+        log.warning("could not mirror the party list: %s", exc)
+
+
 # ---------------------------------------------------------------------------
 # Compile — script tier + THE compiler, per track
 # ---------------------------------------------------------------------------
@@ -769,6 +1062,140 @@ async def h_show_compile(request: web.Request) -> web.Response:
         "palette": show.get("palette_name"),
         "stats": show["stats"],
     })
+
+
+# ---------------------------------------------------------------------------
+# The show script — the file the whole show is, opened for editing
+# ---------------------------------------------------------------------------
+def _script_payload(hash_hex: str) -> tuple[int, dict]:
+    analysis = library.load_analysis(hash_hex)
+    if analysis is None:
+        return 404, {"error": "track not analyzed — run the Library tab first"}
+    script = None
+    try:
+        script = json.loads(library.script_path(hash_hex).read_text())
+    except (OSError, ValueError):
+        # No script yet (never compiled) or an unreadable one. Either way
+        # the honest answer is "nothing to edit yet", not an error about
+        # a file the person has never heard of.
+        pass
+    show = library.load_show(hash_hex)
+    mirror = library.find_mirror(hash_hex)
+    return 200, {
+        "track_hash": hash_hex,
+        "title": (analysis.get("tags") or {}).get("title") or hash_hex[:8],
+        "bpm": analysis.get("bpm"),
+        "duration_s": (analysis.get("tags") or {}).get("duration"),
+        "script": script,
+        "compiled": bool(show and show.get("cues")),
+        "stats": (show or {}).get("stats"),
+        "effects": (show or {}).get("effects"),
+        "file": str(mirror) if mirror else None,
+    }
+
+
+async def h_show_script(request: web.Request) -> web.Response:
+    try:
+        library.analysis_path(request.match_info["hash"])
+    except ValueError:
+        return web.json_response({"error": "not a track hash"}, status=400)
+    status, payload = await asyncio.to_thread(
+        _script_payload, request.match_info["hash"])
+    return web.json_response(payload, status=status)
+
+
+def _compile_script(hash_hex: str, script: dict) -> dict:
+    analysis = library.load_analysis(hash_hex)
+    if analysis is None:
+        raise ValueError("track not analyzed — run the Library tab first")
+    problems = choreographer.validate_script(script)
+    if problems:
+        raise ValueError("this script will not run: " + "; ".join(problems[:6]))
+    fixtures = director_build.fixtures_for_show(ENGINE.devices)
+    if not fixtures:
+        raise ValueError("no reachable fixtures — run Lab discovery, then "
+                         "place your lights on the Light Map")
+    script = {**script, "track_hash": hash_hex,
+              "tier": script.get("tier") or "edited"}
+    return director_build.compile_and_save(hash_hex, script, analysis,
+                                           fixtures, ENGINE.source)
+
+
+async def h_show_script_save(request: web.Request) -> web.Response:
+    """Take an edited script, compile it, keep it.
+
+    The same door the director's own output goes through — validator,
+    compiler, rate budget, mirror — because "automatic but editable" is
+    only true if the edited version is not a second-class show.
+    """
+    hash_hex = request.match_info["hash"]
+    body = await _json_body(request)
+    script = body.get("script")
+    if isinstance(script, str):
+        try:
+            script = json.loads(script)
+        except ValueError as exc:
+            return web.json_response(
+                {"error": f"that is not valid JSON — {exc}"}, status=400)
+    if not isinstance(script, dict):
+        return web.json_response({"error": "send the script as an object"},
+                                 status=400)
+    try:
+        show = await asyncio.to_thread(_compile_script, hash_hex, script)
+    except CompileError as exc:
+        return web.json_response({"error": str(exc)}, status=422)
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    status, payload = await asyncio.to_thread(_script_payload, hash_hex)
+    return web.json_response({**payload, "stats": show["stats"]})
+
+
+async def h_show_script_import(request: web.Request) -> web.Response:
+    """Read the hand-edited file back off the shared volume and compile it."""
+    hash_hex = request.match_info["hash"]
+    try:
+        script = await asyncio.to_thread(library.read_mirrored_script, hash_hex)
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    if script is None:
+        return web.json_response(
+            {"error": "there is no file to read yet — compile the show once "
+                      "and it appears in /config/.bright/shows/"}, status=404)
+    try:
+        show = await asyncio.to_thread(_compile_script, hash_hex, script)
+    except CompileError as exc:
+        return web.json_response({"error": str(exc)}, status=422)
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    status, payload = await asyncio.to_thread(_script_payload, hash_hex)
+    return web.json_response({**payload, "stats": show["stats"],
+                              "imported": True})
+
+
+async def h_show_cues(request: web.Request) -> web.Response:
+    """The compiled timeline, readable — what actually goes on the wire.
+
+    Without the packets: a base64 datagram per row is most of the file
+    and none of the meaning. What a person needs from a cue list is when,
+    which light, and which effect asked for it.
+    """
+    hash_hex = request.match_info["hash"]
+    try:
+        show = await asyncio.to_thread(library.load_show, hash_hex)
+    except ValueError:
+        return web.json_response({"error": "not a track hash"}, status=400)
+    if not show:
+        return web.json_response({"error": "not compiled yet"}, status=404)
+    limit = int(_number(dict(request.query), "limit", 500, 1, 5000))
+    offset = int(_number(dict(request.query), "offset", 0, 0, 100000))
+    cues = show.get("cues") or []
+    rows = [{"t": c["t"], "ch": c["ch"], "lead_ms": c.get("lead_ms"),
+             "target": c.get("serial") or (c.get("data") or {}).get("entity_id"),
+             "desc": c.get("desc")}
+            for c in cues[offset:offset + limit]]
+    return web.json_response({"total": len(cues), "offset": offset,
+                              "cues": rows, "stats": show.get("stats"),
+                              "effects": show.get("effects")})
 
 
 # ---------------------------------------------------------------------------
@@ -837,8 +1264,26 @@ async def h_show_start(request: web.Request) -> web.Response:
 
 
 async def h_show_stop(request: web.Request) -> web.Response:
-    result = await _conductor().stop(restore=True)
-    return web.json_response(result)
+    """Stop, and put the room back — into a scene if one was asked for.
+
+    A stop takes an optional `scene`, and a running party's own end scene
+    is used when the caller names none. Restoring is right when the show
+    interrupted an evening; a scene is right when the show *was* the
+    evening and what comes next is bedtime.
+    """
+    body = await _json_body(request)
+    scene = _entity(body, key="scene", domain="scene") if body.get("scene") \
+        else None
+    if body.get("scene") and scene is None:
+        return web.json_response(
+            {"error": "scene must be a scene entity id, like "
+                      "scene.good_night"}, status=400)
+    conductor = _conductor()
+    if scene:
+        conductor.set_end_scene(scene)
+    result = await conductor.stop(restore=True)
+    return web.json_response({**result, "scene": scene
+                              or conductor.state.get("ended_with_scene")})
 
 
 async def h_show_state(request: web.Request) -> web.Response:
@@ -850,12 +1295,29 @@ async def h_show_party(request: web.Request) -> web.Response:
     analyzed track (shuffled), compile the next show while the current one
     plays, re-anchor per track."""
     body = await _json_body(request)
+    # A named party is a saved set of these same answers, and anything
+    # given explicitly still wins over it — an automation that says
+    # "Saturday Night, but on the kitchen speaker" means that.
+    party = None
+    wanted = str(body.get("party", "") or "").strip()
+    if wanted:
+        party = parties_store.get(wanted)
+        if party is None:
+            known = ", ".join(p["name"] for p in parties_store.load()) or "none"
+            return web.json_response(
+                {"error": f"no party called {wanted!r} — saved parties: "
+                          f"{known}"}, status=404)
+        body = {**party, **{k: v for k, v in body.items() if v not in (None, "")}}
+
     media_player = _entity(body) or calibration_store.best_entity()
     if media_player is None:
         return web.json_response(
             {"error": "no media_player given and none calibrated yet — "
                       "run the Calibrate tab first"},
             status=400)
+    end_scene = _entity(body, key="end_scene", domain="scene") \
+        if body.get("end_scene") else None
+    allow = set(body.get("fixtures") or []) or None
     folders = _music_folders()
     raw_folder = str(body.get("folder", "") or "")
     if raw_folder:
@@ -876,7 +1338,8 @@ async def h_show_party(request: web.Request) -> web.Response:
             {"error": f"no analyzed tracks in {where} — run the Library "
                       "tab first"},
             status=409)
-    random.shuffle(queue)
+    if body.get("shuffle", True):
+        random.shuffle(queue)
 
     mode = _options_from_env()["director_mode"]
     preparer = None
@@ -895,7 +1358,8 @@ async def h_show_party(request: web.Request) -> web.Response:
         queue, media_player=media_player,
         loader=lambda h: conductor_mod.load_show_for_track(
             h, ENGINE.devices, ENGINE.source),
-        preparer=preparer)
+        preparer=preparer, name=(party or {}).get("name"),
+        end_scene=end_scene, allow=allow)
     status = 200 if result.get("ok") else 409
     return web.json_response(result, status=status)
 
@@ -1236,13 +1700,34 @@ def build_app() -> web.Application:
     app.router.add_post("/api/map/fixture", h_map_upsert)
     app.router.add_delete("/api/map/fixture/{fixture_id}", h_map_remove)
     app.router.add_post("/api/map/import-lifx", h_map_import_lifx)
+    app.router.add_get("/api/map/candidates", h_map_candidates)
+    app.router.add_post("/api/map/add-lifx", h_map_add_lifx)
+    # Effects — the builder, the preview, the presets
+    app.router.add_get("/api/effects/catalog", h_effects_catalog)
+    app.router.add_post("/api/effects/preview", h_effects_preview)
+    app.router.add_post("/api/effects/preview-live", h_effects_live)
+    app.router.add_get("/api/effects/presets", h_effect_presets)
+    app.router.add_post("/api/effects/presets", h_effect_preset_save)
+    app.router.add_delete("/api/effects/presets/{name}", h_effect_preset_remove)
+    # Parties — saved evenings, startable by name
+    app.router.add_get("/api/parties", h_parties)
+    app.router.add_post("/api/parties", h_party_save)
+    app.router.add_delete("/api/parties/{name}", h_party_remove)
     # Shows (the bridge forwards bright.* service calls to /api/show/*)
     app.router.add_post("/api/show/compile", h_show_compile)
     app.router.add_post("/api/show/start_show", h_show_start)
     app.router.add_post("/api/show/metronome", h_show_start)
     app.router.add_post("/api/show/stop_show", h_show_stop)
     app.router.add_post("/api/show/party_mode", h_show_party)
+    # `start_party` is party_mode under the name the service uses: an
+    # automation asks for a party, not for a mode.
+    app.router.add_post("/api/show/start_party", h_show_party)
+    app.router.add_post("/api/show/list_parties", h_party_list_for_bridge)
     app.router.add_get("/api/show/state", h_show_state)
+    app.router.add_get("/api/show/{hash}/script", h_show_script)
+    app.router.add_put("/api/show/{hash}/script", h_show_script_save)
+    app.router.add_post("/api/show/{hash}/script/import", h_show_script_import)
+    app.router.add_get("/api/show/{hash}/cues", h_show_cues)
     # Library
     app.router.add_get("/api/media/tree", h_media_tree)
     app.router.add_post("/api/media/folder", h_media_folder)
