@@ -295,8 +295,16 @@ class Conductor:
                 # A scene that cannot be called must not leave the room in
                 # party colours: the snapshot is still here, so use it and
                 # say what happened.
+                #
+                # Both values are flattened, like everything else this
+                # module logs from outside itself: the entity id arrives on
+                # the wire (a party's `end_scene`, or the one a stop_show
+                # call named) and the exception's text is whatever raised
+                # it, so a newline in either is that caller writing its own
+                # log lines.
                 log.warning("end scene %s failed (%s); restoring the "
-                            "lights instead", entity, exc)
+                            "lights instead", playback_check.flat(entity),
+                            playback_check.flat(exc))
         await self._restore_snapshot()
 
     async def stop(self, restore: bool = True) -> dict:

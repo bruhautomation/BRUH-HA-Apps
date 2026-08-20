@@ -6,6 +6,7 @@ import asyncio
 import base64
 import importlib.util
 import json
+import logging
 import os
 import sys
 import tempfile
@@ -216,6 +217,36 @@ class TestWhoJoinsInAndHowItEnds(unittest.TestCase):
         engine = asyncio.run(scenario())
         self.assertEqual(["aa" * 6], engine.sent,
                          "the lights were left where the show put them")
+
+    def test_a_failing_scene_cannot_write_its_own_log_lines(self):
+        """The scene id arrives on the wire and the exception text is
+        whatever raised it — a newline in either is that caller writing
+        log lines of its own (CodeQL called this one)."""
+        def boom(domain, service, data=None, **kw):
+            raise RuntimeError("no such scene\nWARNING all clear")
+
+        ha_client.call_service = boom
+        logged = []
+
+        class _Catch(logging.Handler):
+            def emit(self, record):
+                logged.append(record.getMessage())
+
+        handler = _Catch()
+        conductor_mod.log.addHandler(handler)
+        try:
+            async def scenario():
+                run = conductor_mod.Conductor(_FakeEngine())
+                run.set_end_scene("scene.good\nnight")
+                await run.stop(restore=True)
+
+            asyncio.run(scenario())
+        finally:
+            conductor_mod.log.removeHandler(handler)
+
+        self.assertTrue(logged, "the failure was not logged at all")
+        for message in logged:
+            self.assertNotIn("\n", message)
 
     def test_state_says_when_a_run_is_actually_in_progress(self):
         async def scenario():
