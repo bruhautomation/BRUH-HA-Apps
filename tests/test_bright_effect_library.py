@@ -8,8 +8,6 @@ page — so every show started from nothing, and no show could be better
 than the last one. That is the opposite of what a library is for.
 """
 
-import json
-import os
 import sys
 import tempfile
 import unittest
