@@ -252,3 +252,93 @@ def write_script(analysis: dict, fixtures: list[dict],
     script["track_hash"] = analysis.get("hash")
     script.setdefault("version", 1)
     return script
+
+# ---------------------------------------------------------------------------
+# One effect, from a sentence
+# ---------------------------------------------------------------------------
+# A show is four minutes of decisions; an effect is one idea, and people
+# have ideas in sentences ("bounce a warm pulse between the two window
+# lamps"). Same room description, same catalog, same validator — the only
+# difference is the size of the answer, so the two prompts share everything
+# that describes the instrument and differ only in what is being asked for.
+EFFECT_TIMEOUT_S = 90
+
+_EFFECT_CONTRACT = """\
+Answer with ONE JSON object and nothing else — no prose, no code fences.
+It is a single effect:
+
+{
+  "type": "<one of the types below>",
+  "name": "<short label; it rides on every cue the effect makes>",
+  "select": {"roles": [...], "ids": [...], "zones": [...], "exclude": [...]},
+  "order": "x" | "-x" | "y" | "-y" | "center_out" | "edges_in" | "snake"
+           | "zone" | "listed" | "random",
+  "params": { ... }
+}
+
+`select` names the lights this effect owns, and **every light it does not
+name is left untouched** — that is the whole point of an effect, so select
+the few that carry the idea rather than everything. An empty `select` means
+all of them. Select by role for an idea about a kind of light, by id for an
+idea about particular ones, by zone for an idea about an area.
+
+Timing is in BEATS, not seconds: this will be dropped into a song and the
+tempo is not yours to choose.
+
+TYPES and their params:
+%s
+
+Types and parameter names are EXACTLY as listed. Out-of-range numbers are
+clamped rather than rejected, and anything you leave out takes its default
+— write the two or three parameters that carry the idea and skip the rest."""
+
+_EFFECT_DIRECTION = """\
+You are a lighting designer. Someone has described one effect they want for
+the room below. Write it.
+
+- Design for THIS room. The ids and names are real; the positions are where
+  the lights actually are.
+- One idea, done well. If the description implies two things happening at
+  once, pick the one that carries it — a second effect can be added beside
+  this one.
+- Restraint reads as intent. Most of a room usually stays still."""
+
+
+def _effect_prompt(description: str, fixtures: list[dict]) -> str:
+    return "\n".join([
+        _EFFECT_DIRECTION,
+        "",
+        _EFFECT_CONTRACT % _catalog_lines(),
+        "",
+        room.describe(fixtures),
+        "",
+        "WHAT THEY ASKED FOR:",
+        description.strip()[:400],
+    ])
+
+
+def write_effect(description: str, fixtures: list[dict],
+                 timeout_s: float = EFFECT_TIMEOUT_S) -> dict:
+    """A sentence becomes one validated effect. Raises on any failure.
+
+    The validator is `effects.clean_effect`, the same one a hand-typed
+    effect goes through — a generated effect gets no privileges, and an
+    unknown type or a nonsense parameter is caught here rather than at
+    compile time in the middle of somebody's evening.
+    """
+    from . import effects as fx
+
+    if not description.strip():
+        raise ValueError("describe the effect you want first")
+    if not available():
+        raise RuntimeError("brAIn is not installed (no /config/.brain/tasks) "
+                           "— writing an effect from a description needs it")
+    answer = _run_task(_effect_prompt(description, fixtures), timeout_s)
+    raw = _extract_json(answer)
+    try:
+        effect = fx.clean_effect(raw)
+    except fx.EffectError as exc:
+        raise ValueError(f"Claude wrote an effect BRight cannot use: {exc}") \
+            from None
+    effect.setdefault("name", description.strip()[:48])
+    return effect

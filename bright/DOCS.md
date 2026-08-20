@@ -119,6 +119,35 @@ ordered by `x` runs left to right across the room you drew, `center_out`
 starts in the middle, and `zone` walks room by room. Getting the positions
 roughly right is what makes the automatic shows look deliberate.
 
+#### Roles and zones are two different questions
+
+A **role** is what a light *is*, and it changes how BRight drives it. A
+`candle` stays warm and low (capped at 45%) and is kept out of strobes and
+hard pulses however enthusiastic a show gets; a `lamp` or `downlight`
+carries the beat at full range; a `strip` is the one that reads best for
+motion; `party` and `laser` are switches — on or off, no colour, and sent
+early to cover Home Assistant's latency. Getting a role wrong is how a
+bedside candle ends up strobing.
+
+A **zone** is just a name you give a group of lights, usually a room. Type
+the same word on several lights and they are one zone. There is no list to
+maintain and nothing needs a zone — a zone exists exactly as long as a
+light is in it, and deleting the last light in one deletes the zone.
+
+What zones buy you is being able to talk about *part* of the house:
+
+- `"select": {"zones": ["kitchen"]}` — this effect owns the kitchen and
+  leaves everything else exactly as the scene put it.
+- `"order": "zone"` — a chase or a sweep travels zone by zone rather than
+  straight across the floor plan, which is what you want in an open-plan
+  space where "left to right" crosses three areas.
+- A party's allowed-fixture list and the Claude director both read them, so
+  "keep it to the lounge after 11" is one word rather than five bulb ids.
+
+Set a zone when you add a bulb, or select any light on the map and type one
+into the field beside its role. The box offers the zones you already have
+and accepts a new name.
+
 ### Effects — what the lights actually do
 
 An **effect** is a thing some of your lights do for a stretch of music: a
@@ -390,6 +419,22 @@ links from).
 - `algorithmic` — never call Claude.
 - `claude` — Claude only; compiling fails with the reason rather than
   silently downgrading.
+
+**What Claude is told.** The whole light map, per light: its id, its name,
+its role, its zone, where you put it on the floor plan, and whether it is a
+LIFX bulb or a switch. Plus the travel orders already worked out — the
+actual left-to-right order of your lights, the front-to-back order, and a
+walk around the room from each light to its nearest neighbour — because
+sorting a dozen coordinates is exactly the kind of arithmetic a language
+model does badly and confidently. It designs for the room you drew, and it
+can name a light rather than only a kind of light.
+
+**Writing a single effect.** The Effects tab has a **Describe it** box:
+say what you want in a sentence ("bounce a warm pulse between the two
+window lamps") and Claude writes the effect into the form, for this room.
+It lands unsaved — preview it, change anything, then save it as a preset or
+drop it into a show. This needs brAIn too; everything else in the tab works
+without it.
 
 ### `enable_ha_integration`
 

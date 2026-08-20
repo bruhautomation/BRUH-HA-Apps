@@ -48,14 +48,30 @@ const FIXTURES = [
 
 const ROLES = ['candle', 'downlight', 'lamp', 'strip', 'party', 'laser'];
 
+// The stub REMEMBERS what the panel posts to it. A read-only stub can only
+// ever prove that a control renders, and a control that renders and does
+// not save is worse than no control: it reads as done. So an upsert lands
+// in the same array the next GET serves, exactly as the store does, and
+// `zones` is derived on read rather than kept — which is the server's own
+// contract (a zone exists as long as a light is in it).
 const STUB = `
-window.fetch = async (url) => {
+window.__fixtures = ${JSON.stringify(FIXTURES)};
+window.fetch = async (url, options) => {
   const path = String(url);
   const answer = (body) => new Response(JSON.stringify(body), {
     status: 200, headers: { 'Content-Type': 'application/json' } });
+  if (path.includes('api/map/fixture')) {
+    const sent = JSON.parse((options && options.body) || '{}');
+    window.__posted = sent;
+    window.__fixtures = window.__fixtures
+      .filter((f) => f.id !== sent.id).concat([sent]);
+    return answer({ fixture: sent });
+  }
   if (path.includes('api/map')) {
-    return answer({ version: 1, fixtures: ${JSON.stringify(FIXTURES)},
-                    roles: ${JSON.stringify(ROLES)} });
+    const zones = [...new Set(window.__fixtures
+      .map((f) => String(f.zone || '').trim()).filter(Boolean))].sort();
+    return answer({ version: 1, fixtures: window.__fixtures,
+                    roles: ${JSON.stringify(ROLES)}, zones });
   }
   if (path.includes('api/status')) {
     return answer({ version: 'test', options: { music_folder: '/media/music' } });
@@ -116,9 +132,15 @@ for (const width of WIDTHS) {
       row: row && row.dataset.id,
       barText: bar.textContent,
       hasRole: !!bar.querySelector('select'),
+      hasZone: !!bar.querySelector('.zone-pick'),
       hasRemove: [...bar.querySelectorAll('button')]
         .some((b) => /remove/i.test(b.textContent)),
-      targets: [...bar.querySelectorAll('button, select')]
+      // Inputs are measured too. The 44px floor was once written inside
+      // `.demo-controls`, so it covered the controls that existed and
+      // nothing added afterwards — which is how the role picker shipped at
+      // the browser's default 19px. Anything added to this bar gets
+      // measured by having been added.
+      targets: [...bar.querySelectorAll('button, select, input')]
         .map((el) => Math.round(el.getBoundingClientRect().height)),
     };
   });
@@ -133,11 +155,44 @@ for (const width of WIDTHS) {
     note(width, 'the selection bar does not name the selected light');
   }
   if (!selection.hasRole) note(width, 'no role picker on the selected light');
+  if (!selection.hasZone) {
+    // Zone was settable only while ADDING a bulb, so the answer to "these
+    // four are the kitchen" was to remove them and add them again.
+    note(width, 'no zone field on the selected light');
+  }
   if (!selection.hasRemove) note(width, 'no way to remove the selected light');
   for (const height of selection.targets) {
     if (height < MIN_TARGET) {
       note(width, `selection control is ${height}px tall (min ${MIN_TARGET})`);
     }
+  }
+
+  // A field that renders and does not save is worse than no field: it
+  // reads as done. So type a zone, blur it, reload the map from the
+  // server, and check the light came back wearing it.
+  await page.fill('.zone-pick', 'Measured Zone');
+  await page.locator('.zone-pick').blur();
+  await page.waitForTimeout(400);
+  const stored = await page.evaluate(async (id) => {
+    const body = await (await fetch('api/map')).json();
+    const fixture = (body.fixtures || []).find((f) => f.id === id);
+    return { zone: fixture && fixture.zone, zones: body.zones || [],
+             posted: window.__posted };
+  }, expected.id);
+  // The whole fixture has to go, not just the zone: the endpoint is an
+  // upsert and a partial payload is a light that loses its role or its
+  // place on the floor.
+  for (const key of ['id', 'kind', 'role', 'x', 'y']) {
+    if (stored.posted && stored.posted[key] === undefined) {
+      note(width, `the save left ${key} out of the fixture it posted`);
+    }
+  }
+  if (stored.zone !== 'Measured Zone') {
+    note(width, `the zone did not save (server says ${stored.zone ?? 'nothing'})`);
+  }
+  if (!stored.zones.includes('Measured Zone')) {
+    note(width, 'the saved zone is missing from the map payload, so nothing '
+      + 'downstream can offer it');
   }
 
   await context.close();

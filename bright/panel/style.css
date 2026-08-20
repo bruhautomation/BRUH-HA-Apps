@@ -523,3 +523,21 @@ select { max-width: 100%; }
 .media-source:empty { display: none; }
 .media-source .ms-bad { color: var(--bad, #d9534f); }
 .media-source button { margin-top: 8px; }
+
+/* The zone field on the map's selection bar. Same 44px floor as the role
+   picker beside it — the floor is set once for controls in this bar rather
+   than per control, which is the lesson from the role picker rendering at
+   the browser's default 19px because the rule covered only what existed
+   when it was written. */
+.zone-pick {
+  min-height: 44px;
+  min-width: 120px;
+  flex: 0 1 160px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line, #d5d8de);
+  background: var(--bg, #fff);
+  color: inherit;
+  font: inherit;
+}
+@media (pointer: coarse) { .zone-pick { font-size: 16px; } }

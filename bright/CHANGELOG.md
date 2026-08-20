@@ -5,6 +5,45 @@ All notable changes to the **BRight** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.11.0
+
+Claude knows what room it is lighting, and zones are a thing you can set.
+
+### Added
+
+- **Describe an effect and Claude writes it.** The Effects tab has a
+  **Describe it** box: a sentence ("bounce a warm pulse between the two
+  window lamps") comes back as a real effect in the builder, for this room,
+  with every light named. It lands **unsaved** — an effect you have not
+  looked at is not an effect you want — and previews immediately. Validated
+  by the same `clean_effect` a hand-typed effect goes through: a generated
+  effect gets no privileges, and an unusable one is caught here rather than
+  at compile time in the middle of an evening. Needs brAIn, like the show
+  director; everything else in the tab works without it.
+- **A zone can be set on any light, at any time.** It was settable only
+  while *adding* a bulb, so the answer to "these four are the kitchen" was
+  to remove them and add them again. The field sits beside the role picker
+  on the map's selection bar, offers the zones you already have, and takes
+  a new name.
+- DOCS.md explains what a role is and what a zone is, because they are two
+  different questions and only one of them changes how a light is driven.
+
+### Changed
+
+- **The Claude director is told what room it is designing for.** It used to
+  get roles and x positions — no ids, so `select.ids` was in the schema and
+  unusable; no names, so one lamp could not be told from another; no y,
+  though four travel orders key on it; and no zones, though `select.zones`
+  and `order: "zone"` both do. Every generated script selected by role,
+  because role was the only thing it had. It now gets a row per light, the
+  zones that exist, what each role is *for*, and the travel orders already
+  worked out.
+- The zones in use ride down with the map, derived on read rather than
+  stored — a zone exists exactly as long as a light is in it.
+- The effect builder no longer flattens a selection to ids. An effect that
+  says "every candle" stays "every candle" until you tick a box; flattening
+  it to the candles that exist today is wrong the moment a fifth is added.
+
 ## 0.10.1
 
 Nothing played on an install that sets `media_dirs`.

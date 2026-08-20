@@ -34,10 +34,32 @@ import math
 
 from . import palettes
 
+# The long paragraphs are named rather than written inline in the list
+# `describe` builds. A list of strings where some elements are implicit
+# concatenations across several lines is one missing comma away from
+# silently merging two lines of a prompt into one — invisible in review and
+# invisible at runtime, because the result is still a valid list of strings.
+POSITIONS_NOTE = (
+    "Positions are a floor plan in 0..1 as the person placed them by hand: "
+    "x runs left (0) to right (1), y runs near/front (0) to far/back (1). "
+    "They describe the real room, so an effect that travels by x really "
+    "does cross it.")
+
+ORDERS_NOTE = (
+    "TRAVEL ORDERS, already worked out for you — a chase, sweep or build "
+    "steps through its selection in the order you name, so these are what "
+    "those orders will actually do (colour-capable lights only; switches "
+    "do not travel):")
+
+NEIGHBOUR_NOTE = (
+    "  around the room (each to its nearest neighbour — often the "
+    "best-looking chase in a room that is not a straight line; write it as "
+    'order:"listed" with select.ids in this order): ')
+
 # How a role reads as an instrument. The rules themselves live in
 # palettes.ROLE_RULES (and are enforced in the compiler whatever a script
-# asks for); this is the sentence that explains one to a reader, so a
-# model chooses a fixture for what it is rather than for its name.
+# asks for); this is the sentence that explains one to a reader, so a model
+# chooses a fixture for what it is rather than for its name.
 ROLE_NOTES = {
     "candle": "ambience — warm and low, capped at 45% and kept out of "
               "strobes and hard pulses",
@@ -110,10 +132,7 @@ def describe(fixtures: list[dict], *, orders: bool = True) -> str:
     lines = [
         "THE ROOM — every light BRight can drive, and where it is.",
         "",
-        "Positions are a floor plan in 0..1 as the person placed them by "
-        "hand: x runs left (0) to right (1), y runs near/front (0) to "
-        "far/back (1). They describe the real room, so an effect that "
-        "travels by x really does cross it.",
+        POSITIONS_NOTE,
         "",
         "  id / name / role / zone / x / y / how it is driven",
     ]
@@ -159,18 +178,12 @@ def describe(fixtures: list[dict], *, orders: bool = True) -> str:
     if orders:
         movers = [f for f in fixtures
                   if not palettes.ROLE_RULES.get(f.get("role"), {}).get("switch")]
-        lines += ["", "TRAVEL ORDERS, already worked out for you — a chase, "
-                  "sweep or build steps through its selection in the order "
-                  "you name, so these are what those orders will actually do "
-                  "(colour-capable lights only; switches do not travel):"]
+        lines += ["", ORDERS_NOTE]
         if movers:
             lines += [
                 f'  order:"x"  (left to right): {_names(_order_by(movers, lambda f: f.get("x", 0.5)))}',
                 f'  order:"y"  (front to back): {_names(_order_by(movers, lambda f: f.get("y", 0.5)))}',
-                f"  around the room (each to its nearest neighbour — often the "
-                f"best-looking chase in a room that is not a straight line; "
-                f'write it as order:"listed" with select.ids in this order): '
-                f"{_names(_nearest_neighbour(movers))}",
+                NEIGHBOUR_NOTE + _names(_nearest_neighbour(movers)),
             ]
             xs = [f.get("x", 0.5) for f in movers]
             ys = [f.get("y", 0.5) for f in movers]
