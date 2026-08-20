@@ -118,6 +118,10 @@ def ensure(path: Path, sample_rate: int = SAMPLE_RATE) -> Path:
         if path.stat().st_size == expected_size(sample_rate):
             return path
     except OSError:
+        # No file, or nothing readable where one should be. Either way the
+        # answer is the same as a wrong length: write it. A folder that
+        # cannot be written raises from write_wav below, where the caller
+        # is expecting it — this branch is only "we do not know yet".
         pass
     return write_wav(path, sample_rate)
 

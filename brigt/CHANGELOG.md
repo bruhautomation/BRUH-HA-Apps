@@ -5,6 +5,20 @@ All notable changes to the **BRigt** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.8.3
+
+No behaviour change. Two code-scanning findings from 0.8.2, closed rather
+than left open — an alert nobody intends to act on is what teaches people
+to stop reading the list.
+
+### Changed
+- `reference.ensure`'s `except OSError: pass` says what it is passing on:
+  no file, or nothing readable where one should be, both of which mean
+  "write it" — the same answer as a wrong length. A folder that cannot be
+  written still raises, from the write below, where the caller expects it.
+- The playback test that awaited a deliberately doomed show asserts the
+  refusal it was swallowing (`assertRaises`) instead of passing on it.
+
 ## 0.8.2
 
 Casting the click track answered `HTTP 500` and played nothing — and music
