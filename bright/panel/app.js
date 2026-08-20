@@ -2901,7 +2901,12 @@
       });
       status.textContent = 'Saved "' + body.preset.name +
         '" to the library — Claude can use it by name in the next show.';
-      if (typeof loadEffects === "function") loadEffects();
+      // The Effects tab's preset list is now out of date, so refresh it.
+      // Called directly: it is a function declaration in this same scope,
+      // so a `typeof` guard around it can never be false — and a guard
+      // that cannot fail reads as "this might not exist", which sends the
+      // next person looking for a case there isn't one of.
+      loadEffects();
     } catch (error) {
       status.textContent = "could not save it: " + error.message;
     }
