@@ -5,6 +5,47 @@ All notable changes to the **BRigt** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.8.1
+
+The add-on could not start on a machine where something else already had
+port 8095 — and nothing about the failure said so in a sentence.
+
+### Fixed
+- **The panel no longer pins a host port.** `host_network: true` means the
+  panel binds a *real* port on the machine, not one inside a container, so
+  the 8095 written into config.yaml was a number some other service could
+  already own. On a machine where one did, every boot ended the same way:
+  `[Errno 98] address in use`, the panel dead, the container exited, the
+  Supervisor restarting it, and the next attempt asking the same host for
+  the same taken port — a refusal that could not change the next attempt.
+  `ingress_port: 0` now asks the Supervisor to assign a free port, which is
+  what Home Assistant documents for add-ons on the host network, and the
+  panel reads the assigned port back from `/addons/self/info` at startup.
+- **One port, resolved once** (`panel/panel_port.py`). run.sh logs and
+  announces it, the panel binds it, and the HA bridge posts show commands to
+  it — a second copy of that lookup is a bridge posting into nothing, so
+  there is one, and run.sh exports the answer into `/data/.brigt_env` where a
+  `with-contenv` child can still read it.
+- **A port that cannot be taken now ends in a sentence naming it**, not an
+  aiohttp traceback underneath a log line that had already claimed the panel
+  was listening on it. The bind is attempted *before* that line is written,
+  and retried a few times first — the one holder worth waiting out is a
+  previous panel that has not finished dying.
+
+### Changed
+- **No `watchdog:` URL** — the Supervisor's placeholder needs a port number
+  written into config.yaml, and a watchdog still pinned to 8095 would poll
+  whatever service actually holds 8095 and restart BRigt on its behalf.
+  run.sh polls `/api/health` on loopback instead, where it knows the real
+  port: four consecutive misses, thirty seconds apart, and the panel is
+  taken down so the Supervisor's restart-on-stop brings it back. A hung
+  panel is still caught; nothing else is.
+- **Nothing on the panel is public any more.** `/api/health` was reachable
+  without Home Assistant because the Supervisor watchdog polled it from
+  off-network. Its replacement runs inside the container, over loopback,
+  which the LAN gate already trusts — so the exemption lost its only caller
+  and went with it.
+
 ## 0.8.0
 
 Party mode — the sentence the whole add-on was built for: "start party

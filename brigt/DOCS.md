@@ -41,12 +41,28 @@ Verbosity of the add-on's own logging.
 
 BRigt runs with `host_network: true` — LIFX discovery is a UDP broadcast on
 port 56700 and cue latency is the whole product, so the container sits on
-the LAN directly. The panel (port 8095) is therefore reachable from the LAN
-too; it refuses every caller except Home Assistant itself (the Supervisor's
-networks and loopback). Open it from the Home Assistant sidebar.
+the LAN directly. The panel is therefore reachable from the LAN too; it
+refuses every caller except Home Assistant itself (the Supervisor's networks
+and loopback), so there is nothing to open from the LAN. Open it from the
+Home Assistant sidebar.
 
-The panel binds 8095 rather than the family's usual 8099 because BRUH
-Minecraft also runs on the host network and already owns 8099.
+**The panel's port is not fixed, and does not need to be.** Because the
+container is on the host network, the panel's port is a real port on your
+machine rather than one inside a container, so any number BRigt picked could
+already belong to something else you run — which is what happened: an early
+build pinned 8095 and, on a machine where something else already had 8095,
+the panel could not start at all. Home Assistant has an arrangement for
+exactly this, and BRigt now uses it: the Supervisor assigns a free port when
+the add-on is installed, and BRigt asks which one at startup. Nothing to
+configure, and nothing to collide with. The startup log names the port it
+got:
+
+```
+Starting BRigt panel on 0.0.0.0:8124
+```
+
+If that port ever does get taken by something else, the log says so in one
+sentence naming the port, rather than a Python traceback.
 
 ## The Library
 

@@ -39,6 +39,40 @@ except Exception:
 }
 
 # ----------------------------------------------------------------------------
+# The panel's port is the Supervisor's to choose (config.yaml asks with
+# `ingress_port: 0`, because host_network makes it a REAL host port and any
+# number we pinned was a number somebody's box already had). Resolved ONCE
+# here, exported into this process tree and written into /data/.brigt_env, so
+# the panel, the bridge and this script cannot end up talking about different
+# ports. The lookup itself lives in panel/panel_port.py — one implementation,
+# no shell copy of it to drift.
+# ----------------------------------------------------------------------------
+resolve_panel_port() {
+    PANEL_PORT=$(python3 -c "
+import sys
+sys.path.insert(0, '${PANEL_DIR}')
+import panel_port
+print(panel_port.resolve())
+")
+    # stderr is deliberately NOT swallowed: panel_port warns there when it
+    # could not reach the Supervisor and fell back, and that line is the
+    # whole diagnostic if the panel later turns out to be on a port ingress
+    # is not proxying to.
+    #
+    # No fallback number here on purpose. panel_port.resolve() already has
+    # one for a machine with no Supervisor to ask; the only way this comes
+    # back empty is the module not being importable, which means the panel
+    # cannot start either — and a second port literal in this file is a
+    # second answer that wins exactly when nobody is looking.
+    if ! [ "${PANEL_PORT:-0}" -gt 0 ] 2>/dev/null; then
+        bashio::log.error "Could not resolve the panel port (panel_port.py unreadable?)"
+        exit 1
+    fi
+    export PANEL_PORT
+    export BRIGT_PANEL_PORT="${PANEL_PORT}"
+}
+
+# ----------------------------------------------------------------------------
 # Options are read ONCE here and exported — both into this process tree and
 # into /data/.brigt_env, which is the only route an option has into any
 # process started under `with-contenv` later (the shebang reloads the s6
@@ -60,6 +94,7 @@ load_config() {
         echo "export BRIGT_DIRECTOR_MODE='${DIRECTOR_MODE}'"
         echo "export BRIGT_ENABLE_HA_INTEGRATION='${ENABLE_HA_INTEGRATION}'"
         echo "export BRIGT_LOG_LEVEL='${LOG_LEVEL}'"
+        echo "export BRIGT_PANEL_PORT='${PANEL_PORT}'"
         echo "export ADDON_VERSION='${ADDON_VERSION}'"
     } > "${BRIGT_ENV_FILE}"
     chown brigt:brigt "${BRIGT_ENV_FILE}" 2>/dev/null || true
@@ -124,7 +159,7 @@ announce_ha_discovery() {
     fi
 
     local payload response http_code
-    payload='{"service":"brigt","config":{"panel_port":8095}}'
+    payload="{\"service\":\"brigt\",\"config\":{\"panel_port\":${PANEL_PORT}}}"
     response=$(curl -sS -o /dev/null -w "%{http_code}" \
         -X POST \
         -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
@@ -164,10 +199,13 @@ start_ha_bridge() {
 }
 
 # ----------------------------------------------------------------------------
-# Clean shutdown — tear down the bridge and the panel.
+# Clean shutdown — tear down the watch, the bridge and the panel.
 # ----------------------------------------------------------------------------
 graceful_shutdown() {
     bashio::log.info "Shutdown signal received; stopping BRigt"
+    if [ -n "${WATCH_PID:-}" ]; then
+        kill "${WATCH_PID}" 2>/dev/null || true
+    fi
     if [ -n "${BRIDGE_PID:-}" ]; then
         kill "${BRIDGE_PID}" 2>/dev/null || true
     fi
@@ -178,14 +216,62 @@ graceful_shutdown() {
 }
 
 # ----------------------------------------------------------------------------
+# The health watch — what config.yaml's `watchdog:` URL used to be, moved in
+# here because it is the only place that knows the port the Supervisor
+# assigned. A hung panel is otherwise a dead add-on that still reads as
+# started: the process is alive, so nothing exits and nothing restarts.
+#
+# It polls loopback, so it is unaffected by the LAN gate, and it needs FOUR
+# consecutive misses before it acts — a single slow poll during a heavy
+# analysis pass must not take a working add-on down. Acting means killing the
+# panel, which ends the `wait` below, which ends this script and the
+# container with it; the Supervisor's restart-on-stop brings it back, exactly
+# as it does for a crash.
+# ----------------------------------------------------------------------------
+PANEL_WATCH_GRACE=60
+PANEL_WATCH_INTERVAL=30
+PANEL_WATCH_MISSES=4
+
+start_health_watch() {
+    (
+        sleep "${PANEL_WATCH_GRACE}"
+        local misses=0
+        while kill -0 "${PANEL_PID}" 2>/dev/null; do
+            if curl -sf -m 5 -o /dev/null \
+                    "http://127.0.0.1:${PANEL_PORT}/api/health"; then
+                misses=0
+            else
+                misses=$((misses + 1))
+                bashio::log.warning \
+                    "Panel did not answer /api/health (${misses}/${PANEL_WATCH_MISSES})"
+                if [ "${misses}" -ge "${PANEL_WATCH_MISSES}" ]; then
+                    bashio::log.error \
+                        "Panel stopped answering on port ${PANEL_PORT}; restarting BRigt"
+                    kill "${PANEL_PID}" 2>/dev/null || true
+                    return 0
+                fi
+            fi
+            sleep "${PANEL_WATCH_INTERVAL}"
+        done
+    ) &
+    WATCH_PID=$!
+}
+
+# ----------------------------------------------------------------------------
 # The ingress panel — the foreground process. `wait` rather than `exec` so
 # the SIGTERM trap above still fires and tears the bridge down with it.
 # ----------------------------------------------------------------------------
 start_panel() {
-    bashio::log.info "Starting BRigt panel on 0.0.0.0:8095"
+    bashio::log.info "Starting BRigt panel on 0.0.0.0:${PANEL_PORT}"
     su-exec brigt python3 -u "${PANEL_DIR}/server.py" &
     PANEL_PID=$!
+    start_health_watch
     wait "${PANEL_PID}"
+    PANEL_STATUS=$?
+    if [ "${PANEL_STATUS}" -ne 0 ]; then
+        bashio::log.error "Panel exited with status ${PANEL_STATUS}"
+    fi
+    return "${PANEL_STATUS}"
 }
 
 # ============================================================================
@@ -199,6 +285,7 @@ main() {
 
     trap graceful_shutdown TERM INT
 
+    resolve_panel_port
     load_config
     prepare_filesystem
     deploy_custom_integration

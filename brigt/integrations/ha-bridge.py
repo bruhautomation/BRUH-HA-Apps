@@ -7,7 +7,7 @@ Also mirrors the add-on's show state into /config/.brigt/state.json every
 few seconds so HA Core (which cannot see /data) can read it.
 
 Show control (party_mode / start_show / stop_show) is forwarded to the
-panel's local API on 127.0.0.1:8095 — the panel owns the conductor, and a
+panel's local API on loopback — the panel owns the conductor, and a
 second process driving the lights would be a second answer to "what is
 playing". While the panel has no show endpoints yet (the skeleton build),
 the forward comes back as a clear "not in this build yet" rather than a
@@ -18,11 +18,18 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sys
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
+
+# The panel's port is the Supervisor's to choose, so it is looked up rather
+# than known — from the same module the panel binds with, because a bridge
+# posting to a port the panel is not on is every show service timing out.
+sys.path.append(str(Path(__file__).resolve().parent.parent / "panel"))
+import panel_port  # noqa: E402
 
 SHARED = Path("/config/.brigt")
 REQ_DIR = SHARED / "requests"
@@ -30,7 +37,7 @@ RES_DIR = SHARED / "responses"
 STATE_SRC = Path(os.environ.get("BRIGT_STATE", "/data")) / "state.json"
 STATE_DST = SHARED / "state.json"
 
-PANEL_URL = "http://127.0.0.1:8095"
+PANEL_URL = f"http://127.0.0.1:{panel_port.resolve()}"
 
 POLL_INTERVAL = 0.5
 MIRROR_INTERVAL = 5
