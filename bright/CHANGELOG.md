@@ -5,6 +5,38 @@ All notable changes to the **BRight** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.9.1
+
+Installs by pulling a prebuilt image instead of building one on your box.
+
+### Changed
+
+- **BRight installs from the registry now.** `config.yaml` gained
+  `image: ghcr.io/bruhautomation/{arch}-bright`, which is the second half of
+  the two-step cutover 0.9.0 set up: the images were published first, made
+  Public, and only now is anything told to pull them. Doing it in the other
+  order points every install at a tag that does not exist, and the add-on
+  stops installing entirely rather than merely installing slowly.
+
+  What it changes for you: the Supervisor downloads a finished image instead
+  of running the whole Dockerfile — the base image, `apk add ffmpeg numpy
+  …`, and `pip install`. On a Raspberry Pi that was a long, SD-card-punishing
+  build that could fail on any transient network hiccup, and it left every
+  install subtly different depending on what each machine resolved that day.
+
+  It does not change the add-on's behaviour, and it does not fix
+  `'AddonManager.install' blocked from execution, no host internet
+  connection` — that is the Supervisor refusing the install job before it
+  reaches any of this, on its own connectivity check. See DOCS.md.
+
+### Added
+
+- A test that an add-on declaring `image:` is actually built and published
+  under that name (`tests/test_config_validation.py`). The failure this
+  guards against is silent in CI and total on a user's machine: nothing
+  before now connected the key that redirects an install to the workflow
+  matrix that has to produce what it points at.
+
 ## 0.9.0
 
 The add-on's own name, spelled right — and the thing a light show is

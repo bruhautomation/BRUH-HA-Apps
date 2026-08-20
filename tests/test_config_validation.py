@@ -452,5 +452,77 @@ class TestCrossFileConsistency(unittest.TestCase):
                       f"Version {version} not found in CHANGELOG.md")
 
 
+class TestPrebuiltImages(unittest.TestCase):
+    """An `image:` key redirects an install; something has to produce it.
+
+    With `image:` set the Supervisor stops building the Dockerfile and pulls
+    instead, so the key is only as good as the workflow behind it. The
+    failure mode is invisible from in here and total on a user's machine:
+    CI is green, the push succeeded, and the install dies on `manifest
+    unknown` because nothing ever built that name. build.yml already asks
+    the registry anonymously after it publishes — that catches a private or
+    missing package for an add-on it *builds*. This is the other half: that
+    an add-on pointing at a name is one the matrix actually builds, under
+    that exact name.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.addons = {}
+        for entry in sorted(os.listdir(BASE_DIR)):
+            config = os.path.join(BASE_DIR, entry, "config.yaml")
+            if os.path.isfile(config):
+                with open(config, "r") as f:
+                    cls.addons[entry] = yaml.safe_load(f)
+
+        with open(os.path.join(BASE_DIR, ".github/workflows/build.yml"), "r") as f:
+            cls.workflow = yaml.safe_load(f)
+        matrix = cls.workflow["jobs"]["build"]["strategy"]["matrix"]
+        cls.built = set(matrix["addon"])
+        cls.arches = set(matrix["arch"])
+
+    def test_addons_were_found(self):
+        """A glob that matches nothing would pass every test below."""
+        self.assertIn("brain", self.addons)
+        self.assertIn("bright", self.addons)
+
+    def test_every_image_is_built_by_the_workflow(self):
+        for folder, config in self.addons.items():
+            image = config.get("image")
+            if not image:
+                continue  # builds locally; the registry is not involved
+            self.assertIn(
+                folder, self.built,
+                f"{folder}/config.yaml pulls {image}, but build.yml's matrix "
+                f"does not build {folder} — nothing publishes that image")
+
+    def test_image_name_matches_what_the_workflow_publishes(self):
+        """build.yml names the image `{arch}-{folder}`, not `{arch}-{slug}`.
+
+        They differ for bruh-minecraft-server (slug `bruh_minecraft_server`),
+        which is exactly where a plausible-looking name would be wrong — and
+        an underscore is not even a legal Docker path component.
+        """
+        for folder, config in self.addons.items():
+            image = config.get("image")
+            if not image:
+                continue
+            self.assertEqual(
+                image, "ghcr.io/bruhautomation/{arch}-" + folder,
+                f"{folder}/config.yaml points at {image}, which is not what "
+                f"build.yml publishes for the {folder} matrix entry")
+
+    def test_every_declared_arch_is_built(self):
+        """A pull for an unbuilt arch is an install that cannot succeed."""
+        for folder, config in self.addons.items():
+            if not config.get("image"):
+                continue
+            for arch in config.get("arch", []):
+                self.assertIn(
+                    arch, self.arches,
+                    f"{folder} offers {arch} and pulls a prebuilt image, but "
+                    f"build.yml never builds {arch}")
+
+
 if __name__ == "__main__":
     unittest.main()

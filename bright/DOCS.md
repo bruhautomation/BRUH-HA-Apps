@@ -578,6 +578,42 @@ are the usual causes.
 Supervisor now assigns BRight's panel port. If you are on an older version,
 update.
 
+**It will not install: `'AddonManager.install' blocked from execution, no host
+internet connection`.** This is not BRight — it is the Supervisor refusing the
+install *job* before it reaches the add-on at all. Every install carries an
+`internet_host` condition, and when the Supervisor's own connectivity probe
+says the host is offline the job is blocked, whether or not the machine really
+is. It is a common false negative: people hit it while `ping` and `curl` work
+fine from the same box.
+
+DNS is the usual cause — most often when the DNS server is itself an add-on
+(Pi-hole, AdGuard) that is down or filtering the check. From the Terminal or
+SSH add-on:
+
+```bash
+ha network info          # host connectivity
+ha supervisor info       # look for  connectivity: false
+ha resolution info       # the reasons, named
+
+ha dns reset && ha dns restart          # usual fix
+ha supervisor reload                    # re-run the check, then retry
+```
+
+If the probe is simply wrong and you want to get on with it, the condition can
+be waived for the install and then put back:
+
+```bash
+ha jobs options --ignore-conditions internet_host
+# install BRight, then restore the protection:
+ha jobs reset
+```
+
+Since 0.9.1 the install pulls a prebuilt image rather than building the
+container on your machine, so once the job is allowed to run it is a download
+rather than a long `apk`/`pip` build. That makes the install far less likely
+to die partway on a slow or flaky connection — but it does not affect the
+block above, which happens first.
+
 ---
 
 ## Networking, and why the panel is locked down

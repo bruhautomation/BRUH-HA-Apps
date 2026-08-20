@@ -1,15 +1,26 @@
 ---
 name: "BRight"
 description: "Music-driven light show director: analyzes your local music, choreographs LIFX bulbs over the LAN plus switch-driven party lights, and keeps it all in sync with the speaker"
-version: "0.9.0"
+version: "0.9.1"
 slug: "bright"
 init: false
 
-# No `image:` yet, deliberately. The publish flow is two steps (see the note
-# at the top of .github/workflows/build.yml): merge the workflow addition and
-# let it publish ghcr.io/bruhautomation/{arch}-bright for both architectures,
-# set the package public, and only then point installs at it. Until then the
-# Supervisor builds locally, which works on day one.
+# Pull the prebuilt image instead of building on the user's machine. Step two
+# of the flow the note at the top of .github/workflows/build.yml describes:
+# 0.9.0 published ghcr.io/bruhautomation/{arch}-bright for both
+# architectures and both packages are Public, so installs can point at them.
+#
+# This key is load-bearing in a way that is easy to miss — see the longer
+# note in brain/config.yaml. With it set the Supervisor stops building and
+# pulls, so a version here with no matching tag on the registry, or a
+# package that is not Public, is not a slow install, it is an add-on that
+# will not install at all. build.yml asks the registry anonymously after
+# every push and fails if the answer is not 200.
+#
+# The image name follows the FOLDER, not the slug (they agree here, but they
+# do not for bruh-minecraft-server): build.yml names it after the matrix
+# entry, which is the directory it builds.
+image: "ghcr.io/bruhautomation/{arch}-bright"
 
 # Supported architectures
 arch:
