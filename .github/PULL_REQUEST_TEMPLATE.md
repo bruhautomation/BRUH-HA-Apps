@@ -6,6 +6,7 @@
 
 - [ ] brAIn
 - [ ] BRUH Minecraft
+- [ ] BRigt
 - [ ] Repo-wide (CI, docs, etc.)
 
 ## Checklist
