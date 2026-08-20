@@ -187,6 +187,40 @@ def set_waveform(*, transient: bool, hue: int, saturation: int,
     return build(SET_WAVEFORM, payload, **hdr)
 
 
+# How long the halting waveform below runs for. A bulb runs ONE waveform
+# at a time, so sending another is what ends the one in flight; this one is
+# over almost before it starts, which is the point.
+HALT_PERIOD_MS = 20
+
+
+def halt_waveform(*, hue: int = 0, saturation: int = 0, brightness: int = 0,
+                  kelvin: int = 3500, **hdr) -> bytes:
+    """Stop whatever this bulb is running, now.
+
+    `SetWaveform` hands the bulb a routine it executes ON ITS OWN — that
+    is the whole sync trick, and it is also why "stop the show" did not
+    stop the lights: we stop sending, and a bulb three seconds into a
+    forty-cycle strobe carries on strobing to the end. Nothing we stop
+    doing can reach it.
+
+    A bulb runs one waveform at a time, so the way to end one is to send
+    another. This is that other: a single cycle, twenty milliseconds long,
+    `transient` so the bulb **returns to the colour it held before the
+    waveform started** rather than to whatever this packet carries. That
+    is why the colour arguments default to something arbitrary and why
+    nothing here has to know what the light was doing — the bulb kept that
+    for us, and this asks for it back.
+
+    `SetColor` was what stop used to send, and it is not this: it moves the
+    light to a colour while the routine underneath keeps running, so the
+    strobe carries on around the new value.
+    """
+    return set_waveform(transient=True, hue=hue, saturation=saturation,
+                        brightness=brightness, kelvin=kelvin,
+                        period_ms=HALT_PERIOD_MS, cycles=1.0,
+                        waveform=WAVEFORM_SINE, **hdr)
+
+
 def set_light_power(level: int, duration_ms: int, **hdr) -> bytes:
     """0 = off, 65535 = on, faded over duration."""
     return build(SET_LIGHT_POWER,

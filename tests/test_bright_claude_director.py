@@ -216,3 +216,79 @@ class TestOneEffectFromASentence(ClaudeDirectorCase):
             self.assertIn(name, prompt)
         self.assertIn("BEATS", prompt)
 
+
+
+class TestTheAnswerIsParsedAsModelsActuallyWriteIt(unittest.TestCase):
+    """`Expecting ',' delimiter: line 1 column 222` — the real one.
+
+    It came out of a live install, twice, and every show it touched went
+    quietly to the algorithmic floor: the log said a column number about a
+    document that had already been thrown away, so the same failure was
+    unreadable each time it happened.
+
+    The cause is in the prompt. The schema contract annotates every field
+    with a `//` note, so a model matching the shape it was shown writes
+    those notes back — and a comment is a syntax error in a format that
+    has none. The prompt says so explicitly now; this is the belt to that
+    braces, because the next model to imitate an example is not a bug
+    anybody gets to fix in advance.
+    """
+
+    def test_a_comment_after_a_value_is_the_reported_failure(self):
+        """The exact shape, down to the error message."""
+        annotated = ('{"version": 2, "scenes": [{"start": 0, "end": 30.5 '
+                     '// the first verse\n, "mood": "calm"}]}')
+        with self.assertRaises(ValueError) as caught:
+            json.loads(annotated)
+        self.assertIn("Expecting ',' delimiter", str(caught.exception))
+        self.assertEqual(
+            {"version": 2,
+             "scenes": [{"start": 0, "end": 30.5, "mood": "calm"}]},
+            claude_director._extract_json(annotated))
+
+    def test_block_comments_and_trailing_commas_go_too(self):
+        self.assertEqual(
+            {"a": [1, 2], "b": {"c": 3}},
+            claude_director._extract_json(
+                '{"a": [1, 2,], /* an aside */ "b": {"c": 3,},}'))
+
+    def test_punctuation_inside_a_string_is_not_punctuation(self):
+        """`pop // rock` is a mood somebody could name, and a URL in a
+        label is two slashes that have to survive."""
+        self.assertEqual(
+            {"mood": "pop // rock", "note": "see http://x/y", "n": 1},
+            claude_director._extract_json(
+                '{"mood": "pop // rock", "note": "see http://x/y", "n": 1}'))
+
+    def test_an_escaped_quote_cannot_end_a_string_early(self):
+        """Otherwise the rest of the answer stops being a string and its
+        contents start being read as syntax."""
+        self.assertEqual(
+            {"name": 'a " b // not a comment', "n": 1},
+            claude_director._extract_json(
+                '{"name": "a \\" b // not a comment", "n": 1}'))
+
+    def test_a_failure_quotes_what_broke(self):
+        """A column number is not a diagnosis when the document is gone."""
+        with self.assertRaises(ValueError) as caught:
+            claude_director._extract_json(
+                '{"scenes": [{"start": 0, "end": nonsense-here}]}')
+        message = str(caught.exception)
+        self.assertIn("near:", message)
+        self.assertIn("nonsense", message,
+                      "the log has to carry what Claude actually wrote")
+
+    def test_prose_around_the_object_is_still_tolerated(self):
+        self.assertEqual(
+            {"a": 1},
+            claude_director._extract_json(
+                'Sure! Here is the show:\n```json\n{"a": 1}\n```\nEnjoy.'))
+
+    def test_the_contract_says_not_to_write_comments(self):
+        """The root cause, guarded: the example is annotated, so the
+        instruction that the annotation is not part of the answer has to
+        travel with it."""
+        contract = claude_director._SCHEMA_CONTRACT % "  wash [lifx] — a look"
+        self.assertIn("//", contract, "the example is still annotated")
+        self.assertIn("strict JSON", contract)
+        self.assertIn("trailing comma", contract)

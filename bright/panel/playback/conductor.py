@@ -50,6 +50,12 @@ class Conductor:
     # else.
     _end_scene: str | None = None
 
+    # Same reasoning, and it is load-bearing on the very first stop: a
+    # conductor that has never run still has to answer `stop()` without
+    # raising, and a set that only exists once a show has taken a snapshot
+    # is not a set a stop path can read.
+    _driven: set[str] = frozenset()  # type: ignore[assignment]
+
     def __init__(self, engine) -> None:
         self.engine = engine
         self.clock = ShowClock()
@@ -58,6 +64,7 @@ class Conductor:
         self._verify: asyncio.Task | None = None
         self._snapshot: dict[str, dict] = {}
         self._end_scene: str | None = None
+        self._driven: set[str] = set()
         self.state: dict[str, Any] = {"status": "idle"}
         self._write_state()
 
@@ -283,6 +290,40 @@ class Conductor:
         """
         self._end_scene = entity_id or None
 
+    async def _halt_waveforms(self) -> None:
+        """End every routine still running on a bulb of this show.
+
+        First, on every path out of a show, and deliberately before the
+        room is put back: a waveform is executed by the bulb, so it
+        outlives the cue list, the conductor and the add-on itself. The
+        old stop sent `SetColor` to the bulbs it had snapshotted, which
+        neither ends the routine nor reaches a bulb that never answered —
+        and when a party named an end scene, `_restore` returned before
+        sending a single LIFX packet, so the strobing simply continued
+        through the scene and past it.
+
+        Failures are per-bulb and never fatal: one unreachable light must
+        not leave the rest of the room dancing.
+        """
+        for serial in sorted(self._driven):
+            try:
+                addr = self.engine._addr(serial)
+            except KeyError:
+                continue
+            try:
+                await self.engine.send_governed(
+                    serial,
+                    packets.halt_waveform(
+                        target=bytes.fromhex(serial),
+                        source=self.engine.source,
+                        sequence=self.engine._next_sequence()),
+                    addr)
+            except Exception as exc:  # noqa: BLE001 — one bulb, not the room
+                log.warning("could not stop the effect on %s (%s)",
+                            playback_check.flat(serial),
+                            playback_check.flat(exc))
+        self._driven = set()
+
     async def _restore(self) -> None:
         if self._end_scene:
             entity = self._end_scene
@@ -317,6 +358,11 @@ class Conductor:
                 except (asyncio.CancelledError, Exception):  # noqa: BLE001
                     pass
         self._task = self._poller = self._verify = None
+        # Unconditional, and not part of `restore`: "put the room back" is a
+        # choice a caller gets to decline, but "stop" is not a request to
+        # keep strobing more quietly. A bulb left running its routine is the
+        # one thing every stop path has to undo.
+        await self._halt_waveforms()
         if restore and (self._snapshot or self._end_scene):
             await self._restore()
         self._write_state()
@@ -396,6 +442,12 @@ class Conductor:
         it, so stop puts the room back instead of leaving party colors."""
         self._snapshot = {}
         serials = {cue["serial"] for cue in cues if cue.get("ch") == "lifx"}
+        # Kept separately from the snapshot, and this is the distinction the
+        # old code did not draw: a bulb that does not answer GetColor gets no
+        # snapshot entry, but it is still a bulb this show is about to hand a
+        # waveform to. Stopping has to reach it whether or not it introduced
+        # itself.
+        self._driven = set(serials)
         for serial in serials:
             try:
                 addr = self.engine._addr(serial)

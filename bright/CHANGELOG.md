@@ -5,6 +5,36 @@ All notable changes to the **BRight** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.11.1
+
+Stop actually stops the lights, and Claude's shows stop falling back.
+
+### Fixed
+
+- **Stopping a show left the bulbs running it.** A `SetWaveform` hands the
+  bulb a routine it executes on its own — that is the sync trick, and it is
+  also why Stop did not work: BRight stops sending, and a bulb three
+  seconds into a forty-cycle strobe carries on to the end. Nothing we stop
+  *doing* can reach it. Stop now sends a one-cycle, 20ms, transient
+  waveform to every bulb the show drove, which replaces the running routine
+  and returns the light to the colour it held before. Three separate gaps
+  are closed: `SetColor` (what stop used to send) does not end a routine,
+  it just moves the light while the routine keeps running underneath; a
+  bulb that never answered `GetColor` had no snapshot entry and so was
+  never spoken to at all; and a party with an end scene returned before
+  sending a single LIFX packet, so the room strobed through the scene and
+  past it. Halting is unconditional — `restore=False` means "leave the room
+  as it is", not "keep going".
+- **Every Claude-written show was silently falling back to the algorithmic
+  director.** The schema contract annotates each field with a `//` note, so
+  the model wrote those notes back into its answer — and JSON has no
+  comments, so `json.loads` stopped at the first one with `Expecting ','
+  delimiter`. The prompt now says the annotations are not part of the
+  answer, the parser strips comments and trailing commas (string-aware, so
+  a mood called `pop // rock` and a URL in a label both survive), and a
+  parse failure quotes the text around the break instead of reporting a
+  column number about a document that has already been discarded.
+
 ## 0.11.0
 
 Claude knows what room it is lighting, zones are a thing you can set,
