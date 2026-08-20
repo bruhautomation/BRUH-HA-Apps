@@ -54,6 +54,26 @@ def save_analysis(hash_hex: str, analysis: dict) -> None:
     atomic_write.write_json(analysis_path(hash_hex), analysis)
 
 
+def show_path(hash_hex: str) -> Path:
+    return _track_dir(hash_hex) / "show.json"
+
+
+def script_path(hash_hex: str) -> Path:
+    return _track_dir(hash_hex) / "script.json"
+
+
+def load_show(hash_hex: str) -> dict | None:
+    try:
+        return json.loads(show_path(hash_hex).read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def save_show(hash_hex: str, script: dict, show: dict) -> None:
+    atomic_write.write_json(script_path(hash_hex), script)
+    atomic_write.write_json(show_path(hash_hex), show)
+
+
 def scan(folder: Path) -> list[dict]:
     """Every audio file under `folder`, with its hash and analysis state."""
     tracks = []
@@ -82,5 +102,12 @@ def scan(folder: Path) -> list[dict]:
                 "drops": len(analysis.get("drops") or []),
                 "lyrics": bool((analysis.get("lyrics") or {}).get("synced")),
             }
+            show = load_show(hash_hex)
+            if show:
+                entry["show"] = {
+                    "tier": show.get("tier"),
+                    "palette": show.get("palette_name"),
+                    "cues": (show.get("stats") or {}).get("cues"),
+                }
         tracks.append(entry)
     return tracks

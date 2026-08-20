@@ -206,6 +206,265 @@
   });
 
   // ------------------------------------------------------------------
+  // Light Map
+  // ------------------------------------------------------------------
+  const ROLE_GLYPH = {
+    candle: "🕯", downlight: "▽", lamp: "◉", strip: "▬", party: "✦", laser: "✧",
+  };
+  let mapData = { fixtures: [], roles: [] };
+
+  function renderMap() {
+    const floor = $("mapFloor");
+    floor.innerHTML = "";
+    for (const fixture of mapData.fixtures) {
+      const dot = document.createElement("div");
+      dot.className = "map-dot" +
+        (fixture.reachable === false ? " unreachable" : "");
+      dot.style.left = (fixture.x * 100) + "%";
+      dot.style.top = (fixture.y * 100) + "%";
+      dot.textContent = ROLE_GLYPH[fixture.role] || "?";
+      dot.title = fixture.label + " (" + fixture.role + ")";
+      dot.dataset.id = fixture.id;
+      floor.appendChild(dot);
+    }
+    const list = $("mapList");
+    list.innerHTML = "";
+    for (const fixture of mapData.fixtures) {
+      const row = document.createElement("div");
+      row.className = "row";
+      row.dataset.id = fixture.id;
+      row.innerHTML = '<div class="row-main"><strong></strong>' +
+        '<span class="muted small"></span></div>' +
+        '<div class="row-actions"><select class="role-pick"></select>' +
+        '<button class="btn small" data-act="remove">Remove</button></div>';
+      row.querySelector("strong").textContent = fixture.label;
+      row.querySelector(".muted").textContent = fixture.id +
+        (fixture.reachable === false ? " · unreachable" : "");
+      const pick = row.querySelector(".role-pick");
+      for (const role of mapData.roles) {
+        const option = document.createElement("option");
+        option.value = role;
+        option.textContent = role;
+        option.selected = role === fixture.role;
+        pick.appendChild(option);
+      }
+      list.appendChild(row);
+    }
+  }
+
+  async function loadMap() {
+    try {
+      mapData = await api("api/map");
+      renderMap();
+    } catch (error) {
+      $("mapStatus").textContent = "failed: " + error.message;
+    }
+  }
+
+  function saveFixture(fixture) {
+    return post("api/map/fixture", fixture).then(loadMap)
+      .catch((error) => { $("mapStatus").textContent = error.message; });
+  }
+
+  // Dragging dots around the floor.
+  (function () {
+    let dragging = null;
+    const floor = $("mapFloor");
+    floor.addEventListener("pointerdown", (event) => {
+      const dot = event.target.closest(".map-dot");
+      if (!dot) return;
+      dragging = dot;
+      dot.setPointerCapture(event.pointerId);
+    });
+    floor.addEventListener("pointermove", (event) => {
+      if (!dragging) return;
+      const rect = floor.getBoundingClientRect();
+      const x = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
+      const y = Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height));
+      dragging.style.left = (x * 100) + "%";
+      dragging.style.top = (y * 100) + "%";
+    });
+    floor.addEventListener("pointerup", (event) => {
+      if (!dragging) return;
+      const fixture = mapData.fixtures.find((f) => f.id === dragging.dataset.id);
+      dragging = null;
+      if (!fixture) return;
+      const rect = floor.getBoundingClientRect();
+      fixture.x = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
+      fixture.y = Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height));
+      saveFixture(fixture);
+    });
+  })();
+
+  $("mapList").addEventListener("change", (event) => {
+    const pick = event.target.closest(".role-pick");
+    if (!pick) return;
+    const fixture = mapData.fixtures.find(
+      (f) => f.id === pick.closest(".row").dataset.id);
+    if (fixture) {
+      fixture.role = pick.value;
+      saveFixture(fixture);
+    }
+  });
+
+  $("mapList").addEventListener("click", async (event) => {
+    const button = event.target.closest('button[data-act="remove"]');
+    if (!button) return;
+    const id = button.closest(".row").dataset.id;
+    try {
+      await fetch("api/map/fixture/" + encodeURIComponent(id),
+                  { method: "DELETE" });
+      loadMap();
+    } catch (error) {
+      $("mapStatus").textContent = error.message;
+    }
+  });
+
+  $("btnImportLifx").addEventListener("click", async () => {
+    try {
+      const result = await post("api/map/import-lifx", {});
+      $("mapStatus").textContent = result.added
+        ? result.added + " bulb(s) added — drag them into place and set roles"
+        : "nothing new (discover bulbs in the Lab first?)";
+      loadMap();
+    } catch (error) {
+      $("mapStatus").textContent = error.message;
+    }
+  });
+
+  $("btnAddAux").addEventListener("click", async () => {
+    const form = $("auxForm");
+    form.hidden = !form.hidden;
+    if (form.hidden) return;
+    const select = $("auxEntity");
+    select.innerHTML = "<option value=''>loading…</option>";
+    try {
+      const [switches, lights] = await Promise.all([
+        api("api/ha/entities?domain=switch"),
+        api("api/ha/entities?domain=light"),
+      ]);
+      select.innerHTML = "<option value=''>— switch/light entity —</option>";
+      for (const entity of [].concat(switches.entities || [],
+                                     lights.entities || [])) {
+        const option = document.createElement("option");
+        option.value = entity.entity_id;
+        option.textContent = entity.name + " (" + entity.entity_id + ")";
+        select.appendChild(option);
+      }
+    } catch (error) {
+      select.innerHTML = "<option value=''>failed</option>";
+    }
+  });
+
+  $("btnAuxSave").addEventListener("click", () => {
+    const entityId = $("auxEntity").value;
+    if (!entityId) return;
+    saveFixture({
+      kind: "ha", entity_id: entityId, role: $("auxRole").value,
+      label: entityId.split(".")[1], x: 0.5, y: 0.9,
+    });
+  });
+
+  // Load the map when its tab first opens.
+  tabs.addEventListener("click", (event) => {
+    const button = event.target.closest(".tab");
+    if (button && button.dataset.tab === "map") loadMap();
+    if (button && button.dataset.tab === "shows") loadShows();
+  });
+
+  // ------------------------------------------------------------------
+  // Shows
+  // ------------------------------------------------------------------
+  async function loadShows() {
+    const list = $("showList");
+    try {
+      const [lib, profiles] = await Promise.all([
+        api("api/library"), api("api/calibrate/profiles"),
+      ]);
+      const playerSelect = $("showPlayer");
+      const previous = playerSelect.value;
+      playerSelect.innerHTML = '<option value="">— calibrated player —</option>';
+      for (const profile of profiles.profiles || []) {
+        const option = document.createElement("option");
+        option.value = profile.entity_id;
+        option.textContent = profile.entity_id;
+        option.selected = profile.entity_id === previous;
+        playerSelect.appendChild(option);
+      }
+      const tracks = (lib.tracks || []).filter((t) => t.analyzed);
+      if (!tracks.length) {
+        list.innerHTML = '<p class="muted">No analyzed tracks — Library first.</p>';
+        return;
+      }
+      list.innerHTML = "";
+      for (const track of tracks) {
+        const row = document.createElement("div");
+        row.className = "row";
+        row.dataset.hash = track.hash;
+        const show = track.show;
+        row.innerHTML = '<div class="row-main"><strong></strong>' +
+          '<span class="rtt small"></span></div>' +
+          '<div class="row-actions">' +
+          '<button class="btn small" data-act="compile">Compile</button>' +
+          '<button class="btn small" data-act="play">▶ Play</button></div>';
+        row.querySelector("strong").textContent = track.name;
+        row.querySelector(".rtt").textContent = show
+          ? "compiled: " + show.tier + " · " + show.palette + " · " +
+            show.cues + " cues"
+          : "not compiled (▶ plays the plain beat pulse)";
+        list.appendChild(row);
+      }
+    } catch (error) {
+      list.innerHTML = '<p class="muted">failed: ' + error.message + "</p>";
+    }
+  }
+
+  $("btnShowsRefresh").addEventListener("click", loadShows);
+
+  $("showList").addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-act]");
+    if (!button) return;
+    const row = button.closest(".row");
+    const out = row.querySelector(".rtt");
+    const status = $("showStatus");
+    button.disabled = true;
+    try {
+      if (button.dataset.act === "compile") {
+        out.textContent = "compiling…";
+        const result = await post("api/show/compile",
+                                  { track_hash: row.dataset.hash });
+        out.textContent = "compiled: " + result.tier + " · " +
+          result.palette + " · " + result.stats.cues + " cues (peak " +
+          result.stats.peak_per_device_hz + "/s per bulb)";
+      } else if (button.dataset.act === "play") {
+        const player = $("showPlayer").value;
+        if (!player) {
+          status.textContent = "Pick a calibrated player first.";
+          return;
+        }
+        const result = await post("api/show/start_show", {
+          track_hash: row.dataset.hash, media_player: player,
+        });
+        status.textContent = "Playing (" + result.cues + " cues, anchored " +
+          Math.round(result.offset_ms) + "ms after play).";
+      }
+    } catch (error) {
+      out.textContent = "failed: " + error.message;
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  $("btnShowStop").addEventListener("click", async () => {
+    try {
+      await post("api/show/stop_show", {});
+      $("showStatus").textContent = "Stopped; lights restored.";
+    } catch (error) {
+      $("showStatus").textContent = "stop failed: " + error.message;
+    }
+  });
+
+  // ------------------------------------------------------------------
   // Lab: sync proof (metronome show)
   // ------------------------------------------------------------------
   $("btnLoadSync").addEventListener("click", async () => {

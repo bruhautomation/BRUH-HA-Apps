@@ -5,6 +5,37 @@ All notable changes to the **BRigt** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.6.0
+
+The director, first tier: a real choreographed show per track, compiled
+from the light map.
+
+### Added
+- **Light Map tab**: drag each light where it lives (left↔right is what
+  sweeps travel across), set its role — candle, downlight, lamp, strip,
+  party, laser. Discovered bulbs import with one press and never overwrite
+  a placement you've made; switch-driven lights (party light, laser) join
+  as HA entities.
+- **The algorithmic choreographer**: sections become scenes (palette from
+  the track's own brightness, intensity from the section's energy tier),
+  beats become on-bulb pulses, peaks earn sweeps across the room and the
+  party lights, drops get a blackout-then-hit with the lasers — and it is
+  deterministic: the show someone liked on Friday is the show they get on
+  Saturday.
+- **THE compiler** (one for every future tier): scripts become
+  pre-serialized cue timelines — waveforms carry the beats (a pulsing
+  scene is ~2 packets a minute per bulb), LIFX leads are half the probed
+  RTT, aux leads are the Lab's measured service latency per entity, and
+  the 20 msgs/s ceiling is enforced at compile time: a script that asks
+  for more motion than the wire carries fails loudly, never at the party.
+- **Role rules with taste**: candles cap at 45% and never strobe; lasers
+  and party lights only fire for peaks and drops.
+- **Shows tab**: compile per track, see tier/palette/cue stats, play on a
+  calibrated speaker, stop-and-restore.
+- The script schema validator that every future Claude-authored show must
+  pass — anything malformed lands on the algorithmic floor per-track
+  (or fails honestly in strict `director_mode: claude`).
+
 ## 0.5.0
 
 The playback engine, proven with a metronome. Sync is demonstrated end to

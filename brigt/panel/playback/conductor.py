@@ -283,16 +283,27 @@ def peak_rate_per_device(cues: list[dict]) -> float:
 
 def load_show_for_track(hash_hex: str, devices: dict[str, dict],
                         source: int) -> dict | None:
-    """Phase 5: every track's show IS the metronome show. The director
-    (Phase 6+) replaces this with compiled choreography per track."""
+    """A compiled show when the director has made one; the metronome show
+    otherwise, so 'start_show' always has something honest to play."""
     analysis = library.load_analysis(hash_hex)
     if analysis is None:
         return None
-    cues = metronome_cues(analysis, devices, source)
+    title = (analysis.get("tags") or {}).get("title") or hash_hex[:8]
+    duration = (float((analysis.get("tags") or {}).get("duration") or 0)
+                or (analysis["beats"][-1] + 5 if analysis.get("beats") else 60))
+    compiled = library.load_show(hash_hex)
+    if compiled and compiled.get("cues"):
+        return {
+            "cues": compiled["cues"],
+            "title": title,
+            "duration_s": float(compiled.get("duration_s") or duration),
+            "media_content_id": media_content_id_for(analysis),
+            "tier": compiled.get("tier"),
+        }
     return {
-        "cues": cues,
-        "title": (analysis.get("tags") or {}).get("title") or hash_hex[:8],
-        "duration_s": float((analysis.get("tags") or {}).get("duration") or 0)
-                      or (analysis["beats"][-1] + 5 if analysis.get("beats") else 60),
+        "cues": metronome_cues(analysis, devices, source),
+        "title": title,
+        "duration_s": duration,
         "media_content_id": media_content_id_for(analysis),
+        "tier": "metronome",
     }

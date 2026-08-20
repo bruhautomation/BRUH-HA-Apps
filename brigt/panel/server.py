@@ -55,8 +55,11 @@ import jobs  # noqa: E402
 from analyzer import library, pipeline  # noqa: E402
 from calibrate import correlate, reference  # noqa: E402
 from lifx import engine as lifx_engine  # noqa: E402
+from director import build as director_build  # noqa: E402
+from director.compiler import CompileError  # noqa: E402
 from playback import conductor as conductor_mod  # noqa: E402
 from stores import calibration as calibration_store  # noqa: E402
+from stores import light_map  # noqa: E402
 
 STATIC = HERE
 DATA_DIR = Path(os.environ.get("BRIGT_STATE", "/data"))
@@ -409,7 +412,61 @@ async def h_track_analysis(request: web.Request) -> web.Response:
 
 
 # ---------------------------------------------------------------------------
-# Shows — Phase 5: the metronome proof; the director replaces its cues later
+# The light map — the director's cast list
+# ---------------------------------------------------------------------------
+async def h_map(request: web.Request) -> web.Response:
+    data = light_map.load()
+    reachable = set(ENGINE.devices)
+    for fixture in data["fixtures"]:
+        if fixture.get("kind") == "lifx":
+            fixture["reachable"] = fixture.get("serial") in reachable
+    return web.json_response({**data, "roles": list(light_map.ROLES)})
+
+
+async def h_map_upsert(request: web.Request) -> web.Response:
+    body = await _json_body(request)
+    try:
+        fixture = light_map.upsert(body)
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    return web.json_response({"fixture": fixture})
+
+
+async def h_map_remove(request: web.Request) -> web.Response:
+    if light_map.remove(request.match_info["fixture_id"]):
+        return web.json_response({"ok": True})
+    return web.json_response({"error": "no such fixture"}, status=404)
+
+
+async def h_map_import_lifx(request: web.Request) -> web.Response:
+    added = light_map.merge_lifx(ENGINE.devices)
+    return web.json_response({"added": added})
+
+
+# ---------------------------------------------------------------------------
+# Compile — script tier + THE compiler, per track
+# ---------------------------------------------------------------------------
+async def h_show_compile(request: web.Request) -> web.Response:
+    body = await _json_body(request)
+    hash_hex = str(body.get("track_hash", ""))
+    mode = _options_from_env()["director_mode"]
+    try:
+        show = await asyncio.to_thread(
+            director_build.build_show, hash_hex, ENGINE.devices,
+            ENGINE.source, mode)
+    except CompileError as exc:
+        return web.json_response({"error": str(exc)}, status=422)
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=409)
+    return web.json_response({
+        "tier": show["tier"],
+        "palette": show.get("palette_name"),
+        "stats": show["stats"],
+    })
+
+
+# ---------------------------------------------------------------------------
+# Shows — compiled choreography when it exists, the metronome otherwise
 # ---------------------------------------------------------------------------
 CONDUCTOR: conductor_mod.Conductor | None = None
 
@@ -454,9 +511,18 @@ async def h_show_start(request: web.Request) -> web.Response:
     track = str(body.get("track", ""))
     hash_hex = str(body.get("track_hash", ""))
     if track and not hash_hex:
-        path = Path(track)
+        # The wire names a file we will open (to hash it) and hand to the
+        # media player — it may only ever be a file under /media. Pure
+        # string containment before any filesystem call.
+        base = str(MEDIA_DIR)
+        candidate = os.path.normpath(os.path.join(base, track.lstrip("/")
+                                                  .removeprefix("media/")))
+        if not candidate.startswith(base + os.sep):
+            return web.json_response({"error": "track must live under /media"},
+                                     status=400)
+        path = Path(candidate)
         if not path.is_file():
-            return web.json_response({"error": f"no such track: {track}"},
+            return web.json_response({"error": f"no such track: {candidate}"},
                                      status=404)
         hash_hex = await asyncio.to_thread(library.track_hash, path)
     if not hash_hex:
@@ -680,7 +746,13 @@ def build_app() -> web.Application:
     app.router.add_post("/api/ha/latency-probe", h_ha_latency_probe)
     app.router.add_get("/api/job/{job_id}", h_job)
     app.router.add_get("/api/lab/report", h_lab_report)
+    # Light map
+    app.router.add_get("/api/map", h_map)
+    app.router.add_post("/api/map/fixture", h_map_upsert)
+    app.router.add_delete("/api/map/fixture/{fixture_id}", h_map_remove)
+    app.router.add_post("/api/map/import-lifx", h_map_import_lifx)
     # Shows (the bridge forwards brigt.* service calls to /api/show/*)
+    app.router.add_post("/api/show/compile", h_show_compile)
     app.router.add_post("/api/show/start_show", h_show_start)
     app.router.add_post("/api/show/metronome", h_show_start)
     app.router.add_post("/api/show/stop_show", h_show_stop)

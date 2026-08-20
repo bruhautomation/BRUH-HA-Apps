@@ -92,9 +92,33 @@
   </section>
   <section class="pane" id="pane-map">
     <h2>Light Map</h2>
-    <p class="muted">Place each light, give it a role (candle, downlight,
-      lamp, strip, party light, laser) and a spot in the house. The director
-      choreographs from this map.</p>
+    <p class="muted">Place each light, give it a role and a spot in the
+      house. The director choreographs from this map: candles glow and never
+      strobe, lamps and downlights carry the beat, strips carry sweeps, and
+      party lights and lasers are saved for the moments that earn them.</p>
+
+    <div class="card">
+      <div class="card-head">
+        <h3>The room</h3>
+        <span>
+          <button id="btnImportLifx" class="btn">Add discovered bulbs</button>
+          <button id="btnAddAux" class="btn">Add a switch light…</button>
+        </span>
+      </div>
+      <p class="muted small">Drag lights where they are in the room (left ↔
+        right matters most — sweeps travel across x).</p>
+      <div id="mapFloor" class="map-floor"></div>
+      <div id="auxForm" class="demo-controls" hidden>
+        <select id="auxEntity"><option value="">— switch/light entity —</option></select>
+        <select id="auxRole">
+          <option value="party">party</option>
+          <option value="laser">laser</option>
+        </select>
+        <button id="btnAuxSave" class="btn small">Add</button>
+      </div>
+      <div id="mapList" class="list"></div>
+      <div id="mapStatus" class="cal-status"></div>
+    </div>
   </section>
   <section class="pane" id="pane-library">
     <h2>Library</h2>
@@ -118,7 +142,23 @@
   <section class="pane" id="pane-shows">
     <h2>Shows</h2>
     <p class="muted">Compiled shows — one per track, built ahead of time so
-      playback is nothing but a clock and a cue list.</p>
+      playback is nothing but a clock and a cue list. Compile after changing
+      the Light Map; play needs a calibrated speaker.</p>
+
+    <div class="card">
+      <div class="card-head">
+        <h3>Tracks</h3>
+        <span>
+          <select id="showPlayer"><option value="">— calibrated player —</option></select>
+          <button id="btnShowsRefresh" class="btn">Refresh</button>
+        </span>
+      </div>
+      <div id="showList" class="list"><p class="muted">Not loaded yet.</p></div>
+      <div class="demo-controls">
+        <button id="btnShowStop" class="btn">■ Stop &amp; restore lights</button>
+        <span id="showStatus" class="cal-status"></span>
+      </div>
+    </div>
   </section>
   <section class="pane" id="pane-calibrate">
     <h2>Calibrate</h2>
