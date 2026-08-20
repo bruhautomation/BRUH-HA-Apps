@@ -467,3 +467,106 @@ class TestTheShowEditorsPreview(PanelCase):
             f"/api/show/{TRACK_HASH}/preview", {"script": "{oh dear"})
         self.assertEqual(400, status)
         self.assertIn("JSON", body["error"])
+
+
+class TestWhoWroteThisShow(PanelCase):
+    """A show tagged `algorithmic` used to say nothing about why.
+
+    On a real install every Claude-written show fell back for days — the
+    prompt demonstrated `//` annotations, the model wrote them back, and
+    JSON has no comments — and the only trace was a WARNING nobody reads.
+    From the outside a fallback and a success are identical: you get a
+    show either way. So the record travels with the show, and the reason
+    travels with a fallback.
+    """
+
+    async def test_a_plain_compile_records_who_wrote_it(self):
+        response = await self.client.post(
+            "/api/show/compile", json={"track_hash": TRACK_HASH})
+        self.assertEqual(200, response.status)
+        body = await response.json()
+        report = body["director"]
+        self.assertEqual("algorithmic", report["used"])
+        self.assertFalse(report["fell_back"])
+
+    async def test_the_record_can_be_read_back_later(self):
+        """The editor opens shows it did not compile, so the compile
+        response is not the only place this can be asked."""
+        await self.client.post("/api/show/compile",
+                               json={"track_hash": TRACK_HASH})
+        response = await self.client.get(f"/api/show/{TRACK_HASH}/director")
+        self.assertEqual(200, response.status)
+        self.assertEqual("algorithmic", (await response.json())["used"])
+
+    async def test_a_show_with_no_record_says_so_rather_than_failing(self):
+        response = await self.client.get(f"/api/show/{'cd' * 20}/director")
+        self.assertEqual(404, response.status)
+        self.assertIn("no record", (await response.json())["error"])
+
+    async def test_asking_for_claude_without_brain_is_refused_by_name(self):
+        """Not silently downgraded. Pressing a button called Claude and
+        getting the algorithmic director is the failure this whole record
+        exists to make impossible."""
+        response = await self.client.post(
+            "/api/show/compile",
+            json={"track_hash": TRACK_HASH, "director": "claude"})
+        self.assertEqual(409, response.status)
+        self.assertIn("brAIn", (await response.json())["error"])
+
+    async def test_an_unknown_director_is_refused(self):
+        response = await self.client.post(
+            "/api/show/compile",
+            json={"track_hash": TRACK_HASH, "director": "gpt"})
+        self.assertEqual(400, response.status)
+
+    async def test_algorithmic_can_be_asked_for_explicitly(self):
+        """The override is per-compile in both directions — a show you
+        want rebuilt without spending a Claude run is the same button."""
+        response = await self.client.post(
+            "/api/show/compile",
+            json={"track_hash": TRACK_HASH, "director": "algorithmic"})
+        self.assertEqual(200, response.status)
+        body = await response.json()
+        self.assertEqual("algorithmic", body["director"]["used"])
+        self.assertFalse(body["director"]["fell_back"])
+
+
+class TestTheBriefIsReadable(PanelCase):
+    """"Show me exactly what Claude is doing" starts with what it is told."""
+
+    async def test_the_brief_is_the_real_one(self):
+        response = await self.client.get(f"/api/show/{TRACK_HASH}/prompt")
+        self.assertEqual(200, response.status)
+        body = await response.json()
+        prompt = body["prompt"]
+        # Built by the same function a real run uses, so these are not a
+        # description of the brief — they are in it.
+        self.assertIn("Demo Track", prompt)
+        self.assertIn("THE ROOM", prompt)
+        self.assertIn("lifx-d073d5000001", prompt,
+                      "every light is nameable, or select.ids is unusable")
+        self.assertIn("lounge", prompt, "the zones somebody set")
+        self.assertIn('order:"x"', prompt,
+                      "the travel orders are worked out in Python, because "
+                      "sorting a dozen floats is what a model does badly "
+                      "and confidently")
+        self.assertEqual(3, body["fixtures"])
+        self.assertEqual(len(prompt), body["chars"])
+
+    async def test_reading_the_brief_runs_nothing(self):
+        """It costs no Claude run, which is what makes it worth reading
+        before deciding to spend one."""
+        response = await self.client.get(f"/api/show/{TRACK_HASH}/prompt")
+        self.assertFalse((await response.json())["available"],
+                         "no brAIn in the test environment, and the brief "
+                         "is still readable")
+
+    async def test_a_vibe_appears_in_the_brief(self):
+        response = await self.client.get(
+            f"/api/show/{TRACK_HASH}/prompt?vibe=slow and blue")
+        self.assertIn("slow and blue", (await response.json())["prompt"])
+
+    async def test_an_unanalyzed_track_says_what_to_do(self):
+        response = await self.client.get(f"/api/show/{'cd' * 20}/prompt")
+        self.assertEqual(404, response.status)
+        self.assertIn("Library", (await response.json())["error"])

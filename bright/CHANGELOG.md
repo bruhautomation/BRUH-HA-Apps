@@ -5,6 +5,34 @@ All notable changes to the **BRight** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.12.0
+
+Ask Claude to write one show, and read what it was told.
+
+### Added
+
+- **"✨ Claude" on every track.** The director tier was a global option, so
+  "write this one with Claude" meant a trip to Settings and back. It is a
+  button per show now, in both directions — asking for the algorithmic
+  director explicitly is the same button, for a show you want rebuilt
+  without spending a Claude run. The option stays the default, because it
+  is the answer for every show nobody has an opinion about.
+- **Every show records who wrote it**, saved beside the show and readable
+  later (`GET /api/show/{hash}/director`). A fallback carries the reason it
+  fell back, and pressing a button called Claude on an install with no
+  brAIn is refused by name rather than quietly downgraded. This is the
+  record whose absence let a fortnight of silent fallbacks go unnoticed: a
+  show tagged `algorithmic` looked exactly like one nobody had asked
+  Claude for.
+- **The brief is readable** (`GET /api/show/{hash}/prompt`, and a
+  disclosure under the show editor). It is built by the same function a
+  real run uses rather than described, so it cannot drift into being a
+  nicer story than the truth — and it shows, in the model's own words,
+  that the director knows your light ids, roles, zones, positions and the
+  travel orders worked out from them. Reading it runs nothing and costs
+  nothing, which is the point: it is the cheapest way to find out whether
+  a Claude run is worth a couple of minutes.
+
 ## 0.11.1
 
 Stop actually stops the lights, Claude's shows stop falling back, and the

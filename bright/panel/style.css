@@ -541,3 +541,35 @@ select { max-width: 100%; }
   font: inherit;
 }
 @media (pointer: coarse) { .zone-pick { font-size: 16px; } }
+
+/* The director's brief. A long monospace document inside a card, so it
+   scrolls in its own box rather than making the page do it — and it wraps,
+   because the prompt contains lines longer than any phone. */
+.prompt-box { margin: 10px 0 4px; }
+.prompt-box > summary {
+  cursor: pointer;
+  padding: 8px 2px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  font-weight: 600;
+}
+.prompt-text {
+  max-height: 42vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 1.45;
+  background: var(--bg-sunken, rgba(127, 127, 127, 0.08));
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin: 6px 0 0;
+}
+@media (pointer: coarse) {
+  /* iOS zooms the page in on any text under 16px and never zooms back
+     out, which inside an ingress iframe strands the panel at an arbitrary
+     scale. The brief is long, so it is small on a desktop and readable
+     here rather than clever. */
+  .prompt-text { font-size: 16px; }
+}

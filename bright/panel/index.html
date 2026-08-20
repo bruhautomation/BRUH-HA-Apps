@@ -329,6 +329,18 @@
         </span>
       </div>
       <div id="scriptWhich" class="muted small">Pick a track above to open its show.</div>
+      <div id="scriptWho" class="muted small"></div>
+
+      <!-- What Claude is handed for this track. Not a description of the
+           brief — the brief, built by the same function a real run uses,
+           so it cannot drift into being a nicer story than the truth. -->
+      <details id="promptBox" class="prompt-box">
+        <summary>What Claude is told about this track and your room</summary>
+        <p class="muted small">Exactly the brief the director receives.
+          Reading it costs nothing and runs nothing; it is the quickest way
+          to check that Claude knows where your lights are.</p>
+        <pre id="promptText" class="prompt-text">Open a track to read its brief.</pre>
+      </details>
 
       <!-- The room, at whatever instant the scrub bar is holding. -->
       <div id="edFloor" class="map-floor preview-floor" aria-label="The room

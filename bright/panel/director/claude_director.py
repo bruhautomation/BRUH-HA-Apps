@@ -325,6 +325,18 @@ def _around(body: str, exc: ValueError, span: int = 60) -> str:
     return f"...{excerpt}..." if start else f"{excerpt}..."
 
 
+def digest(analysis: dict, fixtures: list[dict],
+           vibe: str | None = None) -> str:
+    """The brief, for anyone who wants to read it.
+
+    A public name on the private builder rather than a second rendering:
+    the panel shows people exactly what the director is handed, and a
+    "roughly what we send" page would be a copy that drifts the first time
+    the real prompt gains a section.
+    """
+    return _digest(analysis, fixtures, vibe)
+
+
 def write_script(analysis: dict, fixtures: list[dict],
                  timeout_s: float = TASK_TIMEOUT_S,
                  vibe: str | None = None) -> dict:

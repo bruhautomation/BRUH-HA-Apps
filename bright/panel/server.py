@@ -1079,7 +1079,17 @@ def _publish_parties() -> None:
 async def h_show_compile(request: web.Request) -> web.Response:
     body = await _json_body(request)
     hash_hex = str(body.get("track_hash", ""))
-    mode = _options_from_env()["director_mode"]
+    # `director` overrides the option for THIS compile, which is what makes
+    # "rewrite this one with Claude" a button rather than a settings trip.
+    # The option stays the default, because it is the answer for every show
+    # nobody has an opinion about.
+    asked = str(body.get("director", "") or "").strip().lower()
+    if asked and asked not in ("auto", "claude", "algorithmic"):
+        return web.json_response(
+            {"error": f"director must be auto, claude or algorithmic "
+                      f"(not {asked!r})"}, status=400)
+    mode = asked or _options_from_env()["director_mode"]
+    vibe = str(body.get("vibe", "") or "").strip()[:200] or None
     writer = None
     if mode in ("auto", "claude") and claude_director.available():
         writer = claude_director.write_script
@@ -1092,7 +1102,7 @@ async def h_show_compile(request: web.Request) -> web.Response:
     try:
         show = await asyncio.to_thread(
             director_build.build_show, hash_hex, ENGINE.devices,
-            ENGINE.source, mode, writer)
+            ENGINE.source, mode, writer, vibe)
     except CompileError as exc:
         return web.json_response({"error": str(exc)}, status=422)
     except ValueError as exc:
@@ -1101,7 +1111,70 @@ async def h_show_compile(request: web.Request) -> web.Response:
         "tier": show["tier"],
         "palette": show.get("palette_name"),
         "stats": show["stats"],
+        # The whole point of the override: a caller that asked for Claude
+        # has to be told whether it got Claude, in the same answer. A show
+        # tagged `algorithmic` with no reason beside it is how a week of
+        # silent fallbacks went unnoticed.
+        "director": show.get("director"),
     })
+
+
+async def h_show_prompt(request: web.Request) -> web.Response:
+    """Exactly what Claude is handed for this track.
+
+    Built by the same function that builds it for a real run rather than
+    described, because a page describing the prompt is a second copy of it
+    and would start lying the first time the real one changed. Nothing here
+    runs Claude or costs anything — it is the brief, readable before you
+    decide to spend a couple of minutes on the answer, and it is the
+    fastest way to see whether the director actually knows about the room
+    you drew.
+    """
+    hash_hex = request.match_info["hash"]
+    try:
+        analysis = await asyncio.to_thread(library.load_analysis, hash_hex)
+    except ValueError:
+        return web.json_response({"error": "not a track hash"}, status=400)
+    if analysis is None:
+        return web.json_response(
+            {"error": "not analyzed yet — the Library tab analyses a track "
+                      "before there is anything to brief Claude about"},
+            status=404)
+    fixtures = director_build.fixtures_for_show(ENGINE.devices)
+    if not fixtures:
+        return web.json_response(
+            {"error": "no reachable fixtures — run Lab discovery, then place "
+                      "your lights on the Light Map"}, status=409)
+    vibe = str(request.query.get("vibe", "") or "").strip()[:200] or None
+    prompt = await asyncio.to_thread(
+        claude_director.digest, analysis, fixtures, vibe)
+    return web.json_response({
+        "prompt": prompt,
+        "chars": len(prompt),
+        "fixtures": len(fixtures),
+        "available": claude_director.available(),
+    })
+
+
+async def h_show_director(request: web.Request) -> web.Response:
+    """How the show on disk came to be written — read back later.
+
+    The compile response carries this too, but a panel showing a show it
+    did not just compile has no other way to ask, and "was this one
+    actually Claude's?" is the question the Shows list is most often
+    being scanned for.
+    """
+    hash_hex = request.match_info["hash"]
+    try:
+        report = await asyncio.to_thread(director_build.load_report, hash_hex)
+    except ValueError:
+        return web.json_response({"error": "not a track hash"}, status=400)
+    if report is None:
+        return web.json_response(
+            {"error": "no record of how this show was written — it predates "
+                      "the record, or it has not been compiled yet"},
+            status=404)
+    return web.json_response(report)
 
 
 # ---------------------------------------------------------------------------
@@ -1883,6 +1956,8 @@ def build_app() -> web.Application:
     app.router.add_put("/api/show/{hash}/script", h_show_script_save)
     app.router.add_post("/api/show/{hash}/script/import", h_show_script_import)
     app.router.add_get("/api/show/{hash}/cues", h_show_cues)
+    app.router.add_get("/api/show/{hash}/director", h_show_director)
+    app.router.add_get("/api/show/{hash}/prompt", h_show_prompt)
     app.router.add_post("/api/show/{hash}/preview", h_show_preview)
     app.router.add_post("/api/show/{hash}/outline", h_show_outline)
     # Library
