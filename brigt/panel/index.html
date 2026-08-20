@@ -29,10 +29,48 @@
 <main class="wrap">
   <section class="pane active" id="pane-lab">
     <h2>Lab</h2>
-    <p class="muted">Latency and feasibility probes for your actual house —
-      LIFX round-trip times, sustained rates, an on-bulb waveform demo, and
-      Home Assistant service-call timing. Coming in the next update; this
-      build is the installable skeleton.</p>
+    <p class="muted">Latency and feasibility, measured in <em>your</em> house.
+      These numbers are what the director compiles cue lead-times from.</p>
+
+    <div class="card">
+      <div class="card-head">
+        <h3>LIFX bulbs — direct LAN</h3>
+        <button id="btnDiscover" class="btn">Discover bulbs</button>
+      </div>
+      <p class="muted small">Round-trip time per bulb (an invisible echo, not a
+        flash), a sustained-rate ramp to find each bulb's real ceiling, and a
+        waveform demo — one packet that makes the bulb pulse on the beat by
+        itself, which is how shows stay in sync.</p>
+      <div class="demo-controls">
+        <label>BPM <input type="number" id="demoBpm" value="120" min="30" max="300"></label>
+        <label>Seconds <input type="number" id="demoSecs" value="10" min="2" max="60"></label>
+      </div>
+      <div id="lifxList" class="list"><p class="muted">No bulbs discovered yet.</p></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h3>Aux lights — through Home Assistant</h3>
+        <button id="btnLoadEntities" class="btn">Load switches &amp; lights</button>
+      </div>
+      <p class="muted small">Party lights and lasers on smart plugs ride HA
+        service calls, which are slower — this measures the real call-to-state
+        round trip so their cues can be sent early by exactly that much.
+        The probe toggles the device a few times and puts it back.</p>
+      <div class="demo-controls">
+        <select id="haEntity"><option value="">— pick an entity —</option></select>
+        <button id="btnHaProbe" class="btn">Measure latency</button>
+      </div>
+      <div id="haProbeResult"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h3>Latency report</h3>
+        <button id="btnReport" class="btn">Refresh</button>
+      </div>
+      <pre id="labReport" class="report muted">Run some probes first.</pre>
+    </div>
   </section>
   <section class="pane" id="pane-map">
     <h2>Light Map</h2>

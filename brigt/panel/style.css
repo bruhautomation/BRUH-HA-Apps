@@ -55,6 +55,81 @@ body {
 
 .foot { margin-top: 40px; color: var(--muted); font-size: 13px; }
 
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin: 14px 0;
+}
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.card-head h3 { margin: 0; font-size: 16px; }
+.small { font-size: 13px; }
+
+.btn {
+  min-height: 44px;
+  padding: 8px 14px;
+  border: 1px solid var(--azure);
+  border-radius: 8px;
+  background: rgba(30, 159, 224, 0.14);
+  color: var(--ink);
+  font-size: 15px;
+  cursor: pointer;
+}
+.btn:hover { background: rgba(30, 159, 224, 0.28); }
+.btn:disabled { opacity: 0.5; cursor: default; }
+.btn.small { min-height: 40px; padding: 6px 10px; font-size: 14px; }
+
+.demo-controls {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 10px 0;
+}
+.demo-controls label { color: var(--muted); font-size: 14px; }
+.demo-controls input, .demo-controls select {
+  background: var(--bg);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 16px;
+  min-height: 44px;
+}
+.demo-controls input[type="number"] { width: 90px; }
+.demo-controls select { max-width: 100%; }
+
+.list .row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+.row-main { display: flex; flex-direction: column; gap: 2px; min-width: 200px; }
+.row-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.rtt { color: var(--azure-light); }
+
+.report {
+  overflow-x: auto;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  font-size: 13px;
+}
+
+#haProbeResult { margin-top: 8px; color: var(--azure-light); }
+
 @media (pointer: coarse) {
   /* One floor for everything added later, not a per-control patch. */
   input, select, textarea, button { font-size: 16px; }
