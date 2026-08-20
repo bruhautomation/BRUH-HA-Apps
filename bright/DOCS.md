@@ -206,13 +206,36 @@ and a cue list. Compile after changing the Light Map — the show is built for
 the lights that existed when it was compiled. Playing needs a calibrated
 speaker.
 
-**The show file.** Select a track and the whole script opens as text: scenes
-with their palettes, brightness and effects, and moments pinned to the drops.
-This is the entire show — there is nothing else. Edit it here and press
-**Save & compile**, and it goes through exactly the same door the director's
-own output goes through: validated, compiled, and checked against the
-per-bulb message budget before anything is kept. A script that would flood a
-bulb is refused with the reason and the show you had is untouched.
+**The show, as a picture.** Select a track and the show opens as what it is:
+your room on the floor plan at the top, the whole song as a strip beneath it
+with one row per light, the scenes as blocks across the top of that strip,
+and the effects as rows you can press.
+
+Drag the scrub bar and the room shows you that instant. Press ▶ and the show
+plays through at real speed — on the screen, not on the bulbs, so you can
+read a show at midday without lighting the house up. Press a scene block to
+jump to it.
+
+**Editing is the picture, not the file.** Press **Edit** on any effect row
+and you get the same form the Effects tab builds — type, travel order, which
+lights it owns (individually, by role, or by room) and every parameter with
+its range. **+ Effect** adds one to that scene; **✕** takes one away. The
+preview follows every change immediately, because the panel previews the
+show *as currently edited* rather than as last saved. If a change would
+flood a bulb, you find out there and then, next to the effect you changed,
+instead of several presses later.
+
+Nothing is written until you press **Save & compile**, which goes through
+exactly the same door the director's own output goes through: validated,
+compiled, and checked against the per-bulb message budget before anything is
+kept. A script that would flood a bulb is refused with the reason and the
+show you had is untouched.
+
+**Code** opens the same show as text — scenes with their palettes,
+brightness and effects, and moments pinned to the drops. This is still the
+entire show, and the two are one document: type in either and the other
+follows. It is there for the edits a form is clumsy at, and for the copy you
+keep.
 
 Every compile also writes the script to
 `/config/.bright/shows/<track>-<hash>.json`, where the Home Assistant file

@@ -219,7 +219,7 @@ def _from_feature(feature: dict) -> dict | None:
 # ---------------------------------------------------------------------------
 # Compile
 # ---------------------------------------------------------------------------
-def _scene_effects(scene: dict) -> list[dict]:
+def scene_effects(scene: dict) -> list[dict]:
     """Everything a scene asks for, as clean effects, in running order.
 
     The base wash comes first and can be turned off (`"base": false`) by
@@ -247,9 +247,21 @@ def _scene_effects(scene: dict) -> list[dict]:
     return out
 
 
-def compile_show(script: dict, fixtures: list[dict], analysis: dict,
-                 source: int) -> dict:
-    """Render the script. Raises CompileError on an impossible ask."""
+def script_actions(script: dict, fixtures: list[dict],
+                   analysis: dict) -> dict:
+    """A whole script, walked once, as actions.
+
+    The same move `effects.py` makes for a single effect, at the scale of a
+    show: this is the ONLY place that knows how a script becomes actions,
+    and both consumers hang off it — `compile_show` renders the list to
+    packets, `preview.py` simulates it into frames. A preview that walked
+    the script itself would be a second answer to "what does this show do",
+    and the two would drift the first time a moment's default changed.
+
+    Returns the actions in the order they were rendered (which is what
+    `used_aux` below is counting on), the per-effect breakdown, and the
+    duration everything was laid out against.
+    """
     if not fixtures:
         raise CompileError("the light map has no reachable fixtures")
     grid = fx.Grid(analysis.get("beats"), analysis.get("downbeats"),
@@ -257,26 +269,20 @@ def compile_show(script: dict, fixtures: list[dict], analysis: dict,
     duration = float((analysis.get("tags") or {}).get("duration")
                      or ((analysis.get("beats") or [0])[-1] + 5))
 
-    out = _Cues(source, _ha_leads())
+    actions: list[dict] = []
     breakdown: list[dict] = []
-    used_aux: set[str] = set()
 
     def _run(effect: dict, window: tuple[float, float], palette: list,
              base: float, where: str) -> None:
         try:
-            actions = fx.actions_for(effect, fixtures, grid, window=window,
-                                     palette=palette, base_brightness=base)
+            rendered = fx.actions_for(effect, fixtures, grid, window=window,
+                                      palette=palette, base_brightness=base)
         except fx.EffectError as exc:
             raise CompileError(f"{where}: {exc}") from None
-        render_actions(actions, out)
-        for action in actions:
-            if action["kind"] == "aux" and action["on"]:
-                used_aux.add(action["fixture"]["entity_id"])
-            elif action["kind"] == "aux":
-                used_aux.discard(action["fixture"]["entity_id"])
+        actions.extend(rendered)
         breakdown.append({
             "where": where, "type": effect["type"],
-            "name": effect.get("name"), **fx.summarise(actions)})
+            "name": effect.get("name"), **fx.summarise(rendered)})
 
     for index, scene in enumerate(script.get("scenes") or []):
         if not isinstance(scene, dict):
@@ -288,7 +294,7 @@ def compile_show(script: dict, fixtures: list[dict], analysis: dict,
         palette = scene.get("palette") or [[40, 0.6]]
         base = float(scene.get("brightness", 0.5))
         label = scene.get("mood") or scene.get("kind") or f"scene {index}"
-        for effect in _scene_effects(scene):
+        for effect in scene_effects(scene):
             _run(effect, window, palette, base, f"scene {index} ({label})")
 
     # Moments: an effect pinned to a time rather than to a section. Both
@@ -329,10 +335,37 @@ def compile_show(script: dict, fixtures: list[dict], analysis: dict,
     # Aux lights end the show off. They are switches: nothing else turns
     # them back off, and a laser left on after the music stops is the one
     # failure a guest actually notices.
+    #
+    # It is an ordinary aux action rather than a direct `out.ha` so that the
+    # returned list is the WHOLE show — the preview draws the laser going
+    # out at the end because the show really does end that way, and a tail
+    # written straight to the cues would have been invisible to it.
+    used_aux: set[str] = set()
+    for action in actions:
+        if action["kind"] != "aux":
+            continue
+        if action["on"]:
+            used_aux.add(action["fixture"]["entity_id"])
+        else:
+            used_aux.discard(action["fixture"]["entity_id"])
     for fixture in fixtures:
         if (palettes.ROLE_RULES.get(fixture.get("role"), {}).get("switch")
                 and fixture.get("entity_id") in used_aux):
-            out.ha(fixture, duration, "homeassistant.turn_off", "show end")
+            actions.append(fx.aux_action(fixture, duration, False, "show end"))
+
+    return {"actions": actions, "effects": breakdown, "duration_s": duration,
+            "grid": grid}
+
+
+def compile_show(script: dict, fixtures: list[dict], analysis: dict,
+                 source: int) -> dict:
+    """Render the script. Raises CompileError on an impossible ask."""
+    walked = script_actions(script, fixtures, analysis)
+    duration = walked["duration_s"]
+    breakdown = walked["effects"]
+
+    out = _Cues(source, _ha_leads())
+    render_actions(walked["actions"], out)
 
     cues = sorted(out.cues, key=lambda c: c["t"] - c.get("lead_ms", 0) / 1000.0)
     peak, worst_serial = _peak_rate(cues)

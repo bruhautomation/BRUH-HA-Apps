@@ -46,6 +46,14 @@ ORDERS = ("x", "-x", "y", "-y", "center_out", "edges_in", "snake",
 
 ALIGNMENTS = ("beat", "downbeat", "bar", "time")
 
+# What an effect that names neither does. These are shipped to the panel in
+# the catalog, because the editor has to open an effect at the value the
+# compiler would have used — offering any other default turns "open it and
+# press Apply" into a change to the show.
+DEFAULT_ORDER = "x"
+DEFAULT_ALIGN = "beat"
+
+
 # A rendering that would put thousands of steps on the wire is a mistake
 # in the script, not an instruction. Every stepping effect stops here and
 # says so in `notes`, rather than compiling to something the rate check
@@ -347,10 +355,12 @@ def clean_effect(raw: Any) -> dict:
     effect: dict[str, Any] = {
         "type": effect_type,
         "select": clean_select(raw.get("select")),
-        "order": (str(raw.get("order", "x")) if str(raw.get("order", "x"))
-                  in ORDERS else "x"),
-        "align": (str(raw.get("align", "beat"))
-                  if str(raw.get("align", "beat")) in ALIGNMENTS else "beat"),
+        "order": (str(raw.get("order", DEFAULT_ORDER))
+                  if str(raw.get("order", DEFAULT_ORDER)) in ORDERS
+                  else DEFAULT_ORDER),
+        "align": (str(raw.get("align", DEFAULT_ALIGN))
+                  if str(raw.get("align", DEFAULT_ALIGN)) in ALIGNMENTS
+                  else DEFAULT_ALIGN),
         "params": clean_params(effect_type, raw.get("params")),
         "respect_roles": bool(raw.get("respect_roles", True)),
     }
@@ -946,15 +956,26 @@ def _hue_lerp(a: float, b: float, k: float) -> float:
 
 
 def simulate(actions: list[dict], fixtures: list[dict], *,
-             duration_s: float, fps: int = 15,
+             duration_s: float, fps: int = 15, start_s: float = 0.0,
              initial: tuple[float, float, float] = (30.0, 0.4, 0.05)) -> dict:
     """Sampled colours per fixture per frame — what the preview draws.
 
     Built from the same actions the compiler turns into packets, so a
     preview that looks wrong is an effect that is wrong, which is the
     only useful thing a preview can be.
+
+    `start_s` is where the FRAMES begin, not where the show does: every
+    action before it is still applied, at its own time, so the colours the
+    first frame reports are the ones a light really is wearing three
+    minutes in — mid-fade included. Scrubbing a four-minute show is what
+    this is for. Sampling every fixture for every frame is the expensive
+    half and a window skips it; applying the actions is cheap, and skipping
+    THAT would mean previewing a show that began wherever you scrolled to,
+    with every light still at its opening colour.
     """
     fps = max(4, min(30, int(fps)))
+    start_s = max(0.0, float(start_s))
+    first = int(start_s * fps)
     frames = max(1, min(1800, int(duration_s * fps) + 1))
     ids = [f["id"] for f in fixtures]
     index_of = {fixture_id: i for i, fixture_id in enumerate(ids)}
@@ -968,7 +989,7 @@ def simulate(actions: list[dict], fixtures: list[dict], *,
     cursor = 0
     out: list[list[list[float]]] = []
 
-    for frame in range(frames):
+    for frame in range(first, first + frames):
         now = frame / fps
         while cursor < len(pending) and pending[cursor]["t"] <= now:
             action = pending[cursor]
@@ -1002,6 +1023,7 @@ def simulate(actions: list[dict], fixtures: list[dict], *,
 
     return {
         "fps": fps,
+        "start_s": round(first / fps, 3),
         "duration_s": round(frames / fps, 3),
         "fixtures": [{"id": f["id"], "label": f.get("label") or f["id"],
                       "role": f.get("role"), "x": f.get("x", 0.5),
@@ -1047,3 +1069,12 @@ def summarise(actions: list[dict]) -> dict:
         "first_t": round(min(span), 3) if span else 0.0,
         "last_t": round(max(span), 3) if span else 0.0,
     }
+
+
+def aux_action(fixture: dict, t: float, on: bool, desc: str) -> dict:
+    """An aux switch action, for a caller outside this module.
+
+    The compiler ends a show by turning its switches off, and that tail has
+    to be an action like every other so the preview can see it.
+    """
+    return _aux(fixture, t, on, desc)

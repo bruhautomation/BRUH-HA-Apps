@@ -372,3 +372,98 @@ class TestStopping(PanelCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTheShowEditorsPreview(PanelCase):
+    """The routes the visual editor is built on, over real HTTP."""
+
+    async def _compile(self):
+        return await self.post("/api/show/compile", {"track_hash": TRACK_HASH})
+
+    async def _script(self):
+        _, body = await self.get(f"/api/show/{TRACK_HASH}/script")
+        return body["script"]
+
+    async def test_a_window_answers_frames_for_the_moment_asked_for(self):
+        await self._compile()
+        status, body = await self.post(
+            f"/api/show/{TRACK_HASH}/preview", {"start_s": 20, "span_s": 3})
+        self.assertEqual(200, status)
+        self.assertAlmostEqual(body["start_s"], 20.0, places=1)
+        self.assertTrue(body["frames"])
+        self.assertEqual(len(body["frames"][0]), len(body["fixtures"]))
+
+    async def test_the_outline_carries_the_strip_and_its_furniture(self):
+        await self._compile()
+        status, body = await self.post(
+            f"/api/show/{TRACK_HASH}/outline", {"columns": 40})
+        self.assertEqual(200, status)
+        self.assertEqual(len(body["columns"]), 40)
+        self.assertTrue(body["timeline"]["scenes"])
+        self.assertTrue(body["timeline"]["downbeats"])
+
+    async def test_an_unsaved_edit_is_what_gets_previewed(self):
+        """The claim that makes the editor live.
+
+        A script in the request body is previewed instead of the one on
+        disk — otherwise every change would have to be saved to be seen,
+        and 'live preview' would mean 'preview of the last save'.
+        """
+        await self._compile()
+        script = await self._script()
+        _, before = await self.post(
+            f"/api/show/{TRACK_HASH}/preview", {"start_s": 5, "span_s": 1})
+
+        script["scenes"][0]["palette"] = [[120, 1.0]]
+        script["scenes"][0]["brightness"] = 1.0
+        _, after = await self.post(
+            f"/api/show/{TRACK_HASH}/preview",
+            {"start_s": 5, "span_s": 1, "script": script})
+        self.assertNotEqual(before["frames"][0], after["frames"][0])
+
+    async def test_previewing_an_edit_does_not_save_it(self):
+        await self._compile()
+        script = await self._script()
+        original = json.loads(json.dumps(script))
+        script["scenes"][0]["palette"] = [[120, 1.0]]
+        await self.post(f"/api/show/{TRACK_HASH}/preview",
+                        {"start_s": 5, "span_s": 1, "script": script})
+        self.assertEqual(original["scenes"][0]["palette"],
+                         (await self._script())["scenes"][0]["palette"])
+
+    async def test_an_impossible_edit_is_refused_while_you_are_typing(self):
+        """The compiler's refusals reach the preview, not just the save.
+
+        Finding out that an effect floods a bulb belongs beside the effect
+        you just changed, not several presses later.
+        """
+        await self._compile()
+        script = await self._script()
+        script["scenes"][0].setdefault("effects", []).append({
+            "type": "strobe", "name": "far too much",
+            "params": {"hits": 64, "every_beats": 1}})
+        status, body = await self.post(
+            f"/api/show/{TRACK_HASH}/preview",
+            {"start_s": 1, "span_s": 1, "script": script})
+        if status == 400:
+            self.assertTrue(body["error"])
+        else:
+            # Not every over-ask trips the budget; what must never happen
+            # is a traceback or a silent empty preview.
+            self.assertTrue(body["frames"])
+
+    async def test_a_track_the_library_never_scanned_says_so(self):
+        # Deliberately not TRACK_HASH: the scratch /data is per CLASS, so a
+        # sibling test compiling a show would decide this one's answer.
+        unknown = "0" * 40
+        status, body = await self.post(
+            f"/api/show/{unknown}/preview", {"start_s": 0})
+        self.assertEqual(400, status)
+        self.assertIn("analyzed", body["error"])
+
+    async def test_a_script_that_is_not_json_is_a_sentence(self):
+        await self._compile()
+        status, body = await self.post(
+            f"/api/show/{TRACK_HASH}/preview", {"script": "{oh dear"})
+        self.assertEqual(400, status)
+        self.assertIn("JSON", body["error"])

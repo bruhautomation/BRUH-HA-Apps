@@ -112,6 +112,14 @@ jobs:
           done
           node tests/manual/measure-effects.mjs
 
+      # The show editor, on the panel the step above already started. It
+      # edits as it goes — adding an effect, applying a no-op — but never
+      # presses Save, so the seeded show on disk is the same one each width
+      # opens. That independence is what lets it run three viewports in a
+      # row and lets this step follow the effects one on a shared panel.
+      - name: Measure BRight's show editor
+        run: node tests/manual/measure-showeditor.mjs
+
   hassfest:
     name: HA integration validation
     runs-on: ubuntu-latest

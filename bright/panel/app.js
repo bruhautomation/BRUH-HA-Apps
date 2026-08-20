@@ -1378,6 +1378,7 @@
   // ------------------------------------------------------------------
   const fxState = {
     catalog: [], byType: {}, fixtures: [], palettes: [], presets: [],
+    orders: [], alignments: [], roles: [], zones: [], defaultOrder: "",
     selection: new Set(), params: {}, preview: null, playing: false,
     frame: 0, raf: null, lastTick: 0,
   };
@@ -1397,12 +1398,13 @@
     return fxState.byType[$("fxType").value] || null;
   }
 
-  function renderFxParams() {
-    const spec = fxSpec();
-    const box = $("fxParams");
+  // The parameter form, from the catalog. Shared by the Effects tab and
+  // the show editor's effect dialog: two places build this form, and a
+  // second implementation of "what a strobe's controls are" would drift
+  // from the catalog the moment a parameter's range changed.
+  function renderParamControls(box, spec, values) {
     box.innerHTML = "";
     if (!spec) return;
-    $("fxBlurb").textContent = spec.blurb;
     for (const param of spec.params) {
       const label = document.createElement("label");
       label.className = "fx-param";
@@ -1413,14 +1415,14 @@
       if (param.kind === "bool") {
         input = document.createElement("input");
         input.type = "checkbox";
-        input.checked = Boolean(fxState.params[param.name] ?? param.default);
+        input.checked = Boolean(values[param.name] ?? param.default);
       } else if (param.kind === "choice") {
         input = document.createElement("select");
         for (const option of param.options) {
           const el = document.createElement("option");
           el.value = option;
           el.textContent = option;
-          el.selected = option === (fxState.params[param.name] ?? param.default);
+          el.selected = option === (values[param.name] ?? param.default);
           input.appendChild(el);
         }
       } else {
@@ -1429,7 +1431,7 @@
         input.min = param.min;
         input.max = param.max;
         input.step = param.kind === "int" ? 1 : 0.05;
-        input.value = fxState.params[param.name] ?? param.default;
+        input.value = values[param.name] ?? param.default;
         const range = document.createElement("span");
         range.className = "muted small";
         range.textContent = param.min + "–" + param.max;
@@ -1442,9 +1444,9 @@
     }
   }
 
-  function readFxParams() {
+  function readParamControls(box) {
     const params = {};
-    for (const input of $("fxParams").querySelectorAll("[data-param]")) {
+    for (const input of box.querySelectorAll("[data-param]")) {
       if (input.dataset.kind === "bool") {
         params[input.dataset.param] = input.checked;
       } else if (input.dataset.kind === "choice") {
@@ -1454,6 +1456,16 @@
       }
     }
     return params;
+  }
+
+  function renderFxParams() {
+    const spec = fxSpec();
+    if (spec) $("fxBlurb").textContent = spec.blurb;
+    renderParamControls($("fxParams"), spec, fxState.params);
+  }
+
+  function readFxParams() {
+    return readParamControls($("fxParams"));
   }
 
   function currentEffect() {
@@ -1560,6 +1572,11 @@
       for (const spec of fxState.catalog) fxState.byType[spec.type] = spec;
       fxState.fixtures = body.fixtures || [];
       fxState.palettes = body.palettes || [];
+      fxState.orders = body.orders || [];
+      fxState.roles = body.roles || [];
+      fxState.defaultOrder = body.default_order || "x";
+      fxState.zones = body.zones || [];
+      fxState.alignments = body.alignments || [];
       fxState.presets = body.presets || [];
 
       const type = $("fxType");
@@ -1653,14 +1670,18 @@
     }
   });
 
-  function drawFrame(index) {
-    const preview = fxState.preview;
-    if (!preview) return;
-    const floor = $("fxFloor");
-    const frame = preview.frames[Math.min(index, preview.frames.length - 1)];
-    if (!floor.dataset.built) {
+  // The room, lit. Shared by the Effects bench and the show editor, because
+  // they are the same picture of the same house — and because the dots have
+  // three fiddly details (the clamp, the ring on a dark bulb, the name) that
+  // a second copy would get subtly different.
+  //
+  // `key` is what tells the painter its dots are stale: the two surfaces
+  // hold different casts, and a floor rebuilt only when it is empty would
+  // keep the first tab's bulbs forever.
+  function paintFloor(floor, fixtures, frame, key) {
+    if (floor.dataset.built !== key) {
       floor.innerHTML = "";
-      preview.fixtures.forEach((fixture, i) => {
+      fixtures.forEach((fixture, i) => {
         const dot = document.createElement("div");
         dot.className = "map-dot preview-dot";
         dot.style.left = "clamp(24px, " + (fixture.x * 100) +
@@ -1674,8 +1695,9 @@
         dot.appendChild(name);
         floor.appendChild(dot);
       });
-      floor.dataset.built = "1";
+      floor.dataset.built = key;
     }
+    if (!frame) return;
     for (const dot of floor.querySelectorAll(".preview-dot")) {
       const colour = frame[Number(dot.dataset.slot)];
       if (!colour) continue;
@@ -1686,6 +1708,14 @@
       dot.style.boxShadow = "0 0 " + Math.round(4 + colour[2] * 26) +
         "px " + hsvCss(colour[0], colour[1], colour[2]);
     }
+  }
+
+  function drawFrame(index) {
+    const preview = fxState.preview;
+    if (!preview) return;
+    paintFloor($("fxFloor"), preview.fixtures,
+               preview.frames[Math.min(index, preview.frames.length - 1)],
+               "bench:" + preview.fixtures.length);
   }
 
   function drawTimeline() {
@@ -1909,6 +1939,597 @@
   });
 
   // ------------------------------------------------------------------
+  // The show editor: the picture IS the interface
+  //
+  // One document, three views of it. `ed.script` is the show; the scene
+  // blocks, the form rows and the Code textarea are all renderings of that
+  // one object, and every edit goes through `edTouch()` so none of them can
+  // drift from the other two. The preview is a fourth view, and it is the
+  // honest one: it comes back from the server's own compiler walking the
+  // script currently in hand, unsaved edits and all.
+  // ------------------------------------------------------------------
+  const ed = {
+    hash: null, script: null, outline: null, timeline: null,
+    window: null, fixtures: [], duration: 0, t: 0,
+    playing: false, raf: null, lastTick: 0,
+    fetching: false, wanted: null, outlineTimer: null,
+    selected: null, editing: null, editingSelect: {}, editingOrder: false,
+  };
+
+  // How close to the end of the loaded window the playhead may get before
+  // the next one is asked for. A second of slack is about six frames at
+  // preview rate — enough for the request to land before the animation
+  // reaches ground it has no frames for.
+  const ED_WINDOW_SLACK_S = 1.0;
+
+  // What an effect that names no travel order actually does. It comes off
+  // the catalog rather than being written here: a second copy of the
+  // compiler's default is a copy that silently rewrites shows once the two
+  // disagree. The literal is only the value used before the catalog lands.
+  function edDefaultOrder() {
+    return fxState.defaultOrder || "x";
+  }
+
+  function edClock(seconds) {
+    const whole = Math.max(0, Math.floor(seconds));
+    return Math.floor(whole / 60) + ":" + String(whole % 60).padStart(2, "0");
+  }
+
+  function edHasWindow(t) {
+    const w = ed.window;
+    return Boolean(w) && t >= w.start_s &&
+      t <= w.start_s + w.span_s - ED_WINDOW_SLACK_S;
+  }
+
+  function edFrameAt(t) {
+    const w = ed.window;
+    if (!w || !w.frames.length) return null;
+    const index = Math.round((t - w.start_s) * w.fps);
+    return w.frames[Math.max(0, Math.min(w.frames.length - 1, index))];
+  }
+
+  // The preview body. The script rides along on every request, which is
+  // what makes this live: the server previews what is in the editor, not
+  // what is on disk. Nothing here writes.
+  function edBody(extra) {
+    return Object.assign({ script: ed.script }, extra || {});
+  }
+
+  async function edFetchWindow(t) {
+    if (!ed.hash || !ed.script) return;
+    if (ed.fetching) { ed.wanted = t; return; }
+    ed.fetching = true;
+    try {
+      const start = Math.max(0, t - 1);
+      ed.window = await post("api/show/" + ed.hash + "/preview",
+                             edBody({ start_s: start }));
+      edStatus("");
+    } catch (error) {
+      // A script the compiler refuses is the most useful thing this can
+      // say, and it says it here rather than at save — while you are still
+      // looking at the effect you just changed.
+      ed.window = null;
+      edStatus(error.message, true);
+    } finally {
+      ed.fetching = false;
+      const next = ed.wanted;
+      ed.wanted = null;
+      if (next !== null) await edFetchWindow(next);
+      else edPaint();
+    }
+  }
+
+  function edStatus(text, warn) {
+    const box = $("edStatus");
+    box.textContent = text || "";
+    box.classList.toggle("warn", Boolean(warn));
+  }
+
+  function edPaint() {
+    const frame = edFrameAt(ed.t);
+    paintFloor($("edFloor"), ed.fixtures, frame, "show:" + ed.hash);
+    $("edClock").textContent = edClock(ed.t) + " / " + edClock(ed.duration);
+    const head = $("edHead");
+    if (ed.duration > 0) {
+      head.hidden = false;
+      head.style.left = (ed.t / ed.duration * 100) + "%";
+    } else {
+      head.hidden = true;
+    }
+    const scrub = $("edScrub");
+    if (document.activeElement !== scrub) {
+      scrub.value = String(Math.round(
+        ed.duration ? (ed.t / ed.duration) * 1000 : 0));
+    }
+  }
+
+  function edSeek(t, fetchIfNeeded) {
+    ed.t = Math.max(0, Math.min(t, ed.duration));
+    edPaint();
+    if (fetchIfNeeded !== false && !edHasWindow(ed.t)) edFetchWindow(ed.t);
+  }
+
+  function edPlay(on) {
+    ed.playing = Boolean(on) && Boolean(ed.script);
+    $("btnEdPlay").textContent = ed.playing ? "⏸ Pause" : "▶ Play";
+    if (ed.raf) cancelAnimationFrame(ed.raf);
+    if (!ed.playing) return;
+    ed.lastTick = performance.now();
+    const step = (now) => {
+      if (!ed.playing) return;
+      const delta = (now - ed.lastTick) / 1000;
+      ed.lastTick = now;
+      let t = ed.t + delta;
+      if (t >= ed.duration) { t = 0; }
+      ed.t = t;
+      edPaint();
+      // Ask for the next window a beat before running out of frames, so
+      // the animation crosses the seam without stopping on it.
+      if (!edHasWindow(ed.t) && !ed.fetching) edFetchWindow(ed.t);
+      ed.raf = requestAnimationFrame(step);
+    };
+    ed.raf = requestAnimationFrame(step);
+  }
+
+  // -- the strip: the whole show, one row per light --------------------
+  function edDrawStrip() {
+    const canvas = $("edStrip");
+    const outline = ed.outline;
+    if (!canvas.getContext) return;
+    const width = canvas.clientWidth || 800;
+    const rows = (outline && outline.fixtures.length) || 1;
+    const rowHeight = Math.max(6, Math.min(22, 132 / rows));
+    // The backing store is scaled for the device's pixel ratio, and every
+    // measurement of TIME reads the wrapper's CSS width instead — a canvas
+    // twice as wide in device pixels is not twice as long a song.
+    const ratio = window.devicePixelRatio || 1;
+    canvas.width = Math.round(width * ratio);
+    canvas.height = Math.round(rows * rowHeight * ratio);
+    canvas.style.height = (rows * rowHeight) + "px";
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    ctx.clearRect(0, 0, width, rows * rowHeight);
+    if (!outline || !outline.columns.length) return;
+    const columnWidth = width / outline.columns.length;
+    outline.columns.forEach((column, c) => {
+      for (let r = 0; r < rows; r += 1) {
+        const colour = column[r];
+        if (!colour) continue;
+        ctx.fillStyle = hsvCss(colour[0], colour[1], colour[2]);
+        ctx.fillRect(c * columnWidth, r * rowHeight,
+                     Math.ceil(columnWidth), rowHeight - 0.5);
+      }
+    });
+  }
+
+  function edRenderScenes() {
+    const box = $("edScenes");
+    box.innerHTML = "";
+    const timeline = ed.timeline;
+    if (!timeline || !ed.duration) return;
+    for (const scene of timeline.scenes) {
+      const block = document.createElement("button");
+      block.type = "button";
+      block.className = "ed-scene" +
+        (ed.selected === scene.index ? " selected" : "");
+      block.style.left = (scene.start / ed.duration * 100) + "%";
+      block.style.width = Math.max(
+        1, (scene.end - scene.start) / ed.duration * 100) + "%";
+      block.textContent = scene.label;
+      block.dataset.scene = String(scene.index);
+      block.title = scene.label + " · " + edClock(scene.start) + "–" +
+        edClock(scene.end);
+      box.appendChild(block);
+    }
+    for (const moment of timeline.moments) {
+      const mark = document.createElement("button");
+      mark.type = "button";
+      mark.className = "ed-moment";
+      mark.style.left = (moment.t / ed.duration * 100) + "%";
+      mark.textContent = "◆";
+      mark.dataset.moment = String(moment.t);
+      mark.title = moment.name + " at " + edClock(moment.t);
+      box.appendChild(mark);
+    }
+  }
+
+  // -- the script, as controls -----------------------------------------
+
+  // What an effect owns, in words. The choreographer selects by ROLE for
+  // almost everything it writes, so "all lights" was wrong on nearly every
+  // row — and a row that misreads a selection is a row you edit by mistake.
+  function edDescribeSelect(select) {
+    const parts = [];
+    const ids = (select || {}).ids || [];
+    const roles = (select || {}).roles || [];
+    const zones = (select || {}).zones || [];
+    const exclude = (select || {}).exclude || [];
+    if (ids.length) parts.push(ids.length + (ids.length === 1 ? " light" : " lights"));
+    if (roles.length) parts.push(roles.join(", "));
+    if (zones.length) parts.push(zones.join(", "));
+    if (!parts.length) parts.push("all lights");
+    if (exclude.length) parts.push("except " + exclude.length);
+    return parts.join(" · ");
+  }
+
+  function edEffectsOf(scene) {
+    if (!Array.isArray(scene.effects)) scene.effects = [];
+    return scene.effects;
+  }
+
+  function edRenderScript() {
+    const box = $("edScript");
+    box.innerHTML = "";
+    if (!ed.script) {
+      box.innerHTML = '<p class="muted">Pick a track above to open its show.</p>';
+      return;
+    }
+    const scenes = ed.script.scenes || [];
+    scenes.forEach((scene, index) => {
+      const block = document.createElement("div");
+      block.className = "ed-block" + (ed.selected === index ? " selected" : "");
+      block.dataset.scene = String(index);
+
+      const head = document.createElement("div");
+      head.className = "ed-block-head";
+      const name = document.createElement("strong");
+      name.textContent = scene.mood || scene.kind || ("scene " + index);
+      const when = document.createElement("span");
+      when.className = "ed-when";
+      when.textContent = edClock(scene.start) + "–" + edClock(scene.end);
+      const swatches = document.createElement("span");
+      swatches.className = "ed-swatches";
+      for (const entry of (scene.palette || []).slice(0, 6)) {
+        const chip = document.createElement("span");
+        chip.className = "ed-swatch";
+        chip.style.background = hsvCss(entry[0], entry[1],
+                                       scene.brightness || 0.6);
+        swatches.appendChild(chip);
+      }
+      const jump = document.createElement("button");
+      jump.className = "btn small";
+      jump.dataset.act = "jump";
+      jump.textContent = "Go to";
+      const add = document.createElement("button");
+      add.className = "btn small";
+      add.dataset.act = "add";
+      add.textContent = "+ Effect";
+      head.append(name, when, swatches, jump, add);
+      block.appendChild(head);
+
+      const list = document.createElement("div");
+      list.className = "ed-fx";
+      const effects = edEffectsOf(scene);
+      if (!effects.length) {
+        const empty = document.createElement("div");
+        empty.className = "ed-fx-row muted";
+        empty.textContent = "No effects — this scene is the base wash only.";
+        list.appendChild(empty);
+      }
+      effects.forEach((effect, position) => {
+        const row = document.createElement("div");
+        row.className = "ed-fx-row";
+        row.dataset.fx = String(position);
+        const label = document.createElement("span");
+        label.textContent = (effect.name || effect.type) + " · " +
+          effect.type + " · " + edDescribeSelect(effect.select) +
+          (effect.order ? " · " + effect.order : "");
+        const edit = document.createElement("button");
+        edit.className = "btn small";
+        edit.dataset.act = "edit";
+        edit.textContent = "Edit";
+        const drop = document.createElement("button");
+        drop.className = "btn small";
+        drop.dataset.act = "drop";
+        drop.textContent = "✕";
+        drop.setAttribute("aria-label", "Remove this effect");
+        row.append(label, edit, drop);
+        list.appendChild(row);
+      });
+      block.appendChild(list);
+      box.appendChild(block);
+    });
+  }
+
+  // Every edit lands here: it refreshes the Code view, redraws the forms,
+  // and asks the server what the show now looks like. One door, so the
+  // three views cannot disagree and the preview is never of a show that
+  // has been edited since.
+  function edTouch() {
+    $("scriptText").value = JSON.stringify(ed.script, null, 2);
+    edRenderScript();
+    edPaint();
+    if (ed.outlineTimer) clearTimeout(ed.outlineTimer);
+    ed.outlineTimer = setTimeout(() => {
+      ed.outlineTimer = null;
+      edRefreshOutline();
+      edFetchWindow(ed.t);
+    }, 250);
+  }
+
+  async function edRefreshOutline() {
+    if (!ed.hash || !ed.script) return;
+    try {
+      const body = await post("api/show/" + ed.hash + "/outline", edBody({}));
+      ed.outline = body;
+      ed.timeline = body.timeline;
+      ed.fixtures = body.fixtures || [];
+      ed.duration = body.duration_s || 0;
+      edDrawStrip();
+      edRenderScenes();
+      edStatus("");
+    } catch (error) {
+      edStatus(error.message, true);
+    }
+  }
+
+  // -- the effect dialog ------------------------------------------------
+  async function edOpenEffect(where, effect) {
+    await loadEffects();
+    ed.editing = where;
+    const spec = fxState.byType[effect.type] || fxState.catalog[0];
+    $("edFxTitle").textContent = effect.name || effect.type || "Effect";
+    const form = $("edFxForm");
+    form.innerHTML = "";
+
+    const grid = document.createElement("div");
+    grid.className = "fx-params";
+    grid.appendChild(edField("Name", edInput("text", effect.name || "")));
+    const type = document.createElement("select");
+    for (const entry of fxState.catalog) {
+      const option = document.createElement("option");
+      option.value = entry.type;
+      option.textContent = entry.label;
+      option.selected = entry.type === effect.type;
+      type.appendChild(option);
+    }
+    type.id = "edFxType";
+    grid.appendChild(edField("Type", type));
+    const order = document.createElement("select");
+    fillOptions(order, fxState.orders || []);
+    // The compiler's own default, not a nice-looking one: an effect with no
+    // `order` travels by x, so offering "listed" here would have turned
+    // "across the room" into "in map order" on any edit that touched
+    // nothing at all.
+    order.value = effect.order || edDefaultOrder();
+    order.id = "edFxOrder";
+    grid.appendChild(edField("Travels", order));
+    form.appendChild(grid);
+
+    const blurb = document.createElement("p");
+    blurb.className = "muted small";
+    blurb.id = "edFxBlurb";
+    blurb.textContent = spec ? spec.blurb : "";
+    form.appendChild(blurb);
+
+    const lights = document.createElement("div");
+    lights.className = "fx-fixtures";
+    lights.id = "edFxLights";
+    form.appendChild(edLabelled("Lights this effect owns", lights));
+    const chosen = new Set((effect.select || {}).ids || []);
+    for (const fixture of fxState.fixtures) {
+      const label = document.createElement("label");
+      label.className = "fx-fixture";
+      const tick = document.createElement("input");
+      tick.type = "checkbox";
+      tick.dataset.id = fixture.id;
+      tick.checked = chosen.has(fixture.id);
+      const text = document.createElement("span");
+      text.textContent = fixture.label + " · " + fixture.role;
+      label.append(tick, text);
+      lights.appendChild(label);
+    }
+    const none = document.createElement("p");
+    none.className = "muted small";
+    none.textContent = "Nothing ticked anywhere means every light on the " +
+      "map. Whatever this effect does not name is left exactly as it is.";
+    form.appendChild(none);
+
+    // Roles and zones, because that is how the automatic director selects
+    // and an editor that could only tick individual bulbs would rewrite
+    // "every candle" as "these four bulbs" the first time you opened it —
+    // silently, and wrongly the moment a candle is added to the house.
+    form.appendChild(edTickList("Or by role", "edFxRoles", fxState.roles,
+                                (effect.select || {}).roles || []));
+    form.appendChild(edTickList("Or by room", "edFxZones", fxState.zones,
+                                (effect.select || {}).zones || []));
+    ed.editingSelect = effect.select || {};
+    ed.editingOrder = Boolean(effect.order);
+
+    const params = document.createElement("div");
+    params.className = "fx-params";
+    params.id = "edFxParams";
+    form.appendChild(params);
+    renderParamControls(params, spec, effect.params || {});
+
+    type.addEventListener("change", () => {
+      const next = fxState.byType[type.value];
+      $("edFxBlurb").textContent = next ? next.blurb : "";
+      renderParamControls(params, next, {});
+    });
+
+    $("edFxModal").hidden = false;
+  }
+
+  function edField(name, control) {
+    const label = document.createElement("label");
+    label.className = "fx-param";
+    const span = document.createElement("span");
+    span.textContent = name;
+    label.append(span, control);
+    return label;
+  }
+
+  function edLabelled(name, node) {
+    const wrap = document.createElement("div");
+    const heading = document.createElement("p");
+    heading.className = "muted small";
+    heading.textContent = name;
+    wrap.append(heading, node);
+    return wrap;
+  }
+
+  function edInput(type, value) {
+    const input = document.createElement("input");
+    input.type = type;
+    input.value = value;
+    input.id = "edFxName";
+    return input;
+  }
+
+  function edTicked(id) {
+    return Array.from($(id).querySelectorAll("input:checked"))
+      .map((input) => input.dataset.id);
+  }
+
+  function edTickList(title, id, values, chosen) {
+    const box = document.createElement("div");
+    box.className = "fx-fixtures";
+    box.id = id;
+    const picked = new Set(chosen);
+    for (const value of values) {
+      const label = document.createElement("label");
+      label.className = "fx-fixture";
+      const tick = document.createElement("input");
+      tick.type = "checkbox";
+      tick.dataset.id = value;
+      tick.checked = picked.has(value);
+      const text = document.createElement("span");
+      text.textContent = value;
+      label.append(tick, text);
+      box.appendChild(label);
+    }
+    return edLabelled(title, box);
+  }
+
+  function edReadEffect() {
+    const select = {};
+    const ids = edTicked("edFxLights");
+    const roles = edTicked("edFxRoles");
+    const zones = edTicked("edFxZones");
+    if (ids.length) select.ids = ids;
+    if (roles.length) select.roles = roles;
+    if (zones.length) select.zones = zones;
+    // `exclude` has no control yet, so it is carried rather than dropped —
+    // an editor may not quietly delete the half of a selection it cannot
+    // draw.
+    const exclude = (ed.editingSelect || {}).exclude;
+    if (exclude && exclude.length) select.exclude = exclude;
+    const effect = {
+      type: $("edFxType").value,
+      name: $("edFxName").value || $("edFxType").value,
+      select,
+      params: readParamControls($("edFxParams")),
+    };
+    // Only write `order` when it says something. Opening an effect and
+    // pressing Apply must leave the file byte-identical — an editor that
+    // sprinkles defaults through a document turns every visit into a diff.
+    const order = $("edFxOrder").value;
+    if (order !== edDefaultOrder() || ed.editingOrder) effect.order = order;
+    return effect;
+  }
+
+  function edCloseModal() {
+    $("edFxModal").hidden = true;
+    ed.editing = null;
+  }
+
+  $("btnEdFxClose").addEventListener("click", edCloseModal);
+  $("btnEdFxCancel").addEventListener("click", edCloseModal);
+  $("edFxModal").addEventListener("click", (event) => {
+    if (event.target === $("edFxModal")) edCloseModal();
+  });
+
+  $("btnEdFxApply").addEventListener("click", () => {
+    const where = ed.editing;
+    if (!where || !ed.script) return;
+    const effect = edReadEffect();
+    const scene = (ed.script.scenes || [])[where.scene];
+    if (!scene) { edCloseModal(); return; }
+    const effects = edEffectsOf(scene);
+    if (where.index === null) effects.push(effect);
+    else effects[where.index] = effect;
+    edCloseModal();
+    edTouch();
+  });
+
+  // -- wiring ------------------------------------------------------------
+  $("btnEdPlay").addEventListener("click", () => edPlay(!ed.playing));
+
+  $("edScrub").addEventListener("input", () => {
+    if (!ed.duration) return;
+    edPlay(false);
+    edSeek(Number($("edScrub").value) / 1000 * ed.duration);
+  });
+
+  $("edScenes").addEventListener("click", (event) => {
+    const scene = event.target.closest("[data-scene]");
+    if (scene) {
+      ed.selected = Number(scene.dataset.scene);
+      const found = (ed.timeline.scenes || [])
+        .find((s) => s.index === ed.selected);
+      edRenderScenes();
+      edRenderScript();
+      if (found) { edPlay(false); edSeek(found.start); }
+      return;
+    }
+    const moment = event.target.closest("[data-moment]");
+    if (moment) { edPlay(false); edSeek(Number(moment.dataset.moment)); }
+  });
+
+  $("edScript").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-act]");
+    if (!button || !ed.script) return;
+    const block = button.closest("[data-scene]");
+    if (!block) return;
+    const index = Number(block.dataset.scene);
+    const scene = (ed.script.scenes || [])[index];
+    if (!scene) return;
+    const act = button.dataset.act;
+    if (act === "jump") { edPlay(false); edSeek(Number(scene.start) || 0); return; }
+    if (act === "add") {
+      // No `order` on a new effect: it opens at whatever the compiler
+      // would do with one that names none, and only carries the key if
+      // you pick something else.
+      edOpenEffect({ scene: index, index: null },
+                   { type: "chase", name: "", params: {} });
+      return;
+    }
+    const row = button.closest("[data-fx]");
+    if (!row) return;
+    const position = Number(row.dataset.fx);
+    if (act === "edit") {
+      edOpenEffect({ scene: index, index: position },
+                   edEffectsOf(scene)[position] || {});
+    } else if (act === "drop") {
+      edEffectsOf(scene).splice(position, 1);
+      edTouch();
+    }
+  });
+
+  // The Code view is an editor, not a mirror: what is typed there is the
+  // show as soon as it parses, and the forms above redraw from it. A
+  // half-typed brace leaves the last good script alone and says so, rather
+  // than blanking the editor somebody is in the middle of using.
+  $("scriptText").addEventListener("change", () => {
+    let parsed;
+    try {
+      parsed = JSON.parse($("scriptText").value);
+    } catch (error) {
+      edStatus("That is not valid JSON yet — " + error.message, true);
+      return;
+    }
+    ed.script = parsed;
+    edStatus("");
+    edTouch();
+  });
+
+  // The strip is drawn from measured width, so it has to be redrawn when
+  // the width changes — including when the tab it lives on is shown, since
+  // a hidden pane measures zero.
+  window.addEventListener("resize", () => { edDrawStrip(); edRenderScenes(); });
+
+  // ------------------------------------------------------------------
   // Shows: the script editor — the whole show, as the file it is
   // ------------------------------------------------------------------
   let scriptTrack = null;
@@ -1925,6 +2546,27 @@
         ? JSON.stringify(body.script, null, 2)
         : "";
       renderScriptEffects(body);
+      edPlay(false);
+      ed.hash = hash;
+      ed.script = body.script || null;
+      ed.window = null;
+      ed.selected = null;
+      ed.t = 0;
+      ed.duration = Number(body.duration_s) || 0;
+      $("edFloor").dataset.built = "";
+      edRenderScript();
+      if (ed.script) {
+        await edRefreshOutline();
+        await edFetchWindow(0);
+        edSeek(0, false);
+      } else {
+        ed.outline = null;
+        ed.timeline = null;
+        ed.fixtures = [];
+        edDrawStrip();
+        edRenderScenes();
+        edPaint();
+      }
       status.textContent = body.compiled
         ? "Compiled: " + body.stats.cues + " cues, peak " +
           body.stats.peak_per_device_hz + "/s per bulb."
@@ -1965,6 +2607,10 @@
       status.textContent = "That is not valid JSON — " + error.message;
       return;
     }
+    // The Code view and the forms are the same document, and `change` has
+    // already fired on the textarea by the time a click lands here — so
+    // parsing it is both a validity check and the current script.
+    ed.script = script;
     status.textContent = "compiling…";
     try {
       const body = await put("api/show/" + scriptTrack + "/script", { script });
@@ -1988,6 +2634,8 @@
       const body = await post("api/show/" + scriptTrack + "/script/import", {});
       $("scriptText").value = JSON.stringify(body.script, null, 2);
       renderScriptEffects(body);
+      ed.script = body.script || null;
+      edTouch();
       status.textContent = "Read from " + body.file + " and compiled: " +
         body.stats.cues + " cues.";
       loadShows();

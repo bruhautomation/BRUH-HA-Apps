@@ -293,24 +293,50 @@
       </div>
     </div>
 
-    <div class="card">
+    <div class="card" id="showEditor">
       <div class="card-head">
-        <h3>The show file</h3>
+        <h3>The show</h3>
         <span>
           <button id="btnScriptReload" class="btn small">Reload from file</button>
           <button id="btnScriptSave" class="btn">Save &amp; compile</button>
         </span>
       </div>
-      <p class="muted small">Every show is this file: scenes with palettes and
-        effects, and moments pinned to the drops. Edit it here, or open it in
-        the Home Assistant file editor at the path below and press
-        <em>Reload from file</em>. Saving validates it, compiles it, and
-        checks it against the per-bulb message budget before anything is
-        kept — a script that would flood a bulb is refused with the reason,
-        not discovered in a dark room.</p>
       <div id="scriptWhich" class="muted small">Pick a track above to open its show.</div>
-      <textarea id="scriptText" class="script-editor" spellcheck="false"
-                placeholder="Compile a show first, then it appears here."></textarea>
+
+      <!-- The room, at whatever instant the scrub bar is holding. -->
+      <div id="edFloor" class="map-floor preview-floor" aria-label="The room
+           at the scrubbed moment"></div>
+
+      <!-- The whole show: scene blocks, one strip row per light, playhead. -->
+      <div class="ed-timeline">
+        <div id="edScenes" class="ed-scenes"></div>
+        <canvas id="edStrip" class="ed-strip" height="120"></canvas>
+        <div id="edHead" class="ed-head" hidden></div>
+      </div>
+
+      <div class="ed-transport">
+        <button id="btnEdPlay" class="btn" aria-label="Play the preview">▶ Play</button>
+        <input id="edScrub" class="ed-scrub" type="range" min="0" max="1000"
+               value="0" step="1" aria-label="Scrub through the show">
+        <span id="edClock" class="ed-clock">0:00 / 0:00</span>
+      </div>
+      <div id="edStatus" class="cal-status"></div>
+
+      <!-- The GUI proper: scenes, their effects, and the moments. -->
+      <div id="edScript" class="ed-script"></div>
+
+      <details id="edCode" class="ed-code">
+        <summary>Code</summary>
+        <p class="muted small">The same show as text. Everything above edits
+          this; it is here for the edits a form is clumsy at, and for the copy
+          you keep. It is mirrored to the path above for the Home Assistant
+          file editor — change it there and press <em>Reload from file</em>.
+          Saving validates, compiles and checks the per-bulb message budget
+          before anything is kept, whichever way you edited it.</p>
+        <textarea id="scriptText" class="script-editor" spellcheck="false"
+                  placeholder="Compile a show first, then it appears here."></textarea>
+      </details>
+
       <div id="scriptStatus" class="cal-status"></div>
       <div class="card-head">
         <h4>What it compiled to</h4>
@@ -318,6 +344,22 @@
       </div>
       <div id="scriptEffects" class="list"></div>
       <pre id="showCues" class="report muted" hidden></pre>
+    </div>
+
+    <!-- One dialog edits any effect, in a scene or at a moment. It is the
+         Effects tab's own form, filled from the same catalog. -->
+    <div id="edFxModal" class="modal" hidden>
+      <div class="modal-box">
+        <div class="card-head">
+          <h3 id="edFxTitle">Effect</h3>
+          <button id="btnEdFxClose" class="btn small" aria-label="Close">✕</button>
+        </div>
+        <div id="edFxForm"></div>
+        <div class="demo-controls">
+          <button id="btnEdFxApply" class="btn">Apply</button>
+          <button id="btnEdFxCancel" class="btn small">Cancel</button>
+        </div>
+      </div>
     </div>
   </section>
   <section class="pane" id="pane-calibrate">
