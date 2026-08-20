@@ -2997,6 +2997,14 @@
   tabs.addEventListener("click", (event) => {
     const button = event.target.closest(".tab");
     if (!button) return;
+    // The Library tab used to open empty and wait to be told to scan, so
+    // every visit began by pressing a button to be shown the music that
+    // was already there — which reads as "it forgot my library again",
+    // and after an add-on restart that is exactly what it looks like.
+    // Nothing was ever lost: the analysis has always been in /data. It
+    // just was not asked for. Affordable to do on every open now that a
+    // rescan is a stat per file rather than a megabyte read per file.
+    if (button.dataset.tab === "library") scanLibrary();
     if (button.dataset.tab === "map") loadBulbCandidates();
     if (button.dataset.tab === "effects") {
       loadEffects();

@@ -7,6 +7,7 @@ against answers it did not produce. No fixtures, no golden files, no ffmpeg
 (the decode boundary is the one thing mocked).
 """
 
+import json
 import os
 import sys
 import tempfile
@@ -248,6 +249,120 @@ class TestLibrary(unittest.TestCase):
 
     def _unpatch_shows(self):
         library.SHOWS_DIR = self._shows
+
+
+class TestTheLibraryIsNotRereadFromTheDiskUp(unittest.TestCase):
+    """A megabyte per file per scan, paid once.
+
+    `track_hash` reads the first megabyte of every track, and the library
+    is scanned far more often than the Library tab suggests: the Shows
+    tab lists it, the effect builder lists it, the sync proof lists it,
+    and the Library tab now lists it on open rather than on a button
+    press. On a Pi reading a network share that is why the tab felt like
+    it was loading the music every time — the whole file list really was
+    being re-read from the disk up on each visit.
+
+    Nothing here is about persistence of the *analysis*, which has always
+    lived in /data and always survived a restart. What did not survive
+    was the cheapness of finding out.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self.music = root / "music"
+        self.music.mkdir()
+        self._shows, library.SHOWS_DIR = library.SHOWS_DIR, root / "shows"
+        self._cache, library.HASH_CACHE = (library.HASH_CACHE,
+                                           root / "track-hashes.json")
+
+    def tearDown(self):
+        library.SHOWS_DIR = self._shows
+        library.HASH_CACHE = self._cache
+        self.tmp.cleanup()
+
+    def _track(self, name, payload=b"a"):
+        path = self.music / name
+        path.write_bytes(payload * 2048)
+        return path
+
+    def _reads(self, folders):
+        """How many tracks got their first megabyte read this scan."""
+        opened = []
+        real = library.track_hash
+
+        def counting(path):
+            opened.append(str(path))
+            return real(path)
+
+        library.track_hash = counting
+        try:
+            library.scan_all(folders)
+        finally:
+            library.track_hash = real
+        return opened
+
+    def test_a_second_scan_reads_nothing(self):
+        self._track("a.mp3")
+        self._track("b.mp3", b"b")
+        self.assertEqual(2, len(self._reads([self.music])), "cold: both read")
+        self.assertEqual([], self._reads([self.music]), "warm: neither")
+
+    def test_an_edited_track_is_read_again(self):
+        path = self._track("a.mp3")
+        self._reads([self.music])
+        path.write_bytes(b"different content entirely" * 100)
+        self.assertEqual([str(path)], self._reads([self.music]))
+
+    def test_a_touched_track_is_reread_but_keeps_its_identity(self):
+        """mtime is a hint that something changed, not proof — so the file
+        is read again, and the hash it produces is the same one, because
+        the hash is of the content and the content did not move."""
+        path = self._track("a.mp3")
+        before = library.scan_all([self.music])[0]["hash"]
+        os.utime(path, (0, 0))
+        self.assertEqual([str(path)], self._reads([self.music]))
+        self.assertEqual(before, library.scan_all([self.music])[0]["hash"])
+
+    def test_a_new_track_beside_known_ones_reads_only_itself(self):
+        self._track("a.mp3")
+        self._reads([self.music])
+        fresh = self._track("b.mp3", b"b")
+        self.assertEqual([str(fresh)], self._reads([self.music]))
+
+    def test_a_removed_track_leaves_the_cache(self):
+        """Otherwise the file grows to every track that has ever been in
+        the library rather than the ones that are."""
+        path = self._track("a.mp3")
+        self._track("b.mp3", b"b")
+        library.scan_all([self.music])
+        path.unlink()
+        library.scan_all([self.music])
+        entries = json.loads(library.HASH_CACHE.read_text())["entries"]
+        self.assertEqual(1, len(entries))
+        self.assertNotIn(str(path), entries)
+
+    def test_scanning_one_folder_never_prunes(self):
+        """`scan` of a single folder cannot know what the others were
+        going to claim, so it gets a cache it never saves. Pruning is only
+        safe once every folder has been walked."""
+        other = Path(self.tmp.name) / "more"
+        other.mkdir()
+        self._track("a.mp3")
+        (other / "b.mp3").write_bytes(b"b" * 2048)
+        library.scan_all([self.music, other])
+        before = json.loads(library.HASH_CACHE.read_text())["entries"]
+        self.assertEqual(2, len(before))
+        library.scan(self.music)
+        after = json.loads(library.HASH_CACHE.read_text())["entries"]
+        self.assertEqual(before, after, "a partial scan must not evict")
+
+    def test_an_unreadable_cache_costs_speed_and_nothing_else(self):
+        self._track("a.mp3")
+        library.HASH_CACHE.write_text("{{{ not json")
+        tracks = library.scan_all([self.music])
+        self.assertEqual(1, len(tracks))
+        self.assertTrue(tracks[0]["hash"])
 
 
 if __name__ == "__main__":

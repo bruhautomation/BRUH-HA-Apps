@@ -7,7 +7,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## 0.11.1
 
-Stop actually stops the lights, and Claude's shows stop falling back.
+Stop actually stops the lights, Claude's shows stop falling back, and the
+Library tab stops asking to be told to show you your music.
 
 ### Fixed
 
@@ -34,6 +35,28 @@ Stop actually stops the lights, and Claude's shows stop falling back.
   a mood called `pop // rock` and a URL in a label both survive), and a
   parse failure quotes the text around the break instead of reporting a
   column number about a document that has already been discarded.
+- **The Library tab opened empty every time.** `scanLibrary` was bound to
+  the Scan button and to nothing else, so every visit started by pressing
+  a button to be shown the library you already had — and after an add-on
+  restart that is indistinguishable from having lost it. Nothing ever was:
+  the analysis lives in `/data` and has always survived. The tab loads
+  itself on open now, and re-opening refreshes, so a track added while the
+  add-on was running turns up without a restart.
+
+### Changed
+
+- **A library scan is a stat per file, not a megabyte read per file.**
+  Track identity is a hash of the first megabyte, and the library is
+  scanned far more often than the Library tab suggests — the Shows tab,
+  the effect builder and the sync proof all list it, and now so does
+  opening the Library tab. Hashes are remembered in
+  `/data/track-hashes.json`, keyed on size and mtime, so a rescan re-reads
+  only what changed: measured at **48× faster** warm over 60 tracks on a
+  local disk, and the saving is larger on a Pi reading a network share,
+  which is where this was felt. A track that is touched but not edited is
+  read again and keeps its identity, because the hash is of the content.
+  Deleted tracks are pruned, and only a scan of *every* folder may prune —
+  a single-folder scan has no idea what the others were about to claim.
 
 ## 0.11.0
 

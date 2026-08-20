@@ -97,6 +97,9 @@ jobs:
       - name: Measure BRight's light map
         run: node tests/manual/measure-lightmap.mjs
 
+      - name: Measure BRight's library tab
+        run: node tests/manual/measure-library.mjs
+
       # This one needs the real panel behind it: the effect preview is a
       # canvas and a floor of dots, and "the timeline painted" is not
       # something a static fixture can answer. The panel boots against a
