@@ -1,5 +1,13 @@
 # BRigt — light show director for Home Assistant
 
+> ## ⚠️ Under active development
+> **BRigt is being built in the open and is not finished.** Features
+> described here may be partial, missing, or broken, and updates may change
+> behavior without ceremony. Install it to follow along and experiment —
+> not (yet) to run the party. If something misbehaves, restarting the
+> add-on is safe: shows and analysis are regenerable, and nothing BRigt
+> does is destructive to your Home Assistant config.
+
 Point BRigt at a folder of your music. It analyzes every track — tempo, the
 beat grid, onsets, energy, song sections and drops, plus time-synced lyrics —
 and a director compiles a choreographed light show for *your* lights ahead of

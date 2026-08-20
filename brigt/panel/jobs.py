@@ -65,6 +65,15 @@ def start(name: str, factory: Callable[[], Awaitable[Any]]) -> dict:
     return job
 
 
+async def wait(job_id: str) -> dict | None:
+    """Await a job's completion and return its public record. Test-facing
+    convenience — production reads poll `get()`."""
+    job = _JOBS.get(job_id)
+    if job is not None and "_task" in job:
+        await asyncio.gather(job["_task"])
+    return get(job_id)
+
+
 def get(job_id: str) -> dict | None:
     job = _JOBS.get(job_id)
     if job is None:

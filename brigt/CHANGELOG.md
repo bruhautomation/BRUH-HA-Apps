@@ -5,6 +5,34 @@ All notable changes to the **BRigt** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.3.0
+
+Speaker calibration — the number no API reports, measured instead of
+guessed. AirPlay buffers roughly two seconds before sound comes out;
+every show is anchored at "play command + this measurement".
+
+### Added
+- **Calibration reference track**: eight sharp clicks at deliberately
+  irregular offsets (a regular train correlates at every multiple of its
+  period — the uneven pattern lines up exactly one way), written
+  deterministically to `/media/brigt/calibration.wav`.
+- **Phone-microphone wizard** on the Calibrate tab: the page syncs its
+  clock to the add-on over a few pings, records raw PCM through WebAudio
+  while the reference plays on the chosen media player, and uploads a WAV
+  it builds itself (no codecs involved). The add-on cross-correlates the
+  recording's onset envelope against the click pattern and stores the
+  measured offset — with a z-score confidence gate, so a recording that
+  didn't actually hear the clicks is refused rather than stored.
+- **Tap-along fallback** for browsers that won't share a microphone over
+  plain HTTP: tap on each click; the median tap error is the offset
+  (reaction time rides along, and the stored run says which method made it).
+- **Per-player profiles**: runs accumulate with median + spread, a
+  fine-tune nudge rides on top of (never instead of) the measurement, and
+  the same run checks whether the player reports a usable `media_position`
+  — the drift corrector will only ever trust players that proved it here.
+- A prominent **under-active-development notice** at the top of README
+  and DOCS.
+
 ## 0.2.0
 
 The Lab — real latency numbers from the real house, before anything is

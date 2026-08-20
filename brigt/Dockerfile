@@ -13,9 +13,10 @@ ENV ADDON_VERSION=${ADDON_VERSION} \
     BRIGT_DATA=/data
 
 # Core packages: Python + aiohttp for the ingress panel, jq for JSON
-# tooling in run.sh, su-exec to drop privileges. The audio-analysis stack
-# (ffmpeg, aubio, numpy/scipy) arrives with the analyzer — this image stays
-# small until the code that needs it exists.
+# tooling in run.sh, su-exec to drop privileges, numpy for the calibration
+# cross-correlation. The rest of the audio stack (ffmpeg, aubio, scipy)
+# arrives with the analyzer — the image stays small until the code that
+# needs it exists.
 RUN apk add --no-cache \
     bash \
     curl \
@@ -26,7 +27,8 @@ RUN apk add --no-cache \
     python3 \
     py3-pip \
     py3-aiohttp \
-    py3-yaml
+    py3-yaml \
+    py3-numpy
 
 # Python libs used by the ingress panel: async file IO, and the LIFX LAN
 # protocol library Home Assistant itself uses (discovery + product caps —

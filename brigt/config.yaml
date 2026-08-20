@@ -1,7 +1,7 @@
 ---
 name: "BRigt"
 description: "Music-driven light show director: analyzes your local music, choreographs LIFX bulbs over the LAN plus switch-driven party lights, and keeps it all in sync with the speaker"
-version: "0.2.0"
+version: "0.3.0"
 slug: "brigt"
 init: false
 

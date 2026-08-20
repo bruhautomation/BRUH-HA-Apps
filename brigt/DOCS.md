@@ -1,5 +1,10 @@
 # BRigt
 
+> ## ⚠️ Under active development
+> **BRigt is not finished.** Features described below may be partial,
+> missing, or broken, and updates may change behavior without ceremony.
+> Treat every release as a preview until this banner goes away.
+
 Music-driven light show director: local music in, compiled light shows out,
 everything in sync with the speaker actually playing the music.
 
@@ -41,6 +46,23 @@ networks and loopback). Open it from the Home Assistant sidebar.
 
 The panel binds 8095 rather than the family's usual 8099 because BRUH
 Minecraft also runs on the host network and already owns 8099.
+
+## Calibration
+
+Every speaker adds latency between "play" and audible sound — AirPlay
+around two seconds, and no API reports it. The Calibrate tab measures it:
+
+1. Open the panel **on your phone**, in the room with the speaker.
+2. Pick the media player and press **Play clicks & listen**. The add-on
+   plays a 13-second click track; your phone records it; the offset is
+   computed by cross-correlation and stored for that player.
+3. No microphone access (plain-HTTP setups)? Use **Play clicks & tap** and
+   tap along — coarser (your reaction time rides in), but workable.
+
+Run it once per speaker, and again if a show ever feels consistently early
+or late (speakers can renegotiate their buffers between sessions). The
+stored profile keeps a median across runs plus a fine-tune nudge you can
+set per player.
 
 ## Services
 

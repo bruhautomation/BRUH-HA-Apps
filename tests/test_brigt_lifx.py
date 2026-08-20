@@ -228,8 +228,7 @@ class TestJobs(unittest.TestCase):
         async def scenario():
             job = jobs.start("probe", self._quick(41))
             self.assertEqual("running", job["status"])
-            await job["_task"]
-            return jobs.get(job["id"])
+            return await jobs.wait(job["id"])
 
         finished = asyncio.run(scenario())
         self.assertEqual("done", finished["status"])
@@ -247,7 +246,8 @@ class TestJobs(unittest.TestCase):
             first = jobs.start("probe", waits)
             second = jobs.start("probe", waits)
             gate.set()
-            await first["_task"]
+            done = await jobs.wait(first["id"])
+            self.assertEqual("done", done["status"])
             return first, second
 
         first, second = asyncio.run(scenario())
@@ -260,8 +260,7 @@ class TestJobs(unittest.TestCase):
                 raise RuntimeError("bulb on fire")
 
             job = jobs.start("probe", explodes)
-            await job["_task"]
-            return jobs.get(job["id"])
+            return await jobs.wait(job["id"])
 
         finished = asyncio.run(scenario())
         self.assertEqual("error", finished["status"])

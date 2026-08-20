@@ -75,6 +75,28 @@ def call_service(domain: str, service: str, data: dict | None = None,
                           data=data or {}, opener=opener)
 
 
+def play_media(entity_id: str, media_content_id: str,
+               media_content_type: str = "music",
+               *, opener=urllib.request.urlopen) -> Any:
+    return call_service("media_player", "play_media", {
+        "entity_id": entity_id,
+        "media_content_id": media_content_id,
+        "media_content_type": media_content_type,
+    }, opener=opener)
+
+
+def position_snapshot(entity_id: str, *, opener=urllib.request.urlopen) -> dict:
+    """What the player says about its own position, for the reliability
+    check the drift corrector depends on."""
+    state = get_state(entity_id, opener=opener)
+    attributes = state.get("attributes") or {}
+    return {
+        "state": state.get("state"),
+        "media_position": attributes.get("media_position"),
+        "media_position_updated_at": attributes.get("media_position_updated_at"),
+    }
+
+
 # ---------------------------------------------------------------------------
 # The service-call latency probe
 # ---------------------------------------------------------------------------

@@ -29,6 +29,8 @@ liveness only.
 """
 from __future__ import annotations
 
+import asyncio
+import base64
 import ipaddress
 import logging
 import os
@@ -49,7 +51,9 @@ if str(HERE) not in sys.path:
 import atomic_write  # noqa: E402
 import ha_client  # noqa: E402
 import jobs  # noqa: E402
+from calibrate import correlate, reference  # noqa: E402
 from lifx import engine as lifx_engine  # noqa: E402
+from stores import calibration as calibration_store  # noqa: E402
 STATIC = HERE
 DATA_DIR = Path(os.environ.get("BRIGT_STATE", "/data"))
 ENV_FILE = Path(os.environ.get("BRIGT_ENV_FILE", "/data/.brigt_env"))
@@ -339,6 +343,164 @@ async def h_lab_report(request: web.Request) -> web.Response:
     })
 
 
+# ---------------------------------------------------------------------------
+# Calibration — how long the speaker takes, measured, never configured
+# ---------------------------------------------------------------------------
+MEDIA_DIR = Path(os.environ.get("BRIGT_MEDIA", "/media"))
+REFERENCE_WAV = MEDIA_DIR / "brigt" / "calibration.wav"
+# What media_player.play_media is handed for the file above (HA maps the
+# /media mount to the local media source).
+REFERENCE_MEDIA_ID = "media-source://media_source/local/brigt/calibration.wav"
+
+# The position-reliability check that runs while the reference plays,
+# keyed by entity. In memory: it describes the run in progress.
+_POSITION_CHECKS: dict[str, dict] = {}
+
+
+async def h_cal_reference(request: web.Request) -> web.Response:
+    await asyncio.to_thread(reference.write_wav, REFERENCE_WAV)
+    return web.json_response({
+        **reference.describe(),
+        "media_content_id": REFERENCE_MEDIA_ID,
+    })
+
+
+async def h_cal_ping(request: web.Request) -> web.Response:
+    """The phone's clock and ours differ; a few of these round trips let
+    the wizard page estimate the offset (server minus client, from the
+    lowest-RTT exchange)."""
+    return web.json_response({"server_epoch_ms": time.time() * 1000.0})
+
+
+async def _position_check(entity_id: str) -> dict:
+    """Poll the player's reported position while the reference plays —
+    the drift corrector may only trust players this proved."""
+    samples = []
+    for _ in range(6):
+        await asyncio.sleep(2.0)
+        snapshot = await asyncio.to_thread(ha_client.position_snapshot, entity_id)
+        samples.append(snapshot)
+    positions = [s.get("media_position") for s in samples
+                 if isinstance(s.get("media_position"), (int, float))]
+    increases = sum(1 for a, b in zip(positions, positions[1:]) if b > a)
+    result = {
+        "reliable": len(positions) >= 4 and increases >= 2,
+        "reports_position": bool(positions),
+        "samples": len(positions),
+    }
+    _POSITION_CHECKS[entity_id] = result
+    return result
+
+
+async def h_cal_play(request: web.Request) -> web.Response:
+    body = await _json_body(request)
+    entity_id = str(body.get("media_player", ""))
+    if not entity_id.startswith("media_player."):
+        return web.json_response({"error": "media_player entity required"},
+                                 status=400)
+    await asyncio.to_thread(reference.write_wav, REFERENCE_WAV)
+    _POSITION_CHECKS.pop(entity_id, None)
+    play_epoch_ms = time.time() * 1000.0
+    result = await asyncio.to_thread(
+        ha_client.play_media, entity_id, REFERENCE_MEDIA_ID)
+    if isinstance(result, dict) and result.get("error"):
+        return web.json_response(result, status=502)
+    jobs.start(f"position-check:{entity_id}",
+               lambda: _position_check(entity_id))
+    return web.json_response({"play_epoch_ms": play_epoch_ms})
+
+
+async def h_cal_analyze(request: web.Request) -> web.Response:
+    """The wizard's recording, correlated. The page has already mapped its
+    record-start moment onto OUR clock (via /api/calibrate/ping), so the
+    arithmetic here never compares two different clocks."""
+    body = await _json_body(request)
+    entity_id = str(body.get("media_player", ""))
+    try:
+        record_start_ms = float(body["record_start_epoch_ms"])
+        play_epoch_ms = float(body["play_epoch_ms"])
+        wav = base64.b64decode(str(body["wav_b64"]))
+    except (KeyError, ValueError, TypeError):
+        return web.json_response({"error": "missing recording fields"},
+                                 status=400)
+    try:
+        estimate = await asyncio.to_thread(correlate.estimate_offset, wav)
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=422)
+    if estimate["confidence"] < correlate.MIN_CONFIDENCE:
+        return web.json_response({
+            "error": "could not hear the clicks clearly — move the phone "
+                     "closer to the speaker, raise the volume, and try again",
+            "confidence": estimate["confidence"],
+        }, status=422)
+
+    audible_epoch_ms = record_start_ms + estimate["lag_s"] * 1000.0
+    offset_ms = audible_epoch_ms - play_epoch_ms
+    if not -500.0 <= offset_ms <= 30000.0:
+        return web.json_response({
+            "error": f"measured {offset_ms:.0f}ms, which is not a plausible "
+                     "speaker latency — was the right speaker playing?",
+        }, status=422)
+    profile = calibration_store.add_run(
+        entity_id, offset_ms, method="mic",
+        confidence=estimate["confidence"],
+        position_attr=_POSITION_CHECKS.get(entity_id))
+    return web.json_response({"measured_offset_ms": round(offset_ms, 1),
+                              "profile": profile})
+
+
+async def h_cal_taps(request: web.Request) -> web.Response:
+    """The fallback: the person taps along with the clicks. Reaction time
+    rides in (roughly +100ms), which is why the mic path is the default
+    and this one says what it is in the stored method."""
+    body = await _json_body(request)
+    entity_id = str(body.get("media_player", ""))
+    try:
+        play_epoch_ms = float(body["play_epoch_ms"])
+        taps = sorted(float(t) for t in body["taps_epoch_ms"])
+    except (KeyError, ValueError, TypeError):
+        return web.json_response({"error": "missing tap fields"}, status=400)
+    clicks = reference.CLICK_TIMES_S
+    if len(taps) < 4:
+        return web.json_response(
+            {"error": "need at least 4 taps to average out reaction time"},
+            status=422)
+    pairs = min(len(taps), len(clicks))
+    offsets = sorted(
+        taps[i] - play_epoch_ms - clicks[i] * 1000.0 for i in range(pairs))
+    offset_ms = offsets[len(offsets) // 2]
+    spread = offsets[-1] - offsets[0]
+    if spread > 700.0:
+        return web.json_response(
+            {"error": f"taps disagree by {spread:.0f}ms — try again, one "
+                      "tap per click"},
+            status=422)
+    profile = calibration_store.add_run(
+        entity_id, offset_ms, method="taps",
+        position_attr=_POSITION_CHECKS.get(entity_id))
+    return web.json_response({"measured_offset_ms": round(offset_ms, 1),
+                              "profile": profile})
+
+
+async def h_cal_adjust(request: web.Request) -> web.Response:
+    body = await _json_body(request)
+    entity_id = str(body.get("media_player", ""))
+    try:
+        adjust_ms = float(body.get("adjust_ms", 0))
+    except (ValueError, TypeError):
+        return web.json_response({"error": "adjust_ms must be a number"},
+                                 status=400)
+    if not entity_id:
+        return web.json_response({"error": "media_player required"}, status=400)
+    profile = calibration_store.set_adjust(entity_id,
+                                           max(-2000.0, min(2000.0, adjust_ms)))
+    return web.json_response({"profile": profile})
+
+
+async def h_cal_profiles(request: web.Request) -> web.Response:
+    return web.json_response({"profiles": calibration_store.all_profiles()})
+
+
 def _static_file(name: str, content_type: str):
     async def handler(request: web.Request) -> web.Response:
         return web.Response(
@@ -352,7 +514,9 @@ _STARTED = time.monotonic()
 
 
 def build_app() -> web.Application:
-    app = web.Application(middlewares=[_lan_gate])
+    # client_max_size covers the calibration upload: ~14s of 48kHz 16-bit
+    # PCM is ~1.4MB, ~1.9MB as base64 inside JSON. Default is 1MB.
+    app = web.Application(middlewares=[_lan_gate], client_max_size=16 * 1024 ** 2)
     app.router.add_get("/api/health", h_health)
     app.router.add_get("/", h_index)
     app.router.add_get("/style.css", _static_file("style.css", "text/css"))
@@ -369,6 +533,14 @@ def build_app() -> web.Application:
     app.router.add_post("/api/ha/latency-probe", h_ha_latency_probe)
     app.router.add_get("/api/job/{job_id}", h_job)
     app.router.add_get("/api/lab/report", h_lab_report)
+    # Calibration
+    app.router.add_post("/api/calibrate/reference", h_cal_reference)
+    app.router.add_post("/api/calibrate/ping", h_cal_ping)
+    app.router.add_post("/api/calibrate/play", h_cal_play)
+    app.router.add_post("/api/calibrate/analyze", h_cal_analyze)
+    app.router.add_post("/api/calibrate/taps", h_cal_taps)
+    app.router.add_post("/api/calibrate/adjust", h_cal_adjust)
+    app.router.add_get("/api/calibrate/profiles", h_cal_profiles)
     return app
 
 

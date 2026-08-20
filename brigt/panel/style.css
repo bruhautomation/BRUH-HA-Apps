@@ -130,6 +130,17 @@ body {
 
 #haProbeResult { margin-top: 8px; color: var(--azure-light); }
 
+.cal-status { margin-top: 10px; color: var(--azure-light); min-height: 1.4em; }
+.tap-btn {
+  display: block;
+  width: 100%;
+  min-height: 120px;
+  margin-top: 10px;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+}
+
 @media (pointer: coarse) {
   /* One floor for everything added later, not a per-control patch. */
   input, select, textarea, button { font-size: 16px; }

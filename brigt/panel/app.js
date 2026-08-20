@@ -206,6 +206,249 @@
   });
 
   // ------------------------------------------------------------------
+  // Calibrate: the phone is the measurement instrument
+  // ------------------------------------------------------------------
+  const RECORD_SECONDS = 14;
+
+  $("btnLoadPlayers").addEventListener("click", async () => {
+    const select = $("calPlayer");
+    select.innerHTML = '<option value="">loading…</option>';
+    try {
+      const body = await api("api/ha/entities?domain=media_player");
+      select.innerHTML = '<option value="">— pick a media player —</option>';
+      for (const entity of body.entities || []) {
+        const option = document.createElement("option");
+        option.value = entity.entity_id;
+        option.textContent = entity.name + " (" + entity.entity_id + ")";
+        select.appendChild(option);
+      }
+    } catch (error) {
+      select.innerHTML = '<option value="">failed: ' + error.message + "</option>";
+    }
+  });
+
+  // Several ping exchanges; the lowest-RTT one carries the least clock
+  // ambiguity. Returns (server_epoch - client_epoch) in ms.
+  async function clockOffset() {
+    let best = { rtt: Infinity, offset: 0 };
+    for (let i = 0; i < 5; i++) {
+      const t0 = Date.now();
+      const body = await post("api/calibrate/ping", {});
+      const t1 = Date.now();
+      const rtt = t1 - t0;
+      if (rtt < best.rtt) {
+        best = { rtt, offset: body.server_epoch_ms - (t0 + t1) / 2 };
+      }
+    }
+    return best.offset;
+  }
+
+  function floatTo16BitWav(chunks, sampleRate) {
+    let length = 0;
+    for (const chunk of chunks) length += chunk.length;
+    const buffer = new ArrayBuffer(44 + length * 2);
+    const view = new DataView(buffer);
+    const writeString = (at, s) => {
+      for (let i = 0; i < s.length; i++) view.setUint8(at + i, s.charCodeAt(i));
+    };
+    writeString(0, "RIFF");
+    view.setUint32(4, 36 + length * 2, true);
+    writeString(8, "WAVE");
+    writeString(12, "fmt ");
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);       // PCM
+    view.setUint16(22, 1, true);       // mono
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    writeString(36, "data");
+    view.setUint32(40, length * 2, true);
+    let at = 44;
+    for (const chunk of chunks) {
+      for (let i = 0; i < chunk.length; i++) {
+        const s = Math.max(-1, Math.min(1, chunk[i]));
+        view.setInt16(at, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+        at += 2;
+      }
+    }
+    return buffer;
+  }
+
+  function bufferToBase64(buffer) {
+    const bytes = new Uint8Array(buffer);
+    let binary = "";
+    const STEP = 0x8000;
+    for (let i = 0; i < bytes.length; i += STEP) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + STEP));
+    }
+    return btoa(binary);
+  }
+
+  function describeProfile(profile) {
+    const runs = (profile.runs || []).length;
+    return profile.entity_id + ": " + profile.effective_offset_ms + "ms" +
+      (profile.adjust_ms ? " (measured " + profile.offset_ms +
+        " + nudge " + profile.adjust_ms + ")" : "") +
+      " · " + runs + " run" + (runs === 1 ? "" : "s") +
+      " · spread " + (profile.spread_ms || 0) + "ms" +
+      (profile.position_attr && profile.position_attr.reliable
+        ? " · position reporting OK" : "");
+  }
+
+  $("btnMicWizard").addEventListener("click", async () => {
+    const entityId = $("calPlayer").value;
+    const status = $("micStatus");
+    if (!entityId) { status.textContent = "Pick a media player first."; return; }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      status.textContent = "This browser won't share the microphone here " +
+        "(it usually needs HTTPS). Use the tap method below instead.";
+      return;
+    }
+    const button = $("btnMicWizard");
+    button.disabled = true;
+    try {
+      status.textContent = "Syncing clocks…";
+      const offset = await clockOffset();
+
+      status.textContent = "Asking for the microphone…";
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+        },
+      });
+      const context = new (window.AudioContext || window.webkitAudioContext)();
+      const source = context.createMediaStreamSource(stream);
+      const processor = context.createScriptProcessor(4096, 1, 1);
+      const chunks = [];
+      let recordStartClient = null;
+      processor.onaudioprocess = (event) => {
+        if (recordStartClient === null) {
+          // First delivered buffer: its audio began one buffer ago.
+          recordStartClient = Date.now() -
+            (event.inputBuffer.length / context.sampleRate) * 1000;
+        }
+        chunks.push(new Float32Array(event.inputBuffer.getChannelData(0)));
+      };
+      source.connect(processor);
+      processor.connect(context.destination);
+
+      status.textContent = "Recording — starting playback on " + entityId + "…";
+      const play = await post("api/calibrate/play", { media_player: entityId });
+
+      for (let s = RECORD_SECONDS; s > 0; s--) {
+        status.textContent = "Listening for clicks… " + s + "s";
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+      processor.disconnect();
+      source.disconnect();
+      stream.getTracks().forEach((track) => track.stop());
+      context.close();
+
+      status.textContent = "Analyzing…";
+      const wav = floatTo16BitWav(chunks, context.sampleRate);
+      const result = await post("api/calibrate/analyze", {
+        media_player: entityId,
+        wav_b64: bufferToBase64(wav),
+        record_start_epoch_ms: recordStartClient + offset,
+        play_epoch_ms: play.play_epoch_ms,
+      });
+      status.textContent = "Measured: this speaker starts making sound " +
+        Math.round(result.measured_offset_ms) + "ms after the play command. " +
+        describeProfile(result.profile);
+      loadProfiles();
+    } catch (error) {
+      status.textContent = "Failed: " + error.message;
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  $("btnTapWizard").addEventListener("click", async () => {
+    const entityId = $("calPlayer").value;
+    const status = $("tapStatus");
+    if (!entityId) { status.textContent = "Pick a media player first."; return; }
+    const wizard = $("btnTapWizard");
+    const tap = $("btnTap");
+    wizard.disabled = true;
+    try {
+      const offset = await clockOffset();
+      const taps = [];
+      const onTap = () => taps.push(Date.now() + offset);
+      tap.hidden = false;
+      tap.addEventListener("pointerdown", onTap);
+      status.textContent = "Starting playback — tap on every click you hear.";
+      const play = await post("api/calibrate/play", { media_player: entityId });
+      for (let s = RECORD_SECONDS; s > 0; s--) {
+        status.textContent = "Tap each click… " + s + "s (" + taps.length + " taps)";
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+      tap.hidden = true;
+      tap.removeEventListener("pointerdown", onTap);
+      status.textContent = "Computing…";
+      const result = await post("api/calibrate/taps", {
+        media_player: entityId,
+        play_epoch_ms: play.play_epoch_ms,
+        taps_epoch_ms: taps,
+      });
+      status.textContent = "Measured (taps): " +
+        Math.round(result.measured_offset_ms) + "ms. " +
+        describeProfile(result.profile);
+      loadProfiles();
+    } catch (error) {
+      status.textContent = "Failed: " + error.message;
+      tap.hidden = true;
+    } finally {
+      wizard.disabled = false;
+    }
+  });
+
+  async function loadProfiles() {
+    const list = $("calProfiles");
+    try {
+      const body = await api("api/calibrate/profiles");
+      const profiles = body.profiles || [];
+      if (!profiles.length) {
+        list.innerHTML = '<p class="muted">Nothing calibrated yet.</p>';
+        return;
+      }
+      list.innerHTML = "";
+      for (const profile of profiles) {
+        const row = document.createElement("div");
+        row.className = "row";
+        row.innerHTML = '<div class="row-main"><span class="small"></span></div>' +
+          '<div class="row-actions"><label class="small">Nudge ms ' +
+          '<input type="number" step="10" class="nudge"></label>' +
+          '<button class="btn small" data-act="nudge">Save</button></div>';
+        row.querySelector(".row-main span").textContent = describeProfile(profile);
+        row.querySelector(".nudge").value = profile.adjust_ms || 0;
+        row.dataset.entity = profile.entity_id;
+        list.appendChild(row);
+      }
+    } catch (error) {
+      list.innerHTML = '<p class="muted">failed: ' + error.message + "</p>";
+    }
+  }
+
+  $("btnProfiles").addEventListener("click", loadProfiles);
+  $("calProfiles").addEventListener("click", async (event) => {
+    const button = event.target.closest('button[data-act="nudge"]');
+    if (!button) return;
+    const row = button.closest(".row");
+    try {
+      await post("api/calibrate/adjust", {
+        media_player: row.dataset.entity,
+        adjust_ms: Number(row.querySelector(".nudge").value) || 0,
+      });
+      loadProfiles();
+    } catch (error) {
+      row.querySelector(".row-main span").textContent = "failed: " + error.message;
+    }
+  });
+
+  // ------------------------------------------------------------------
   // Lab: the report
   // ------------------------------------------------------------------
   $("btnReport").addEventListener("click", async () => {

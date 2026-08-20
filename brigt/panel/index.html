@@ -91,8 +91,49 @@
   <section class="pane" id="pane-calibrate">
     <h2>Calibrate</h2>
     <p class="muted">Measures how long your speaker takes from "play" to
-      audible sound, using your phone's microphone — so the lights land on
-      the beat instead of two seconds behind an AirPlay buffer.</p>
+      audible sound — so the lights land on the beat instead of two seconds
+      behind an AirPlay buffer. Open this page <strong>on your phone</strong>,
+      in the same room as the speaker.</p>
+
+    <div class="card">
+      <div class="card-head">
+        <h3>Speaker</h3>
+        <button id="btnLoadPlayers" class="btn">Load media players</button>
+      </div>
+      <div class="demo-controls">
+        <select id="calPlayer"><option value="">— pick a media player —</option></select>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Measure with this phone's microphone</h3>
+      <p class="muted small">Plays a 13-second click track through the
+        speaker while this page listens. The clicks are unevenly spaced on
+        purpose — the pattern only lines up one way, so the answer can't be
+        off by a beat.</p>
+      <button id="btnMicWizard" class="btn">Play clicks &amp; listen</button>
+      <div id="micStatus" class="cal-status"></div>
+    </div>
+
+    <div class="card">
+      <h3>No microphone? Tap along instead</h3>
+      <p class="muted small">Plays the same clicks; you tap the big button on
+        each one. Your reaction time rides along (~100ms), so prefer the
+        microphone when you can.</p>
+      <button id="btnTapWizard" class="btn">Play clicks &amp; tap</button>
+      <button id="btnTap" class="btn tap-btn" hidden>TAP</button>
+      <div id="tapStatus" class="cal-status"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h3>Stored profiles</h3>
+        <button id="btnProfiles" class="btn">Refresh</button>
+      </div>
+      <p class="muted small">Fine-tune nudges the whole show earlier
+        (negative) or later (positive) on top of the measurement.</p>
+      <div id="calProfiles" class="list"><p class="muted">Nothing calibrated yet.</p></div>
+    </div>
   </section>
   <section class="pane" id="pane-party">
     <h2>Party</h2>
