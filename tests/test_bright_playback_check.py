@@ -286,9 +286,45 @@ class TestWaitingForPlaying(unittest.TestCase):
         step = self._wait([{"state": "idle"}, {"state": "off"},
                            {"state": "off"}, {"state": "off"}])
         self.assertIs(False, step["ok"])
-        self.assertIn("never started playing", step["detail"])
+        # "reported", not "started": the device may well be making sound.
+        # Claiming it never started is a claim this check cannot make.
+        self.assertIn("never reported playing", step["detail"])
         self.assertIn("idle → off", step["detail"])
         self.assertIn("host step", step["fix"])
+
+    def test_a_receiver_that_took_the_media_is_not_the_url_case(self):
+        """The failure a real install hit: an Onkyo receiver, `command`
+        accepted, state stuck on `on`, and advice about the URL that was
+        already proven fine two steps above.
+
+        A device holding our media has fetched it. Its state model simply
+        has no word for `playing` — so the honest answer is "you may be
+        hearing this right now, and what BRight cannot do is tell when it
+        started", which is a different problem with a different fix.
+        """
+        step = self._wait([
+            {"state": "on"},
+            {"state": "on",
+             "attributes": {"media_content_id": "http://ha/media/x.wav"}},
+            {"state": "on",
+             "attributes": {"media_content_id": "http://ha/media/x.wav"}},
+            {"state": "on",
+             "attributes": {"media_content_id": "http://ha/media/x.wav"}},
+        ])
+        self.assertIs(False, step["ok"])
+        self.assertIn("took the media", step["fix"])
+        self.assertIn("manual tap", step["fix"],
+                      "there is a way to calibrate this speaker anyway")
+        self.assertNotIn("host step", step["fix"],
+                         "the URL is proven fine — it fetched it")
+
+    def test_a_player_that_never_touched_the_media_is_pointed_elsewhere(self):
+        step = self._wait([{"state": "on"}, {"state": "on"},
+                           {"state": "on"}, {"state": "on"}])
+        self.assertIn("never picked the media up", step["fix"])
+        self.assertIn("Chromecast", step["fix"],
+                      "name something known to work, so the next test "
+                      "separates the file from the device")
 
 
 class TestTheWholeChain(unittest.TestCase):

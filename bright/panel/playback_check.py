@@ -219,27 +219,68 @@ async def wait_for_playing(entity_id: str, *, wait_s: float = PLAY_WAIT_S,
     """
     deadline = now() + wait_s
     seen: list[str] = []
+    took_media = ""
     while True:
         state = await asyncio.to_thread(ha_client.get_state, entity_id)
+        attributes = state.get("attributes") or {}
         current = flat(state.get("state") or "unknown", 32)
         if not seen or seen[-1] != current:
             seen.append(current)
+        # Whether the device ever admitted to holding OUR media, separately
+        # from whether it admits to playing. The two come apart on real
+        # hardware and the difference is the whole diagnosis below.
+        holding = attributes.get("media_title") or \
+            attributes.get("media_content_id") or ""
+        if holding and not took_media:
+            took_media = flat(holding)
         if current in PLAYING_STATES:
-            attributes = state.get("attributes") or {}
-            title = flat(attributes.get("media_title") or attributes.get(
-                "media_content_id") or "")
             detail = f"{flat(entity_id)} is {current}"
             return _step("playing", True,
-                         f"{detail} — {title}" if title else detail)
+                         f"{detail} — {took_media}" if took_media else detail)
         if now() >= deadline:
             trail = " → ".join(seen) or current
-            return _step(
-                "playing", False,
-                f"{flat(entity_id)} never started playing (state: {trail})",
-                "Home Assistant accepted the command, so the speaker was "
-                "told to play and did not. That is almost always the URL it "
-                "was given: see the host step above.")
+            return _step("playing", False,
+                         f"{flat(entity_id)} never reported playing "
+                         f"(state: {trail})",
+                         _never_played_advice(took_media, seen))
         await asyncio.sleep(poll_s)
+
+
+def _never_played_advice(took_media: str, seen: list[str]) -> str:
+    """Why a player that was told to play never said it was playing.
+
+    Two very different failures wear the same red cross, and the advice
+    for one is useless for the other:
+
+    A device that picked up our media and still never said `playing` has
+    the file — it is an AV receiver or amplifier whose state model is
+    on/off and which reports playback badly or not at all. It may well be
+    making sound right now. What it cannot do is tell BRight *when*, which
+    is what the light show is synchronised against.
+
+    A device that never picked the media up at all did not fetch it. That
+    is the URL case the host step is about, or a device that accepts
+    `play_media` for its own presets and not for arbitrary http.
+    """
+    if took_media:
+        return (f"The player took the media ({took_media}) but never "
+                f"reported playing. Receivers and amplifiers often do this: "
+                f"the state model is on/off and playback is not reported. "
+                f"If you can HEAR it, the file and the URL are fine and the "
+                f"problem is only that BRight cannot tell when it started — "
+                f"calibrate this speaker by ear with the manual tap, and "
+                f"shows will still run. If you cannot hear it, the receiver "
+                f"is on the wrong input.")
+    moved = len([s for s in seen if s not in ("unknown", "unavailable")]) > 1
+    return ("Home Assistant accepted the command and the player never "
+            "picked the media up" + (" (its state did change, so it was "
+            "listening)" if moved else "") + ". Either it cannot fetch the "
+            "URL — see the host step above — or it is a device whose "
+            "play_media only accepts its own sources (an AV receiver's "
+            "presets and inputs, rather than an http address). Try the "
+            "same test against a Chromecast, Sonos, or VLC target: if that "
+            "one plays, the file and the address are fine and this device "
+            "is the limit.")
 
 
 async def check(entity_id: str, media_content_id: str, *,

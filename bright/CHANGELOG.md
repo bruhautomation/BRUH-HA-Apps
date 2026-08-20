@@ -5,9 +5,45 @@ All notable changes to the **BRight** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.13.0
+
+The effect library is a shared, growing thing that Claude reads and adds to.
+
+### Added
+
+- **Saved effects are in every brief Claude gets.** The library existed and
+  was invisible to the one thing most able to use it: BRight held effects
+  somebody spent an evening getting right, and then asked Claude to write a
+  show from a blank page. Every show started from nothing, so no show could
+  be better than the last one — the opposite of what a library is for. The
+  show director, the effect writer and the effect inventor are all told
+  what is saved, described rather than just named: `"kitchen chase"` is not
+  something a model can reason about, but "a chase across the kitchen zone,
+  half a beat a step, notes: looks great at 120bpm" is.
+- **A script can name a saved effect.** `{"use": "kitchen chase"}` works
+  anywhere an effect goes, in a hand-written script and in one Claude
+  writes. Override anything alongside it —
+  `{"use": "kitchen chase", "params": {"step_beats": 1}}` keeps the
+  selection and changes the speed — and parameters *merge*, so changing one
+  does not silently drop the rest.
+- **＋ Library on every effect in a show.** An effect that turned out well
+  is kept with one press, and is then available by name to every future
+  show. Before this the only way back to it was finding the show it was in
+  and copying the JSON out by hand.
+
+### Notes
+
+Names are resolved once, before a script is compiled or saved, so what
+lands on disk is the effect in full. A show that stored the *name* would be
+a show that changes when somebody edits the library — silently, and usually
+the night after they edited it. The library is a place to copy from, not a
+layer a saved show hangs off. Expansion happens on a copy, so a refused
+compile leaves the editor holding exactly what was typed.
+
 ## 0.12.0
 
-Ask Claude to write one show, and read what it was told.
+Ask Claude to write one show, read what it was told, and see the song it
+is hung off.
 
 ### Added
 
@@ -32,6 +68,23 @@ Ask Claude to write one show, and read what it was told.
   travel orders worked out from them. Reading it runs nothing and costs
   nothing, which is the point: it is the cheapest way to find out whether
   a Claude run is worth a couple of minutes.
+- **The song, drawn.** Nothing in the panel showed the music at all — a
+  show is a list of times, and the only way to know whether the drop
+  landed on the drop was to play it in a dark room and watch. The show
+  editor now draws the waveform above the timeline, tinted by section,
+  with the analyser's drops marked in red and bar lines you can count
+  against. It shares a wrapper (and therefore a time axis and a playhead)
+  with the light strip, because two pictures of one song that do not line
+  up are worse than one. Clicking or dragging it scrubs.
+- **The playhead follows a real show.** While a show is actually playing,
+  the editor stops animating its own preview and follows the room instead,
+  interpolating between the conductor's position stamps so the head moves
+  smoothly through a quiet stretch where no cues are dispatched.
+- Waveforms are computed once during analysis, beside the decode that has
+  already happened. A track analysed before this release has one computed
+  on demand from its file, so nobody has to re-analyse a library to get a
+  picture — and if that file has since moved, it says so rather than
+  drawing a flat line that reads as silence.
 
 ## 0.11.1
 

@@ -68,3 +68,33 @@ def brightness_hint(pcm: np.ndarray, sample_rate: int) -> float:
     value = (np.log10(max(centroid, 200.0)) - np.log10(200.0)) / (
         np.log10(4000.0) - np.log10(200.0))
     return round(float(np.clip(value, 0.0, 1.0)), 3)
+
+
+# How many columns the stored waveform has. Wide enough that a desktop
+# canvas draws one bucket per pixel or better, small enough that it is a
+# few KB of JSON beside an analysis rather than a download.
+ENVELOPE_BUCKETS = 900
+
+
+def envelope(pcm: np.ndarray, buckets: int = ENVELOPE_BUCKETS) -> list[float]:
+    """The shape of the track: peak level per bucket, 0..1.
+
+    Peak rather than mean, because this is drawn and a mean waveform is a
+    grey smear — the point of seeing the song is to recognise where the
+    quiet bit ends, and RMS flattens exactly that. Normalised to its own
+    maximum so a quietly mastered track still fills the box; this is a
+    picture for finding your place in, not a meter.
+    """
+    if pcm.size == 0:
+        return []
+    buckets = max(1, min(4000, int(buckets)))
+    if pcm.size < buckets:
+        buckets = pcm.size
+    # Trim rather than pad: a partial last bucket would read as a fade-out
+    # the track does not have, at the one place a person looks to find the
+    # end of it.
+    per = pcm.size // buckets
+    usable = pcm[:per * buckets].reshape(buckets, per)
+    peaks = np.abs(usable).max(axis=1)
+    ceiling = float(peaks.max()) or 1.0
+    return [round(float(value) / ceiling, 3) for value in peaks]

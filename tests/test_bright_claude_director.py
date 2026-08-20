@@ -292,3 +292,92 @@ class TestTheAnswerIsParsedAsModelsActuallyWriteIt(unittest.TestCase):
         self.assertIn("//", contract, "the example is still annotated")
         self.assertIn("strict JSON", contract)
         self.assertIn("trailing comma", contract)
+
+
+class TestInventingEffectsFromTheRoom(ClaudeDirectorCase):
+    """Effects with nothing typed in.
+
+    The other half of `write_effect`, and the half that matters most to
+    somebody who has just drawn their first light map: describing what you
+    want assumes you already know what is possible in your own room, which
+    is exactly what a new map does not tell you. "What would look good in
+    here" is a question about a floor plan — and the floor plan is the one
+    thing BRight has.
+    """
+
+    def _answer(self, payload):
+        brain = _FakeBrain(claude_director.TASKS_DIR,
+                           claude_director.RESULTS_DIR,
+                           lambda task: {"id": task["id"],
+                                         "status": "completed",
+                                         "result": json.dumps(payload)})
+        brain.start()
+        try:
+            return claude_director.invent_effects(FIXTURES, 3, timeout_s=10), \
+                brain.seen_prompt
+        finally:
+            brain.join(timeout=5)
+
+    def test_ideas_come_back_validated_and_carry_their_reason(self):
+        ideas, prompt = self._answer({"effects": [
+            {"type": "theater", "name": "window answer",
+             "select": {"ids": ["lifx-d073d5000001", "lifx-d073d5000002"]},
+             "params": {"groups": 2},
+             "why": "the two window lamps face each other across the bay"},
+            {"type": "breathe", "name": "corner calm",
+             "select": {"roles": ["candle"]}, "params": {"depth": 0.12},
+             "why": "the candles stay soft while everything else moves"},
+        ]})
+        self.assertEqual(2, len(ideas))
+        self.assertEqual("theater", ideas[0]["type"])
+        self.assertIn("window lamps", ideas[0]["why"])
+        # The room went with the question, or the ideas are about nothing.
+        self.assertIn("lifx-d073d5000001", prompt)
+        self.assertIn("Left lamp", prompt)
+
+    def test_one_unusable_idea_does_not_sink_the_batch(self):
+        """A model asked for six things will occasionally get one wrong.
+        Throwing away five good ideas to punish it would make the feature
+        useless at the moment it is most useful."""
+        ideas, _ = self._answer({"effects": [
+            {"type": "not_a_real_effect", "name": "nonsense", "params": {}},
+            {"type": "wash", "name": "ground", "params": {"brightness": 0.5},
+             "why": "a still ground for the rest to move against"},
+        ]})
+        self.assertEqual(1, len(ideas))
+        self.assertEqual("wash", ideas[0]["type"])
+
+    def test_ideas_that_are_all_unusable_are_reported(self):
+        with self.assertRaises(ValueError) as caught:
+            self._answer({"effects": [{"type": "nope", "params": {}}]})
+        self.assertIn("cannot use", str(caught.exception))
+
+    def test_an_answer_with_no_effects_is_refused(self):
+        with self.assertRaises(ValueError) as caught:
+            self._answer({"effects": []})
+        self.assertIn("no effects", str(caught.exception))
+
+    def test_why_never_reaches_the_compiler(self):
+        """`why` is ours, not the catalog's. It is lifted out before the
+        validator sees the effect and put back after, so a generated effect
+        cannot smuggle a field the compiler will later trip over."""
+        ideas, _ = self._answer({"effects": [
+            {"type": "wash", "name": "g", "params": {}, "why": "because",
+             "smuggled": {"anything": True}},
+        ]})
+        self.assertNotIn("smuggled", ideas[0])
+        self.assertEqual("because", ideas[0]["why"])
+
+    def test_a_room_with_no_lights_is_refused_before_claude_is_asked(self):
+        with self.assertRaises(ValueError) as caught:
+            claude_director.invent_effects([], 3, timeout_s=10)
+        self.assertIn("Light Map", str(caught.exception))
+
+    def test_the_brief_asks_for_variety_and_for_this_room(self):
+        """The two failure modes of asking a model for a list: six
+        variations on one idea, and ideas that could have been written
+        without ever seeing the room."""
+        _, prompt = self._answer({"effects": [
+            {"type": "wash", "name": "g", "params": {}, "why": "w"}]})
+        self.assertIn("DIFFERENT from each other", prompt)
+        self.assertIn("Read the map", prompt)

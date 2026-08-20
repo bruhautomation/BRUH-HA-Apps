@@ -15,7 +15,7 @@ import time
 
 import atomic_write
 from analyzer import library
-from stores import light_map
+from stores import effect_presets, light_map
 
 from . import choreographer, compiler
 
@@ -137,6 +137,17 @@ def compile_and_save(hash_hex: str, script: dict, analysis: dict,
     budget and the same mirror as one the director wrote, because a
     script is a script whoever typed it.
     """
+    # Saved effects are resolved HERE, once, before the script is compiled
+    # or written — so what lands on disk is the effect in full.
+    #
+    # A show that stored the NAME would be a show that changes when
+    # somebody edits the library: silently, and usually the night after
+    # they edited it. The library is a place to copy from, not a layer a
+    # saved show hangs off. This is also the one choke point every script
+    # passes through — the director's, Claude's, and a hand-edited one —
+    # so `use` works the same in all three without any of them knowing
+    # the library exists.
+    script = effect_presets.expand_script(script)
     show = compiler.compile_show(script, fixtures, analysis, source)
     title = (analysis.get("tags") or {}).get("title") or ""
     library.save_show(hash_hex, script, show, title)

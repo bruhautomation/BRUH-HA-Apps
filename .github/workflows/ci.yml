@@ -116,6 +116,9 @@ jobs:
           node tests/manual/measure-effects.mjs
 
       # The show editor, on the panel the step above already started. It
+      # also measures the waveform, whose envelope the demo SEEDS rather
+      # than decodes — there is no ffmpeg in this job and the demo's
+      # "track" is a few bytes on disk, so a decode could never run here.
       # edits as it goes — adding an effect, applying a no-op — but never
       # presses Save, so the seeded show on disk is the same one each width
       # opens. That independence is what lets it run three viewports in a

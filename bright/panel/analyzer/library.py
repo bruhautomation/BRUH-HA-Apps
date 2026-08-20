@@ -124,6 +124,18 @@ class _HashCache:
             pass
 
 
+def is_track_hash(hash_hex: str) -> bool:
+    """Is this the shape of a track identity?
+
+    Public because callers need to tell "you asked for something that is
+    not a hash" from "there is no analysis for that track", and
+    `load_analysis` cannot: it swallows the ValueError along with the
+    missing-file case, so both arrive as None and both used to be reported
+    as "not analysed yet".
+    """
+    return bool(_HASH_RE.fullmatch(str(hash_hex)))
+
+
 def _track_dir(hash_hex: str) -> Path:
     if not _HASH_RE.fullmatch(hash_hex):
         raise ValueError(f"not a track hash: {hash_hex!r}")
