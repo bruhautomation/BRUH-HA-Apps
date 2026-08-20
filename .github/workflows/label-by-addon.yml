@@ -40,14 +40,14 @@ jobs:
             const MAP = {
               'brAIn':                 ['brain'],
               'BRUH Minecraft':        ['minecraft'],
-              'BRigt':                 ['brigt'],
-              'Multiple add-ons':      ['brain', 'minecraft', 'brigt'],
+              'BRight':                 ['bright'],
+              'Multiple add-ons':      ['brain', 'minecraft', 'bright'],
               'The repository / docs': ['repo'],
             };
             const COLORS = {
               brain:     { color: '1e9fe0', description: 'The brAIn add-on' },
               minecraft: { color: '3fa34d', description: 'The BRUH Minecraft add-on' },
-              brigt:     { color: '5ac4f2', description: 'The BRigt add-on' },
+              bright:     { color: '5ac4f2', description: 'The BRight add-on' },
               repo:      { color: '6e7781', description: 'Repository, CI or docs' },
             };
 

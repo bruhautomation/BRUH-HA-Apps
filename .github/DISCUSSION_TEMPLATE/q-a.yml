@@ -13,7 +13,7 @@ body:
       options:
         - brAIn
         - BRUH Minecraft
-        - BRigt
+        - BRight
         - Other / unsure
     validations:
       required: true

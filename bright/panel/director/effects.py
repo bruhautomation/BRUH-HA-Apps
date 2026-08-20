@@ -1,0 +1,1049 @@
+"""The effect vocabulary: what a light can be asked to *do*, as data.
+
+An effect is the unit both directors write in and the unit a person builds
+in the Effects tab. It names a type, the fixtures it owns, the window it
+runs in, how it lines up with the beat, and a handful of typed parameters
+— and nothing else. It carries no packets, no entity ids and no wire
+budget, because those are the compiler's and it must be possible to edit
+one by hand in a text file without knowing any of them.
+
+One rendering, two consumers
+----------------------------
+Every effect renders to a list of ACTIONS — "this fixture, at this
+moment, becomes this colour over this fade", or "this fixture runs this
+waveform for this many cycles". The compiler turns actions into packets;
+`simulate()` turns the same actions into frames for the preview. That is
+deliberate: a preview drawn from a second implementation of what an
+effect does is a preview of the second implementation. Here the picture
+and the packets come from the same list.
+
+Selection is explicit and narrow
+--------------------------------
+`select` resolves to fixtures by id, role or zone, and everything it does
+not name is not touched by that effect — a chase across three kitchen
+bulbs leaves the lounge exactly as the scene left it. That is the whole
+point of building effects rather than scenes: most of the room is usually
+meant to stay still.
+
+Roles still cap what a fixture will do (a candle does not strobe) because
+that is what makes an automatic show tasteful. An effect that means it
+can say `respect_roles: false` and own the fixture outright.
+"""
+from __future__ import annotations
+
+import hashlib
+import math
+from typing import Any, Callable
+
+from . import palettes
+
+# Waveform shapes, by the name a person writes. Mapped to LIFX's numbers
+# in the compiler — this module never sees a packet.
+SHAPES = ("sine", "triangle", "pulse", "saw", "half_sine")
+
+ORDERS = ("x", "-x", "y", "-y", "center_out", "edges_in", "snake",
+          "zone", "listed", "random")
+
+ALIGNMENTS = ("beat", "downbeat", "bar", "time")
+
+# A rendering that would put thousands of steps on the wire is a mistake
+# in the script, not an instruction. Every stepping effect stops here and
+# says so in `notes`, rather than compiling to something the rate check
+# refuses later with no idea which effect did it.
+MAX_STEPS = 512
+
+
+class EffectError(ValueError):
+    """An effect that cannot be understood, with a person-readable why."""
+
+
+# ---------------------------------------------------------------------------
+# Parameter kinds
+# ---------------------------------------------------------------------------
+def _num(low: float, high: float, default: float, *, integer: bool = False):
+    return {"kind": "int" if integer else "number", "min": low, "max": high,
+            "default": default}
+
+
+def _choice(options: tuple[str, ...], default: str):
+    return {"kind": "choice", "options": list(options), "default": default}
+
+
+def _flag(default: bool):
+    return {"kind": "bool", "default": default}
+
+
+# ---------------------------------------------------------------------------
+# The catalog
+# ---------------------------------------------------------------------------
+# Every entry: what it is for in one line, which channel it drives, and its
+# parameters with ranges. The UI builds its whole form from this, so a new
+# effect is a catalog entry plus a render function — never a new form.
+CATALOG: dict[str, dict[str, Any]] = {
+    "wash": {
+        "label": "Wash",
+        "blurb": "Hold a colour. The still ground everything else moves against.",
+        "channel": "light",
+        "params": {
+            "brightness": _num(0, 1, 0.6),
+            "spread": _choice(("cycle", "single", "gradient"), "cycle"),
+            "fade_ms": _num(0, 10000, 800, integer=True),
+        },
+    },
+    "fade": {
+        "label": "Fade",
+        "blurb": "Travel from one level to another across the whole window — "
+                 "the section transition that reads as intent rather than a cut.",
+        "channel": "light",
+        "params": {
+            "from_brightness": _num(0, 1, 0.2),
+            "to_brightness": _num(0, 1, 0.9),
+            "curve": _choice(("linear", "ease_in", "ease_out", "ease_in_out"),
+                             "linear"),
+            "steps": _num(2, 64, 8, integer=True),
+            "hue_shift": _num(-360, 360, 0),
+        },
+    },
+    "build": {
+        "label": "Build",
+        "blurb": "Tension: climb in stages, optionally lighting up one more "
+                 "fixture per stage, so the drop has somewhere to land.",
+        "channel": "light",
+        "params": {
+            "from_brightness": _num(0, 1, 0.15),
+            "to_brightness": _num(0, 1, 1.0),
+            "step_beats": _num(0.25, 16, 1),
+            "stagger": _flag(True),
+            "curve": _choice(("linear", "ease_in", "ease_out", "exp"), "exp"),
+            "saturate": _flag(False),
+        },
+    },
+    "pulse": {
+        "label": "Beat pulse",
+        "blurb": "The beat itself. One packet carries eight beats of motion — "
+                 "the bulb keeps time locally, so the network cannot smear it.",
+        "channel": "light",
+        "params": {
+            "every_beats": _num(0.25, 8, 1),
+            "depth": _num(0, 1, 0.35),
+            "shape": _choice(SHAPES, "sine"),
+            "duty": _num(0, 1, 0.5),
+            "cycles_per_cue": _num(1, 32, 8, integer=True),
+            "stagger_beats": _num(0, 8, 0),
+        },
+    },
+    "strobe": {
+        "label": "Strobe",
+        "blurb": "Hard flashing for a short burst. Costs one packet per "
+                 "fixture however fast it runs, because the bulb does the "
+                 "flashing.",
+        "channel": "light",
+        "params": {
+            "hz": _num(1, 20, 8),
+            "beats": _num(0.5, 32, 4),
+            "duty": _num(0.05, 0.95, 0.35),
+            "brightness": _num(0, 1, 1.0),
+            "desaturate": _flag(True),
+        },
+    },
+    "chase": {
+        "label": "Chase",
+        "blurb": "Jump between bulbs in order — the effect the light map "
+                 "exists for. Width and bounce turn it into a runner, a "
+                 "comet or a ping-pong.",
+        "channel": "light",
+        "params": {
+            "step_beats": _num(0.125, 8, 0.5),
+            "width": _num(1, 8, 1, integer=True),
+            "bounce": _flag(False),
+            "background": _num(0, 1, 0.08),
+            "brightness": _num(0, 1, 1.0),
+            "fade_ms": _num(0, 2000, 90, integer=True),
+            "colour_step": _flag(False),
+        },
+    },
+    "sweep": {
+        "label": "Sweep",
+        "blurb": "One wave travelling across the room: same motion on every "
+                 "fixture, phase-shifted by where it stands.",
+        "channel": "light",
+        "params": {
+            "period_beats": _num(1, 32, 8),
+            "depth": _num(0, 1, 0.45),
+            "shape": _choice(SHAPES, "sine"),
+            "repeats": _num(1, 64, 4, integer=True),
+        },
+    },
+    "breathe": {
+        "label": "Breathe",
+        "blurb": "Slow rise and fall under everything else. What a candle "
+                 "does, and the only motion a quiet section usually wants.",
+        "channel": "light",
+        "params": {
+            "period_beats": _num(2, 64, 16),
+            "depth": _num(0, 1, 0.15),
+        },
+    },
+    "sparkle": {
+        "label": "Sparkle",
+        "blurb": "A few random fixtures catch the light each beat. Reads as "
+                 "texture, not as a pattern.",
+        "channel": "light",
+        "params": {
+            "every_beats": _num(0.25, 8, 1),
+            "count": _num(1, 12, 2, integer=True),
+            "brightness": _num(0, 1, 1.0),
+            "decay_ms": _num(50, 4000, 320, integer=True),
+            "seed": _num(0, 9999, 0, integer=True),
+        },
+    },
+    "colour_cycle": {
+        "label": "Colour cycle",
+        "blurb": "Rotate the palette through the fixtures. Motion without "
+                 "brightness — the one that works when the room is already bright.",
+        "channel": "light",
+        "params": {
+            "every_beats": _num(0.5, 32, 4),
+            "rotate": _num(1, 8, 1, integer=True),
+            "fade_ms": _num(0, 4000, 320, integer=True),
+            "brightness": _num(0, 1, 0.85),
+        },
+    },
+    "rainbow": {
+        "label": "Rainbow",
+        "blurb": "Hue spread across the room, turning slowly. Ignores the "
+                 "palette on purpose — this one is its own colour scheme.",
+        "channel": "light",
+        "params": {
+            "period_beats": _num(2, 64, 16),
+            "spread_deg": _num(0, 360, 240),
+            "saturation": _num(0, 1, 0.9),
+            "brightness": _num(0, 1, 0.8),
+            "steps_per_period": _num(2, 32, 8, integer=True),
+        },
+    },
+    "theater": {
+        "label": "Theater chase",
+        "blurb": "Alternating groups, on and off against each other. Two "
+                 "halves of a room answering one another.",
+        "channel": "light",
+        "params": {
+            "step_beats": _num(0.25, 8, 1),
+            "groups": _num(2, 6, 2, integer=True),
+            "background": _num(0, 1, 0.1),
+            "brightness": _num(0, 1, 1.0),
+            "fade_ms": _num(0, 2000, 80, integer=True),
+        },
+    },
+    "stab": {
+        "label": "Stab",
+        "blurb": "One hit, at one moment. The drop, the downbeat back in, the "
+                 "line in the chorus that deserves an answer.",
+        "channel": "light",
+        "params": {
+            "strength": _num(0, 1, 0.9),
+            "blackout_before_ms": _num(0, 4000, 400, integer=True),
+            "hold_ms": _num(60, 4000, 500, integer=True),
+            "white": _flag(True),
+            "shape": _choice(SHAPES, "pulse"),
+        },
+    },
+    "blackout": {
+        "label": "Blackout",
+        "blurb": "Take the selected lights down. Silence is a lighting cue.",
+        "channel": "light",
+        "params": {
+            "level": _num(0, 0.5, 0.02),
+            "fade_ms": _num(0, 6000, 500, integer=True),
+        },
+    },
+    "aux": {
+        "label": "Aux switch",
+        "blurb": "Party lights and lasers: on, off, or flashed on the beat. "
+                 "These ride Home Assistant, so their cues are sent early by "
+                 "the latency the Lab measured.",
+        "channel": "switch",
+        "params": {
+            "state": _choice(("on", "off", "flash"), "on"),
+            "flash_beats": _num(1, 32, 4),
+            "flashes": _num(1, 16, 4, integer=True),
+        },
+    },
+}
+
+# Which roles an effect will refuse to drive when `respect_roles` is on.
+# Two rules, both about taste rather than hardware: a candle is ambience
+# and a switch cannot be dimmed, so nothing that fades or flickers goes
+# near either by default.
+_HARSH = {"strobe", "chase", "sparkle", "stab", "theater"}
+
+
+# ---------------------------------------------------------------------------
+# Validation
+# ---------------------------------------------------------------------------
+def _clamped(spec: dict, raw: Any) -> Any:
+    kind = spec["kind"]
+    if kind == "bool":
+        if isinstance(raw, str):
+            return raw.strip().lower() in ("1", "true", "yes", "on")
+        return bool(raw)
+    if kind == "choice":
+        value = str(raw)
+        return value if value in spec["options"] else spec["default"]
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return spec["default"]
+    if math.isnan(value) or math.isinf(value):
+        return spec["default"]
+    value = min(spec["max"], max(spec["min"], value))
+    return int(round(value)) if kind == "int" else value
+
+
+def clean_params(effect_type: str, raw: Any) -> dict:
+    """Every parameter the type declares, filled and clamped.
+
+    Missing is the default and out-of-range is the nearest legal value,
+    never an error: this data is meant to be typed by hand into a file,
+    and a show that refuses to compile over `depth: 1.2` would be a worse
+    tool than one that reads it as 1.
+    """
+    spec = CATALOG[effect_type]["params"]
+    given = raw if isinstance(raw, dict) else {}
+    return {name: _clamped(rule, given.get(name, rule["default"]))
+            for name, rule in spec.items()}
+
+
+def clean_select(raw: Any) -> dict:
+    """The fixture selection, as three optional lists.
+
+    An empty selection means "every fixture this effect can drive" — the
+    useful default for a scene-wide wash, and the one a hand-written
+    script gets by leaving `select` out entirely.
+    """
+    given = raw if isinstance(raw, dict) else {}
+
+    def _list(key: str) -> list[str]:
+        values = given.get(key)
+        if isinstance(values, str):
+            values = [values]
+        if not isinstance(values, list):
+            return []
+        return [str(v)[:80] for v in values if isinstance(v, (str, int))][:200]
+
+    return {"ids": _list("ids"), "roles": _list("roles"),
+            "zones": _list("zones"), "exclude": _list("exclude")}
+
+
+def clean_effect(raw: Any) -> dict:
+    """One effect instance off the wire or out of a hand-edited file."""
+    if not isinstance(raw, dict):
+        raise EffectError("an effect must be an object")
+    effect_type = str(raw.get("type", ""))
+    if effect_type not in CATALOG:
+        known = ", ".join(sorted(CATALOG))
+        raise EffectError(f"unknown effect type {effect_type!r} — known "
+                          f"types are: {known}")
+    effect: dict[str, Any] = {
+        "type": effect_type,
+        "select": clean_select(raw.get("select")),
+        "order": (str(raw.get("order", "x")) if str(raw.get("order", "x"))
+                  in ORDERS else "x"),
+        "align": (str(raw.get("align", "beat"))
+                  if str(raw.get("align", "beat")) in ALIGNMENTS else "beat"),
+        "params": clean_params(effect_type, raw.get("params")),
+        "respect_roles": bool(raw.get("respect_roles", True)),
+    }
+    if raw.get("name"):
+        effect["name"] = str(raw["name"])[:64]
+    for key in ("start", "end"):
+        if raw.get(key) is not None:
+            try:
+                effect[key] = float(raw[key])
+            except (TypeError, ValueError):
+                raise EffectError(f"{key} must be a number of seconds") from None
+    if "start" in effect and "end" in effect and effect["end"] <= effect["start"]:
+        raise EffectError("an effect ends before it starts")
+    palette = raw.get("palette")
+    if isinstance(palette, list) and palette:
+        cleaned = []
+        for pair in palette:
+            if isinstance(pair, (list, tuple)) and len(pair) == 2:
+                try:
+                    cleaned.append([float(pair[0]) % 360.0,
+                                    min(1.0, max(0.0, float(pair[1])))])
+                except (TypeError, ValueError):
+                    continue
+        if cleaned:
+            effect["palette"] = cleaned
+    return effect
+
+
+def catalog_payload() -> list[dict]:
+    """The whole vocabulary, for the builder UI to draw its forms from."""
+    return [{"type": name, **{k: v for k, v in spec.items() if k != "params"},
+             "params": [{"name": pname, **prule}
+                        for pname, prule in spec["params"].items()]}
+            for name, spec in CATALOG.items()]
+
+
+# ---------------------------------------------------------------------------
+# Selecting and ordering the cast
+# ---------------------------------------------------------------------------
+def _is_switch(fixture: dict) -> bool:
+    return bool(palettes.ROLE_RULES.get(fixture.get("role"), {}).get("switch"))
+
+
+def _stable_seed(text: str) -> int:
+    return int(hashlib.sha1(text.encode()).hexdigest()[:8], 16)
+
+
+def order_fixtures(fixtures: list[dict], order: str,
+                   seed: int = 0) -> list[dict]:
+    """Put the cast in the order the effect travels through them.
+
+    This is what makes the light map worth filling in: `x` is left to
+    right across the room, `center_out` starts in the middle, `snake`
+    walks the rows the way you would read them. Every ordering is total
+    and deterministic — a chase must look the same on Saturday as it did
+    on Friday, so `random` is seeded, never `random.shuffle`.
+    """
+    listed = list(fixtures)
+    if order == "listed":
+        return listed
+    if order == "random":
+        return sorted(listed, key=lambda f: _stable_seed(f"{seed}:{f['id']}"))
+    if order == "zone":
+        return sorted(listed, key=lambda f: (f.get("zone") or "~",
+                                             f.get("x", 0.5), f["id"]))
+    if order == "snake":
+        # Rows top to bottom, alternate rows right to left — reading order
+        # for a room, which is what a "sweep the whole house" wants.
+        rows: dict[int, list[dict]] = {}
+        for fixture in listed:
+            rows.setdefault(int(round(float(fixture.get("y", 0.5)) * 3)),
+                            []).append(fixture)
+        out: list[dict] = []
+        for index, key in enumerate(sorted(rows)):
+            row = sorted(rows[key], key=lambda f: (f.get("x", 0.5), f["id"]))
+            out.extend(row if index % 2 == 0 else list(reversed(row)))
+        return out
+    if order in ("center_out", "edges_in"):
+        by_distance = sorted(
+            listed, key=lambda f: (abs(float(f.get("x", 0.5)) - 0.5), f["id"]))
+        return by_distance if order == "center_out" else list(reversed(by_distance))
+    axis = "y" if order in ("y", "-y") else "x"
+    ascending = not order.startswith("-")
+    ordered = sorted(listed, key=lambda f: (float(f.get(axis, 0.5)), f["id"]))
+    return ordered if ascending else list(reversed(ordered))
+
+
+def resolve_fixtures(effect: dict, fixtures: list[dict]) -> list[dict]:
+    """The fixtures this effect drives, in the order it drives them.
+
+    Everything not returned here is untouched by this effect — that is
+    the contract the Effects tab is built on, and the reason a show can
+    run a chase in the kitchen while the lounge holds a wash.
+    """
+    select = effect.get("select") or {}
+    ids = set(select.get("ids") or [])
+    roles = set(select.get("roles") or [])
+    zones = set(select.get("zones") or [])
+    exclude = set(select.get("exclude") or [])
+    channel = CATALOG[effect["type"]]["channel"]
+
+    chosen = []
+    for fixture in fixtures:
+        if fixture.get("id") in exclude:
+            continue
+        if _is_switch(fixture) != (channel == "switch"):
+            continue
+        if ids or roles or zones:
+            if not (fixture.get("id") in ids
+                    or fixture.get("role") in roles
+                    or (fixture.get("zone") or "") in zones):
+                continue
+        if effect.get("respect_roles", True) and channel == "light":
+            rules = palettes.ROLE_RULES.get(fixture.get("role"), {})
+            if effect["type"] in _HARSH and not rules.get("pulses", True):
+                continue
+        chosen.append(fixture)
+    seed = _stable_seed(effect.get("name") or effect["type"])
+    return order_fixtures(chosen, effect.get("order", "x"), seed)
+
+
+def _cap(fixture: dict, brightness: float, effect: dict) -> float:
+    """Role brightness ceiling, unless the effect said it owns the fixture."""
+    if not effect.get("respect_roles", True):
+        return min(1.0, max(0.0, brightness))
+    ceiling = palettes.ROLE_RULES.get(fixture.get("role"), {}).get(
+        "max_brightness", 1.0)
+    return min(ceiling, max(0.0, min(1.0, brightness)))
+
+
+# ---------------------------------------------------------------------------
+# The beat grid
+# ---------------------------------------------------------------------------
+class Grid:
+    """Where the beats are, and what a beat is worth in milliseconds.
+
+    Every stepping effect asks this rather than the analysis, so an
+    effect with `align: "time"` (no music, or a preview on the bench)
+    works through exactly the same code as one locked to a track.
+    """
+
+    def __init__(self, beats: list[float] | None = None,
+                 downbeats: list[float] | None = None,
+                 bpm: float | None = None) -> None:
+        self.beats = sorted(float(b) for b in (beats or []))
+        self.downbeats = sorted(float(b) for b in (downbeats or []))
+        if len(self.beats) >= 2:
+            gaps = sorted(b - a for a, b in zip(self.beats, self.beats[1:]))
+            self.beat_s = gaps[len(gaps) // 2]
+        elif bpm:
+            self.beat_s = 60.0 / max(1.0, float(bpm))
+        else:
+            self.beat_s = 0.5
+
+    @property
+    def beat_ms(self) -> int:
+        return max(20, int(round(self.beat_s * 1000)))
+
+    def ticks(self, start: float, end: float, every_beats: float,
+              align: str = "beat") -> list[float]:
+        """The moments an effect steps on, inside its own window."""
+        if end <= start:
+            return []
+        every = max(0.05, float(every_beats))
+        if align == "time" or not self.beats:
+            step = every * self.beat_s
+            count = min(MAX_STEPS, int((end - start) / step) + 1)
+            return [start + i * step for i in range(count)]
+        source = self.downbeats if (align in ("downbeat", "bar")
+                                    and self.downbeats) else self.beats
+        inside = [b for b in source if start - 1e-6 <= b < end]
+        if not inside:
+            step = every * self.beat_s
+            count = min(MAX_STEPS, int((end - start) / step) + 1)
+            return [start + i * step for i in range(count)]
+        if every >= 1:
+            stride = max(1, int(round(every)))
+            return inside[::stride][:MAX_STEPS]
+        # Sub-beat stepping: subdivide each beat interval evenly, which is
+        # what a half- or quarter-beat chase means and what a beat list on
+        # its own cannot express.
+        divisions = max(1, int(round(1.0 / every)))
+        out: list[float] = []
+        for index, beat in enumerate(inside):
+            nxt = inside[index + 1] if index + 1 < len(inside) else beat + self.beat_s
+            span = (nxt - beat) / divisions
+            out.extend(beat + i * span for i in range(divisions))
+            if len(out) >= MAX_STEPS:
+                break
+        return out[:MAX_STEPS]
+
+
+# ---------------------------------------------------------------------------
+# Actions — the one rendering
+# ---------------------------------------------------------------------------
+def _set(fixture: dict, t: float, hue: float, sat: float, bri: float,
+         fade_ms: int, desc: str, resend: bool = False) -> dict:
+    return {"kind": "set", "fixture": fixture, "t": round(float(t), 4),
+            "hue": float(hue) % 360.0, "sat": min(1.0, max(0.0, float(sat))),
+            "bri": min(1.0, max(0.0, float(bri))),
+            "fade_ms": max(0, int(fade_ms)), "desc": desc, "resend": resend}
+
+
+def _wave(fixture: dict, t: float, hue: float, sat: float, bri: float,
+          period_ms: int, cycles: float, shape: str, duty: float,
+          desc: str) -> dict:
+    return {"kind": "wave", "fixture": fixture, "t": round(float(t), 4),
+            "hue": float(hue) % 360.0, "sat": min(1.0, max(0.0, float(sat))),
+            "bri": min(1.0, max(0.0, float(bri))),
+            "period_ms": max(20, int(period_ms)), "cycles": float(cycles),
+            "shape": shape if shape in SHAPES else "sine",
+            "duty": min(1.0, max(0.0, float(duty))), "desc": desc}
+
+
+def _aux(fixture: dict, t: float, on: bool, desc: str) -> dict:
+    return {"kind": "aux", "fixture": fixture, "t": round(float(t), 4),
+            "on": bool(on), "desc": desc}
+
+
+def _curve(name: str, position: float) -> float:
+    position = min(1.0, max(0.0, position))
+    if name == "ease_in":
+        return position * position
+    if name == "ease_out":
+        return 1.0 - (1.0 - position) ** 2
+    if name == "ease_in_out":
+        return 0.5 - 0.5 * math.cos(math.pi * position)
+    if name == "exp":
+        return (math.exp(3.0 * position) - 1.0) / (math.exp(3.0) - 1.0)
+    return position
+
+
+def _colour(palette: list, index: int) -> tuple[float, float]:
+    if not palette:
+        return 40.0, 0.6
+    hue, sat = palette[index % len(palette)]
+    return float(hue), float(sat)
+
+
+# Each renderer takes the same arguments and appends to `out`. Signature is
+# uniform so `RENDERERS` can be a plain dict — an effect type is a catalog
+# entry plus one of these, and nothing else anywhere.
+Renderer = Callable[..., None]
+
+
+def _r_wash(out, effect, cast, grid, ctx) -> None:
+    p = effect["params"]
+    palette = ctx["palette"]
+    for index, fixture in enumerate(cast):
+        if p["spread"] == "single":
+            hue, sat = _colour(palette, 0)
+        elif p["spread"] == "gradient" and len(cast) > 1:
+            span = (len(palette) - 1) * index / (len(cast) - 1)
+            low, high = int(span), min(len(palette) - 1, int(span) + 1)
+            blend = span - low
+            hue = _colour(palette, low)[0] * (1 - blend) + _colour(palette, high)[0] * blend
+            sat = _colour(palette, low)[1] * (1 - blend) + _colour(palette, high)[1] * blend
+        else:
+            hue, sat = _colour(palette, index)
+        out.append(_set(fixture, ctx["start"], hue, sat,
+                        _cap(fixture, p["brightness"], effect),
+                        int(p["fade_ms"]), "wash", resend=True))
+
+
+def _r_fade(out, effect, cast, grid, ctx) -> None:
+    p = effect["params"]
+    steps = int(p["steps"])
+    span = ctx["end"] - ctx["start"]
+    step_s = span / max(1, steps)
+    fade_ms = int(step_s * 1000)
+    for index, fixture in enumerate(cast):
+        hue, sat = _colour(ctx["palette"], index)
+        for step in range(steps + 1):
+            position = step / steps
+            level = (p["from_brightness"]
+                     + (p["to_brightness"] - p["from_brightness"])
+                     * _curve(p["curve"], position))
+            out.append(_set(fixture, ctx["start"] + step * step_s,
+                            hue + p["hue_shift"] * position, sat,
+                            _cap(fixture, level, effect), fade_ms, "fade"))
+
+
+def _r_build(out, effect, cast, grid, ctx) -> None:
+    p = effect["params"]
+    ticks = grid.ticks(ctx["start"], ctx["end"], p["step_beats"],
+                       effect.get("align", "beat"))
+    if not ticks:
+        return
+    fade_ms = int(p["step_beats"] * grid.beat_s * 1000)
+    for step, tick in enumerate(ticks):
+        position = step / max(1, len(ticks) - 1)
+        level = (p["from_brightness"]
+                 + (p["to_brightness"] - p["from_brightness"])
+                 * _curve(p["curve"], position))
+        # Staggered: the build lights one more fixture each stage, which
+        # is the version that reads as a room filling up rather than as a
+        # dimmer being turned.
+        lit = cast if not p["stagger"] else cast[:max(
+            1, int(round(len(cast) * (position ** 0.7))))]
+        for index, fixture in enumerate(lit):
+            hue, sat = _colour(ctx["palette"], index)
+            if p["saturate"]:
+                sat = min(1.0, sat + 0.3 * position)
+            out.append(_set(fixture, tick, hue, sat,
+                            _cap(fixture, level, effect), fade_ms, "build"))
+
+
+def _r_pulse(out, effect, cast, grid, ctx) -> None:
+    p = effect["params"]
+    cycles = int(p["cycles_per_cue"])
+    period_ms = int(p["every_beats"] * grid.beat_ms)
+    # One cue carries `cycles` beats of motion, so the wire only sees a
+    # packet every `cycles` beats however busy the effect looks.
+    anchors = grid.ticks(ctx["start"], ctx["end"],
+                         p["every_beats"] * cycles, effect.get("align", "beat"))
+    for index, fixture in enumerate(cast):
+        hue, sat = _colour(ctx["palette"], index)
+        offset = index * p["stagger_beats"] * grid.beat_s
+        peak = _cap(fixture, ctx["base"] + p["depth"], effect)
+        for anchor in anchors:
+            out.append(_wave(fixture, anchor + offset, hue, sat, peak,
+                             period_ms, cycles, p["shape"], p["duty"],
+                             f"pulse x{cycles}"))
+
+
+def _r_strobe(out, effect, cast, grid, ctx) -> None:
+    p = effect["params"]
+    period_ms = int(1000.0 / max(1.0, p["hz"]))
+    length_s = min(p["beats"] * grid.beat_s, ctx["end"] - ctx["start"])
+    cycles = max(1.0, length_s * 1000.0 / period_ms)
+    for index, fixture in enumerate(cast):
+        hue, sat = _colour(ctx["palette"], index)
+        if p["desaturate"]:
+            hue, sat = 0.0, 0.0
+        out.append(_wave(fixture, ctx["start"], hue, sat,
+                         _cap(fixture, p["brightness"], effect),
+                         period_ms, cycles, "pulse", p["duty"], "strobe"))
+
+
+def _r_chase(out, effect, cast, grid, ctx) -> None:
+    p = effect["params"]
+    if not cast:
+        return
+    ticks = grid.ticks(ctx["start"], ctx["end"], p["step_beats"],
+                       effect.get("align", "beat"))
+    width = min(int(p["width"]), len(cast))
+    count = len(cast)
+    span = max(1, count - width + 1)
+    for step, tick in enumerate(ticks):
+        if p["bounce"] and span > 1:
+            # Ping-pong: walk up the room and back down it, without
+            # repeating either end (which would read as a stutter).
+            cycle = max(1, 2 * span - 2)
+            phase = step % cycle
+            head = phase if phase < span else cycle - phase
+        else:
+            head = step % span
+        lit = {id(f) for f in cast[head:head + width]}
+        for index, fixture in enumerate(cast):
+            on = id(fixture) in lit
+            hue, sat = _colour(ctx["palette"],
+                               step if p["colour_step"] else index)
+            level = p["brightness"] if on else p["background"]
+            out.append(_set(fixture, tick, hue, sat,
+                            _cap(fixture, level, effect), int(p["fade_ms"]),
+                            "chase"))
+
+
+def _r_sweep(out, effect, cast, grid, ctx) -> None:
+    p = effect["params"]
+    if not cast:
+        return
+    period_s = p["period_beats"] * grid.beat_s
+    repeats = min(int(p["repeats"]),
+                  max(1, int((ctx["end"] - ctx["start"]) / max(0.1, period_s))))
+    for index, fixture in enumerate(cast):
+        phase = (index / len(cast)) * period_s
+        hue, sat = _colour(ctx["palette"], index)
+        start = ctx["start"] + phase
+        if start >= ctx["end"]:
+            continue
+        out.append(_wave(fixture, start, hue, sat,
+                         _cap(fixture, ctx["base"] + p["depth"], effect),
+                         int(period_s * 1000), float(repeats), p["shape"],
+                         0.5, "sweep"))
+
+
+def _r_breathe(out, effect, cast, grid, ctx) -> None:
+    p = effect["params"]
+    period_ms = int(p["period_beats"] * grid.beat_ms)
+    cycles = max(1.0, (ctx["end"] - ctx["start"]) * 1000.0 / max(1, period_ms))
+    for index, fixture in enumerate(cast):
+        hue, sat = _colour(ctx["palette"], index)
+        out.append(_wave(fixture, ctx["start"], hue, sat,
+                         _cap(fixture, ctx["base"] + p["depth"], effect),
+                         period_ms, cycles, "sine", 0.5, "breathe"))
+
+
+def _r_sparkle(out, effect, cast, grid, ctx) -> None:
+    p = effect["params"]
+    if not cast:
+        return
+    ticks = grid.ticks(ctx["start"], ctx["end"], p["every_beats"],
+                       effect.get("align", "beat"))
+    seed = int(p["seed"]) or _stable_seed(effect.get("name") or "sparkle")
+    for step, tick in enumerate(ticks):
+        # Deterministic "randomness": the same script sparkles the same
+        # way every night, which is what makes a show a show.
+        picks = sorted(range(len(cast)),
+                       key=lambda i: _stable_seed(f"{seed}:{step}:{i}"))
+        for index in picks[:int(p["count"])]:
+            fixture = cast[index]
+            hue, sat = _colour(ctx["palette"], index + step)
+            out.append(_set(fixture, tick, hue, sat,
+                            _cap(fixture, p["brightness"], effect), 60,
+                            "sparkle"))
+            out.append(_set(fixture, tick + p["decay_ms"] / 1000.0, hue, sat,
+                            _cap(fixture, ctx["base"], effect),
+                            int(p["decay_ms"]), "sparkle decay"))
+
+
+def _r_colour_cycle(out, effect, cast, grid, ctx) -> None:
+    p = effect["params"]
+    ticks = grid.ticks(ctx["start"], ctx["end"], p["every_beats"],
+                       effect.get("align", "beat"))
+    for step, tick in enumerate(ticks):
+        for index, fixture in enumerate(cast):
+            hue, sat = _colour(ctx["palette"], index + step * int(p["rotate"]))
+            out.append(_set(fixture, tick, hue, sat,
+                            _cap(fixture, p["brightness"], effect),
+                            int(p["fade_ms"]), "colour cycle"))
+
+
+def _r_rainbow(out, effect, cast, grid, ctx) -> None:
+    p = effect["params"]
+    if not cast:
+        return
+    period_s = p["period_beats"] * grid.beat_s
+    steps = int(p["steps_per_period"])
+    step_s = period_s / max(1, steps)
+    total = min(MAX_STEPS, int((ctx["end"] - ctx["start"]) / max(0.05, step_s)) + 1)
+    for step in range(total):
+        t = ctx["start"] + step * step_s
+        turn = 360.0 * (step / max(1, steps))
+        for index, fixture in enumerate(cast):
+            hue = turn + p["spread_deg"] * (index / max(1, len(cast)))
+            out.append(_set(fixture, t, hue, p["saturation"],
+                            _cap(fixture, p["brightness"], effect),
+                            int(step_s * 1000), "rainbow"))
+
+
+def _r_theater(out, effect, cast, grid, ctx) -> None:
+    p = effect["params"]
+    groups = int(p["groups"])
+    ticks = grid.ticks(ctx["start"], ctx["end"], p["step_beats"],
+                       effect.get("align", "beat"))
+    for step, tick in enumerate(ticks):
+        live = step % groups
+        for index, fixture in enumerate(cast):
+            on = index % groups == live
+            hue, sat = _colour(ctx["palette"], index)
+            out.append(_set(fixture, tick, hue, sat,
+                            _cap(fixture, p["brightness"] if on
+                                 else p["background"], effect),
+                            int(p["fade_ms"]), "theater"))
+
+
+def _r_stab(out, effect, cast, grid, ctx) -> None:
+    p = effect["params"]
+    blackout_s = p["blackout_before_ms"] / 1000.0
+    for index, fixture in enumerate(cast):
+        hue, sat = (0.0, 0.0) if p["white"] else _colour(ctx["palette"], index)
+        if blackout_s > 0:
+            out.append(_set(fixture, ctx["start"] - blackout_s, hue, sat, 0.02,
+                            int(blackout_s * 700), "pre-stab dip"))
+        out.append(_wave(fixture, ctx["start"], hue, sat,
+                         _cap(fixture, 0.7 + 0.3 * p["strength"], effect),
+                         int(p["hold_ms"]), 1.0, p["shape"], 0.2, "stab"))
+
+
+def _r_blackout(out, effect, cast, grid, ctx) -> None:
+    p = effect["params"]
+    for fixture in cast:
+        out.append(_set(fixture, ctx["start"], 0.0, 0.0, p["level"],
+                        int(p["fade_ms"]), "blackout", resend=True))
+
+
+def _r_aux(out, effect, cast, grid, ctx) -> None:
+    p = effect["params"]
+    if p["state"] in ("on", "off"):
+        for fixture in cast:
+            out.append(_aux(fixture, ctx["start"], p["state"] == "on",
+                            f"aux {p['state']}"))
+        return
+    step_s = p["flash_beats"] * grid.beat_s
+    for flash in range(int(p["flashes"])):
+        at = ctx["start"] + flash * 2 * step_s
+        if at >= ctx["end"]:
+            break
+        for fixture in cast:
+            out.append(_aux(fixture, at, True, "aux flash on"))
+            out.append(_aux(fixture, min(ctx["end"], at + step_s), False,
+                            "aux flash off"))
+
+
+RENDERERS: dict[str, Renderer] = {
+    "wash": _r_wash,
+    "fade": _r_fade,
+    "build": _r_build,
+    "pulse": _r_pulse,
+    "strobe": _r_strobe,
+    "chase": _r_chase,
+    "sweep": _r_sweep,
+    "breathe": _r_breathe,
+    "sparkle": _r_sparkle,
+    "colour_cycle": _r_colour_cycle,
+    "rainbow": _r_rainbow,
+    "theater": _r_theater,
+    "stab": _r_stab,
+    "blackout": _r_blackout,
+    "aux": _r_aux,
+}
+
+# Every catalog entry has to have a renderer and vice versa — the pair IS
+# the effect, and a half of one is a type that validates and does nothing.
+assert set(RENDERERS) == set(CATALOG), "effect catalog and renderers disagree"
+
+
+def actions_for(effect: dict, fixtures: list[dict], grid: Grid, *,
+                window: tuple[float, float], palette: list,
+                base_brightness: float = 0.5) -> list[dict]:
+    """One effect, rendered into actions. Never raises on a clean effect."""
+    cast = resolve_fixtures(effect, fixtures)
+    if not cast:
+        return []
+    start = float(effect.get("start", window[0]))
+    end = float(effect.get("end", window[1]))
+    if end <= start:
+        return []
+    ctx = {
+        "start": start,
+        "end": end,
+        "palette": effect.get("palette") or palette or [[40, 0.6]],
+        "base": min(1.0, max(0.0, float(base_brightness))),
+    }
+    out: list[dict] = []
+    RENDERERS[effect["type"]](out, effect, cast, grid, ctx)
+    # Every cue carries the name of the effect that asked for it. This is
+    # the only thread from a packet in a compiled show back to the line in
+    # the script a person wrote, and it is what makes a 900-cue timeline
+    # readable at all.
+    name = effect.get("name")
+    if name:
+        for action in out:
+            action["desc"] = f"{name} · {action['desc']}"
+    return [action for action in out if action["t"] >= -1.0]
+
+
+# ---------------------------------------------------------------------------
+# Simulation — the preview, from the same actions
+# ---------------------------------------------------------------------------
+def _wave_position(shape: str, phase: float, duty: float) -> float:
+    """How far toward the waveform's colour the bulb is, 0..1.
+
+    LIFX runs the waveform between the fixture's current colour and the
+    one in the packet; this is that interpolation factor at a point in
+    the cycle. It is an approximation of the firmware, not a copy of it —
+    the preview's job is to show the shape of the motion.
+    """
+    phase = phase % 1.0
+    if shape == "sine":
+        return 0.5 - 0.5 * math.cos(2 * math.pi * phase)
+    if shape == "half_sine":
+        return math.sin(math.pi * phase)
+    if shape == "triangle":
+        return 2 * phase if phase < 0.5 else 2 * (1 - phase)
+    if shape == "saw":
+        return phase
+    if shape == "pulse":
+        return 1.0 if phase < max(0.02, duty) else 0.0
+    return 0.5 - 0.5 * math.cos(2 * math.pi * phase)
+
+
+def _lerp(a: float, b: float, k: float) -> float:
+    return a + (b - a) * k
+
+
+def _hue_lerp(a: float, b: float, k: float) -> float:
+    """Around the wheel the short way — a fade from 350° to 10° passes
+    through red, not through the entire spectrum."""
+    delta = ((b - a + 180.0) % 360.0) - 180.0
+    return (a + delta * k) % 360.0
+
+
+def simulate(actions: list[dict], fixtures: list[dict], *,
+             duration_s: float, fps: int = 15,
+             initial: tuple[float, float, float] = (30.0, 0.4, 0.05)) -> dict:
+    """Sampled colours per fixture per frame — what the preview draws.
+
+    Built from the same actions the compiler turns into packets, so a
+    preview that looks wrong is an effect that is wrong, which is the
+    only useful thing a preview can be.
+    """
+    fps = max(4, min(30, int(fps)))
+    frames = max(1, min(1800, int(duration_s * fps) + 1))
+    ids = [f["id"] for f in fixtures]
+    index_of = {fixture_id: i for i, fixture_id in enumerate(ids)}
+
+    # Per fixture: the colour it is moving from, the one it is moving to,
+    # when the move started and how long it takes; plus any waveform
+    # currently running on it.
+    state = [{"from": initial, "to": initial, "t0": -1.0, "fade": 0.0,
+              "wave": None} for _ in ids]
+    pending = sorted(actions, key=lambda a: a["t"])
+    cursor = 0
+    out: list[list[list[float]]] = []
+
+    for frame in range(frames):
+        now = frame / fps
+        while cursor < len(pending) and pending[cursor]["t"] <= now:
+            action = pending[cursor]
+            cursor += 1
+            slot = index_of.get(action["fixture"]["id"])
+            if slot is None:
+                continue
+            current = _sample(state[slot], action["t"])
+            if action["kind"] == "set":
+                state[slot] = {"from": current,
+                               "to": (action["hue"], action["sat"], action["bri"]),
+                               "t0": action["t"],
+                               "fade": action["fade_ms"] / 1000.0,
+                               "wave": None}
+            elif action["kind"] == "wave":
+                state[slot] = {
+                    "from": current, "to": current, "t0": action["t"],
+                    "fade": 0.0,
+                    "wave": {"hue": action["hue"], "sat": action["sat"],
+                             "bri": action["bri"],
+                             "period": action["period_ms"] / 1000.0,
+                             "cycles": action["cycles"],
+                             "shape": action["shape"], "duty": action["duty"],
+                             "t0": action["t"]}}
+            elif action["kind"] == "aux":
+                state[slot] = {"from": current,
+                               "to": (55.0, 0.5, 1.0 if action["on"] else 0.0),
+                               "t0": action["t"], "fade": 0.15, "wave": None}
+        out.append([[round(v[0], 1), round(v[1], 3), round(v[2], 3)]
+                    for v in (_sample(slot_state, now) for slot_state in state)])
+
+    return {
+        "fps": fps,
+        "duration_s": round(frames / fps, 3),
+        "fixtures": [{"id": f["id"], "label": f.get("label") or f["id"],
+                      "role": f.get("role"), "x": f.get("x", 0.5),
+                      "y": f.get("y", 0.5),
+                      "switch": _is_switch(f)} for f in fixtures],
+        "frames": out,
+    }
+
+
+def _sample(slot: dict, now: float) -> tuple[float, float, float]:
+    base_from, base_to = slot["from"], slot["to"]
+    if slot["fade"] > 0 and now < slot["t0"] + slot["fade"]:
+        k = max(0.0, (now - slot["t0"]) / slot["fade"])
+        base = (_hue_lerp(base_from[0], base_to[0], k),
+                _lerp(base_from[1], base_to[1], k),
+                _lerp(base_from[2], base_to[2], k))
+    else:
+        base = base_to
+    wave = slot.get("wave")
+    if not wave:
+        return base
+    elapsed = now - wave["t0"]
+    if elapsed < 0 or elapsed > wave["period"] * wave["cycles"]:
+        return base
+    k = _wave_position(wave["shape"], elapsed / max(0.001, wave["period"]),
+                       wave["duty"])
+    return (_hue_lerp(base[0], wave["hue"], k),
+            _lerp(base[1], wave["sat"], k),
+            _lerp(base[2], wave["bri"], k))
+
+
+def summarise(actions: list[dict]) -> dict:
+    """What an effect costs, before anybody runs it."""
+    per_fixture: dict[str, int] = {}
+    for action in actions:
+        per_fixture[action["fixture"]["id"]] = (
+            per_fixture.get(action["fixture"]["id"], 0) + 1)
+    span = [a["t"] for a in actions]
+    return {
+        "actions": len(actions),
+        "fixtures": len(per_fixture),
+        "busiest_fixture": max(per_fixture.values()) if per_fixture else 0,
+        "first_t": round(min(span), 3) if span else 0.0,
+        "last_t": round(max(span), 3) if span else 0.0,
+    }

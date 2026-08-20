@@ -33,7 +33,7 @@ BRANDS_DIR = os.path.join(BASE_DIR, "brands", "custom_integrations")
 INTEGRATIONS = [
     ("brain", "brain"),
     ("bruh-minecraft-server", "bruh_minecraft"),
-    ("brigt", "brigt"),
+    ("bright", "bright"),
 ]
 
 # The four files HA looks for, and the size each must be. Icons are exact
