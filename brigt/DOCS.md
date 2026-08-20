@@ -76,10 +76,37 @@ set per player.
 
 ## Services
 
-- `brigt.party_mode` — play a folder and run each track's show. Optional
-  `media_player`, `folder`, `vibe`.
-- `brigt.start_show` — one track (`track`, optional `media_player`).
+- `brigt.party_mode` — every analyzed track in the folder, shuffled, each
+  with its own show; the next track's choreography compiles while the
+  current one plays. Optional `media_player` (defaults to the most
+  recently calibrated), `folder` (defaults to the `music_folder` option),
+  and `vibe` (a steer for the Claude director, e.g. "halloween").
+- `brigt.start_show` — one track (`track` path under /media or, from the
+  panel, a track hash; optional `media_player`).
 - `brigt.stop_show` — stop and restore every light to its pre-show state.
 
-In the 0.1.0 skeleton these services answer that shows aren't available
-yet; they go live with the playback engine.
+An automation that starts the party on a voice phrase or a button:
+
+```yaml
+automation:
+  - alias: "Start party mode"
+    triggers:
+      - trigger: conversation
+        command: "start party mode"
+    actions:
+      - action: brigt.party_mode
+        data:
+          media_player: media_player.living_room
+```
+
+## The order things want to happen in
+
+1. **Lab** — discover your bulbs, probe their round-trip times, measure a
+   switch's service latency, run the waveform demo.
+2. **Calibrate** — once per speaker, phone in hand.
+3. **Library** — analyze the music folder.
+4. **Light Map** — place the lights, set roles.
+5. **Shows** — compile, play one, judge it in the room ("Sync proof" in
+   the Lab plays a bare metronome show when you want the chain without
+   the choreography).
+6. **Party** — one button, or one automation.

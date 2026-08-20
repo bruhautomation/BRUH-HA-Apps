@@ -31,9 +31,12 @@ switch-driven party lights run the show in sync.
 
 ## Status
 
-0.1.0 is the installable skeleton: panel, security hardening, the companion
-integration and its services. The Lab (latency probes for your actual house)
-lands next, then calibration, analysis, and the director.
+The whole chain is in place and being tuned against real houses: the Lab
+(latency probes, waveform demo), phone-mic speaker calibration, the
+analyzer (beats, sections, drops, synced lyrics), the light map, the
+algorithmic and Claude director tiers, single-track shows, and party mode
+end to end. See CHANGELOG.md for the phase-by-phase story — and the
+warning above still stands.
 
 ## Installation
 

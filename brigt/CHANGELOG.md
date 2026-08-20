@@ -5,6 +5,27 @@ All notable changes to the **BRigt** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.8.0
+
+Party mode — the sentence the whole add-on was built for: "start party
+mode", and the house takes it from there.
+
+### Added
+- **`brigt.party_mode`, end to end**: every analyzed track in the folder
+  (or a given one), shuffled, each played with its own show and its own
+  clock anchor — playlist sync never depends on predicting a track
+  boundary through an AirPlay buffer. While one track plays, the NEXT
+  one's choreography compiles in the background (Claude tier when brAIn
+  is there), so a designed show is ready the moment it's needed; a track
+  whose compile fails simply plays its floor show. A failed track skips
+  to the next — one bad file must not end the night. Optional `vibe`
+  ("chill", "rave", "halloween") steers the Claude director.
+- **Party tab**: pick a calibrated player, type a vibe, one button — plus
+  live show state while it runs. Stop restores every light.
+- An example automation in DOCS ("start party mode" as a conversation
+  trigger) and "the order things want to happen in" — Lab → Calibrate →
+  Library → Map → Shows → Party.
+
 ## 0.7.0
 
 The Claude director — creative choreography per track, with the

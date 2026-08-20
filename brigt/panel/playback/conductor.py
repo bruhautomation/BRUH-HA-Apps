@@ -67,35 +67,101 @@ class Conductor:
             pass  # the state file is a mirror; the run itself is unaffected
 
     # -- lifecycle -----------------------------------------------------------
-    async def start(self, cues: list[dict], *, media_player: str,
-                    media_content_id: str, title: str,
-                    duration_s: float) -> dict:
-        await self.stop(restore=True)
-        profile = calibration_store.load(media_player)
-        offset_ms = profile.get("effective_offset_ms")
-        if offset_ms is None:
-            return {"ok": False,
-                    "error": f"{media_player} has never been calibrated — "
-                             "run the Calibrate tab first"}
-
+    async def _play_one(self, cues: list[dict], *, media_player: str,
+                        media_content_id: str, title: str,
+                        duration_s: float, offset_ms: float,
+                        status: str = "playing") -> None:
+        """One track, start to restored lights. Awaited inline by the party
+        loop; wrapped in a task by single-show start()."""
         await self.engine.start()
         await self._take_snapshot(cues)
-
         play_call = time.monotonic()
         result = await asyncio.to_thread(
             ha_client.play_media, media_player, media_content_id)
         if isinstance(result, dict) and result.get("error"):
-            return {"ok": False, "error": result["error"]}
+            raise RuntimeError(result["error"])
         self.clock.anchor(play_call, offset_ms / 1000.0)
-
-        self._write_state()
-        self._update_state(status="playing", track=title,
+        self._update_state(status=status, track=title,
                            media_player=media_player, position_s=0.0)
-        self._task = asyncio.create_task(
-            self._run(sorted(cues, key=self._send_time), duration_s))
+        profile = calibration_store.load(media_player)
         if (profile.get("position_attr") or {}).get("reliable"):
             self._poller = asyncio.create_task(self._poll_position(media_player))
+        try:
+            await self._run(sorted(cues, key=self._send_time), duration_s)
+        finally:
+            if self._poller is not None:
+                self._poller.cancel()
+                self._poller = None
+
+    @staticmethod
+    def _calibrated_offset(media_player: str) -> float | None:
+        return calibration_store.load(media_player).get("effective_offset_ms")
+
+    async def start(self, cues: list[dict], *, media_player: str,
+                    media_content_id: str, title: str,
+                    duration_s: float) -> dict:
+        await self.stop(restore=True)
+        offset_ms = self._calibrated_offset(media_player)
+        if offset_ms is None:
+            return {"ok": False,
+                    "error": f"{media_player} has never been calibrated — "
+                             "run the Calibrate tab first"}
+        self._write_state()
+        self._task = asyncio.create_task(self._play_one(
+            cues, media_player=media_player,
+            media_content_id=media_content_id, title=title,
+            duration_s=duration_s, offset_ms=offset_ms))
         return {"ok": True, "offset_ms": offset_ms, "cues": len(cues)}
+
+    async def start_party(self, queue: list[str], *, media_player: str,
+                          loader, preparer=None) -> dict:
+        """The autonomous evening: a queue of track hashes, each played
+        with its own show and its own anchor. `loader(hash)` returns the
+        playable show; `preparer(hash)` (optional, blocking — run in a
+        thread) compiles the NEXT track's show while the current one
+        plays, so a Claude-designed show is ready by the time it's needed.
+        """
+        await self.stop(restore=True)
+        offset_ms = self._calibrated_offset(media_player)
+        if offset_ms is None:
+            return {"ok": False,
+                    "error": f"{media_player} has never been calibrated — "
+                             "run the Calibrate tab first"}
+        if not queue:
+            return {"ok": False, "error": "no analyzed tracks to play"}
+
+        async def _party() -> None:
+            for index, hash_hex in enumerate(queue):
+                show = await asyncio.to_thread(loader, hash_hex)
+                if not show or not show.get("cues") \
+                        or not show.get("media_content_id"):
+                    continue
+                if preparer is not None and index + 1 < len(queue):
+                    # Fire-and-forget: a failed prepare means that track
+                    # simply plays its floor show.
+                    asyncio.create_task(
+                        asyncio.to_thread(preparer, queue[index + 1]))
+                self._update_state(status="party", queue_left=len(queue) - index)
+                try:
+                    await self._play_one(
+                        show["cues"], media_player=media_player,
+                        media_content_id=show["media_content_id"],
+                        title=show["title"],
+                        duration_s=show["duration_s"],
+                        offset_ms=self._calibrated_offset(media_player)
+                                  or offset_ms,
+                        status="party")
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:  # noqa: BLE001 — next track, not the night
+                    log.warning("party: %s failed: %s", show.get("title"), exc)
+                await asyncio.sleep(1.5)  # breath between tracks
+            self._write_state()
+
+        self._write_state()
+        self._update_state(status="party", queue_left=len(queue))
+        self._task = asyncio.create_task(_party())
+        return {"ok": True, "queue": len(queue), "offset_ms": offset_ms}
 
     async def stop(self, restore: bool = True) -> dict:
         for task in (self._task, self._poller):

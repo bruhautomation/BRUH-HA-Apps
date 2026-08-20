@@ -90,13 +90,18 @@ Principles:
 - Less is more: one intentional motif per scene beats three busy ones."""
 
 
-def _digest(analysis: dict, fixtures: list[dict]) -> str:
+def _digest(analysis: dict, fixtures: list[dict],
+            vibe: str | None = None) -> str:
     tags = analysis.get("tags") or {}
     lines = [
         _DIRECTION,
         "",
         _SCHEMA_CONTRACT,
         "",
+    ]
+    if vibe:
+        lines += [f"THE HOST ASKED FOR THIS VIBE: {vibe[:120]}", ""]
+    lines += [
         f"TRACK: {tags.get('title') or 'unknown'} — "
         f"{tags.get('artist') or 'unknown artist'}",
         f"bpm={analysis.get('bpm')} duration={tags.get('duration')}s "
@@ -187,13 +192,14 @@ def _extract_json(text: str) -> dict:
 
 
 def write_script(analysis: dict, fixtures: list[dict],
-                 timeout_s: float = TASK_TIMEOUT_S) -> dict:
+                 timeout_s: float = TASK_TIMEOUT_S,
+                 vibe: str | None = None) -> dict:
     """The script_writer build.py plugs in. Raises on any failure; the
     caller decides whether that lands on the algorithmic floor."""
     if not available():
         raise RuntimeError("brAIn is not installed (no /config/.brain/tasks) "
                            "— the Claude director needs it")
-    answer = _run_task(_digest(analysis, fixtures), timeout_s)
+    answer = _run_task(_digest(analysis, fixtures, vibe), timeout_s)
     script = _extract_json(answer)
     script["tier"] = "claude"
     script["track_hash"] = analysis.get("hash")

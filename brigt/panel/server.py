@@ -34,6 +34,7 @@ import base64
 import ipaddress
 import logging
 import os
+import random
 import re
 import sys
 import time
@@ -552,11 +553,57 @@ async def h_show_state(request: web.Request) -> web.Response:
 
 
 async def h_show_party(request: web.Request) -> web.Response:
-    return web.json_response(
-        {"ok": False,
-         "error": "party mode arrives with the director — for now, "
-                  "start_show plays one track's show"},
-        status=501)
+    """`brigt.party_mode`, end to end: scan the folder, queue every
+    analyzed track (shuffled), compile the next show while the current one
+    plays, re-anchor per track."""
+    body = await _json_body(request)
+    media_player = _entity(body) or calibration_store.best_entity()
+    if media_player is None:
+        return web.json_response(
+            {"error": "no media_player given and none calibrated yet — "
+                      "run the Calibrate tab first"},
+            status=400)
+    folder = _music_folder()
+    raw_folder = str(body.get("folder", "") or "")
+    if raw_folder:
+        base = str(MEDIA_DIR)
+        candidate = os.path.normpath(os.path.join(
+            base, raw_folder.lstrip("/").removeprefix("media/")))
+        if not candidate.startswith(base + os.sep):
+            return web.json_response({"error": "folder must live under /media"},
+                                     status=400)
+        folder = Path(candidate)
+    vibe = str(body.get("vibe", "") or "")[:120]
+
+    tracks = await asyncio.to_thread(library.scan, folder)
+    queue = [t["hash"] for t in tracks if t["analyzed"]]
+    if not queue:
+        return web.json_response(
+            {"error": f"no analyzed tracks in {folder} — run the Library "
+                      "tab first"},
+            status=409)
+    random.shuffle(queue)
+
+    mode = _options_from_env()["director_mode"]
+    preparer = None
+    if mode in ("auto", "claude") and claude_director.available():
+        def preparer(hash_hex: str) -> None:
+            if library.load_show(hash_hex) is not None:
+                return  # already choreographed
+            try:
+                director_build.build_show(
+                    hash_hex, ENGINE.devices, ENGINE.source, mode,
+                    lambda a, f: claude_director.write_script(a, f, vibe=vibe))
+            except Exception as exc:  # noqa: BLE001 — that track plays its floor show
+                log.warning("party prepare failed for %s: %s", hash_hex[:8], exc)
+
+    result = await _conductor().start_party(
+        queue, media_player=media_player,
+        loader=lambda h: conductor_mod.load_show_for_track(
+            h, ENGINE.devices, ENGINE.source),
+        preparer=preparer)
+    status = 200 if result.get("ok") else 409
+    return web.json_response(result, status=status)
 
 
 # ---------------------------------------------------------------------------

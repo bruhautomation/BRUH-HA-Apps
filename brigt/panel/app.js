@@ -465,6 +465,67 @@
   });
 
   // ------------------------------------------------------------------
+  // Party
+  // ------------------------------------------------------------------
+  $("btnPartyLoad").addEventListener("click", async () => {
+    try {
+      const profiles = await api("api/calibrate/profiles");
+      const select = $("partyPlayer");
+      select.innerHTML = '<option value="">— calibrated player —</option>';
+      for (const profile of profiles.profiles || []) {
+        const option = document.createElement("option");
+        option.value = profile.entity_id;
+        option.textContent = profile.entity_id;
+        select.appendChild(option);
+      }
+    } catch (error) {
+      $("partyStatus").textContent = "failed: " + error.message;
+    }
+  });
+
+  let partyPoll = null;
+  function pollPartyState() {
+    if (partyPoll) clearInterval(partyPoll);
+    partyPoll = setInterval(async () => {
+      try {
+        const state = await api("api/show/state");
+        const pre = $("partyState");
+        pre.hidden = false;
+        pre.textContent = JSON.stringify(state, null, 2);
+        if (state.status === "idle") {
+          clearInterval(partyPoll);
+          partyPoll = null;
+        }
+      } catch (error) { /* transient; keep polling */ }
+    }, 3000);
+  }
+
+  $("btnPartyStart").addEventListener("click", async () => {
+    const status = $("partyStatus");
+    try {
+      const result = await post("api/show/party_mode", {
+        media_player: $("partyPlayer").value || undefined,
+        vibe: $("partyVibe").value || undefined,
+      });
+      status.textContent = "Party on: " + result.queue +
+        " tracks queued, anchored " + Math.round(result.offset_ms) +
+        "ms after each play.";
+      pollPartyState();
+    } catch (error) {
+      status.textContent = "failed: " + error.message;
+    }
+  });
+
+  $("btnPartyStop").addEventListener("click", async () => {
+    try {
+      await post("api/show/stop_show", {});
+      $("partyStatus").textContent = "Party over; lights restored.";
+    } catch (error) {
+      $("partyStatus").textContent = "stop failed: " + error.message;
+    }
+  });
+
+  // ------------------------------------------------------------------
   // Lab: sync proof (metronome show)
   // ------------------------------------------------------------------
   $("btnLoadSync").addEventListener("click", async () => {

@@ -209,8 +209,24 @@
   </section>
   <section class="pane" id="pane-party">
     <h2>Party</h2>
-    <p class="muted">Pick a playlist and a speaker, press go. Or say
-      "start party mode" and let the automation do it.</p>
+    <p class="muted">Every analyzed track in the folder, shuffled, each with
+      its own show — the next one choreographs itself while the current one
+      plays. Also reachable from any automation:
+      <code>brigt.party_mode</code>.</p>
+
+    <div class="card">
+      <div class="demo-controls">
+        <select id="partyPlayer"><option value="">— calibrated player —</option></select>
+        <input type="text" id="partyVibe" placeholder="vibe (optional): chill, rave, halloween…">
+        <button id="btnPartyLoad" class="btn">Load players</button>
+      </div>
+      <div class="demo-controls">
+        <button id="btnPartyStart" class="btn">🎉 Start party mode</button>
+        <button id="btnPartyStop" class="btn">■ Stop &amp; restore</button>
+      </div>
+      <div id="partyStatus" class="cal-status"></div>
+      <pre id="partyState" class="report muted" hidden></pre>
+    </div>
   </section>
   <footer class="foot">
     <span id="version">v__VERSION__</span>
