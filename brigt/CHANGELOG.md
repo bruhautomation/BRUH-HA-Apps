@@ -5,6 +5,32 @@ All notable changes to the **BRigt** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.7.0
+
+The Claude director — creative choreography per track, with the
+algorithmic tier as the ever-present floor.
+
+### Added
+- **Claude-designed shows through brAIn.** BRigt carries no Claude CLI
+  and asks for no second login: when brAIn is installed on the same Home
+  Assistant, its automation-task surface is already a signed-in Claude,
+  so BRigt hands it the track's digest — sections, drops, BPM, the
+  fixture roster with roles and positions, and up to 60 synced lyric
+  lines — plus the exact script schema, and gets choreography back.
+  The model writes a *script* (scenes, motifs, lyric moments); the wire
+  budget stays the compiler's, and every answer passes the same schema
+  validator or that track falls back to the algorithmic tier, logged.
+- `director_mode` now does what it says: `auto` uses Claude when brAIn is
+  there and the floor otherwise (per track — one bad answer never blocks
+  a playlist); `claude` is strict and fails with the reason instead of
+  downgrading; `algorithmic` never calls anyone.
+- Lyric-aware moments: the director is asked to pick up to four
+  `lyric_moment` features at lines that deserve a visual answer.
+
+### Fixed
+- The light-map loader's silent fallback carries its explanation
+  (CodeQL).
+
 ## 0.6.0
 
 The director, first tier: a real choreographed show per track, compiled

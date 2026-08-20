@@ -20,12 +20,13 @@ files through your media player during a show.
 
 Who choreographs each track:
 
-- `auto` (default) — Claude designs the show when a Claude Code login is
-  available; the built-in algorithmic choreographer is the fallback, so a
-  show always compiles.
+- `auto` (default) — Claude designs the show when **brAIn** is installed
+  (BRigt delegates through brAIn's task interface, so there is no second
+  login); the built-in algorithmic choreographer is the fallback and the
+  floor, so a show always compiles.
 - `algorithmic` — never call Claude.
-- `claude` — Claude only; compiling fails without a working login rather
-  than silently downgrading.
+- `claude` — Claude only; compiling fails with the reason rather than
+  silently downgrading.
 
 ### `enable_ha_integration`
 

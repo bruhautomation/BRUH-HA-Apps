@@ -56,6 +56,7 @@ from analyzer import library, pipeline  # noqa: E402
 from calibrate import correlate, reference  # noqa: E402
 from lifx import engine as lifx_engine  # noqa: E402
 from director import build as director_build  # noqa: E402
+from director import claude_director  # noqa: E402
 from director.compiler import CompileError  # noqa: E402
 from playback import conductor as conductor_mod  # noqa: E402
 from stores import calibration as calibration_store  # noqa: E402
@@ -450,10 +451,19 @@ async def h_show_compile(request: web.Request) -> web.Response:
     body = await _json_body(request)
     hash_hex = str(body.get("track_hash", ""))
     mode = _options_from_env()["director_mode"]
+    writer = None
+    if mode in ("auto", "claude") and claude_director.available():
+        writer = claude_director.write_script
+    elif mode == "claude":
+        return web.json_response(
+            {"error": "director_mode is 'claude' but brAIn is not installed "
+                      "— the Claude director runs through brAIn's task "
+                      "surface. Install brAIn or switch to 'auto'."},
+            status=409)
     try:
         show = await asyncio.to_thread(
             director_build.build_show, hash_hex, ENGINE.devices,
-            ENGINE.source, mode)
+            ENGINE.source, mode, writer)
     except CompileError as exc:
         return web.json_response({"error": str(exc)}, status=422)
     except ValueError as exc:

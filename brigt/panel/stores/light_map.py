@@ -32,6 +32,8 @@ def load() -> dict:
         if isinstance(data.get("fixtures"), list):
             return data
     except (OSError, ValueError):
+        # No map yet, or an unreadable one — either way the empty map
+        # below is the honest answer and the next save rewrites the file.
         pass
     return {"version": 1, "fixtures": []}
 
