@@ -70,6 +70,7 @@ from director import claude_director  # noqa: E402
 from director import choreographer  # noqa: E402
 from director import compiler  # noqa: E402
 from director import palettes as director_palettes  # noqa: E402
+from director import preview as director_preview  # noqa: E402
 from director.compiler import CompileError  # noqa: E402
 from playback import conductor as conductor_mod  # noqa: E402
 from director import effects as fx  # noqa: E402
@@ -872,6 +873,8 @@ async def h_effects_catalog(request: web.Request) -> web.Response:
     return web.json_response({
         "catalog": fx.catalog_payload(),
         "orders": list(fx.ORDERS),
+        "default_order": fx.DEFAULT_ORDER,
+        "default_align": fx.DEFAULT_ALIGN,
         "alignments": list(fx.ALIGNMENTS),
         "shapes": list(fx.SHAPES),
         "roles": list(light_map.ROLES),
@@ -1170,6 +1173,89 @@ async def h_show_script_import(request: web.Request) -> web.Response:
     status, payload = await asyncio.to_thread(_script_payload, hash_hex)
     return web.json_response({**payload, "stats": show["stats"],
                               "imported": True})
+
+
+def _preview_inputs(hash_hex: str, body: dict) -> tuple[dict, list[dict], dict]:
+    """The script, the cast and the song a preview is about.
+
+    The script comes from the REQUEST when the editor sent one and from
+    disk otherwise, and that is the whole reason the editor can be live:
+    what you are looking at is the show as currently edited, not the show
+    as last saved. Nothing here writes anything.
+
+    Raises ValueError with a person-readable message.
+    """
+    analysis = library.load_analysis(hash_hex)
+    if analysis is None:
+        raise ValueError("track not analyzed — run the Library tab first")
+    script = body.get("script")
+    if isinstance(script, str):
+        try:
+            script = json.loads(script)
+        except ValueError as exc:
+            raise ValueError(f"that script is not valid JSON: {exc}") from None
+    if not isinstance(script, dict):
+        try:
+            script = json.loads(library.script_path(hash_hex).read_text())
+        except (OSError, ValueError):
+            raise ValueError("no show for this track yet — compile one "
+                             "first, then it can be edited") from None
+    fixtures = director_build.fixtures_for_show(ENGINE.devices)
+    if not fixtures:
+        raise ValueError("no reachable fixtures — run Lab discovery, then "
+                         "place your lights on the Light Map")
+    return script, fixtures, analysis
+
+
+async def h_show_preview(request: web.Request) -> web.Response:
+    """The room at an instant, and for a few seconds either side of it.
+
+    This is the scrub path, so it is the one that has to stay cheap: a
+    window of frames, not the whole show, and no writes of any kind. An
+    unfinished edit is previewed rather than refused — the compiler's own
+    refusals (a flooded bulb, an impossible selection) still come back
+    here, which is how you find out you have asked for too much while you
+    are still typing rather than at save.
+    """
+    hash_hex = request.match_info["hash"]
+    body = await _json_body(request)
+    start_s = _number(body, "start_s", 0.0, 0.0, 100000.0)
+    span_s = _number(body, "span_s", director_preview.WINDOW_S, 0.5, 60.0)
+
+    def _run() -> dict:
+        script, fixtures, analysis = _preview_inputs(hash_hex, body)
+        return director_preview.window(script, fixtures, analysis,
+                                       start_s=start_s, span_s=span_s)
+
+    try:
+        return web.json_response(await asyncio.to_thread(_run))
+    except (ValueError, compiler.CompileError) as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+
+
+async def h_show_outline(request: web.Request) -> web.Response:
+    """The whole show at a glance: the strip, and the furniture behind it.
+
+    Asked for once per edit rather than once per scrub, which is why it
+    can afford to simulate the entire song.
+    """
+    hash_hex = request.match_info["hash"]
+    body = await _json_body(request)
+    columns = int(_number(body, "columns", director_preview.OVERVIEW_COLUMNS,
+                          24, 1200))
+
+    def _run() -> dict:
+        script, fixtures, analysis = _preview_inputs(hash_hex, body)
+        return {
+            **director_preview.overview(script, fixtures, analysis,
+                                        columns=columns),
+            "timeline": director_preview.timeline(script, analysis),
+        }
+
+    try:
+        return web.json_response(await asyncio.to_thread(_run))
+    except (ValueError, compiler.CompileError) as exc:
+        return web.json_response({"error": str(exc)}, status=400)
 
 
 async def h_show_cues(request: web.Request) -> web.Response:
@@ -1728,6 +1814,8 @@ def build_app() -> web.Application:
     app.router.add_put("/api/show/{hash}/script", h_show_script_save)
     app.router.add_post("/api/show/{hash}/script/import", h_show_script_import)
     app.router.add_get("/api/show/{hash}/cues", h_show_cues)
+    app.router.add_post("/api/show/{hash}/preview", h_show_preview)
+    app.router.add_post("/api/show/{hash}/outline", h_show_outline)
     # Library
     app.router.add_get("/api/media/tree", h_media_tree)
     app.router.add_post("/api/media/folder", h_media_folder)

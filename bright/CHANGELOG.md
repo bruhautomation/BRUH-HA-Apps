@@ -5,6 +5,58 @@ All notable changes to the **BRight** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.10.0
+
+The show editor is a picture you can scrub, and editing it is the primary
+way to change a show.
+
+### Added
+
+- **A visual show editor.** The Shows tab opens a show as what it is: the
+  room on a floor plan, the whole song as a strip with one row per light,
+  the scenes as blocks over it, and the effects as rows you press. A scrub
+  bar under the picture moves the playhead; ▶ plays the show through at
+  real speed without touching a bulb. Pressing a scene block jumps there.
+- **Live preview of unsaved edits.** Every preview request carries the
+  script currently being edited, so what you are looking at is the show as
+  it stands, not the show as last saved. The compiler's own refusals — a
+  flooded bulb, an impossible selection — arrive while you are still
+  looking at the effect you changed, rather than several presses later at
+  save time.
+- **An effect dialog built from the catalog**, the same source the Effects
+  tab builds its form from, so a new effect type reaches both by existing.
+  It edits selection by light, by role and by room, because the automatic
+  director selects by role for nearly everything it writes.
+- `POST /api/show/{hash}/preview` (a window of frames, for scrubbing) and
+  `POST /api/show/{hash}/outline` (the strip, plus the scenes, sections,
+  moments and bar lines behind it). Neither writes anything.
+
+### Changed
+
+- **The Code view is a view, not the interface.** The show is still a file
+  and still editable as text — it moved behind a `Code` disclosure, and the
+  forms and the text are two renderings of one document: type in either and
+  the other follows.
+- An effect row now says what the effect actually owns. Rows read
+  `candles · breathe · candle` where they used to read `all lights`, which
+  was wrong for nearly every effect the director writes.
+- `compiler.script_actions` is the single walk from a script to actions.
+  `compile_show` renders those to packets and the preview simulates the
+  same list — the same "one rendering, two consumers" contract effects have
+  had, now at the scale of a show. Verified against the old compiler on a
+  real generated show: 898 cues, byte-identical.
+- The compiler's own defaults (`DEFAULT_ORDER`, `DEFAULT_ALIGN`) ship in
+  the effect catalog, so the editor opens an effect at the value the
+  compiler would have used. Opening one and pressing Apply leaves the show
+  byte-identical, which the editor measure checks at three widths.
+
+### Fixed
+
+- The end-of-show switch-off is an ordinary action rather than a cue
+  written straight to the timeline, so the preview shows a laser going out
+  at the end of the show — it really does, and the picture used to leave it
+  lit.
+
 ## 0.9.1
 
 Installs by pulling a prebuilt image instead of building one on your box.

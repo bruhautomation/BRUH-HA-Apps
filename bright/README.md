@@ -38,16 +38,19 @@ switch-driven party lights run the show in sync.
   the handful of lights you chose and travelling through them in the order
   your light map says they stand. The director writes that file; the Effects
   tab builds effects by hand and previews them before they reach a bulb; the
-  Shows tab opens the whole thing as text. There is no private vocabulary the
-  automatic show can use and you cannot.
+  Shows tab opens the whole thing as a picture you can scrub — your room at
+  any instant, the song as a strip, the scenes as blocks — and as text
+  behind a Code toggle. There is no private vocabulary the automatic show
+  can use and you cannot.
 
 ## Status
 
 The whole chain is in place and being tuned against real houses: the Lab
 (latency probes, waveform demo), phone-mic speaker calibration, the
 analyzer (beats, sections, drops, synced lyrics), the light map, the effect
-builder and its preview, the algorithmic and Claude director tiers,
-hand-editable show files, single-track shows, saved parties, and party mode
+builder and its preview, the algorithmic and Claude director tiers, the
+visual show editor and its live preview, single-track shows, saved parties,
+and party mode
 end to end. See CHANGELOG.md for the phase-by-phase story — and the
 warning above still stands.
 
