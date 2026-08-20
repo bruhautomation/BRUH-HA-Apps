@@ -24,6 +24,35 @@ SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 HA_BASE_URL = os.environ.get("HA_BASE_URL", "http://supervisor/core/api")
 
 
+def _why(exc: urllib.error.HTTPError, limit: int = 300) -> str:
+    """Home Assistant's own words about a failed request, if it said any.
+
+    Core answers a service-call failure with `{"message": "..."}`; other
+    endpoints answer with plain text; a few answer with nothing at all.
+    All three end up here, and the empty case has to stay empty rather
+    than become "(no detail)" — a caller pasting a message into a bug
+    report should not be pasting our note about the absence of one.
+
+    Never fatal: this runs while something has already gone wrong, and a
+    body that cannot be read or decoded must not replace the status code
+    the caller does have with a traceback about reading it.
+    """
+    try:
+        body = exc.read().decode(errors="replace").strip()
+    except Exception:  # noqa: BLE001 — diagnosing a failure, not causing one
+        return ""
+    if not body:
+        return ""
+    try:
+        parsed = json.loads(body)
+        if isinstance(parsed, dict):
+            body = str(parsed.get("message") or parsed.get("error") or body)
+    except ValueError:
+        pass  # plain text, which is already what we want
+    flat = " ".join(body.split())[:limit]
+    return f": {flat}" if flat else ""
+
+
 def ha_api_request(endpoint: str, method: str = "GET", data: dict | None = None,
                    *, opener: Callable = urllib.request.urlopen,
                    timeout: float = 15.0) -> Any:
@@ -45,7 +74,17 @@ def ha_api_request(endpoint: str, method: str = "GET", data: dict | None = None,
         with opener(request, timeout=timeout) as response:
             text = response.read().decode()
     except urllib.error.HTTPError as exc:
-        return {"error": f"HTTP {exc.code} from {endpoint}"}
+        # `HTTPError` IS the response, and Home Assistant puts the reason in
+        # its body — for a failed service call that is the exception Core
+        # raised, by name. Reporting only the status code throws away the
+        # single most useful sentence available: `HTTP 500 from
+        # /services/media_player/play_media` says something went wrong
+        # somewhere, which the red cross beside it had already said.
+        #
+        # Same rule as the integration's services and the HA bridge, one
+        # layer further down: an answer that is dropped is a success nobody
+        # earned.
+        return {"error": f"HTTP {exc.code} from {endpoint}{_why(exc)}"}
     except (urllib.error.URLError, OSError) as exc:
         return {"error": f"cannot reach Home Assistant: {exc}"}
     try:
