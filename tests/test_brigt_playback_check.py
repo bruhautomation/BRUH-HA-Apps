@@ -149,7 +149,7 @@ class TestTheWebSocketClient(unittest.TestCase):
 
     def test_bad_auth_says_so(self):
         fake = FakeHomeAssistant({}, auth_ok=False)
-        answer = run_against(fake, lambda: ha_ws.browse_media())
+        answer = run_against(fake, ha_ws.browse_media)
         self.assertIn("auth", answer["error"].lower())
 
     def test_nothing_listening_is_an_error_not_a_traceback(self):
@@ -360,6 +360,75 @@ class TestTheWholeChain(unittest.TestCase):
         report = self._check({"url": "/media/local/x.mp3", "mime_type": "audio/mpeg"})
         self.assertTrue(report["ok"])
         self.assertTrue(report["fix"], "a warning with nothing to do is noise")
+
+
+class TestTheDiagnosticIsNotAFileReader(unittest.TestCase):
+    """The check stats the file behind a media id, and the media id comes
+    off the wire. CodeQL called that a path expression depending on a
+    user-provided value, and it was right: it was joined onto /media
+    directly, which is a traversal wearing a media id's clothes."""
+
+    @classmethod
+    def setUpClass(cls):
+        import importlib.util
+        import tempfile
+
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.media = tempfile.TemporaryDirectory()
+        os.environ["BRIGT_STATE"] = cls.tmp.name
+        os.environ["BRIGT_MEDIA"] = cls.media.name
+        os.environ["BRIGT_ENV_FILE"] = os.path.join(cls.tmp.name, "no-env")
+        os.environ["BRIGT_OPTIONS"] = os.path.join(cls.tmp.name, "no-options")
+        spec = importlib.util.spec_from_file_location(
+            "brigt_panel_pbcheck", os.path.join(PANEL_DIR, "server.py"))
+        cls.server = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.server)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+        cls.media.cleanup()
+
+    def _check(self, media_id):
+        from aiohttp.test_utils import TestClient, TestServer
+
+        seen = {}
+        original = playback_check.check
+
+        async def spy(entity_id, content_id, *, path=None, **kwargs):
+            seen["path"] = path
+            return {"ok": True, "steps": [], "summary": ""}
+
+        playback_check.check = spy
+        try:
+            async def scenario():
+                client = TestClient(TestServer(self.server.build_app()))
+                await client.start_server()
+                try:
+                    response = await client.request(
+                        "POST", "/api/playback/check",
+                        json={"media_player": "media_player.kitchen",
+                              "media_content_id": media_id})
+                    return response.status, await response.json()
+                finally:
+                    await client.close()
+
+            status, body = asyncio.run(scenario())
+        finally:
+            playback_check.check = original
+        return status, body, seen.get("path")
+
+    def test_a_traversing_media_id_never_becomes_a_path(self):
+        status, _, path = self._check(
+            "media-source://media_source/local/../../../etc/passwd")
+        self.assertEqual(200, status)
+        self.assertIsNone(path, f"stat would have been called on {path}")
+
+    def test_an_ordinary_media_id_still_resolves_to_its_file(self):
+        status, _, path = self._check(
+            "media-source://media_source/local/music/song.mp3")
+        self.assertEqual(200, status)
+        self.assertEqual(Path(self.media.name) / "music" / "song.mp3", path)
 
 
 if __name__ == "__main__":

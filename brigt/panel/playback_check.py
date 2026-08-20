@@ -52,6 +52,20 @@ POLL_S = 0.5
 PLAYING_STATES = ("playing", "buffering")
 
 
+def _flat(value: object, limit: int = 200) -> str:
+    """Text from somewhere else, on one line.
+
+    Every detail below quotes something BRigt did not write — an entity id,
+    a state Home Assistant reported, an error string — and these lines are
+    logged as well as rendered. A newline in a logged value is a caller
+    writing its own log lines, so the line breaks go here rather than in
+    each caller (same reasoning as the panel's `_for_log`).
+    """
+    return (str(value)
+            .replace("\r\n", " ").replace("\n", " ")
+            .replace("\r", " ").replace("\t", " ")[:limit])
+
+
 def _step(name: str, ok: bool | None, detail: str, fix: str = "") -> dict:
     """One link in the chain. `ok` is None for "could not tell", which is
     not the same as a failure and must not be reported as one."""
@@ -78,7 +92,7 @@ def base_url_step(config: dict) -> dict:
     """
     if config.get("error"):
         return _step("host", None, f"could not read Home Assistant's "
-                                   f"configuration: {config['error']}")
+                                   f"configuration: {_flat(config['error'])}")
     internal = str(config.get("internal_url") or "").strip()
     external = str(config.get("external_url") or "").strip()
     chosen = internal or external
@@ -126,7 +140,7 @@ def file_step(path: Path | None, expected_size: int | None = None) -> dict:
     try:
         size = path.stat().st_size
     except OSError as exc:
-        return _step("file", False, f"{path} is not readable: {exc}",
+        return _step("file", False, f"{path} is not readable: {_flat(exc)}",
                      "BRigt can only play files it can see under /media.")
     if expected_size is not None and size != expected_size:
         return _step("file", False,
@@ -143,15 +157,15 @@ async def resolve_step(media_content_id: str) -> tuple[dict, dict]:
     if answer.get("error"):
         return _step(
             "media", False,
-            f"Home Assistant will not resolve {media_content_id}: "
-            f"{answer['error']}",
+            f"Home Assistant will not resolve {_flat(media_content_id)}: "
+            f"{_flat(answer['error'])}",
             "The id is built from where the file sits under /media. If you "
             "set `media_dirs` in configuration.yaml, Home Assistant's local "
             "media source is no longer called `local` and BRigt's ids will "
             "not resolve — see the add-on documentation.",
         ), answer
-    url = str(answer.get("url") or "")
-    mime = str(answer.get("mime_type") or "")
+    url = _flat(answer.get("url") or "")
+    mime = _flat(answer.get("mime_type") or "")
     if not mime:
         return _step("media", None,
                      f"resolved to {url}, but Home Assistant reported no "
@@ -162,7 +176,7 @@ async def resolve_step(media_content_id: str) -> tuple[dict, dict]:
 def player_step(state: dict, entity_id: str) -> dict:
     if state.get("error"):
         return _step("player", False,
-                     f"{entity_id}: {state['error']}",
+                     f"{_flat(entity_id)}: {_flat(state['error'])}",
                      "Pick a media player that exists — the list comes from "
                      "Home Assistant.")
     attributes = state.get("attributes") or {}
@@ -170,13 +184,14 @@ def player_step(state: dict, entity_id: str) -> dict:
         features = int(attributes.get("supported_features") or 0)
     except (TypeError, ValueError):
         features = 0
-    name = attributes.get("friendly_name") or entity_id
+    name = _flat(attributes.get("friendly_name") or entity_id)
     if not features & FEATURE_PLAY_MEDIA:
         return _step("player", False,
                      f"{name} does not accept play_media",
                      "This entity cannot be sent media at all. Group members "
                      "and some remotes look like players and are not.")
-    return _step("player", True, f"{name} · state {state.get('state')!r}")
+    return _step("player", True,
+                 f"{name} · state {_flat(state.get('state'))!r}")
 
 
 async def wait_for_playing(entity_id: str, *, wait_s: float = PLAY_WAIT_S,
@@ -193,21 +208,21 @@ async def wait_for_playing(entity_id: str, *, wait_s: float = PLAY_WAIT_S,
     seen: list[str] = []
     while True:
         state = await asyncio.to_thread(ha_client.get_state, entity_id)
-        current = str(state.get("state") or "unknown")
+        current = _flat(state.get("state") or "unknown", 32)
         if not seen or seen[-1] != current:
             seen.append(current)
         if current in PLAYING_STATES:
             attributes = state.get("attributes") or {}
-            title = attributes.get("media_title") or attributes.get(
-                "media_content_id") or ""
-            detail = f"{entity_id} is {current}"
+            title = _flat(attributes.get("media_title") or attributes.get(
+                "media_content_id") or "")
+            detail = f"{_flat(entity_id)} is {current}"
             return _step("playing", True,
                          f"{detail} — {title}" if title else detail)
         if now() >= deadline:
             trail = " → ".join(seen) or current
             return _step(
                 "playing", False,
-                f"{entity_id} never started playing (state: {trail})",
+                f"{_flat(entity_id)} never started playing (state: {trail})",
                 "Home Assistant accepted the command, so the speaker was "
                 "told to play and did not. That is almost always the URL it "
                 "was given: see the host step above.")
@@ -249,7 +264,7 @@ async def check(entity_id: str, media_content_id: str, *,
     if isinstance(result, dict) and result.get("error"):
         steps.append(_step("command", False,
                            f"Home Assistant refused the play command: "
-                           f"{result['error']}"))
+                           f"{_flat(result['error'])}"))
         return _verdict(steps)
     steps.append(_step("command", True, "Home Assistant accepted the command"))
 

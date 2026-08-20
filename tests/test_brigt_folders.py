@@ -132,6 +132,35 @@ class TestFoldersMustBeServable(unittest.TestCase):
             with self.subTest(value=hostile):
                 self.assertIsNone(self.server._under_media(hostile))
 
+    def test_a_path_is_rebuilt_from_components_rather_than_normalised(self):
+        """Normalising and then checking the prefix is a check bolted onto a
+        string that already said something else. Joining validated components
+        onto /media cannot express an escape at all — so `..` is refused
+        wherever it appears, not resolved away."""
+        for hostile in ("..", "a/../../etc", "parties/../music",
+                        "../../../etc/passwd", "a/b/../../../etc",
+                        "x/\x00y", "\x00"):
+            with self.subTest(value=hostile):
+                self.assertIsNone(self.server._under_media(hostile))
+
+    def test_whatever_comes_out_is_under_media_or_nothing(self):
+        """The contract, stated as the property rather than as a list of
+        strings somebody thought of. An absolute path pointing somewhere
+        else is read as a path *inside* /media rather than refused — it will
+        simply not exist, which is a sentence the Library tab already has —
+        and the one thing that must never happen is a path outside."""
+        media = self.server.MEDIA_DIR
+        for typed in (str(media) + "evil/x", "/etc/passwd", "/../etc",
+                      "//etc/passwd", "parties", "/media/parties",
+                      "a/./b", "  /parties  "):
+            with self.subTest(typed=typed):
+                answer = self.server._under_media(typed)
+                if answer is None:
+                    continue
+                self.assertEqual(media, answer if answer == media
+                                 else Path(*answer.parts[:len(media.parts)]),
+                                 f"{typed} escaped to {answer}")
+
     def test_the_media_root_itself_is_allowed(self):
         media = str(self.server.MEDIA_DIR)
         self.assertEqual(Path(media), self.server._under_media(media))

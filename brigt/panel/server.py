@@ -39,6 +39,7 @@ import base64
 import ipaddress
 import json
 import logging
+import math
 import os
 import random
 import re
@@ -228,17 +229,38 @@ def _under_media(raw: str) -> Path | None:
 
     Both spellings are accepted, because both are what people type: an
     absolute `/media/parties`, and a bare `parties` meaning the same thing.
+
+    The path is then rebuilt **one component at a time** rather than
+    normalised after the fact. Normalising and checking the prefix is the
+    usual recipe and it is a check bolted onto a string that already said
+    something else; joining validated components onto MEDIA_DIR cannot
+    express an escape in the first place, which is a different and better
+    kind of guarantee. A component may be any name a filesystem allows
+    except the two that mean "somewhere else" — `.` is dropped, `..` is
+    refused, and a separator cannot survive the split.
+
+    Symlinks are deliberately followed: `/media/music` pointing at a NAS
+    mount is a setup people really have, and anyone able to plant a symlink
+    inside Home Assistant's media folder has the filesystem already.
     """
     text = str(raw).strip()
     if not text:
         return None
     base = str(MEDIA_DIR)
-    if not text.startswith(base + os.sep) and text != base:
-        text = os.path.join(base, text.lstrip("/").removeprefix("media/"))
-    candidate = os.path.normpath(text)
-    if candidate != base and not candidate.startswith(base + os.sep):
-        return None
-    return Path(candidate)
+    if text == base:
+        return MEDIA_DIR
+    if text.startswith(base + os.sep):
+        text = text[len(base) + 1:]
+    else:
+        text = text.lstrip("/").removeprefix("media/")
+    folder = MEDIA_DIR
+    for part in text.split("/"):
+        if part in ("", "."):
+            continue
+        if part == ".." or "\0" in part:
+            return None
+        folder = folder / part
+    return folder
 
 
 def _additional_music_folders() -> list[Path]:
@@ -341,7 +363,7 @@ def _number(body: dict, key: str, default: float, low: float,
         value = float(raw if raw not in (None, "") else default)
     except (TypeError, ValueError):
         value = float(default)
-    if value != value:                      # NaN compares false with itself
+    if math.isnan(value):
         value = float(default)
     return min(high, max(low, value))
 
@@ -912,8 +934,11 @@ async def h_playback_check(request: web.Request) -> web.Response:
         path = REFERENCE_WAV
         expected = reference.expected_size()
     elif media_id.startswith("media-source://media_source/local/"):
-        relative = media_id[len("media-source://media_source/local/"):]
-        path = MEDIA_DIR / relative
+        # A media id names a file we are about to stat, so it goes through
+        # the same confinement every other path off the wire does. It was
+        # joined onto MEDIA_DIR directly, which is a traversal wearing a
+        # media id's clothes.
+        path = _under_media(media_id[len("media-source://media_source/local/"):])
 
     result = await playback_check.check(entity_id, media_id, path=path,
                                         expected_size=expected)
