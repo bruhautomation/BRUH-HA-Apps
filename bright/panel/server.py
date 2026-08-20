@@ -923,6 +923,41 @@ async def h_effect_describe(request: web.Request) -> web.Response:
     return web.json_response({"effect": effect})
 
 
+async def h_effect_invent(request: web.Request) -> web.Response:
+    """Effects for this room, with nothing typed in.
+
+    The other half of `describe`: knowing what to ask for assumes you
+    already know what is possible in your own room, which is the thing
+    somebody with a new light map most reliably does not. Same room
+    description, same catalog, same validator — these are ordinary effects
+    that arrive unsaved, and each carries one sentence about why it suits
+    the room, which is the part that makes the list worth reading rather
+    than six names to click through.
+    """
+    body = await _json_body(request)
+    try:
+        count = int(body.get("count", 4))
+    except (TypeError, ValueError):
+        count = 4
+    fixtures = _map_fixtures()
+    if not fixtures:
+        return web.json_response(
+            {"error": "no lights on the map yet — the Light Map tab is where "
+                      "an effect gets something to drive"}, status=409)
+    if not claude_director.available():
+        return web.json_response(
+            {"error": "inventing effects runs through brAIn's task surface, "
+                      "and brAIn is not installed on this Home Assistant. "
+                      "Everything else in this tab works without it."},
+            status=409)
+    try:
+        effects = await asyncio.to_thread(
+            claude_director.invent_effects, fixtures, count)
+    except (ValueError, RuntimeError) as exc:
+        return web.json_response({"error": str(exc)}, status=409)
+    return web.json_response({"effects": effects})
+
+
 async def h_effects_preview(request: web.Request) -> web.Response:
     """One or more effects, rendered on the bench.
 
@@ -1991,6 +2026,7 @@ def build_app() -> web.Application:
     # Effects — the builder, the preview, the presets
     app.router.add_get("/api/effects/catalog", h_effects_catalog)
     app.router.add_post("/api/effects/describe", h_effect_describe)
+    app.router.add_post("/api/effects/invent", h_effect_invent)
     app.router.add_post("/api/effects/preview", h_effects_preview)
     app.router.add_post("/api/effects/preview-live", h_effects_live)
     app.router.add_get("/api/effects/presets", h_effect_presets)

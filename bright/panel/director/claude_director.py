@@ -441,3 +441,108 @@ def write_effect(description: str, fixtures: list[dict],
             from None
     effect.setdefault("name", description.strip()[:48])
     return effect
+
+
+# ---------------------------------------------------------------------------
+# Effects nobody had to think of
+# ---------------------------------------------------------------------------
+MAX_IDEAS = 6
+
+_INVENT_CONTRACT = """\
+Answer with ONE JSON object and nothing else — no prose, no code fences:
+
+{"effects": [ {<effect>, "why": "<one sentence>"}, ... ]}
+
+Each <effect> is exactly the object described above, plus a `why`: one
+sentence, about THIS room, saying what the idea is and where it happens.
+"the two window lamps answer each other across the bay" is a why. "a nice
+chase effect" is not — it would be true of any room, and a reason that
+would be true anywhere is not a reason for here."""
+
+_INVENT_DIRECTION = """\
+You are a lighting designer looking at somebody's actual room. Propose
+%(count)d effects worth having in it.
+
+Nobody has asked for anything specific, so the room is the brief:
+
+- Read the map. Where the lights ARE is the material — two lamps facing
+  each other across a sofa, a strip along one wall, candles in a corner
+  that should stay calm. An idea that ignores the positions could have
+  been written without ever seeing this room, and it will look like it.
+- Make them DIFFERENT from each other. Six variations on a chase is one
+  idea with six sets of parameters. Vary what moves, how much of the room
+  is involved, and how loud it is — at least one should be quiet enough
+  for a verse and at least one big enough for a drop.
+- Most of the room usually stays still. An effect that names three lights
+  and leaves the rest alone is generally better than one that takes
+  everything, and it can be layered with another.
+- Respect what each role is for. Candles are ambience and should not
+  strobe; a laser is a moment, not a texture.
+- Timing is in BEATS. These will be dropped into songs you have not
+  heard."""
+
+
+def invent_effects(fixtures: list[dict], count: int = 4,
+                   timeout_s: float = EFFECT_TIMEOUT_S) -> list[dict]:
+    """Effects built for this room, with nothing typed in.
+
+    The other half of `write_effect`. Describing what you want assumes you
+    already know what is possible in your own room, which is the thing a
+    person with a new light map most reliably does not — and "what would
+    look good in here" is a question about a floor plan, which is exactly
+    what BRight has and the person is looking at.
+
+    Every idea goes through `effects.clean_effect`, the same validator a
+    hand-typed effect meets. One unusable idea costs that idea and not the
+    batch: a model asked for six things will occasionally get one wrong,
+    and throwing away five good ones to punish it would make the feature
+    useless at the moment it is most useful.
+    """
+    from . import effects as fx
+
+    # The map is checked first, and not for tidiness: an empty map is a
+    # complaint about this install that is true whether or not brAIn is
+    # here, and sending somebody to install brAIn when what they actually
+    # need is to place a light is the wrong errand.
+    if not fixtures:
+        raise ValueError("no lights on the map yet — the Light Map tab is "
+                         "where an effect gets something to drive")
+    if not available():
+        raise RuntimeError("brAIn is not installed (no /config/.brain/tasks) "
+                           "— inventing effects needs it")
+    count = max(1, min(MAX_IDEAS, int(count)))
+    prompt = "\n".join([
+        _INVENT_DIRECTION % {"count": count},
+        "",
+        _EFFECT_CONTRACT % _catalog_lines(),
+        "",
+        _INVENT_CONTRACT,
+        "",
+        room.describe(fixtures),
+    ])
+    answer = _run_task(prompt, timeout_s)
+    raw = _extract_json(answer)
+    ideas = raw.get("effects")
+    if not isinstance(ideas, list) or not ideas:
+        raise ValueError("Claude answered with no effects")
+
+    kept: list[dict] = []
+    for item in ideas[:MAX_IDEAS]:
+        if not isinstance(item, dict):
+            continue
+        # `why` is ours, not the catalog's, so it is lifted out before the
+        # validator sees the effect and put back afterwards — `clean_effect`
+        # keeps only what an effect is allowed to carry, which is what
+        # stops a generated one smuggling in a field the compiler will
+        # later trip over.
+        why = str(item.get("why", "") or "").strip()[:200]
+        try:
+            effect = fx.clean_effect({k: v for k, v in item.items()
+                                      if k != "why"})
+        except fx.EffectError:
+            continue
+        effect["why"] = why
+        kept.append(effect)
+    if not kept:
+        raise ValueError("Claude's ideas were all effects BRight cannot use")
+    return kept
