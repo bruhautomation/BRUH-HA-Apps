@@ -37,6 +37,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import ipaddress
+import json
 import logging
 import os
 import random
@@ -72,6 +73,13 @@ from stores import light_map  # noqa: E402
 STATIC = HERE
 DATA_DIR = Path(os.environ.get("BRIGT_STATE", "/data"))
 ENV_FILE = Path(os.environ.get("BRIGT_ENV_FILE", "/data/.brigt_env"))
+# The Supervisor's own copy of the add-on's options. Read directly for the
+# one option that is a LIST — see `_additional_music_folders`.
+OPTIONS_FILE = Path(os.environ.get("BRIGT_OPTIONS", "/data/options.json"))
+# Home Assistant's media folder, as this container sees it. Everything the
+# add-on hands a media player has to live under it — the folders it scans
+# for music, and the calibration click track it writes.
+MEDIA_DIR = Path(os.environ.get("BRIGT_MEDIA", "/media"))
 ADDON_VERSION = os.environ.get("ADDON_VERSION", "dev")
 SUPERVISOR_API_URL = os.environ.get("SUPERVISOR_API_URL", "http://supervisor")
 SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
@@ -206,6 +214,63 @@ def _options_from_env() -> dict:
     return options
 
 
+def _under_media(raw: str) -> Path | None:
+    """`raw` as a folder inside /media, or None if it is not one.
+
+    The confinement is not only about what the panel may read. A track BRigt
+    can see but Home Assistant cannot serve is a track that analyzes
+    perfectly and then never plays: `conductor.media_content_id_for` builds a
+    `media-source://media_source/local/…` URI, and that URI only exists for
+    files under the media folder Core shares. A folder outside it would fill
+    the Library tab with tracks whose every show ends in "no media id".
+
+    Both spellings are accepted, because both are what people type: an
+    absolute `/media/parties`, and a bare `parties` meaning the same thing.
+    """
+    text = str(raw).strip()
+    if not text:
+        return None
+    base = str(MEDIA_DIR)
+    if not text.startswith(base + os.sep) and text != base:
+        text = os.path.join(base, text.lstrip("/").removeprefix("media/"))
+    candidate = os.path.normpath(text)
+    if candidate != base and not candidate.startswith(base + os.sep):
+        return None
+    return Path(candidate)
+
+
+def _additional_music_folders() -> list[Path]:
+    """The `additional_music_folders` option, from the Supervisor's own file.
+
+    Every other option rides /data/.brigt_env, because that file is the only
+    route an option has into a process started under `with-contenv`. A LIST
+    cannot ride it: packing several paths into one shell string needs a
+    separator, and every separator is a character a path may legally contain
+    — `/media/best of 80s:90s` is a folder somebody has. The panel is not a
+    with-contenv child (run.sh starts it directly), so it reads the typed
+    value from the file the Supervisor wrote, and nothing else reads this
+    option at all — one reader, no separator, no second answer.
+
+    Anything unreadable answers "no extra folders", never an exception: the
+    music folder on its own is a working add-on.
+    """
+    try:
+        options = json.loads(OPTIONS_FILE.read_text())
+    except (OSError, ValueError):
+        return []
+    raw = options.get("additional_music_folders") if isinstance(options, dict) else None
+    if not isinstance(raw, list):
+        return []
+    folders = []
+    for item in raw:
+        if not isinstance(item, str):
+            continue
+        folder = _under_media(item)
+        if folder is not None:
+            folders.append(folder)
+    return folders
+
+
 # ---------------------------------------------------------------------------
 # Handlers
 # ---------------------------------------------------------------------------
@@ -216,7 +281,10 @@ async def h_health(request: web.Request) -> web.Response:
 async def h_status(request: web.Request) -> web.Response:
     return web.json_response({
         "version": ADDON_VERSION,
-        "options": _options_from_env(),
+        "options": {
+            **_options_from_env(),
+            "additional_music_folders": [str(f) for f in _additional_music_folders()],
+        },
     })
 
 
@@ -381,15 +449,34 @@ async def h_lab_report(request: web.Request) -> web.Response:
 # Library — the music folder, analyzed ahead of the party
 # ---------------------------------------------------------------------------
 def _music_folder() -> Path:
+    """The main folder — the one option every install has set."""
     return Path(_options_from_env()["music_folder"])
 
 
+def _music_folders() -> list[Path]:
+    """Everywhere BRigt looks for music: the music folder, then any extras.
+
+    Ordered and de-duplicated by path, so listing a folder twice in the
+    options costs nothing. Overlap between them costs nothing either — the
+    scan de-duplicates by track hash, which is what makes a folder nested
+    inside another one harmless.
+    """
+    folders = [_music_folder()]
+    for folder in _additional_music_folders():
+        if folder not in folders:
+            folders.append(folder)
+    return folders
+
+
 async def h_library(request: web.Request) -> web.Response:
-    folder = _music_folder()
-    tracks = await asyncio.to_thread(library.scan, folder)
+    folders = _music_folders()
+    tracks = await asyncio.to_thread(library.scan_all, folders)
     return web.json_response({
-        "folder": str(folder),
-        "exists": folder.is_dir(),
+        # `folder`/`exists` describe the main folder and stay for a panel
+        # served before this update; `folders` is what the page renders.
+        "folder": str(folders[0]),
+        "exists": folders[0].is_dir(),
+        "folders": [{"path": str(f), "exists": f.is_dir()} for f in folders],
         "tracks": tracks,
     })
 
@@ -397,16 +484,19 @@ async def h_library(request: web.Request) -> web.Response:
 async def h_library_analyze(request: web.Request) -> web.Response:
     body = await _json_body(request)
     force = bool(body.get("force"))
-    folder = _music_folder()
-    if not folder.is_dir():
+    folders = _music_folders()
+    present = [f for f in folders if f.is_dir()]
+    if not present:
+        missing = ", ".join(str(f) for f in folders)
         return web.json_response(
-            {"error": f"{folder} does not exist — put music there, or point "
-                      "the music_folder option somewhere else"},
+            {"error": f"none of these folders exist: {missing} — put music in "
+                      "one of them, or point the music_folder option (and "
+                      "additional_music_folders) somewhere else"},
             status=404)
     job = jobs.start(
         "analyze-folder",
-        lambda report: pipeline.analyze_folder(folder, progress=report,
-                                               force=force))
+        lambda report: pipeline.analyze_folders(present, progress=report,
+                                                force=force))
     status = 409 if job.get("already") else 202
     return web.json_response({"job": job["id"]}, status=status)
 
@@ -572,23 +662,24 @@ async def h_show_party(request: web.Request) -> web.Response:
             {"error": "no media_player given and none calibrated yet — "
                       "run the Calibrate tab first"},
             status=400)
-    folder = _music_folder()
+    folders = _music_folders()
     raw_folder = str(body.get("folder", "") or "")
     if raw_folder:
-        base = str(MEDIA_DIR)
-        candidate = os.path.normpath(os.path.join(
-            base, raw_folder.lstrip("/").removeprefix("media/")))
-        if not candidate.startswith(base + os.sep):
+        # One folder was named for this party: it wins over the options, and
+        # it has to be somewhere Home Assistant can serve from.
+        chosen = _under_media(raw_folder)
+        if chosen is None:
             return web.json_response({"error": "folder must live under /media"},
                                      status=400)
-        folder = Path(candidate)
+        folders = [chosen]
     vibe = str(body.get("vibe", "") or "")[:120]
 
-    tracks = await asyncio.to_thread(library.scan, folder)
+    tracks = await asyncio.to_thread(library.scan_all, folders)
     queue = [t["hash"] for t in tracks if t["analyzed"]]
     if not queue:
+        where = " or ".join(str(f) for f in folders)
         return web.json_response(
-            {"error": f"no analyzed tracks in {folder} — run the Library "
+            {"error": f"no analyzed tracks in {where} — run the Library "
                       "tab first"},
             status=409)
     random.shuffle(queue)
@@ -618,7 +709,6 @@ async def h_show_party(request: web.Request) -> web.Response:
 # ---------------------------------------------------------------------------
 # Calibration — how long the speaker takes, measured, never configured
 # ---------------------------------------------------------------------------
-MEDIA_DIR = Path(os.environ.get("BRIGT_MEDIA", "/media"))
 REFERENCE_WAV = MEDIA_DIR / "brigt" / "calibration.wav"
 # What media_player.play_media is handed for the file above (HA maps the
 # /media mount to the local media source).
@@ -629,8 +719,32 @@ REFERENCE_MEDIA_ID = "media-source://media_source/local/brigt/calibration.wav"
 _POSITION_CHECKS: dict[str, dict] = {}
 
 
+def _ensure_reference() -> str | None:
+    """None once the click track is on disk, or the sentence to send back.
+
+    This is the failure that shipped. /media belongs to root on a Home
+    Assistant install and this panel runs as the `brigt` user, so
+    `mkdir("/media/brigt")` raised PermissionError, aiohttp turned that into
+    a bare `500 Internal Server Error` with no body, and the wizard could
+    only report `HTTP 500` — about a folder, in a message that never named
+    it. run.sh creates the folder as root and hands it over now; if the
+    write still cannot happen, this is what says so.
+    """
+    try:
+        reference.ensure(REFERENCE_WAV)
+    except OSError as exc:
+        log.error("cannot write the click track to %s: %s", REFERENCE_WAV, exc)
+        return (f"could not write the click track to {REFERENCE_WAV}: "
+                f"{exc.strerror or exc}. BRigt creates that folder at startup "
+                f"and writes it as the 'brigt' user — restart the add-on, and "
+                f"check that Home Assistant's media folder exists.")
+    return None
+
+
 async def h_cal_reference(request: web.Request) -> web.Response:
-    await asyncio.to_thread(reference.write_wav, REFERENCE_WAV)
+    error = await asyncio.to_thread(_ensure_reference)
+    if error:
+        return web.json_response({"error": error}, status=500)
     return web.json_response({
         **reference.describe(),
         "media_content_id": REFERENCE_MEDIA_ID,
@@ -670,13 +784,24 @@ async def h_cal_play(request: web.Request) -> web.Response:
     if entity_id is None:
         return web.json_response({"error": "media_player entity required"},
                                  status=400)
-    await asyncio.to_thread(reference.write_wav, REFERENCE_WAV)
+    error = await asyncio.to_thread(_ensure_reference)
+    if error:
+        return web.json_response({"error": error}, status=500)
     _POSITION_CHECKS.pop(entity_id, None)
     play_epoch_ms = time.time() * 1000.0
     result = await asyncio.to_thread(
         ha_client.play_media, entity_id, REFERENCE_MEDIA_ID)
     if isinstance(result, dict) and result.get("error"):
-        return web.json_response(result, status=502)
+        # Name what was asked for. Home Assistant answers a media it cannot
+        # resolve with its own HTTP 500, which arrives here as a string and
+        # reached the wizard as "HTTP 500" — a number about somebody else's
+        # request, which is how this looked like a panel crash.
+        return web.json_response({
+            "error": f"Home Assistant would not play the click track on "
+                     f"{entity_id}: {result['error']}. It was asked for "
+                     f"{REFERENCE_MEDIA_ID}, which is {REFERENCE_WAV} in the "
+                     f"add-on.",
+        }, status=502)
     jobs.start(f"position-check:{entity_id}",
                lambda: _position_check(entity_id))
     return web.json_response({"play_epoch_ms": play_epoch_ms})

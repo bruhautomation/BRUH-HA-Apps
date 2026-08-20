@@ -56,10 +56,23 @@ def analyze_track(path: Path) -> dict:
 async def analyze_folder(folder: Path,
                          progress: Callable[[dict], None] | None = None,
                          force: bool = False) -> dict:
-    """The Library tab's job: every unanalyzed track in the folder, one at
+    """One folder — `analyze_folders` with a list of one."""
+    return await analyze_folders([folder], progress=progress, force=force)
+
+
+async def analyze_folders(folders,
+                          progress: Callable[[dict], None] | None = None,
+                          force: bool = False) -> dict:
+    """The Library tab's job: every unanalyzed track in every folder, one at
     a time (analysis is CPU-bound; two at once just thrash), reporting
-    progress after each."""
-    tracks = await asyncio.to_thread(library.scan, folder)
+    progress after each.
+
+    The folders are scanned together and de-duplicated before any work
+    starts, so the count the progress bar counts down from is the number of
+    tracks there are — not the number of paths they can be reached by, which
+    is what a per-folder loop would have made it.
+    """
+    tracks = await asyncio.to_thread(library.scan_all, list(folders))
     todo = [t for t in tracks if force or not t["analyzed"]]
     done, failed = 0, []
     for index, track in enumerate(todo):

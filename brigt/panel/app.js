@@ -601,8 +601,19 @@
     list.innerHTML = '<p class="muted">Scanning…</p>';
     try {
       const body = await api("api/library");
-      $("libraryFolder").textContent = body.folder +
-        (body.exists ? "" : " (missing!)");
+      // `folders` is the whole list; `folder` is the main one, kept so a
+      // page cached from before the option existed still says something.
+      const folders = body.folders ||
+        [{ path: body.folder, exists: body.exists }];
+      const box = $("libraryFolders");
+      box.innerHTML = "";
+      for (const folder of folders) {
+        const line = document.createElement("div");
+        // textContent: a folder name is whatever someone typed into the
+        // add-on's options, and it is not markup.
+        line.textContent = folder.path + (folder.exists ? "" : " — missing");
+        box.appendChild(line);
+      }
       const tracks = body.tracks || [];
       if (!tracks.length) {
         list.innerHTML = '<p class="muted">No audio files found.</p>';

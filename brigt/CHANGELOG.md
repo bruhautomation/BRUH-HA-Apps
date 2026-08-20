@@ -5,6 +5,57 @@ All notable changes to the **BRigt** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.8.2
+
+Casting the click track answered `HTTP 500` and played nothing — and music
+could only ever live in one folder.
+
+### Fixed
+- **The calibration click track can be written again.** `/media` belongs to
+  root on a Home Assistant install and BRigt's panel runs as the `brigt`
+  user, so creating `/media/brigt` raised a permission error the moment
+  anyone pressed **Play clicks & listen**. aiohttp turned that into a bare
+  `500 Internal Server Error` with no body, which is all the wizard could
+  report — a number, about a folder it never named, for a file that was
+  therefore never there to stream. run.sh creates the folder as root at
+  startup and hands it to the panel.
+- **A click track that still cannot be written says so in a sentence** that
+  names the folder and what to do, instead of a traceback. So does a refusal
+  from Home Assistant: it now quotes the media id it was asked to play,
+  because Core answers an unresolvable media with *its own* HTTP 500, and
+  that number arriving as our error message is what made a missing file look
+  like a panel crash.
+- **The click track is rendered once, not on every press.** It is half a
+  million samples through a Python loop — 1.6s on a laptop and several times
+  that on a Pi, paid inside the request every time — and the file is a pure
+  function of the pattern, so a file that is already the right length is
+  already the right file. A short one (a write cut off by a restart) is
+  rewritten rather than played. Packing it through `array` instead of
+  per-sample `struct.pack` cuts the render itself to a quarter, byte for
+  identical byte.
+
+- **A show that cannot start says so.** `start()` answers the request the
+  moment the task exists — a show runs for minutes and a request cannot — so
+  a play command the speaker refuses raised out of sight, and the panel went
+  on reporting "Running: 412 cues" over a dark room. The only trace was
+  asyncio's "Task exception was never retrieved" when the dead task was
+  collected. The error now lands in the show state the panel polls and the
+  HA sensor reads, and the lights are put back: the snapshot was taken
+  before the play command, and restoring is the other half of an ending
+  nobody watched.
+
+### Added
+- **`additional_music_folders`** — more folders to scan for music beside
+  `music_folder`, listed one per line. Overlapping folders cost nothing: a
+  track two folders both reach is listed and analyzed once, because tracks
+  are identified by content rather than by path. Subfolders never needed an
+  entry — each folder is scanned all the way down — and the Library tab now
+  lists the folders it is scanning, saying which of them are missing.
+- Every folder is confined to `/media`, and the docs say why rather than
+  just that: a show plays its track by handing the media player a
+  media-source link, which Home Assistant only serves for files under its
+  media folder. A folder outside it would analyze perfectly and never play.
+
 ## 0.8.1
 
 The add-on could not start on a machine where something else already had
