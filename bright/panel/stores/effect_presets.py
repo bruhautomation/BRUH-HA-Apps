@@ -97,6 +97,20 @@ def _summarise_select(effect: dict) -> str:
     return "; ".join(parts) or "every light"
 
 
+# Named rather than written inline in the list below, and this is the
+# second time that has mattered: a paragraph split across adjacent string
+# literals inside a list is one missing comma away from silently becoming
+# two list items — legal Python, invisible in review, and it would quietly
+# reshape a prompt. As a constant, the same slip is a syntax error.
+_HOW_TO_USE = (
+    'Use one with {"use": "<name>"} anywhere an effect goes. Override '
+    'anything by naming it alongside: {"use": "kitchen chase", '
+    '"params": {"step_beats": 1}} keeps the selection and changes the '
+    "speed. These are worth reaching for — they were kept because they "
+    "looked good in THIS room."
+)
+
+
 def describe(presets: list[dict] | None = None) -> str:
     """The saved library, written out for a prompt.
 
@@ -116,16 +130,8 @@ def describe(presets: list[dict] | None = None) -> str:
         return ("SAVED EFFECTS: none yet. Anything good you write here can "
                 "be saved to the library afterwards and reused by name in "
                 "later shows.")
-    lines = [
-        "SAVED EFFECTS — this room's own library, built up over time.",
-        "",
-        'Use one with {"use": "<name>"} anywhere an effect goes. Override '
-        'anything by naming it alongside: {"use": "kitchen chase", '
-        '"params": {"step_beats": 1}} keeps the selection and changes the '
-        "speed. These are worth reaching for — they were kept because they "
-        "looked good in THIS room.",
-        "",
-    ]
+    lines = ["SAVED EFFECTS — this room's own library, built up over time.",
+             "", _HOW_TO_USE, ""]
     for preset in presets:
         effect = preset.get("effect") or {}
         params = effect.get("params") or {}
