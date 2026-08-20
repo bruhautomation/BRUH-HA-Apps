@@ -102,6 +102,16 @@ load_config() {
 
 # ----------------------------------------------------------------------------
 # /data layout, created root then handed to the brigt user the panel runs as.
+#
+# /media/brigt is the same move for a different reason. The calibration click
+# track has to live somewhere Home Assistant's local media source can serve
+# it from — a media player fetches it over HTTP from Core, not from us — and
+# that means under /media. But /media belongs to root, and the panel runs as
+# `brigt`: it could not create that folder, the write raised, and the wizard
+# reported a bare `HTTP 500` with nothing in it about a folder. Root makes it
+# here, once, and hands it over. A read-only or absent /media is a warning
+# and not a failure — everything except calibration still works, and the
+# panel says so in a sentence when someone presses Play.
 # ----------------------------------------------------------------------------
 prepare_filesystem() {
     mkdir -p \
@@ -110,6 +120,14 @@ prepare_filesystem() {
         /data/calibration \
         /data/logs
     chown -R brigt:brigt /data 2>/dev/null || true
+
+    if mkdir -p /media/brigt 2>/dev/null; then
+        chown brigt:brigt /media/brigt 2>/dev/null || true
+    else
+        bashio::log.warning \
+            "Could not create /media/brigt — the Calibrate tab needs it to " \
+            "share the click track with your speaker"
+    fi
 }
 
 # ----------------------------------------------------------------------------

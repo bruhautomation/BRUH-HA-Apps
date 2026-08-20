@@ -74,6 +74,26 @@ def save_show(hash_hex: str, script: dict, show: dict) -> None:
     atomic_write.write_json(show_path(hash_hex), show)
 
 
+def scan_all(folders) -> list[dict]:
+    """Every audio file under every folder, listed once.
+
+    De-duplicated by track hash, because one track can be reachable twice:
+    a folder nested inside another one, or the same file copied into both.
+    Identity is the content hash everywhere else in this add-on, so it is
+    the content hash here — two paths to one track are one track, and it
+    keeps the one found first.
+    """
+    seen: set[str] = set()
+    tracks: list[dict] = []
+    for folder in folders:
+        for entry in scan(folder):
+            if entry["hash"] in seen:
+                continue
+            seen.add(entry["hash"])
+            tracks.append(entry)
+    return tracks
+
+
 def scan(folder: Path) -> list[dict]:
     """Every audio file under `folder`, with its hash and analysis state."""
     tracks = []

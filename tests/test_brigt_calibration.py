@@ -306,5 +306,155 @@ class TestReferenceStruct(unittest.TestCase):
         self.assertEqual(int(max(-1.0, min(1.0, rendered[0])) * 32767), first)
 
 
+class TestTheClickTrackFile(unittest.TestCase):
+    """Writing it, skipping it, and healing it.
+
+    Rendering is half a million samples through a Python loop — 1.6s on a
+    laptop with `struct.pack`, several times that on a Pi — and the wizard
+    used to pay it inside every press of Play.
+    """
+
+    def test_the_two_packings_agree(self):
+        """`array` replaced a per-sample `struct.pack`. Same bytes, or the
+        analyzer is correlating against a track nobody plays."""
+        samples = reference.render_samples(8000)
+        old = b"".join(
+            struct.pack("<h", int(max(-1.0, min(1.0, s)) * 32767))
+            for s in samples
+        )
+        self.assertEqual(old, reference.wav_bytes(8000)[44:])
+
+    def test_the_expected_size_is_the_size_written(self):
+        """`ensure` skips on length, so the arithmetic behind that length is
+        measured against a real file rather than trusted."""
+        for rate in (8000, 44100):
+            with self.subTest(rate=rate):
+                self.assertEqual(reference.expected_size(rate),
+                                 len(reference.wav_bytes(rate)))
+
+    def test_ensure_writes_once_and_then_leaves_it_alone(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "brigt" / "calibration.wav"
+            reference.ensure(path, 8000)
+            self.assertTrue(path.is_file())
+            stamped = path.stat().st_mtime_ns
+            reference.ensure(path, 8000)
+            self.assertEqual(stamped, path.stat().st_mtime_ns,
+                             "re-rendered a file that was already the track")
+
+    def test_ensure_heals_a_half_written_file(self):
+        """A write cut off by a restart leaves a short file, and a short
+        file is a click track the correlator will never find."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "calibration.wav"
+            path.write_bytes(reference.wav_bytes(8000)[:9000])
+            reference.ensure(path, 8000)
+            self.assertEqual(reference.wav_bytes(8000), path.read_bytes())
+
+
+class TestTheClickTrackCannotBeWritten(unittest.TestCase):
+    """The failure that shipped, reproduced.
+
+    /media belongs to root on a Home Assistant install and the panel runs as
+    the `brigt` user, so `mkdir("/media/brigt")` raised PermissionError,
+    aiohttp answered `500 Internal Server Error` with no body, and the wizard
+    could only report `HTTP 500` — a number, about a folder it never named.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.media = tempfile.TemporaryDirectory()
+        cls.server = _load_server(cls.tmp.name, cls.media.name)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+        cls.media.cleanup()
+
+    def _call(self, method, path, payload=None):
+        from aiohttp.test_utils import TestClient, TestServer
+
+        async def scenario():
+            client = TestClient(TestServer(self.server.build_app()))
+            await client.start_server()
+            try:
+                response = await client.request(method, path, json=payload)
+                return response.status, await response.json()
+            finally:
+                await client.close()
+
+        return asyncio.run(scenario())
+
+    def _unwritable_track(self):
+        """Put the click track somewhere it cannot be created.
+
+        A blocking *file* where a parent folder should be, rather than a
+        chmod: `mkdir` raises the same OSError either way, and this one is
+        the same answer for root — which is who runs the tests in a
+        container, and who would otherwise skip the only case that matters.
+        """
+        blocker = Path(self.tmp.name) / "not-a-folder"
+        blocker.write_text("a file, where /media is a folder")
+        original = self.server.REFERENCE_WAV
+        self.server.REFERENCE_WAV = blocker / "brigt" / "calibration.wav"
+        self.addCleanup(setattr, self.server, "REFERENCE_WAV", original)
+
+    def test_the_reference_route_says_which_folder(self):
+        self._unwritable_track()
+        status, body = self._call("POST", "/api/calibrate/reference")
+        self.assertEqual(500, status)
+        self.assertIn("brigt", body["error"])
+        self.assertIn("click track", body["error"])
+
+    def test_play_says_the_same_thing_and_never_asks_for_playback(self):
+        """A play command for a file that does not exist is how this reached
+        Home Assistant, came back as ITS 500, and read as a panel crash."""
+        self._unwritable_track()
+        asked = []
+        original = self.server.ha_client.play_media
+        self.server.ha_client.play_media = lambda *a, **k: asked.append(a)
+        self.addCleanup(setattr, self.server.ha_client, "play_media", original)
+
+        status, body = self._call("POST", "/api/calibrate/play",
+                                  {"media_player": "media_player.kitchen"})
+        self.assertEqual(500, status)
+        self.assertIn("click track", body["error"])
+        self.assertEqual([], asked)
+
+    def test_a_refusal_from_home_assistant_names_what_it_was_asked_for(self):
+        original = self.server.ha_client.play_media
+        self.server.ha_client.play_media = lambda *a, **k: {
+            "error": "HTTP 500 from /services/media_player/play_media"}
+        self.addCleanup(setattr, self.server.ha_client, "play_media", original)
+
+        status, body = self._call("POST", "/api/calibrate/play",
+                                  {"media_player": "media_player.kitchen"})
+        self.assertEqual(502, status)
+        self.assertIn("media_player.kitchen", body["error"])
+        self.assertIn(self.server.REFERENCE_MEDIA_ID, body["error"])
+
+    def test_play_writes_the_track_where_home_assistant_can_serve_it(self):
+        original = self.server.ha_client.play_media
+        self.server.ha_client.play_media = lambda *a, **k: []
+        self.addCleanup(setattr, self.server.ha_client, "play_media", original)
+        started = []
+        original_start = self.server.jobs.start
+        self.server.jobs.start = lambda name, fn: started.append(name) or {"id": name}
+        self.addCleanup(setattr, self.server.jobs, "start", original_start)
+
+        status, body = self._call("POST", "/api/calibrate/play",
+                                  {"media_player": "media_player.kitchen"})
+        self.assertEqual(200, status, body)
+        self.assertIn("play_epoch_ms", body)
+        track = Path(self.server.REFERENCE_WAV)
+        self.assertTrue(track.is_file())
+        self.assertEqual(reference.expected_size(), track.stat().st_size)
+        # The media id is that file, spelled the way the local media source
+        # spells it — the pair has to stay in step or nothing plays.
+        self.assertTrue(self.server.REFERENCE_MEDIA_ID.endswith(
+            "/".join(track.parts[-2:])))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -6,7 +6,9 @@ import asyncio
 import base64
 import os
 import sys
+import tempfile
 import unittest
+from pathlib import Path
 
 BASE_DIR = os.path.join(os.path.dirname(__file__), "..")
 PANEL_DIR = os.path.join(BASE_DIR, "brigt", "panel")
@@ -191,6 +193,77 @@ class TestCueScheduling(unittest.TestCase):
 
 async def _noop():
     return None
+
+
+class TestAShowThatCannotStartSaysSo(unittest.TestCase):
+    """`start()` answers before the show has begun, so a play command the
+    speaker refuses fails with nobody listening.
+
+    What that looked like: "Running: 412 cues" in the panel, a dark room,
+    and the reason only in asyncio's "Task exception was never retrieved"
+    whenever the dead task was collected.
+    """
+
+    def _run_a_doomed_show(self, tmp):
+        async def scenario():
+            engine = _FakeEngine()
+            run = conductor.Conductor.__new__(conductor.Conductor)
+            run.engine = engine
+            run.clock = ShowClock()
+            run._snapshot = {}
+            run._task = run._poller = None
+            run.state = {"status": "idle"}
+
+            restored = []
+            original_restore = run._restore_snapshot
+
+            async def counting_restore():
+                restored.append(True)
+                await original_restore()
+
+            run._restore_snapshot = counting_restore
+
+            started = await run.start(
+                [{"t": 0.0, "ch": "lifx", "serial": "aa" * 6,
+                  "payload_b64": ""}],
+                media_player="media_player.kitchen",
+                media_content_id="media-source://media_source/local/x.mp3",
+                title="x", duration_s=1.0)
+
+            try:
+                await run._task
+            except RuntimeError:
+                pass
+            # The done callback runs on the next turn of the loop, and the
+            # restore it schedules on the one after that.
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            return started, run.state, restored
+
+        return asyncio.run(scenario())
+
+    def test_the_state_carries_the_refusal(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state_file = conductor.STATE_FILE
+            conductor.STATE_FILE = Path(tmp) / "state.json"
+            load = conductor.calibration_store.load
+            play = conductor.ha_client.play_media
+            conductor.calibration_store.load = lambda *a, **k: {
+                "effective_offset_ms": 0.0}
+            conductor.ha_client.play_media = lambda *a, **k: {
+                "error": "HTTP 500 from /services/media_player/play_media"}
+            try:
+                started, state, restored = self._run_a_doomed_show(tmp)
+            finally:
+                conductor.STATE_FILE = state_file
+                conductor.calibration_store.load = load
+                conductor.ha_client.play_media = play
+
+        self.assertTrue(started["ok"], "start answers before the show runs")
+        self.assertEqual("error", state["status"])
+        self.assertIn("play_media", state["error"])
+        self.assertEqual([True], restored,
+                         "the lights were snapshotted and never put back")
 
 
 class TestMetronomeShow(unittest.TestCase):

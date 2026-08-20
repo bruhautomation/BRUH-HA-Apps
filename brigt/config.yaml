@@ -1,7 +1,7 @@
 ---
 name: "BRigt"
 description: "Music-driven light show director: analyzes your local music, choreographs LIFX bulbs over the LAN plus switch-driven party lights, and keeps it all in sync with the speaker"
-version: "0.8.1"
+version: "0.8.2"
 slug: "brigt"
 init: false
 
@@ -91,6 +91,16 @@ options:
   # to the media player through media-source URLs when a show runs.
   music_folder: /media/music
 
+  # additional_music_folders: more folders to scan, beside music_folder.
+  # Every one of them has to be under /media, and that is not an arbitrary
+  # confinement: a show plays its track by handing the media player a
+  # media-source URI, which Home Assistant only serves for files under the
+  # media folder. A folder outside it would analyze perfectly and never
+  # play a note. Subfolders need no entry — each folder is scanned all the
+  # way down — and overlapping folders cost nothing, because tracks are
+  # de-duplicated by content hash.
+  additional_music_folders: []
+
   # director_mode: who choreographs a track's show.
   #   auto        — Claude designs the show when a Claude Code login is
   #                 available, and the built-in algorithmic choreographer is
@@ -109,6 +119,8 @@ options:
   log_level: info
 schema:
   music_folder: "match(^/media(/.*)?$)"
+  additional_music_folders:
+    - "match(^/media(/.*)?$)"
   director_mode: "list(auto|algorithmic|claude)"
   enable_ha_integration: bool
   log_level: "list(trace|debug|info|notice|warning|error|fatal)"

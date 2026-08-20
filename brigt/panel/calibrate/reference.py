@@ -8,11 +8,20 @@ show that is confidently wrong. The uneven pattern has one alignment.
 The track is deterministic — same bytes every time — because the analyzer
 correlates against the pattern *as specified here*, never against a file
 that might have been regenerated differently.
+
+Deterministic is also what makes `ensure()` cheap. Rendering the file is
+half a million samples through a Python loop — 1.6s on a laptop, several
+times that on the Pi this add-on mostly runs on — and the calibration
+wizard used to pay it on *every* press of Play, inside the request. Same
+constants in, same bytes out, so a file that is already the right length is
+already the right file.
 """
 from __future__ import annotations
 
+import array
+import io
 import math
-import struct
+import sys
 import wave
 from pathlib import Path
 
@@ -48,21 +57,69 @@ def render_samples(sample_rate: int = SAMPLE_RATE) -> list[float]:
     return samples
 
 
-def write_wav(path: Path, sample_rate: int = SAMPLE_RATE) -> Path:
-    """16-bit mono WAV at `path`. Parents created; idempotent content."""
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+def wav_bytes(sample_rate: int = SAMPLE_RATE) -> bytes:
+    """The track as a complete 16-bit mono WAV, in memory.
+
+    `array` rather than `struct.pack` per sample: same int16s, same bytes
+    (`test_the_two_packings_agree`), a fraction of the time. The byteswap is
+    for a big-endian host — `array('h')` is native-endian and WAV is not.
+    """
     samples = render_samples(sample_rate)
-    frames = b"".join(
-        struct.pack("<h", int(max(-1.0, min(1.0, s)) * 32767))
-        for s in samples
-    )
-    with wave.open(str(path), "wb") as handle:
+    pcm = array.array("h", (int(max(-1.0, min(1.0, s)) * 32767) for s in samples))
+    if sys.byteorder == "big":
+        pcm.byteswap()
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as handle:
         handle.setnchannels(1)
         handle.setsampwidth(2)
         handle.setframerate(sample_rate)
-        handle.writeframes(frames)
+        handle.writeframes(pcm.tobytes())
+    return buffer.getvalue()
+
+
+def write_wav(path: Path, sample_rate: int = SAMPLE_RATE) -> Path:
+    """16-bit mono WAV at `path`. Parents created; idempotent content.
+
+    Raises OSError if the folder cannot be made or the file cannot be
+    written — which is the interesting case on a real install, where /media
+    belongs to root and the panel does not.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(wav_bytes(sample_rate))
     return path
+
+
+# A canonical PCM WAV header is 44 bytes — RIFF (12) + fmt (24) + the data
+# chunk's own header (8) — which is what `wave` writes for a file carrying
+# no extra chunks. `expected_size` exists so `ensure` can answer "is this
+# already the track?" with a stat instead of a render, and
+# `test_the_expected_size_is_the_size_written` measures the arithmetic
+# against a real file rather than trusting it.
+WAV_HEADER_BYTES = 44
+
+
+def expected_size(sample_rate: int = SAMPLE_RATE) -> int:
+    """How many bytes a complete file measures."""
+    return WAV_HEADER_BYTES + 2 * int(DURATION_S * sample_rate)
+
+
+def ensure(path: Path, sample_rate: int = SAMPLE_RATE) -> Path:
+    """`write_wav`, skipped when the file on disk is already this track.
+
+    Length is the whole test, and it is enough: the content is a pure
+    function of the constants above, so the only ways to hold a wrong file
+    are to hold no file or a short one — a write cut off by a restart or a
+    full disk. Both are a different length, and both are healed by
+    rewriting, which is what the caller wanted anyway.
+    """
+    path = Path(path)
+    try:
+        if path.stat().st_size == expected_size(sample_rate):
+            return path
+    except OSError:
+        pass
+    return write_wav(path, sample_rate)
 
 
 def describe() -> dict:

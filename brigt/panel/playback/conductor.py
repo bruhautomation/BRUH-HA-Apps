@@ -111,7 +111,34 @@ class Conductor:
             cues, media_player=media_player,
             media_content_id=media_content_id, title=title,
             duration_s=duration_s, offset_ms=offset_ms))
+        self._task.add_done_callback(self._show_ended)
         return {"ok": True, "offset_ms": offset_ms, "cues": len(cues)}
+
+    def _show_ended(self, task: asyncio.Task) -> None:
+        """A show that could not start has to say so somewhere.
+
+        `start()` answers the request the moment the task exists — a show
+        runs for minutes and a request cannot — so everything that fails
+        afterwards fails out of sight. A play command the media player
+        refuses raises in `_play_one` before the cue loop is ever reached,
+        and the panel went on reporting "Running: 412 cues" over a dark
+        room: the only trace was asyncio's own "Task exception was never
+        retrieved", logged whenever the task was garbage collected.
+
+        The state file is what the panel polls and what the HA sensor
+        reads, so the error goes there. Restoring is the other half of an
+        ending nobody watched — the snapshot was taken before the play
+        command, and without this the lights keep whatever the last cue
+        left them at.
+        """
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is None:
+            return
+        log.error("show stopped: %s", error)
+        self._update_state(status="error", error=str(error))
+        asyncio.get_running_loop().create_task(self._restore_snapshot())
 
     async def start_party(self, queue: list[str], *, media_player: str,
                           loader, preparer=None) -> dict:

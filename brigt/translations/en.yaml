@@ -11,6 +11,14 @@ configuration:
       Where your music lives, under Home Assistant's /media folder
       (e.g. /media/music). BRigt scans this folder for tracks to analyze
       and plays the same files through your media player during a show.
+  additional_music_folders:
+    name: Extra music folders
+    description: >-
+      More folders to scan for music, one per line, beside the music folder
+      above (e.g. /media/parties). They must be under /media: a show plays
+      its track by handing your media player a media-source link, and Home
+      Assistant only serves those for files in its media folder. Subfolders
+      are already included — each folder is scanned all the way down.
   director_mode:
     name: Show director
     description: >-

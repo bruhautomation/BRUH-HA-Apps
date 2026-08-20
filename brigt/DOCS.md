@@ -13,8 +13,23 @@ everything in sync with the speaker actually playing the music.
 ### `music_folder`
 
 Where your music lives, under Home Assistant's `/media` folder (default
-`/media/music`). BRigt scans it for tracks to analyze and plays the same
-files through your media player during a show.
+`/media/music`). BRigt scans it — all the way down, so subfolders are
+already included — for tracks to analyze, and plays the same files through
+your media player during a show.
+
+### `additional_music_folders`
+
+More folders to scan, beside `music_folder`. One per line, e.g.
+`/media/parties`. Overlapping folders are fine: a track that two folders
+both reach is listed and analyzed once, because BRigt identifies tracks by
+their contents rather than by their path.
+
+They must be under `/media`, and that is not an arbitrary restriction. A
+show plays its track by handing your media player a media-source link, and
+Home Assistant only serves those for files inside its media folder — so a
+folder anywhere else would analyze perfectly and then never play a note.
+If your music lives elsewhere on the machine, point Home Assistant's own
+`media_dirs` at it (or move it under `/media`) and BRigt can use it.
 
 ### `director_mode`
 
@@ -89,6 +104,14 @@ Run it once per speaker, and again if a show ever feels consistently early
 or late (speakers can renegotiate their buffers between sessions). The
 stored profile keeps a median across runs plus a fine-tune nudge you can
 set per player.
+
+The click track is written to `/media/brigt/calibration.wav`, because your
+speaker fetches it from Home Assistant rather than from the add-on — a
+Chromecast or an AirPlay speaker has no route to BRigt's panel, and would
+not be allowed through it if it did. BRigt creates that folder at startup.
+If the wizard reports that it could not write the click track, the message
+names the folder: check that Home Assistant's media folder exists, and
+restart the add-on.
 
 ## Services
 
