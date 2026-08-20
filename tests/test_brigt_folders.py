@@ -459,6 +459,7 @@ class TestPickingFoldersByBrowsing(unittest.TestCase):
         self.assertNotIn(str(media / "parties"), body["scanning"])
 
     def test_ticking_twice_is_one_folder(self):
+        _track(Path(self.media.name) / "parties" / "loud.mp3", b"p")
         self._call("POST", "/api/media/folder", {"path": "parties", "add": True})
         _, body = self._call("POST", "/api/media/folder",
                              {"path": "parties", "add": True})
@@ -481,6 +482,20 @@ class TestPickingFoldersByBrowsing(unittest.TestCase):
         status, _ = self._call("POST", "/api/media/folder",
                                {"path": "../../etc", "add": True})
         self.assertEqual(400, status)
+
+    def test_a_folder_that_is_not_there_cannot_be_browsed_or_ticked(self):
+        """Found by walking real directory entries, so "no such folder" is
+        the answer rather than a listing of nothing."""
+        status, _ = self._call("GET", "/api/media/tree?path=imaginary")
+        self.assertEqual(404, status)
+        status, _ = self._call("POST", "/api/media/folder",
+                               {"path": "imaginary", "add": True})
+        self.assertEqual(404, status)
+
+    def test_a_file_is_not_a_folder_to_browse_into(self):
+        _track(Path(self.media.name) / "loose.mp3", b"z")
+        status, _ = self._call("GET", "/api/media/tree?path=loose.mp3")
+        self.assertEqual(404, status)
 
     def test_the_media_root_itself_cannot_be_ticked_by_accident(self):
         """It is already the parent of everything; ticking it would scan the

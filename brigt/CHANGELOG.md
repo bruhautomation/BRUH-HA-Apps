@@ -77,6 +77,19 @@ could actually set the add-on up from.
 - The `/media` confinement is one implementation rather than two: the show
   route had its own copy of the string arithmetic.
 
+- **A browse walks real directory entries.** Turning something typed into a
+  directory to open is the exact shape a path traversal is written for, and
+  checking the string and hoping is the answer everybody writes. Each
+  component is matched against what the filesystem actually reports, so the
+  path that comes out is built from directory entries rather than from the
+  request — and a folder that is not there answers "no such folder" instead
+  of listing nothing.
+- **The playback check no longer turns a media id into a path.** It statted
+  the file behind whatever media id it was handed; Home Assistant's own
+  resolve step answers "is the file there" better than a stat does, and a
+  media id is not always a local file. The one path it does stat is the
+  click track, whose path is the add-on's own.
+
 ### Changed
 - **The documentation is a rewrite.** DOCS.md now covers what you need,
   install, the order things want to happen in, every tab, every option with

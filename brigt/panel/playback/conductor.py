@@ -110,12 +110,16 @@ class Conductor:
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 — a watcher must not end a show
+            # Flattened, like everything else logged from outside: an
+            # exception's text is whatever raised it, and a newline in a
+            # logged value is that value writing its own log lines.
             log.warning("could not check whether %s started: %s",
-                        media_player, exc)
+                        playback_check.flat(media_player),
+                        playback_check.flat(exc))
             return
         if step["ok"]:
             return
-        log.warning("%s", step["detail"])
+        log.warning("%s", playback_check.flat(step["detail"]))
         self._update_state(playback_warning=step["detail"])
 
     @staticmethod

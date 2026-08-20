@@ -577,6 +577,34 @@ def _folder_listing(folder: Path) -> dict:
     return {"folders": entries}
 
 
+def _browse_media(raw: str) -> Path | None:
+    """A folder to open, found by walking real directory entries.
+
+    Browsing turns something typed into a directory to list, which is the
+    exact shape a path traversal is written for — and checking the string
+    and hoping is the answer everybody writes. This matches each component
+    against what `iterdir` actually reports instead, so the path that comes
+    out is built from directory entries rather than from the request, and a
+    name that is not there is simply not found. `_under_media` still runs
+    first, because "that is not a path inside /media" and "there is no such
+    folder" are different answers and the caller sends different statuses.
+    """
+    confined = _under_media(raw) if str(raw).strip() else MEDIA_DIR
+    if confined is None:
+        return None
+    folder = MEDIA_DIR
+    for wanted in confined.relative_to(MEDIA_DIR).parts:
+        try:
+            match = next((child for child in folder.iterdir()
+                          if child.is_dir() and child.name == wanted), None)
+        except OSError:
+            return None
+        if match is None:
+            return None
+        folder = match
+    return folder
+
+
 async def h_media_tree(request: web.Request) -> web.Response:
     """Browse /media so folders can be picked instead of typed.
 
@@ -586,12 +614,12 @@ async def h_media_tree(request: web.Request) -> web.Response:
     question, and `/api/playback/check` is the one that asks it.
     """
     raw = request.query.get("path", "")
-    folder = _under_media(raw) if raw else MEDIA_DIR
-    if folder is None:
+    if raw and _under_media(raw) is None:
         return web.json_response({"error": "folder must live under /media"},
                                  status=400)
-    if not folder.is_dir():
-        return web.json_response({"error": f"{folder} is not a folder"},
+    folder = await asyncio.to_thread(_browse_media, raw)
+    if folder is None:
+        return web.json_response({"error": "no such folder under /media"},
                                  status=404)
     listing = await asyncio.to_thread(_folder_listing, folder)
     if listing.get("error"):
@@ -613,10 +641,17 @@ async def h_media_folder(request: web.Request) -> web.Response:
     """Tick or untick a folder for scanning."""
     body = await _json_body(request)
     raw = str(body.get("path", "") or "")
-    folder = _under_media(raw)
-    if folder is None or folder == MEDIA_DIR:
+    confined = _under_media(raw)
+    if confined is None or confined == MEDIA_DIR:
         return web.json_response(
             {"error": "pick a folder inside /media"}, status=400)
+    # Found by walking, not by trusting: what gets stored is a path built
+    # from directory entries, and a folder that is not there cannot be
+    # ticked in the first place.
+    folder = await asyncio.to_thread(_browse_media, raw)
+    if folder is None or folder == MEDIA_DIR:
+        return web.json_response(
+            {"error": f"no such folder under /media: {raw}"}, status=404)
     relative = str(folder.relative_to(MEDIA_DIR))
     try:
         if body.get("add"):
@@ -933,12 +968,13 @@ async def h_playback_check(request: web.Request) -> web.Response:
         media_id = REFERENCE_MEDIA_ID
         path = REFERENCE_WAV
         expected = reference.expected_size()
-    elif media_id.startswith("media-source://media_source/local/"):
-        # A media id names a file we are about to stat, so it goes through
-        # the same confinement every other path off the wire does. It was
-        # joined onto MEDIA_DIR directly, which is a traversal wearing a
-        # media id's clothes.
-        path = _under_media(media_id[len("media-source://media_source/local/"):])
+    # A caller-supplied media id is deliberately NOT turned into a path.
+    # The file step exists for the click track, whose path is ours; for
+    # anything else Home Assistant's own resolve step answers "is the file
+    # there" better than a stat does, and a media id is not always a local
+    # file at all. Statting one meant a path expression built from the
+    # request, in the one handler people reach for when something is
+    # already wrong.
 
     result = await playback_check.check(entity_id, media_id, path=path,
                                         expected_size=expected)

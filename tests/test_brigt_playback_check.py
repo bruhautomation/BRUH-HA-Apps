@@ -424,11 +424,47 @@ class TestTheDiagnosticIsNotAFileReader(unittest.TestCase):
         self.assertEqual(200, status)
         self.assertIsNone(path, f"stat would have been called on {path}")
 
-    def test_an_ordinary_media_id_still_resolves_to_its_file(self):
+    def test_no_media_id_off_the_wire_becomes_a_path_at_all(self):
+        """Not even an innocent one. The file step exists for the click
+        track, whose path is ours; for anything else Home Assistant's own
+        resolve step answers "is the file there" better than a stat does —
+        and a media id is not always a local file to begin with."""
         status, _, path = self._check(
             "media-source://media_source/local/music/song.mp3")
         self.assertEqual(200, status)
-        self.assertEqual(Path(self.media.name) / "music" / "song.mp3", path)
+        self.assertIsNone(path)
+
+    def test_the_default_still_checks_the_click_track_itself(self):
+        """The one path the check does stat is a module constant."""
+        from aiohttp.test_utils import TestClient, TestServer
+
+        seen = {}
+        original = playback_check.check
+
+        async def spy(entity_id, content_id, *, path=None, **kwargs):
+            seen["path"] = path
+            seen["id"] = content_id
+            return {"ok": True, "steps": [], "summary": ""}
+
+        playback_check.check = spy
+        try:
+            async def scenario():
+                client = TestClient(TestServer(self.server.build_app()))
+                await client.start_server()
+                try:
+                    response = await client.request(
+                        "POST", "/api/playback/check",
+                        json={"media_player": "media_player.kitchen"})
+                    return response.status
+                finally:
+                    await client.close()
+
+            status = asyncio.run(scenario())
+        finally:
+            playback_check.check = original
+        self.assertEqual(200, status)
+        self.assertEqual(self.server.REFERENCE_WAV, seen["path"])
+        self.assertEqual(self.server.REFERENCE_MEDIA_ID, seen["id"])
 
 
 if __name__ == "__main__":
