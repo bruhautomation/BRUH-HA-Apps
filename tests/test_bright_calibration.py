@@ -567,7 +567,7 @@ class TestTheClickTrackCannotBeWritten(unittest.TestCase):
                                   {"media_player": "media_player.kitchen"})
         self.assertEqual(502, status)
         self.assertIn("media_player.kitchen", body["error"])
-        self.assertIn(self.server.REFERENCE_MEDIA_ID, body["error"])
+        self.assertIn(self.server.reference_media_id(), body["error"])
 
     def test_play_writes_the_track_where_home_assistant_can_serve_it(self):
         original = self.server.ha_client.play_media
@@ -587,7 +587,7 @@ class TestTheClickTrackCannotBeWritten(unittest.TestCase):
         self.assertEqual(reference.expected_size(), track.stat().st_size)
         # The media id is that file, spelled the way the local media source
         # spells it — the pair has to stay in step or nothing plays.
-        self.assertTrue(self.server.REFERENCE_MEDIA_ID.endswith(
+        self.assertTrue(self.server.reference_media_id().endswith(
             "/".join(track.parts[-2:])))
 
 

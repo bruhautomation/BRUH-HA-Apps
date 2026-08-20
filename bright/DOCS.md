@@ -119,6 +119,35 @@ ordered by `x` runs left to right across the room you drew, `center_out`
 starts in the middle, and `zone` walks room by room. Getting the positions
 roughly right is what makes the automatic shows look deliberate.
 
+#### Roles and zones are two different questions
+
+A **role** is what a light *is*, and it changes how BRight drives it. A
+`candle` stays warm and low (capped at 45%) and is kept out of strobes and
+hard pulses however enthusiastic a show gets; a `lamp` or `downlight`
+carries the beat at full range; a `strip` is the one that reads best for
+motion; `party` and `laser` are switches — on or off, no colour, and sent
+early to cover Home Assistant's latency. Getting a role wrong is how a
+bedside candle ends up strobing.
+
+A **zone** is just a name you give a group of lights, usually a room. Type
+the same word on several lights and they are one zone. There is no list to
+maintain and nothing needs a zone — a zone exists exactly as long as a
+light is in it, and deleting the last light in one deletes the zone.
+
+What zones buy you is being able to talk about *part* of the house:
+
+- `"select": {"zones": ["kitchen"]}` — this effect owns the kitchen and
+  leaves everything else exactly as the scene put it.
+- `"order": "zone"` — a chase or a sweep travels zone by zone rather than
+  straight across the floor plan, which is what you want in an open-plan
+  space where "left to right" crosses three areas.
+- A party's allowed-fixture list and the Claude director both read them, so
+  "keep it to the lounge after 11" is one word rather than five bulb ids.
+
+Set a zone when you add a bulb, or select any light on the map and type one
+into the field beside its role. The box offers the zones you already have
+and accepts a new name.
+
 ### Effects — what the lights actually do
 
 An **effect** is a thing some of your lights do for a stretch of music: a
@@ -391,6 +420,22 @@ links from).
 - `claude` — Claude only; compiling fails with the reason rather than
   silently downgrading.
 
+**What Claude is told.** The whole light map, per light: its id, its name,
+its role, its zone, where you put it on the floor plan, and whether it is a
+LIFX bulb or a switch. Plus the travel orders already worked out — the
+actual left-to-right order of your lights, the front-to-back order, and a
+walk around the room from each light to its nearest neighbour — because
+sorting a dozen coordinates is exactly the kind of arithmetic a language
+model does badly and confidently. It designs for the room you drew, and it
+can name a light rather than only a kind of light.
+
+**Writing a single effect.** The Effects tab has a **Describe it** box:
+say what you want in a sentence ("bounce a warm pulse between the two
+window lamps") and Claude writes the effect into the form, for this room.
+It lands unsaved — preview it, change anything, then save it as a preset or
+drop it into a show. This needs brAIn too; everything else in the tab works
+without it.
+
 ### `enable_ha_integration`
 
 *Default: on.* Deploys the companion `bright` integration and runs the bridge
@@ -543,20 +588,38 @@ issued for a name the speaker cannot resolve) fails the same silent way.
 
 ### The media step: "Home Assistant will not resolve…"
 
-BRight builds `media-source://media_source/local/<path>` from where a file
-sits under `/media`. `local` is the default id of Home Assistant's local
-media source — but if you set `media_dirs` in `configuration.yaml`, that
-default is *replaced*, and the id may be something else entirely. Core then
-answers with its own HTTP 500, which used to arrive as a bare number.
+BRight plays a file by handing Home Assistant a media id built from where
+the file sits under `/media` — `media-source://media_source/<source>/<path>`.
+That `<source>` is the name Core gives the media directory, and it is
+`local` **by default**. Set `media_dirs` in `configuration.yaml` and the
+default is *replaced*: the source is called whatever your key says, and
+every id built with `local` comes back `Unknown source directory`. Nothing
+plays at all — not the click track, not a single song.
 
-**The fix:** keep a `local:` entry pointing at `/media`:
+BRight works the name out for itself. It writes the click track (a file it
+knows is there), then asks Core to resolve it under each media source Core
+reports until one answers, and remembers which. Core does not publish the
+filesystem path behind a source, so which one is your `/media` is not
+something that can be read — only tried.
 
-```yaml
-homeassistant:
-  media_dirs:
-    local: /media
-    nas: /mnt/nas
-```
+So on nearly every install this needs nothing from you. Two cases do:
+
+- **You changed `media_dirs` while the add-on was running.** Lab → Test
+  playback picks the new name up on the next try; **Look again** under the
+  result forces it immediately. No restart.
+- **None of Core's media directories is the folder BRight writes to.** Then
+  the message names the ones Core does have, and one of them has to point
+  at the same folder the add-on sees as `/media`:
+
+  ```yaml
+  homeassistant:
+    media_dirs:
+      local: /media      # BRight writes here; Core has to serve from here
+      nas: /mnt/nas
+  ```
+
+  The names do not matter — `local` is not required — but one entry has to
+  be that folder, or Home Assistant has no way to serve what BRight writes.
 
 ### The file step: "could not write the click track"
 

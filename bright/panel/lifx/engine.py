@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import math
 import os
+import secrets
 import socket
 import time
 from pathlib import Path
@@ -109,7 +110,19 @@ class LifxEngine:
     def __init__(self) -> None:
         # A stable-ish nonzero source id tells our replies apart from other
         # clients on the same network segment.
-        self.source = (os.getpid() & 0xFFFF) | 0x42420000
+        # Unpredictable, and deliberately so. This socket is bound to every
+        # interface (LIFX discovery is a broadcast and the replies come back
+        # to the sender's own address, which is why the add-on runs
+        # host_network at all), so anything on the LAN can send to it. The
+        # source id is the whole of what separates a bulb's reply from a
+        # stranger's datagram: `_on_datagram` drops everything that does not
+        # carry it. Deriving it from the pid made that filter guessable — a
+        # fixed 0x4242 prefix over a container pid that is usually small —
+        # and a guessed id buys an attacker a forged StateService, which is
+        # a phantom device in the registry pointed at an address of their
+        # choosing. 31 bits from `secrets` costs nothing and ends that.
+        # The high bit is set so the id can never be 0, which LIFX reserves.
+        self.source = secrets.randbits(31) | 0x80000000
         self._sequence = 0
         self._transport: asyncio.DatagramTransport | None = None
         self._pending: dict[int, tuple[int, asyncio.Future]] = {}
@@ -129,10 +142,17 @@ class LifxEngine:
         # INADDR_ANY by default ("" is Python's spelling of it), and
         # deliberately: discovery is a LAN broadcast and the bulbs' replies
         # arrive on whichever interface faces them — this add-on runs
-        # host_network for exactly that. Nothing listens here in the
-        # service sense (only LIFX datagrams matching our own source id
-        # are ever acted on); BRIGHT_LIFX_BIND pins a specific interface
-        # address on a multi-homed host.
+        # host_network for exactly that. Binding one interface would work
+        # on a single-homed box and silently find no bulbs on any other,
+        # so BRIGHT_LIFX_BIND is the escape hatch rather than the default.
+        #
+        # CodeQL flags this bind, and the answer is not that the bind is
+        # narrow — it cannot be — but that nothing here is a service. This
+        # is a client socket on an ephemeral port; the only datagrams acted
+        # on are those carrying the source id chosen in __init__, which is
+        # now 31 unpredictable bits rather than a pid behind a fixed
+        # prefix. That id is the security boundary, so it is where the
+        # strength belongs.
         sock.bind((os.environ.get("BRIGHT_LIFX_BIND", ""), 0))
         self._transport, _ = await loop.create_datagram_endpoint(
             lambda: _Protocol(self), sock=sock)
@@ -176,9 +196,18 @@ class LifxEngine:
             future.set_result(header)
 
     def send(self, data: bytes, addr) -> None:
+        """Every outbound packet, stamped with this connection's source id.
+
+        One place, so nothing upstream has to remember: cue packets are
+        serialized by the compiler and saved with the show, discovery
+        packets are built here, and both leave carrying the id the engine
+        is actually listening for. Before this, the compiler baked its
+        caller's id into the file — which worked only because the id was
+        derived from the pid and a restart usually got the same one back.
+        """
         if self._transport is None:
             raise RuntimeError("engine not started")
-        self._transport.sendto(data, addr)
+        self._transport.sendto(packets.with_source(data, self.source), addr)
 
     async def send_governed(self, serial: str, data: bytes, addr) -> None:
         """A send that can never exceed the per-device ceiling."""

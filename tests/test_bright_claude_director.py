@@ -83,8 +83,15 @@ class TestRoundTrip(ClaudeDirectorCase):
         # The digest carried what a director needs to know.
         self.assertIn("SECTIONS", brain.seen_prompt)
         self.assertIn("DROPS", brain.seen_prompt)
-        self.assertIn("lamp: 2", brain.seen_prompt)
-        self.assertIn("laser: 1", brain.seen_prompt)
+        self.assertIn("lamp (2)", brain.seen_prompt)
+        self.assertIn("laser (1)", brain.seen_prompt)
+        # And the part that used to be missing: a director cannot design for
+        # a room it cannot see. Every light by id and by name, the zone it
+        # is in, and the orders it can travel in.
+        self.assertIn("lifx-d073d5000001", brain.seen_prompt)
+        self.assertIn("Left lamp", brain.seen_prompt)
+        self.assertIn("living", brain.seen_prompt)
+        self.assertIn('order:"x"', brain.seen_prompt)
         self.assertIn("no prose", brain.seen_prompt)
 
     def test_a_failed_task_raises(self):
@@ -149,3 +156,63 @@ class TestLyricsInDigest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class TestOneEffectFromASentence(ClaudeDirectorCase):
+    """A show is four minutes of decisions; an effect is one idea, and
+    people have ideas in sentences."""
+
+    def test_a_described_effect_comes_back_validated(self):
+        effect = {"type": "chase", "name": "window bounce",
+                  "select": {"ids": ["lifx-d073d5000001",
+                                     "lifx-d073d5000002"]},
+                  "order": "listed",
+                  "params": {"step_beats": 0.5, "bounce": True}}
+        brain = _FakeBrain(claude_director.TASKS_DIR,
+                           claude_director.RESULTS_DIR,
+                           lambda task: {"id": task["id"],
+                                         "status": "completed",
+                                         "result": json.dumps(effect)})
+        brain.start()
+        try:
+            written = claude_director.write_effect(
+                "bounce between the two window lamps", FIXTURES, timeout_s=10)
+        finally:
+            brain.join(timeout=5)
+        self.assertEqual("chase", written["type"])
+        self.assertEqual(True, written["params"]["bounce"])
+        # The room went with the question: an effect written for a room the
+        # model cannot see is an effect about nothing.
+        self.assertIn("lifx-d073d5000001", brain.seen_prompt)
+        self.assertIn("Left lamp", brain.seen_prompt)
+        self.assertIn("bounce between the two window lamps", brain.seen_prompt)
+
+    def test_an_unusable_effect_is_refused_not_stored(self):
+        """The validator is the same one a hand-typed effect goes through.
+        A generated effect gets no privileges, and an unknown type is caught
+        here rather than at compile time in the middle of an evening."""
+        brain = _FakeBrain(claude_director.TASKS_DIR,
+                           claude_director.RESULTS_DIR,
+                           lambda task: {"id": task["id"],
+                                         "status": "completed",
+                                         "result": json.dumps(
+                                             {"type": "disco_inferno"})})
+        brain.start()
+        try:
+            with self.assertRaises(ValueError) as caught:
+                claude_director.write_effect("go wild", FIXTURES, timeout_s=10)
+        finally:
+            brain.join(timeout=5)
+        self.assertIn("disco_inferno", str(caught.exception))
+
+    def test_an_empty_description_never_reaches_claude(self):
+        with self.assertRaises(ValueError):
+            claude_director.write_effect("   ", FIXTURES, timeout_s=10)
+
+    def test_the_effect_prompt_carries_the_whole_catalog(self):
+        """The types and their parameters are generated from the catalog,
+        so an effect gaining a parameter cannot leave the prompt behind."""
+        prompt = claude_director._effect_prompt("something", FIXTURES)
+        for name in ("chase", "strobe", "breathe", "aux"):
+            self.assertIn(name, prompt)
+        self.assertIn("BEATS", prompt)
+

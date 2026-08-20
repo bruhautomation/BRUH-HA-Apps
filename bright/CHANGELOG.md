@@ -5,6 +5,106 @@ All notable changes to the **BRight** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.11.0
+
+Claude knows what room it is lighting, zones are a thing you can set,
+and the LIFX socket no longer trusts a guessable id.
+
+### Added
+
+- **Describe an effect and Claude writes it.** The Effects tab has a
+  **Describe it** box: a sentence ("bounce a warm pulse between the two
+  window lamps") comes back as a real effect in the builder, for this room,
+  with every light named. It lands **unsaved** — an effect you have not
+  looked at is not an effect you want — and previews immediately. Validated
+  by the same `clean_effect` a hand-typed effect goes through: a generated
+  effect gets no privileges, and an unusable one is caught here rather than
+  at compile time in the middle of an evening. Needs brAIn, like the show
+  director; everything else in the tab works without it.
+- **A zone can be set on any light, at any time.** It was settable only
+  while *adding* a bulb, so the answer to "these four are the kitchen" was
+  to remove them and add them again. The field sits beside the role picker
+  on the map's selection bar, offers the zones you already have, and takes
+  a new name.
+- DOCS.md explains what a role is and what a zone is, because they are two
+  different questions and only one of them changes how a light is driven.
+
+### Changed
+
+- **The Claude director is told what room it is designing for.** It used to
+  get roles and x positions — no ids, so `select.ids` was in the schema and
+  unusable; no names, so one lamp could not be told from another; no y,
+  though four travel orders key on it; and no zones, though `select.zones`
+  and `order: "zone"` both do. Every generated script selected by role,
+  because role was the only thing it had. It now gets a row per light, the
+  zones that exist, what each role is *for*, and the travel orders already
+  worked out.
+- The zones in use ride down with the map, derived on read rather than
+  stored — a zone exists exactly as long as a light is in it.
+- The effect builder no longer flattens a selection to ids. An effect that
+  says "every candle" stays "every candle" until you tick a box; flattening
+  it to the candles that exist today is wrong the moment a fifth is added.
+
+## 0.10.1
+
+Nothing played on an install that sets `media_dirs`.
+
+### Fixed
+
+- **BRight now works out what Home Assistant calls its media folder, instead
+  of assuming.** Every file BRight plays is handed to Core as
+  `media-source://media_source/<source>/<path>`, and `<source>` was written
+  as `local` — which is Core's *default* name for its local media source and
+  nothing more. An install that sets `media_dirs` in `configuration.yaml`
+  renames it, and then every id BRight builds comes back `Unknown source
+  directory`: no click track, no calibration, and so no music either. The
+  name is discovered now — BRight writes the click track, then asks Core to
+  resolve it under each media source Core reports until one answers, and
+  remembers which. Core does not publish the path behind a source, so which
+  one is our `/media` cannot be read, only tried.
+- A media id that fails to resolve **drops the remembered name and goes
+  looking again**, so editing `media_dirs` costs one failed play rather than
+  a restart — and the Lab's playback test reports what it found. Naming the
+  problem and then building the next id the same wrong way was a diagnosis
+  that fixed nothing.
+- The failure, when BRight genuinely cannot find a match, now names the media
+  directories Core *does* have — the person has to be able to recognise
+  their own `configuration.yaml` in the answer.
+
+### Changed
+
+- **The Claude director is told what room it is designing for.** It used to
+  get roles and x positions (`lamp: 3 at x=[0.10, 0.50, 0.90]`) — no ids, so
+  `select.ids` was in the schema and unusable; no names, so one lamp could
+  not be told from another; no y, while half the travel orders key on it;
+  and no zones, though `select.zones` and `order: "zone"` both need them.
+  Every generated script selected by role because role was all it had. It
+  now gets every light as a row — id, name, role, zone, x/y, and how it is
+  driven — the zones that exist, and the travel orders **already worked
+  out**, because sorting a dozen floats by hand is exactly what a language
+  model does badly and confidently.
+
+### The LIFX source id is this connection's, and it is unguessable
+
+Two problems met in one field. The engine's socket is bound to every
+interface — LIFX discovery is a broadcast and the replies come back to the
+sender's own address, which is the whole reason this add-on runs
+`host_network` — so anything on the LAN can send to it, and the only thing
+separating a bulb's reply from a stranger's datagram is the source id in
+the header. That id was `(pid & 0xFFFF) | 0x42420000`: a fixed prefix over
+a container pid that is usually a small number. Guessing it bought a
+forged `StateService`, which is a phantom device in the registry pointed
+at whatever address the sender chose. It is 31 bits from `secrets` now.
+
+Making it unpredictable exposed the second problem: the compiler baked the
+id it was handed into every cue packet, and shows are *saved* — so a show
+compiled in one process was replayed in the next still carrying the old
+id. That was invisible only because a pid-derived id usually survived a
+restart. The id is stamped at dispatch now (`packets.with_source`, in
+`Engine.send`, the one place every outbound packet passes through), so a
+compiled show is portable between runs and between installs, and the id
+is free to be drawn fresh each time.
+
 ## 0.10.0
 
 The show editor is a picture you can scrub, and editing it is the primary

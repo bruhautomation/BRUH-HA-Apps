@@ -510,3 +510,34 @@ select { max-width: 100%; }
   border: 1px solid var(--line);
   border-radius: 12px;
 }
+
+/* Which of Core's media sources BRight builds ids with. Renders only when
+   there is something to say — a line reporting `local` on the install
+   where `local` is right is a line nobody needs, and the whole point of
+   the discovery is that it is invisible when it works. */
+.media-source {
+  margin-top: 10px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.media-source:empty { display: none; }
+.media-source .ms-bad { color: var(--bad, #d9534f); }
+.media-source button { margin-top: 8px; }
+
+/* The zone field on the map's selection bar. Same 44px floor as the role
+   picker beside it — the floor is set once for controls in this bar rather
+   than per control, which is the lesson from the role picker rendering at
+   the browser's default 19px because the rule covered only what existed
+   when it was written. */
+.zone-pick {
+  min-height: 44px;
+  min-width: 120px;
+  flex: 0 1 160px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line, #d5d8de);
+  background: var(--bg, #fff);
+  color: inherit;
+  font: inherit;
+}
+@media (pointer: coarse) { .zone-pick { font-size: 16px; } }

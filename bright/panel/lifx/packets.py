@@ -85,6 +85,32 @@ def build(msg_type: int, payload: bytes = b"", *, target: bytes = b"",
     return header + payload
 
 
+# The source field sits at bytes 4..8 of the frame (little-endian u32),
+# right after `size` and `flags`.
+_SOURCE_OFFSET = 4
+
+
+def with_source(data: bytes, source: int) -> bytes:
+    """`data` with its source field rewritten.
+
+    The source id identifies THIS connection, and a compiled show is a file
+    that outlives the process that compiled it — so the id cannot be part
+    of what gets saved. Cue packets are pre-serialized at compile time and
+    replayed weeks later; stamping the live id here, at the one place every
+    outbound packet passes through, is what keeps a show portable between
+    runs (and between installs) while letting the id itself be chosen
+    freshly and unpredictably each time.
+
+    Raises ValueError on a datagram too short to carry the field, rather
+    than silently returning something that is not a LIFX packet.
+    """
+    if len(data) < _SOURCE_OFFSET + 4:
+        raise ValueError("datagram shorter than a LIFX frame header")
+    return (bytes(data[:_SOURCE_OFFSET])
+            + struct.pack("<I", source & 0xFFFFFFFF)
+            + bytes(data[_SOURCE_OFFSET + 4:]))
+
+
 def parse_header(data: bytes) -> dict:
     """The fields a reply reader needs. Raises ValueError on a short/alien
     datagram — port 56700 hears other clients' traffic too."""

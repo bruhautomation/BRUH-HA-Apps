@@ -219,7 +219,7 @@
   const ROLE_GLYPH = {
     candle: "🕯", downlight: "▽", lamp: "◉", strip: "▬", party: "✦", laser: "✧",
   };
-  let mapData = { fixtures: [], roles: [] };
+  let mapData = { fixtures: [], roles: [], zones: [] };
 
   // Which light is selected. A dot used to carry a role glyph and a `title`,
   // which is no name at all on a phone — you dragged an anonymous circle and
@@ -283,6 +283,34 @@
       fixture.role = pick.value;
       saveFixture(fixture);
     });
+    // A zone is a name you give a group of lights — usually a room. It was
+    // settable only while ADDING a bulb, which meant the answer to "these
+    // four are the kitchen" was to remove them and add them again. It is a
+    // free-text field with a datalist rather than a picker because the
+    // first light in a new zone has to be able to invent the name, and a
+    // picker of existing zones can only ever offer the ones already there.
+    const zone = document.createElement("input");
+    zone.className = "zone-pick";
+    zone.type = "text";
+    zone.placeholder = "room / zone";
+    zone.value = fixture.zone || "";
+    zone.setAttribute("list", "mapZoneNames");
+    zone.setAttribute("aria-label", "Room or zone for " + fixture.label);
+    const commitZone = () => {
+      const wanted = zone.value.trim();
+      if (wanted === (fixture.zone || "")) return;
+      fixture.zone = wanted;
+      saveFixture(fixture);
+    };
+    zone.addEventListener("change", commitZone);
+    zone.addEventListener("blur", commitZone);
+    const names = document.createElement("datalist");
+    names.id = "mapZoneNames";
+    for (const existing of mapData.zones || []) {
+      const option = document.createElement("option");
+      option.value = existing;
+      names.appendChild(option);
+    }
     const remove = document.createElement("button");
     remove.className = "btn small";
     remove.textContent = "Remove this light";
@@ -290,6 +318,8 @@
     bar.appendChild(name);
     bar.appendChild(where);
     bar.appendChild(pick);
+    bar.appendChild(zone);
+    bar.appendChild(names);
     bar.appendChild(remove);
   }
 
@@ -968,6 +998,11 @@
     try {
       renderPlaybackCheck(await post("api/playback/check",
                                      { media_player: entityId }));
+      try {
+        renderMediaSource(await api("api/media/source"));
+      } catch (error) {
+        // The chain report is the answer; this line is a footnote to it.
+      }
     } catch (error) {
       box.innerHTML = "";
       const failed = document.createElement("p");
@@ -976,6 +1011,45 @@
       box.appendChild(failed);
     }
   });
+
+  // Which media source BRight builds ids with. Rendered only when it is
+  // NOT the default: on the install where `local` is right, saying so is a
+  // line nobody needs, and discovery working is discovery you never see.
+  function renderMediaSource(state) {
+    const box = $("mediaSource");
+    box.innerHTML = "";
+    if (!state) return;
+    const bits = [];
+    if (state.error) {
+      const bad = document.createElement("p");
+      bad.className = "ms-bad";
+      bad.textContent = state.error;
+      bits.push(bad);
+    } else if (state.discovered && state.source_id !== "local") {
+      const note = document.createElement("p");
+      note.className = "muted";
+      note.textContent = "Home Assistant calls this add-on's " +
+        state.media_root + ' folder "' + state.source_id + '", not the ' +
+        'usual "local" — BRight found that and is using it.';
+      bits.push(note);
+    }
+    if (!bits.length) return;
+    const again = document.createElement("button");
+    again.className = "btn small";
+    again.textContent = "Look again";
+    again.addEventListener("click", async () => {
+      again.disabled = true;
+      again.textContent = "looking…";
+      try {
+        renderMediaSource(await post("api/media/source/rediscover", {}));
+      } catch (error) {
+        again.disabled = false;
+        again.textContent = "Look again — " + error.message;
+      }
+    });
+    for (const bit of bits) box.appendChild(bit);
+    box.appendChild(again);
+  }
 
   $("btnLoadPlayers").addEventListener("click", async () => {
     const select = $("calPlayer");
@@ -1378,6 +1452,7 @@
   // ------------------------------------------------------------------
   const fxState = {
     catalog: [], byType: {}, fixtures: [], palettes: [], presets: [],
+    select: null,
     orders: [], alignments: [], roles: [], zones: [], defaultOrder: "",
     selection: new Set(), params: {}, preview: null, playing: false,
     frame: 0, raf: null, lastTick: 0,
@@ -1476,9 +1551,37 @@
       order: $("fxOrder").value,
       align: $("fxAlign").value,
       respect_roles: $("fxRespectRoles").checked,
-      select: { ids: Array.from(fxState.selection) },
+      // The tick boxes are ids, but an effect's select is not only ids.
+      // A generated effect (or a preset) that says "every candle" has to
+      // STAY "every candle" — flattening it to the four candles that exist
+      // today is wrong the moment a fifth is added, and it is the same
+      // quiet rewrite the show editor's dialog was fixed for. Ticking any
+      // box is what hands the selection back to the ids.
+      select: fxState.select || { ids: Array.from(fxState.selection) },
       params: readFxParams(),
     };
+  }
+
+  // A kept select (roles, zones) stops being the answer the moment somebody
+  // uses the tick boxes: from then on the ticks ARE the selection, which is
+  // what they look like they are.
+  function fxTakeSelection() {
+    fxState.select = null;
+    renderFxFixtures();
+    renderFxSelectNote();
+  }
+
+  function renderFxSelectNote() {
+    const box = $("fxSelectNote");
+    if (!box) return;
+    if (!fxState.select) {
+      box.textContent = "";
+      return;
+    }
+    box.textContent = "This effect selects: " +
+      edDescribeSelect(fxState.select) +
+      " — the ticks below show which lights that is right now. Tick anything " +
+      "to replace it with a fixed list.";
   }
 
   function renderFxFixtures() {
@@ -1533,7 +1636,7 @@
       if (allOn) fxState.selection.delete(id);
       else fxState.selection.add(id);
     }
-    renderFxFixtures();
+    fxTakeSelection();
   });
 
   $("fxFixtures").addEventListener("change", (event) => {
@@ -1541,11 +1644,12 @@
     if (!box) return;
     if (box.checked) fxState.selection.add(box.dataset.id);
     else fxState.selection.delete(box.dataset.id);
+    fxTakeSelection();
   });
 
   $("btnFxAll").addEventListener("click", () => {
     for (const fixture of fxState.fixtures) fxState.selection.add(fixture.id);
-    renderFxFixtures();
+    fxTakeSelection();
   });
   $("btnFxNone").addEventListener("click", () => {
     fxState.selection.clear();
@@ -1864,19 +1968,73 @@
     }
     const preset = fxState.presets.find((p) => p.name === name);
     if (!preset) return;
-    const effect = preset.effect || {};
-    $("fxType").value = effect.type;
-    fxState.params = effect.params || {};
-    renderFxParams();
-    $("fxName").value = effect.name || preset.name;
-    $("fxOrder").value = effect.order || "x";
-    $("fxAlign").value = effect.align || "beat";
-    $("fxRespectRoles").checked = effect.respect_roles !== false;
-    fxState.selection = new Set((effect.select && effect.select.ids) || []);
-    renderFxFixtures();
+    putEffectInForm(preset.effect || {});
     $("fxPresetName").value = preset.name;
     $("fxStatus").textContent = "Loaded " + preset.name + ".";
   });
+
+  $("btnFxAsk").addEventListener("click", async () => {
+    const description = $("fxAsk").value.trim();
+    const status = $("fxAskStatus");
+    const button = $("btnFxAsk");
+    if (!description) {
+      status.textContent = "Say what you want the lights to do first.";
+      return;
+    }
+    button.disabled = true;
+    status.textContent = "Claude is writing it — this takes a few seconds…";
+    try {
+      const body = await post("api/effects/describe", { description });
+      putEffectInForm(body.effect || {});
+      status.textContent = "Written. Preview it, change anything, then save " +
+        "it or drop it into a show — nothing has been saved yet.";
+      // Straight to the preview: the whole question about a generated
+      // effect is what it looks like, and making somebody find the button
+      // is making them ask twice.
+      $("btnFxPreview").click();
+    } catch (error) {
+      status.textContent = error.message;
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  $("fxAsk").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") $("btnFxAsk").click();
+  });
+
+  // The one route from an effect object into the builder's form. Two
+  // callers — a saved preset, and one Claude has just written — and a
+  // second copy of "which control holds which key" is the drift that put
+  // three quiet rewrites into the show editor's dialog.
+  function putEffectInForm(effect) {
+    const select = effect.select || {};
+    $("fxType").value = effect.type;
+    fxState.params = effect.params || {};
+    renderFxParams();
+    $("fxName").value = effect.name || "";
+    $("fxOrder").value = effect.order || fxState.defaultOrder || "x";
+    $("fxAlign").value = effect.align || "beat";
+    $("fxRespectRoles").checked = effect.respect_roles !== false;
+    // Ticks follow the ids the select resolves to; the select itself is
+    // kept whole when it says anything the ticks cannot (a role, a zone,
+    // an exclude), so previewing or saving does not quietly narrow it.
+    const byRole = (f) => (select.roles || []).includes(f.role);
+    const byZone = (f) => (select.zones || []).includes((f.zone || "").trim());
+    const byId = (f) => (select.ids || []).includes(f.id);
+    const named = (select.ids || []).length || (select.roles || []).length ||
+      (select.zones || []).length;
+    fxState.selection = new Set(
+      fxState.fixtures
+        .filter((f) => (named ? (byId(f) || byRole(f) || byZone(f)) : true))
+        .filter((f) => !(select.exclude || []).includes(f.id))
+        .map((f) => f.id));
+    const idsOnly = !(select.roles || []).length &&
+      !(select.zones || []).length && !(select.exclude || []).length;
+    fxState.select = idsOnly ? null : select;
+    renderFxFixtures();
+    renderFxSelectNote();
+  }
 
   // -- putting an effect into a show -----------------------------------
   async function loadFxShowTracks() {

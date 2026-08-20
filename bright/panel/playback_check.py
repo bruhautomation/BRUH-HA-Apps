@@ -38,6 +38,7 @@ from urllib.parse import urlsplit
 
 import ha_client
 import ha_ws
+import media_source
 
 # MediaPlayerEntityFeature.PLAY_MEDIA, from Home Assistant's own enum. A
 # player without it cannot be sent media at all, whatever else is true.
@@ -155,14 +156,26 @@ async def resolve_step(media_content_id: str) -> tuple[dict, dict]:
     will. Returns the step and the raw answer (for the caller's summary)."""
     answer = await ha_ws.resolve_media(media_content_id)
     if answer.get("error"):
+        # The id did not resolve, so whatever source id it was built with
+        # is wrong — drop it and go and find the right one. Re-discovery is
+        # the whole point: reporting "your media source is not called local"
+        # and then building the next id with `local` again is a diagnosis
+        # that fixes nothing, which is what this used to do.
+        media_source.forget()
+        found = await media_source.discover()
+        if found.get("discovered"):
+            fix = (f"Home Assistant calls that media directory "
+                   f"{found['source_id']!r}, not "
+                   f"{media_source.DEFAULT_ID!r} — BRight has picked that up "
+                   f"and the next play will use it. Try again.")
+        else:
+            fix = flat(found.get("error") or
+                       "BRight could not work out which of Home Assistant's "
+                       "media sources is its /media folder.", 400)
         return _step(
             "media", False,
             f"Home Assistant will not resolve {flat(media_content_id)}: "
-            f"{flat(answer['error'])}",
-            "The id is built from where the file sits under /media. If you "
-            "set `media_dirs` in configuration.yaml, Home Assistant's local "
-            "media source is no longer called `local` and BRight's ids will "
-            "not resolve — see the add-on documentation.",
+            f"{flat(answer['error'])}", fix,
         ), answer
     url = flat(answer.get("url") or "")
     mime = flat(answer.get("mime_type") or "")

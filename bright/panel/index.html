@@ -108,10 +108,20 @@
       </div>
       <p class="muted small">Tap a light to select it, then drag it where it
         is in the room (left ↔ right matters most — chases and sweeps travel
-        across x). The selected light can be re-roled or removed right here.
-        Add bulbs one at a time from the picker below — with a role and a
-        room — or drop every discovered one on the floor at once and sort
-        them out afterwards.</p>
+        across x). The selected light can be re-roled, put in a zone, or
+        removed right here. Add bulbs one at a time from the picker below —
+        with a role and a zone — or drop every discovered one on the floor at
+        once and sort them out afterwards.</p>
+      <p class="muted small"><strong>Roles and zones are two different
+        questions.</strong> A <em>role</em> is what a light IS — a candle
+        stays warm and low and never strobes, a lamp carries the beat, a
+        strip carries motion, a party light is a switch. A <em>zone</em> is
+        just a name you give a group, usually a room: type the same word on
+        several lights and they become one. Nothing needs a zone, and there
+        is no list to maintain — a zone exists exactly as long as a light is
+        in it. What zones buy you is being able to say "the kitchen" in an
+        effect, or to send a chase travelling zone by zone through the
+        house rather than straight across the floor plan.</p>
       <div id="mapSelection" class="map-selection"></div>
       <div id="mapFloor" class="map-floor"></div>
       <div class="demo-controls" id="bulbPicker">
@@ -119,7 +129,7 @@
           <option value="">— discovered bulbs —</option>
         </select>
         <select id="bulbRole"></select>
-        <input type="text" id="bulbZone" placeholder="zone (optional)"
+        <input type="text" id="bulbZone" placeholder="zone, e.g. Kitchen (optional)"
                maxlength="32">
         <button id="btnAddBulb" class="btn small">Add this bulb</button>
         <button id="btnRefreshBulbs" class="btn small">Refresh list</button>
@@ -143,6 +153,22 @@
       strobe on the last four bars. Pick the lights it owns — everything you
       do not pick is left exactly as it was — set it up against a tempo,
       watch it, then save it or drop it into a show.</p>
+
+    <div class="card" id="fxAskCard">
+      <div class="card-head">
+        <h3>Describe it</h3>
+      </div>
+      <p class="muted small">Say what you want in a sentence and Claude
+        writes the effect into the form below, for this room — it is given
+        every light by name, what each one is, and where you put it on the
+        map. Nothing is saved: look at it, preview it, change anything.</p>
+      <div class="demo-controls">
+        <input type="text" id="fxAsk" maxlength="200"
+               placeholder="bounce a warm pulse between the two window lamps">
+        <button id="btnFxAsk" class="btn">Write it</button>
+      </div>
+      <p id="fxAskStatus" class="muted small"></p>
+    </div>
 
     <div class="card">
       <div class="card-head">
@@ -186,6 +212,7 @@
       <p class="muted small">Ticked lights are the ones this effect drives.
         Everything unticked keeps doing whatever the rest of the show is
         doing — that is the point of building effects rather than scenes.</p>
+      <p id="fxSelectNote" class="muted small"></p>
       <div id="fxRoleQuick" class="fx-quick"></div>
       <div id="fxFixtures" class="fx-fixtures"></div>
     </div>
@@ -384,6 +411,7 @@
         speaker, and whether the speaker actually started — and names the
         step that broke.</p>
       <div id="playbackCheck" class="list"></div>
+      <div id="mediaSource" class="media-source"></div>
     </div>
 
     <div class="card">
