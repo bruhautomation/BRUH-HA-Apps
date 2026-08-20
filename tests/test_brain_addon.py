@@ -145,7 +145,7 @@ class TestPanelBranding(unittest.TestCase):
     # caps are built to one rule rather than two.
     SMOOTH_GABLE = "M293.5,21.6V70.83S189.86,174.05,188.83,175.5H450.09Z"
     BLOCKY_GABLE = "M188.83,175.5V158.4H200.46"
-    # BRigt's roof: the same apex, eaves and knockout window, drawn as a
+    # BRight's roof: the same apex, eaves and knockout window, drawn as a
     # straight plane with two light-beam knockouts fanning from under the
     # apex — the signal motif rebuilt as light, which is the product.
     BEAMED_GABLE = "M293.5,21.6L450.09,175.5H188.83Z"
@@ -163,7 +163,7 @@ class TestPanelBranding(unittest.TestCase):
 
         for app, gable in (("brain", self.SMOOTH_GABLE),
                            ("minecraft", self.BLOCKY_GABLE),
-                           ("brigt", self.BEAMED_GABLE)):
+                           ("bright", self.BEAMED_GABLE)):
             for svg in sorted((BASE_DIR / "branding" / app).glob("*.svg")):
                 self.assertIn(gable, svg.read_text(),
                               f"{svg.name} does not carry {app}'s gable path")
@@ -174,7 +174,7 @@ class TestPanelBranding(unittest.TestCase):
         a brAIn tile would pass every other check here."""
         roofs = {"brain": self.SMOOTH_GABLE,
                  "minecraft": self.BLOCKY_GABLE,
-                 "brigt": self.BEAMED_GABLE}
+                 "bright": self.BEAMED_GABLE}
         for app, mine in roofs.items():
             others = [path for owner, path in roofs.items() if owner != app]
             for svg in sorted((BASE_DIR / "branding" / app).glob("*.svg")):
@@ -185,7 +185,7 @@ class TestPanelBranding(unittest.TestCase):
                                      f"{svg.name} is wearing another app's roof")
 
         for addon, mine in (("bruh-minecraft-server", self.BLOCKY_GABLE),
-                            ("brigt", self.BEAMED_GABLE)):
+                            ("bright", self.BEAMED_GABLE)):
             favicon = (BASE_DIR / addon / "panel" / "favicon.svg").read_text()
             self.assertIn(mine, favicon,
                           f"{addon}'s favicon is not its own roof")
@@ -204,7 +204,7 @@ class TestPanelBranding(unittest.TestCase):
         for svg in sorted((BASE_DIR / "branding").glob("*/*.svg")):
             self.assertIn(ligature, svg.read_text(),
                           f"{svg.name} is the gable without the BR ligature")
-        for panel in ("brain", "bruh-minecraft-server", "brigt"):
+        for panel in ("brain", "bruh-minecraft-server", "bright"):
             favicon = BASE_DIR / panel / "panel" / "favicon.svg"
             self.assertIn(ligature, favicon.read_text(),
                           f"{panel}'s favicon is the gable without the BR ligature")
@@ -213,7 +213,7 @@ class TestPanelBranding(unittest.TestCase):
         """Twelve files each, same names, so render.mjs and anything else that
         reaches for a variant can do it by pattern rather than by special case."""
         for app, stem in (("brain", "brain"), ("minecraft", "bruh-minecraft"),
-                          ("brigt", "brigt")):
+                          ("bright", "bright")):
             for shape in ("logo-onlight", "logo-ondark", "logo-onazure",
                           "logo-mono-black", "logo-mono-white",
                           "square-onlight", "square-ondark",

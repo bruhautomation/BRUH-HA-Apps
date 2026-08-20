@@ -94,7 +94,7 @@ jobs:
       - name: Measure the tooltips
         run: node tests/manual/measure-tooltips.mjs
 
-      - name: Measure BRigt's light map
+      - name: Measure BRight's light map
         run: node tests/manual/measure-lightmap.mjs
 
   hassfest:
@@ -119,7 +119,7 @@ jobs:
           cp -r brain/custom_components/brain custom_components/brain
           cp -r bruh-minecraft-server/custom_components/bruh_minecraft \
                 custom_components/bruh_minecraft
-          cp -r brigt/custom_components/brigt custom_components/brigt
+          cp -r bright/custom_components/bright custom_components/bright
 
       - name: Run hassfest
         uses: home-assistant/actions/hassfest@a7c616ce81ccda50150bf1595786c71b1883fabb  # master @ 2026-08-03
@@ -141,7 +141,7 @@ jobs:
       - name: Validate profiles
         run: |
           status=0
-          for profile in brain/apparmor.txt bruh-minecraft-server/apparmor.txt brigt/apparmor.txt; do
+          for profile in brain/apparmor.txt bruh-minecraft-server/apparmor.txt bright/apparmor.txt; do
             if sudo apparmor_parser -Q -K "$profile"; then
               echo "✓ $profile"
             else
@@ -172,9 +172,9 @@ jobs:
             brain/build.yaml \
             brain/translations/en.yaml \
             bruh-minecraft-server/translations/en.yaml \
-            brigt/config.yaml \
-            brigt/build.yaml \
-            brigt/translations/en.yaml
+            bright/config.yaml \
+            bright/build.yaml \
+            bright/translations/en.yaml
 
   shellcheck:
     name: Shellcheck
@@ -193,17 +193,17 @@ jobs:
             bruh-minecraft-server/custom_components
             bruh-minecraft-server/panel
 
-      - name: Run shellcheck (brigt)
+      - name: Run shellcheck (bright)
         uses: ludeeus/action-shellcheck@00b27aa7cb85167568cb48a3838b75f4265f2bca  # master @ 2026-08-03
         env:
           SHELLCHECK_OPTS: -s bash -e SC1091
         with:
-          scandir: ./brigt
+          scandir: ./bright
           severity: error
           ignore_paths: >-
-            brigt/custom_components
-            brigt/panel
-            brigt/integrations
+            bright/custom_components
+            bright/panel
+            bright/integrations
 
       - name: Run shellcheck (brain)
         uses: ludeeus/action-shellcheck@00b27aa7cb85167568cb48a3838b75f4265f2bca  # master @ 2026-08-03
@@ -241,10 +241,10 @@ jobs:
           failure-threshold: error
 
 
-      - name: Lint BRigt Dockerfile
+      - name: Lint BRight Dockerfile
         uses: hadolint/hadolint-action@2a66e89f53d0771bb131a7fa31f3136336094aa6  # v3.4.0
         with:
-          dockerfile: brigt/Dockerfile
+          dockerfile: bright/Dockerfile
           failure-threshold: error
 
   manifest-versions:
@@ -289,19 +289,19 @@ jobs:
       - name: Check brAIn changelog matches shipped version
         run: .github/scripts/check-changelog-version.sh brain
 
-      - name: Check BRigt version parity
+      - name: Check BRight version parity
         run: |
-          addon_version=$(grep -E '^version:' brigt/config.yaml | head -1 | sed 's/.*"\([^"]*\)".*/\1/')
-          manifest_version=$(python3 -c 'import json; print(json.load(open("brigt/custom_components/brigt/manifest.json"))["version"])')
+          addon_version=$(grep -E '^version:' bright/config.yaml | head -1 | sed 's/.*"\([^"]*\)".*/\1/')
+          manifest_version=$(python3 -c 'import json; print(json.load(open("bright/custom_components/bright/manifest.json"))["version"])')
           echo "add-on:         $addon_version"
           echo "HA integration: $manifest_version"
           if [ "$addon_version" != "$manifest_version" ]; then
-            echo "::error::BRigt add-on ($addon_version) and integration manifest ($manifest_version) versions disagree"
+            echo "::error::BRight add-on ($addon_version) and integration manifest ($manifest_version) versions disagree"
             exit 1
           fi
 
-      - name: Check BRigt changelog matches shipped version
-        run: .github/scripts/check-changelog-version.sh brigt
+      - name: Check BRight changelog matches shipped version
+        run: .github/scripts/check-changelog-version.sh bright
 
   version-bump:
     # On every PR that touches addon files, verify the version in
@@ -326,5 +326,5 @@ jobs:
       - name: Verify brAIn version bumped if files changed
         run: .github/scripts/check-version-bump.sh "origin/${{ github.base_ref }}" brain
 
-      - name: Verify BRigt version bumped if files changed
-        run: .github/scripts/check-version-bump.sh "origin/${{ github.base_ref }}" brigt
+      - name: Verify BRight version bumped if files changed
+        run: .github/scripts/check-version-bump.sh "origin/${{ github.base_ref }}" bright

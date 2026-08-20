@@ -1,4 +1,4 @@
-// Render BRigt's Light Map with real fixtures and assert a dot is a light
+// Render BRight's Light Map with real fixtures and assert a dot is a light
 // somebody can identify, select and move.
 //
 // The bug this exists to prevent: a dot was a role glyph in a circle with the
@@ -28,7 +28,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const PANEL = path.resolve(HERE, '..', '..', 'brigt', 'panel');
+const PANEL = path.resolve(HERE, '..', '..', 'bright', 'panel');
 
 const WIDTHS = [390, 430, 768, 1200];
 const MIN_TARGET = 40;

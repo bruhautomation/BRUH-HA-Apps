@@ -265,7 +265,7 @@ class TestEveryStoreUsesIt(unittest.TestCase):
         shows up as one failed CI run in three.
         """
         offenders = []
-        for panel in (BASE_DIR / "brain" / "panel", BASE_DIR / "brigt" / "panel"):
+        for panel in (BASE_DIR / "brain" / "panel", BASE_DIR / "bright" / "panel"):
             for path in sorted(panel.glob("*.py")):
                 if path.name == "atomic_write.py":
                     continue  # the one file allowed to talk about scratch files

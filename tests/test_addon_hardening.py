@@ -28,7 +28,7 @@ BASE_DIR = os.path.join(os.path.dirname(__file__), "..")
 ADDONS = {
     "brain": os.path.join(BASE_DIR, "brain"),
     "bruh_minecraft_server": os.path.join(BASE_DIR, "bruh-minecraft-server"),
-    "brigt": os.path.join(BASE_DIR, "brigt"),
+    "bright": os.path.join(BASE_DIR, "bright"),
 }
 
 
@@ -322,8 +322,8 @@ class TestWatchdog(unittest.TestCase):
         """Either the Supervisor polls a URL, or run.sh polls the panel
         itself — but nobody ships a panel nothing watches.
 
-        BRigt is the second kind. `watchdog:` needs a port number written
-        into config.yaml, and BRigt's port is the Supervisor's to assign
+        BRight is the second kind. `watchdog:` needs a port number written
+        into config.yaml, and BRight's port is the Supervisor's to assign
         (`ingress_port: 0`, because host_network made a pinned port a
         collision on somebody's box), so the only honest watcher is the one
         inside the container that knows which port it got.
@@ -354,7 +354,7 @@ class TestWatchdog(unittest.TestCase):
             "brain": os.path.join(ADDONS["brain"], "panel", "server.py"),
             "bruh_minecraft_server": os.path.join(
                 ADDONS["bruh_minecraft_server"], "panel", "server.py"),
-            "brigt": os.path.join(ADDONS["brigt"], "panel", "server.py"),
+            "bright": os.path.join(ADDONS["bright"], "panel", "server.py"),
         }
         for slug, path in panels.items():
             with self.subTest(addon=slug):
@@ -420,8 +420,8 @@ class TestIntegrationManifests(unittest.TestCase):
         "bruh_minecraft": os.path.join(
             ADDONS["bruh_minecraft_server"], "custom_components",
             "bruh_minecraft", "manifest.json"),
-        "brigt": os.path.join(
-            ADDONS["brigt"], "custom_components", "brigt", "manifest.json"),
+        "bright": os.path.join(
+            ADDONS["bright"], "custom_components", "bright", "manifest.json"),
     }
 
     def _load(self, path):

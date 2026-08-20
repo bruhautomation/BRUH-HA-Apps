@@ -1,0 +1,21 @@
+{
+  "domain": "bright",
+  "name": "BRight",
+  "after_dependencies": [
+    "hassio"
+  ],
+  "codeowners": [
+    "@bruhautomation"
+  ],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/bruhautomation/BRUH-HA-Apps/tree/main/bright",
+  "integration_type": "service",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/bruhautomation/BRUH-HA-Apps/issues",
+  "loggers": [
+    "custom_components.bright"
+  ],
+  "requirements": [],
+  "version": "0.8.4"
+}
