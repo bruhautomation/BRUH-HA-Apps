@@ -5,6 +5,41 @@ All notable changes to the **BRight** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.13.0
+
+The effect library is a shared, growing thing that Claude reads and adds to.
+
+### Added
+
+- **Saved effects are in every brief Claude gets.** The library existed and
+  was invisible to the one thing most able to use it: BRight held effects
+  somebody spent an evening getting right, and then asked Claude to write a
+  show from a blank page. Every show started from nothing, so no show could
+  be better than the last one — the opposite of what a library is for. The
+  show director, the effect writer and the effect inventor are all told
+  what is saved, described rather than just named: `"kitchen chase"` is not
+  something a model can reason about, but "a chase across the kitchen zone,
+  half a beat a step, notes: looks great at 120bpm" is.
+- **A script can name a saved effect.** `{"use": "kitchen chase"}` works
+  anywhere an effect goes, in a hand-written script and in one Claude
+  writes. Override anything alongside it —
+  `{"use": "kitchen chase", "params": {"step_beats": 1}}` keeps the
+  selection and changes the speed — and parameters *merge*, so changing one
+  does not silently drop the rest.
+- **＋ Library on every effect in a show.** An effect that turned out well
+  is kept with one press, and is then available by name to every future
+  show. Before this the only way back to it was finding the show it was in
+  and copying the JSON out by hand.
+
+### Notes
+
+Names are resolved once, before a script is compiled or saved, so what
+lands on disk is the effect in full. A show that stored the *name* would be
+a show that changes when somebody edits the library — silently, and usually
+the night after they edited it. The library is a place to copy from, not a
+layer a saved show hangs off. Expansion happens on a copy, so a refused
+compile leaves the editor holding exactly what was typed.
+
 ## 0.12.0
 
 Ask Claude to write one show, read what it was told, and see the song it

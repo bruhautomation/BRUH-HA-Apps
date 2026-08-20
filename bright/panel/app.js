@@ -2578,12 +2578,21 @@
         edit.className = "btn small";
         edit.dataset.act = "edit";
         edit.textContent = "Edit";
+        // Keeping an effect is how the library grows. An effect that
+        // turned out well in one show is worth having in the next one,
+        // and without this the only way back to it was to find the show
+        // it was in and copy the JSON out by hand.
+        const keep = document.createElement("button");
+        keep.className = "btn small";
+        keep.dataset.act = "keep";
+        keep.textContent = "＋ Library";
+        keep.setAttribute("aria-label", "Save this effect to the library");
         const drop = document.createElement("button");
         drop.className = "btn small";
         drop.dataset.act = "drop";
         drop.textContent = "✕";
         drop.setAttribute("aria-label", "Remove this effect");
-        row.append(label, edit, drop);
+        row.append(label, edit, keep, drop);
         list.appendChild(row);
       });
       block.appendChild(list);
@@ -2865,8 +2874,38 @@
     } else if (act === "drop") {
       edEffectsOf(scene).splice(position, 1);
       edTouch();
+    } else if (act === "keep") {
+      edKeepEffect(edEffectsOf(scene)[position] || {});
     }
   });
+
+  // Save one of a show's effects into the library.
+  //
+  // The name is asked for rather than taken from the effect, because an
+  // effect's name is a cue label ("scene chorus") and a library entry is
+  // something you will go looking for by name a month later. Saving over
+  // an existing name is how you edit one — the same contract the builder's
+  // Save has, so the two cannot disagree about what a name means.
+  async function edKeepEffect(effect) {
+    if (!effect || !effect.type) return;
+    const suggested = effect.name || effect.type;
+    const name = window.prompt(
+      "Save this effect to the library as:", suggested);
+    if (name === null) return;
+    const status = $("scriptStatus");
+    try {
+      const body = await post("api/effects/preset", {
+        name: name,
+        effect: effect,
+        note: "kept from " + ($("scriptWhich").textContent || "a show"),
+      });
+      status.textContent = 'Saved "' + body.preset.name +
+        '" to the library — Claude can use it by name in the next show.';
+      if (typeof loadEffects === "function") loadEffects();
+    } catch (error) {
+      status.textContent = "could not save it: " + error.message;
+    }
+  }
 
   // The Code view is an editor, not a mirror: what is typed there is the
   // show as soon as it parses, and the forms above redraw from it. A

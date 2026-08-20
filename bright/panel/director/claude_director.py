@@ -21,6 +21,8 @@ import time
 import uuid
 from pathlib import Path
 
+from stores import effect_presets
+
 from . import room
 
 BRAIN_SHARED = Path(os.environ.get("BRIGHT_BRAIN_SHARED", "/config/.brain"))
@@ -177,6 +179,9 @@ def _digest(analysis: dict, fixtures: list[dict],
 
     lines.append("")
     lines.append(room.describe(fixtures))
+
+    lines.append("")
+    lines.append(effect_presets.describe())
 
     lyrics = analysis.get("lyrics") or {}
     if lyrics.get("synced") and lyrics.get("lines"):
@@ -411,6 +416,8 @@ def _effect_prompt(description: str, fixtures: list[dict]) -> str:
         "",
         room.describe(fixtures),
         "",
+        effect_presets.describe(),
+        "",
         "WHAT THEY ASKED FOR:",
         description.strip()[:400],
     ])
@@ -519,6 +526,8 @@ def invent_effects(fixtures: list[dict], count: int = 4,
         _INVENT_CONTRACT,
         "",
         room.describe(fixtures),
+        "",
+        effect_presets.describe(),
     ])
     answer = _run_task(prompt, timeout_s)
     raw = _extract_json(answer)
