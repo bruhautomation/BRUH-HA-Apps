@@ -7,7 +7,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## 0.11.0
 
-Claude knows what room it is lighting, and zones are a thing you can set.
+Claude knows what room it is lighting, zones are a thing you can set,
+and the LIFX socket no longer trusts a guessable id.
 
 ### Added
 
@@ -82,6 +83,27 @@ Nothing played on an install that sets `media_dirs`.
   driven — the zones that exist, and the travel orders **already worked
   out**, because sorting a dozen floats by hand is exactly what a language
   model does badly and confidently.
+
+### The LIFX source id is this connection's, and it is unguessable
+
+Two problems met in one field. The engine's socket is bound to every
+interface — LIFX discovery is a broadcast and the replies come back to the
+sender's own address, which is the whole reason this add-on runs
+`host_network` — so anything on the LAN can send to it, and the only thing
+separating a bulb's reply from a stranger's datagram is the source id in
+the header. That id was `(pid & 0xFFFF) | 0x42420000`: a fixed prefix over
+a container pid that is usually a small number. Guessing it bought a
+forged `StateService`, which is a phantom device in the registry pointed
+at whatever address the sender chose. It is 31 bits from `secrets` now.
+
+Making it unpredictable exposed the second problem: the compiler baked the
+id it was handed into every cue packet, and shows are *saved* — so a show
+compiled in one process was replayed in the next still carrying the old
+id. That was invisible only because a pid-derived id usually survived a
+restart. The id is stamped at dispatch now (`packets.with_source`, in
+`Engine.send`, the one place every outbound packet passes through), so a
+compiled show is portable between runs and between installs, and the id
+is free to be drawn fresh each time.
 
 ## 0.10.0
 

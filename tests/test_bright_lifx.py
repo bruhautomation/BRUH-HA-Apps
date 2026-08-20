@@ -220,6 +220,108 @@ class TestEngineDispatch(unittest.TestCase):
         self.assertEqual(b"y" * 64, header["payload"])
 
 
+class TestSourceIsThisConnection(unittest.TestCase):
+    """The source id identifies the live connection, not the saved show.
+
+    Two things meet here. A compiled show is a file full of pre-serialized
+    packets that outlives the process that built it, so it must not carry a
+    runtime id; and the id is the only thing separating a bulb's reply from
+    a stranger's datagram on a socket bound to every interface, so it has
+    to be unguessable. Stamping at send is what lets both be true at once.
+    """
+
+    def _packet(self, source):
+        return packets.set_color(0x5555, 0xFFFF, 0xFFFF, 3500, 1024,
+                                 target=bytes.fromhex("d073d5000001"),
+                                 source=source)
+
+    def test_with_source_rewrites_only_the_source(self):
+        original = self._packet(0x11111111)
+        stamped = packets.with_source(original, 0xA1B2C3D4)
+        self.assertEqual(len(original), len(stamped))
+        self.assertEqual(0xA1B2C3D4, packets.parse_header(stamped)["source"])
+        # Everything else survives byte-for-byte: the frame either side of
+        # the field, and the whole payload.
+        self.assertEqual(original[:4], stamped[:4])
+        self.assertEqual(original[8:], stamped[8:])
+        before = packets.parse_header(original)
+        after = packets.parse_header(stamped)
+        for field in ("size", "target", "sequence", "type", "payload"):
+            self.assertEqual(before[field], after[field], field)
+
+    def test_a_datagram_too_short_to_carry_a_source_is_refused(self):
+        with self.assertRaises(ValueError):
+            packets.with_source(b"\x00\x01\x02", 1)
+
+    def test_a_show_compiled_under_another_source_still_arrives_as_ours(self):
+        """The failure this prevents: a saved show carrying a stale id.
+
+        The compiler serializes cue packets with whatever source it was
+        handed and `library.save_show` writes them to disk. Replayed in a
+        later process, those bytes used to go out still carrying the old
+        id — invisible while the id came from the pid and a restart usually
+        got the same pid back.
+        """
+        sent = []
+        engine = LifxEngine()
+        engine.source = 0x8BADF00D
+        engine._transport = type("T", (), {
+            "sendto": lambda _self, data, addr: sent.append((data, addr))})()
+
+        engine.send(self._packet(0x42420007), ("10.0.0.9", 56700))
+
+        self.assertEqual(1, len(sent))
+        self.assertEqual(0x8BADF00D, packets.parse_header(sent[0][0])["source"])
+
+    def test_every_route_out_is_stamped(self):
+        """send_governed and request go through send, so neither can skip it."""
+        async def scenario():
+            sent = []
+            engine = LifxEngine()
+            engine.source = 0x8BADF00D
+            engine._transport = type("T", (), {
+                "sendto": lambda _self, data, addr: sent.append(data)})()
+            await engine.send_governed("d073d5000001",
+                                       self._packet(0), ("10.0.0.9", 56700))
+            await engine.request(("10.0.0.9", 56700), self._packet(0), 7,
+                                 packets.LIGHT_STATE, timeout=0.01)
+            return sent
+
+        for data in asyncio.run(scenario()):
+            self.assertEqual(0x8BADF00D, packets.parse_header(data)["source"])
+
+    def test_the_source_is_not_derived_from_the_pid(self):
+        """A guessable id is a filter an attacker walks straight through.
+
+        The old scheme was `(pid & 0xFFFF) | 0x42420000`: a fixed prefix
+        over a container pid that is usually small. Anything on the LAN
+        could forge a StateService that `_on_datagram` would accept — a
+        phantom device in the registry, addressed wherever the sender
+        liked.
+        """
+        pid_derived = (os.getpid() & 0xFFFF) | 0x42420000
+        sources = {LifxEngine().source for _ in range(8)}
+        self.assertNotIn(pid_derived, sources)
+        # Eight independent draws landing on one value would mean it is not
+        # being drawn at all.
+        self.assertGreater(len(sources), 1)
+        for source in sources:
+            self.assertTrue(0 < source <= 0xFFFFFFFF)
+
+    def test_a_forged_reply_on_the_old_guessable_id_is_ignored(self):
+        async def scenario():
+            engine = LifxEngine()
+            future = asyncio.get_running_loop().create_future()
+            engine._pending[5] = (packets.ECHO_RESPONSE, future)
+            forged = packets.build(
+                packets.ECHO_RESPONSE, b"x" * 64, target=bytes(6),
+                source=(os.getpid() & 0xFFFF) | 0x42420000, sequence=5)
+            engine._on_datagram(forged, ("10.0.0.9", 56700))
+            return future.done()
+
+        self.assertFalse(asyncio.run(scenario()))
+
+
 class TestJobs(unittest.TestCase):
     def setUp(self):
         jobs.clear()
