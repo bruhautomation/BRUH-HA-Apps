@@ -510,3 +510,16 @@ select { max-width: 100%; }
   border: 1px solid var(--line);
   border-radius: 12px;
 }
+
+/* Which of Core's media sources BRight builds ids with. Renders only when
+   there is something to say — a line reporting `local` on the install
+   where `local` is right is a line nobody needs, and the whole point of
+   the discovery is that it is invisible when it works. */
+.media-source {
+  margin-top: 10px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.media-source:empty { display: none; }
+.media-source .ms-bad { color: var(--bad, #d9534f); }
+.media-source button { margin-top: 8px; }

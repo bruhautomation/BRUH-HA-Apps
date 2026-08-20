@@ -41,6 +41,11 @@ class FakeHomeAssistant:
     `answers` maps a command type to what to send back; `before` is anything
     to send first, which is how the "Core interleaves events with results"
     case gets tested rather than described.
+
+    An answer may be a callable taking the whole message, for the cases
+    where the reply depends on what was asked — media-source discovery
+    resolves the same command with several different ids and the point is
+    precisely that only one of them works.
     """
 
     def __init__(self, answers=None, *, auth_ok=True, before=None):
@@ -77,6 +82,8 @@ class FakeHomeAssistant:
         for extra in self.before:
             await ws.send_json(extra)
         answer = self.answers.get(message.get("type"))
+        if callable(answer):
+            answer = answer(message)
         if answer is None:
             await ws.send_json({"id": message["id"], "type": "result",
                                 "success": False,
@@ -329,13 +336,19 @@ class TestTheWholeChain(unittest.TestCase):
                          [s["name"] for s in report["steps"]])
         self.assertEqual(1, len(self.played))
 
-    def test_an_unresolvable_media_id_stops_the_walk_and_names_media_dirs(self):
+    def test_an_unresolvable_media_id_stops_the_walk_and_goes_looking(self):
         """The failure mode a hardcoded `local` produces on an install that
-        set `media_dirs` — and the one Core answers with its own HTTP 500."""
+        set `media_dirs` — and the one Core answers with its own HTTP 500.
+
+        The walk stops, and the step's fix reports what re-discovery found:
+        naming the problem and then building the next id the same wrong way
+        is a diagnosis that fixes nothing.
+        """
         report = self._check({"error": "Unresolvable: Unknown source directory"})
         self.assertFalse(report["ok"])
         self.assertEqual(["file", "media"], [s["name"] for s in report["steps"]])
-        self.assertIn("media_dirs", report["fix"])
+        self.assertTrue(report["fix"], "a failed resolve said nothing about "
+                                       "what to do next")
         self.assertEqual([], self.played,
                          "asked a speaker to play something Core cannot find")
 
@@ -464,7 +477,7 @@ class TestTheDiagnosticIsNotAFileReader(unittest.TestCase):
             playback_check.check = original
         self.assertEqual(200, status)
         self.assertEqual(self.server.REFERENCE_WAV, seen["path"])
-        self.assertEqual(self.server.REFERENCE_MEDIA_ID, seen["id"])
+        self.assertEqual(self.server.reference_media_id(), seen["id"])
 
 
 if __name__ == "__main__":

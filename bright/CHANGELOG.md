@@ -5,6 +5,45 @@ All notable changes to the **BRight** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.10.1
+
+Nothing played on an install that sets `media_dirs`.
+
+### Fixed
+
+- **BRight now works out what Home Assistant calls its media folder, instead
+  of assuming.** Every file BRight plays is handed to Core as
+  `media-source://media_source/<source>/<path>`, and `<source>` was written
+  as `local` — which is Core's *default* name for its local media source and
+  nothing more. An install that sets `media_dirs` in `configuration.yaml`
+  renames it, and then every id BRight builds comes back `Unknown source
+  directory`: no click track, no calibration, and so no music either. The
+  name is discovered now — BRight writes the click track, then asks Core to
+  resolve it under each media source Core reports until one answers, and
+  remembers which. Core does not publish the path behind a source, so which
+  one is our `/media` cannot be read, only tried.
+- A media id that fails to resolve **drops the remembered name and goes
+  looking again**, so editing `media_dirs` costs one failed play rather than
+  a restart — and the Lab's playback test reports what it found. Naming the
+  problem and then building the next id the same wrong way was a diagnosis
+  that fixed nothing.
+- The failure, when BRight genuinely cannot find a match, now names the media
+  directories Core *does* have — the person has to be able to recognise
+  their own `configuration.yaml` in the answer.
+
+### Changed
+
+- **The Claude director is told what room it is designing for.** It used to
+  get roles and x positions (`lamp: 3 at x=[0.10, 0.50, 0.90]`) — no ids, so
+  `select.ids` was in the schema and unusable; no names, so one lamp could
+  not be told from another; no y, while half the travel orders key on it;
+  and no zones, though `select.zones` and `order: "zone"` both need them.
+  Every generated script selected by role because role was all it had. It
+  now gets every light as a row — id, name, role, zone, x/y, and how it is
+  driven — the zones that exist, and the travel orders **already worked
+  out**, because sorting a dozen floats by hand is exactly what a language
+  model does badly and confidently.
+
 ## 0.10.0
 
 The show editor is a picture you can scrub, and editing it is the primary

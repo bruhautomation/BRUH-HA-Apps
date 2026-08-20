@@ -543,20 +543,38 @@ issued for a name the speaker cannot resolve) fails the same silent way.
 
 ### The media step: "Home Assistant will not resolve…"
 
-BRight builds `media-source://media_source/local/<path>` from where a file
-sits under `/media`. `local` is the default id of Home Assistant's local
-media source — but if you set `media_dirs` in `configuration.yaml`, that
-default is *replaced*, and the id may be something else entirely. Core then
-answers with its own HTTP 500, which used to arrive as a bare number.
+BRight plays a file by handing Home Assistant a media id built from where
+the file sits under `/media` — `media-source://media_source/<source>/<path>`.
+That `<source>` is the name Core gives the media directory, and it is
+`local` **by default**. Set `media_dirs` in `configuration.yaml` and the
+default is *replaced*: the source is called whatever your key says, and
+every id built with `local` comes back `Unknown source directory`. Nothing
+plays at all — not the click track, not a single song.
 
-**The fix:** keep a `local:` entry pointing at `/media`:
+BRight works the name out for itself. It writes the click track (a file it
+knows is there), then asks Core to resolve it under each media source Core
+reports until one answers, and remembers which. Core does not publish the
+filesystem path behind a source, so which one is your `/media` is not
+something that can be read — only tried.
 
-```yaml
-homeassistant:
-  media_dirs:
-    local: /media
-    nas: /mnt/nas
-```
+So on nearly every install this needs nothing from you. Two cases do:
+
+- **You changed `media_dirs` while the add-on was running.** Lab → Test
+  playback picks the new name up on the next try; **Look again** under the
+  result forces it immediately. No restart.
+- **None of Core's media directories is the folder BRight writes to.** Then
+  the message names the ones Core does have, and one of them has to point
+  at the same folder the add-on sees as `/media`:
+
+  ```yaml
+  homeassistant:
+    media_dirs:
+      local: /media      # BRight writes here; Core has to serve from here
+      nas: /mnt/nas
+  ```
+
+  The names do not matter — `local` is not required — but one entry has to
+  be that folder, or Home Assistant has no way to serve what BRight writes.
 
 ### The file step: "could not write the click track"
 

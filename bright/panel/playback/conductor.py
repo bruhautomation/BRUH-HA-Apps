@@ -24,6 +24,7 @@ from typing import Any
 
 import atomic_write
 import ha_client
+import media_source
 import playback_check
 from analyzer import library
 from lifx import packets
@@ -469,12 +470,19 @@ def metronome_cues(analysis: dict, devices: dict[str, dict],
 
 
 def media_content_id_for(analysis: dict, media_root: str = "/media") -> str | None:
-    """The media-source URI HA players accept for a local file."""
+    """The media-source URI HA players accept for a local file.
+
+    The source id comes from `media_source.current_id()` rather than the
+    `local` that used to be written here: `local` is only Core's DEFAULT
+    name for its local media source, and an install that sets `media_dirs`
+    renames it — which Core answers with `Unknown source directory` for
+    every id BRight builds, so nothing plays at all.
+    """
     file = analysis.get("file") or ""
     if not file.startswith(media_root + "/"):
         return None
     relative = file[len(media_root) + 1:]
-    return f"media-source://media_source/local/{relative}"
+    return media_source.build(media_source.current_id(), relative)
 
 
 def peak_rate_per_device(cues: list[dict]) -> float:

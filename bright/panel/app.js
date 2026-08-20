@@ -968,6 +968,11 @@
     try {
       renderPlaybackCheck(await post("api/playback/check",
                                      { media_player: entityId }));
+      try {
+        renderMediaSource(await api("api/media/source"));
+      } catch (error) {
+        // The chain report is the answer; this line is a footnote to it.
+      }
     } catch (error) {
       box.innerHTML = "";
       const failed = document.createElement("p");
@@ -976,6 +981,45 @@
       box.appendChild(failed);
     }
   });
+
+  // Which media source BRight builds ids with. Rendered only when it is
+  // NOT the default: on the install where `local` is right, saying so is a
+  // line nobody needs, and discovery working is discovery you never see.
+  function renderMediaSource(state) {
+    const box = $("mediaSource");
+    box.innerHTML = "";
+    if (!state) return;
+    const bits = [];
+    if (state.error) {
+      const bad = document.createElement("p");
+      bad.className = "ms-bad";
+      bad.textContent = state.error;
+      bits.push(bad);
+    } else if (state.discovered && state.source_id !== "local") {
+      const note = document.createElement("p");
+      note.className = "muted";
+      note.textContent = "Home Assistant calls this add-on's " +
+        state.media_root + ' folder "' + state.source_id + '", not the ' +
+        'usual "local" — BRight found that and is using it.';
+      bits.push(note);
+    }
+    if (!bits.length) return;
+    const again = document.createElement("button");
+    again.className = "btn small";
+    again.textContent = "Look again";
+    again.addEventListener("click", async () => {
+      again.disabled = true;
+      again.textContent = "looking…";
+      try {
+        renderMediaSource(await post("api/media/source/rediscover", {}));
+      } catch (error) {
+        again.disabled = false;
+        again.textContent = "Look again — " + error.message;
+      }
+    });
+    for (const bit of bits) box.appendChild(bit);
+    box.appendChild(again);
+  }
 
   $("btnLoadPlayers").addEventListener("click", async () => {
     const select = $("calPlayer");

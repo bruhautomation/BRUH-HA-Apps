@@ -83,8 +83,15 @@ class TestRoundTrip(ClaudeDirectorCase):
         # The digest carried what a director needs to know.
         self.assertIn("SECTIONS", brain.seen_prompt)
         self.assertIn("DROPS", brain.seen_prompt)
-        self.assertIn("lamp: 2", brain.seen_prompt)
-        self.assertIn("laser: 1", brain.seen_prompt)
+        self.assertIn("lamp (2)", brain.seen_prompt)
+        self.assertIn("laser (1)", brain.seen_prompt)
+        # And the part that used to be missing: a director cannot design for
+        # a room it cannot see. Every light by id and by name, the zone it
+        # is in, and the orders it can travel in.
+        self.assertIn("lifx-d073d5000001", brain.seen_prompt)
+        self.assertIn("Left lamp", brain.seen_prompt)
+        self.assertIn("living", brain.seen_prompt)
+        self.assertIn('order:"x"', brain.seen_prompt)
         self.assertIn("no prose", brain.seen_prompt)
 
     def test_a_failed_task_raises(self):

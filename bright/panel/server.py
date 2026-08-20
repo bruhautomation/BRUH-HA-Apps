@@ -59,6 +59,7 @@ if str(HERE) not in sys.path:
 
 import atomic_write  # noqa: E402
 import ha_client  # noqa: E402
+import media_source  # noqa: E402
 import jobs  # noqa: E402
 import panel_port  # noqa: E402
 import playback_check  # noqa: E402
@@ -1456,7 +1457,14 @@ async def h_show_party(request: web.Request) -> web.Response:
 REFERENCE_WAV = MEDIA_DIR / "bright" / "calibration.wav"
 # What media_player.play_media is handed for the file above (HA maps the
 # /media mount to the local media source).
-REFERENCE_MEDIA_ID = "media-source://media_source/local/bright/calibration.wav"
+REFERENCE_RELATIVE = "bright/calibration.wav"
+
+
+def reference_media_id() -> str:
+    """The click track's media id, with whatever source id discovery has
+    learned. A function and not a constant because the id is a fact about
+    the user's configuration.yaml, and constants cannot be corrected."""
+    return media_source.build(media_source.current_id(), REFERENCE_RELATIVE)
 
 # The position-reliability check that runs while the reference plays,
 # keyed by entity. In memory: it describes the run in progress.
@@ -1489,9 +1497,15 @@ async def h_cal_reference(request: web.Request) -> web.Response:
     error = await asyncio.to_thread(_ensure_reference)
     if error:
         return web.json_response({"error": error}, status=500)
+    # The file is on disk, so now it can be used as the probe that finds
+    # which of Core's media sources actually is our /media. This is the
+    # first thing the calibration wizard does, which makes it the right
+    # place to learn the id everything else will build with.
+    await media_source.ensure()
     return web.json_response({
         **reference.describe(),
-        "media_content_id": REFERENCE_MEDIA_ID,
+        "media_content_id": reference_media_id(),
+        "media_source": media_source.state(),
     })
 
 
@@ -1515,7 +1529,8 @@ async def h_playback_check(request: web.Request) -> web.Response:
         error = await asyncio.to_thread(_ensure_reference)
         if error:
             return web.json_response({"error": error}, status=500)
-        media_id = REFERENCE_MEDIA_ID
+        await media_source.ensure()
+        media_id = reference_media_id()
         path = REFERENCE_WAV
         expected = reference.expected_size()
     # A caller-supplied media id is deliberately NOT turned into a path.
@@ -1531,6 +1546,23 @@ async def h_playback_check(request: web.Request) -> web.Response:
     # 200 either way: the report IS the answer, and a non-2xx would send the
     # page down its error path with the diagnosis in it.
     return web.json_response(result)
+
+
+async def h_media_source(request: web.Request) -> web.Response:
+    """Which media source BRight is building ids with, and what else Core
+    has. Read by the Lab tab so a mismatch is legible before anything is
+    played rather than after a speaker sits silent."""
+    return web.json_response(media_source.state())
+
+
+async def h_media_rediscover(request: web.Request) -> web.Response:
+    """Look again. This is the button somebody presses after editing
+    `media_dirs` and restarting Core — a cached wrong answer must never be
+    something you have to restart the add-on to clear."""
+    error = await asyncio.to_thread(_ensure_reference)
+    if error:
+        return web.json_response({"error": error}, status=500)
+    return web.json_response(await media_source.discover(force=True))
 
 
 async def h_cal_ping(request: web.Request) -> web.Response:
@@ -1580,7 +1612,7 @@ async def h_cal_play(request: web.Request) -> web.Response:
     _POSITION_CHECKS.pop(entity_id, None)
     play_epoch_ms = time.time() * 1000.0
     result = await asyncio.to_thread(
-        ha_client.play_media, entity_id, REFERENCE_MEDIA_ID)
+        ha_client.play_media, entity_id, reference_media_id())
     if isinstance(result, dict) and result.get("error"):
         # Name what was asked for. Home Assistant answers a media it cannot
         # resolve with its own HTTP 500, which arrives here as a string and
@@ -1589,7 +1621,7 @@ async def h_cal_play(request: web.Request) -> web.Response:
         return web.json_response({
             "error": f"Home Assistant would not play the click track on "
                      f"{entity_id}: {result['error']}. It was asked for "
-                     f"{REFERENCE_MEDIA_ID}, which is {REFERENCE_WAV} in the "
+                     f"{reference_media_id()}, which is {REFERENCE_WAV} in the "
                      f"add-on.",
         }, status=502)
     jobs.start(f"position-check:{entity_id}",
@@ -1823,6 +1855,8 @@ def build_app() -> web.Application:
     app.router.add_post("/api/library/analyze", h_library_analyze)
     app.router.add_get("/api/track/{hash}/analysis", h_track_analysis)
     # Calibration
+    app.router.add_get("/api/media/source", h_media_source)
+    app.router.add_post("/api/media/source/rediscover", h_media_rediscover)
     app.router.add_post("/api/calibrate/reference", h_cal_reference)
     app.router.add_post("/api/calibrate/ping", h_cal_ping)
     app.router.add_post("/api/calibrate/play", h_cal_play)

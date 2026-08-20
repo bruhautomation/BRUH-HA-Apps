@@ -21,6 +21,8 @@ import time
 import uuid
 from pathlib import Path
 
+from . import room
+
 BRAIN_SHARED = Path(os.environ.get("BRIGHT_BRAIN_SHARED", "/config/.brain"))
 TASKS_DIR = BRAIN_SHARED / "tasks"
 RESULTS_DIR = BRAIN_SHARED / "task_results"
@@ -118,11 +120,19 @@ Principles:
 - Candles are ambience: warm, low, never flashing. Lamps and downlights
   carry the beat. Strips carry motion (sweeps). Party lights and lasers
   are aux switches — save them for peaks and drops or they mean nothing.
-- The fixture list gives every light an x position, left to right. Use it:
-  a chase, a sweep or a build travels through the room in the order you
-  choose, and "left to right" or "out from the middle" is a real choice
-  about the room the lights are actually in. With fewer than three moving
-  lights a chase is a flicker — alternate them instead (theater).
+- THE ROOM section below is the real floor plan, placed by hand. Every
+  light has an id, a name, a role, a zone and an x/y position, and the
+  travel orders are worked out for you at the bottom of it. Design for
+  that room specifically: "the two lamps either side of the sofa answer
+  each other" is a real idea about a real place, and it is available to
+  you because the map says where they are.
+- Select by ROLE for anything that should keep working when a bulb is
+  added ("every candle"), and by ID when the idea is about particular
+  lights ("these two, alternating"). Both are honoured; ids are listed in
+  THE ROOM and are exact. Zones, where the map defines them, are the
+  natural unit for "one area of the house".
+- With fewer than three moving lights a chase is a flicker — alternate
+  them instead (theater).
 - Effects can own different parts of the room at once. A chase across the
   lamps while the strip holds a wash is one scene with two effects and
   two selections, and it reads far better than one effect over everything.
@@ -160,14 +170,8 @@ def _digest(analysis: dict, fixtures: list[dict],
         f"{d['t']:.1f}s (strength {d.get('strength')})" for d in drops)
         if drops else "none detected"))
 
-    roster: dict[str, list] = {}
-    for fixture in fixtures:
-        roster.setdefault(fixture["role"], []).append(fixture)
     lines.append("")
-    lines.append("FIXTURES (role: count, left-to-right x positions):")
-    for role, members in sorted(roster.items()):
-        xs = ", ".join(f"{m.get('x', 0.5):.2f}" for m in members)
-        lines.append(f"  {role}: {len(members)} at x=[{xs}]")
+    lines.append(room.describe(fixtures))
 
     lyrics = analysis.get("lyrics") or {}
     if lyrics.get("synced") and lyrics.get("lines"):
