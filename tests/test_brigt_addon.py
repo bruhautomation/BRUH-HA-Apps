@@ -231,6 +231,22 @@ def _load_panel_port():
     return module
 
 
+class _FakeSupervisorResponse:
+    """What urlopen returns: a context manager whose read() is bytes."""
+
+    def __init__(self, payload):
+        self._payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def read(self):
+        return json.dumps(self._payload).encode()
+
+
 class TestPanelPortResolution(unittest.TestCase):
     """Where the panel's port comes from, in the order that keeps run.sh,
     the panel and the bridge talking about the same one."""
@@ -242,20 +258,10 @@ class TestPanelPortResolution(unittest.TestCase):
         return unittest.mock.patch.dict(os.environ, values, clear=True)
 
     def _supervisor_answers(self, payload):
-        """Stand in for urlopen with a context manager returning payload."""
-        class _Response:
-            def __enter__(self_inner):
-                return self_inner
-
-            def __exit__(self_inner, *exc):
-                return False
-
-            def read(self_inner):
-                return json.dumps(payload).encode()
-
+        """Stand in for urlopen, which is used as a context manager."""
         return unittest.mock.patch.object(
             self.port.urllib.request, "urlopen",
-            lambda *a, **k: _Response())
+            lambda *a, **k: _FakeSupervisorResponse(payload))
 
     def test_the_env_run_sh_exported_wins(self):
         with self._env(BRIGT_PANEL_PORT="8412", SUPERVISOR_TOKEN="t"):
