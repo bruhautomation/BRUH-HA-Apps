@@ -9,6 +9,7 @@ second probe racing the first at the same bulb.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import time
 import uuid
 from typing import Any, Awaitable, Callable
@@ -31,9 +32,14 @@ def running(name: str) -> dict | None:
     return None
 
 
-def start(name: str, factory: Callable[[], Awaitable[Any]]) -> dict:
+def start(name: str, factory: Callable[..., Awaitable[Any]]) -> dict:
     """Start `factory()` as a task. Refuses (returns the live job with
-    `already: True`) while a job of the same name is running."""
+    `already: True`) while a job of the same name is running.
+
+    A factory that takes one parameter is handed a `report(dict)` callback;
+    whatever it reports lands on the job as `progress`, which is what the
+    poller renders while a folder-sized job grinds.
+    """
     live = running(name)
     if live is not None:
         return {**live, "already": True}
@@ -45,14 +51,21 @@ def start(name: str, factory: Callable[[], Awaitable[Any]]) -> dict:
         "status": "running",
         "started": time.time(),
         "finished": None,
+        "progress": None,
         "result": None,
         "error": None,
     }
     _JOBS[job_id] = job
 
+    def report(info: dict) -> None:
+        job["progress"] = info
+
+    wants_report = bool(inspect.signature(factory).parameters)
+
     async def _run() -> None:
         try:
-            job["result"] = await factory()
+            job["result"] = await (factory(report) if wants_report
+                                   else factory())
             job["status"] = "done"
         except Exception as exc:  # noqa: BLE001 — the job IS the error report
             job["error"] = str(exc)

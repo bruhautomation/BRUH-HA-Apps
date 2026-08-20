@@ -34,6 +34,7 @@ import base64
 import ipaddress
 import logging
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -51,9 +52,11 @@ if str(HERE) not in sys.path:
 import atomic_write  # noqa: E402
 import ha_client  # noqa: E402
 import jobs  # noqa: E402
+from analyzer import library, pipeline  # noqa: E402
 from calibrate import correlate, reference  # noqa: E402
 from lifx import engine as lifx_engine  # noqa: E402
 from stores import calibration as calibration_store  # noqa: E402
+
 STATIC = HERE
 DATA_DIR = Path(os.environ.get("BRIGT_STATE", "/data"))
 ENV_FILE = Path(os.environ.get("BRIGT_ENV_FILE", "/data/.brigt_env"))
@@ -222,6 +225,22 @@ ENGINE = lifx_engine.LifxEngine()
 HA_PROBES_FILE = DATA_DIR / "cache" / "ha-latency.json"
 
 
+# Wire data becomes filenames (calibration profiles) and service payloads,
+# so entity ids are validated to HA's own shape at the boundary — not
+# best-effort-sanitized later.
+_ENTITY_RE = re.compile(r"^[a-z_]+\.[a-z0-9_]+$")
+
+
+def _entity(body: dict, key: str = "media_player",
+            domain: str | None = "media_player") -> str | None:
+    value = str(body.get(key, ""))
+    if not _ENTITY_RE.fullmatch(value):
+        return None
+    if domain and not value.startswith(f"{domain}."):
+        return None
+    return value
+
+
 async def _json_body(request: web.Request) -> dict:
     try:
         body = await request.json()
@@ -296,8 +315,8 @@ async def h_ha_entities(request: web.Request) -> web.Response:
 
 async def h_ha_latency_probe(request: web.Request) -> web.Response:
     body = await _json_body(request)
-    entity_id = str(body.get("entity_id", ""))
-    if "." not in entity_id:
+    entity_id = _entity(body, key="entity_id", domain=None)
+    if entity_id is None:
         return web.json_response({"error": "entity_id required"}, status=400)
     rounds = min(20, max(2, int(body.get("rounds", 6) or 6)))
 
@@ -341,6 +360,51 @@ async def h_lab_report(request: web.Request) -> web.Response:
         "ha_service_calls": ha_probes,
         "generated_at": time.time(),
     })
+
+
+# ---------------------------------------------------------------------------
+# Library — the music folder, analyzed ahead of the party
+# ---------------------------------------------------------------------------
+def _music_folder() -> Path:
+    return Path(_options_from_env()["music_folder"])
+
+
+async def h_library(request: web.Request) -> web.Response:
+    folder = _music_folder()
+    tracks = await asyncio.to_thread(library.scan, folder)
+    return web.json_response({
+        "folder": str(folder),
+        "exists": folder.is_dir(),
+        "tracks": tracks,
+    })
+
+
+async def h_library_analyze(request: web.Request) -> web.Response:
+    body = await _json_body(request)
+    force = bool(body.get("force"))
+    folder = _music_folder()
+    if not folder.is_dir():
+        return web.json_response(
+            {"error": f"{folder} does not exist — put music there, or point "
+                      "the music_folder option somewhere else"},
+            status=404)
+    job = jobs.start(
+        "analyze-folder",
+        lambda report: pipeline.analyze_folder(folder, progress=report,
+                                               force=force))
+    status = 409 if job.get("already") else 202
+    return web.json_response({"job": job["id"]}, status=status)
+
+
+async def h_track_analysis(request: web.Request) -> web.Response:
+    hash_hex = request.match_info["hash"]
+    try:
+        analysis = await asyncio.to_thread(library.load_analysis, hash_hex)
+    except ValueError:
+        return web.json_response({"error": "not a track hash"}, status=400)
+    if analysis is None:
+        return web.json_response({"error": "not analyzed yet"}, status=404)
+    return web.json_response(analysis)
 
 
 # ---------------------------------------------------------------------------
@@ -394,8 +458,8 @@ async def _position_check(entity_id: str) -> dict:
 
 async def h_cal_play(request: web.Request) -> web.Response:
     body = await _json_body(request)
-    entity_id = str(body.get("media_player", ""))
-    if not entity_id.startswith("media_player."):
+    entity_id = _entity(body)
+    if entity_id is None:
         return web.json_response({"error": "media_player entity required"},
                                  status=400)
     await asyncio.to_thread(reference.write_wav, REFERENCE_WAV)
@@ -415,7 +479,10 @@ async def h_cal_analyze(request: web.Request) -> web.Response:
     record-start moment onto OUR clock (via /api/calibrate/ping), so the
     arithmetic here never compares two different clocks."""
     body = await _json_body(request)
-    entity_id = str(body.get("media_player", ""))
+    entity_id = _entity(body)
+    if entity_id is None:
+        return web.json_response({"error": "media_player entity required"},
+                                 status=400)
     try:
         record_start_ms = float(body["record_start_epoch_ms"])
         play_epoch_ms = float(body["play_epoch_ms"])
@@ -454,7 +521,10 @@ async def h_cal_taps(request: web.Request) -> web.Response:
     rides in (roughly +100ms), which is why the mic path is the default
     and this one says what it is in the stored method."""
     body = await _json_body(request)
-    entity_id = str(body.get("media_player", ""))
+    entity_id = _entity(body)
+    if entity_id is None:
+        return web.json_response({"error": "media_player entity required"},
+                                 status=400)
     try:
         play_epoch_ms = float(body["play_epoch_ms"])
         taps = sorted(float(t) for t in body["taps_epoch_ms"])
@@ -484,14 +554,15 @@ async def h_cal_taps(request: web.Request) -> web.Response:
 
 async def h_cal_adjust(request: web.Request) -> web.Response:
     body = await _json_body(request)
-    entity_id = str(body.get("media_player", ""))
+    entity_id = _entity(body)
+    if entity_id is None:
+        return web.json_response({"error": "media_player entity required"},
+                                 status=400)
     try:
         adjust_ms = float(body.get("adjust_ms", 0))
     except (ValueError, TypeError):
         return web.json_response({"error": "adjust_ms must be a number"},
                                  status=400)
-    if not entity_id:
-        return web.json_response({"error": "media_player required"}, status=400)
     profile = calibration_store.set_adjust(entity_id,
                                            max(-2000.0, min(2000.0, adjust_ms)))
     return web.json_response({"profile": profile})
@@ -533,6 +604,10 @@ def build_app() -> web.Application:
     app.router.add_post("/api/ha/latency-probe", h_ha_latency_probe)
     app.router.add_get("/api/job/{job_id}", h_job)
     app.router.add_get("/api/lab/report", h_lab_report)
+    # Library
+    app.router.add_get("/api/library", h_library)
+    app.router.add_post("/api/library/analyze", h_library_analyze)
+    app.router.add_get("/api/track/{hash}/analysis", h_track_analysis)
     # Calibration
     app.router.add_post("/api/calibrate/reference", h_cal_reference)
     app.router.add_post("/api/calibrate/ping", h_cal_ping)

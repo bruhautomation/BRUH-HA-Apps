@@ -126,13 +126,14 @@ class LifxEngine:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         sock.setblocking(False)
-        # All interfaces by default, and deliberately: discovery is a LAN
-        # broadcast and the bulbs' replies arrive on whichever interface
-        # faces them — this add-on runs host_network for exactly that.
-        # Nothing listens here in the service sense (only LIFX datagrams
-        # matching our source id are ever acted on); BRIGT_LIFX_BIND pins
-        # a specific interface address on a multi-homed host.
-        sock.bind((os.environ.get("BRIGT_LIFX_BIND", "0.0.0.0"), 0))
+        # INADDR_ANY by default ("" is Python's spelling of it), and
+        # deliberately: discovery is a LAN broadcast and the bulbs' replies
+        # arrive on whichever interface faces them — this add-on runs
+        # host_network for exactly that. Nothing listens here in the
+        # service sense (only LIFX datagrams matching our own source id
+        # are ever acted on); BRIGT_LIFX_BIND pins a specific interface
+        # address on a multi-homed host.
+        sock.bind((os.environ.get("BRIGT_LIFX_BIND", ""), 0))
         self._transport, _ = await loop.create_datagram_endpoint(
             lambda: _Protocol(self), sock=sock)
 

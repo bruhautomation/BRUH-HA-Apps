@@ -14,9 +14,11 @@ ENV ADDON_VERSION=${ADDON_VERSION} \
 
 # Core packages: Python + aiohttp for the ingress panel, jq for JSON
 # tooling in run.sh, su-exec to drop privileges, numpy for the calibration
-# cross-correlation. The rest of the audio stack (ffmpeg, aubio, scipy)
-# arrives with the analyzer — the image stays small until the code that
-# needs it exists.
+# cross-correlation and the analyzer's DSP, ffmpeg to decode whatever the
+# music folder actually contains. The beat tracker is pure numpy on
+# purpose — librosa needs numba (painful on musl) and the aubio python
+# binding isn't packaged here, so the analyzer depends on nothing this
+# image doesn't already carry.
 RUN apk add --no-cache \
     bash \
     curl \
@@ -28,14 +30,16 @@ RUN apk add --no-cache \
     py3-pip \
     py3-aiohttp \
     py3-yaml \
-    py3-numpy
+    py3-numpy \
+    ffmpeg
 
 # Python libs used by the ingress panel: async file IO, and the LIFX LAN
 # protocol library Home Assistant itself uses (discovery + product caps —
 # the playback engine sends its own pre-serialized packets).
 RUN pip3 install --break-system-packages --no-cache-dir \
     aiofiles \
-    aiolifx
+    aiolifx \
+    mutagen
 
 # Dedicated, non-root brigt user (UID 1000). The panel should not run as root.
 RUN addgroup -g 1000 brigt \

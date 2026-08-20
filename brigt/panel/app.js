@@ -206,6 +206,72 @@
   });
 
   // ------------------------------------------------------------------
+  // Library
+  // ------------------------------------------------------------------
+  function trackSummary(track) {
+    if (!track.analyzed) return "not analyzed";
+    const s = track.summary || {};
+    return (s.bpm ? s.bpm + " BPM" : "?") +
+      " · " + (s.sections || 0) + " sections · " + (s.drops || 0) + " drops" +
+      (s.lyrics ? " · lyrics ✓" : "");
+  }
+
+  async function scanLibrary() {
+    const list = $("trackList");
+    list.innerHTML = '<p class="muted">Scanning…</p>';
+    try {
+      const body = await api("api/library");
+      $("libraryFolder").textContent = body.folder +
+        (body.exists ? "" : " (missing!)");
+      const tracks = body.tracks || [];
+      if (!tracks.length) {
+        list.innerHTML = '<p class="muted">No audio files found.</p>';
+        return;
+      }
+      list.innerHTML = "";
+      for (const track of tracks) {
+        const row = document.createElement("div");
+        row.className = "row";
+        row.innerHTML = '<div class="row-main"><strong></strong>' +
+          '<span class="rtt small"></span></div>';
+        row.querySelector("strong").textContent = track.name;
+        row.querySelector(".rtt").textContent = trackSummary(track);
+        list.appendChild(row);
+      }
+    } catch (error) {
+      list.innerHTML = '<p class="muted">scan failed: ' + error.message + "</p>";
+    }
+  }
+
+  $("btnScanLibrary").addEventListener("click", scanLibrary);
+
+  $("btnAnalyzeAll").addEventListener("click", async () => {
+    const status = $("analyzeStatus");
+    try {
+      const started = await post("api/library/analyze", {});
+      const job = await awaitJob(started.job, (running) => {
+        const p = running.progress;
+        if (p) {
+          status.textContent = "Analyzing " + (p.current || "…") + " (" +
+            p.done + "/" + p.total + (p.failed ? ", " + p.failed + " failed" : "") + ")";
+        }
+      });
+      if (job.status === "done") {
+        const r = job.result;
+        status.textContent = "Done: " + r.analyzed + " analyzed, " +
+          r.skipped + " already had analysis" +
+          (r.failed.length ? ", " + r.failed.length + " failed (" +
+            r.failed.map((f) => f.file.split("/").pop()).join(", ") + ")" : "");
+      } else {
+        status.textContent = "Analysis failed: " + job.error;
+      }
+      scanLibrary();
+    } catch (error) {
+      status.textContent = "failed: " + error.message;
+    }
+  });
+
+  // ------------------------------------------------------------------
   // Calibrate: the phone is the measurement instrument
   // ------------------------------------------------------------------
   const RECORD_SECONDS = 14;

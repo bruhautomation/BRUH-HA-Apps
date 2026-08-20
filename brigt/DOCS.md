@@ -47,6 +47,15 @@ networks and loopback). Open it from the Home Assistant sidebar.
 The panel binds 8095 rather than the family's usual 8099 because BRUH
 Minecraft also runs on the host network and already owns 8099.
 
+## The Library
+
+Point `music_folder` at your music and press **Analyze new tracks** on the
+Library tab. Each track is analyzed once — tempo and beat grid, song
+sections and drops, synced lyrics from LRCLIB when they exist — and cached
+by content (renaming files doesn't re-analyze). Analysis runs as a
+background job with per-track progress; one bad file is reported and
+skipped, never the end of the folder.
+
 ## Calibration
 
 Every speaker adds latency between "play" and audible sound — AirPlay

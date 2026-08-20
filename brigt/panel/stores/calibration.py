@@ -22,10 +22,23 @@ CALIBRATION_DIR = Path(os.environ.get("BRIGT_STATE", "/data")) / "calibration"
 
 MAX_RUNS = 12
 
+# What a Home Assistant entity id looks like. Anything else never reaches
+# a filename — the store's callers take entity ids off the wire, and a
+# filename is exactly where wire data must not improvise.
+_ENTITY_RE = re.compile(r"^[a-z_]+\.[a-z0-9_]+$")
+
 
 def _path(entity_id: str) -> Path:
-    safe = re.sub(r"[^A-Za-z0-9_.-]", "_", entity_id)
-    return CALIBRATION_DIR / f"{safe}.json"
+    if not _ENTITY_RE.fullmatch(entity_id):
+        raise ValueError(f"not an entity id: {entity_id!r}")
+    safe = entity_id.replace(".", "_")
+    path = (CALIBRATION_DIR / f"{safe}.json").resolve()
+    # Belt and suspenders: the strict pattern above cannot produce a
+    # separator, so this containment check never fires in practice — it is
+    # here so the guarantee survives someone loosening the pattern.
+    if path.parent != CALIBRATION_DIR.resolve():
+        raise ValueError(f"path escaped the calibration dir: {entity_id!r}")
+    return path
 
 
 def load(entity_id: str) -> dict:
@@ -83,6 +96,8 @@ def all_profiles() -> list[dict]:
             except (OSError, ValueError):
                 continue
     except OSError:
+        # No calibration directory yet — nothing has been measured, and
+        # an empty list is exactly that answer.
         pass
     return profiles
 

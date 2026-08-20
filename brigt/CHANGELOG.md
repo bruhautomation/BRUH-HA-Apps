@@ -5,6 +5,41 @@ All notable changes to the **BRigt** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.4.0
+
+The analyzer — everything the director will choreograph from, computed
+once per track and cached, so a show compiles from answers instead of
+listening on the fly.
+
+### Added
+- **Beat tracking** (pure numpy — no librosa/numba on musl): spectral-flux
+  onset envelope, autocorrelation tempo with octave correction, an
+  exhaustive phase/tempo grid fit, and each grid beat snapped onto the
+  actual onset under it. The envelope is aligned to audio time at the
+  source (spectral flux answers FRAME/HOP bins early — measured, exactly
+  2 bins — and every consumer reads the corrected timeline). Verified
+  against synthesized drum tracks: tempo within 3%, beats within 40ms.
+- **Features**: energy + low/mid/high band envelopes on one shared 20Hz
+  grid, and a whole-track brightness hint for palette selection.
+- **Sections & drops**: novelty-based boundaries labelled by honest energy
+  tier (intro/quiet/mid/peak/outro — not guessed verse/chorus names), and
+  drop detection (a sharp sustained jump out of a quieter stretch, led by
+  bass).
+- **Synced lyrics** from LRCLIB (free, keyless) by artist/title/duration;
+  absence is an answer, never an error — instrumentals choreograph from
+  the music alone.
+- **Library tab**: scan the music folder (content-hashed identity, so a
+  renamed file keeps its analysis), analyze new tracks as a background job
+  with live per-track progress, per-track summaries (BPM, sections,
+  drops, lyrics).
+- ffmpeg + mutagen in the image (decode anything, read tags).
+
+### Security
+- Entity ids and track hashes are validated at every API boundary before
+  they ever shape a filename (CodeQL path-injection findings addressed
+  with strict patterns plus containment checks, not best-effort
+  sanitizing).
+
 ## 0.3.0
 
 Speaker calibration — the number no API reports, measured instead of

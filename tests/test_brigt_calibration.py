@@ -146,6 +146,15 @@ class TestCalibrationStore(unittest.TestCase):
         calibration.add_run("media_player.new", 2000.0, method="mic")
         self.assertEqual("media_player.new", calibration.best_entity())
 
+    def test_wire_data_never_names_a_file(self):
+        """Entity ids come off the wire and become filenames; anything that
+        is not shaped like an entity id is refused before a path exists."""
+        for hostile in ("../../etc/passwd", "media_player/../x", "",
+                        "media_player.", "a.b/c", "MEDIA_PLAYER.LOUD"):
+            with self.subTest(entity=hostile):
+                with self.assertRaises(ValueError):
+                    calibration.add_run(hostile, 1000.0, method="mic")
+
     def test_runs_are_capped(self):
         for i in range(20):
             profile = calibration.add_run("media_player.x", 1000.0 + i,
