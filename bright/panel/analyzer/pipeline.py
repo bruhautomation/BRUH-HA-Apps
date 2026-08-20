@@ -44,6 +44,10 @@ def analyze_track(path: Path) -> dict:
         "beat_method": rhythm["method"],
         "features": bands,
         "brightness": features.brightness_hint(pcm, decode.SAMPLE_RATE),
+        # The picture of the song, computed here because the decode has
+        # already happened — asking for it later means running ffmpeg over
+        # the whole track again to draw a few hundred pixels.
+        "envelope": features.envelope(pcm),
         "sections": sections.find_sections(bands, duration_s),
         "drops": sections.find_drops(bands),
         "lyrics": lyrics.fetch(tags.get("artist", ""), tags.get("title", ""),

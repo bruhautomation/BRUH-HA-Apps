@@ -1398,7 +1398,44 @@
       return;
     }
     renderRunState();
+    edFollowLiveShow();
   }
+
+  // While a show is actually playing, the editor's playhead follows the
+  // room rather than the preview.
+  //
+  // The conductor stamps `position_s` as it dispatches, so the value is
+  // exact but arrives in steps — every cue during a busy scene, and not at
+  // all through a quiet one. Sitting on it would make the playhead lurch
+  // and then freeze, so it is treated as an anchor and advanced locally
+  // between polls: the same trick the show clock itself uses, for the same
+  // reason. A poll that moves the anchor backwards (a restart, a different
+  // track) re-anchors instead of interpolating toward it.
+  function edFollowLiveShow() {
+    const state = showState.data || {};
+    const live = state.active && typeof state.position_s === "number" &&
+      ed.hash && state.track_hash === ed.hash;
+    if (!live) {
+      if (ed.following) {
+        ed.following = false;
+        edPlay(false);
+      }
+      return;
+    }
+    if (!ed.following) {
+      ed.following = true;
+      edPlay(false);  // the room is the clock now, not the animation loop
+    }
+    ed.liveAnchor = { at: performance.now(), position: state.position_s };
+    edSeek(state.position_s);
+  }
+
+  // Between polls, keep the playhead moving from the last anchor.
+  setInterval(() => {
+    if (!ed.following || !ed.liveAnchor) return;
+    const elapsed = (performance.now() - ed.liveAnchor.at) / 1000;
+    edSeek(ed.liveAnchor.position + elapsed, false);
+  }, 100);
 
   function watchRunState() {
     if (showState.timer) return;
@@ -2264,6 +2301,136 @@
     ed.raf = requestAnimationFrame(step);
   }
 
+  // -- the song: what the show is hung off ------------------------------
+  //
+  // Nothing in the panel used to show the music at all. A show is a list
+  // of times, and the only way to know whether a drop landed on the drop
+  // was to play it in a dark room and watch. The waveform is the missing
+  // half of the picture: the shape of the track, the sections the analyser
+  // found, the drops it marked, and the bar lines — so "why does nothing
+  // happen for thirty seconds" is answerable by looking.
+  //
+  // Downbeats rather than every beat, deliberately. At 120bpm a four
+  // minute track has 480 beats; drawn on a 900px canvas that is a grey
+  // wash, not a grid. Bar lines are the ones a person can count against.
+  async function edLoadWave(hash) {
+    ed.wave = null;
+    $("edWaveNote").textContent = "";
+    edDrawWave();
+    try {
+      const body = await api("api/track/" + hash + "/waveform");
+      ed.wave = body;
+      const bits = [];
+      if (body.bpm) bits.push(Math.round(body.bpm) + " bpm");
+      if (body.sections.length) bits.push(body.sections.length + " sections");
+      bits.push(body.drops.length
+        ? body.drops.length + (body.drops.length === 1 ? " drop" : " drops")
+        : "no drops found");
+      $("edWaveNote").textContent = bits.join(" · ");
+      edDrawWave();
+    } catch (error) {
+      // A track analysed before envelopes existed, whose file has since
+      // moved, is the honest 409 here — say it rather than drawing a flat
+      // line that reads as silence.
+      $("edWaveNote").textContent = error.message;
+    }
+  }
+
+  const SECTION_TINT = {
+    intro: "rgba(120,160,255,0.13)", verse: "rgba(120,160,255,0.10)",
+    build: "rgba(255,190,90,0.16)", chorus: "rgba(255,140,90,0.16)",
+    peak: "rgba(255,110,90,0.20)", break: "rgba(140,140,160,0.10)",
+    outro: "rgba(120,160,255,0.10)",
+  };
+
+  function edDrawWave() {
+    const canvas = $("edWave");
+    if (!canvas || !canvas.getContext) return;
+    const width = canvas.clientWidth || 800;
+    const height = 72;
+    const ratio = window.devicePixelRatio || 1;
+    canvas.width = Math.round(width * ratio);
+    canvas.height = Math.round(height * ratio);
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+    const wave = ed.wave;
+    if (!wave || !wave.envelope || !wave.envelope.length) return;
+    const duration = wave.duration_s || ed.duration || 1;
+    const at = (seconds) => (seconds / duration) * width;
+
+    // Sections first: they are the ground everything else sits on.
+    for (const section of wave.sections) {
+      ctx.fillStyle = SECTION_TINT[section.kind] || "rgba(140,140,160,0.10)";
+      ctx.fillRect(at(section.start), 0,
+                   Math.max(1, at(section.end) - at(section.start)), height);
+    }
+
+    // Bar lines, under the audio so they never obscure its shape.
+    ctx.strokeStyle = "rgba(160,160,180,0.22)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (const beat of wave.downbeats) {
+      const x = Math.round(at(beat)) + 0.5;
+      ctx.moveTo(x, height - 10);
+      ctx.lineTo(x, height);
+    }
+    ctx.stroke();
+
+    // The audio, mirrored about the middle — the shape people recognise.
+    const middle = height / 2;
+    const columns = wave.envelope.length;
+    const columnWidth = width / columns;
+    ctx.fillStyle = "rgba(90,170,255,0.75)";
+    for (let i = 0; i < columns; i += 1) {
+      const peak = wave.envelope[i] * (height * 0.45);
+      ctx.fillRect(i * columnWidth, middle - peak,
+                   Math.max(1, columnWidth - 0.3), peak * 2);
+    }
+
+    // Drops last, over everything, because they are the thing you are
+    // looking for when you look at this at all.
+    for (const drop of wave.drops) {
+      const x = Math.round(at(drop.t)) + 0.5;
+      ctx.strokeStyle = "rgba(255,90,90,0.95)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, height);
+      ctx.stroke();
+    }
+  }
+
+  // Clicking or dragging the song scrubs it, because a picture of a track
+  // that you cannot put the playhead on is a picture and not a control.
+  (function bindWaveScrub() {
+    const canvas = $("edWave");
+    if (!canvas) return;
+    let dragging = false;
+    const seekTo = (event) => {
+      const box = canvas.getBoundingClientRect();
+      if (!box.width || !ed.duration) return;
+      const ratio = Math.min(1, Math.max(0,
+        (event.clientX - box.left) / box.width));
+      edSeek(ratio * ed.duration);
+    };
+    canvas.addEventListener("pointerdown", (event) => {
+      dragging = true;
+      canvas.setPointerCapture(event.pointerId);
+      seekTo(event);
+    });
+    canvas.addEventListener("pointermove", (event) => {
+      if (dragging) seekTo(event);
+    });
+    const release = (event) => {
+      if (!dragging) return;
+      dragging = false;
+      try { canvas.releasePointerCapture(event.pointerId); } catch (ignored) {}
+    };
+    canvas.addEventListener("pointerup", release);
+    canvas.addEventListener("pointercancel", release);
+  })();
+
   // -- the strip: the whole show, one row per light --------------------
   function edDrawStrip() {
     const canvas = $("edStrip");
@@ -2449,6 +2616,7 @@
       ed.fixtures = body.fixtures || [];
       ed.duration = body.duration_s || 0;
       edDrawStrip();
+      edDrawWave();
       edRenderScenes();
       edStatus("");
     } catch (error) {
@@ -2720,7 +2888,11 @@
   // The strip is drawn from measured width, so it has to be redrawn when
   // the width changes — including when the tab it lives on is shown, since
   // a hidden pane measures zero.
-  window.addEventListener("resize", () => { edDrawStrip(); edRenderScenes(); });
+  window.addEventListener("resize", () => {
+    edDrawStrip();
+    edDrawWave();
+    edRenderScenes();
+  });
 
   // ------------------------------------------------------------------
   // Shows: the script editor — the whole show, as the file it is
@@ -2771,6 +2943,7 @@
         (body.file ? " · " + body.file : " · not compiled yet");
       loadDirectorReport(hash);
       loadDirectorPrompt(hash);
+      edLoadWave(hash);
       $("scriptText").value = body.script
         ? JSON.stringify(body.script, null, 2)
         : "";
@@ -2793,6 +2966,7 @@
         ed.timeline = null;
         ed.fixtures = [];
         edDrawStrip();
+      edDrawWave();
         edRenderScenes();
         edPaint();
       }

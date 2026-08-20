@@ -63,7 +63,7 @@ import media_source  # noqa: E402
 import jobs  # noqa: E402
 import panel_port  # noqa: E402
 import playback_check  # noqa: E402
-from analyzer import library, pipeline  # noqa: E402
+from analyzer import decode, features, library, pipeline  # noqa: E402
 from calibrate import correlate, reference  # noqa: E402
 from lifx import engine as lifx_engine  # noqa: E402
 from director import build as director_build  # noqa: E402
@@ -1119,6 +1119,64 @@ async def h_show_compile(request: web.Request) -> web.Response:
     })
 
 
+def _waveform_payload(hash_hex: str) -> tuple[int, dict]:
+    """The song as something to look at, with its landmarks.
+
+    Everything a person needs to see WHEN things happen: the shape of the
+    audio, and the beats, sections and drops the show is hung off. They
+    travel together because they are drawn together — two requests would
+    let the picture and the marks disagree about which track they are of.
+
+    An analysis made before envelopes existed has none, so one is computed
+    from the file and folded back in rather than making somebody re-analyse
+    a library to get a picture. That costs an ffmpeg pass, once, and only
+    for old analyses.
+    """
+    if not library.is_track_hash(hash_hex):
+        return 400, {"error": "not a track hash"}
+    analysis = library.load_analysis(hash_hex)
+    if analysis is None:
+        return 404, {"error": "not analyzed yet — the Library tab analyses a "
+                              "track before there is anything to show"}
+    envelope = analysis.get("envelope")
+    if not envelope:
+        path = Path(analysis.get("file") or "")
+        if not path.is_file():
+            return 409, {"error": f"this track was analysed before BRight drew "
+                                  f"waveforms, and the file it was analysed "
+                                  f"from ({path or 'unknown'}) is not there "
+                                  f"any more — re-analyse it from the Library "
+                                  f"tab"}
+        try:
+            envelope = features.envelope(decode.pcm(path))
+        except (OSError, ValueError) as exc:
+            return 422, {"error": f"could not read the audio: "
+                                  f"{playback_check.flat(exc)}"}
+        analysis["envelope"] = envelope
+        library.save_analysis(hash_hex, analysis)
+    tags = analysis.get("tags") or {}
+    return 200, {
+        "envelope": envelope,
+        "duration_s": tags.get("duration"),
+        "bpm": analysis.get("bpm"),
+        "title": tags.get("title") or "",
+        "artist": tags.get("artist") or "",
+        # Downbeats rather than every beat: at four minutes a beat every
+        # half second is 480 lines on a 900px canvas, which is a grey wash
+        # and not a grid. The bar lines are what a person can actually
+        # count against.
+        "downbeats": analysis.get("downbeats") or [],
+        "sections": analysis.get("sections") or [],
+        "drops": analysis.get("drops") or [],
+    }
+
+
+async def h_track_waveform(request: web.Request) -> web.Response:
+    hash_hex = request.match_info["hash"]
+    status, payload = await asyncio.to_thread(_waveform_payload, hash_hex)
+    return web.json_response(payload, status=status)
+
+
 async def h_show_prompt(request: web.Request) -> web.Response:
     """Exactly what Claude is handed for this track.
 
@@ -1424,7 +1482,8 @@ async def _start_show_for(hash_hex: str, media_player: str) -> tuple[int, dict]:
     result = await _conductor().start(
         show["cues"], media_player=media_player,
         media_content_id=show["media_content_id"], title=show["title"],
-        duration_s=show["duration_s"])
+        duration_s=show["duration_s"],
+        track_hash=show.get("track_hash", ""))
     return (200 if result.get("ok") else 409), result
 
 
@@ -1958,6 +2017,7 @@ def build_app() -> web.Application:
     app.router.add_get("/api/show/{hash}/cues", h_show_cues)
     app.router.add_get("/api/show/{hash}/director", h_show_director)
     app.router.add_get("/api/show/{hash}/prompt", h_show_prompt)
+    app.router.add_get("/api/track/{hash}/waveform", h_track_waveform)
     app.router.add_post("/api/show/{hash}/preview", h_show_preview)
     app.router.add_post("/api/show/{hash}/outline", h_show_outline)
     # Library

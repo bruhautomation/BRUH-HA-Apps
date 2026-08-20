@@ -104,6 +104,17 @@ duration = BEATS[-1] + 4
     ],
     "drops": [{"t": 70.0, "strength": 0.9}],
     "lyrics": {"synced": False, "lines": []},
+    # The waveform, seeded rather than decoded. This demo has no ffmpeg and
+    # its "track" is a few bytes on disk, so the panel's on-demand decode
+    # path cannot run here — and it should not have to: every other field
+    # in this analysis is fabricated too. The shape follows the sections
+    # above (quiet intro, loud peak) so what is drawn agrees with what the
+    # rest of the seeded analysis claims about the song.
+    "envelope": [
+        round(min(1.0, level * (0.55 + 0.45 * ((index * 37) % 11) / 10)), 3)
+        for index, level in enumerate(
+            [0.18] * 170 + [0.55] * 230 + [0.95] * 340 + [0.22] * 160)
+    ],
 }))
 
 import server  # noqa: E402

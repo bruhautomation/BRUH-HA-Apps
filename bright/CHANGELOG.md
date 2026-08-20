@@ -7,7 +7,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## 0.12.0
 
-Ask Claude to write one show, and read what it was told.
+Ask Claude to write one show, read what it was told, and see the song it
+is hung off.
 
 ### Added
 
@@ -32,6 +33,23 @@ Ask Claude to write one show, and read what it was told.
   travel orders worked out from them. Reading it runs nothing and costs
   nothing, which is the point: it is the cheapest way to find out whether
   a Claude run is worth a couple of minutes.
+- **The song, drawn.** Nothing in the panel showed the music at all — a
+  show is a list of times, and the only way to know whether the drop
+  landed on the drop was to play it in a dark room and watch. The show
+  editor now draws the waveform above the timeline, tinted by section,
+  with the analyser's drops marked in red and bar lines you can count
+  against. It shares a wrapper (and therefore a time axis and a playhead)
+  with the light strip, because two pictures of one song that do not line
+  up are worse than one. Clicking or dragging it scrubs.
+- **The playhead follows a real show.** While a show is actually playing,
+  the editor stops animating its own preview and follows the room instead,
+  interpolating between the conductor's position stamps so the head moves
+  smoothly through a quiet stretch where no cues are dispatched.
+- Waveforms are computed once during analysis, beside the decode that has
+  already happened. A track analysed before this release has one computed
+  on demand from its file, so nobody has to re-analyse a library to get a
+  picture — and if that file has since moved, it says so rather than
+  drawing a flat line that reads as silence.
 
 ## 0.11.1
 

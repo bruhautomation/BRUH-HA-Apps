@@ -52,6 +52,7 @@ def _seed(state: Path) -> None:
         "version": 1, "hash": TRACK_HASH, "bpm": BPM, "beats": BEATS,
         "downbeats": BEATS[::4], "onsets": BEATS, "brightness": 0.6,
         "file": "/media/music/demo.mp3",
+        "envelope": [round(0.2 + 0.7 * (i % 40) / 40, 3) for i in range(900)],
         "tags": {"title": "Demo Track", "duration": duration},
         "sections": [
             {"start": 0.0, "end": 30.0, "kind": "intro", "energy": 0.2},
@@ -570,3 +571,41 @@ class TestTheBriefIsReadable(PanelCase):
         response = await self.client.get(f"/api/show/{'cd' * 20}/prompt")
         self.assertEqual(404, response.status)
         self.assertIn("Library", (await response.json())["error"])
+
+
+class TestSeeingTheMusic(PanelCase):
+    """Nothing in the panel showed the song at all.
+
+    A show is a list of times, and the only way to know whether the drop
+    landed on the drop was to play it in a dark room and watch. The
+    waveform and the landmarks travel in ONE answer on purpose: two
+    requests would let the picture and the marks disagree about which
+    track they are of.
+    """
+
+    async def test_the_song_and_its_landmarks_arrive_together(self):
+        response = await self.client.get(f"/api/track/{TRACK_HASH}/waveform")
+        self.assertEqual(200, response.status)
+        body = await response.json()
+        self.assertEqual(900, len(body["envelope"]))
+        self.assertEqual("Demo Track", body["title"])
+        self.assertEqual(BPM, body["bpm"])
+        self.assertTrue(body["sections"], "the sections the analyser found")
+        self.assertTrue(body["drops"], "and the drops it marked")
+        self.assertTrue(body["duration_s"])
+
+    async def test_bar_lines_not_every_beat(self):
+        """At 120bpm a four minute track is 480 beats; drawn on a 900px
+        canvas that is a grey wash rather than a grid."""
+        body = await (await self.client.get(
+            f"/api/track/{TRACK_HASH}/waveform")).json()
+        self.assertLess(len(body["downbeats"]), len(BEATS))
+
+    async def test_an_unanalysed_track_says_what_to_do(self):
+        response = await self.client.get(f"/api/track/{'cd' * 20}/waveform")
+        self.assertEqual(404, response.status)
+        self.assertIn("Library", (await response.json())["error"])
+
+    async def test_a_bad_hash_is_refused_rather_than_globbed(self):
+        response = await self.client.get("/api/track/not-a-hash/waveform")
+        self.assertEqual(400, response.status)

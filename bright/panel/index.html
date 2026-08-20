@@ -346,8 +346,16 @@
       <div id="edFloor" class="map-floor preview-floor" aria-label="The room
            at the scrubbed moment"></div>
 
-      <!-- The whole show: scene blocks, one strip row per light, playhead. -->
+      <!-- The whole show: the song, scene blocks, one strip row per
+           light, and one playhead across all three. The waveform is in
+           the SAME wrapper as the strip so they share a time axis — two
+           pictures of one song that did not line up would be worse than
+           one, and lining them up by eye is not a thing a layout should
+           ask of anybody. -->
       <div class="ed-timeline">
+        <canvas id="edWave" class="ed-wave" height="72"
+                aria-label="The song, with its sections and drops"></canvas>
+        <div id="edWaveNote" class="muted small ed-wave-note"></div>
         <div id="edScenes" class="ed-scenes"></div>
         <canvas id="edStrip" class="ed-strip" height="120"></canvas>
         <div id="edHead" class="ed-head" hidden></div>

@@ -573,3 +573,16 @@ select { max-width: 100%; }
      here rather than clever. */
   .prompt-text { font-size: 16px; }
 }
+
+/* The song itself, above the show that is hung off it. Same width and the
+   same wrapper as the strip, so one playhead crosses both and the two
+   cannot disagree about where 1:30 is. */
+.ed-wave {
+  display: block;
+  width: 100%;
+  height: 72px;
+  border-radius: 8px 8px 0 0;
+  cursor: pointer;
+  touch-action: none;
+}
+.ed-wave-note { padding: 2px 4px 4px; }

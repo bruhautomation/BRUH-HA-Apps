@@ -84,6 +84,44 @@ for (const width of WIDTHS) {
 	if (!painted) fail('the strip canvas is blank');
 	else ok('the strip painted');
 
+	// The song itself. A blank waveform is the whole feature missing, and
+	// it looks exactly like a quiet track — so this checks for INK, not for
+	// a canvas. The note beneath carries what the analyser found, which is
+	// the other half of "show me what you pulled out of the music".
+	const wavePainted = await page.evaluate(() => {
+		const c = document.getElementById('edWave');
+		if (!c || !c.getContext || !c.width) return 0;
+		const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+		let ink = 0;
+		for (let i = 3; i < d.length; i += 4) if (d[i] > 8) ink += 1;
+		return ink;
+	});
+	if (!wavePainted) fail('the waveform canvas is blank');
+	else ok(`the song painted (${wavePainted} lit pixels)`);
+
+	const waveNote = (await page.textContent('#edWaveNote') || '').trim();
+	if (!/bpm/.test(waveNote)) {
+		fail(`the waveform says nothing about the track: "${waveNote}"`);
+	} else ok(`the song reports: ${waveNote}`);
+
+	// Clicking the song moves the playhead — a picture of a track you
+	// cannot put the playhead on is a picture, not a control.
+	const beforeClick = await page.textContent('#edClock');
+	// Scrolled into view first: at 390px the editor sits well below the
+	// fold, and a rect taken from a scrolled-away element gives viewport
+	// coordinates that land on whatever happens to be there instead.
+	const waveBox = await page.$eval('#edWave', (c) => {
+		c.scrollIntoView({ block: 'center' });
+		const b = c.getBoundingClientRect();
+		return { x: b.left + b.width * 0.72, y: b.top + b.height / 2 };
+	});
+	await page.mouse.click(waveBox.x, waveBox.y);
+	await page.waitForTimeout(200);
+	const afterClick = await page.textContent('#edClock');
+	if (beforeClick === afterClick) {
+		fail(`clicking the song did not move the playhead (${afterClick})`);
+	} else ok(`clicking the song seeks (${beforeClick} -> ${afterClick})`);
+
 	const dots = await roomColours(page);
 	if (!dots.length) fail('the preview floor has no lights on it');
 	else ok(`${dots.length} lights on the preview floor`);

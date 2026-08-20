@@ -93,7 +93,8 @@ class Conductor:
     async def _play_one(self, cues: list[dict], *, media_player: str,
                         media_content_id: str, title: str,
                         duration_s: float, offset_ms: float,
-                        status: str = "playing") -> None:
+                        status: str = "playing",
+                        track_hash: str = "") -> None:
         """One track, start to restored lights. Awaited inline by the party
         loop; wrapped in a task by single-show start()."""
         await self.engine.start()
@@ -104,7 +105,11 @@ class Conductor:
         if isinstance(result, dict) and result.get("error"):
             raise RuntimeError(result["error"])
         self.clock.anchor(play_call, offset_ms / 1000.0)
+        # `track` is the title, for a person; `track_hash` is the identity,
+        # for anything that has to decide whether the show it is looking at
+        # is the one that is running. Two tracks can share a title.
         self._update_state(status=status, track=title, active=True,
+                           track_hash=track_hash,
                            lights_busy=True, cues_total=len(cues),
                            cues_sent=0, media_player=media_player,
                            position_s=0.0)
@@ -151,7 +156,8 @@ class Conductor:
 
     async def start(self, cues: list[dict], *, media_player: str,
                     media_content_id: str, title: str,
-                    duration_s: float, end_scene: str | None = None) -> dict:
+                    duration_s: float, end_scene: str | None = None,
+                    track_hash: str = "") -> dict:
         await self.stop(restore=True)
         self.set_end_scene(end_scene)
         offset_ms = self._calibrated_offset(media_player)
@@ -163,7 +169,8 @@ class Conductor:
         self._task = asyncio.create_task(self._play_one(
             cues, media_player=media_player,
             media_content_id=media_content_id, title=title,
-            duration_s=duration_s, offset_ms=offset_ms))
+            duration_s=duration_s, offset_ms=offset_ms,
+            track_hash=track_hash))
         self._task.add_done_callback(self._show_ended)
         return {"ok": True, "offset_ms": offset_ms, "cues": len(cues)}
 
@@ -236,7 +243,8 @@ class Conductor:
                         duration_s=show["duration_s"],
                         offset_ms=self._calibrated_offset(media_player)
                                   or offset_ms,
-                        status="party")
+                        status="party",
+                        track_hash=show.get("track_hash", ""))
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:  # noqa: BLE001 — next track, not the night
