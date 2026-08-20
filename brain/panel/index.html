@@ -587,13 +587,12 @@
       <button id="convClose" class="btn icon" data-tip="Close" aria-label="Close">✕</button>
     </header>
     <div class="edit-body">
-      <p class="hint tight">Everything in <code id="convCwd">/config</code>, newest first —
-        started here or in the classic terminal, it makes no difference. Picking one
-        replays it and carries on where it left off. brAIn runs Claude here too —
-        voice, automations, filing memory — so those are behind their own chips
-        rather than mixed in with yours. Card and fix runs have chips as well:
-        those open read-only, a record of exactly what was sent to Claude about
-        your house and what came back.</p>
+      <!-- One line, not a manual: the chips explain themselves on press,
+           and the full story lives in Docs. The long version of this hint
+           took more of the dialog than the list it was introducing. -->
+      <p class="hint tight">Newest first — pick one to carry on where it left
+        off. brAIn's own runs sit behind their chips; Cards and Fixes open
+        read-only.</p>
       <div id="convFilter" class="crfilters"></div>
       <div id="convList" class="convlist"></div>
       <p id="convEmpty" class="kempty hidden">No other conversations yet.</p>

@@ -2,6 +2,16 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.28.4
+
+### Changed
+
+- **The Conversations dialog's intro is one line.** The paragraph had grown
+  to five sentences and took more of the dialog than the list it was
+  introducing. The chips explain themselves on press and the full story
+  lives in Docs; the project directory it used to display is still in
+  Session details.
+
 ## 1.28.3
 
 ### Changed
