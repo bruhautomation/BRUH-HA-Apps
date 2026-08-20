@@ -145,6 +145,10 @@ class TestPanelBranding(unittest.TestCase):
     # caps are built to one rule rather than two.
     SMOOTH_GABLE = "M293.5,21.6V70.83S189.86,174.05,188.83,175.5H450.09Z"
     BLOCKY_GABLE = "M188.83,175.5V158.4H200.46"
+    # BRigt's roof: the same apex, eaves and knockout window, drawn as a
+    # straight plane with two light-beam knockouts fanning from under the
+    # apex — the signal motif rebuilt as light, which is the product.
+    BEAMED_GABLE = "M293.5,21.6L450.09,175.5H188.83Z"
 
     def test_the_mark_is_the_gable(self):
         """Each app's roof is one path, used everywhere that app appears —
@@ -157,7 +161,9 @@ class TestPanelBranding(unittest.TestCase):
         self.assertIn(self.SMOOTH_GABLE, self.html, "the top bar isn't drawing the gable")
         self.assertIn(self.SMOOTH_GABLE, (PANEL / "favicon.svg").read_text())
 
-        for app, gable in (("brain", self.SMOOTH_GABLE), ("minecraft", self.BLOCKY_GABLE)):
+        for app, gable in (("brain", self.SMOOTH_GABLE),
+                           ("minecraft", self.BLOCKY_GABLE),
+                           ("brigt", self.BEAMED_GABLE)):
             for svg in sorted((BASE_DIR / "branding" / app).glob("*.svg")):
                 self.assertIn(gable, svg.read_text(),
                               f"{svg.name} does not carry {app}'s gable path")
@@ -166,18 +172,26 @@ class TestPanelBranding(unittest.TestCase):
         """The blocky roof belongs to Minecraft and the smooth one to brAIn.
         Mixing them is the failure this catches: a Minecraft square built from
         a brAIn tile would pass every other check here."""
-        for app, mine, theirs in (("brain", self.SMOOTH_GABLE, self.BLOCKY_GABLE),
-                                  ("minecraft", self.BLOCKY_GABLE, self.SMOOTH_GABLE)):
+        roofs = {"brain": self.SMOOTH_GABLE,
+                 "minecraft": self.BLOCKY_GABLE,
+                 "brigt": self.BEAMED_GABLE}
+        for app, mine in roofs.items():
+            others = [path for owner, path in roofs.items() if owner != app]
             for svg in sorted((BASE_DIR / "branding" / app).glob("*.svg")):
                 body = svg.read_text()
                 self.assertIn(mine, body, f"{svg.name} lost its own roof")
-                self.assertNotIn(theirs, body, f"{svg.name} is wearing the other app's roof")
+                for theirs in others:
+                    self.assertNotIn(theirs, body,
+                                     f"{svg.name} is wearing another app's roof")
 
-        mc_favicon = (BASE_DIR / "bruh-minecraft-server" / "panel" / "favicon.svg").read_text()
-        self.assertIn(self.BLOCKY_GABLE, mc_favicon,
-                      "the Minecraft favicon is not the blocky roof")
-        self.assertNotIn(self.SMOOTH_GABLE, mc_favicon,
-                         "the Minecraft favicon is wearing brAIn's roof")
+        for addon, mine in (("bruh-minecraft-server", self.BLOCKY_GABLE),
+                            ("brigt", self.BEAMED_GABLE)):
+            favicon = (BASE_DIR / addon / "panel" / "favicon.svg").read_text()
+            self.assertIn(mine, favicon,
+                          f"{addon}'s favicon is not its own roof")
+            for theirs in set(roofs.values()) - {mine}:
+                self.assertNotIn(theirs, favicon,
+                                 f"{addon}'s favicon is wearing another app's roof")
 
     def test_no_asset_is_the_gable_alone(self):
         """The gable is the *family* mark: it says BRUH and says nothing about
@@ -190,7 +204,7 @@ class TestPanelBranding(unittest.TestCase):
         for svg in sorted((BASE_DIR / "branding").glob("*/*.svg")):
             self.assertIn(ligature, svg.read_text(),
                           f"{svg.name} is the gable without the BR ligature")
-        for panel in ("brain", "bruh-minecraft-server"):
+        for panel in ("brain", "bruh-minecraft-server", "brigt"):
             favicon = BASE_DIR / panel / "panel" / "favicon.svg"
             self.assertIn(ligature, favicon.read_text(),
                           f"{panel}'s favicon is the gable without the BR ligature")
@@ -198,7 +212,8 @@ class TestPanelBranding(unittest.TestCase):
     def test_both_apps_have_a_full_brand_set(self):
         """Twelve files each, same names, so render.mjs and anything else that
         reaches for a variant can do it by pattern rather than by special case."""
-        for app, stem in (("brain", "brain"), ("minecraft", "bruh-minecraft")):
+        for app, stem in (("brain", "brain"), ("minecraft", "bruh-minecraft"),
+                          ("brigt", "brigt")):
             for shape in ("logo-onlight", "logo-ondark", "logo-onazure",
                           "logo-mono-black", "logo-mono-white",
                           "square-onlight", "square-ondark",

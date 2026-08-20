@@ -1,0 +1,61 @@
+/* BRigt panel. Dark stage, azure family accent. Touch targets ≥44px, and no
+   text control under 16px on touch — iOS Safari zooms in on focus below that
+   and never zooms back out inside an ingress iframe. */
+:root {
+  --bg: #0B1016;
+  --panel: #121a24;
+  --ink: #F4F8FB;
+  --muted: #8fa3b5;
+  --azure: #1E9FE0;
+  --azure-light: #5AC4F2;
+  --line: #1f2c3a;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+.topbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 8px 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand-tile { width: 32px; height: 32px; border-radius: 7px; }
+.brand-name { font-weight: 700; font-size: 18px; letter-spacing: .02em; }
+.brand-sub { color: var(--muted); font-size: 13px; }
+
+.tabs { display: flex; flex-wrap: wrap; gap: 4px; }
+.tab {
+  min-height: 44px;
+  padding: 10px 14px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 15px;
+  cursor: pointer;
+}
+.tab:hover { color: var(--ink); background: rgba(90, 196, 242, 0.08); }
+.tab.active { color: var(--ink); background: rgba(30, 159, 224, 0.18); }
+
+.wrap { max-width: 1080px; margin: 0 auto; padding: 20px 16px 40px; }
+.pane { display: none; }
+.pane.active { display: block; }
+.pane h2 { margin: 8px 0 6px; font-size: 20px; }
+.muted { color: var(--muted); max-width: 62ch; }
+
+.foot { margin-top: 40px; color: var(--muted); font-size: 13px; }
+
+@media (pointer: coarse) {
+  /* One floor for everything added later, not a per-control patch. */
+  input, select, textarea, button { font-size: 16px; }
+}

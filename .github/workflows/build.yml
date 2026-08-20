@@ -28,6 +28,7 @@ on:
     paths:
       - "brain/**"
       - "bruh-minecraft-server/**"
+      - "brigt/**"
       - ".github/workflows/build.yml"
   workflow_dispatch:
     inputs:
@@ -49,7 +50,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        addon: [brain, bruh-minecraft-server]
+        addon: [brain, bruh-minecraft-server, brigt]
         arch: [aarch64, amd64]
 
     steps:

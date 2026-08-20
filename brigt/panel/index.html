@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BRigt</title>
+<!-- Relative URLs only: the Supervisor serves this panel under
+     /api/hassio_ingress/<token>/ and absolute paths would escape it. -->
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css?v=__VERSION__">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <img src="favicon.svg" alt="" class="brand-tile">
+    <span class="brand-name">BRigt</span>
+    <span class="brand-sub">light show director</span>
+  </div>
+  <nav class="tabs" id="tabs">
+    <button class="tab active" data-tab="lab">Lab</button>
+    <button class="tab" data-tab="map">Light Map</button>
+    <button class="tab" data-tab="library">Library</button>
+    <button class="tab" data-tab="shows">Shows</button>
+    <button class="tab" data-tab="calibrate">Calibrate</button>
+    <button class="tab" data-tab="party">Party</button>
+  </nav>
+</header>
+
+<main class="wrap">
+  <section class="pane active" id="pane-lab">
+    <h2>Lab</h2>
+    <p class="muted">Latency and feasibility probes for your actual house —
+      LIFX round-trip times, sustained rates, an on-bulb waveform demo, and
+      Home Assistant service-call timing. Coming in the next update; this
+      build is the installable skeleton.</p>
+  </section>
+  <section class="pane" id="pane-map">
+    <h2>Light Map</h2>
+    <p class="muted">Place each light, give it a role (candle, downlight,
+      lamp, strip, party light, laser) and a spot in the house. The director
+      choreographs from this map.</p>
+  </section>
+  <section class="pane" id="pane-library">
+    <h2>Library</h2>
+    <p class="muted">Your music folder, analyzed: beats, sections, drops and
+      synced lyrics per track.</p>
+  </section>
+  <section class="pane" id="pane-shows">
+    <h2>Shows</h2>
+    <p class="muted">Compiled shows — one per track, built ahead of time so
+      playback is nothing but a clock and a cue list.</p>
+  </section>
+  <section class="pane" id="pane-calibrate">
+    <h2>Calibrate</h2>
+    <p class="muted">Measures how long your speaker takes from "play" to
+      audible sound, using your phone's microphone — so the lights land on
+      the beat instead of two seconds behind an AirPlay buffer.</p>
+  </section>
+  <section class="pane" id="pane-party">
+    <h2>Party</h2>
+    <p class="muted">Pick a playlist and a speaker, press go. Or say
+      "start party mode" and let the automation do it.</p>
+  </section>
+  <footer class="foot">
+    <span id="version">v__VERSION__</span>
+  </footer>
+</main>
+
+<script src="app.js?v=__VERSION__"></script>
+</body>
+</html>
