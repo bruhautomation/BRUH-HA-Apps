@@ -5,6 +5,87 @@ All notable changes to the **BRight** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.12.0
+
+Ask Claude to write one show, and read what it was told.
+
+### Added
+
+- **"✨ Claude" on every track.** The director tier was a global option, so
+  "write this one with Claude" meant a trip to Settings and back. It is a
+  button per show now, in both directions — asking for the algorithmic
+  director explicitly is the same button, for a show you want rebuilt
+  without spending a Claude run. The option stays the default, because it
+  is the answer for every show nobody has an opinion about.
+- **Every show records who wrote it**, saved beside the show and readable
+  later (`GET /api/show/{hash}/director`). A fallback carries the reason it
+  fell back, and pressing a button called Claude on an install with no
+  brAIn is refused by name rather than quietly downgraded. This is the
+  record whose absence let a fortnight of silent fallbacks go unnoticed: a
+  show tagged `algorithmic` looked exactly like one nobody had asked
+  Claude for.
+- **The brief is readable** (`GET /api/show/{hash}/prompt`, and a
+  disclosure under the show editor). It is built by the same function a
+  real run uses rather than described, so it cannot drift into being a
+  nicer story than the truth — and it shows, in the model's own words,
+  that the director knows your light ids, roles, zones, positions and the
+  travel orders worked out from them. Reading it runs nothing and costs
+  nothing, which is the point: it is the cheapest way to find out whether
+  a Claude run is worth a couple of minutes.
+
+## 0.11.1
+
+Stop actually stops the lights, Claude's shows stop falling back, and the
+Library tab stops asking to be told to show you your music.
+
+### Fixed
+
+- **Stopping a show left the bulbs running it.** A `SetWaveform` hands the
+  bulb a routine it executes on its own — that is the sync trick, and it is
+  also why Stop did not work: BRight stops sending, and a bulb three
+  seconds into a forty-cycle strobe carries on to the end. Nothing we stop
+  *doing* can reach it. Stop now sends a one-cycle, 20ms, transient
+  waveform to every bulb the show drove, which replaces the running routine
+  and returns the light to the colour it held before. Three separate gaps
+  are closed: `SetColor` (what stop used to send) does not end a routine,
+  it just moves the light while the routine keeps running underneath; a
+  bulb that never answered `GetColor` had no snapshot entry and so was
+  never spoken to at all; and a party with an end scene returned before
+  sending a single LIFX packet, so the room strobed through the scene and
+  past it. Halting is unconditional — `restore=False` means "leave the room
+  as it is", not "keep going".
+- **Every Claude-written show was silently falling back to the algorithmic
+  director.** The schema contract annotates each field with a `//` note, so
+  the model wrote those notes back into its answer — and JSON has no
+  comments, so `json.loads` stopped at the first one with `Expecting ','
+  delimiter`. The prompt now says the annotations are not part of the
+  answer, the parser strips comments and trailing commas (string-aware, so
+  a mood called `pop // rock` and a URL in a label both survive), and a
+  parse failure quotes the text around the break instead of reporting a
+  column number about a document that has already been discarded.
+- **The Library tab opened empty every time.** `scanLibrary` was bound to
+  the Scan button and to nothing else, so every visit started by pressing
+  a button to be shown the library you already had — and after an add-on
+  restart that is indistinguishable from having lost it. Nothing ever was:
+  the analysis lives in `/data` and has always survived. The tab loads
+  itself on open now, and re-opening refreshes, so a track added while the
+  add-on was running turns up without a restart.
+
+### Changed
+
+- **A library scan is a stat per file, not a megabyte read per file.**
+  Track identity is a hash of the first megabyte, and the library is
+  scanned far more often than the Library tab suggests — the Shows tab,
+  the effect builder and the sync proof all list it, and now so does
+  opening the Library tab. Hashes are remembered in
+  `/data/track-hashes.json`, keyed on size and mtime, so a rescan re-reads
+  only what changed: measured at **48× faster** warm over 60 tracks on a
+  local disk, and the saving is larger on a Pi reading a network share,
+  which is where this was felt. A track that is touched but not edited is
+  read again and keeps its identity, because the hash is of the content.
+  Deleted tracks are pruned, and only a scan of *every* folder may prune —
+  a single-folder scan has no idea what the others were about to claim.
+
 ## 0.11.0
 
 Claude knows what room it is lighting, zones are a thing you can set,

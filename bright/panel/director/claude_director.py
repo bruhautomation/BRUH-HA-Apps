@@ -82,7 +82,12 @@ TYPES and their params:
 
 Types and parameter names are EXACTLY as listed. Out-of-range numbers are
 clamped rather than rejected, and any parameter you leave out takes its
-default — write the two or three that matter and skip the rest."""
+default — write the two or three that matter and skip the rest.
+
+The `//` notes above are ANNOTATION, explaining the shape to you. JSON has
+no comments: your answer must be strict JSON — no `//`, no `/* */`, no
+trailing comma before a `}` or `]`, and no `<angle brackets>`, which mark
+where a value goes rather than being one."""
 
 
 def _catalog_lines() -> str:
@@ -226,6 +231,69 @@ def _run_task(prompt: str, timeout_s: float,
     raise RuntimeError(f"brAIn did not answer within {int(timeout_s)}s")
 
 
+def _decomment(text: str) -> str:
+    """JSON with the things models write into JSON taken back out.
+
+    Two of them, and both are here because the schema contract above
+    *demonstrates* the first: every field in that example carries a `//`
+    note explaining it, so a model imitating the shape it was shown emits
+    them too. That is a comment in a format that has none, and
+    `json.loads` stops at it with `Expecting ',' delimiter` — the failure
+    that sent two real shows to the algorithmic floor before anyone knew
+    why. The prompt says not to now; this is what happens when it does
+    anyway. Trailing commas are the same class: legal in every language
+    the model has read more of than JSON.
+
+    The scan tracks string literals, because both of these are only
+    punctuation when they are *outside* one — `"pop // rock"` is a mood
+    somebody could reasonably name, and a URL in a label is two slashes
+    that must survive. Escapes are honoured so a `\"` cannot end a string
+    early and turn the rest of the answer into syntax.
+    """
+    out: list[str] = []
+    in_string = escaped = False
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if in_string:
+            out.append(char)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            index += 1
+            continue
+        if char == '"':
+            in_string = True
+            out.append(char)
+            index += 1
+            continue
+        if char == "/" and index + 1 < len(text):
+            following = text[index + 1]
+            if following == "/":
+                while index < len(text) and text[index] != "\n":
+                    index += 1
+                continue
+            if following == "*":
+                end = text.find("*/", index + 2)
+                index = len(text) if end < 0 else end + 2
+                continue
+        if char == ",":
+            # A comma is trailing when the next thing that is not
+            # whitespace closes the collection it is sitting in.
+            look = index + 1
+            while look < len(text) and text[look].isspace():
+                look += 1
+            if look < len(text) and text[look] in "}]":
+                index += 1
+                continue
+        out.append(char)
+        index += 1
+    return "".join(out)
+
+
 def _extract_json(text: str) -> dict:
     """The one JSON object in the answer, fences and prose tolerated —
     models narrate even when told not to, and the validator downstream is
@@ -235,7 +303,38 @@ def _extract_json(text: str) -> dict:
     end = text.rfind("}")
     if start < 0 or end <= start:
         raise ValueError("no JSON object in the answer")
-    return json.loads(text[start:end + 1])
+    body = _decomment(text[start:end + 1])
+    try:
+        return json.loads(body)
+    except ValueError as exc:
+        # A column number about a document nobody can see is not a
+        # diagnosis. `Expecting ',' delimiter: line 1 column 222` was all
+        # the log ever said, and the answer it was about had already been
+        # thrown away — so the next person to hit it starts where the last
+        # one did. Quote what actually broke.
+        raise ValueError(f"{exc} — near: {_around(body, exc)}") from None
+
+
+def _around(body: str, exc: ValueError, span: int = 60) -> str:
+    """The text either side of where the parser gave up, on one line."""
+    position = getattr(exc, "pos", None)
+    if not isinstance(position, int):
+        return body[:span].replace("\n", " ")
+    start = max(0, position - span // 2)
+    excerpt = body[start:position + span // 2].replace("\n", " ")
+    return f"...{excerpt}..." if start else f"{excerpt}..."
+
+
+def digest(analysis: dict, fixtures: list[dict],
+           vibe: str | None = None) -> str:
+    """The brief, for anyone who wants to read it.
+
+    A public name on the private builder rather than a second rendering:
+    the panel shows people exactly what the director is handed, and a
+    "roughly what we send" page would be a copy that drifts the first time
+    the real prompt gains a section.
+    """
+    return _digest(analysis, fixtures, vibe)
 
 
 def write_script(analysis: dict, fixtures: list[dict],

@@ -48,6 +48,82 @@ def track_hash(path: Path) -> str:
     return digest.hexdigest()
 
 
+# Where the answer to "what is this file's hash" is remembered between
+# scans, keyed by the two things that change when a file does.
+HASH_CACHE = Path(os.environ.get("BRIGHT_STATE", "/data")) / "track-hashes.json"
+
+
+class _HashCache:
+    """A megabyte read per file per scan, paid once instead.
+
+    `track_hash` reads the first megabyte of every track, and the library
+    is scanned far more often than anyone would guess from the Library
+    tab: the Shows tab lists it, the effect builder lists it, the sync
+    proof lists it, and the Library tab is about to list it on open rather
+    than on a button. On a Pi reading a network share that is the whole
+    reason the tab felt like it was loading the music each time — the file
+    list really was being re-read from the disk up, every time.
+
+    Size and mtime are what the cache is keyed on, because they are what
+    change when a file changes. The risk in that trade is a file edited so
+    that its length and timestamp both survive unchanged, which is not a
+    thing music files do; and the cost of being wrong is one stale hash,
+    not a corrupt library — the hash only has to be *stable*, and a track
+    whose entry is wrong analyses again under a new identity rather than
+    breaking. `st_mtime_ns` rather than `st_mtime` so the comparison is
+    integer equality and not a float that a filesystem may round.
+    """
+
+    def __init__(self) -> None:
+        self._entries: dict[str, list] = {}
+        self._seen: set[str] = set()
+        self._dirty = False
+        try:
+            data = json.loads(HASH_CACHE.read_text())
+            if isinstance(data.get("entries"), dict):
+                self._entries = {k: v for k, v in data["entries"].items()
+                                 if isinstance(v, list) and len(v) == 3}
+        except (OSError, ValueError):
+            # No cache, or an unreadable one. Both mean the same thing —
+            # hash everything this time — and the next save rewrites it.
+            pass
+
+    def hash_for(self, path: Path, stat_result) -> str:
+        key = str(path)
+        self._seen.add(key)
+        entry = self._entries.get(key)
+        if (entry and entry[0] == stat_result.st_size
+                and entry[1] == stat_result.st_mtime_ns):
+            return entry[2]
+        digest = track_hash(path)
+        self._entries[key] = [stat_result.st_size, stat_result.st_mtime_ns,
+                              digest]
+        self._dirty = True
+        return digest
+
+    def save(self, prune: bool = True) -> None:
+        """Persist. `prune` drops anything this scan did not see.
+
+        Pruning keeps the file bounded to the library rather than to every
+        track that has ever been in it, and it is only correct after a
+        walk of ALL the folders: a scan of one folder has no idea what the
+        others were about to claim, and evicting on its say-so throws away
+        every entry it did not happen to visit. So a lone `scan` still
+        records what it learned — the speed is worth having either way —
+        and simply never evicts. `scan_all` is the only caller that prunes.
+        """
+        stale = (set(self._entries) - self._seen) if prune else set()
+        if not self._dirty and not stale:
+            return
+        for key in stale:
+            self._entries.pop(key, None)
+        try:
+            atomic_write.write_json(HASH_CACHE, {"entries": self._entries})
+        except OSError:
+            # A cache that cannot be written costs speed and nothing else.
+            pass
+
+
 def _track_dir(hash_hex: str) -> Path:
     if not _HASH_RE.fullmatch(hash_hex):
         raise ValueError(f"not a track hash: {hash_hex!r}")
@@ -170,28 +246,36 @@ def scan_all(folders) -> list[dict]:
     the content hash here — two paths to one track are one track, and it
     keeps the one found first.
     """
+    cache = _HashCache()
     seen: set[str] = set()
     tracks: list[dict] = []
     for folder in folders:
-        for entry in scan(folder):
+        for entry in scan(folder, cache):
             if entry["hash"] in seen:
                 continue
             seen.add(entry["hash"])
             tracks.append(entry)
+    cache.save()
     return tracks
 
 
-def scan(folder: Path) -> list[dict]:
+def scan(folder: Path, cache: "_HashCache | None" = None) -> list[dict]:
     """Every audio file under `folder`, with its hash and analysis state."""
     tracks = []
     folder = Path(folder)
     if not folder.is_dir():
         return tracks
+    # A scan of one folder gets a throwaway cache it never saves: pruning
+    # is only safe once every folder has been walked, and a lone folder
+    # cannot know what the others were going to claim.
+    owned = cache is None
+    if cache is None:
+        cache = _HashCache()
     for path in sorted(folder.rglob("*")):
         if not path.is_file() or path.suffix.lower() not in AUDIO_EXTENSIONS:
             continue
         try:
-            hash_hex = track_hash(path)
+            hash_hex = cache.hash_for(path, path.stat())
         except OSError:
             continue
         analysis = load_analysis(hash_hex)
@@ -217,4 +301,6 @@ def scan(folder: Path) -> list[dict]:
                     "cues": (show.get("stats") or {}).get("cues"),
                 }
         tracks.append(entry)
+    if owned:
+        cache.save(prune=False)
     return tracks

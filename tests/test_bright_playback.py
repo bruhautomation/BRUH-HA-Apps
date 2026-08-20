@@ -310,3 +310,130 @@ class TestMetronomeShow(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestStoppingStopsTheBulbs(unittest.TestCase):
+    """A waveform runs ON the bulb, so ending the cue list does not end it.
+
+    This is the failure a person sees rather than reads: press Stop and the
+    room carries on strobing to the end of a routine that was handed over
+    seconds ago. Nothing BRight stops *doing* can reach it — the only thing
+    that ends a running waveform is another waveform, which is what
+    `packets.halt_waveform` is for.
+
+    Every case below uses `_FakeEngine`, whose `request` answers None, so
+    NOTHING is ever snapshotted. That is deliberate and it is the old bug's
+    shape: stop only ever spoke to bulbs it had snapshotted.
+    """
+
+    @staticmethod
+    def _run_with(cues, **attrs):
+        """A conductor that has dispatched `cues`, ready to be stopped."""
+        engine = _FakeEngine()
+        run = conductor.Conductor.__new__(conductor.Conductor)
+        run.engine = engine
+        run.clock = ShowClock()
+        run._snapshot = {}
+        run._end_scene = None
+        run._driven = set()
+        run._task = run._poller = run._verify = None
+        run.state = {}
+        run._update_state = lambda **kw: None
+        run._write_state = lambda **kw: None
+        for name, value in attrs.items():
+            setattr(run, name, value)
+        asyncio.run(run._take_snapshot(cues))
+        return run, engine
+
+    @staticmethod
+    def _cues(*serials):
+        pulse = packets.set_waveform(
+            transient=False, hue=0, saturation=65535, brightness=65535,
+            kelvin=3500, period_ms=120, cycles=40.0,
+            target=bytes(6), source=0x42420001)
+        return [{"t": 0.0, "ch": "lifx", "serial": s, "lead_ms": 0,
+                 "payload_b64": base64.b64encode(pulse).decode()}
+                for s in serials]
+
+    def _halts(self, engine):
+        return [(serial, packets.parse_header(data))
+                for serial, data in engine.sent
+                if packets.parse_header(data)["type"] == packets.SET_WAVEFORM]
+
+    def test_every_driven_bulb_is_halted_though_none_was_snapshotted(self):
+        run, engine = self._run_with(self._cues("aa" * 6, "bb" * 6))
+        self.assertEqual({}, run._snapshot, "the fake engine answers nothing")
+        asyncio.run(run.stop())
+        self.assertEqual({"aa" * 6, "bb" * 6},
+                         {serial for serial, _ in self._halts(engine)},
+                         "a bulb that never answered GetColor is still a bulb "
+                         "this show handed a waveform to")
+
+    def test_the_halt_is_a_waveform_and_transient(self):
+        """SetColor was what stop used to send, and it is not this.
+
+        The bulb keeps running its routine underneath a SetColor, so the
+        strobe carries on around the new value. Only another waveform
+        replaces it, and `transient` is what returns the light to the
+        colour it held before the routine started rather than to whatever
+        the halting packet happens to carry.
+        """
+        run, engine = self._run_with(self._cues("aa" * 6))
+        asyncio.run(run.stop())
+        halts = self._halts(engine)
+        self.assertEqual(1, len(halts))
+        # Unpacked with the module's own struct rather than hand-counted
+        # offsets: a test that recomputes the layout is a second copy of it,
+        # and it agrees with itself rather than with the packet.
+        (_resv, transient, _h, _s, _b, _k, period_ms, cycles, _skew,
+         _shape) = packets._SET_WAVEFORM.unpack_from(halts[0][1]["payload"])
+        self.assertEqual(1, transient, "must return the bulb to its own colour")
+        self.assertEqual(1.0, cycles, "one cycle — it ends as soon as it starts")
+        self.assertEqual(packets.HALT_PERIOD_MS, period_ms)
+
+    def test_an_end_scene_does_not_excuse_the_bulbs(self):
+        """The path that returned before sending a single LIFX packet.
+
+        With a party's end scene set, `_restore` called the scene and
+        returned, so a bulb mid-strobe strobed through the scene and past
+        it — the one case where the room is *most* likely to be full of
+        people wondering why the lights won't stop.
+        """
+        called = []
+        run, engine = self._run_with(
+            self._cues("cc" * 6), _end_scene="scene.late_night")
+        run._restore = _noop  # the scene call itself is tested elsewhere
+        run._restore_called = called
+        asyncio.run(run.stop())
+        self.assertEqual(["cc" * 6],
+                         [serial for serial, _ in self._halts(engine)])
+
+    def test_declining_the_restore_is_not_declining_the_stop(self):
+        """`restore=False` says "leave the room as it is", not "keep going"."""
+        run, engine = self._run_with(self._cues("dd" * 6))
+        asyncio.run(run.stop(restore=False))
+        self.assertEqual(["dd" * 6],
+                         [serial for serial, _ in self._halts(engine)])
+
+    def test_a_second_stop_does_not_speak_to_the_bulbs_again(self):
+        run, engine = self._run_with(self._cues("ee" * 6))
+        asyncio.run(run.stop())
+        before = len(engine.sent)
+        asyncio.run(run.stop())
+        self.assertEqual(before, len(engine.sent),
+                         "nothing is running any more, so there is nothing "
+                         "to stop")
+
+    def test_one_unreachable_bulb_does_not_strand_the_rest(self):
+        run, engine = self._run_with(self._cues("aa" * 6, "bb" * 6))
+
+        def only_bb(serial):
+            if serial == "aa" * 6:
+                raise KeyError(serial)
+            return ("10.0.0.5", 56700)
+
+        engine._addr = only_bb
+        asyncio.run(run.stop())
+        self.assertEqual(["bb" * 6],
+                         [serial for serial, _ in self._halts(engine)],
+                         "the reachable half of the room still stops")

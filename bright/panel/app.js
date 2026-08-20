@@ -570,6 +570,7 @@
           '<span class="rtt small"></span></div>' +
           '<div class="row-actions">' +
           '<button class="btn small" data-act="compile">Compile</button>' +
+          '<button class="btn small" data-act="claude">✨ Claude</button>' +
           '<button class="btn small" data-act="play">▶ Play</button></div>';
         row.querySelector("strong").textContent = track.name;
         row.querySelector(".rtt").textContent = show
@@ -581,6 +582,29 @@
     } catch (error) {
       list.innerHTML = '<p class="muted">failed: ' + error.message + "</p>";
     }
+  }
+
+  // Who wrote this show, in a sentence.
+  //
+  // A show tagged `algorithmic` with nothing beside it is indistinguishable
+  // from one nobody asked Claude for — which is how a fortnight of silent
+  // fallbacks went unnoticed on a real install. The distinction that
+  // matters is not "which tier" but "did the one you asked for actually
+  // run", so a fallback always carries its reason.
+  function describeDirector(report) {
+    if (!report) return "";
+    if (report.used === "claude") {
+      return "written by Claude" +
+        (report.seconds ? " in " + report.seconds + "s" : "");
+    }
+    if (report.fell_back) {
+      return "Claude was asked and could not: " + report.reason +
+        " — the algorithmic director wrote this one instead";
+    }
+    if (report.asked !== "algorithmic" && report.reason) {
+      return "algorithmic — " + report.reason;
+    }
+    return "written by the algorithmic director";
   }
 
   $("btnShowsRefresh").addEventListener("click", loadShows);
@@ -607,13 +631,24 @@
     const status = $("showStatus");
     button.disabled = true;
     try {
-      if (button.dataset.act === "compile") {
-        out.textContent = "compiling…";
-        const result = await post("api/show/compile",
-                                  { track_hash: row.dataset.hash });
+      if (button.dataset.act === "compile" ||
+          button.dataset.act === "claude") {
+        const wantsClaude = button.dataset.act === "claude";
+        out.textContent = wantsClaude
+          // Named, and with the wait declared: a Claude show is one long
+          // considered answer and can take minutes. A spinner that says
+          // nothing about how long is a spinner people press twice.
+          ? "asking Claude to write this show — this can take a minute or two…"
+          : "compiling…";
+        const result = await post("api/show/compile", {
+          track_hash: row.dataset.hash,
+          director: wantsClaude ? "claude" : undefined,
+        });
+        const who = describeDirector(result.director);
         out.textContent = "compiled: " + result.tier + " · " +
           result.palette + " · " + result.stats.cues + " cues (peak " +
-          result.stats.peak_per_device_hz + "/s per bulb)";
+          result.stats.peak_per_device_hz + "/s per bulb)" +
+          (who ? " — " + who : "");
         openScript(row.dataset.hash, row.querySelector("strong").textContent);
       } else if (button.dataset.act === "play") {
         const player = $("showPlayer").value;
@@ -2692,6 +2727,40 @@
   // ------------------------------------------------------------------
   let scriptTrack = null;
 
+  // Who wrote the show that is open, and what the writer was told.
+  //
+  // Both are fetched rather than remembered, because the editor opens
+  // shows it did not compile — including ones from before any of this
+  // existed, which is why a missing record is a sentence and not an error.
+  async function loadDirectorReport(hash) {
+    const line = $("scriptWho");
+    line.textContent = "";
+    try {
+      line.textContent = describeDirector(await api(
+        "api/show/" + hash + "/director"));
+    } catch (error) {
+      // A 404 here is the ordinary case for an older show, not a fault.
+      line.textContent = "";
+    }
+  }
+
+  async function loadDirectorPrompt(hash) {
+    const box = $("promptText");
+    box.textContent = "reading the brief…";
+    try {
+      const body = await api("api/show/" + hash + "/prompt");
+      box.textContent = body.prompt;
+      const summary = $("promptBox").querySelector("summary");
+      summary.textContent = "What Claude is told about this track and your " +
+        "room (" + body.fixtures + " lights, " +
+        Math.round(body.chars / 1000) + "k characters)" +
+        (body.available ? "" : " — brAIn is not installed, so nothing can " +
+         "be sent");
+    } catch (error) {
+      box.textContent = error.message;
+    }
+  }
+
   async function openScript(hash, name) {
     scriptTrack = hash;
     const status = $("scriptStatus");
@@ -2700,6 +2769,8 @@
       const body = await api("api/show/" + hash + "/script");
       $("scriptWhich").textContent = body.title +
         (body.file ? " · " + body.file : " · not compiled yet");
+      loadDirectorReport(hash);
+      loadDirectorPrompt(hash);
       $("scriptText").value = body.script
         ? JSON.stringify(body.script, null, 2)
         : "";
@@ -2997,6 +3068,14 @@
   tabs.addEventListener("click", (event) => {
     const button = event.target.closest(".tab");
     if (!button) return;
+    // The Library tab used to open empty and wait to be told to scan, so
+    // every visit began by pressing a button to be shown the music that
+    // was already there — which reads as "it forgot my library again",
+    // and after an add-on restart that is exactly what it looks like.
+    // Nothing was ever lost: the analysis has always been in /data. It
+    // just was not asked for. Affordable to do on every open now that a
+    // rescan is a stat per file rather than a megabyte read per file.
+    if (button.dataset.tab === "library") scanLibrary();
     if (button.dataset.tab === "map") loadBulbCandidates();
     if (button.dataset.tab === "effects") {
       loadEffects();
