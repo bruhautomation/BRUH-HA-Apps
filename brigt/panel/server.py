@@ -39,6 +39,7 @@ import base64
 import ipaddress
 import json
 import logging
+import math
 import os
 import random
 import re
@@ -60,6 +61,7 @@ import atomic_write  # noqa: E402
 import ha_client  # noqa: E402
 import jobs  # noqa: E402
 import panel_port  # noqa: E402
+import playback_check  # noqa: E402
 from analyzer import library, pipeline  # noqa: E402
 from calibrate import correlate, reference  # noqa: E402
 from lifx import engine as lifx_engine  # noqa: E402
@@ -68,6 +70,7 @@ from director import claude_director  # noqa: E402
 from director.compiler import CompileError  # noqa: E402
 from playback import conductor as conductor_mod  # noqa: E402
 from stores import calibration as calibration_store  # noqa: E402
+from stores import folders as folders_store  # noqa: E402
 from stores import light_map  # noqa: E402
 
 STATIC = HERE
@@ -226,17 +229,38 @@ def _under_media(raw: str) -> Path | None:
 
     Both spellings are accepted, because both are what people type: an
     absolute `/media/parties`, and a bare `parties` meaning the same thing.
+
+    The path is then rebuilt **one component at a time** rather than
+    normalised after the fact. Normalising and checking the prefix is the
+    usual recipe and it is a check bolted onto a string that already said
+    something else; joining validated components onto MEDIA_DIR cannot
+    express an escape in the first place, which is a different and better
+    kind of guarantee. A component may be any name a filesystem allows
+    except the two that mean "somewhere else" — `.` is dropped, `..` is
+    refused, and a separator cannot survive the split.
+
+    Symlinks are deliberately followed: `/media/music` pointing at a NAS
+    mount is a setup people really have, and anyone able to plant a symlink
+    inside Home Assistant's media folder has the filesystem already.
     """
     text = str(raw).strip()
     if not text:
         return None
     base = str(MEDIA_DIR)
-    if not text.startswith(base + os.sep) and text != base:
-        text = os.path.join(base, text.lstrip("/").removeprefix("media/"))
-    candidate = os.path.normpath(text)
-    if candidate != base and not candidate.startswith(base + os.sep):
-        return None
-    return Path(candidate)
+    if text == base:
+        return MEDIA_DIR
+    if text.startswith(base + os.sep):
+        text = text[len(base) + 1:]
+    else:
+        text = text.lstrip("/").removeprefix("media/")
+    folder = MEDIA_DIR
+    for part in text.split("/"):
+        if part in ("", "."):
+            continue
+        if part == ".." or "\0" in part:
+            return None
+        folder = folder / part
+    return folder
 
 
 def _additional_music_folders() -> list[Path]:
@@ -324,6 +348,26 @@ def _entity(body: dict, key: str = "media_player",
     return value
 
 
+def _number(body: dict, key: str, default: float, low: float,
+            high: float) -> float:
+    """One number off the wire, clamped, never an exception.
+
+    `int(body.get("count", 20) or 20)` reads fine and answers a bare HTTP
+    500 for `{"count": "lots"}` — a traceback in the log about a value the
+    panel is allowed to refuse in a sentence. Clamping rather than
+    rejecting, because every caller here has a range where any answer is
+    fine and the edges are the answer.
+    """
+    raw = body.get(key, default)
+    try:
+        value = float(raw if raw not in (None, "") else default)
+    except (TypeError, ValueError):
+        value = float(default)
+    if math.isnan(value):
+        value = float(default)
+    return min(high, max(low, value))
+
+
 async def _json_body(request: web.Request) -> dict:
     try:
         body = await request.json()
@@ -346,7 +390,7 @@ async def h_lifx_discover(request: web.Request) -> web.Response:
 async def h_lifx_probe(request: web.Request) -> web.Response:
     body = await _json_body(request)
     serial = str(body.get("serial", ""))
-    count = min(100, max(5, int(body.get("count", 20) or 20)))
+    count = int(_number(body, "count", 20, 5, 100))
     if serial not in ENGINE.devices:
         return web.json_response({"error": "unknown device; discover first"},
                                  status=404)
@@ -374,16 +418,23 @@ async def h_lifx_waveform_demo(request: web.Request) -> web.Response:
                                  status=404)
     result = await ENGINE.waveform_demo(
         serial,
-        bpm=min(300.0, max(30.0, float(body.get("bpm", 120) or 120))),
-        seconds=min(60.0, max(2.0, float(body.get("seconds", 10) or 10))),
-        hue_deg=float(body.get("hue_deg", 200) or 200) % 360.0,
+        bpm=_number(body, "bpm", 120, 30, 300),
+        seconds=_number(body, "seconds", 10, 2, 60),
+        hue_deg=_number(body, "hue_deg", 200, -3600, 3600) % 360.0,
     )
     return web.json_response(result)
 
 
 async def h_ha_entities(request: web.Request) -> web.Response:
     domain = request.query.get("domain", "") or None
-    states = await ha_client.async_get_states(domain)
+    states, error = await ha_client.async_states_or_error(domain)
+    if error:
+        # An empty picker is what this used to be, and it reads as "you own
+        # no speakers" rather than "I could not ask Home Assistant".
+        return web.json_response(
+            {"error": f"could not read entities from Home Assistant: {error}",
+             "entities": []},
+            status=502)
     entities = [
         {
             "entity_id": s.get("entity_id"),
@@ -401,19 +452,21 @@ async def h_ha_latency_probe(request: web.Request) -> web.Response:
     entity_id = _entity(body, key="entity_id", domain=None)
     if entity_id is None:
         return web.json_response({"error": "entity_id required"}, status=400)
-    rounds = min(20, max(2, int(body.get("rounds", 6) or 6)))
+    rounds = int(_number(body, "rounds", 6, 2, 20))
 
     async def _run():
         result = await ha_client.async_latency_probe(entity_id, rounds)
         # The report survives restarts: cue lead times are compiled from it.
         try:
-            import json as _json
+            stored = json.loads(HA_PROBES_FILE.read_text())
+        except (OSError, ValueError):
+            # No file yet, or an unreadable one. Either way this probe is
+            # the first entry rather than an addition to what was there.
             stored = {}
-            try:
-                stored = _json.loads(HA_PROBES_FILE.read_text())
-            except (OSError, ValueError):
-                stored = {}
-            stored[entity_id] = {**result, "measured_at": time.time()}
+        if not isinstance(stored, dict):
+            stored = {}
+        stored[entity_id] = {**result, "measured_at": time.time()}
+        try:
             atomic_write.write_json(HA_PROBES_FILE, stored, indent=2)
         except OSError:
             log.warning("could not persist HA latency probe result")
@@ -433,9 +486,8 @@ async def h_job(request: web.Request) -> web.Response:
 
 async def h_lab_report(request: web.Request) -> web.Response:
     """Everything the Lab has measured, in one read."""
-    import json as _json
     try:
-        ha_probes = _json.loads(HA_PROBES_FILE.read_text())
+        ha_probes = json.loads(HA_PROBES_FILE.read_text())
     except (OSError, ValueError):
         ha_probes = {}
     return web.json_response({
@@ -453,19 +505,163 @@ def _music_folder() -> Path:
     return Path(_options_from_env()["music_folder"])
 
 
-def _music_folders() -> list[Path]:
-    """Everywhere BRigt looks for music: the music folder, then any extras.
+def _picked_music_folders() -> list[Path]:
+    """The folders someone ticked in the Library tab.
 
-    Ordered and de-duplicated by path, so listing a folder twice in the
-    options costs nothing. Overlap between them costs nothing either — the
-    scan de-duplicates by track hash, which is what makes a folder nested
-    inside another one harmless.
+    Stored relative to /media (the store says why), and re-checked against
+    /media on the way out rather than trusted: the file outlives the panel
+    that wrote it, and a path is only ever as good as the last thing that
+    validated it.
+    """
+    picked = []
+    for relative in folders_store.load():
+        folder = _under_media(relative)
+        if folder is not None:
+            picked.append(folder)
+    return picked
+
+
+def _music_folders() -> list[Path]:
+    """Everywhere BRigt looks for music: the music folder, then the options'
+    extras, then anything ticked in the panel.
+
+    Ordered and de-duplicated by path, so naming a folder twice costs
+    nothing. Overlap costs nothing either — the scan de-duplicates by track
+    hash, which is what makes a folder nested inside another one harmless.
+
+    Two sources, one list, and neither is a second answer: the options are
+    configuration that survives a reinstall, the store is what somebody
+    ticked without editing YAML.
     """
     folders = [_music_folder()]
-    for folder in _additional_music_folders():
+    for folder in _additional_music_folders() + _picked_music_folders():
         if folder not in folders:
             folders.append(folder)
     return folders
+
+
+def _folder_listing(folder: Path) -> dict:
+    """One level of /media, as folders with a hint of what is in them.
+
+    The count is the audio files *directly* inside — not a recursive scan,
+    which on a real library is thousands of stat calls for a number nobody
+    asked for. It is there to answer "is this the folder I meant", so it
+    says `12+` rather than pretending to be a total.
+    """
+    picked = set(folders_store.load())
+    scanned = {str(f) for f in _music_folders()}
+    entries = []
+    try:
+        children = sorted(folder.iterdir(), key=lambda c: c.name.lower())
+    except OSError as exc:
+        return {"error": f"cannot read {folder}: {exc}"}
+    for child in children:
+        if not child.is_dir() or child.name.startswith("."):
+            continue
+        try:
+            audio = sum(1 for f in child.iterdir()
+                        if f.is_file()
+                        and f.suffix.lower() in library.AUDIO_EXTENSIONS)
+        except OSError:
+            audio = 0
+        relative = str(child.relative_to(MEDIA_DIR))
+        entries.append({
+            "name": child.name,
+            "path": relative,
+            "audio_files": audio,
+            # `picked` is this folder exactly; `scanned` covers a parent
+            # already being scanned, which is why a tick can be redundant.
+            "picked": relative in picked,
+            "scanned": str(child) in scanned,
+        })
+    return {"folders": entries}
+
+
+def _browse_media(raw: str) -> Path | None:
+    """A folder to open, found by walking real directory entries.
+
+    Browsing turns something typed into a directory to list, which is the
+    exact shape a path traversal is written for — and checking the string
+    and hoping is the answer everybody writes. This matches each component
+    against what `iterdir` actually reports instead, so the path that comes
+    out is built from directory entries rather than from the request, and a
+    name that is not there is simply not found. `_under_media` still runs
+    first, because "that is not a path inside /media" and "there is no such
+    folder" are different answers and the caller sends different statuses.
+    """
+    confined = _under_media(raw) if str(raw).strip() else MEDIA_DIR
+    if confined is None:
+        return None
+    folder = MEDIA_DIR
+    for wanted in confined.relative_to(MEDIA_DIR).parts:
+        try:
+            match = next((child for child in folder.iterdir()
+                          if child.is_dir() and child.name == wanted), None)
+        except OSError:
+            return None
+        if match is None:
+            return None
+        folder = match
+    return folder
+
+
+async def h_media_tree(request: web.Request) -> web.Response:
+    """Browse /media so folders can be picked instead of typed.
+
+    The filesystem, not Home Assistant's media browser: this list has to be
+    folders BRigt can *read* (the analyzer opens the files), and /media is
+    exactly the set it can. What Core will serve from them is a different
+    question, and `/api/playback/check` is the one that asks it.
+    """
+    raw = request.query.get("path", "")
+    if raw and _under_media(raw) is None:
+        return web.json_response({"error": "folder must live under /media"},
+                                 status=400)
+    folder = await asyncio.to_thread(_browse_media, raw)
+    if folder is None:
+        return web.json_response({"error": "no such folder under /media"},
+                                 status=404)
+    listing = await asyncio.to_thread(_folder_listing, folder)
+    if listing.get("error"):
+        return web.json_response(listing, status=500)
+    here = "" if folder == MEDIA_DIR else str(folder.relative_to(MEDIA_DIR))
+    parent = None
+    if here:
+        parent = str(Path(here).parent) if str(Path(here).parent) != "." else ""
+    return web.json_response({
+        "path": here,
+        "parent": parent,
+        "root": str(MEDIA_DIR),
+        "folders": listing["folders"],
+        "scanning": [str(f) for f in _music_folders()],
+    })
+
+
+async def h_media_folder(request: web.Request) -> web.Response:
+    """Tick or untick a folder for scanning."""
+    body = await _json_body(request)
+    raw = str(body.get("path", "") or "")
+    confined = _under_media(raw)
+    if confined is None or confined == MEDIA_DIR:
+        return web.json_response(
+            {"error": "pick a folder inside /media"}, status=400)
+    # Found by walking, not by trusting: what gets stored is a path built
+    # from directory entries, and a folder that is not there cannot be
+    # ticked in the first place.
+    folder = await asyncio.to_thread(_browse_media, raw)
+    if folder is None or folder == MEDIA_DIR:
+        return web.json_response(
+            {"error": f"no such folder under /media: {raw}"}, status=404)
+    relative = str(folder.relative_to(MEDIA_DIR))
+    try:
+        if body.get("add"):
+            folders_store.add(relative)
+        else:
+            folders_store.remove(relative)
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=409)
+    return web.json_response({"scanning": [str(f) for f in _music_folders()],
+                              "picked": folders_store.load()})
 
 
 async def h_library(request: web.Request) -> web.Response:
@@ -622,17 +818,15 @@ async def h_show_start(request: web.Request) -> web.Response:
     hash_hex = str(body.get("track_hash", ""))
     if track and not hash_hex:
         # The wire names a file we will open (to hash it) and hand to the
-        # media player — it may only ever be a file under /media. Pure
-        # string containment before any filesystem call.
-        base = str(MEDIA_DIR)
-        candidate = os.path.normpath(os.path.join(base, track.lstrip("/")
-                                                  .removeprefix("media/")))
-        if not candidate.startswith(base + os.sep):
+        # media player — it may only ever be a file under /media, and that
+        # is one rule with one implementation (`_under_media`), not a second
+        # copy of the string arithmetic to keep in step with the first.
+        path = _under_media(track)
+        if path is None or path == MEDIA_DIR:
             return web.json_response({"error": "track must live under /media"},
                                      status=400)
-        path = Path(candidate)
         if not path.is_file():
-            return web.json_response({"error": f"no such track: {candidate}"},
+            return web.json_response({"error": f"no such track: {path}"},
                                      status=404)
         hash_hex = await asyncio.to_thread(library.track_hash, path)
     if not hash_hex:
@@ -751,6 +945,44 @@ async def h_cal_reference(request: web.Request) -> web.Response:
     })
 
 
+async def h_playback_check(request: web.Request) -> web.Response:
+    """Why nothing is playing, one link of the chain at a time.
+
+    Defaults to the click track because that is the file BRigt controls
+    end to end — if this cannot play, nothing else was ever going to, and
+    the answer is about the house rather than about the music.
+    """
+    body = await _json_body(request)
+    entity_id = _entity(body)
+    if entity_id is None:
+        return web.json_response({"error": "media_player entity required"},
+                                 status=400)
+
+    media_id = str(body.get("media_content_id", "") or "")
+    path = None
+    expected = None
+    if not media_id:
+        error = await asyncio.to_thread(_ensure_reference)
+        if error:
+            return web.json_response({"error": error}, status=500)
+        media_id = REFERENCE_MEDIA_ID
+        path = REFERENCE_WAV
+        expected = reference.expected_size()
+    # A caller-supplied media id is deliberately NOT turned into a path.
+    # The file step exists for the click track, whose path is ours; for
+    # anything else Home Assistant's own resolve step answers "is the file
+    # there" better than a stat does, and a media id is not always a local
+    # file at all. Statting one meant a path expression built from the
+    # request, in the one handler people reach for when something is
+    # already wrong.
+
+    result = await playback_check.check(entity_id, media_id, path=path,
+                                        expected_size=expected)
+    # 200 either way: the report IS the answer, and a non-2xx would send the
+    # page down its error path with the diagnosis in it.
+    return web.json_response(result)
+
+
 async def h_cal_ping(request: web.Request) -> web.Response:
     """The phone's clock and ours differ; a few of these round trips let
     the wizard page estimate the offset (server minus client, from the
@@ -773,6 +1005,14 @@ async def _position_check(entity_id: str) -> dict:
         "reliable": len(positions) >= 4 and increases >= 2,
         "reports_position": bool(positions),
         "samples": len(positions),
+        # Not about drift at all — this poll is already watching the player
+        # while the click track should be audible, so it is the one thing in
+        # a position to answer "did the speaker actually play". A wizard that
+        # heard nothing has two very different explanations and they need
+        # different sentences.
+        "ever_playing": any(
+            s.get("state") in playback_check.PLAYING_STATES for s in samples),
+        "states": sorted({str(s.get("state")) for s in samples}),
     }
     _POSITION_CHECKS[entity_id] = result
     return result
@@ -828,6 +1068,20 @@ async def h_cal_analyze(request: web.Request) -> web.Response:
     except ValueError as exc:
         return web.json_response({"error": str(exc)}, status=422)
     if estimate["confidence"] < correlate.MIN_CONFIDENCE:
+        # "Move the phone closer" is the wrong advice — and infuriating —
+        # when the speaker never made a sound. The position poll ran through
+        # the same seconds the phone was listening, so it knows which of the
+        # two happened.
+        watched = _POSITION_CHECKS.get(entity_id) or {}
+        if watched.get("ever_playing") is False:
+            return web.json_response({
+                "error": f"{entity_id} never started playing, so there was "
+                         f"nothing for the phone to hear "
+                         f"(it stayed {', '.join(watched.get('states') or ['idle'])}). "
+                         f"Press Test playback to find out why.",
+                "confidence": estimate["confidence"],
+                "never_played": True,
+            }, status=422)
         return web.json_response({
             "error": "could not hear the clicks clearly — move the phone "
                      "closer to the speaker, raise the volume, and try again",
@@ -874,6 +1128,14 @@ async def h_cal_taps(request: web.Request) -> web.Response:
     offset_ms = offsets[len(offsets) // 2]
     spread = offsets[-1] - offsets[0]
     if spread > 700.0:
+        watched = _POSITION_CHECKS.get(entity_id) or {}
+        if watched.get("ever_playing") is False:
+            return web.json_response(
+                {"error": f"{entity_id} never started playing, so those taps "
+                          f"were not on anything. Press Test playback to find "
+                          f"out why.",
+                 "never_played": True},
+                status=422)
         return web.json_response(
             {"error": f"taps disagree by {spread:.0f}ms — try again, one "
                       "tap per click"},
@@ -883,6 +1145,38 @@ async def h_cal_taps(request: web.Request) -> web.Response:
         position_attr=_POSITION_CHECKS.get(entity_id))
     return web.json_response({"measured_offset_ms": round(offset_ms, 1),
                               "profile": profile})
+
+
+async def h_cal_manual(request: web.Request) -> web.Response:
+    """Type the delay in and get on with it.
+
+    Everything downstream is gated on a calibration profile — a show
+    refuses to start without one, which is right, because a show whose
+    offset nobody measured lands its cues somewhere unknowable. But it also
+    means one broken step (a speaker that will not play the click track)
+    takes the whole add-on with it, and that is not a gate, it is a brick.
+
+    So: a profile a person typed, recorded as `method: "manual"` so the
+    stored record never claims to have been measured. 0 is a perfectly good
+    answer for a wired speaker, and the Shows tab works the moment it exists.
+    """
+    body = await _json_body(request)
+    entity_id = _entity(body)
+    if entity_id is None:
+        return web.json_response({"error": "media_player entity required"},
+                                 status=400)
+    try:
+        offset_ms = float(body["offset_ms"])
+    except (KeyError, TypeError, ValueError):
+        return web.json_response({"error": "offset_ms must be a number"},
+                                 status=400)
+    if not -2000.0 <= offset_ms <= 10000.0:
+        return web.json_response(
+            {"error": "offset_ms must be between -2000 and 10000 — a speaker "
+                      "delay outside that is a different problem"},
+            status=400)
+    profile = calibration_store.add_run(entity_id, offset_ms, method="manual")
+    return web.json_response({"profile": profile})
 
 
 async def h_cal_adjust(request: web.Request) -> web.Response:
@@ -950,6 +1244,8 @@ def build_app() -> web.Application:
     app.router.add_post("/api/show/party_mode", h_show_party)
     app.router.add_get("/api/show/state", h_show_state)
     # Library
+    app.router.add_get("/api/media/tree", h_media_tree)
+    app.router.add_post("/api/media/folder", h_media_folder)
     app.router.add_get("/api/library", h_library)
     app.router.add_post("/api/library/analyze", h_library_analyze)
     app.router.add_get("/api/track/{hash}/analysis", h_track_analysis)
@@ -959,8 +1255,10 @@ def build_app() -> web.Application:
     app.router.add_post("/api/calibrate/play", h_cal_play)
     app.router.add_post("/api/calibrate/analyze", h_cal_analyze)
     app.router.add_post("/api/calibrate/taps", h_cal_taps)
+    app.router.add_post("/api/calibrate/manual", h_cal_manual)
     app.router.add_post("/api/calibrate/adjust", h_cal_adjust)
     app.router.add_get("/api/calibrate/profiles", h_cal_profiles)
+    app.router.add_post("/api/playback/check", h_playback_check)
     return app
 
 

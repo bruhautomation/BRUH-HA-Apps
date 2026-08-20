@@ -12,6 +12,7 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 
 from .bridge import send_request
@@ -71,15 +72,45 @@ START_SHOW_SCHEMA = vol.Schema(
 )
 
 
+async def _forward(kind: str, data: dict) -> dict:
+    """Send one request to the add-on and make its answer the caller's.
+
+    The three services used to `await send_request(...)` and drop what came
+    back, so an automation that asked for party mode with nothing analyzed
+    got a green tick and a dark room: the add-on's "no analyzed tracks in
+    /media/music — run the Library tab first" travelled all the way to Core
+    and was thrown away one line from the person who needed it.
+
+    A refusal is a `HomeAssistantError`, which is what puts the sentence in
+    the automation trace and in the UI's red toast.
+    """
+    try:
+        response = await send_request(kind, data)
+    except TimeoutError as exc:
+        raise HomeAssistantError(
+            f"BRigt did not answer in time — is the add-on running? ({exc})"
+        ) from exc
+    except OSError as exc:
+        raise HomeAssistantError(
+            f"BRigt could not be reached: {exc}. The add-on and Home "
+            f"Assistant share a folder under /config, so this usually means "
+            f"the add-on is stopped."
+        ) from exc
+    if isinstance(response, dict) and response.get("ok") is False:
+        raise HomeAssistantError(
+            str(response.get("error") or f"BRigt refused {kind}"))
+    return response if isinstance(response, dict) else {}
+
+
 def _register_services(hass: HomeAssistant) -> None:
     async def handle_party_mode(call: ServiceCall) -> None:
-        await send_request(SERVICE_PARTY_MODE, dict(call.data))
+        await _forward(SERVICE_PARTY_MODE, dict(call.data))
 
     async def handle_start_show(call: ServiceCall) -> None:
-        await send_request(SERVICE_START_SHOW, dict(call.data))
+        await _forward(SERVICE_START_SHOW, dict(call.data))
 
     async def handle_stop_show(call: ServiceCall) -> None:
-        await send_request(SERVICE_STOP_SHOW, {})
+        await _forward(SERVICE_STOP_SHOW, {})
 
     hass.services.async_register(
         DOMAIN, SERVICE_PARTY_MODE, handle_party_mode, schema=PARTY_MODE_SCHEMA

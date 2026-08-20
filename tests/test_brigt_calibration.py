@@ -306,6 +306,141 @@ class TestReferenceStruct(unittest.TestCase):
         self.assertEqual(int(max(-1.0, min(1.0, rendered[0])) * 32767), first)
 
 
+class TestNotBeingBrickedByOneBrokenStep(unittest.TestCase):
+    """A show refuses to start without a calibration profile, which is
+    right — and it means a speaker that will not play the click track takes
+    the whole add-on with it, which is not a gate but a brick."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.media = tempfile.TemporaryDirectory()
+        cls.server = _load_server(cls.tmp.name, cls.media.name)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+        cls.media.cleanup()
+
+    def setUp(self):
+        self._dir = calibration.CALIBRATION_DIR
+        calibration.CALIBRATION_DIR = Path(self.tmp.name) / "manual-calibration"
+
+    def tearDown(self):
+        calibration.CALIBRATION_DIR = self._dir
+
+    def _call(self, method, path, payload=None):
+        from aiohttp.test_utils import TestClient, TestServer
+
+        async def scenario():
+            client = TestClient(TestServer(self.server.build_app()))
+            await client.start_server()
+            try:
+                response = await client.request(method, path, json=payload)
+                return response.status, await response.json()
+            finally:
+                await client.close()
+
+        return asyncio.run(scenario())
+
+    def test_a_typed_offset_becomes_a_usable_profile(self):
+        status, body = self._call("POST", "/api/calibrate/manual", {
+            "media_player": "media_player.wired", "offset_ms": 0})
+        self.assertEqual(200, status, body)
+        self.assertEqual(0, body["profile"]["effective_offset_ms"])
+        # The one thing a show asks for before it will run.
+        self.assertEqual(0, calibration.load(
+            "media_player.wired")["effective_offset_ms"])
+
+    def test_it_never_claims_to_have_been_measured(self):
+        self._call("POST", "/api/calibrate/manual", {
+            "media_player": "media_player.airplay", "offset_ms": 2100})
+        profile = calibration.load("media_player.airplay")
+        self.assertEqual("manual", profile["runs"][-1]["method"])
+
+    def test_a_number_that_is_not_one_is_refused(self):
+        for value in ("soon", None, float("nan"), 60000, -9000):
+            with self.subTest(value=value):
+                status, _ = self._call("POST", "/api/calibrate/manual", {
+                    "media_player": "media_player.x", "offset_ms": value})
+                self.assertEqual(400, status)
+
+
+class TestTheWizardSaysWhichSilenceItWas(unittest.TestCase):
+    """"Move the phone closer" is the wrong advice — and infuriating — when
+    the speaker never made a sound. The position poll ran through the same
+    seconds the phone was listening, so it knows which of the two happened."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.media = tempfile.TemporaryDirectory()
+        cls.server = _load_server(cls.tmp.name, cls.media.name)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+        cls.media.cleanup()
+
+    def tearDown(self):
+        self.server._POSITION_CHECKS.clear()
+
+    def _call(self, path, payload):
+        from aiohttp.test_utils import TestClient, TestServer
+
+        async def scenario():
+            client = TestClient(TestServer(self.server.build_app()))
+            await client.start_server()
+            try:
+                response = await client.request("POST", path, json=payload)
+                return response.status, await response.json()
+            finally:
+                await client.close()
+
+        return asyncio.run(scenario())
+
+    def _noise(self):
+        rng = np.random.default_rng(seed=11)
+        return base64.b64encode(wav_bytes(
+            rng.normal(0, 0.02, 44100 * 8).astype(np.float32), 44100)).decode()
+
+    def test_a_speaker_that_never_played_is_told_apart_from_a_quiet_room(self):
+        self.server._POSITION_CHECKS["media_player.kitchen"] = {
+            "ever_playing": False, "states": ["idle"]}
+        status, body = self._call("/api/calibrate/analyze", {
+            "media_player": "media_player.kitchen",
+            "wav_b64": self._noise(),
+            "record_start_epoch_ms": 0, "play_epoch_ms": 0,
+        })
+        self.assertEqual(422, status)
+        self.assertTrue(body["never_played"])
+        self.assertIn("never started playing", body["error"])
+        self.assertNotIn("closer", body["error"])
+
+    def test_a_speaker_that_did_play_still_gets_the_room_advice(self):
+        self.server._POSITION_CHECKS["media_player.kitchen"] = {
+            "ever_playing": True, "states": ["playing"]}
+        status, body = self._call("/api/calibrate/analyze", {
+            "media_player": "media_player.kitchen",
+            "wav_b64": self._noise(),
+            "record_start_epoch_ms": 0, "play_epoch_ms": 0,
+        })
+        self.assertEqual(422, status)
+        self.assertIn("closer", body["error"])
+
+    def test_taps_at_silence_say_so_too(self):
+        self.server._POSITION_CHECKS["media_player.den"] = {
+            "ever_playing": False, "states": ["off"]}
+        status, body = self._call("/api/calibrate/taps", {
+            "media_player": "media_player.den",
+            "play_epoch_ms": 1000.0,
+            # Wildly scattered taps: the old message blamed the tapping.
+            "taps_epoch_ms": [1100.0, 5000.0, 9000.0, 14000.0],
+        })
+        self.assertEqual(422, status)
+        self.assertTrue(body["never_played"])
+
+
 class TestTheClickTrackFile(unittest.TestCase):
     """Writing it, skipping it, and healing it.
 

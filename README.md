@@ -31,6 +31,30 @@ Rock-solid Minecraft **Java Edition** server add-on with an ingress management p
 - **Aikar-tuned JVM** on Java 25, crash auto-restart, graceful shutdown
 - **Plugin management** with `If-Modified-Since` caching
 
+### [BRigt](brigt/)
+
+**Your music, your lights, actually in time.** Point BRigt at a folder of
+music and it analyzes every track once — tempo and beat grid, song sections
+and drops, synced lyrics — then compiles a light show for *your* lights ahead
+of time. Say "start party mode" and the music plays while LIFX bulbs and
+switch-driven party lights run the show in sync.
+
+- **LIFX over the LAN, not through service calls** — beat-locked effects are
+  pushed *onto* the bulbs as LIFX waveforms, so the network only carries
+  scene changes and hits
+- **The speaker's delay is measured, not guessed** — a click track, your
+  phone's microphone, and a cross-correlation, per media player
+- **Everything expensive happens before the party** — at show time the engine
+  is a clock and a cue list
+- **A light map with roles** — candles glow and never strobe, lamps and
+  downlights carry the beat, strips carry sweeps, party lights and lasers are
+  saved for the moments that earn them
+- **Two directors** — a built-in algorithmic choreographer that always
+  compiles, and Claude (through brAIn, when it is installed) when you want a
+  show designed rather than derived
+
+📖 [add-on README](brigt/) · [full documentation](brigt/DOCS.md)
+
 ## Installation
 
 Click the badge above, or add this repository URL to your Home Assistant add-on store (**Settings → Add-ons → Add-on Store → ⋮ → Repositories**):
@@ -52,7 +76,7 @@ https://github.com/bruhautomation/BRUH-HA-Apps
 
 ## Disclaimer
 
-BRUH Automation and these add-ons are independent projects, **not affiliated with, endorsed by, or sponsored by Anthropic, Home Assistant / Nabu Casa, Mojang, or Microsoft**. "Claude" and "Claude Code" are trademarks of Anthropic, PBC; "Minecraft" is a trademark of Mojang Synergies AB; "Home Assistant" is a trademark of the Open Home Foundation. The brAIn add-on runs the official Claude Code CLI under **your own** Anthropic account — your use of Claude through it is governed by [Anthropic's terms](https://www.anthropic.com/legal/consumer-terms). The BRUH Minecraft add-on downloads server software from official upstream sources at runtime and requires you to accept the [Minecraft EULA](https://www.minecraft.net/eula) yourself.
+BRUH Automation and these add-ons are independent projects, **not affiliated with, endorsed by, or sponsored by Anthropic, Home Assistant / Nabu Casa, Mojang, or Microsoft**. "Claude" and "Claude Code" are trademarks of Anthropic, PBC; "Minecraft" is a trademark of Mojang Synergies AB; "Home Assistant" is a trademark of the Open Home Foundation; "LIFX" is a trademark of LIFX Pty Ltd, and BRigt speaks the published LIFX LAN protocol without being affiliated with or endorsed by them. The brAIn add-on runs the official Claude Code CLI under **your own** Anthropic account — your use of Claude through it is governed by [Anthropic's terms](https://www.anthropic.com/legal/consumer-terms). The BRUH Minecraft add-on downloads server software from official upstream sources at runtime and requires you to accept the [Minecraft EULA](https://www.minecraft.net/eula) yourself.
 
 ## Credits
 

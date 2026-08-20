@@ -132,6 +132,35 @@ class TestFoldersMustBeServable(unittest.TestCase):
             with self.subTest(value=hostile):
                 self.assertIsNone(self.server._under_media(hostile))
 
+    def test_a_path_is_rebuilt_from_components_rather_than_normalised(self):
+        """Normalising and then checking the prefix is a check bolted onto a
+        string that already said something else. Joining validated components
+        onto /media cannot express an escape at all — so `..` is refused
+        wherever it appears, not resolved away."""
+        for hostile in ("..", "a/../../etc", "parties/../music",
+                        "../../../etc/passwd", "a/b/../../../etc",
+                        "x/\x00y", "\x00"):
+            with self.subTest(value=hostile):
+                self.assertIsNone(self.server._under_media(hostile))
+
+    def test_whatever_comes_out_is_under_media_or_nothing(self):
+        """The contract, stated as the property rather than as a list of
+        strings somebody thought of. An absolute path pointing somewhere
+        else is read as a path *inside* /media rather than refused — it will
+        simply not exist, which is a sentence the Library tab already has —
+        and the one thing that must never happen is a path outside."""
+        media = self.server.MEDIA_DIR
+        for typed in (str(media) + "evil/x", "/etc/passwd", "/../etc",
+                      "//etc/passwd", "parties", "/media/parties",
+                      "a/./b", "  /parties  "):
+            with self.subTest(typed=typed):
+                answer = self.server._under_media(typed)
+                if answer is None:
+                    continue
+                self.assertEqual(media, answer if answer == media
+                                 else Path(*answer.parts[:len(media.parts)]),
+                                 f"{typed} escaped to {answer}")
+
     def test_the_media_root_itself_is_allowed(self):
         media = str(self.server.MEDIA_DIR)
         self.assertEqual(Path(media), self.server._under_media(media))
@@ -328,6 +357,165 @@ class TestPartyUsesEveryFolder(unittest.TestCase):
                                    "folder": "../escape"})
         self.assertEqual(400, status)
         self.assertIn("/media", body["error"])
+
+
+class TestPickingFoldersByBrowsing(unittest.TestCase):
+    """Typing a path into an add-on option and restarting to find out
+    whether you typed it right is not picking a folder."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.media = tempfile.TemporaryDirectory()
+        cls.options = os.path.join(cls.tmp.name, "options.json")
+        cls.server = _load_server(cls.tmp.name, cls.media.name, cls.options,
+                                  os.path.join(cls.media.name, "music"))
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+        cls.media.cleanup()
+
+    def setUp(self):
+        from stores import folders as folders_store
+        self.folders_store = folders_store
+        self._file = folders_store.FOLDERS_FILE
+        folders_store.FOLDERS_FILE = Path(self.tmp.name) / "music-folders.json"
+        # Every test starts with nothing ticked: a store that leaks between
+        # them is a test that passes because of the one before it.
+        folders_store.FOLDERS_FILE.unlink(missing_ok=True)
+        self.addCleanup(setattr, folders_store, "FOLDERS_FILE", self._file)
+        self._shows = library.SHOWS_DIR
+        library.SHOWS_DIR = Path(self.tmp.name) / "shows"
+        self.addCleanup(setattr, library, "SHOWS_DIR", self._shows)
+
+    def _call(self, method, path, payload=None):
+        from aiohttp.test_utils import TestClient, TestServer
+
+        async def scenario():
+            client = TestClient(TestServer(self.server.build_app()))
+            await client.start_server()
+            try:
+                response = await client.request(method, path, json=payload)
+                return response.status, await response.json()
+            finally:
+                await client.close()
+
+        return asyncio.run(scenario())
+
+    def test_the_root_lists_folders_and_counts_what_is_in_them(self):
+        media = Path(self.media.name)
+        _track(media / "parties" / "loud.mp3", b"p")
+        _track(media / "parties" / "louder.flac", b"q")
+        (media / "parties" / "cover.jpg").write_bytes(b"nope")
+        (media / "empty").mkdir(exist_ok=True)
+
+        status, body = self._call("GET", "/api/media/tree")
+        self.assertEqual(200, status)
+        by_name = {f["name"]: f for f in body["folders"]}
+        self.assertEqual(2, by_name["parties"]["audio_files"])
+        self.assertEqual(0, by_name["empty"]["audio_files"])
+        self.assertIsNone(body["parent"], "the root has nothing above it")
+
+    def test_a_dot_folder_is_not_offered(self):
+        (Path(self.media.name) / ".Trash-1000").mkdir(exist_ok=True)
+        _, body = self._call("GET", "/api/media/tree")
+        self.assertNotIn(".Trash-1000", [f["name"] for f in body["folders"]])
+
+    def test_going_in_and_back_out(self):
+        media = Path(self.media.name)
+        _track(media / "parties" / "nye" / "song.mp3", b"n")
+        _, body = self._call("GET", "/api/media/tree?path=parties")
+        self.assertEqual("parties", body["path"])
+        self.assertEqual("", body["parent"], "one level down goes back to root")
+        self.assertEqual(["nye"], [f["name"] for f in body["folders"]])
+
+    def test_ticking_a_folder_makes_the_library_scan_it(self):
+        media = Path(self.media.name)
+        _track(media / "music" / "main.mp3", b"m")
+        _track(media / "parties" / "loud.mp3", b"p")
+
+        _, before = self._call("GET", "/api/library")
+        # Other tests in this class share the media folder, so this asserts
+        # about the track that moves rather than about the whole library.
+        self.assertNotIn("loud", {t["name"] for t in before["tracks"]})
+
+        status, body = self._call("POST", "/api/media/folder",
+                                  {"path": "parties", "add": True})
+        self.assertEqual(200, status, body)
+        self.assertIn(str(media / "parties"), body["scanning"])
+
+        _, after = self._call("GET", "/api/library")
+        names = {t["name"] for t in after["tracks"]}
+        self.assertIn("loud", names)
+        self.assertIn("main", names, "the music folder is still scanned too")
+
+    def test_unticking_takes_it_back_out(self):
+        media = Path(self.media.name)
+        _track(media / "parties" / "loud.mp3", b"p")
+        self._call("POST", "/api/media/folder", {"path": "parties", "add": True})
+        _, body = self._call("POST", "/api/media/folder",
+                             {"path": "parties", "add": False})
+        self.assertNotIn(str(media / "parties"), body["scanning"])
+
+    def test_ticking_twice_is_one_folder(self):
+        _track(Path(self.media.name) / "parties" / "loud.mp3", b"p")
+        self._call("POST", "/api/media/folder", {"path": "parties", "add": True})
+        _, body = self._call("POST", "/api/media/folder",
+                             {"path": "parties", "add": True})
+        self.assertEqual(["parties"], body["picked"])
+
+    def test_a_folder_covered_by_a_parent_says_so_rather_than_hiding(self):
+        """Ticking a subfolder of a folder already scanned is harmless and
+        pointless, and the row should say which."""
+        media = Path(self.media.name)
+        _track(media / "music" / "live" / "song.mp3", b"l")
+        _, body = self._call("GET", "/api/media/tree?path=music")
+        live = next(f for f in body["folders"] if f["name"] == "live")
+        self.assertFalse(live["picked"])
+        self.assertFalse(live["scanned"],
+                         "only the folder itself counts as scanned, not its parent")
+
+    def test_an_escape_is_refused_by_both_routes(self):
+        status, _ = self._call("GET", "/api/media/tree?path=../..")
+        self.assertEqual(400, status)
+        status, _ = self._call("POST", "/api/media/folder",
+                               {"path": "../../etc", "add": True})
+        self.assertEqual(400, status)
+
+    def test_a_folder_that_is_not_there_cannot_be_browsed_or_ticked(self):
+        """Found by walking real directory entries, so "no such folder" is
+        the answer rather than a listing of nothing."""
+        status, _ = self._call("GET", "/api/media/tree?path=imaginary")
+        self.assertEqual(404, status)
+        status, _ = self._call("POST", "/api/media/folder",
+                               {"path": "imaginary", "add": True})
+        self.assertEqual(404, status)
+
+    def test_a_file_is_not_a_folder_to_browse_into(self):
+        _track(Path(self.media.name) / "loose.mp3", b"z")
+        status, _ = self._call("GET", "/api/media/tree?path=loose.mp3")
+        self.assertEqual(404, status)
+
+    def test_the_media_root_itself_cannot_be_ticked_by_accident(self):
+        """It is already the parent of everything; ticking it would scan the
+        whole share, which is a choice to make deliberately in the option."""
+        status, _ = self._call("POST", "/api/media/folder",
+                               {"path": "", "add": True})
+        self.assertEqual(400, status)
+
+    def test_a_stored_folder_that_has_gone_is_dropped_not_crashed_on(self):
+        self.folders_store.FOLDERS_FILE.write_text(
+            json.dumps({"folders": ["gone", "../escape", 7, ""]}))
+        media = Path(self.media.name)
+        picked = self.server._picked_music_folders()
+        self.assertEqual([media / "gone"], picked,
+                         "junk entries dropped, a missing folder still listed "
+                         "so the Library tab can say it is missing")
+
+    def test_an_unreadable_store_is_no_folders_not_an_exception(self):
+        self.folders_store.FOLDERS_FILE.write_text("{not json")
+        self.assertEqual([], self.folders_store.load())
 
 
 class TestTheOptionIsDeclared(unittest.TestCase):

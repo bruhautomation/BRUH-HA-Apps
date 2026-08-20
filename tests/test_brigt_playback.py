@@ -211,7 +211,7 @@ class TestAShowThatCannotStartSaysSo(unittest.TestCase):
             run.engine = engine
             run.clock = ShowClock()
             run._snapshot = {}
-            run._task = run._poller = None
+            run._task = run._poller = run._verify = None
             run.state = {"status": "idle"}
 
             restored = []
@@ -230,10 +230,10 @@ class TestAShowThatCannotStartSaysSo(unittest.TestCase):
                 media_content_id="media-source://media_source/local/x.mp3",
                 title="x", duration_s=1.0)
 
-            try:
+            # Awaiting the dead task re-raises what killed it, which is
+            # the refusal itself — assert it rather than swallowing it.
+            with self.assertRaises(RuntimeError):
                 await run._task
-            except RuntimeError:
-                pass
             # The done callback runs on the next turn of the loop, and the
             # restore it schedules on the one after that.
             await asyncio.sleep(0)

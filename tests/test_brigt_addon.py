@@ -206,6 +206,52 @@ class TestBrigtLanGateBehaviour(unittest.TestCase):
                     403, self._call(path, "192.168.1.50", method="GET").status)
 
 
+class TestTheServicesReportWhatHappened(unittest.TestCase):
+    """Grepped rather than run — the integration imports Home Assistant,
+    which is not installed here. The shape is what matters and the shape is
+    what regressed: three handlers that awaited the bridge and dropped what
+    came back, so an automation asking for party mode with nothing analyzed
+    got a green tick and a dark room."""
+
+    @classmethod
+    def setUpClass(cls):
+        path = os.path.join(ADDON_DIR, "custom_components", "brigt",
+                            "__init__.py")
+        with open(path) as handle:
+            cls.source = handle.read()
+
+    def test_no_handler_calls_the_bridge_directly(self):
+        """Parsed, not grepped: `_forward` calls the bridge and that is the
+        point of it, so the question is which functions do."""
+        import ast
+
+        tree = ast.parse(self.source)
+        offenders = []
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if not node.name.startswith("handle_"):
+                continue
+            for inner in ast.walk(node):
+                if (isinstance(inner, ast.Call)
+                        and isinstance(inner.func, ast.Name)
+                        and inner.func.id == "send_request"):
+                    offenders.append(node.name)
+        self.assertEqual([], offenders,
+                         "a service handler talks to the bridge itself, so "
+                         "whatever came back is dropped")
+
+    def test_every_service_goes_through_the_forwarder(self):
+        for service in ("SERVICE_PARTY_MODE", "SERVICE_START_SHOW",
+                        "SERVICE_STOP_SHOW"):
+            with self.subTest(service=service):
+                self.assertIn(f"_forward({service}", self.source)
+
+    def test_a_refusal_becomes_an_error_home_assistant_shows(self):
+        self.assertIn("HomeAssistantError", self.source)
+        self.assertIn('response.get("ok") is False', self.source)
+
+
 class TestBridgeContract(unittest.TestCase):
     """The integration's request kinds and the bridge's must agree — a kind
     only one side knows about is a service that always times out."""

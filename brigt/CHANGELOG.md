@@ -5,6 +5,116 @@ All notable changes to the **BRigt** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.8.4
+
+Why nothing plays, said out loud — plus folders you can pick, a light map
+where a dot is a light rather than a circle, and documentation somebody
+could actually set the add-on up from.
+
+### Added
+- **Test playback** (Calibrate tab). "Nothing plays" has half a dozen causes
+  living in different machines, and `media_player.play_media` answers
+  "accepted", never "playing": Core resolves the media, signs a path, puts a
+  *host* in front of it and hands the result to a speaker that fetches it
+  afterwards, on its own, over the network. This walks the chain — the file
+  on disk, whether Core resolves the media id, what address it will hand the
+  speaker, whether the player accepts media at all, whether the command was
+  taken, and whether the player ever actually started — and names the step
+  that broke with what to do about it.
+- **The host step is the one that took research.** Chromecast, Google and
+  Nest speakers resolve names through Google's public DNS rather than your
+  router's, so an Internal URL of `http://homeassistant.local:8123` — which
+  a great many installs have — is a name the speaker is told does not exist.
+  Nothing plays, nothing errors. BRigt reads Core's own configuration and
+  says so, with the fix.
+- **An HA WebSocket client** (`panel/ha_ws.py`), because media sources are
+  WebSocket-only and `media_source/resolve_media` is the same call the cast
+  integration makes before it hands a URL to a speaker. It also catches the
+  case a hardcoded `local` cannot: an install that set `media_dirs` and
+  renamed the local source out from under every media id BRigt builds.
+- **Browse and tick folders** in the Library tab. Everything under Home
+  Assistant's media folder, openable, with the tracks in each; ticking one
+  scans it, all the way down, with no restart and no YAML. Merged with the
+  `additional_music_folders` option rather than competing with it.
+- **Type the delay in** (Calibrate tab). A show refuses to start without a
+  calibration profile, which is right — and it meant one speaker that would
+  not play the click track took the whole add-on with it. A typed profile is
+  stored as `manual`, so the record never claims to have been measured.
+
+### Fixed
+- **The Light Map's dots say which light they are.** A dot was a role glyph
+  with the name in a `title` attribute — a hover tooltip, on the device most
+  likely to be dragging lights around a floor plan, which has no hover. Every
+  dot carries its name now; tapping one selects it, and the dot, its row in
+  the list and a bar above the map all agree on which light that is. The
+  selected light can be re-roled and removed from the map itself, instead of
+  from a list that had no visible connection to the picture above it.
+- A tap is no longer a one-pixel drag: a press that never travels selects and
+  saves nothing, so tapping a light to see what it is cannot nudge it.
+- A light at the very edge of the room is fully on the map. A 44px dot hangs
+  half outside its own coordinate, so a light at x=0 drew half off the floor,
+  clipped and hard to grab — which is exactly where people put lights.
+- **Every text control is a 44px touch target.** The floor this panel claims
+  was set inside one CSS block, so the role picker on each light — a bare
+  `<select>` — rendered at the browser's default 19px.
+- **A service call that could not do what you asked now fails with the
+  reason.** `brigt.party_mode` awaited the bridge and dropped what came back,
+  so an automation with nothing analyzed got a green tick and a dark room
+  while "no analyzed tracks in /media/music — run the Library tab first"
+  was thrown away one line from the person who needed it.
+- **The bridge relays the panel's sentence rather than its status code.**
+  Same failure, one layer out: an automation got "panel answered HTTP 409".
+- **A show that could not start says so** rather than reporting "Running:
+  412 cues" over a dark room, and the lights are put back.
+- **"You have no media players" and "I could not ask Home Assistant" are
+  different sentences now.** The entity picker answered both with an empty
+  list.
+- The calibration wizard no longer says "move the phone closer" when the
+  speaker never made a sound — the position poll ran through the same
+  seconds and knows which of the two happened.
+- A number off the wire that is not a number (`{"count": "lots"}`) is
+  clamped rather than answered with a bare HTTP 500.
+- The `/media` confinement is one implementation rather than two: the show
+  route had its own copy of the string arithmetic.
+
+- **A browse walks real directory entries.** Turning something typed into a
+  directory to open is the exact shape a path traversal is written for, and
+  checking the string and hoping is the answer everybody writes. Each
+  component is matched against what the filesystem actually reports, so the
+  path that comes out is built from directory entries rather than from the
+  request — and a folder that is not there answers "no such folder" instead
+  of listing nothing.
+- **The playback check no longer turns a media id into a path.** It statted
+  the file behind whatever media id it was handed; Home Assistant's own
+  resolve step answers "is the file there" better than a stat does, and a
+  media id is not always a local file. The one path it does stat is the
+  click track, whose path is the add-on's own.
+
+### Changed
+- **The documentation is a rewrite.** DOCS.md now covers what you need,
+  install, the order things want to happen in, every tab, every option with
+  its default and what it changes, the services with their fields, a
+  troubleshooting section built around *when nothing plays*, and where BRigt
+  keeps its files. BRigt is in the repository README and SECURITY.md for the
+  first time.
+- `tests/manual/measure-lightmap.mjs` measures the map at four widths — names
+  present, nothing hanging off the floor, selection agreeing in three places,
+  every control a real target — and runs in CI beside the other four.
+
+## 0.8.3
+
+No behaviour change. Two code-scanning findings from 0.8.2, closed rather
+than left open — an alert nobody intends to act on is what teaches people
+to stop reading the list.
+
+### Changed
+- `reference.ensure`'s `except OSError: pass` says what it is passing on:
+  no file, or nothing readable where one should be, both of which mean
+  "write it" — the same answer as a wrong length. A folder that cannot be
+  written still raises, from the write below, where the caller expects it.
+- The playback test that awaited a deliberately doomed show asserts the
+  refusal it was swallowing (`assertRaises`) instead of passing on it.
+
 ## 0.8.2
 
 Casting the click track answered `HTTP 500` and played nothing — and music

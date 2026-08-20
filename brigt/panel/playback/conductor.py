@@ -24,6 +24,7 @@ from typing import Any
 
 import atomic_write
 import ha_client
+import playback_check
 from analyzer import library
 from lifx import packets
 from playback.clock import ShowClock
@@ -47,6 +48,7 @@ class Conductor:
         self.clock = ShowClock()
         self._task: asyncio.Task | None = None
         self._poller: asyncio.Task | None = None
+        self._verify: asyncio.Task | None = None
         self._snapshot: dict[str, dict] = {}
         self.state: dict[str, Any] = {"status": "idle"}
         self._write_state()
@@ -83,6 +85,15 @@ class Conductor:
         self.clock.anchor(play_call, offset_ms / 1000.0)
         self._update_state(status=status, track=title,
                            media_player=media_player, position_s=0.0)
+        # Home Assistant accepting the command is not the speaker playing:
+        # it resolves the media, signs a URL and hands it over, and the
+        # speaker fetches it afterwards, on its own, over the network. The
+        # show cannot wait to find out — the clock was anchored at the play
+        # command — but a room that stays silent while the panel says
+        # "Running" is exactly the failure this watches for.
+        if self._verify is not None and not self._verify.done():
+            self._verify.cancel()
+        self._verify = asyncio.create_task(self._verify_playing(media_player))
         profile = calibration_store.load(media_player)
         if (profile.get("position_attr") or {}).get("reliable"):
             self._poller = asyncio.create_task(self._poll_position(media_player))
@@ -92,6 +103,24 @@ class Conductor:
             if self._poller is not None:
                 self._poller.cancel()
                 self._poller = None
+
+    async def _verify_playing(self, media_player: str) -> None:
+        try:
+            step = await playback_check.wait_for_playing(media_player)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — a watcher must not end a show
+            # Flattened, like everything else logged from outside: an
+            # exception's text is whatever raised it, and a newline in a
+            # logged value is that value writing its own log lines.
+            log.warning("could not check whether %s started: %s",
+                        playback_check.flat(media_player),
+                        playback_check.flat(exc))
+            return
+        if step["ok"]:
+            return
+        log.warning("%s", playback_check.flat(step["detail"]))
+        self._update_state(playback_warning=step["detail"])
 
     @staticmethod
     def _calibrated_offset(media_player: str) -> float | None:
@@ -191,14 +220,14 @@ class Conductor:
         return {"ok": True, "queue": len(queue), "offset_ms": offset_ms}
 
     async def stop(self, restore: bool = True) -> dict:
-        for task in (self._task, self._poller):
+        for task in (self._task, self._poller, self._verify):
             if task is not None and not task.done():
                 task.cancel()
                 try:
                     await task
                 except (asyncio.CancelledError, Exception):  # noqa: BLE001
                     pass
-        self._task = self._poller = None
+        self._task = self._poller = self._verify = None
         if restore and self._snapshot:
             await self._restore_snapshot()
         self._write_state()

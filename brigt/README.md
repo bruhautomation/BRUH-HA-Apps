@@ -29,6 +29,11 @@ switch-driven party lights run the show in sync.
   choreography are compiled to a cue file per track; at show time the engine
   is just a clock and a cue list.
 
+- **Nothing reports a success it cannot know about.** Home Assistant
+  accepting a play command is not a speaker making a sound, so BRigt follows
+  the command until the player says it is playing — and says so plainly when
+  it never does, instead of running a light show at a silent room.
+
 ## Status
 
 The whole chain is in place and being tuned against real houses: the Lab
@@ -38,8 +43,22 @@ algorithmic and Claude director tiers, single-track shows, and party mode
 end to end. See CHANGELOG.md for the phase-by-phase story — and the
 warning above still stands.
 
+## What you need
+
+Home Assistant 2023.6+ with the add-on store, audio files under `/media`, a
+`media_player` entity, and LIFX bulbs and/or party lights on HA switches.
+The [brAIn](../brain) add-on is optional and upgrades the choreography from
+the built-in algorithm to Claude.
+
 ## Installation
 
 Add this repository to the Home Assistant add-on store and install BRigt.
 The companion integration deploys itself on first start — accept the
 discovered integration under Settings → Devices & Services.
+
+Then open the panel and press **Test playback** on the Calibrate tab. It
+walks the whole chain from the file on disk to the speaker actually playing,
+and names whatever is in the way — which on a Chromecast is usually Home
+Assistant's *Internal URL* being a `.local` name that Google's DNS cannot
+resolve. [DOCS.md](DOCS.md) has the full setup, every configuration option,
+the services, and a troubleshooting section for when nothing plays.

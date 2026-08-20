@@ -28,7 +28,7 @@ version bump and reach users through the normal add-on update.
 
 ## What these add-ons can reach
 
-Both add-ons run with real authority over a Home Assistant install, and
+These add-ons run with real authority over a Home Assistant install, and
 knowing where the boundaries are is most of knowing what counts as a bug.
 
 **brAIn** runs Claude Code with read/write access to `/config`, and,
@@ -43,6 +43,18 @@ reachable without it.
 uses `host_network: true` so Bedrock clients can find the server on the
 LAN. Its management panel is gated to the Supervisor's own network; the
 resource-pack path and a liveness endpoint are deliberately public.
+
+**BRigt** uses `host_network: true` so LIFX discovery — a UDP broadcast
+whose replies come back to the sender's own address — works at all, which
+puts its panel on a real port on the host. Every route is gated to the
+Supervisor's own networks and loopback, matched on the connection's peer
+address rather than on any header a caller can set, and **no prefix is
+public**. It reads your music under `/media` and writes one file there (the
+calibration click track, in `/media/brigt/`), reads and writes its own
+`/config/.brigt/` for the integration bridge, and calls the Home Assistant
+API to list entities, play media and toggle the switch-driven lights a show
+uses. It holds no credential of its own. Its panel port is assigned by the
+Supervisor rather than fixed.
 
 Things we consider vulnerabilities:
 
@@ -70,15 +82,20 @@ Things that are working as intended, and are documented rather than fixed:
 - Minecraft plugins you install run with the server's full authority. The
   AppArmor profile limits what that means for the *host*, not for the
   world.
+- BRigt sends LIFX packets to bulbs on your LAN without authenticating to
+  them. That is the LIFX LAN protocol: it has no authentication, and any
+  device on the network can already drive those bulbs.
 
 ## Hardening we already apply
 
-- AppArmor profiles on both add-ons, denying mount, kernel module
+- AppArmor profiles on all three add-ons, denying mount, kernel module
   loading, raw sockets, kernel tunables and the Docker socket.
 - The brAIn terminal port is unpublished by default and requires HTTP
   Basic auth when published.
-- The Minecraft panel refuses management requests that did not arrive
-  through the Supervisor.
+- The Minecraft and BRigt panels refuse requests that did not arrive
+  through the Supervisor. BRigt's has no public prefix at all.
+- Every path BRigt is handed from the wire — a folder to scan, a track to
+  play — is confined to `/media` before any filesystem call.
 - Credentials are excluded from Home Assistant backups via
   `backup_exclude`.
 - Claude Code runs as an unprivileged user (UID 1000), not root.
