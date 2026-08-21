@@ -259,6 +259,67 @@ stretches where the section map is doing nothing at all.
 The `melody` and `harmony` effects consume this directly, the automatic
 director places both, and Claude gets all of it in its brief.
 
+The accents carry **which drum** as well as how hard: the analyzer compares
+the low band against the mid at each hit, so a kick and a snare are
+different events and the `accent` effect can put them on different lights.
+
+### How a show is built: four layers, on different lights
+
+This is the design the automatic director follows and the one Claude's brief
+teaches, and it is worth knowing because it is also how to read a show you
+are editing.
+
+A show is four layers with different time constants, and what makes it read
+as musical rather than busy is that they are **separate**:
+
+- **ground** — the room's colour, moving with the harmony. Seconds-long.
+  The only layer that should feel like fading. Candles, a strip, whatever
+  is not keeping time.
+- **pulse** — the beat, on lights doing nothing else. A `hit`, not a
+  `pulse`: mostly felt rather than watched.
+- **hits** — the kick and the snare as different instruments, landing on
+  the drums the analyzer actually heard rather than on the beat grid, so
+  they catch the fills a grid knows nothing about.
+- **voice** — the melody, tracking real pitch. The layer that makes a room
+  feel like it is playing along, and it belongs in the chorus as much as
+  anywhere else.
+
+Two rules hold the arrangement together, and the first is physics: **a LIFX
+bulb runs one waveform at a time**, so two rhythmic layers on one bulb is
+the second cancelling the first. A fixture therefore belongs to exactly one
+layer, and where a room has fewer kinds of light than there are layers, the
+director **splits a role** — the left lamps are the kick, the right ones the
+snare. The second rule is what actually makes a chorus land: **a layer
+arriving is itself an event**. A chorus is not brighter than the verse; it
+is the strip joining the kick and the lamps switching from washing to
+following the tune.
+
+### Swells and strikes
+
+Every effect in the vocabulary is one or the other, and it is the single
+biggest difference between "a light show" and "mood lighting".
+
+A **swell** travels smoothly up to a level and smoothly back: `pulse`,
+`breathe`, `sweep`, `colour_drift`, `saturate`. A **strike** is at full
+brightness the instant it lands and decays from there: `hit`, `accent`,
+`stab`, `strobe`. An instrument has an attack; a show made only of swells
+does not, and reads as a row of lights fading in and out near the music.
+
+`hit` and `accent` are drawn as a linear decay because `saw` is the only
+one of LIFX's five waveform shapes that is monotone across a cycle — the
+others come back up inside it, which ducks rather than decays. Both still
+cost one message per light however many beats they cover, because the bulb
+runs the envelope itself.
+
+### Where the lights land
+
+A LIFX waveform runs between the bulb's **current** colour and the one in
+the packet, so a sine anchored on the beat is at its dimmest exactly where
+the kick is and brightest halfway to the next one. BRight sends every
+rhythmic cue early by that shape's own peak phase, so the brightest instant
+falls on the beat. If you are writing effects by hand you do not have to
+think about this; it is in the compiler.
+
 **If a track was analysed by an older version of BRight it has none of
 this**, and its row in the Library says so (`⟳ analysed by an older
 version`). Press **Analyze** — out-of-date tracks are re-heard without
@@ -314,6 +375,25 @@ Drag the scrub bar and the room shows you that instant. Press ▶ and the show
 plays through at real speed — on the screen, not on the bulbs, so you can
 read a show at midday without lighting the house up. Press a scene block to
 jump to it.
+
+**The song is drawn too, under the same ruler.** Beneath the waveform are
+three lanes of what the track is actually playing: the **chord changes** as
+labelled blocks, the **melody** as a pitch contour against the song's own
+range (a rising line rises), and the **drums** with the kick low in the lane
+and everything above it high, each tick as tall as the analyzer ranked it.
+Under the strip is one **named row per effect**, drawn from what the
+compiler really rendered — so an effect that produced nothing has a visibly
+empty row saying so, which is the one thing no other view could tell you. A
+line under the transport says what is running at the playhead and what
+starts next. Pressing anywhere on the song or its lanes scrubs to that
+instant.
+
+**Every show is kept.** *Versions of this show* lists every compile,
+revision and hand edit, newest first, with who wrote it and how big it is.
+The one marked *playing* is what a party runs; **Play this one** makes an
+older version live again. **Name it** keeps a version for good — unnamed
+ones are dropped oldest-first past a dozen — so asking Claude to try again
+can never cost you the show you spent an evening on.
 
 **Editing is the picture, not the file.** Press **Edit** on any effect row
 and you get the same form the Effects tab builds — type, travel order, which
@@ -421,7 +501,15 @@ if it did. BRight creates that folder at startup.
 
 ### Party — the sentence the add-on was built for
 
-Pick a calibrated player, type a vibe if you want one, press the button.
+One screen: tick the shows you want, pick the speaker, press **Play**.
+Nothing ticked plays everything in your music folders. The songs run in the
+order you ticked them (each shows its place, `#1`, `#2`), and **Shuffle**
+is off unless you ask for it — an order you just chose is a request, not a
+default to override.
+
+A song with no show yet gets one written while the party runs, so a set can
+mix tracks you have already directed with ones you have not.
+
 The Stop button is not there when nothing is running: a button that is
 always present is a button nobody trusts, so it renders only while the
 add-on says a run is actually in progress, and the line beside it says what
@@ -435,12 +523,22 @@ what it heard against the playing track itself, and the lights shift by
 exactly the difference. **Keep this trim** folds either kind into the
 speaker's calibration so every future show starts in tune.
 
-**Saved parties** are the evening set up once — the speaker, the folder, the
-vibe, which lights may join in, and what the room should look like when it
-stops. Start one from the list, from an automation with
-`bright.start_party`, or by voice. Anything given at the time still wins
-over what the party saved, so "the usual thing, but on the kitchen speaker"
-works.
+**Saved sets** are a name on exactly what is on that screen — the speaker,
+the songs, which lights may join in, and what the room should look like when
+it stops. **Save as a set** names what you have picked; **Load** puts a saved
+one back on screen so you can see what Play would do before pressing it.
+Start one from the list, from an automation with `bright.start_party`, or by
+voice. Anything given at the time still wins over what the set saved, so
+"the usual thing, but on the kitchen speaker" works.
+
+There is no "vibe" here any more, and its absence is deliberate. A vibe
+steers the **director**, which is a compile-time decision — and on the Party
+tab it only ever reached a track that had no show yet. On a library you had
+already built shows for it did nothing at all; on a fresh one it silently
+decided what got written to disk, permanently, without saying so; and two
+sets naming different vibes over one song gave whichever ran first. It lives
+on the **Shows** tab now, in the box above the track list, where it applies
+to the next Claude compile and you can see the show it produced.
 
 The **end scene** is the part that is not obvious. Stopping normally restores
 every light to what it was before the show started, which is right when the
@@ -551,21 +649,21 @@ Every analyzed track, shuffled, each with its own show.
 |---|---|---|
 | `media_player` | no | Defaults to the most recently calibrated speaker |
 | `folder` | no | One folder under `/media` for this party; defaults to every scanned folder |
-| `vibe` | no | A steer for the Claude director, e.g. `chill`, `rave`, `halloween` |
-| `party` | no | The name of a saved party; its settings fill in anything not given here |
+| `party` | no | The name of a saved set; its settings fill in anything not given here |
+| `tracks` | no | Exact track hashes, in play order; replaces the folder scan |
 | `end_scene` | no | A scene to call when it stops, instead of restoring the lights |
 | `shuffle` | no | Play the folder in order instead, with `false` |
 
 ### `bright.start_party`
 
-Run a saved party by name. The name is **required** here, which is what makes
+Run a saved set by name. The name is **required** here, which is what makes
 an automation fail loudly on a typo instead of quietly playing the default
 folder.
 
 | Field | Required | Meaning |
 |---|---|---|
-| `party` | yes | The saved party's name, as it appears in the Party tab |
-| `media_player` | no | Override the speaker this party normally plays on |
+| `party` | yes | The saved set's name, as it appears in the Party tab |
+| `media_player` | no | Override the speaker this set normally plays on |
 | `end_scene` | no | Override the scene called when it stops |
 
 ### `bright.start_show`
@@ -600,7 +698,6 @@ automation:
       - action: bright.party_mode
         data:
           media_player: media_player.living_room
-          vibe: "rave"
 ```
 
 ```yaml

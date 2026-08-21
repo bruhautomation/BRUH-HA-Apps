@@ -62,7 +62,6 @@ PARTY_MODE_SCHEMA = vol.Schema(
         vol.Optional("party"): cv.string,
         vol.Optional("media_player"): cv.entity_id,
         vol.Optional("folder"): cv.string,
-        vol.Optional("vibe"): cv.string,
         vol.Optional("end_scene"): cv.entity_id,
         vol.Optional("shuffle"): cv.boolean,
     }

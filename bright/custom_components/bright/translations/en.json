@@ -34,13 +34,9 @@
           "name": "Music folder",
           "description": "Folder under /media to play. Defaults to the add-on's music_folder option."
         },
-        "vibe": {
-          "name": "Vibe",
-          "description": "Optional steer for the director, e.g. \"chill\", \"rave\", \"halloween\"."
-        },
         "party": {
-          "name": "Saved party",
-          "description": "Name of a party saved in the BRight panel. Its speaker, folder, vibe, light selection and end scene are used; anything given here wins over what the party saved."
+          "name": "Saved set",
+          "description": "Name of a set saved in the BRight panel. Its speaker, folder, songs, light selection and end scene are used; anything given here wins over what the set saved."
         },
         "end_scene": {
           "name": "End scene",
@@ -77,12 +73,12 @@
       }
     },
     "start_party": {
-      "name": "Start a saved party",
-      "description": "Run a party saved in the BRight panel, by name — its speaker, music folder, vibe, lights and end scene were set up once and are reused.",
+      "name": "Start a saved set",
+      "description": "Run a set saved in the BRight panel, by name — its speaker, music folder or songs, lights and end scene were set up once and are reused.",
       "fields": {
         "party": {
-          "name": "Party",
-          "description": "The saved party's name, as it appears in the panel's Party tab."
+          "name": "Set",
+          "description": "The saved set's name, as it appears in the panel's Party tab."
         },
         "media_player": {
           "name": "Media player",

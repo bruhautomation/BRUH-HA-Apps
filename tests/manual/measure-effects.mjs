@@ -165,6 +165,37 @@ for (const width of WIDTHS) {
 		{ timeout: 8000 }).catch(() => fail('the live view outlived the run'));
 	await page.unroute('**/api/show/state');
 
+	// The set IS the party. There is one surface now — tick the shows,
+	// press Play — so the list has to be there, the tick order has to be
+	// visible (it is what "in the order you tick them" promises), and
+	// Play has to say what it would do.
+	await page.waitForSelector('#partySet .party-pick', { timeout: 8000 })
+		.catch(() => fail('the set list never loaded'));
+	const picks = await page.locator('#partySet .party-pick').count();
+	if (!picks) fail('the set has no songs to tick');
+	else {
+		const idle = (await page.textContent('#btnPartyStart') || '').trim();
+		if (!/everything/.test(idle)) {
+			fail(`nothing ticked should offer everything: "${idle}"`);
+		}
+		await page.locator('#partySet .party-pick input').first().check();
+		const one = (await page.textContent('#btnPartyStart') || '').trim();
+		const badge = (await page.textContent('#partySet .party-order') || '').trim();
+		if (!/1 show/.test(one)) fail(`Play does not count the set: "${one}"`);
+		else if (badge !== '#1') fail(`the tick order is not shown: "${badge}"`);
+		else ok(`the set counts and orders: ${one} · ${badge}`);
+		await page.click('#btnSetNone');
+		const cleared = (await page.textContent('#btnPartyStart') || '').trim();
+		if (!/everything/.test(cleared)) fail(`None did not clear: "${cleared}"`);
+	}
+
+	// The vibe box is not on this tab any more: it steers the director,
+	// which is a compile-time decision, and here it reached only a track
+	// with no show yet.
+	if (await page.$('#pane-party #partyVibe')) {
+		fail('the vibe box is back on the party tab');
+	} else ok('no vibe box on the party tab');
+
 	if (errors.length) fail(`page errors: ${errors.slice(0, 3).join(' | ')}`);
 	else ok('no page errors');
 

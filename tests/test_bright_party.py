@@ -289,9 +289,9 @@ class TestBridge(unittest.TestCase):
 
         self.bridge._panel_post = fake_post
         result = asyncio.run(self.bridge.handle(
-            {"kind": "party_mode", "payload": {"vibe": "rave"}}))
+            {"kind": "party_mode", "payload": {"shuffle": True}}))
         self.assertEqual({"ok": True, "queue": 3}, result)
-        self.assertEqual([("/api/show/party_mode", {"vibe": "rave"})], calls)
+        self.assertEqual([("/api/show/party_mode", {"shuffle": True})], calls)
 
     def test_the_panels_reason_survives_the_trip(self):
         """The panel's body carries the sentence and its status carries a

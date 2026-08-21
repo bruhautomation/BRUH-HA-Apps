@@ -703,6 +703,10 @@
         const result = await claudeJob("api/show/compile", {
           track_hash: row.dataset.hash,
           director: wantsClaude ? "claude" : undefined,
+          // Only on a Claude compile: the algorithmic director has no
+          // use for it, and sending it there would put a word in the
+          // version note about a run that never read it.
+          vibe: wantsClaude ? ($("showVibe").value || undefined) : undefined,
         }, (seconds) => {
           if (wantsClaude) {
             out.textContent = "asking Claude to write this show — " +
@@ -774,13 +778,16 @@
   $("btnPartyStart").addEventListener("click", async () => {
     const status = $("partyStatus");
     try {
-      // A saved party carries its own speaker, folder, vibe, lights and
-      // end scene; anything typed here still wins over it, which is what
-      // "the usual thing, but on the kitchen speaker" means.
+      // What is on screen IS the party. There is no saved-versus-ad-hoc
+      // mode any more: a saved party was only ever a NAME on this set of
+      // choices, and having two ways to start the same thing is how a
+      // field on one of them (the vibe box) could change a show without
+      // anybody being told.
       const result = await post("api/show/party_mode", {
-        party: $("partySaved").value || undefined,
         media_player: $("partyPlayer").value || undefined,
-        vibe: $("partyVibe").value || undefined,
+        end_scene: $("partyScene").value || undefined,
+        shuffle: $("partyShuffle").checked,
+        tracks: partySet.slice(),
       });
       status.textContent = "Party on: " + result.queue +
         " tracks queued, anchored " + Math.round(result.offset_ms) +
@@ -3693,6 +3700,130 @@
     }
   }
 
+  // -- versions: every show this track has had --------------------------
+  //
+  // A compile used to overwrite the show that was there, so "rewrite it
+  // with Claude" was a button you learned not to press on a show you had
+  // spent an evening editing. Every save is its own version now and one
+  // pointer says which plays.
+  //
+  // The list is rendered from the server's answer on every mutation
+  // rather than patched in place: activate, rename and delete all return
+  // the whole list, so there is one shape of "what the versions are" and
+  // the panel never holds a second opinion about which one is live.
+  let versionRows = [];
+
+  function renderVersions(payload) {
+    versionRows = (payload && payload.versions) || [];
+    const box = $("versionList");
+    const summary = $("versionSummary");
+    box.innerHTML = "";
+    if (!versionRows.length) {
+      summary.textContent = "Versions of this show";
+      box.innerHTML = '<p class="muted small">Nothing compiled for this ' +
+        "track yet.</p>";
+      return;
+    }
+    summary.textContent = "Versions of this show (" + versionRows.length + ")";
+    for (const version of versionRows) {
+      const row = document.createElement("div");
+      row.className = "row";
+      const main = document.createElement("div");
+      main.className = "row-main";
+      const title = document.createElement("strong");
+      title.textContent = version.name ||
+        (VERSION_SOURCES[version.source] || version.source);
+      main.appendChild(title);
+      const note = document.createElement("span");
+      note.className = "muted small";
+      const bits = [];
+      if (version.active) bits.push("playing");
+      if (version.name) {
+        bits.push(VERSION_SOURCES[version.source] || version.source);
+      }
+      if (version.created_at) bits.push(whenShort(version.created_at));
+      if (version.cues) bits.push(version.cues + " cues");
+      if (version.scenes) bits.push(version.scenes + " scenes");
+      if (version.note) bits.push(version.note);
+      note.textContent = bits.join(" · ");
+      main.appendChild(note);
+      row.appendChild(main);
+
+      const actions = document.createElement("div");
+      actions.className = "row-actions";
+      if (!version.active) {
+        actions.appendChild(versionButton("Play this one", () =>
+          versionAction(version.id, "activate")));
+      }
+      actions.appendChild(versionButton(version.name ? "Rename" : "Name it",
+        () => renameVersion(version)));
+      if (!version.active) {
+        actions.appendChild(versionButton("Delete", () =>
+          versionAction(version.id, "delete")));
+      }
+      row.appendChild(actions);
+      box.appendChild(row);
+    }
+  }
+
+  const VERSION_SOURCES = {
+    claude: "written by Claude",
+    algorithmic: "BRight's own director",
+    revision: "revised by Claude",
+    edit: "your edit",
+    import: "read from the file",
+  };
+
+  function versionButton(label, onClick) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "btn small";
+    button.textContent = label;
+    button.addEventListener("click", onClick);
+    return button;
+  }
+
+  function whenShort(seconds) {
+    try {
+      return new Date(seconds * 1000).toLocaleString(undefined,
+        { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    } catch (ignored) {
+      return "";
+    }
+  }
+
+  async function versionAction(id, verb, body) {
+    if (!scriptTrack) return;
+    const status = $("scriptStatus");
+    const base = "api/show/" + scriptTrack + "/versions/" + id;
+    try {
+      const answer = verb === "delete"
+        ? await api(base, { method: "DELETE" })
+        : await post(base + "/" + verb, body || {});
+      renderVersions(answer);
+      if (verb === "activate") {
+        // The show on disk is a different show now, so the editor has to
+        // reopen rather than keep showing the one it had — an editor
+        // holding a script the track no longer plays is the worst of the
+        // two answers, because Save would write it back.
+        await openScript(scriptTrack, "");
+      }
+      status.textContent = verb === "activate"
+        ? "That version is what this track plays now."
+        : "";
+    } catch (error) {
+      status.textContent = "could not do that: " + error.message;
+    }
+  }
+
+  function renameVersion(version) {
+    const name = window.prompt(
+      "Name this version — naming it keeps it for good.",
+      version.name || "");
+    if (name === null) return;
+    versionAction(version.id, "rename", { name: name });
+  }
+
   async function openScript(hash, name) {
     scriptTrack = hash;
     const status = $("scriptStatus");
@@ -3708,6 +3839,7 @@
         ? JSON.stringify(body.script, null, 2)
         : "";
       renderScriptEffects(body);
+      renderVersions(body);
       edPlay(false);
       ed.hash = hash;
       ed.script = body.script || null;
@@ -3874,28 +4006,18 @@
   });
 
   // ------------------------------------------------------------------
-  // Party: saved evenings
+  // Party: one screen — pick the shows, press Play
   // ------------------------------------------------------------------
-  let partyEditing = null;
-
   async function loadParties() {
     try {
       const body = await api("api/parties");
       const list = $("partyList");
-      const picker = $("partySaved");
-      const previous = picker.value;
-      picker.innerHTML = '<option value="">— ad-hoc party —</option>';
       list.innerHTML = "";
       if (!(body.parties || []).length) {
-        list.innerHTML = '<p class="muted">No saved parties yet.</p>';
+        list.innerHTML = '<p class="muted">No saved sets yet — tick some ' +
+          "songs above and press <em>Save as a set</em>.</p>";
       }
       for (const party of body.parties || []) {
-        const option = document.createElement("option");
-        option.value = party.name;
-        option.textContent = party.name;
-        option.selected = party.name === previous;
-        picker.appendChild(option);
-
         const row = document.createElement("div");
         row.className = "row";
         row.dataset.name = party.name;
@@ -3903,13 +4025,14 @@
           '<span class="muted small"></span></div>' +
           '<div class="row-actions">' +
           '<button class="btn small" data-act="start">▶ Start</button>' +
-          '<button class="btn small" data-act="edit">Edit</button>' +
+          '<button class="btn small" data-act="load">Load</button>' +
           '<button class="btn small" data-act="drop">Delete</button></div>';
         row.querySelector("strong").textContent = party.name;
         const bits = [];
         if (party.media_player) bits.push(party.media_player);
         if (party.folder) bits.push(party.folder);
-        if (party.vibe) bits.push('"' + party.vibe + '"');
+        const songs = (party.tracks || []).length;
+        if (songs) bits.push(songs + (songs === 1 ? " song" : " songs"));
         const count = (party.fixtures || []).length;
         bits.push(count ? count + (count === 1 ? " light" : " lights")
           : "all lights");
@@ -3923,188 +4046,194 @@
     }
   }
 
-  async function fillPartyForm(party) {
-    partyEditing = party ? party.name : null;
-    $("partyForm").hidden = false;
-    $("pfName").value = party ? party.name : "";
-    $("pfVibe").value = (party && party.vibe) || "";
-    $("pfFolder").value = (party && party.folder) || "";
-    $("pfShuffle").checked = !party || party.shuffle !== false;
-    // Synchronously, BEFORE any await: the playlist belongs to the party
-    // being opened, and a Save pressed while the library fetch is still
-    // in flight must write this party's tracks — not whatever the last
-    // edited party left in the array. Names patch in when the fetch
-    // lands; a track that has left the library keeps its hash prefix
-    // rather than vanishing from the playlist it is in.
-    pfPlaylist = ((party && party.tracks) || []).map((hash) => ({
-      hash, name: hash.slice(0, 8) + "…",
-    }));
-    renderPfTracks();
-    loadPfTrackPick().then(() => {
-      const names = {};
-      for (const option of $("pfTrackPick").options) {
-        if (option.value) names[option.value] = option.dataset.name;
-      }
-      for (const track of pfPlaylist) {
-        if (names[track.hash]) track.name = names[track.hash];
-      }
-      renderPfTracks();
-    });
+  // -- the set: which shows play, in what order -------------------------
+  //
+  // Ticked hashes, in tick order, because the order is a choice and a
+  // Set would throw it away. Held here rather than read back off the
+  // DOM so a repaint (a rescan, a saved set being loaded) cannot lose
+  // it.
+  let partySet = [];
+
+  async function loadPartySet() {
+    const box = $("partySet");
     try {
-      const [profiles, scenes, catalog] = await Promise.all([
-        api("api/calibrate/profiles"),
-        api("api/ha/entities?domain=scene").catch(() => ({ entities: [] })),
-        api("api/effects/catalog"),
-      ]);
-      const players = $("pfPlayer");
-      players.innerHTML = '<option value="">— calibrated player —</option>';
-      for (const profile of profiles.profiles || []) {
-        const option = document.createElement("option");
-        option.value = profile.entity_id;
-        option.textContent = profile.entity_id;
-        option.selected = party && profile.entity_id === party.media_player;
-        players.appendChild(option);
+      const lib = await api("api/library");
+      const tracks = (lib.tracks || []).filter((t) => t.analyzed);
+      box.innerHTML = "";
+      if (!tracks.length) {
+        box.innerHTML = '<p class="muted small">Nothing analyzed yet — ' +
+          "the Library tab does that.</p>";
+        return;
       }
-      const sceneSelect = $("pfScene");
-      sceneSelect.innerHTML =
-        '<option value="">— put the lights back as they were —</option>';
-      for (const entity of scenes.entities || []) {
+      // A hash that has left the library goes with it, or the party
+      // starts and reports every one of them as skipped.
+      const known = new Set(tracks.map((t) => t.hash));
+      partySet = partySet.filter((hash) => known.has(hash));
+      for (const track of tracks) {
+        const row = document.createElement("label");
+        row.className = "row party-pick";
+        const check = document.createElement("input");
+        check.type = "checkbox";
+        check.dataset.hash = track.hash;
+        check.checked = partySet.includes(track.hash);
+        const main = document.createElement("div");
+        main.className = "row-main";
+        const title = document.createElement("strong");
+        title.textContent = track.name;
+        main.appendChild(title);
+        const note = document.createElement("span");
+        note.className = "muted small";
+        const bits = [];
+        // Whether a track already HAS a show is the useful thing to know
+        // when picking a set: one that does starts instantly, one that
+        // does not is written while the party runs.
+        bits.push(track.show
+          ? "has a show · " + (track.show.tier === "claude"
+            ? "written by Claude" : "BRight's own director")
+          : "a show gets written while the party runs");
+        if (track.stale) bits.push("analysed by an older BRight");
+        note.textContent = bits.join(" · ");
+        main.appendChild(note);
+        row.appendChild(check);
+        row.appendChild(main);
+        const order = document.createElement("span");
+        order.className = "muted small party-order";
+        row.appendChild(order);
+        box.appendChild(row);
+      }
+      renderSetOrder();
+    } catch (error) {
+      box.innerHTML = "";
+      box.textContent = "could not read the library: " + error.message;
+    }
+  }
+
+  // The tick order, written beside each ticked row. Without it "in the
+  // order you tick them" is a promise nothing on screen keeps.
+  function renderSetOrder() {
+    for (const row of $("partySet").querySelectorAll(".party-pick")) {
+      const hash = row.querySelector("input").dataset.hash;
+      const place = partySet.indexOf(hash);
+      row.querySelector(".party-order").textContent =
+        place < 0 ? "" : "#" + (place + 1);
+    }
+    const count = partySet.length;
+    $("btnPartyStart").textContent = count
+      ? "🎉 Play " + count + (count === 1 ? " show" : " shows")
+      : "🎉 Play everything";
+  }
+
+  $("partySet").addEventListener("change", (event) => {
+    const check = event.target.closest("input[data-hash]");
+    if (!check) return;
+    const hash = check.dataset.hash;
+    if (check.checked) {
+      if (!partySet.includes(hash)) partySet.push(hash);
+    } else {
+      partySet = partySet.filter((other) => other !== hash);
+    }
+    renderSetOrder();
+  });
+
+  $("btnSetAll").addEventListener("click", () => {
+    partySet = Array.from($("partySet").querySelectorAll("input[data-hash]"))
+      .map((check) => { check.checked = true; return check.dataset.hash; });
+    renderSetOrder();
+  });
+
+  $("btnSetNone").addEventListener("click", () => {
+    partySet = [];
+    for (const check of $("partySet").querySelectorAll("input[data-hash]")) {
+      check.checked = false;
+    }
+    renderSetOrder();
+  });
+
+  // The scene list is fetched when somebody REACHES for the control, not
+  // when the tab opens. Asking Core for its scenes is the one thing on
+  // this tab that needs Core at all, and an install where it is not
+  // reachable answers 502 — which is correct, and is a failed request in
+  // the console on every visit to a tab whose default ("put the room
+  // back") needs nothing from Core to work.
+  let partyScenesLoaded = false;
+
+  async function loadPartyScenes() {
+    if (partyScenesLoaded) return;
+    partyScenesLoaded = true;
+    try {
+      const body = await api("api/ha/entities?domain=scene");
+      const select = $("partyScene");
+      const previous = select.value;
+      select.innerHTML = '<option value="">put the room back</option>';
+      for (const entity of body.entities || []) {
         const option = document.createElement("option");
         option.value = entity.entity_id;
         option.textContent = entity.name;
-        option.selected = party && entity.entity_id === party.end_scene;
-        sceneSelect.appendChild(option);
+        option.selected = entity.entity_id === previous;
+        select.appendChild(option);
       }
-      const chosen = new Set((party && party.fixtures) || []);
-      const box = $("pfFixtures");
-      box.innerHTML = "";
-      for (const fixture of catalog.fixtures || []) {
-        const label = document.createElement("label");
-        label.className = "fx-fixture";
-        const check = document.createElement("input");
-        check.type = "checkbox";
-        check.dataset.id = fixture.id;
-        check.checked = chosen.has(fixture.id);
-        const text = document.createElement("span");
-        text.textContent = fixture.label + " · " + fixture.role;
-        label.appendChild(check);
-        label.appendChild(text);
-        box.appendChild(label);
-      }
+      if (previous && select.value !== previous) partyScene(previous);
     } catch (error) {
-      $("pfStatus").textContent = error.message;
+      // A house with no scenes, or a Core that could not be asked. Say so
+      // where the person is looking rather than leaving a control that
+      // silently only ever offers its default.
+      partyScenesLoaded = false;
+      $("partyStatus").textContent =
+        "could not read your scenes: " + error.message;
     }
   }
 
-  // The playlist under construction: [{hash, name}], in play order.
-  // Lives beside the form rather than in the DOM so reordering is an
-  // array move and the list is simply repainted.
-  let pfPlaylist = [];
-
-  function renderPfTracks() {
-    const box = $("pfTracks");
-    box.innerHTML = "";
-    if (!pfPlaylist.length) {
-      box.innerHTML = '<p class="muted small">No playlist — the whole ' +
-        "folder plays.</p>";
-      return;
+  // A scene the picker has not fetched yet — the one a saved set names.
+  // Without this, loading a set would silently drop its end scene,
+  // because a `<select>` cannot hold a value it has no option for.
+  function partyScene(entityId) {
+    const select = $("partyScene");
+    if (!entityId) { select.value = ""; return; }
+    if (!Array.from(select.options).some((o) => o.value === entityId)) {
+      const option = document.createElement("option");
+      option.value = entityId;
+      option.textContent = entityId;
+      select.appendChild(option);
     }
-    pfPlaylist.forEach((track, index) => {
-      const row = document.createElement("div");
-      row.className = "row";
-      row.dataset.index = String(index);
-      row.innerHTML = '<div class="row-main"><strong></strong></div>' +
-        '<div class="row-actions">' +
-        '<button class="btn small" data-act="up" aria-label="Earlier">↑</button>' +
-        '<button class="btn small" data-act="down" aria-label="Later">↓</button>' +
-        '<button class="btn small" data-act="out" aria-label="Remove">✕</button>' +
-        "</div>";
-      row.querySelector("strong").textContent =
-        (index + 1) + ". " + track.name;
-      box.appendChild(row);
-    });
+    select.value = entityId;
   }
 
-  async function loadPfTrackPick() {
-    const pick = $("pfTrackPick");
-    try {
-      const lib = await api("api/library");
-      pick.innerHTML = '<option value="">— analyzed track —</option>';
-      for (const track of (lib.tracks || []).filter((t) => t.analyzed)) {
-        const option = document.createElement("option");
-        option.value = track.hash;
-        option.textContent = track.name;
-        option.dataset.name = track.name;
-        pick.appendChild(option);
-      }
-    } catch (error) {
-      pick.innerHTML = '<option value="">failed: ' + error.message +
-        "</option>";
-    }
-  }
-
-  $("btnPfAddTrack").addEventListener("click", () => {
-    const pick = $("pfTrackPick");
-    if (!pick.value) return;
-    // Building a playlist is choosing an order, so the first song added
-    // turns Shuffle off where the person can SEE it happen — a default
-    // that silently randomizes what they just ordered is the feature
-    // contradicting itself. Re-ticking it afterwards is still honoured.
-    if (!pfPlaylist.length) $("pfShuffle").checked = false;
-    // The same song twice in a playlist is a choice, not a mistake.
-    pfPlaylist.push({
-      hash: pick.value,
-      name: pick.selectedOptions[0].dataset.name || pick.value.slice(0, 8),
-    });
-    renderPfTracks();
-  });
-
-  $("pfTracks").addEventListener("click", (event) => {
-    const button = event.target.closest("button[data-act]");
-    if (!button) return;
-    const index = Number(button.closest(".row").dataset.index);
-    const act = button.dataset.act;
-    if (act === "out") pfPlaylist.splice(index, 1);
-    if (act === "up" && index > 0) {
-      [pfPlaylist[index - 1], pfPlaylist[index]] =
-        [pfPlaylist[index], pfPlaylist[index - 1]];
-    }
-    if (act === "down" && index < pfPlaylist.length - 1) {
-      [pfPlaylist[index + 1], pfPlaylist[index]] =
-        [pfPlaylist[index], pfPlaylist[index + 1]];
-    }
-    renderPfTracks();
-  });
-
-  $("btnPartyNew").addEventListener("click", () => fillPartyForm(null));
-  $("btnPartyCancel").addEventListener("click", () => {
-    $("partyForm").hidden = true;
-    partyEditing = null;
-  });
+  ["pointerdown", "focus"].forEach((event) =>
+    $("partyScene").addEventListener(event, loadPartyScenes));
 
   $("btnPartySave").addEventListener("click", async () => {
-    const fixtures = Array.from(
-      $("pfFixtures").querySelectorAll("input[data-id]:checked"))
-      .map((input) => input.dataset.id);
+    const status = $("pfStatus");
     try {
-      await post("api/parties", {
-        name: $("pfName").value,
-        media_player: $("pfPlayer").value,
-        folder: $("pfFolder").value,
-        vibe: $("pfVibe").value,
-        end_scene: $("pfScene").value,
-        shuffle: $("pfShuffle").checked,
-        fixtures,
-        tracks: pfPlaylist.map((track) => track.hash),
+      const body = await post("api/parties", {
+        name: $("partySetName").value,
+        media_player: $("partyPlayer").value,
+        end_scene: $("partyScene").value,
+        shuffle: $("partyShuffle").checked,
+        tracks: partySet.slice(),
       });
-      $("partyForm").hidden = true;
-      partyEditing = null;
-      $("pfStatus").textContent = "";
+      status.textContent = 'Saved "' + body.party.name + '".';
       loadParties();
     } catch (error) {
-      $("pfStatus").textContent = error.message;
+      status.textContent = error.message;
     }
   });
+
+  // Loading a saved set fills the screen with it rather than starting it.
+  // The two are different intentions and one button cannot be both — and
+  // the screen showing what a Play would do is the whole reason there is
+  // only one party surface now.
+  function fillPartyFromSaved(party) {
+    if (!party) return;
+    $("partySetName").value = party.name || "";
+    $("partyShuffle").checked = party.shuffle === true;
+    if (party.media_player) $("partyPlayer").value = party.media_player;
+    partyScene(party.end_scene || "");
+    partySet = (party.tracks || []).slice();
+    for (const check of $("partySet").querySelectorAll("input[data-hash]")) {
+      check.checked = partySet.includes(check.dataset.hash);
+    }
+    renderSetOrder();
+  }
 
   $("partyList").addEventListener("click", async (event) => {
     const button = event.target.closest("button[data-act]");
@@ -4124,10 +4253,11 @@
       } catch (error) {
         status.textContent = error.message;
       }
-    } else if (button.dataset.act === "edit") {
+    } else if (button.dataset.act === "load") {
       try {
         const body = await api("api/parties");
-        fillPartyForm((body.parties || []).find((p) => p.name === name));
+        fillPartyFromSaved((body.parties || []).find((p) => p.name === name));
+        status.textContent = 'Loaded "' + name + '" — press Play to start it.';
       } catch (error) {
         status.textContent = error.message;
       }
@@ -4174,6 +4304,7 @@
     if (button.dataset.tab === "party") {
       loadParties();
       loadPartyPlayers();
+      loadPartySet();
     }
   });
 })();

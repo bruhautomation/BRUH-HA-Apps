@@ -16,17 +16,12 @@ party_mode:
       description: Folder under /media to play. Defaults to the add-on's music_folder option.
       selector:
         text: {}
-    vibe:
-      name: Vibe
-      description: 'Optional steer for the director, e.g. "chill", "rave", "halloween".'
-      selector:
-        text: {}
     party:
-      name: Saved party
+      name: Saved set
       description: >-
-        Name of a party saved in the BRight panel. Its speaker, folder, vibe,
+        Name of a set saved in the BRight panel. Its speaker, folder, songs,
         light selection and end scene are used; anything given here wins over
-        what the party saved.
+        what the set saved.
       selector:
         text: {}
     end_scene:
@@ -45,16 +40,16 @@ party_mode:
         boolean: {}
 
 start_party:
-  name: Start a saved party
+  name: Start a saved set
   description: >-
-    Run a party saved in the BRight panel, by name. Everything it needs — the
-    speaker, the music folder, the vibe, which lights may join in and what the
+    Run a set saved in the BRight panel, by name. Everything it needs — the
+    speaker, the songs or music folder, which lights may join in and what the
     room looks like afterwards — was set up once and is reused. An unknown name
     fails loudly rather than quietly playing the default folder.
   fields:
     party:
-      name: Party
-      description: The saved party's name, as it appears in the panel's Party tab.
+      name: Set
+      description: The saved set's name, as it appears in the panel's Party tab.
       required: true
       selector:
         text: {}

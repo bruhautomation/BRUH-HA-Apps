@@ -313,6 +313,16 @@
             Claude director</button>
         </span>
       </div>
+      <!-- The vibe steers the DIRECTOR, which is a compile-time
+           decision, so it lives beside the button that compiles. It used
+           to sit on the Party tab, where it reached only a track that had
+           no show yet — nothing at all on a library you had already
+           built shows for, and a silent permanent rewrite on a fresh
+           one. -->
+      <div class="demo-controls">
+        <input type="text" id="showVibe" maxlength="200"
+               placeholder="vibe for the next Claude show (optional): chill, rave, halloween…">
+      </div>
       <div id="showList" class="list"><p class="muted">Not loaded yet.</p></div>
       <div class="demo-controls">
         <button id="btnShowStop" class="btn" hidden>■ Stop &amp; restore lights</button>
@@ -335,6 +345,19 @@
       </div>
       <div id="scriptWhich" class="muted small">Pick a track above to open its show.</div>
       <div id="scriptWho" class="muted small"></div>
+
+      <!-- Every show this track has had. A compile used to overwrite the
+           one you had, which made "rewrite it with Claude" a button you
+           learned not to press on a show you liked. -->
+      <details id="versionBox" class="prompt-box">
+        <summary id="versionSummary">Versions of this show</summary>
+        <p class="muted small">Every compile, revision and save is kept.
+          The one marked <em>playing</em> is what a party runs; picking
+          another makes it the one that plays. Naming a version keeps it
+          for good — unnamed ones are dropped oldest-first once there are
+          more than a dozen.</p>
+        <div id="versionList" class="list"></div>
+      </details>
 
       <!-- What Claude is handed for this track. Not a description of the
            brief — the brief, built by the same function a real run uses,
@@ -523,12 +546,17 @@
 
     <div class="card">
       <div class="demo-controls">
-        <select id="partySaved"><option value="">— ad-hoc party —</option></select>
-        <select id="partyPlayer"><option value="">— calibrated player —</option></select>
-        <input type="text" id="partyVibe" placeholder="vibe (optional): chill, rave, halloween…">
+        <label>Speaker
+          <select id="partyPlayer"><option value="">— calibrated player —</option></select>
+        </label>
+        <label>When it stops
+          <select id="partyScene"><option value="">put the room back</option></select>
+        </label>
+        <label class="fx-flag"><input type="checkbox" id="partyShuffle">
+          Shuffle</label>
       </div>
       <div class="demo-controls">
-        <button id="btnPartyStart" class="btn">🎉 Start the party</button>
+        <button id="btnPartyStart" class="btn">🎉 Play</button>
         <button id="btnPartyStop" class="btn" hidden>■ Stop</button>
       </div>
       <div id="partyStatus" class="cal-status"></div>
@@ -574,43 +602,37 @@
       </div>
     </div>
 
+    <!-- The set: which shows play, in what order. This IS the party —
+         there is no separate "ad-hoc versus saved" mode, because a saved
+         party was only ever a name on a set of choices, and having two
+         ways to start the same thing meant the vibe field could change
+         a show without saying so. Saving names what is on screen. -->
     <div class="card">
       <div class="card-head">
-        <h3>Saved parties</h3>
-        <button id="btnPartyNew" class="btn small">New party…</button>
+        <h3>The set</h3>
+        <span>
+          <button id="btnSetAll" class="btn small">All</button>
+          <button id="btnSetNone" class="btn small">None</button>
+        </span>
       </div>
-      <p class="muted small">The evening set up once — start it from
-        here, an automation, or a voice command
-        (<code>bright.start_party</code>).</p>
-      <div id="partyForm" class="party-form" hidden>
-        <div class="demo-controls">
-          <label>Name <input type="text" id="pfName" maxlength="48"></label>
-          <label>Speaker <select id="pfPlayer"></select></label>
-          <label>Folder <input type="text" id="pfFolder"
-                               placeholder="/media/music/halloween"></label>
-        </div>
-        <div class="demo-controls">
-          <label>Vibe <input type="text" id="pfVibe" maxlength="120"></label>
-          <label>When it stops <select id="pfScene"></select></label>
-          <label class="fx-flag"><input type="checkbox" id="pfShuffle" checked>
-            Shuffle</label>
-        </div>
-        <p class="muted small">Playlist — the exact songs, in order. Leave
-          it empty and the party plays everything in the folder instead.</p>
-        <div class="demo-controls">
-          <select id="pfTrackPick"><option value="">— analyzed track —</option></select>
-          <button id="btnPfAddTrack" class="btn small">＋ Add to playlist</button>
-        </div>
-        <div id="pfTracks" class="list"></div>
-        <p class="muted small">Lights this party may use — none ticked means
-          all of them.</p>
-        <div id="pfFixtures" class="fx-fixtures"></div>
-        <div class="demo-controls">
-          <button id="btnPartySave" class="btn">Save party</button>
-          <button id="btnPartyCancel" class="btn small">Cancel</button>
-        </div>
-        <div id="pfStatus" class="cal-status"></div>
+      <p class="muted small">Tick the songs to play, in the order you tick
+        them. Nothing ticked plays everything in your music folders.
+        A song with no show yet gets one written while the party runs.</p>
+      <div id="partySet" class="list party-set"></div>
+      <div class="demo-controls">
+        <input type="text" id="partySetName" maxlength="48"
+               placeholder="name this set (optional)">
+        <button id="btnPartySave" class="btn small">Save as a set</button>
+        <span id="pfStatus" class="cal-status"></span>
       </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h3>Saved sets</h3>
+      </div>
+      <p class="muted small">Start one from here, an automation, or a
+        voice command (<code>bright.start_party</code>).</p>
       <div id="partyList" class="list"></div>
     </div>
   </section>

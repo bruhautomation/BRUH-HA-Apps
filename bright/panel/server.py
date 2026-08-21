@@ -1927,8 +1927,6 @@ async def h_show_party(request: web.Request) -> web.Response:
             return web.json_response({"error": "folder must live under /media"},
                                      status=400)
         folders = [chosen]
-    vibe = str(body.get("vibe", "") or "")[:120]
-
     # A playlist beats the folder. It is a choice of exact songs in an
     # exact order, and merging it with "everything in the folder" would
     # un-choose them. Tracks that have lost their analysis since the list
@@ -1977,7 +1975,7 @@ async def h_show_party(request: web.Request) -> web.Response:
             try:
                 director_build.build_show(
                     hash_hex, ENGINE.devices, ENGINE.source, mode,
-                    lambda a, f: claude_director.write_script(a, f, vibe=vibe))
+                    claude_director.write_script)
             except Exception as exc:  # noqa: BLE001 — that track plays its floor show
                 log.warning("party prepare failed for %s: %s", hash_hex[:8], exc)
 

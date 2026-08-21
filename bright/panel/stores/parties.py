@@ -1,11 +1,20 @@
-"""Named parties: a saved answer to "put the usual thing on".
+"""Named sets: a saved answer to "put the usual thing on".
 
-A party is the handful of decisions somebody would otherwise make in the
-panel every time — which speaker, which folder of music, what vibe to
-steer the director with, which lights are allowed to join in, and what
-the room should look like when it ends. Named, so an automation, a
-dashboard button or a voice command can ask for one by name and get
-exactly the evening that was set up rather than the defaults.
+A set is the handful of decisions somebody would otherwise make in the
+panel every time — which speaker, which songs (or which folder), which
+lights are allowed to join in, and what the room should look like when
+it ends. Named, so an automation, a dashboard button or a voice command
+can ask for one by name and get exactly the evening that was set up
+rather than the defaults.
+
+There is deliberately NO vibe here any more. It steered the director,
+which is a COMPILE-time decision, and it only ever reached a track that
+had no show yet — so on a library you had already built shows for it did
+nothing at all, and on a fresh one it silently changed what was written
+to disk forever without saying so. Two parties naming different vibes
+over one track gave whichever ran first. That is not a rough edge on a
+feature; it is a field that cannot have a coherent meaning where it was.
+It lives on the Shows tab now, beside the button that compiles.
 
 The end scene is the part that is not obvious. Stopping a show restores
 every light to what it was before the show started, which is right when
@@ -73,7 +82,6 @@ def clean(raw: dict) -> dict:
             raise ValueError("a party's folder must live under /media")
         party["folder"] = folder[:200]
 
-    party["vibe"] = str(raw.get("vibe", "") or "")[:120]
     party["note"] = str(raw.get("note", "") or "")[:200]
 
     # The playlist: exact tracks, in order, by content hash. When set it
