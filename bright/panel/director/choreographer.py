@@ -6,6 +6,42 @@ assert the whole output. This tier is also the FLOOR: whatever the Claude
 tier produces is validated against the same schema, and any failure lands
 back here, so a show always compiles.
 
+Four layers, on different lights
+--------------------------------
+The first version of this file gave each SECTION a texture and ran it end
+to end: a pulse and a colour cycle for every verse, a chase for every
+chorus. A four-minute track therefore changed about eight times, and
+inside a section nothing moved but the same swell on the same bulbs. It
+is a mood-lighting engine that happens to know where the chorus is, and
+from a sofa it reads exactly as what it is — a bunch of fading lights.
+
+What a show is actually made of is four layers with different time
+constants, and the thing that makes it read as musical is that they are
+SEPARATE:
+
+* **ground** — the room's colour, moving with the harmony. Seconds-long.
+  The only layer that is allowed to feel like fading.
+* **pulse** — the beat, as a strike rather than a swell.
+* **hits** — the kick and the snare, as different instruments on
+  different lights, landing on the drums the analyzer actually heard
+  rather than on the beat grid.
+* **voice** — the melody, tracking real pitch. This is the layer that
+  makes a room feel like it is playing along, and the previous version
+  deliberately kept it out of every chorus.
+
+A fixture belongs to exactly one layer at a time, and that is not a
+style rule — a LIFX bulb runs ONE waveform at a time, so two rhythmic
+layers on one bulb is the second cancelling the first. The arrangement
+is what makes the layering audible AND what makes it work.
+
+A layer arriving is itself an event
+-----------------------------------
+A chorus does not hit because it is brighter. It hits because the strip
+joins the kick and the lamps stop washing and start following the tune.
+`_entrances` places a stab on exactly that: the lights of a layer that
+was not running in the previous section, on the downbeat where it
+starts.
+
 It writes EFFECTS, and it writes them off the map
 -------------------------------------------------
 Everything this tier emits is an ordinary effect instance — the same
@@ -34,6 +70,45 @@ _MOVERS = ("lamp", "downlight", "strip")
 # from still reads as itself.
 BUILD_BEATS = 16
 
+# Which layers a section of each energy runs, in the order they claim
+# lights. The ORDER is the taste: a chorus hands its lights to the drums
+# first and its leftovers to the ground, a verse does the opposite,
+# because a verse with a snare on every light and nothing carrying the
+# tune is a chorus that arrived early.
+LAYER_PLAN = {
+    "intro": ("ground", "voice"),
+    "quiet": ("ground", "voice"),
+    "mid":   ("voice", "ground", "kick", "pulse"),
+    "peak":  ("kick", "snare", "voice", "pulse", "ground"),
+    "outro": ("ground", "voice"),
+}
+
+# How many layers may share one kind of light by splitting its fixtures.
+#
+# Rooms do not come with five kinds of light. Most have "some lamps", and
+# a layer model that only assigns whole ROLES gives such a room one layer
+# and calls the rest impossible — which is how a chorus ends up as a
+# single effect on every bulb again. Splitting is what a person does with
+# six lamps and four ideas, so it is what this does: the kick takes the
+# left pair, the snare the right pair, the tune what is left.
+#
+# Capped because a split is also a cost — every layer past the first
+# makes the room's picture smaller — and floored at one fixture, because
+# a layer with none is a layer that silently did not happen.
+MAX_SHARERS = 4
+
+# Which roles each layer will take, best first. A role is claimed by at
+# most one layer per section — that is the rule that keeps two bulb-side
+# routines off one bulb, and it is enforced by construction here rather
+# than checked afterwards.
+LAYER_ROLES = {
+    "ground": ("candle", "strip", "downlight", "lamp"),
+    "voice":  ("lamp", "downlight", "strip"),
+    "kick":   ("strip", "downlight", "lamp"),
+    "snare":  ("downlight", "lamp", "strip"),
+    "pulse":  ("lamp", "downlight", "strip"),
+}
+
 
 def _mood(kind: str) -> str:
     return {
@@ -50,158 +125,227 @@ def _chase_order(seed: int, zones: bool) -> str:
     return ("x", "-x", "center_out", "snake")[seed % 4]
 
 
-def _effects_for(kind: str, roles: set[str], movers: list[str],
-                 mover_count: int, seed: int, zones: bool,
-                 depth: float, has_music: bool = False) -> list[dict]:
-    """What moves during a section of this energy, given who is on stage.
+def plan_layers(kind: str, fixtures: list[dict]) -> dict[str, dict]:
+    """layer -> the lights it drives in a section of this energy.
 
-    Every branch here is a judgement about taste, and all of them are
-    reversible: the result is a list of effects in the script, so a
-    person who disagrees edits the line rather than the code.
+    Two passes, and the order of them is the whole design. First every
+    layer tries to claim a WHOLE role, because selecting by role is what
+    survives somebody adding a bulb next month — an automatic show that
+    named ids would quietly stop covering a light the day it was mapped.
+    Only when a layer has nowhere left to go does it split a role it
+    shares, and then it says so by naming ids, which is the honest
+    encoding of "these four of the six".
+
+    Rooms are small and layers are many, so most of this function is
+    about what to DROP. A room with one kind of light and one bulb gets
+    one layer, and the plan's order decides which — which is why a
+    chorus lists its drums first: if only one thing can happen in a
+    chorus, it should be the kick.
     """
-    effects: list[dict] = []
-    if "candle" in roles:
-        effects.append({
-            "type": "breathe", "name": "candles", "select": {"roles": ["candle"]},
-            "params": {"period_beats": 16, "depth": 0.12}})
+    by_role: dict[str, list[dict]] = {}
+    for fixture in fixtures:
+        by_role.setdefault(fixture.get("role"), []).append(fixture)
+    # Left to right, so a split is a split of the ROOM and two adjacent
+    # lamps end up on the same layer rather than across it.
+    for group in by_role.values():
+        group.sort(key=lambda f: (float(f.get("x", 0.5)), f.get("id", "")))
 
-    effects.extend(_musical_layers(kind, roles, movers, has_music))
+    plan = LAYER_PLAN.get(kind, LAYER_PLAN["mid"])
+    wanted: dict[str, list[str]] = {}
+    order: list[tuple[str, str]] = []
+    for layer in plan:
+        for role in LAYER_ROLES[layer]:
+            group = by_role.get(role) or []
+            sharers = len(wanted.get(role, ()))
+            if not group or sharers >= min(MAX_SHARERS, len(group)):
+                continue
+            wanted.setdefault(role, []).append(layer)
+            order.append((layer, role))
+            break
 
-    if not movers:
-        return effects
+    out: dict[str, dict] = {}
+    for layer, role in order:
+        sharing = wanted[role]
+        group = by_role[role]
+        if len(sharing) == 1:
+            out[layer] = {"select": {"roles": [role]}, "size": len(group),
+                          "role": role}
+            continue
+        index = sharing.index(layer)
+        # Contiguous slices, so with five lamps and two layers the kick
+        # gets the left three and the snare the right two rather than
+        # the remainder landing wherever integer division puts it.
+        start = index * len(group) // len(sharing)
+        end = (index + 1) * len(group) // len(sharing)
+        mine = group[start:end] or [group[min(index, len(group) - 1)]]
+        out[layer] = {"select": {"ids": [f["id"] for f in mine]},
+                      "size": len(mine), "role": role}
+    return out
 
-    mover_select = {"roles": movers}
 
-    if kind in ("intro", "outro"):
-        effects.append({
-            "type": "fade", "name": f"{kind} fade", "select": mover_select,
-            "params": {
-                "from_brightness": 0.12 if kind == "intro" else 0.45,
-                "to_brightness": 0.45 if kind == "intro" else 0.08,
-                "curve": "ease_in_out", "steps": 12}})
-        # Colour that travels while the level does not. It goes here and
-        # not in the busier sections for a reason that is mechanical
-        # rather than aesthetic: a bulb runs ONE waveform at a time, and
-        # every other section already has a pulse or a breathe on these
-        # lights — a drift on top would simply cancel it. An intro's fade
-        # is made of `set` actions, so this layers cleanly over it.
-        effects.append({
-            "type": "colour_drift", "name": f"{kind} colour",
-            "select": mover_select,
-            "params": {"period_beats": 24, "span": 55 if kind == "intro"
-                       else -45, "shape": "sine"}})
-        return effects
+def _layer_effects(layer: str, spec: dict, kind: str,
+                   seed: int, zones: bool, depth: float,
+                   has_music: bool, has_hits: bool) -> list[dict]:
+    """One layer, as the effect that carries it in a section of this
+    energy. Returns a list because a layer may be silent here."""
+    select = spec["select"]
+    size = spec["size"]
 
-    if kind == "quiet":
-        effects.append({
-            "type": "breathe", "name": "quiet breath", "select": mover_select,
-            "params": {"period_beats": 8, "depth": 0.10}})
-        return effects
+    if layer == "ground":
+        if has_music and kind != "peak":
+            # The chords, not the section map: the room's colour turns
+            # over when the harmony does, which is the difference
+            # between a show that follows the song and one that follows
+            # its outline.
+            return [{"type": "harmony", "name": "chord colour",
+                     "select": select,
+                     "params": {"brightness": 0.5 if kind in ("mid", "peak")
+                                else 0.4,
+                                "fade_ms": 1600, "spread": "single"}}]
+        if kind in ("intro", "outro"):
+            # Colour that travels while the level does not. It layers
+            # cleanly over a wash because a wash is made of `set`s.
+            return [{"type": "colour_drift", "name": "ground colour",
+                     "select": select,
+                     "params": {"period_beats": 24,
+                                "span": 55 if kind == "intro" else -45,
+                                "shape": "sine"}}]
+        return [{"type": "breathe", "name": "ground breath", "select": select,
+                 "params": {"period_beats": 16 if kind == "quiet" else 8,
+                            "depth": 0.12}}]
 
-    effects.append({
-        "type": "pulse", "name": "beat pulse", "select": mover_select,
-        "params": {"every_beats": 1, "depth": depth, "shape": "sine",
-                   "cycles_per_cue": 8}})
+    if layer == "voice":
+        if not has_music:
+            return []
+        # The tune belongs in the chorus too. Keeping it out was the
+        # previous version's rule and it was wrong: a chorus IS the part
+        # of the song people know the melody of, and a room that stops
+        # following it exactly there is a room that stops playing along
+        # when it matters most. What makes it work in a peak is that it
+        # owns its own lights — it is not a third thing fighting for the
+        # bulbs the drums are on.
+        return [{"type": "melody", "name": "the tune", "select": select,
+                 "params": {"hue_spread": 0.45 if kind in ("quiet", "intro")
+                            else 0.7,
+                            "brightness": 0.75 if kind != "peak" else 0.9,
+                            "fade_ms": 90, "min_strength": 0.3,
+                            "voices": 1, "hold": True}}]
 
-    if kind == "mid":
-        # Colour movement rather than brightness movement: the room is
-        # already lit, and cycling the palette is what reads as motion
-        # without turning a verse into a chorus.
-        effects.append({
-            "type": "colour_cycle", "name": "verse colours",
-            "select": mover_select,
-            "params": {"every_beats": 8, "rotate": 1, "fade_ms": 600,
-                       "brightness": 0.6}})
-        if "party" in roles:
-            effects.append({"type": "aux", "name": "party lights",
-                            "select": {"roles": ["party"]},
-                            "params": {"state": "on"}})
-        return effects
+    if layer in ("kick", "snare"):
+        if not has_hits:
+            # No ranked drums in this analysis: fall back to the grid,
+            # which is a worse answer and still a real one. Silence here
+            # would leave a chorus with no rhythm at all.
+            return [{"type": "hit", "name": f"{layer} (on the grid)",
+                     "select": select,
+                     "params": {"every_beats": 1 if layer == "kick" else 2,
+                                "peak": 0.95, "floor": 0.15,
+                                "cycles_per_cue": 8}}]
+        return [{"type": "accent", "name": layer, "select": select,
+                 "params": {"band": "low" if layer == "kick" else "mid",
+                            "min_strength": 0.3 if kind == "peak" else 0.45,
+                            "min_gap_beats": 0.5 if layer == "kick" else 1,
+                            "peak": 1.0 if kind == "peak" else 0.85,
+                            "floor": 0.1, "decay_beats": 0.7,
+                            "follow_strength": True, "white": False}}]
 
-    # peak — the section that has earned everything.
-    if mover_count >= 3:
-        effects.append({
-            "type": "chase", "name": "peak chase", "select": mover_select,
-            "order": _chase_order(seed, zones),
-            "params": {"step_beats": 0.5, "width": max(1, mover_count // 3),
-                       "bounce": bool(seed % 2), "background": 0.12,
-                       "brightness": 1.0, "fade_ms": 80}})
-    else:
-        # Two lights cannot chase — they flicker. They can answer each
-        # other, which is the same idea at the size the room actually is.
-        effects.append({
-            "type": "theater", "name": "peak alternation",
-            "select": mover_select,
-            "params": {"step_beats": 1, "groups": 2, "background": 0.15}})
-    if "strip" in roles:
-        effects.append({
-            "type": "sweep", "name": "strip sweep",
-            "select": {"roles": ["strip"]}, "order": "x",
-            "params": {"period_beats": 8, "depth": 0.4, "repeats": 8}})
+    if layer == "pulse":
+        if kind == "peak" and size >= 3:
+            # Three or more of one kind of light and the beat can TRAVEL
+            # rather than blink in place. Below three a chase is a
+            # flicker, which is why this is a count and not a preference.
+            return [{"type": "chase", "name": "beat chase", "select": select,
+                     "order": _chase_order(seed, zones),
+                     "params": {"step_beats": 0.5,
+                                "width": max(1, size // 3),
+                                "bounce": bool(seed % 2), "background": 0.12,
+                                "brightness": 1.0, "fade_ms": 80}}]
+        if size == 2 and kind == "peak":
+            return [{"type": "theater", "name": "beat alternation",
+                     "select": select,
+                     "params": {"step_beats": 1, "groups": 2,
+                                "background": 0.15}}]
+        return [{"type": "hit", "name": "the beat", "select": select,
+                 "params": {"every_beats": 1, "peak": min(1.0, 0.6 + depth),
+                            "floor": max(0.05, 0.35 - depth * 0.4),
+                            "cycles_per_cue": 8}}]
+    return []
+
+
+def _effects_for(kind: str, roles: set, seed: int, zones: bool,
+                 depth: float, has_music: bool, has_hits: bool,
+                 layers: dict) -> list[dict]:
+    """Everything that happens during a section of this energy.
+
+    A wash goes down first and covers the WHOLE room, because a layer
+    only claims one role and everything else would otherwise hold
+    whatever the last section left it at. It is made of `set` actions,
+    so every routine above it layers cleanly.
+    """
+    effects: list[dict] = [{
+        "type": "wash", "name": "scene colour", "select": {},
+        "params": {"brightness": 0.55 if kind in ("mid", "peak") else 0.8,
+                   "spread": "cycle",
+                   "fade_ms": 1200 if kind in ("intro", "quiet", "outro")
+                   else 500}}]
+
+    for layer, spec in layers.items():
+        effects.extend(_layer_effects(layer, spec, kind, seed, zones,
+                                      depth, has_music, has_hits))
+
     for switch_role in ("party", "laser"):
-        if switch_role in roles:
+        if switch_role in roles and kind in ("mid", "peak"):
+            if switch_role == "laser" and kind != "peak":
+                continue
             effects.append({"type": "aux", "name": f"{switch_role} on",
                             "select": {"roles": [switch_role]},
                             "params": {"state": "on"}})
     return effects
 
 
-def _musical_layers(kind: str, roles: set, movers: list,
-                    has_music: bool) -> list[dict]:
-    """The two layers that follow what the song is PLAYING.
+def _entrances(sections: list[dict], plans: list[dict], beat_s: float,
+               roles_present: set) -> list[dict]:
+    """A stab on the lights of a layer that has just arrived.
 
-    Kept apart from the rhythmic effects above on purpose, because they
-    answer a different question and belong on different lights. Harmony
-    is the ground — slow, wide, on whatever is not carrying the beat, so
-    the room's colour turns over with the chords instead of with the
-    section map. Melody is a voice: one kind of light, one note at a
-    time, following the tune.
-
-    Where they are NOT placed is the taste in this function. Melody sits
-    out the peaks: a chorus already has a chase across every mover and a
-    stab on every accent, and a third thing competing for the same bulbs
-    on eighth notes is not more musical, it is mush. The tune gets the
-    verses and the quiet parts, which is where a person can hear it and
-    where the lights have room to answer.
-
-    A track with no musical analysis gets neither, rather than two
-    effects that render to nothing — the compiler would explain the
-    silence, but a show should not need explaining.
+    This is the whole of "a layer entering is an event". A chorus does
+    not land because it is brighter than the verse — it lands because
+    something new starts happening, on lights that were doing something
+    else a moment ago. Restricted to the layers a listener can name
+    (the drums and the tune) and to sections that are LOUDER than the
+    one before, because a layer arriving as a song calms down is the
+    arrangement thinning out and wants no announcement.
     """
-    if not has_music:
-        return []
     out: list[dict] = []
-    ground = [r for r in ("candle", "strip") if r in roles] or movers
-    if kind in ("intro", "quiet", "mid", "outro") and ground:
+    for index, (section, layers) in enumerate(zip(sections, plans)):
+        if index == 0:
+            continue
+        before = plans[index - 1]
+        if float(section.get("energy", 0)) <= float(
+                sections[index - 1].get("energy", 0)):
+            continue
+        ids: list[str] = []
+        roles: list[str] = []
+        for layer in ("kick", "snare", "voice"):
+            spec = layers.get(layer)
+            if spec is None or (before.get(layer) or {}).get(
+                    "select") == spec["select"]:
+                continue
+            ids.extend(spec["select"].get("ids") or [])
+            roles.extend(spec["select"].get("roles") or [])
+        if not ids and not roles:
+            continue
+        select: dict = {}
+        if ids:
+            select["ids"] = sorted(set(ids))
+        if roles:
+            select["roles"] = sorted(set(roles))
         out.append({
-            "type": "harmony", "name": "chord colour",
-            "select": {"roles": ground},
-            "params": {"brightness": 0.45 if kind in ("intro", "outro")
-                       else 0.55,
-                       "fade_ms": 1600, "spread": "single"}})
-    # The strip breathing with the bass, where there is a strip and
-    # something else is carrying the beat. `level` follows the measured
-    # loudness rather than the grid, so this is the room reacting to the
-    # actual audio — and on the low band it is the kick, which is what a
-    # strip along a wall is for. Only when the strip is not the ONLY
-    # mover, because a room whose single moving light is doing this has
-    # nothing keeping time.
-    if kind in ("mid", "peak") and "strip" in roles and len(movers) > 1:
-        out.append({
-            "type": "level", "name": "bass breath",
-            "select": {"roles": ["strip"]},
-            "params": {"band": "low", "floor": 0.15,
-                       "ceiling": 0.9 if kind == "peak" else 0.7,
-                       "step_beats": 0.5, "gamma": 1.4, "fade_ms": 150}})
-
-    lead = next((r for r in ("lamp", "downlight") if r in roles), None)
-    if kind in ("quiet", "mid") and lead:
-        out.append({
-            "type": "melody", "name": "the tune",
-            "select": {"roles": [lead]},
-            "params": {"hue_spread": 0.45 if kind == "quiet" else 0.65,
-                       "brightness": 0.8, "fade_ms": 90,
-                       "min_strength": 0.3, "voices": 1, "hold": True}})
+            "t": float(section["start"]),
+            "effect": {"type": "stab", "name": "layer enters",
+                       "select": select,
+                       "params": {"strength": 0.7,
+                                  "blackout_before_ms": 220,
+                                  "hold_ms": 320, "white": False}}})
     return out
 
 
@@ -209,15 +353,19 @@ def write_script(analysis: dict, fixtures: list[dict]) -> dict:
     roles_present = {f["role"] for f in fixtures}
     zones = any((f.get("zone") or "").strip() for f in fixtures)
     movers = [r for r in _MOVERS if r in roles_present]
-    mover_count = sum(1 for f in fixtures if f["role"] in movers)
     seed = int((analysis.get("hash") or "0")[:8] or "0", 16)
     musical = analysis.get("music") or {}
     has_music = bool(musical.get("notes") or musical.get("chords"))
+    has_hits = bool(analysis.get("hits"))
     palette_name, palette = palettes.pick_palette(
         float(analysis.get("brightness", 0.5)), seed)
 
+    sections = [s for s in (analysis.get("sections") or [])
+                if isinstance(s, dict)]
+    plans = [plan_layers(s["kind"], fixtures) for s in sections]
+
     scenes = []
-    for section in analysis.get("sections") or []:
+    for section, layers in zip(sections, plans):
         base, depth = palettes.SECTION_LEVELS.get(
             section["kind"], palettes.SECTION_LEVELS["mid"])
         scenes.append({
@@ -227,9 +375,9 @@ def write_script(analysis: dict, fixtures: list[dict]) -> dict:
             "kind": section["kind"],
             "palette": palette,
             "brightness": base,
-            "effects": _effects_for(section["kind"], roles_present, movers,
-                                    mover_count, seed, zones, depth,
-                                    has_music),
+            "effects": _effects_for(section["kind"], roles_present,
+                                    seed, zones, depth, has_music, has_hits,
+                                    layers),
         })
 
     # Moments: the build into a drop and the hit itself. The build is a
@@ -237,7 +385,7 @@ def write_script(analysis: dict, fixtures: list[dict]) -> dict:
     # because tension crosses section boundaries — it starts inside the
     # section before the drop and ends on it.
     beat_s = _beat_seconds(analysis)
-    moments = []
+    moments = _entrances(sections, plans, beat_s, roles_present)
     for drop in analysis.get("drops") or []:
         at = float(drop["t"])
         if movers:
@@ -268,43 +416,13 @@ def write_script(analysis: dict, fixtures: list[dict]) -> dict:
                                                 if r in roles_present]},
                            "params": {"state": "on"}}})
 
-    # Accents between the drops: the strongest ON-BEAT hits get a stab of
-    # their own, so the show answers the song's actual punches rather
-    # than only its section boundaries. Restraint is the design: only
-    # hits the analyzer ranked near the top, only in the loud half of the
-    # song (a stab in a verse is a wrong number), at least eight beats
-    # apart so they read as moments rather than a strobe, clear of the
-    # drops (which already own their hits), and never more than six —
-    # one intentional accent beats three busy ones.
-    drop_times = [float(d["t"]) for d in analysis.get("drops") or []]
-    loud = [s for s in analysis.get("sections") or []
-            if float(s.get("energy", 0)) >= 0.6]
-    hit_roles = [r for r in ("strip", "lamp", "downlight")
-                 if r in roles_present]
-    if hit_roles:
-        placed: list[float] = []
-        strongest = sorted((h for h in analysis.get("hits") or []
-                            if h.get("on_beat") and h.get("strength", 0) >= 0.55),
-                           key=lambda h: h["strength"], reverse=True)
-        for hit in strongest:
-            if len(placed) >= 6:
-                break
-            at = float(hit["t"])
-            if not any(float(s["start"]) <= at < float(s["end"]) for s in loud):
-                continue
-            if any(abs(at - d) < 2.0 for d in drop_times):
-                continue
-            if any(abs(at - p) < 8 * beat_s for p in placed):
-                continue
-            placed.append(at)
-            moments.append({
-                "t": at,
-                "effect": {"type": "stab", "name": "accent",
-                           "select": {"roles": hit_roles},
-                           "params": {"strength": round(
-                               0.5 + 0.4 * float(hit["strength"]), 2),
-                               "blackout_before_ms": 0,
-                               "hold_ms": 260, "white": False}}})
+    # There is no separate accent pass any more. It used to place six
+    # stabs a song on the strongest on-beat hits — restraint, when the
+    # only tool was a stab that owned every mover in the room. The
+    # `accent` effect is that idea done properly: every drum the
+    # analyzer heard, at the strength it heard it, on the lights that
+    # layer owns and nothing else. Six a song was never the taste; it
+    # was the budget.
 
     return {
         "version": SCRIPT_VERSION,

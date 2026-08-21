@@ -41,6 +41,27 @@ from . import palettes
 # in the compiler — this module never sees a packet.
 SHAPES = ("sine", "triangle", "pulse", "saw", "half_sine")
 
+# Where in its cycle each shape is BRIGHTEST, as a fraction of the period.
+#
+# This table is why the beat pulse used to miss the beat. A LIFX waveform
+# runs between the bulb's current colour and the packet's, starting at the
+# current one — so a sine anchored on the beat is at its DIMMEST on the
+# beat and peaks halfway to the next one. The one effect whose entire job
+# was "the beat" was landing on the off-beat, in every show, since the
+# first release. It is not a subtle thing to see once you know: the room
+# answers a four-to-the-floor kick exactly out of phase with it.
+#
+# So a wave that means to peak at a moment starts `peak_phase * period`
+# BEFORE it, and every shape knows its own number.
+PEAK_PHASE = {"sine": 0.5, "half_sine": 0.5, "triangle": 0.5,
+              "saw": 1.0, "pulse": 0.0}
+
+
+def peak_shift(shape: str, period_s: float) -> float:
+    """How far ahead of the beat a wave of this shape has to start."""
+    return PEAK_PHASE.get(shape, 0.5) * max(0.0, float(period_s))
+
+
 ORDERS = ("x", "-x", "y", "-y", "center_out", "edges_in", "snake",
           "zone", "listed", "random")
 
@@ -56,6 +77,12 @@ NEEDS_MUSIC = frozenset({"melody", "harmony"})
 # written carries `features`, so a track that cannot drive a level effect
 # is one with no analysis at all rather than an out-of-date one.
 NEEDS_ENERGY = frozenset({"level"})
+
+# `accent` follows the analyzer's ranked drum hits. A track analysed
+# before BRight ranked them has none, which is a third missing thing with
+# a third remedy — and one more effect that would otherwise render an
+# unexplained nothing.
+NEEDS_HITS = frozenset({"accent"})
 
 ALIGNMENTS = ("beat", "downbeat", "bar", "time")
 
@@ -355,6 +382,41 @@ CATALOG: dict[str, dict[str, Any]] = {
             "fade_ms": _num(0, 2000, 140, integer=True),
         },
     },
+    "hit": {
+        "label": "Hit",
+        "blurb": "A drum hit: full brightness the instant the beat lands, "
+                 "then a decay to the ground before the next one. This is "
+                 "what makes a light read as an instrument rather than as "
+                 "a dimmer being turned — a pulse swells, a hit STRIKES.",
+        "channel": "light",
+        "params": {
+            "every_beats": _num(0.25, 8, 1),
+            "peak": _num(0, 1, 1.0),
+            "floor": _num(0, 1, 0.1),
+            "cycles_per_cue": _num(1, 32, 8, integer=True),
+            "stagger_beats": _num(0, 8, 0),
+            "attack_ms": _num(0, 400, 0, integer=True),
+            "white": _flag(False),
+        },
+    },
+    "accent": {
+        "label": "Accent",
+        "blurb": "A hit on every drum the analyzer actually heard, at the "
+                 "strength it heard it — the kick on one set of lights and "
+                 "the snare on another. Follows the record, not the grid, "
+                 "so it lands on the fills the beat grid knows nothing about.",
+        "channel": "light",
+        "params": {
+            "band": _choice(("any", "low", "mid"), "any"),
+            "min_strength": _num(0, 1, 0.35),
+            "min_gap_beats": _num(0, 8, 1),
+            "peak": _num(0, 1, 1.0),
+            "floor": _num(0, 1, 0.08),
+            "decay_beats": _num(0.1, 4, 0.75),
+            "follow_strength": _flag(True),
+            "white": _flag(False),
+        },
+    },
     "aux": {
         "label": "Aux switch",
         "blurb": "Party lights and lasers: on, off, or flashed on the beat. "
@@ -611,9 +673,18 @@ class Grid:
                  bpm: float | None = None,
                  notes: list[dict] | None = None,
                  chords: list[dict] | None = None,
-                 energy: dict | None = None) -> None:
+                 energy: dict | None = None,
+                 hits: list[dict] | None = None) -> None:
         self.notes = list(notes or [])
         self.chords = list(chords or [])
+        # The analyzer's ranked drum hits, each with which band won it.
+        # This is the layer a light show is actually made of and the one
+        # nothing but a handful of stabs had ever read: a kick and a
+        # snare are different instruments and belong on different
+        # fixtures, which is what `band` is for.
+        self.hits = sorted((h for h in (hits or [])
+                            if isinstance(h, dict) and "t" in h),
+                           key=lambda h: float(h["t"]))
         # The loudness envelope the analyzer already measures at 20Hz and
         # which, until `level` existed, was read only to find where the
         # sections and drops are. It is the song's actual shape, instant
@@ -655,6 +726,43 @@ class Grid:
     @property
     def has_energy(self) -> bool:
         return bool(self.energy.get("energy"))
+
+    @property
+    def has_hits(self) -> bool:
+        return bool(self.hits)
+
+    def hits_in(self, start: float, end: float, *, band: str = "any",
+                min_strength: float = 0.0,
+                min_gap_s: float = 0.0) -> list[dict]:
+        """The drum hits inside a window, filtered the way a light is.
+
+        `band` picks the instrument — "low" is the kick, "mid" the snare
+        and everything with body above it, "any" both. A hit analysed
+        before BRight recorded which band won carries no `band` at all
+        and is kept by every filter: an older analysis should render a
+        plainer show, never an empty one.
+
+        `min_gap_s` is the taste knob and the reason this is a method
+        rather than a comprehension. Drums are dense — a snare and its
+        ghost note 90ms later are one gesture to an ear and two flashes
+        to a room — so the strongest hit in each cluster wins and the
+        rest are dropped, which is what makes an accent read as an
+        accent rather than as flicker.
+        """
+        inside = [h for h in self.hits
+                  if start - 1e-6 <= float(h["t"]) < end
+                  and float(h.get("strength", 0)) >= min_strength
+                  and (band == "any" or not h.get("band")
+                       or h.get("band") == band)]
+        if min_gap_s > 0:
+            kept: list[dict] = []
+            for hit in sorted(inside, key=lambda h: -float(
+                    h.get("strength", 0))):
+                if all(abs(float(hit["t"]) - float(k["t"])) >= min_gap_s
+                       for k in kept):
+                    kept.append(hit)
+            inside = sorted(kept, key=lambda h: float(h["t"]))
+        return inside[:MAX_STEPS]
 
     @property
     def has_music(self) -> bool:
@@ -763,7 +871,7 @@ ALL_CHANNELS = ("h", "s", "b")
 # on DIFFERENT fixtures; the director is told this in its brief and the
 # compiler warns when a script does it anyway.
 BULB_ROUTINES = frozenset({"pulse", "strobe", "breathe", "sweep", "stab",
-                           "colour_drift", "saturate"})
+                           "colour_drift", "saturate", "hit", "accent"})
 
 
 def _wave(fixture: dict, t: float, hue: float, sat: float, bri: float,
@@ -880,12 +988,24 @@ def _r_pulse(out, effect, cast, grid, ctx) -> None:
     # packet every `cycles` beats however busy the effect looks.
     anchors = grid.ticks(ctx["start"], ctx["end"],
                          p["every_beats"] * cycles, effect.get("align", "beat"))
+    # The wave has to START before the beat so it PEAKS on it. A sine
+    # anchored on the beat is at the bulb's current level there and
+    # brightest halfway to the next one — which is what the beat pulse
+    # did in every show BRight has ever compiled. See PEAK_PHASE.
+    lead = peak_shift(p["shape"], period_ms / 1000.0)
     for index, fixture in enumerate(cast):
         hue, sat = _colour(ctx["palette"], index)
         offset = index * p["stagger_beats"] * grid.beat_s
         peak = _cap(fixture, ctx["base"] + p["depth"], effect)
         for anchor in anchors:
-            out.append(_wave(fixture, anchor + offset, hue, sat, peak,
+            at = anchor + offset - lead
+            # An anchor whose lead-in would start before the song does is
+            # dropped rather than clamped: clamping moves the peak off
+            # the beat again, quietly, for the one cue nobody is
+            # watching for it.
+            if at < 0:
+                continue
+            out.append(_wave(fixture, at, hue, sat, peak,
                              period_ms, cycles, p["shape"], p["duty"],
                              f"pulse x{cycles}"))
 
@@ -1050,6 +1170,76 @@ def _r_blackout(out, effect, cast, grid, ctx) -> None:
     for fixture in cast:
         out.append(_set(fixture, ctx["start"], 0.0, 0.0, p["level"],
                         int(p["fade_ms"]), "blackout", resend=True))
+
+
+def _envelope(out, fixture, t, hue, sat, peak, floor, period_s, cycles,
+              attack_ms, desc) -> None:
+    """One instrument-shaped strike: instant attack, linear decay.
+
+    Two actions, and the pair is the whole idea. A `set` puts the fixture
+    AT the peak with no fade, and the waveform then travels from there
+    toward the floor — so the bulb's brightest instant is the moment the
+    packet lands, which is what an attack is. Every other rhythmic effect
+    BRight had travelled the other way: a sine from the current level up
+    to a target, brightest halfway to the next beat, which is a swell.
+    Swells are what "a bunch of fading lights" means.
+
+    `saw` is the only shape that does this, and that is not a preference
+    — it is the only one of LIFX's five that is monotone across a cycle.
+    Sine, triangle and half-sine all come back up inside the cycle, so
+    they duck rather than decay. `pulse` is a square and has no decay at
+    all. So `shape` is not a parameter here: there is one answer.
+
+    The `set` carries no fade because the waveform reads the bulb's
+    CURRENT colour as its starting point — a fade still in flight would
+    start the decay from somewhere between the two, and the strike would
+    lose exactly the attack it exists for.
+    """
+    out.append(_set(fixture, t, hue, sat, peak, int(attack_ms), desc))
+    out.append(_wave(fixture, t, hue, sat, floor,
+                     int(period_s * 1000), cycles, "saw", 0.5, desc))
+
+
+def _r_hit(out, effect, cast, grid, ctx) -> None:
+    p = effect["params"]
+    cycles = int(p["cycles_per_cue"])
+    period_s = p["every_beats"] * grid.beat_s
+    anchors = grid.ticks(ctx["start"], ctx["end"],
+                         p["every_beats"] * cycles, effect.get("align", "beat"))
+    for index, fixture in enumerate(cast):
+        hue, sat = (0.0, 0.0) if p["white"] else _colour(ctx["palette"], index)
+        offset = index * p["stagger_beats"] * grid.beat_s
+        peak = _cap(fixture, p["peak"], effect)
+        floor = _cap(fixture, min(p["floor"], p["peak"]), effect)
+        for anchor in anchors:
+            # No peak-phase shift, deliberately: this wave travels DOWN,
+            # so its brightest instant is where it starts. Shifting it
+            # early — the fix the beat pulse needs — would land the
+            # strike before the beat.
+            _envelope(out, fixture, anchor + offset, hue, sat, peak, floor,
+                      period_s, cycles, p["attack_ms"], f"hit x{cycles}")
+
+
+def _r_accent(out, effect, cast, grid, ctx) -> None:
+    p = effect["params"]
+    hits = grid.hits_in(ctx["start"], ctx["end"], band=p["band"],
+                        min_strength=p["min_strength"],
+                        min_gap_s=p["min_gap_beats"] * grid.beat_s)
+    period_s = p["decay_beats"] * grid.beat_s
+    for hit in hits:
+        strength = float(hit.get("strength", 1.0)) if p["follow_strength"] else 1.0
+        for index, fixture in enumerate(cast):
+            hue, sat = (0.0, 0.0) if p["white"] \
+                else _colour(ctx["palette"], index)
+            # The analyzer ranked these against the track's own loudest
+            # hit, so a quiet one really is quieter and the room should
+            # say so. Half the range is the strength's, half is floor:
+            # an accent at 0.4 that rendered at 0.4 brightness would be
+            # invisible beside a scene already sitting at 0.55.
+            peak = _cap(fixture, p["peak"] * (0.55 + 0.45 * strength), effect)
+            floor = _cap(fixture, min(p["floor"], peak), effect)
+            _envelope(out, fixture, float(hit["t"]), hue, sat, peak, floor,
+                      period_s, 1.0, 0, "accent")
 
 
 def _r_aux(out, effect, cast, grid, ctx) -> None:
@@ -1250,6 +1440,8 @@ RENDERERS: dict[str, Renderer] = {
     "colour_drift": _r_colour_drift,
     "saturate": _r_saturate,
     "level": _r_level,
+    "hit": _r_hit,
+    "accent": _r_accent,
     "aux": _r_aux,
 }
 

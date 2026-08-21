@@ -288,7 +288,7 @@ class TestTheAnswerIsParsedAsModelsActuallyWriteIt(unittest.TestCase):
         """The root cause, guarded: the example is annotated, so the
         instruction that the annotation is not part of the answer has to
         travel with it."""
-        contract = claude_director._SCHEMA_CONTRACT % "  wash [lifx] — a look"
+        contract = claude_director.schema_contract()
         self.assertIn("//", contract, "the example is still annotated")
         self.assertIn("strict JSON", contract)
         self.assertIn("trailing comma", contract)
@@ -646,6 +646,35 @@ class TestTheContractTeachesWhatTheCompilerAccepts(unittest.TestCase):
         for name in sorted(fx.BULB_ROUTINES):
             with self.subTest(effect=name):
                 self.assertIn(f"`{name}`", self.brief)
+
+    def test_it_teaches_the_four_layers(self):
+        for layer in ("ground", "pulse", "hits", "voice"):
+            with self.subTest(layer=layer):
+                self.assertIn(f"**{layer}**", self.brief)
+
+    def test_it_says_the_tune_belongs_in_the_chorus(self):
+        """The old brief told the model to keep melody OUT of the peaks.
+        That was the rule that made every chorus a wall of drums."""
+        self.assertIn("CHORUS TOO", self.brief)
+
+    def test_it_separates_the_swells_from_the_effects_with_an_attack(self):
+        self.assertIn("SWELLS", self.brief)
+        self.assertIn("ATTACK", self.brief)
+        for name in ("`hit`", "`accent`"):
+            self.assertIn(name, self.brief)
+
+    def test_it_says_to_split_a_role_rather_than_stack_one_bulb(self):
+        self.assertIn("SPLIT a role", self.brief)
+
+    def test_the_routine_list_is_generated_and_cannot_drift(self):
+        """It was written out by hand and drifted the moment two effects
+        joined the class: the brief listed seven while the compiler
+        warned about nine."""
+        from director import effects as fx
+
+        self.assertIn(claude_director._routine_names(), self.brief)
+        self.assertEqual(len(fx.BULB_ROUTINES),
+                         claude_director._routine_names().count("`") // 2)
 
     def test_it_carries_a_worked_example_and_says_what_is_good_about_it(self):
         self.assertIn("ONE SCENE, WRITTEN WELL", self.brief)
