@@ -109,6 +109,11 @@
     try {
       const body = await post("api/lifx/discover");
       renderDevices(body.devices || []);
+      // The beat test's bulb picker is built from this same list, and
+      // discovery is the first thing anybody does on this tab — so a
+      // picker loaded before the bulbs were found stayed empty, sent no
+      // selection, and the test ran on every light in the house.
+      loadSyncChoices();
     } catch (error) {
       $("lifxList").innerHTML =
         '<p class="muted">Discovery failed: ' + error.message + "</p>";
@@ -752,6 +757,28 @@
   // ------------------------------------------------------------------
   // Lab: sync proof (metronome show)
   // ------------------------------------------------------------------
+  // How many bulbs the beat test will actually drive, said out loud
+  // beside the buttons that change it.
+  function syncCount() {
+    const all = Array.from(
+      $("syncBulbs").querySelectorAll("input[data-serial]"));
+    const on = all.filter((input) => input.checked).length;
+    $("syncCount").textContent = all.length
+      ? on + " of " + all.length + " selected"
+      : "no bulbs discovered yet — press Discover bulbs above";
+  }
+
+  function syncSetAll(checked) {
+    for (const input of $("syncBulbs").querySelectorAll("input[data-serial]")) {
+      input.checked = checked;
+    }
+    syncCount();
+  }
+
+  $("btnSyncAll").addEventListener("click", () => syncSetAll(true));
+  $("btnSyncNone").addEventListener("click", () => syncSetAll(false));
+  $("syncBulbs").addEventListener("change", syncCount);
+
   async function loadSyncChoices() {
     try {
       const [lib, profiles, devices] = await Promise.all([
@@ -760,13 +787,21 @@
         api("api/lifx/devices").catch(() => ({ devices: [] })),
       ]);
       const bulbs = $("syncBulbs");
+      // Ticks are remembered across a reload of this list, because the
+      // list reloads whenever the tab opens or a discovery finishes —
+      // and a picker that silently re-ticks the bedroom every time you
+      // press Discover is a picker you have to check before every run.
+      const was = new Map(
+        Array.from(bulbs.querySelectorAll("input[data-serial]"))
+          .map((input) => [input.dataset.serial, input.checked]));
       bulbs.innerHTML = "";
       for (const device of devices.devices || []) {
         const label = document.createElement("label");
         label.className = "fx-fixture";
         const check = document.createElement("input");
         check.type = "checkbox";
-        check.checked = true;
+        check.checked = was.has(device.serial)
+          ? was.get(device.serial) : true;
         check.dataset.serial = device.serial;
         const text = document.createElement("span");
         text.textContent = (device.label || device.serial);
@@ -774,6 +809,7 @@
         label.appendChild(text);
         bulbs.appendChild(label);
       }
+      syncCount();
       const trackSelect = $("syncTrack");
       trackSelect.innerHTML = '<option value="">— analyzed track —</option>';
       for (const track of (lib.tracks || []).filter((t) => t.analyzed)) {
@@ -804,10 +840,21 @@
       status.textContent = "Pick an analyzed track and a calibrated player.";
       return;
     }
+    // "The picker had nothing to offer" and "I unticked everything" are
+    // different answers and only one of them means every bulb. An empty
+    // selection out of a populated list used to send no filter at all,
+    // so unticking the house ran the test on the house — the exact
+    // opposite of the press. A populated list with nothing ticked is
+    // refused here instead.
+    const boxes = Array.from(
+      $("syncBulbs").querySelectorAll("input[data-serial]"));
+    const serials = boxes.filter((input) => input.checked)
+      .map((input) => input.dataset.serial);
+    if (boxes.length && !serials.length) {
+      status.textContent = "Tick at least one bulb — or press All.";
+      return;
+    }
     try {
-      const serials = Array.from(
-        $("syncBulbs").querySelectorAll("input[data-serial]:checked"))
-        .map((input) => input.dataset.serial);
       const result = await post("api/show/metronome", {
         track_hash: hash, media_player: player,
         serials: serials.length ? serials : undefined,
@@ -841,9 +888,17 @@
   function trackSummary(track) {
     if (!track.analyzed) return "not analyzed";
     const s = track.summary || {};
+    // A stale analysis says so on the row it belongs to. It still plays —
+    // it has beats and a duration — but it was heard by an older
+    // analyzer, and a person looking at a show that ignores the melody
+    // deserves to see the reason on the track rather than guess at it.
     return (s.bpm ? s.bpm + " BPM" : "?") +
       " · " + (s.sections || 0) + " sections · " + (s.drops || 0) + " drops" +
-      (s.lyrics ? " · lyrics ✓" : "");
+      (s.hits ? " · " + s.hits + " accents" : "") +
+      (s.chords ? " · " + s.chords + " chord changes" : "") +
+      (s.lyrics ? " · lyrics ✓" : "") +
+      (track.stale ? " · ⟳ analysed by an older version — press Analyze"
+                   : "");
   }
 
   async function scanLibrary() {
@@ -974,8 +1029,10 @@
       });
       if (job.status === "done") {
         const r = job.result;
-        status.textContent = "Done: " + r.analyzed + " analyzed, " +
-          r.skipped + " already had analysis" +
+        status.textContent = "Done: " + r.analyzed + " analyzed" +
+          (r.refreshed ? " (" + r.refreshed + " re-heard by the current " +
+            "analyzer)" : "") + ", " +
+          r.skipped + " already up to date" +
           (r.failed.length ? ", " + r.failed.length + " failed (" +
             r.failed.map((f) => f.file.split("/").pop()).join(", ") + ")" : "");
       } else {
@@ -3333,7 +3390,8 @@
         (entry.name || entry.type) + " (" + entry.type + ")";
       row.querySelector(".muted").textContent = entry.where + " · " +
         entry.fixtures + " lights · " + entry.actions + " moves · busiest " +
-        "light gets " + entry.busiest_fixture;
+        "light gets " + entry.busiest_fixture +
+        (entry.note ? " — ⚠ " + entry.note : "");
       list.appendChild(row);
     }
   }

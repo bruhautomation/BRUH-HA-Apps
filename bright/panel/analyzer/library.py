@@ -16,6 +16,40 @@ import atomic_write
 
 SHOWS_DIR = Path(os.environ.get("BRIGHT_STATE", "/data")) / "shows"
 
+# What the analyzer knows how to hear. **Bump this whenever an analysis
+# gains a field**, because a track is re-analysed on nothing else.
+#
+# It lives here rather than in `pipeline` because `scan` is what has to
+# read it — and reading it is the whole point. It sat at 1 while the
+# analyzer gained ranked accents, and `scan` marked a track analysed if an
+# analysis file existed at all, so every library that had ever been
+# scanned went on answering with the old analyzer's output forever. The
+# feature shipped, its tests passed, and it could not reach one person who
+# had already used the add-on: their shows had no accents to place because
+# their analyses had no accents in them, and from the outside that is
+# indistinguishable from a feature that does nothing. A version nothing
+# compares against is not a version, it is a comment.
+#
+# 2: `hits` — ranked accents with their place against the beat.
+# 3: `music` — harmony, melody, phrases, repetition.
+ANALYSIS_VERSION = 3
+
+
+def is_stale(analysis: dict | None) -> bool:
+    """Was this analysis made by an older analyzer than the one running?
+
+    Stale is not unusable: the track still has beats, sections and a
+    duration, so it still plays and its show still runs. It means the
+    library is answering a question the current analyzer would answer
+    better, which is a thing to re-run and never a thing to refuse.
+    """
+    if not analysis:
+        return False
+    try:
+        return int(analysis.get("version") or 0) < ANALYSIS_VERSION
+    except (TypeError, ValueError):
+        return True
+
 # Where a show script is mirrored so a person can open it.
 #
 # /data belongs to the add-on and Home Assistant cannot see into it, so a
@@ -322,7 +356,13 @@ def scan(folder: Path, cache: "_HashCache | None" = None) -> list[dict]:
             "file": str(path),
             "name": path.stem,
             "hash": hash_hex,
+            # `analyzed` stays true for an out-of-date analysis: it still
+            # has beats and a duration, so the track still plays and the
+            # party queue must not lose it over a field it never needed.
+            # `stale` is the separate, narrower claim — this one is worth
+            # running again — and it is what the Analyze pass picks up.
             "analyzed": analysis is not None,
+            "stale": is_stale(analysis),
         }
         if analysis:
             entry["summary"] = {
@@ -333,6 +373,14 @@ def scan(folder: Path, cache: "_HashCache | None" = None) -> list[dict]:
                 "duration": duration_of(analysis),
                 "sections": len(analysis.get("sections") or []),
                 "drops": len(analysis.get("drops") or []),
+                # What the current analyzer heard beyond the structure.
+                # Zero here on a stale row is the visible half of the
+                # version check: the number a person can point at.
+                "hits": len(analysis.get("hits") or []),
+                "chords": len(((analysis.get("music") or {})
+                               .get("chords")) or []),
+                "notes": len(((analysis.get("music") or {})
+                              .get("notes")) or []),
                 "lyrics": bool((analysis.get("lyrics") or {}).get("synced")),
             }
             show = load_show(hash_hex)

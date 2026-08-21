@@ -43,10 +43,25 @@ LASER = {"id": "switch.laser", "kind": "ha", "entity_id": "switch.laser",
          "x": 0.5, "y": 0.9}
 
 
-def grid(bpm: float = 120.0, seconds: float = 16.0) -> fx.Grid:
+def grid(bpm: float = 120.0, seconds: float = 16.0,
+         music: bool = True) -> fx.Grid:
+    """The bench song. It carries a melody and a chord progression by
+    default because a real track does — `music=False` is the track
+    analysed before BRight could hear either, which is its own case and
+    is tested as one."""
     beat = 60.0 / bpm
     beats = [round(i * beat, 4) for i in range(int(seconds / beat) + 1)]
-    return fx.Grid(beats, beats[::4], bpm)
+    if not music:
+        return fx.Grid(beats, beats[::4], bpm)
+    scale = (0, 2, 4, 5, 7, 9, 11, 12)
+    notes = [{"t": round(i * beat / 2, 4), "d": round(beat / 2, 4),
+              "m": 60 + scale[i % len(scale)],
+              "pc": (60 + scale[i % len(scale)]) % 12, "s": 0.9}
+             for i in range(int(seconds / (beat / 2)))]
+    chords = [{"t": round(i * beat * 4, 4), "name": "C", "root": i * 5 % 12,
+               "quality": "maj" if i % 2 else "min", "confidence": 0.9}
+              for i in range(int(seconds / (beat * 4)) + 1)]
+    return fx.Grid(beats, beats[::4], bpm, notes=notes, chords=chords)
 
 
 PALETTE = [[200, 0.9], [300, 0.8], [40, 0.7]]
@@ -419,3 +434,127 @@ class TestPresetsAndParties(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTheEffectsThatFollowTheMusic(unittest.TestCase):
+    """`melody` and `harmony` — the two that answer what is being played
+    rather than when it hits."""
+
+    def test_melody_puts_one_note_on_one_light_at_a_time(self):
+        actions = render({"type": "melody", "name": "tune",
+                          "params": {"voices": 1}})
+        self.assertTrue(actions)
+        times = sorted({a["t"] for a in actions})
+        self.assertGreater(len(times), 8, "the tune barely moved")
+        # One voice means one fixture lit per note.
+        per_time = {}
+        for action in actions:
+            per_time.setdefault(action["t"], set()).add(action["fixture"]["id"])
+        self.assertTrue(all(len(v) == 1 for v in per_time.values()))
+
+    def test_melody_walks_across_the_room(self):
+        """A rising line has to travel — a melody effect that put every
+        note on the same bulb would be a pulse with extra steps."""
+        actions = render({"type": "melody", "name": "tune",
+                          "params": {"voices": 1}})
+        used = {a["fixture"]["id"] for a in actions}
+        self.assertGreater(len(used), 1)
+
+    def test_a_notes_pitch_picks_its_colour(self):
+        """The same pitch class is always the same colour, so a phrase
+        that returns home looks like it did."""
+        actions = render({"type": "melody", "name": "tune",
+                          "params": {"hue_spread": 1.0, "voices": 1}})
+        by_pitch = {}
+        for action, note in zip(actions, grid().notes):
+            by_pitch.setdefault(note["pc"], set()).add(round(action["hue"], 3))
+        repeated = {pc: hues for pc, hues in by_pitch.items() if len(hues) > 1}
+        self.assertFalse(repeated, f"one pitch class, two colours: {repeated}")
+
+    def test_hue_spread_zero_keeps_the_scene_colour(self):
+        """Following the tune in brightness only, without a second
+        parameter to mean it."""
+        actions = render({"type": "melody", "name": "tune",
+                          "params": {"hue_spread": 0.0}})
+        hues = {round(a["hue"], 3) for a in actions}
+        self.assertEqual(1, len(hues), f"expected one colour, got {hues}")
+
+    def test_a_quiet_note_is_dimmer_than_a_loud_one(self):
+        loud = {"t": 0.5, "d": 0.4, "m": 60, "pc": 0, "s": 1.0}
+        soft = {"t": 1.5, "d": 0.4, "m": 60, "pc": 0, "s": 0.3}
+        bench = fx.Grid([0.0, 0.5, 1.0, 1.5, 2.0], [0.0], 120.0,
+                        notes=[loud, soft])
+        actions = fx.actions_for(
+            fx.clean_effect({"type": "melody", "name": "t",
+                             "params": {"min_strength": 0.0}}),
+            lamps(), bench, window=(0.0, 4.0), palette=PALETTE)
+        levels = {a["t"]: a["bri"] for a in actions}
+        self.assertGreater(levels[0.5], levels[1.5])
+
+    def test_min_strength_drops_the_notes_under_it(self):
+        actions = render({"type": "melody", "name": "tune",
+                          "params": {"min_strength": 0.99}})
+        self.assertEqual([], actions)
+
+    def test_harmony_changes_the_room_when_the_chord_changes(self):
+        actions = render({"type": "harmony", "name": "chords"})
+        self.assertTrue(actions)
+        times = sorted({a["t"] for a in actions})
+        # The bench progression changes every four beats (2s at 120bpm).
+        self.assertGreater(len(times), 1)
+        for first, second in zip(times, times[1:]):
+            self.assertGreaterEqual(round(second - first, 3), 1.9)
+
+    def test_harmony_covers_the_whole_selection_on_every_change(self):
+        cast = lamps()
+        actions = render({"type": "harmony", "name": "chords"}, cast)
+        by_time = {}
+        for action in actions:
+            by_time.setdefault(action["t"], set()).add(action["fixture"]["id"])
+        for lit in by_time.values():
+            self.assertEqual(len(cast), len(lit))
+
+    def test_a_scene_that_opens_mid_chord_still_has_a_colour(self):
+        """Starting black until the next change would be reading the
+        list rather than the music."""
+        bench = grid(seconds=16.0)
+        actions = fx.actions_for(
+            fx.clean_effect({"type": "harmony", "name": "c"}), lamps(),
+            bench, window=(3.0, 7.0), palette=PALETTE)
+        self.assertTrue(actions)
+        self.assertAlmostEqual(3.0, min(a["t"] for a in actions), places=3)
+
+    def test_minor_and_major_are_different_colours(self):
+        minor = {"t": 0.0, "name": "Am", "root": 9, "quality": "min"}
+        major = {"t": 4.0, "name": "A", "root": 9, "quality": "maj"}
+        bench = fx.Grid([0.0, 1.0, 2.0, 3.0, 4.0], [0.0], 120.0,
+                        chords=[minor, major])
+        actions = fx.actions_for(
+            fx.clean_effect({"type": "harmony", "name": "c",
+                             "params": {"minor_shift": -40}}),
+            lamps(), bench, window=(0.0, 8.0), palette=PALETTE)
+        hues = {a["t"]: a["hue"] for a in actions}
+        self.assertNotEqual(hues[0.0], hues[4.0],
+                            "the same root, major and minor, one colour")
+
+    def test_both_render_nothing_when_the_track_has_no_music(self):
+        """A track analysed before BRight could hear melody or harmony.
+        Silence is correct — and the compiler is what says why."""
+        silent = grid(music=False)
+        for name in ("melody", "harmony"):
+            with self.subTest(effect=name):
+                actions = fx.actions_for(
+                    fx.clean_effect({"type": name, "name": name}), lamps(),
+                    silent, window=(0.0, 16.0), palette=PALETTE)
+                self.assertEqual([], actions)
+        self.assertFalse(silent.has_music)
+        self.assertTrue(grid().has_music)
+
+    def test_a_busy_line_cannot_flood_the_wire(self):
+        many = [{"t": round(i * 0.02, 3), "d": 0.02, "m": 60 + i % 12,
+                 "pc": (60 + i % 12) % 12, "s": 0.9} for i in range(4000)]
+        bench = fx.Grid([0.0, 0.5], [0.0], 120.0, notes=many)
+        kept = bench.notes_in(0.0, 100.0)
+        self.assertLessEqual(len(kept), fx.MAX_STEPS)
+        self.assertEqual(sorted(kept, key=lambda n: n["t"]), kept,
+                         "the cap reordered the tune")

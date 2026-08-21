@@ -52,7 +52,7 @@ def _chase_order(seed: int, zones: bool) -> str:
 
 def _effects_for(kind: str, roles: set[str], movers: list[str],
                  mover_count: int, seed: int, zones: bool,
-                 depth: float) -> list[dict]:
+                 depth: float, has_music: bool = False) -> list[dict]:
     """What moves during a section of this energy, given who is on stage.
 
     Every branch here is a judgement about taste, and all of them are
@@ -64,6 +64,8 @@ def _effects_for(kind: str, roles: set[str], movers: list[str],
         effects.append({
             "type": "breathe", "name": "candles", "select": {"roles": ["candle"]},
             "params": {"period_beats": 16, "depth": 0.12}})
+
+    effects.extend(_musical_layers(kind, roles, movers, has_music))
 
     if not movers:
         return effects
@@ -133,12 +135,59 @@ def _effects_for(kind: str, roles: set[str], movers: list[str],
     return effects
 
 
+def _musical_layers(kind: str, roles: set, movers: list,
+                    has_music: bool) -> list[dict]:
+    """The two layers that follow what the song is PLAYING.
+
+    Kept apart from the rhythmic effects above on purpose, because they
+    answer a different question and belong on different lights. Harmony
+    is the ground — slow, wide, on whatever is not carrying the beat, so
+    the room's colour turns over with the chords instead of with the
+    section map. Melody is a voice: one kind of light, one note at a
+    time, following the tune.
+
+    Where they are NOT placed is the taste in this function. Melody sits
+    out the peaks: a chorus already has a chase across every mover and a
+    stab on every accent, and a third thing competing for the same bulbs
+    on eighth notes is not more musical, it is mush. The tune gets the
+    verses and the quiet parts, which is where a person can hear it and
+    where the lights have room to answer.
+
+    A track with no musical analysis gets neither, rather than two
+    effects that render to nothing — the compiler would explain the
+    silence, but a show should not need explaining.
+    """
+    if not has_music:
+        return []
+    out: list[dict] = []
+    ground = [r for r in ("candle", "strip") if r in roles] or movers
+    if kind in ("intro", "quiet", "mid", "outro") and ground:
+        out.append({
+            "type": "harmony", "name": "chord colour",
+            "select": {"roles": ground},
+            "params": {"brightness": 0.45 if kind in ("intro", "outro")
+                       else 0.55,
+                       "fade_ms": 1600, "spread": "single"}})
+    lead = next((r for r in ("lamp", "downlight", "strip") if r in roles),
+                None)
+    if kind in ("quiet", "mid") and lead:
+        out.append({
+            "type": "melody", "name": "the tune",
+            "select": {"roles": [lead]},
+            "params": {"hue_spread": 0.45 if kind == "quiet" else 0.65,
+                       "brightness": 0.8, "fade_ms": 90,
+                       "min_strength": 0.3, "voices": 1, "hold": True}})
+    return out
+
+
 def write_script(analysis: dict, fixtures: list[dict]) -> dict:
     roles_present = {f["role"] for f in fixtures}
     zones = any((f.get("zone") or "").strip() for f in fixtures)
     movers = [r for r in _MOVERS if r in roles_present]
     mover_count = sum(1 for f in fixtures if f["role"] in movers)
     seed = int((analysis.get("hash") or "0")[:8] or "0", 16)
+    musical = analysis.get("music") or {}
+    has_music = bool(musical.get("notes") or musical.get("chords"))
     palette_name, palette = palettes.pick_palette(
         float(analysis.get("brightness", 0.5)), seed)
 
@@ -154,7 +203,8 @@ def write_script(analysis: dict, fixtures: list[dict]) -> dict:
             "palette": palette,
             "brightness": base,
             "effects": _effects_for(section["kind"], roles_present, movers,
-                                    mover_count, seed, zones, depth),
+                                    mover_count, seed, zones, depth,
+                                    has_music),
         })
 
     # Moments: the build into a drop and the hit itself. The build is a

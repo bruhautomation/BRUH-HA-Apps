@@ -5,6 +5,86 @@ All notable changes to the **BRight** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.16.0
+
+The analyzer learns to hear the music, and the reason you could not tell
+that it had.
+
+### Fixed
+
+- **An upgraded analyzer never re-heard a library that had already been
+  scanned.** `ANALYSIS_VERSION` sat at 1 through every change to the
+  analyzer, and `scan` called a track analysed if an analysis file
+  existed at all — so 0.15.0's ranked accents shipped, passed their
+  tests, and reached **nobody** who had used BRight before: their shows
+  had no accents to place because their analyses had no accents in them,
+  which from the outside is identical to a feature that does nothing.
+  The version is now bumped with every field, `library.is_stale` reads
+  it, and the Analyze pass re-runs anything older without being asked
+  twice. `analyzed` deliberately stays true for a stale track (it still
+  has beats and a duration, and the party queue is built from that flag);
+  `stale` is the separate, narrower claim, shown on the track's own row.
+- **The show editor pushed a phone 7px sideways.** The mirrored script
+  path is one unbreakable token longer than a 390px screen. It was
+  invisible to the measure that exists to catch exactly this, because at
+  390px the measure had been clicking the row's *middle* — which is a
+  button once a row has four of them — so the editor never opened and
+  the overflow check passed on a page with no editor on it. The measure
+  clicks the track name now, the way a person does.
+- **The Lab's beat test ran on every bulb in the house.** Its picker was
+  built once when the tab opened, and discovery is the first thing
+  anybody does *on* that tab — so the list was usually still empty, an
+  empty list sent no selection, and no selection means every bulb. The
+  picker reloads after a discovery, remembers what was ticked, and an
+  empty selection out of a populated list is now refused rather than
+  quietly meaning "all of them".
+
+### Added
+
+- **BRight hears harmony, melody, phrases and repetition**
+  (`analyzer/music.py`). Rhythm says when a song hits; this says what it
+  is *playing*, which is what the lights had no way to follow:
+  - **chords** — a beat-synchronous chromagram against 24 triad
+    templates, reported as *changes* only. Harmony turns over every bar
+    or two, on its own clock, almost never where the energy changes,
+    which is why a palette that follows it moves through the long
+    stretches where the structure is doing nothing.
+  - **melody** — the dominant pitch in the melodic register, segmented
+    into note events with pitch class, octave and strength. Harmonic
+    summing picks fundamentals over partials, and a sub-octave penalty
+    stops the tracker following the bass up into the melodic range
+    whenever the tune rests (measured: without it, a phantom note filled
+    every silence).
+  - **phrases** — notes grouped into breaths, each with the direction of
+    its line, so a gesture that travels can start and end with one.
+  - **repeats** — beat-chroma self-similarity, finding the passages that
+    come back and what they come back from.
+  - Also the track's **key**. All of it pure numpy, from one extra STFT
+    pass over audio that is already decoded, and every extractor has a
+    floor below which it says nothing rather than guessing.
+- **Two effects that follow it**: `melody` (each note lands on the next
+  light along, its pitch class picking the colour out of the scene's own
+  palette, so a rising phrase climbs across the room) and `harmony` (the
+  selection crossfades on every chord change, minor chords shifted
+  around the wheel). Both render to nothing on a track with no musical
+  analysis — correct, and indistinguishable from broken, so the compiler
+  puts the reason on that effect's own row in the editor.
+- **The automatic show uses them**: a harmony ground on whatever is not
+  carrying the beat, and the tune on one kind of light through the
+  verses and quiet sections. Not in the peaks, on purpose — a chorus
+  already has a chase across every mover and a stab on every accent, and
+  a third thing competing for the same bulbs is not more musical.
+- **Claude's brief is rebuilt around all of it.** It now opens with the
+  difference between a show that is *synchronized* (marks the structure,
+  correct, boring by the second chorus) and one that is *musical*, and
+  carries the musical map: the chord changes, the melody's range, the
+  phrases, and what repeats — with the instruction to give a repeated
+  passage the look its original had. A track whose analysis predates all
+  this says so in the brief and tells the model not to reach for the two
+  effects that would render to nothing.
+- **Select All / None on the Lab's bulb picker**, with a live count of
+  how many bulbs the test will actually drive.
+
 ## 0.15.0
 
 Stabs on the beat, notes to the director, and a party you can steer.

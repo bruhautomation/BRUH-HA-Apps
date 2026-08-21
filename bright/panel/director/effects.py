@@ -44,6 +44,13 @@ SHAPES = ("sine", "triangle", "pulse", "saw", "half_sine")
 ORDERS = ("x", "-x", "y", "-y", "center_out", "edges_in", "snake",
           "zone", "listed", "random")
 
+# The effects that follow what the song is PLAYING rather than when it
+# hits. They render to nothing at all when the analysis carries no music
+# — which is correct, and indistinguishable from broken unless somebody
+# says so out loud. The compiler checks this set to put a reason on the
+# effect's own row rather than leaving a silent zero there.
+NEEDS_MUSIC = frozenset({"melody", "harmony"})
+
 ALIGNMENTS = ("beat", "downbeat", "bar", "time")
 
 # What an effect that names neither does. These are shipped to the panel in
@@ -263,6 +270,42 @@ CATALOG: dict[str, dict[str, Any]] = {
         "params": {
             "level": _num(0, 0.5, 0.02),
             "fade_ms": _num(0, 6000, 500, integer=True),
+        },
+    },
+    "melody": {
+        "label": "Melody",
+        "blurb": "Follow the tune. Each note the analyzer heard lands on the "
+                 "next light along, and the colour comes from the note "
+                 "itself — a rising line walks across the room and climbs "
+                 "the palette with it. The one effect that answers what is "
+                 "being played rather than when.",
+        "channel": "light",
+        "params": {
+            # How far around the palette a note's pitch moves the colour.
+            # Full is the vivid reading (an octave crosses the whole
+            # palette); low values keep a scene's colour and let the
+            # melody move only the brightness.
+            "hue_spread": _num(0, 1, 0.6),
+            "brightness": _num(0, 1, 0.85),
+            "fade_ms": _num(0, 2000, 90, integer=True),
+            "hold": _flag(True),
+            "min_strength": _num(0, 1, 0.25),
+            "voices": _num(1, 6, 1, integer=True),
+        },
+    },
+    "harmony": {
+        "label": "Harmony",
+        "blurb": "The palette follows the chords. On every harmony change "
+                 "the selection crossfades to that chord's colour, so the "
+                 "room turns over with the song rather than with its "
+                 "sections — slow, wide, and the ground other effects move "
+                 "against.",
+        "channel": "light",
+        "params": {
+            "brightness": _num(0, 1, 0.5),
+            "fade_ms": _num(0, 6000, 1200, integer=True),
+            "spread": _choice(("cycle", "single", "gradient"), "single"),
+            "minor_shift": _num(-180, 180, -25),
         },
     },
     "aux": {
@@ -495,16 +538,26 @@ def _cap(fixture: dict, brightness: float, effect: dict) -> float:
 # The beat grid
 # ---------------------------------------------------------------------------
 class Grid:
-    """Where the beats are, and what a beat is worth in milliseconds.
+    """The song, as the effects see it: its beats, and what it is playing.
 
     Every stepping effect asks this rather than the analysis, so an
     effect with `align: "time"` (no music, or a preview on the bench)
     works through exactly the same code as one locked to a track.
+
+    `notes` and `chords` are the musical half, and they are optional for
+    the same reason: an effect that follows the melody renders to nothing
+    at all when there is no melody to follow, which is exactly what it
+    should do on a bench preview and on a track analysed before BRight
+    could hear harmony. They are read straight off `analysis["music"]`.
     """
 
     def __init__(self, beats: list[float] | None = None,
                  downbeats: list[float] | None = None,
-                 bpm: float | None = None) -> None:
+                 bpm: float | None = None,
+                 notes: list[dict] | None = None,
+                 chords: list[dict] | None = None) -> None:
+        self.notes = list(notes or [])
+        self.chords = list(chords or [])
         self.beats = sorted(float(b) for b in (beats or []))
         self.downbeats = sorted(float(b) for b in (downbeats or []))
         if len(self.beats) >= 2:
@@ -518,6 +571,16 @@ class Grid:
     @property
     def beat_ms(self) -> int:
         return max(20, int(round(self.beat_s * 1000)))
+
+    @property
+    def has_music(self) -> bool:
+        """Does this song carry harmony or a melodic line at all?
+
+        False for a track analysed before BRight could hear either, which
+        is the case that has to be *said* rather than rendered as an empty
+        effect nobody can explain.
+        """
+        return bool(self.notes or self.chords)
 
     def ticks(self, start: float, end: float, every_beats: float,
               align: str = "beat") -> list[float]:
@@ -551,6 +614,38 @@ class Grid:
             if len(out) >= MAX_STEPS:
                 break
         return out[:MAX_STEPS]
+
+    def notes_in(self, start: float, end: float,
+                 min_strength: float = 0.0) -> list[dict]:
+        """The melodic notes inside a window, quietest ones dropped.
+
+        Capped like every other stepping source: a busy lead line can
+        carry six notes a second, and a window that asked for all of them
+        would put a packet on the wire per note per fixture. The cap
+        keeps the LOUDEST notes and puts them back in time order, because
+        a melody thinned by dropping its accents is not the melody.
+        """
+        inside = [n for n in self.notes
+                  if start - 1e-6 <= float(n.get("t", 0)) < end
+                  and float(n.get("s", 0)) >= min_strength]
+        if len(inside) > MAX_STEPS:
+            inside = sorted(inside, key=lambda n: -float(n.get("s", 0)))
+            inside = sorted(inside[:MAX_STEPS], key=lambda n: float(n["t"]))
+        return inside
+
+    def chords_in(self, start: float, end: float) -> list[dict]:
+        """The harmony changes inside a window, plus the chord already
+        sounding when it opened — a scene that starts mid-chord has a
+        colour, and starting black until the next change would be reading
+        the list rather than the music."""
+        inside = [c for c in self.chords
+                  if start - 1e-6 <= float(c.get("t", 0)) < end]
+        before = [c for c in self.chords if float(c.get("t", 0)) < start]
+        if before:
+            opening = dict(before[-1])
+            opening["t"] = start
+            inside.insert(0, opening)
+        return inside[:MAX_STEPS]
 
 
 # ---------------------------------------------------------------------------
@@ -866,6 +961,94 @@ def _r_aux(out, effect, cast, grid, ctx) -> None:
                             "aux flash off"))
 
 
+def _r_melody(out, effect, cast, grid, ctx) -> None:
+    """One note, one light, the colour taken from the pitch.
+
+    The mapping is deliberately musical rather than decorative: the
+    pitch CLASS picks the colour (so the same note is always the same
+    colour, and a phrase that returns home looks like it did), and the
+    palette is what it picks from — a melody effect in a warm scene stays
+    warm, because a show whose colours are chosen by the tune and not by
+    the scene is a show with no scenes.
+
+    `voices` is how many lights a note takes; the rest of the selection
+    keeps whatever the scene left it, which is what makes this layer over
+    a wash instead of replacing it.
+    """
+    p = effect["params"]
+    palette = ctx["palette"]
+    notes = grid.notes_in(ctx["start"], ctx["end"], p["min_strength"])
+    if not notes or not cast:
+        # Nothing to follow is not an error: a track analysed before
+        # BRight could hear melody, or an instrumental break with no
+        # melodic line in it, both render to silence rather than to a
+        # guess. `notes` in the summary is what tells the editor why.
+        return
+    voices = max(1, min(len(cast), int(p["voices"])))
+    spread = p["hue_spread"]
+    span = max(1, len(palette) - 1) if palette else 1
+    for index, note in enumerate(notes):
+        at = float(note["t"])
+        # Pitch class → a position around the palette. The palette is
+        # walked rather than the hue wheel so the scene's colours are what
+        # a note can be; `hue_spread` fades that toward the scene's first
+        # colour, which is how "follow the tune in brightness only" is
+        # spelled without a second parameter.
+        position = float(note.get("pc", 0)) / 12.0
+        hue, sat = _colour(palette, int(round(position * span)))
+        home_hue, home_sat = _colour(palette, 0)
+        hue = home_hue + (hue - home_hue) * spread
+        sat = home_sat + (sat - home_sat) * spread
+        level = p["brightness"] * (0.45 + 0.55 * float(note.get("s", 1.0)))
+        for voice in range(voices):
+            fixture = cast[(index * voices + voice) % len(cast)]
+            out.append(_set(fixture, at, hue, sat, level, int(p["fade_ms"]),
+                            effect["name"]))
+        if not p["hold"]:
+            # Let the note end where the note ends, rather than holding
+            # until the next one. A staccato line reads as staccato.
+            tail = at + max(0.05, float(note.get("d", 0.2)))
+            if tail < ctx["end"]:
+                for voice in range(voices):
+                    fixture = cast[(index * voices + voice) % len(cast)]
+                    out.append(_set(fixture, tail, hue, sat,
+                                    level * 0.15, int(p["fade_ms"]),
+                                    effect["name"]))
+
+
+def _r_harmony(out, effect, cast, grid, ctx) -> None:
+    """The room turns over when the chord does.
+
+    A long crossfade on purpose: harmony changes every bar or two and a
+    fast one would read as a cut. Minor chords are shifted around the
+    wheel by `minor_shift`, which is the one piece of synaesthesia here
+    and earns its place — a minor chord landing a little cooler than the
+    major beside it is the difference between a palette that follows the
+    song and one that merely changes.
+    """
+    p = effect["params"]
+    palette = ctx["palette"]
+    changes = grid.chords_in(ctx["start"], ctx["end"])
+    if not changes or not cast:
+        return
+    span = max(1, len(palette) - 1) if palette else 1
+    for change in changes:
+        root = int(change.get("root", 0))
+        hue, sat = _colour(palette, int(round(root / 12.0 * span)))
+        if change.get("quality") == "min":
+            hue += float(p["minor_shift"])
+        at = float(change["t"])
+        for index, fixture in enumerate(cast):
+            if p["spread"] == "single":
+                shade = 0.0
+            elif p["spread"] == "gradient" and len(cast) > 1:
+                shade = 18.0 * index / (len(cast) - 1)
+            else:
+                shade = 12.0 * (index % 3)
+            out.append(_set(fixture, at, hue + shade, sat, p["brightness"],
+                            int(p["fade_ms"]), effect["name"], resend=True))
+
+
 RENDERERS: dict[str, Renderer] = {
     "wash": _r_wash,
     "fade": _r_fade,
@@ -881,6 +1064,8 @@ RENDERERS: dict[str, Renderer] = {
     "theater": _r_theater,
     "stab": _r_stab,
     "blackout": _r_blackout,
+    "melody": _r_melody,
+    "harmony": _r_harmony,
     "aux": _r_aux,
 }
 

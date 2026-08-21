@@ -830,6 +830,20 @@ def _map_fixtures() -> list[dict]:
     return out
 
 
+# The bench's stand-in tune: a scale up and back down, an eighth-note
+# apart, over a I-V-vi-IV turnaround. It exists because `melody` and
+# `harmony` follow a song and the Effects tab has no song — and an effect
+# that previews blank is indistinguishable from one that is broken. The
+# bench was always a synthetic track (a BPM box and nothing else), so
+# this is the same fiction extended to the two effects that need more
+# than a beat: what you see is what the effect does with a simple tune,
+# and what a real track does is the show editor's preview, which uses the
+# real one.
+_BENCH_SCALE = (0, 2, 4, 5, 7, 9, 11, 12, 11, 9, 7, 5, 4, 2)
+_BENCH_CHORDS = (("C", 0, "maj"), ("G", 7, "maj"),
+                 ("Am", 9, "min"), ("F", 5, "maj"))
+
+
 def _preview_grid(body: dict) -> fx.Grid:
     """A beat grid from a BPM, because the bench has no track.
 
@@ -841,7 +855,19 @@ def _preview_grid(body: dict) -> fx.Grid:
     duration = _number(body, "duration_s", 12, 2, 60)
     beat_s = 60.0 / bpm
     beats = [round(i * beat_s, 4) for i in range(int(duration / beat_s) + 2)]
-    return fx.Grid(beats, beats[::4], bpm)
+    step = beat_s / 2
+    notes = []
+    for index in range(int(duration / step) + 1):
+        semitone = _BENCH_SCALE[index % len(_BENCH_SCALE)]
+        notes.append({"t": round(index * step, 4), "d": round(step, 4),
+                      "m": 60 + semitone, "pc": (60 + semitone) % 12,
+                      "s": 0.9})
+    chords = []
+    for index in range(int(duration / (beat_s * 4)) + 1):
+        name, root, quality = _BENCH_CHORDS[index % len(_BENCH_CHORDS)]
+        chords.append({"t": round(index * beat_s * 4, 4), "name": name,
+                       "root": root, "quality": quality, "confidence": 1.0})
+    return fx.Grid(beats, beats[::4], bpm, notes=notes, chords=chords)
 
 
 def _preview_palette(body: dict) -> list:
