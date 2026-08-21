@@ -5,6 +5,43 @@ All notable changes to the **BRight** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.13.1
+
+Find the media source that actually holds the file, and let Home Assistant
+say why it refused.
+
+### Fixed
+
+- **A source that could NAME the file was taken for one that HAS it.**
+  Discovery probed each of Core's media sources with
+  `media_source/resolve_media` and treated a signed URL as proof — but
+  Core resolves for any source that exists, whether or not the path under
+  it does. On an install whose only media source was
+  `media: /config/media`, Core happily signed a URL for
+  `media-source://media_source/media/bright/calibration.wav` while the
+  click track sat under `/media` and nothing of the sort existed at
+  `/config/media/bright/`. BRight took that as the answer, built every
+  media id that way, and Core refused the eventual play with an HTTP 500
+  about a file that was never there. The resolved URL is now **fetched**:
+  a 200 is proof, a 404 is proof of absence, and a fetch that cannot run
+  at all is neither — it falls back to the resolve, because a probe that
+  cannot run must not veto the only candidate.
+
+### Fixed
+
+- **A failed Core request reported its status code and threw away the
+  reason.** `Test playback` walked every link, reached the last one, and
+  said `HTTP 500 from /services/media_player/play_media` — which is what
+  the red cross beside it had already said. Core puts the reason in the
+  response body, and `urllib`'s `HTTPError` **is** that response, so the
+  single most useful sentence available was being read and discarded.
+  Every Core call BRight makes now carries Home Assistant's own words:
+  for a failed service call that is the exception Core raised, by name.
+  An empty body stays empty rather than becoming a note about the absence
+  of a message, a body that cannot be read leaves the status code alone,
+  and a traceback is flattened to one bounded line because it lands in a
+  panel row beside five other steps.
+
 ## 0.13.0
 
 The effect library is a shared, growing thing that Claude reads and adds to.

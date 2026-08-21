@@ -316,9 +316,20 @@ async def check(entity_id: str, media_content_id: str, *,
     result = await asyncio.to_thread(
         ha_client.play_media, entity_id, media_content_id)
     if isinstance(result, dict) and result.get("error"):
+        # Core's reason AND what it was asked to do. Either alone leaves
+        # a guess: the message names what Core objected to, and the
+        # payload is the only place to see which of the id and the type it
+        # was objecting about — neither is visible from the other steps,
+        # because the `media` step shows the URL Core RESOLVED rather than
+        # the media-source id BRight actually hands to `play_media`.
         steps.append(_step("command", False,
                            f"Home Assistant refused the play command: "
-                           f"{flat(result['error'])}"))
+                           f"{flat(result['error'])}",
+                           f"BRight asked for media_content_id="
+                           f"{flat(media_content_id, 120)} with "
+                           f"media_content_type=music. If Core names one of "
+                           f"those, that is the one to look at; the Home "
+                           f"Assistant log will have the full traceback."))
         return _verdict(steps)
     steps.append(_step("command", True, "Home Assistant accepted the command"))
 

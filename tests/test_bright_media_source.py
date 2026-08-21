@@ -243,3 +243,94 @@ class TestEveryBuilderGoesThroughIt(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestResolvingIsNotServing(MediaSourceTest):
+    """The failure that reached a real house, and the reason for the fetch.
+
+    `resolve_media` answers for any source that EXISTS, whether or not the
+    path under it does — it builds and signs a URL rather than looking on
+    disk. On an install whose only media source was `media: /config/media`,
+    Core resolved `media-source://media_source/media/bright/calibration.wav`
+    happily while the click track sat under `/media` and nothing of the
+    sort existed at `/config/media/bright/`. BRight read the successful
+    resolve as "found it", built every media id that way, and Core answered
+    the eventual play with an HTTP 500 about a file that was never there.
+
+    The URL is fetched now, and these run that fetch against a REAL HTTP
+    server rather than stubbing it: what a served and an unserved path do
+    differently IS the thing under test, and a stub of that is a stub of
+    the answer.
+    """
+
+    def _serve(self, status_by_path):
+        """A stand-in for Core's HTTP, on a thread. Returns its base URL."""
+        import http.server
+        import threading
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):  # noqa: N802 — http.server's spelling
+                path = self.path.split("?", 1)[0]
+                self.send_response(status_by_path.get(path, 404))
+                self.send_header("Content-Length", "1")
+                self.end_headers()
+                self.wfile.write(b"x")
+
+            def log_message(self, *args):
+                pass  # a test server narrating itself is noise
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.shutdown)
+        host, port = server.server_address[:2]
+        return f"http://{host}:{port}"
+
+    def _discover_against(self, fake, base_url):
+        original = media_source.CORE_HTTP
+        media_source.CORE_HTTP = base_url
+        try:
+            return run_against(fake, lambda: media_source.discover(PROBE))
+        finally:
+            media_source.CORE_HTTP = original
+
+    def test_a_source_that_resolves_but_404s_is_not_chosen(self):
+        """The exact shape of the real failure: one source, it resolves,
+        and the file is not under it."""
+        fake = FakeHomeAssistant({
+            "media_source/resolve_media": resolver("media"),
+            "media_source/browse_media": lambda m: tree("media"),
+        })
+        state = self._discover_against(
+            fake, self._serve({"/media/local/x.wav": 404}))
+        self.assertFalse(state["discovered"],
+                         "a signed URL for a file that is not there is not "
+                         "a discovery")
+
+    def test_a_source_that_serves_is_chosen(self):
+        fake = FakeHomeAssistant({
+            "media_source/resolve_media": resolver("media"),
+            "media_source/browse_media": lambda m: tree("media"),
+        })
+        state = self._discover_against(
+            fake, self._serve({"/media/local/x.wav": 200}))
+        self.assertTrue(state["discovered"])
+        self.assertEqual("media", state["source_id"])
+
+    def test_a_fetch_that_cannot_run_does_not_veto(self):
+        """A probe that cannot run is not evidence of absence.
+
+        On an install where this fetch route does not work, refusing every
+        candidate would turn a working discovery into a total failure —
+        strictly worse than the behaviour being fixed. So an unreachable
+        prober falls back to the resolve alone.
+        """
+        fake = FakeHomeAssistant({
+            "media_source/resolve_media": resolver("media"),
+            "media_source/browse_media": lambda m: tree("media"),
+        })
+        # Port 9 is discard; nothing answers, so the fetch fails at the
+        # transport rather than with a status.
+        state = self._discover_against(fake, "http://127.0.0.1:9")
+        self.assertTrue(state["discovered"],
+                        "the resolve still counts when nothing can check it")
+        self.assertEqual("media", state["source_id"])

@@ -364,6 +364,27 @@ class TestTheWholeChain(unittest.TestCase):
         finally:
             ha_ws.resolve_media = original
 
+    def test_a_refused_command_shows_core_reason_and_our_request(self):
+        """Either half alone leaves a guess.
+
+        Core's message names what it objected to; the payload is the only
+        place to see WHICH of the id and the type it meant — and the
+        `media` step above shows the URL Core RESOLVED, not the
+        media-source id `play_media` is actually handed, so the failing
+        request is otherwise invisible on the whole page.
+        """
+        ha_client.play_media = lambda *a, **kw: {
+            "error": "HTTP 500 from /services/media_player/play_media: "
+                     "Unsupported media type music"}
+        report = self._check({"url": "/media/local/x.mp3",
+                              "mime_type": "audio/mpeg"})
+        command = next(s for s in report["steps"] if s["name"] == "command")
+        self.assertIs(False, command["ok"])
+        self.assertIn("Unsupported media type music", command["detail"])
+        self.assertIn("media-source://media_source/local/x.mp3",
+                      command["fix"], "what BRight actually sent")
+        self.assertIn("media_content_type=music", command["fix"])
+
     def test_a_working_chain_reports_every_step(self):
         report = self._check({"url": "/media/local/x.mp3",
                               "mime_type": "audio/mpeg"})
@@ -518,3 +539,4 @@ class TestTheDiagnosticIsNotAFileReader(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
