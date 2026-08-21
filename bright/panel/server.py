@@ -74,6 +74,7 @@ from director import compiler  # noqa: E402
 from director import palettes as director_palettes  # noqa: E402
 from director import preview as director_preview  # noqa: E402
 from director.compiler import CompileError  # noqa: E402
+import director_check  # noqa: E402
 from playback import autosync  # noqa: E402
 from playback import conductor as conductor_mod  # noqa: E402
 from director import effects as fx  # noqa: E402
@@ -867,7 +868,14 @@ def _preview_grid(body: dict) -> fx.Grid:
         name, root, quality = _BENCH_CHORDS[index % len(_BENCH_CHORDS)]
         chords.append({"t": round(index * beat_s * 4, 4), "name": name,
                        "root": root, "quality": quality, "confidence": 1.0})
-    return fx.Grid(beats, beats[::4], bpm, notes=notes, chords=chords)
+    hop = 0.05
+    swell = [round(0.25 + 0.7 * abs(((i * hop / (beat_s * 4)) % 1.0) - 0.5) * 2,
+                   3)
+             for i in range(int(duration / hop) + 1)]
+    energy = {"hop_s": hop, "energy": swell, "low": swell, "mid": swell,
+              "high": swell}
+    return fx.Grid(beats, beats[::4], bpm, notes=notes, chords=chords,
+                   energy=energy)
 
 
 def _preview_palette(body: dict) -> list:
@@ -897,6 +905,19 @@ def _effects_from(body: dict) -> list[dict]:
     if not isinstance(raw, list) or not raw:
         raise ValueError("send an effect (or a list of them) to preview")
     return raw[:24]
+
+
+async def h_director_check(request: web.Request) -> web.Response:
+    """Walk the links between BRight and Claude and report each one.
+
+    A job like every other Claude call, because the probe waits on the
+    same listener a show does. `available()` answers one of six
+    questions and the other five are why "it still fails" can survive
+    several fixes.
+    """
+    return _claude_job("director-check",
+                       lambda: asyncio.to_thread(director_check.check),
+                       lambda result: result)
 
 
 def _claude_job(name: str, run, shape) -> web.Response:
@@ -2316,6 +2337,7 @@ def build_app() -> web.Application:
     app.router.add_delete("/api/parties/{name}", h_party_remove)
     # Shows (the bridge forwards bright.* service calls to /api/show/*)
     app.router.add_post("/api/show/compile", h_show_compile)
+    app.router.add_post("/api/director/check", h_director_check)
     app.router.add_post("/api/show/start_show", h_show_start)
     app.router.add_post("/api/show/metronome", h_show_start)
     app.router.add_post("/api/show/stop_show", h_show_stop)

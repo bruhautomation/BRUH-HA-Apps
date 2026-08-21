@@ -644,6 +644,31 @@
 
   $("btnShowsRefresh").addEventListener("click", loadShows);
 
+  // "It still fails" is not a diagnosis, and until this button existed
+  // there was no way to get one: the Claude director is a file handed to
+  // another add-on, run by a shell listener, through a CLI with its own
+  // login. Every layer answered "fine" about the part it could see. This
+  // walks the links and names the first one that is broken.
+  $("btnDirectorCheck").addEventListener("click", async () => {
+    const status = $("showStatus");
+    const button = $("btnDirectorCheck");
+    button.disabled = true;
+    status.textContent = "Checking the link to Claude…";
+    try {
+      const result = await claudeJob("api/director/check", {}, (seconds) => {
+        status.textContent = "Checking the link to Claude — " + seconds + "s…";
+      });
+      const lines = (result.steps || []).map(
+        (s) => (s.ok ? "✓ " : "✕ ") + s.step + ": " + s.detail);
+      if (result.ok && result.note) lines.push(result.note);
+      status.textContent = lines.join("  |  ");
+    } catch (error) {
+      status.textContent = "Could not run the check: " + error.message;
+    } finally {
+      button.disabled = false;
+    }
+  });
+
   $("showList").addEventListener("click", (event) => {
     // Anywhere but the buttons opens that track's show file. The list and
     // the editor are one thing seen twice, the same way the light map and
@@ -2437,6 +2462,57 @@
       // effect is what it looks like, and making somebody find the button
       // is making them ask twice.
       $("btnFxPreview").click();
+    } catch (error) {
+      status.textContent = error.message;
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  // The other half of "Describe it": knowing what to ask for assumes you
+  // already know what is possible in your own room, which is the thing
+  // somebody with a new light map most reliably does not. The server has
+  // answered this since the feature shipped — it simply had no button,
+  // which is a feature nobody can reach.
+  $("btnFxInvent").addEventListener("click", async () => {
+    const status = $("fxAskStatus");
+    const list = $("fxIdeas");
+    const button = $("btnFxInvent");
+    button.disabled = true;
+    list.innerHTML = "";
+    status.textContent = "Claude is looking at your room…";
+    try {
+      const body = await claudeJob("api/effects/invent", { count: 4 },
+        (seconds) => {
+          status.textContent = "Claude is looking at your room — " +
+            seconds + "s…";
+        });
+      const ideas = body.effects || [];
+      status.textContent = ideas.length
+        ? "Nothing is saved — open one to put it in the form below."
+        : "Claude had no ideas for this room.";
+      for (const idea of ideas) {
+        const row = document.createElement("div");
+        row.className = "row";
+        row.innerHTML = '<div class="row-main"><strong></strong>' +
+          '<span class="muted small"></span></div>' +
+          '<div class="row-actions">' +
+          '<button class="btn small" data-act="use">Open it</button></div>';
+        row.querySelector("strong").textContent =
+          (idea.name || idea.type) + " (" + idea.type + ")";
+        row.querySelector(".muted").textContent = idea.why || "";
+        row.querySelector('[data-act="use"]').addEventListener(
+          "click", () => {
+            // `why` is ours, not the catalog's — it must not ride into
+            // the form and out again into a saved effect.
+            const { why, ...effect } = idea;
+            putEffectInForm(effect);
+            status.textContent = "Loaded. Preview it, change anything, " +
+              "then save it — nothing has been saved yet.";
+            $("btnFxPreview").click();
+          });
+        list.appendChild(row);
+      }
     } catch (error) {
       status.textContent = error.message;
     } finally {

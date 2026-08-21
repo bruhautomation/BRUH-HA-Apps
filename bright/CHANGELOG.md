@@ -5,6 +5,121 @@ All notable changes to the **BRight** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.17.0
+
+Colour that moves without flickering, and lights that follow the audio.
+
+### Added
+
+- **BRight speaks `SetWaveformOptional`** (LIFX message 119), and it
+  matters more than a protocol line sounds. Every effect BRight had ran on
+  `SetWaveform`, which carries a whole colour and moves all of it — so a
+  measured audit of the catalog found **only two of seventeen effects
+  moving brightness through more than two levels**, and not one able to
+  move colour while leaving the level alone. The vocabulary was "which
+  light is bright, and when". This message is the same engine with a
+  per-channel mask, and it still runs on the bulb for one packet however
+  long it lasts.
+- **`colour_drift`** — the bulb walks its hue around the wheel and the
+  brightness never moves. Measured on the simulator: 356° of travel with
+  the level frozen to three decimal places. The only motion a candle can
+  join, and the ground a whole quiet section can sit on.
+- **`saturate`** — saturation breathes, washing the room out toward white
+  and back with the level untouched. A chorus lifting without getting
+  brighter.
+- **`level`** — brightness follows how loud the song actually *is*,
+  moment to moment. It reads the analyzer's own 20Hz loudness envelope,
+  which until now was used only to find where the sections and drops are:
+  the song's real shape, instant by instant, and nothing was following it.
+  Pick a band and the lights breathe with the kick, the vocal or the
+  shimmer; `gamma` decides whether the quiet parts stay alive or fall
+  away, which is what turns a meter into a lighting choice.
+- **The automatic show uses all three**: colour drift through the intros
+  and outros (where nothing else is running a bulb routine to cancel), and
+  the strip breathing with the bass through the verses and choruses when
+  something else is keeping time.
+
+### Changed
+
+- **The director's brief was audited as a document rather than added to,
+  and it was hiding four capabilities and one hard limit.** An effect has
+  always been able to carry its own `start`/`end` inside a scene — the
+  compiler has supported it from the beginning and the brief never said
+  so, which meant every scene the director wrote was one texture from end
+  to end. `"base": false` (a scene that layers over the one before rather
+  than washing the room) and `"respect_roles": false` were equally
+  invisible. And the per-bulb rate budget — 18 messages a second, past
+  which BRight **refuses the whole show** and falls back to the
+  algorithmic director — was never mentioned at all, so the one constraint
+  that can throw the work away was the one thing the model could not see.
+  All five are in the contract now, with which effects actually spend
+  messages and which cost one however long they run.
+- **The brief carries a worked example and a list of anti-patterns.** One
+  scene written well — four effects owning four different sets of lights,
+  a windowed build in its last eight seconds, `base: false` so it grows
+  out of the section before — followed by what the example is doing and
+  why. `test_the_worked_example_actually_compiles` pulls that scene back
+  out of the live prompt, validates it and compiles it inside the rate
+  budget, because a broken example teaches the model to write broken
+  scripts and does it convincingly.
+
+### Fixed
+
+- **Two bulb routines on one light silently cancelled each other.** A LIFX
+  bulb runs exactly one waveform at a time — sending a second is how you
+  end the first, which is precisely how BRight's own "stop the lights"
+  works. Stacking `pulse` under `breathe` on the same fixture was
+  therefore never a layered effect, and from a sofa it reads as an effect
+  that does nothing. The compiler now says so on that effect's row,
+  naming what it is replacing, and the Claude director is told the rule in
+  its brief. It is reported rather than refused: a stab interrupting a
+  pulse on the drop is a real technique.
+
+## 0.16.2
+
+Why it still failed, and a button that answers the question.
+
+### Fixed
+
+- **A stopped brAIn looked exactly like a working one.** `available()` —
+  the only thing BRight checked — tests whether `/config/.brain/tasks` is
+  a directory, and that directory is created by brAIn's automation
+  listener at startup and then **outlives it**. A brAIn that is not
+  running, or running with its Automation integration switched off,
+  leaves the folder behind, so every Claude compile sailed past the check
+  and then sat in silence until the wait expired: ten minutes of spinner
+  and a message blaming a timeout, which sends you to look at the slowest
+  thing in the system when the truth is that nobody was listening at all.
+  The listener CLAIMS a task by renaming it before it does any work, so
+  an un-renamed file is proof rather than a guess — that is caught in
+  **30 seconds** now and the message names the switch to turn on. A task
+  that *was* claimed and never answered is a different sentence pointing
+  at brAIn's own log, because it is a different problem.
+- **A candle could be asked to follow the melody.** `melody` lands a note
+  every few hundred milliseconds with a 90ms fade, which is flickering
+  however musical its reason, and a candle is documented as "glows and
+  drifts, never strobes". It joins the harsh set that `respect_roles`
+  keeps off candles. `harmony` deliberately does not: a crossfade over a
+  bar or two is exactly what a candle should do, which is why the
+  automatic director gives it the candles on purpose.
+
+### Added
+
+- **"Test the Claude director"** on the Shows tab (`director_check.py`,
+  `POST /api/director/check`). The Claude director is a file handed to a
+  different add-on, picked up by a shell listener, run through a CLI with
+  its own login — six things have to be true and BRight could see one of
+  them. This walks the links (brAIn → its task folder → BRight can write
+  there → something claims a task → something answers it → there are
+  lights to write a show for) and stops at the first one that is broken,
+  the same shape `playback_check` uses for audio. It runs a real trivial
+  round trip rather than describing one, because a test of the actual
+  path is the only kind worth trusting.
+- **"Or suggest some" on the Effects tab.** Claude proposing effects
+  built for your light map has been implemented, tested and reachable by
+  API since it shipped — and had no button anywhere, which is a feature
+  nobody can use.
+
 ## 0.16.1
 
 Asking Claude for a show is a job, not a request.

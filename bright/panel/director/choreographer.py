@@ -79,6 +79,17 @@ def _effects_for(kind: str, roles: set[str], movers: list[str],
                 "from_brightness": 0.12 if kind == "intro" else 0.45,
                 "to_brightness": 0.45 if kind == "intro" else 0.08,
                 "curve": "ease_in_out", "steps": 12}})
+        # Colour that travels while the level does not. It goes here and
+        # not in the busier sections for a reason that is mechanical
+        # rather than aesthetic: a bulb runs ONE waveform at a time, and
+        # every other section already has a pulse or a breathe on these
+        # lights — a drift on top would simply cancel it. An intro's fade
+        # is made of `set` actions, so this layers cleanly over it.
+        effects.append({
+            "type": "colour_drift", "name": f"{kind} colour",
+            "select": mover_select,
+            "params": {"period_beats": 24, "span": 55 if kind == "intro"
+                       else -45, "shape": "sine"}})
         return effects
 
     if kind == "quiet":
@@ -168,8 +179,22 @@ def _musical_layers(kind: str, roles: set, movers: list,
             "params": {"brightness": 0.45 if kind in ("intro", "outro")
                        else 0.55,
                        "fade_ms": 1600, "spread": "single"}})
-    lead = next((r for r in ("lamp", "downlight", "strip") if r in roles),
-                None)
+    # The strip breathing with the bass, where there is a strip and
+    # something else is carrying the beat. `level` follows the measured
+    # loudness rather than the grid, so this is the room reacting to the
+    # actual audio — and on the low band it is the kick, which is what a
+    # strip along a wall is for. Only when the strip is not the ONLY
+    # mover, because a room whose single moving light is doing this has
+    # nothing keeping time.
+    if kind in ("mid", "peak") and "strip" in roles and len(movers) > 1:
+        out.append({
+            "type": "level", "name": "bass breath",
+            "select": {"roles": ["strip"]},
+            "params": {"band": "low", "floor": 0.15,
+                       "ceiling": 0.9 if kind == "peak" else 0.7,
+                       "step_beats": 0.5, "gamma": 1.4, "fade_ms": 150}})
+
+    lead = next((r for r in ("lamp", "downlight") if r in roles), None)
     if kind in ("quiet", "mid") and lead:
         out.append({
             "type": "melody", "name": "the tune",

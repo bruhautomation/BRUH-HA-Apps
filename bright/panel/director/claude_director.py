@@ -94,6 +94,36 @@ An <effect> is:
 name is left exactly as the scene put it. An empty `select` means all of
 them. Only use roles the fixture list below actually has.
 
+FOUR THINGS THE SHAPE ABOVE DOES NOT SHOW, and every one of them is a
+tool you will want:
+
+1. **An effect can carry its own `"start"` and `"end"`** (seconds), and
+   then it runs only for that stretch of its scene instead of all of it.
+   This is how you write "strobe for the last four bars", "the sweep
+   arrives halfway through", "hold, then move". A scene is a container,
+   not a straitjacket — without this every scene is one texture from end
+   to end, which is the single most common way a show reads as flat.
+2. **`"base": false` on a scene** stops it washing every light at its
+   start, so the room stays exactly as the previous scene left it and
+   your effects layer over that. Use it when a section should evolve out
+   of the one before rather than cut.
+3. **`"respect_roles": false` on an effect** lets it drive a fixture its
+   role would normally protect — a candle in a strobe. It is the
+   override for when you mean it. Leaving it out is right nearly always.
+4. **A scene's `brightness` is the ground everything moves against**, and
+   effects are read relative to it. A scene at 0.9 with a pulse on top
+   has nowhere to go; a scene at 0.45 does.
+
+THE ONE HARD LIMIT: a LIFX bulb accepts about 20 messages a second and
+BRight refuses to compile a show that exceeds 18 at any single bulb. Only
+STEPPING effects spend messages (chase, sparkle, theater, melody, level,
+colour_cycle, rainbow, fade, build) — one per light per step. The bulb
+routines cost ONE message each however long they run. So: a chase at
+`step_beats: 0.125` across three lights at 128bpm is about 21/s at one
+bulb and the whole show is REFUSED — not that effect, the show. Keep
+`step_beats` at 0.25 or slower unless the selection is wide, and do not
+stack three stepping effects on the same light.
+
 TYPES and their params:
 %s
 
@@ -101,10 +131,69 @@ Types and parameter names are EXACTLY as listed. Out-of-range numbers are
 clamped rather than rejected, and any parameter you leave out takes its
 default — write the two or three that matter and skip the rest.
 
+ONE RULE ABOUT LAYERING, and it is physics rather than taste. These
+effects are run BY THE BULB: `pulse`, `strobe`, `breathe`, `sweep`, `stab`, `colour_drift`, `saturate`. A bulb runs exactly one of them at a
+time, so two overlapping on the SAME light is not a layered effect — the
+later one cancels the earlier, and from across the room that reads as an
+effect that mysteriously does nothing. Give them different lights, or
+different windows. Everything else layers freely, and layering a bulb
+routine with those is exactly right: a pulse on the lamps under a chase
+across them is two different things happening at once.
+
+`colour_drift` and `saturate` are the two that move COLOUR while leaving
+the brightness alone, which nothing else here can do. They are what a
+quiet section wants — the room changing without anything flickering —
+and they are the only motion a candle can join.
+
 The `//` notes above are ANNOTATION, explaining the shape to you. JSON has
 no comments: your answer must be strict JSON — no `//`, no `/* */`, no
 trailing comma before a `}` or `]`, and no `<angle brackets>`, which mark
-where a value goes rather than being one."""
+where a value goes rather than being one.
+
+ONE SCENE, WRITTEN WELL — not a template to copy, an example of the
+density and the thinking. This is a verse in a room with two lamps, a
+strip and candles:
+
+{
+  "start": 48.0, "end": 76.0, "mood": "simmer", "base": false,
+  "palette": [[268, 0.75], [212, 0.6], [318, 0.5]],
+  "brightness": 0.42,
+  "effects": [
+    {"type": "harmony", "name": "chords on the candles",
+     "select": {"roles": ["candle"]},
+     "params": {"brightness": 0.4, "fade_ms": 1800}},
+    {"type": "melody", "name": "the tune, on the lamps",
+     "select": {"roles": ["lamp"]},
+     "params": {"hue_spread": 0.55, "voices": 1}},
+    {"type": "level", "name": "strip breathes with the kick",
+     "select": {"roles": ["strip"]},
+     "params": {"band": "low", "floor": 0.15, "ceiling": 0.7,
+                "gamma": 1.4}},
+    {"type": "build", "name": "lift into the chorus",
+     "start": 68.0, "end": 76.0,
+     "select": {"roles": ["lamp", "strip"]},
+     "params": {"from_brightness": 0.35, "to_brightness": 0.9,
+                "curve": "exp"}}
+  ]
+}
+
+Read what that scene is doing. `base: false` — it grows out of the
+section before it. Four effects and each one owns DIFFERENT lights, so
+nothing is fighting: harmony has the candles, the tune has the lamps, the
+kick has the strip. The build is windowed to the last eight seconds, so
+the verse is one thing and then becomes another. Nothing steps faster
+than the music. And every choice is about this room — it names the roles
+that exist in it.
+
+WHAT MAKES A SHOW BAD, so you can avoid it deliberately:
+- One texture per section, end to end, changing only at the boundaries.
+- Every effect selecting every light, so the room only ever does one
+  thing and effects overwrite each other.
+- Chases everywhere. A chase is one idea; four chases is one idea four
+  times.
+- The peaks doing everything and the verses doing nothing. Most of a
+  song is not its chorus.
+- Colour chosen at random rather than from the scene's palette."""
 
 
 def _catalog_lines() -> str:
@@ -348,10 +437,34 @@ def _digest(analysis: dict, fixtures: list[dict],
 # ---------------------------------------------------------------------------
 # The task round-trip
 # ---------------------------------------------------------------------------
+# How long to wait for brAIn to CLAIM a task before concluding nothing is
+# listening. Its listener claims by renaming `<id>.json` to `<id>.work.<pid>`
+# the moment it sees the file — inotify when available, a 5s poll otherwise
+# — so thirty seconds is six fallback cycles and not a race.
+CLAIM_GRACE_S = 30
+
+
 def _run_task(prompt: str, timeout_s: float,
               sleep=time.sleep, clock=time.monotonic) -> str:
     """One brAIn automation task: write the request, poll for the answer.
-    Blocking — build_show already runs in a worker thread."""
+    Blocking — build_show already runs in a worker thread.
+
+    Two failures live here and they are NOT the same, which is the whole
+    reason this function watches the task file as well as the result
+    directory. `available()` only says the tasks directory exists, and
+    that directory outlives the listener that made it — so a brAIn whose
+    Automation integration is switched off (or which is simply not
+    running) looks exactly like a working one until the wait expires. It
+    used to cost ten minutes of spinner and then a message blaming a
+    timeout, which sends somebody to look at the slowest thing in the
+    system when the truth is that nobody was listening at all.
+
+    brAIn's listener CLAIMS a task by renaming it out of the way before
+    it does any work, so an un-renamed file is a definitive answer: no
+    listener. That one is caught in thirty seconds and says what to
+    switch on. A claimed task that never answers is a different sentence,
+    and it points at brAIn's own log, where the reason will be.
+    """
     task_id = uuid.uuid4().hex
     task = {
         "id": task_id,
@@ -371,7 +484,9 @@ def _run_task(prompt: str, timeout_s: float,
     scratch.replace(task_path)
 
     result_path = RESULTS_DIR / f"{task_id}.json"
-    deadline = clock() + timeout_s
+    started = clock()
+    deadline = started + timeout_s
+    claimed = False
     while clock() < deadline:
         if result_path.is_file():
             try:
@@ -385,9 +500,25 @@ def _run_task(prompt: str, timeout_s: float,
                 return text
             raise RuntimeError(
                 f"brAIn task ended {payload.get('status')!r}: {text[:200]}")
+        if not claimed:
+            # Renamed out of the way = the listener has it. Checked before
+            # the grace expires so a fast claim is never mistaken for a
+            # slow one.
+            if not task_path.exists():
+                claimed = True
+            elif clock() - started > CLAIM_GRACE_S:
+                task_path.unlink(missing_ok=True)
+                raise RuntimeError(
+                    f"brAIn never picked this up ({CLAIM_GRACE_S}s). Its "
+                    f"task folder is there but nothing is reading it: open "
+                    f"the brAIn add-on and check it is running with its "
+                    f"Automation integration switched on — that listener is "
+                    f"what answers BRight.")
         sleep(POLL_S)
     task_path.unlink(missing_ok=True)  # don't leave a stale ask behind
-    raise RuntimeError(f"brAIn did not answer within {int(timeout_s)}s")
+    raise RuntimeError(
+        f"brAIn picked this up but did not answer within {int(timeout_s)}s "
+        f"— its own log says why (Settings → Add-ons → brAIn → Log).")
 
 
 def _decomment(text: str) -> str:

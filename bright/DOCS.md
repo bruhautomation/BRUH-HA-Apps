@@ -190,8 +190,28 @@ Every effect has four parts:
 | `stab` | One hit, at one moment. |
 | `blackout` | Take the selected lights down. Silence is a lighting cue. |
 | `melody` | Follow the tune. Each note lands on the next light along and its pitch picks the colour, so a rising phrase climbs across the room. |
+| `colour_drift` | The colour travels and the brightness never moves — the bulb walks its hue around the wheel on its own. The only motion a candle can join. |
+| `saturate` | Saturation breathes: the room washes out toward white and back, with the level untouched. |
+| `level` | Brightness follows how loud the song actually **is**, moment to moment — the audio itself, not the beat grid. Pick a band and the lights breathe with the kick, the vocal or the shimmer. |
 | `harmony` | The palette follows the chords: the selection crossfades on every harmony change, so the room turns over with the song rather than with its sections. |
 | `aux` | Party lights and lasers: on, off, or flashed on the beat. |
+
+**One rule about layering, and it is physics rather than taste.** `pulse`,
+`strobe`, `breathe`, `sweep`, `stab`, `colour_drift` and `saturate` are run
+*by the bulb* — that is the sync trick, and it is why they cost one packet
+however long they run. A LIFX bulb runs exactly **one** of them at a time,
+so two overlapping on the same light is not a layered effect: the later one
+cancels the earlier, and from across a room that reads as an effect that
+mysteriously does nothing. Give them different lights or different windows.
+Everything else layers freely — a pulse on the lamps under a chase across
+them is two different things at once, which is the good case. The show
+editor says so on the effect's own row when a script does it anyway.
+
+`colour_drift` and `saturate` are the only two effects that move **colour
+without touching brightness**. Nothing else here can: an ordinary waveform
+carries a whole colour and moves all of it, so before these existed every
+effect in BRight was ultimately a brightness effect. They are what a quiet
+section wants, and the only motion a candle is allowed to join.
 
 `melody` and `harmony` are the two that need the song's *musical* analysis
 (see below) rather than just its beat grid. On the Effects tab they preview

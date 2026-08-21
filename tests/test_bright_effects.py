@@ -61,7 +61,16 @@ def grid(bpm: float = 120.0, seconds: float = 16.0,
     chords = [{"t": round(i * beat * 4, 4), "name": "C", "root": i * 5 % 12,
                "quality": "maj" if i % 2 else "min", "confidence": 0.9}
               for i in range(int(seconds / (beat * 4)) + 1)]
-    return fx.Grid(beats, beats[::4], bpm, notes=notes, chords=chords)
+    # A stand-in loudness envelope at the analyzer's own 20Hz: two bars
+    # of swell and fall, so `level` has a shape to follow on the bench.
+    hop = 0.05
+    frames = int(seconds / hop) + 1
+    swell = [round(0.25 + 0.7 * abs(((i * hop / (beat * 4)) % 1.0) - 0.5) * 2, 3)
+             for i in range(frames)]
+    energy = {"hop_s": hop, "energy": swell, "low": swell,
+              "mid": swell, "high": swell}
+    return fx.Grid(beats, beats[::4], bpm, notes=notes, chords=chords,
+                   energy=energy)
 
 
 PALETTE = [[200, 0.9], [300, 0.8], [40, 0.7]]
@@ -558,3 +567,206 @@ class TestTheEffectsThatFollowTheMusic(unittest.TestCase):
         self.assertLessEqual(len(kept), fx.MAX_STEPS)
         self.assertEqual(sorted(kept, key=lambda n: n["t"]), kept,
                          "the cap reordered the tune")
+
+
+class TestRoleMannersCoverTheMusicalEffects(unittest.TestCase):
+    """A candle is ambience: "Glows and drifts. Never strobes." A melody
+    note lands every few hundred milliseconds — musical, and still a
+    flicker. Harmony is the opposite and keeps its candles."""
+
+    def test_a_candle_is_not_asked_to_follow_the_tune(self):
+        fixtures = lamps(2) + [CANDLE]
+        actions = render({"type": "melody", "name": "tune"}, fixtures)
+        self.assertTrue(actions)
+        touched = {a["fixture"]["role"] for a in actions}
+        self.assertNotIn("candle", touched)
+
+    def test_a_candle_does_follow_the_chords(self):
+        fixtures = lamps(2) + [CANDLE]
+        actions = render({"type": "harmony", "name": "chords"}, fixtures)
+        touched = {a["fixture"]["role"] for a in actions}
+        self.assertIn("candle", touched)
+
+    def test_an_effect_that_means_it_can_still_own_the_candle(self):
+        """`respect_roles: false` is the override, same as every other
+        harsh effect — the rule is a default, not a wall."""
+        fixtures = [CANDLE]
+        actions = render({"type": "melody", "name": "tune",
+                          "respect_roles": False}, fixtures)
+        self.assertTrue(actions)
+
+
+class TestColourMovesWithoutTheBrightnessMoving(unittest.TestCase):
+    """The gap the audit found: every effect in the catalog modulated
+    brightness, because `SetWaveform` carries a whole colour and moves all
+    of it. `SetWaveformOptional` is the same engine with a channel mask,
+    and these two are the only motion a room can make without flickering.
+    """
+
+    def _room_over_time(self, effect, seconds=8.0):
+        cast = lamps(2)
+        acts = fx.actions_for(fx.clean_effect(effect), cast,
+                              grid(seconds=seconds), window=(0.0, seconds),
+                              palette=PALETTE, base_brightness=0.55)
+        sim = fx.simulate(acts, cast, duration_s=seconds, fps=10)
+        return ([f[0][0] for f in sim["frames"]],
+                [f[0][1] for f in sim["frames"]],
+                [f[0][2] for f in sim["frames"]])
+
+    def test_colour_drift_travels_the_hue_and_freezes_the_level(self):
+        hues, _, bris = self._room_over_time(
+            {"type": "colour_drift", "name": "d",
+             "params": {"period_beats": 4, "span": 120}})
+        self.assertGreater(max(hues) - min(hues), 60,
+                           "the colour did not travel")
+        self.assertLess(max(bris) - min(bris), 0.001,
+                        "brightness moved — this effect exists not to")
+
+    def test_saturate_moves_only_the_saturation(self):
+        _, sats, bris = self._room_over_time(
+            {"type": "saturate", "name": "s",
+             "params": {"period_beats": 4, "to_saturation": 0.0}})
+        self.assertGreater(max(sats) - min(sats), 0.15)
+        self.assertLess(max(bris) - min(bris), 0.001)
+
+    def test_one_packet_carries_the_whole_travel(self):
+        """Same economy as every other bulb routine: the motion is run by
+        the bulb, so the wire sees one message however long it runs."""
+        acts = render({"type": "colour_drift", "name": "d"}, lamps(3))
+        self.assertEqual(3, len(acts), "one packet per bulb, not per step")
+        self.assertEqual(("h",), acts[0]["channels"])
+
+    def test_the_wire_gets_the_optional_waveform_and_only_then(self):
+        from lifx import packets as pk
+
+        cast = lamps(1)
+        analysis = {"beats": [i * 0.5 for i in range(20)], "bpm": 120,
+                    "tags": {"duration": 8}, "duration_s": 8}
+        def _type_of(effect):
+            show = compiler.compile_show(
+                {"version": 2, "scenes": [{
+                    "start": 0, "end": 8, "mood": "m", "palette": PALETTE,
+                    "brightness": 0.5, "base": False, "effects": [effect]}],
+                 "moments": []}, cast, analysis, source=7)
+            import base64
+            return pk.parse_header(
+                base64.b64decode(show["cues"][0]["payload_b64"]))["type"]
+
+        self.assertEqual(pk.SET_WAVEFORM_OPTIONAL,
+                         _type_of({"type": "colour_drift", "name": "d"}))
+        # An ordinary waveform effect keeps the ordinary message — nothing
+        # already compiled changes shape.
+        self.assertEqual(pk.SET_WAVEFORM,
+                         _type_of({"type": "breathe", "name": "b"}))
+
+
+class TestLevelFollowsTheAudio(unittest.TestCase):
+    """The other half of the audit: only two effects moved brightness
+    through more than two values, and none of them read the song. This one
+    has no levels of its own — it reads the analyzer's loudness envelope."""
+
+    def _bench(self, energy):
+        beats = [round(i * 0.5, 3) for i in range(33)]
+        return fx.Grid(beats, beats[::4], 120.0, energy=energy)
+
+    def test_brightness_tracks_the_envelope(self):
+        # Quiet for four beats, loud for four: the lights must follow.
+        hop = 0.05
+        quiet = [0.05] * int(2.0 / hop)
+        loud = [0.95] * int(2.0 / hop)
+        g = self._bench({"hop_s": hop, "energy": quiet + loud})
+        acts = fx.actions_for(
+            fx.clean_effect({"type": "level", "name": "lv",
+                             "params": {"step_beats": 1, "floor": 0.0,
+                                        "ceiling": 1.0}}),
+            lamps(1), g, window=(0.0, 4.0), palette=PALETTE)
+        early = [a["bri"] for a in acts if a["t"] < 1.5]
+        late = [a["bri"] for a in acts if a["t"] >= 2.0]
+        self.assertTrue(early and late)
+        self.assertLess(max(early), 0.3, "stayed bright through the quiet")
+        self.assertGreater(min(late), 0.6, "did not lift for the loud part")
+
+    def test_a_band_can_be_chosen(self):
+        hop = 0.05
+        g = self._bench({"hop_s": hop, "energy": [0.5] * 80,
+                         "low": [0.9] * 80, "high": [0.1] * 80})
+        def level_of(band):
+            acts = fx.actions_for(
+                fx.clean_effect({"type": "level", "name": "l",
+                                 "params": {"band": band, "floor": 0.0,
+                                            "ceiling": 1.0}}),
+                lamps(1), g, window=(0.0, 4.0), palette=PALETTE)
+            return acts[0]["bri"]
+        self.assertGreater(level_of("low"), level_of("high"))
+
+    def test_gamma_shapes_the_mapping(self):
+        hop = 0.05
+        g = self._bench({"hop_s": hop, "energy": [0.5] * 80})
+        def level_of(gamma):
+            acts = fx.actions_for(
+                fx.clean_effect({"type": "level", "name": "l",
+                                 "params": {"gamma": gamma, "floor": 0.0,
+                                            "ceiling": 1.0}}),
+                lamps(1), g, window=(0.0, 4.0), palette=PALETTE)
+            return acts[0]["bri"]
+        self.assertGreater(level_of(0.5), level_of(2.0),
+                           "gamma below 1 must lift the quiet parts")
+
+    def test_a_track_with_no_envelope_renders_nothing(self):
+        g = fx.Grid([0.0, 0.5, 1.0], [0.0], 120.0)
+        self.assertFalse(g.has_energy)
+        acts = fx.actions_for(fx.clean_effect({"type": "level", "name": "l"}),
+                              lamps(1), g, window=(0.0, 4.0), palette=PALETTE)
+        self.assertEqual([], acts)
+
+
+class TestOneWaveformPerBulb(unittest.TestCase):
+    """A LIFX bulb runs exactly one waveform at a time — sending a second
+    is how you end the first. Two overlapping on one light is the later
+    cancelling the earlier, which from a sofa reads as an effect that
+    mysteriously does nothing."""
+
+    def _rows(self, effects):
+        analysis = {"beats": [i * 0.5 for i in range(40)], "bpm": 120,
+                    "tags": {"duration": 16}, "duration_s": 16}
+        return compiler.script_actions(
+            {"version": 2, "scenes": [{
+                "start": 0, "end": 16, "mood": "m", "palette": PALETTE,
+                "brightness": 0.5, "base": False, "effects": effects}],
+             "moments": []}, lamps(3), analysis)["effects"]
+
+    def test_two_routines_on_one_light_are_reported(self):
+        rows = self._rows([{"type": "breathe", "name": "first"},
+                           {"type": "colour_drift", "name": "second"}])
+        clash = [r for r in rows if r.get("note")]
+        self.assertTrue(clash, "stacking two bulb routines said nothing")
+        self.assertIn("first", clash[0]["note"])
+        self.assertIn("one waveform at a time", clash[0]["note"])
+
+    def test_routines_on_different_lights_are_fine(self):
+        cast = lamps(3)
+        rows = self._rows([
+            {"type": "breathe", "name": "a",
+             "select": {"ids": [cast[0]["id"]]}},
+            {"type": "colour_drift", "name": "b",
+             "select": {"ids": [cast[1]["id"]]}}])
+        self.assertEqual([], [r for r in rows if r.get("note")])
+
+    def test_a_stepping_effect_never_clashes(self):
+        rows = self._rows([{"type": "breathe", "name": "a"},
+                           {"type": "chase", "name": "b"}])
+        self.assertEqual([], [r for r in rows if r.get("note")])
+
+    def test_the_catalog_agrees_with_itself_about_which_are_routines(self):
+        """`BULB_ROUTINES` is what the compiler and the brief both read.
+        An effect that emits a wave action and is not on the list would
+        clash silently."""
+        for name in fx.CATALOG:
+            if fx.CATALOG[name]["channel"] != "light":
+                continue
+            acts = render({"type": name, "name": name})
+            emits_wave = any(a["kind"] == "wave" for a in acts)
+            with self.subTest(effect=name):
+                self.assertEqual(emits_wave, name in fx.BULB_ROUTINES,
+                                 f"{name} emits_wave={emits_wave} but "
+                                 f"BULB_ROUTINES says otherwise")
