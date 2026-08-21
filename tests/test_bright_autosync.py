@@ -10,9 +10,9 @@ import io
 import os
 import sys
 import unittest
+import unittest.mock as mock
 import wave
 from pathlib import Path
-from unittest import mock
 
 BASE_DIR = os.path.join(os.path.dirname(__file__), "..")
 PANEL_DIR = os.path.join(BASE_DIR, "bright", "panel")
