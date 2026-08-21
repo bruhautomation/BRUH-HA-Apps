@@ -899,6 +899,46 @@ def _effects_from(body: dict) -> list[dict]:
     return raw[:24]
 
 
+def _claude_job(name: str, run, shape) -> web.Response:
+    """Start a Claude run as a job and hand back its id.
+
+    Every route that asks Claude for something goes through here, because
+    all four of them share one hard limit: **a Claude run is longer than
+    the request that asked for it is allowed to live.** A show script is
+    one long considered answer and can take minutes; ingress and Nabu
+    Casa cut a request well before that, and what reaches the browser is
+    not the panel's error message but the *absence* of a reply — Safari
+    calls it `load failed`, Chrome `Failed to fetch`. So the compile
+    button reported a network error about a director that was still
+    working, and would go on to succeed and save the show nobody was
+    told about.
+
+    This is the same move `jobs.py` was written for and says so in its
+    own docstring; the Library's analyze pass has always used it. The
+    Claude routes awaited inline because when they were written the
+    director was quicker — a smaller brief, a smaller model — which is
+    exactly how a latent limit becomes a bug months later without a line
+    of the code that breaks changing.
+
+    `run` is called with no arguments and returns an awaitable; `shape`
+    turns its result into the JSON body the panel expects, and runs
+    inside the job so a slow render is not charged to the poller.
+    """
+    def _work():
+        async def _go():
+            return shape(await run())
+        return _go()
+
+    job = jobs.start(name, _work)
+    # 409 for a second press while the first is still thinking: one
+    # Claude run at a time per show, and the live job's id comes back so
+    # the panel can follow the one that is already going rather than
+    # reporting a collision at somebody who pressed twice.
+    status = 409 if job.get("already") else 202
+    return web.json_response({"job": job["id"], "running": True},
+                             status=status)
+
+
 async def h_effects_catalog(request: web.Request) -> web.Response:
     """Everything the builder needs to draw itself, in one read."""
     fixtures = _map_fixtures()
@@ -939,15 +979,13 @@ async def h_effect_describe(request: web.Request) -> web.Response:
                       "brAIn's task surface, and brAIn is not installed on "
                       "this Home Assistant. Everything else in this tab "
                       "works without it."}, status=409)
-    try:
-        effect = await asyncio.to_thread(
-            claude_director.write_effect, description, fixtures)
-    except (ValueError, RuntimeError) as exc:
-        # 409 and not 500: nothing is broken — Claude was asked and either
-        # could not be reached or wrote something unusable, and the sentence
-        # says which.
-        return web.json_response({"error": str(exc)}, status=409)
-    return web.json_response({"effect": effect})
+    # Started, not awaited — see `_claude_job`. A minute of Claude is
+    # longer than the request that asked for it is allowed to live.
+    return _claude_job("effect-describe",
+                       lambda: asyncio.to_thread(
+                           claude_director.write_effect, description,
+                           fixtures),
+                       lambda effect: {"effect": effect})
 
 
 async def h_effect_invent(request: web.Request) -> web.Response:
@@ -977,12 +1015,10 @@ async def h_effect_invent(request: web.Request) -> web.Response:
                       "and brAIn is not installed on this Home Assistant. "
                       "Everything else in this tab works without it."},
             status=409)
-    try:
-        effects = await asyncio.to_thread(
-            claude_director.invent_effects, fixtures, count)
-    except (ValueError, RuntimeError) as exc:
-        return web.json_response({"error": str(exc)}, status=409)
-    return web.json_response({"effects": effects})
+    return _claude_job("effect-invent",
+                       lambda: asyncio.to_thread(
+                           claude_director.invent_effects, fixtures, count),
+                       lambda effects: {"effects": effects})
 
 
 async def h_effects_preview(request: web.Request) -> web.Response:
@@ -1161,24 +1197,23 @@ async def h_show_compile(request: web.Request) -> web.Response:
                       "— the Claude director runs through brAIn's task "
                       "surface. Install brAIn or switch to 'auto'."},
             status=409)
-    try:
-        show = await asyncio.to_thread(
-            director_build.build_show, hash_hex, ENGINE.devices,
-            ENGINE.source, mode, writer, vibe)
-    except CompileError as exc:
-        return web.json_response({"error": str(exc)}, status=422)
-    except ValueError as exc:
-        return web.json_response({"error": str(exc)}, status=409)
-    return web.json_response({
-        "tier": show["tier"],
-        "palette": show.get("palette_name"),
-        "stats": show["stats"],
-        # The whole point of the override: a caller that asked for Claude
-        # has to be told whether it got Claude, in the same answer. A show
-        # tagged `algorithmic` with no reason beside it is how a week of
-        # silent fallbacks went unnoticed.
-        "director": show.get("director"),
-    })
+    def _payload(show: dict) -> dict:
+        return {
+            "tier": show["tier"],
+            "palette": show.get("palette_name"),
+            "stats": show["stats"],
+            # The whole point of the override: a caller that asked for
+            # Claude has to be told whether it got Claude, in the same
+            # answer. A show tagged `algorithmic` with no reason beside it
+            # is how a week of silent fallbacks went unnoticed.
+            "director": show.get("director"),
+        }
+
+    return _claude_job(f"compile:{hash_hex[:12]}",
+                       lambda: asyncio.to_thread(
+                           director_build.build_show, hash_hex,
+                           ENGINE.devices, ENGINE.source, mode, writer, vibe),
+                       _payload)
 
 
 def _waveform_payload(hash_hex: str) -> tuple[int, dict]:
@@ -1423,23 +1458,17 @@ async def h_show_revise(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": "brAIn is not installed — revising a show with Claude "
                       "runs through brAIn's task surface"}, status=409)
-    try:
-        show = await asyncio.to_thread(
-            director_build.revise_show, hash_hex, ENGINE.devices,
-            ENGINE.source, feedback, claude_director.revise_script)
-    except CompileError as exc:
-        return web.json_response({"error": str(exc)}, status=422)
-    except ValueError as exc:
-        return web.json_response({"error": str(exc)}, status=400)
-    except RuntimeError as exc:
-        # brAIn's side of it: not installed after all, timed out, task
-        # failed. The show on disk is untouched, and the message says so.
-        return web.json_response(
-            {"error": f"{exc} — the show is unchanged"}, status=502)
-    status, payload = await asyncio.to_thread(_script_payload, hash_hex)
-    return web.json_response({**payload, "stats": show["stats"],
-                              "director": show.get("director"),
-                              "revised": True})
+    def _payload(show: dict) -> dict:
+        _, script = _script_payload(hash_hex)
+        return {**script, "stats": show["stats"],
+                "director": show.get("director"), "revised": True}
+
+    return _claude_job(f"revise:{hash_hex[:12]}",
+                       lambda: asyncio.to_thread(
+                           director_build.revise_show, hash_hex,
+                           ENGINE.devices, ENGINE.source, feedback,
+                           claude_director.revise_script),
+                       _payload)
 
 
 def _preview_inputs(hash_hex: str, body: dict) -> tuple[dict, list[dict], dict]:

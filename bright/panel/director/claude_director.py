@@ -30,8 +30,14 @@ BRAIN_SHARED = Path(os.environ.get("BRIGHT_BRAIN_SHARED", "/config/.brain"))
 TASKS_DIR = BRAIN_SHARED / "tasks"
 RESULTS_DIR = BRAIN_SHARED / "task_results"
 
-# A show script is one long considered answer, not a quick reply.
-TASK_TIMEOUT_S = 240
+# A show script is one long considered answer, not a quick reply — and
+# now that the panel starts these as jobs rather than awaiting them
+# inside a request (`server._claude_job`), the budget is the director's
+# to spend rather than whatever an ingress proxy will hold a connection
+# open for. It was 240s because a request had to survive it, which is not
+# a reason about writing a show; brAIn passes this through as the CLI's
+# own process limit, so it is the real ceiling on an answer.
+TASK_TIMEOUT_S = 600
 POLL_S = 1.0
 
 # Which Claude writes the shows. Creative choreography is the one place
@@ -580,7 +586,7 @@ def revise_script(script: dict, feedback: str, analysis: dict,
 # lamps"). Same room description, same catalog, same validator — the only
 # difference is the size of the answer, so the two prompts share everything
 # that describes the instrument and differ only in what is being asked for.
-EFFECT_TIMEOUT_S = 90
+EFFECT_TIMEOUT_S = 180
 
 _EFFECT_CONTRACT = """\
 Answer with ONE JSON object and nothing else — no prose, no code fences.

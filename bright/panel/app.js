@@ -56,6 +56,32 @@
     }
   }
 
+  // Every Claude request is a JOB, not a reply.
+  //
+  // A show script is one long considered answer and can take minutes;
+  // ingress and Nabu Casa cut a request long before that, and what
+  // arrives here is not the panel's error but the absence of a reply —
+  // Safari renders it "load failed", which is what the compile button
+  // reported while the director was still working and about to save a
+  // show nobody was told about. So these routes hand back a job id and
+  // the outcome is polled, exactly like the Library's analyze pass.
+  //
+  // `onWait` is called with the seconds elapsed so a slow answer can say
+  // it is still going: a spinner that never changes is a spinner people
+  // press twice.
+  async function claudeJob(path, body, onWait) {
+    const started = await post(path, body);
+    if (!started.job) return started;          // an older panel/server pair
+    const began = Date.now();
+    const job = await awaitJob(started.job, () => {
+      if (onWait) onWait(Math.round((Date.now() - began) / 1000));
+    });
+    if (job.status !== "done") {
+      throw new Error(job.error || "the run failed with no reason given");
+    }
+    return job.result || {};
+  }
+
   function fmtRtt(rtt) {
     if (!rtt || rtt.p50_ms === undefined) return "not probed";
     return "p50 " + rtt.p50_ms + "ms · p95 " + rtt.p95_ms + "ms · loss " +
@@ -649,9 +675,14 @@
           // nothing about how long is a spinner people press twice.
           ? "asking Claude to write this show — this can take a minute or two…"
           : "compiling…";
-        const result = await post("api/show/compile", {
+        const result = await claudeJob("api/show/compile", {
           track_hash: row.dataset.hash,
           director: wantsClaude ? "claude" : undefined,
+        }, (seconds) => {
+          if (wantsClaude) {
+            out.textContent = "asking Claude to write this show — " +
+              seconds + "s so far, this can take a minute or two…";
+          }
         });
         const who = describeDirector(result.director);
         out.textContent = "compiled: " + result.tier + " · " +
@@ -2395,7 +2426,10 @@
     button.disabled = true;
     status.textContent = "Claude is writing it — this takes a few seconds…";
     try {
-      const body = await post("api/effects/describe", { description });
+      const body = await claudeJob("api/effects/describe", { description },
+        (seconds) => {
+          status.textContent = "Claude is writing it — " + seconds + "s…";
+        });
       putEffectInForm(body.effect || {});
       status.textContent = "Written. Preview it, change anything, then save " +
         "it or drop it into a show — nothing has been saved yet.";
@@ -3466,8 +3500,11 @@
     status.textContent = "Claude is revising the show — this can take a " +
       "couple of minutes…";
     try {
-      const body = await post("api/show/" + scriptTrack + "/revise",
-        { feedback });
+      const body = await claudeJob("api/show/" + scriptTrack + "/revise",
+        { feedback }, (seconds) => {
+          status.textContent = "Claude is revising the show — " + seconds +
+            "s so far, this can take a couple of minutes…";
+        });
       const took = body.director && body.director.seconds
         ? " in " + Math.round(body.director.seconds) + "s" : "";
       $("reviseText").value = "";
