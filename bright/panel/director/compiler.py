@@ -316,6 +316,7 @@ def script_actions(script: dict, fixtures: list[dict],
             moments.append((float(feature["t"]), translated))
         except (KeyError, TypeError, ValueError):
             raise CompileError("a feature has no usable time") from None
+    beats_list = analysis.get("beats") or []
     for moment in script.get("moments") or []:
         if not isinstance(moment, dict):
             continue
@@ -325,6 +326,15 @@ def script_actions(script: dict, fixtures: list[dict],
             at = float(moment.get("t", effect.get("start", 0.0)))
         except (TypeError, ValueError):
             raise CompileError("a moment has no usable time") from None
+        # `"snap": "beat"` moves the moment onto the nearest analyzed
+        # beat. It exists for times that arrive APPROXIMATE — a model
+        # reading "the hit around 41 seconds", a person typing one — and
+        # a stab 80ms off the beat reads as a mistake where one ON it
+        # reads as intent. Written times that are already exact (the
+        # choreographer's, which come from the analysis itself) simply
+        # don't ask.
+        if moment.get("snap") == "beat" and beats_list:
+            at = float(min(beats_list, key=lambda b: abs(float(b) - at)))
         moments.append((at, effect))
 
     default_palette = ((script.get("scenes") or [{}])[0] or {}).get(

@@ -64,6 +64,20 @@ class ShowClock:
         self._drift_stamp = now
         self._drift_target = self._drift + correction_s
 
+    def step_drift(self, correction_s: float) -> None:
+        """Apply a correction at once, no slew.
+
+        For a MEASURED error too large for the slew to be honest about: at
+        8ms/s an 800ms correction would spend a hundred seconds arriving,
+        which is most of a song out of sync on purpose. Past the point
+        where the room is visibly wrong, one clean jump is less noticeable
+        than a long, deliberate drift through every wrong value between.
+        """
+        now = self._monotonic()
+        self._drift = self._applied_drift(now) + correction_s
+        self._drift_target = self._drift
+        self._drift_stamp = now
+
     def sleep_needed(self, until_show_time: float) -> float:
         """Seconds of real time until the show reaches `until_show_time`."""
         return max(0.0, until_show_time - self.now())

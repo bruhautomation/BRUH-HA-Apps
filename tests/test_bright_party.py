@@ -390,3 +390,148 @@ class TestPartyPlaylists(unittest.TestCase):
     def test_a_party_without_a_playlist_has_an_empty_list(self):
         parties.save({"name": "Folder Night"})
         self.assertEqual([], parties.get("Folder Night")["tracks"])
+
+
+class TestPartyTransport(unittest.TestCase):
+    """Next/previous during a party: one track ends, the evening doesn't."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self._cal_dir = calibration.CALIBRATION_DIR
+        calibration.CALIBRATION_DIR = Path(self.tmp.name)
+        calibration.add_run("media_player.living", 100.0, method="mic")
+        self._state = conductor_mod.STATE_FILE
+        conductor_mod.STATE_FILE = Path(self.tmp.name) / "state.json"
+        self._play = ha_client.play_media
+        self._stop = ha_client.media_stop
+        self.played = []
+        self.stopped = []
+
+        def fake_play(entity, content_id, *a, **kw):
+            self.played.append((entity, content_id))
+            return []
+
+        def fake_stop(entity, *a, **kw):
+            self.stopped.append(entity)
+            return []
+
+        ha_client.play_media = fake_play
+        ha_client.media_stop = fake_stop
+
+    def tearDown(self):
+        calibration.CALIBRATION_DIR = self._cal_dir
+        conductor_mod.STATE_FILE = self._state
+        ha_client.play_media = self._play
+        ha_client.media_stop = self._stop
+        self.tmp.cleanup()
+
+    @staticmethod
+    def _long_show(name: str) -> dict:
+        # Long enough that nothing ends on its own while the test steers.
+        show = _tiny_show(name)
+        show["duration_s"] = 30.0
+        return show
+
+    async def _wait_for_track(self, run, title, budget=6.0):
+        deadline = asyncio.get_event_loop().time() + budget
+        while asyncio.get_event_loop().time() < deadline:
+            if run.state.get("track") == title and run.state.get("active"):
+                return
+            await asyncio.sleep(0.02)
+        self.fail(f"never reached track {title!r}; "
+                  f"state={run.state.get('track')!r}")
+
+    def test_next_ends_the_track_and_not_the_party(self):
+        async def scenario():
+            run = conductor_mod.Conductor(_FakeEngine())
+            await run.start_party(["one", "two"],
+                                  media_player="media_player.living",
+                                  loader=self._long_show)
+            await self._wait_for_track(run, "one")
+            result = run.skip(1)
+            self.assertTrue(result.get("ok"), result)
+            await self._wait_for_track(run, "two")
+            self.assertTrue(run.state.get("active"),
+                            "the skip ended the party, not the track")
+            # The interrupted track's music was silenced; the speaker
+            # plays on its own and outlives the cancelled task.
+            self.assertEqual(["media_player.living"], self.stopped)
+            await run.stop(restore=False)
+
+        asyncio.run(scenario())
+        self.assertEqual(["one", "two"],
+                         [cid.split("/")[-1].split(".")[0]
+                          for _, cid in self.played])
+
+    def test_previous_on_the_first_track_replays_it(self):
+        async def scenario():
+            run = conductor_mod.Conductor(_FakeEngine())
+            await run.start_party(["one", "two"],
+                                  media_player="media_player.living",
+                                  loader=self._long_show)
+            await self._wait_for_track(run, "one")
+            result = run.skip(-1)
+            self.assertTrue(result.get("ok"), result)
+            deadline = asyncio.get_event_loop().time() + 6.0
+            while len(self.played) < 2 \
+                    and asyncio.get_event_loop().time() < deadline:
+                await asyncio.sleep(0.02)
+            self.assertTrue(run.state.get("active"))
+            await run.stop(restore=False)
+
+        asyncio.run(scenario())
+        self.assertEqual(2, len(self.played), "previous on the first track "
+                         "replays it rather than ending the party")
+        self.assertTrue(all("one" in cid for _, cid in self.played))
+
+    def test_previous_goes_back_a_track(self):
+        async def scenario():
+            run = conductor_mod.Conductor(_FakeEngine())
+            await run.start_party(["one", "two"],
+                                  media_player="media_player.living",
+                                  loader=self._long_show)
+            await self._wait_for_track(run, "one")
+            run.skip(1)
+            await self._wait_for_track(run, "two")
+            run.skip(-1)
+            deadline = asyncio.get_event_loop().time() + 6.0
+            while len(self.played) < 3 \
+                    and asyncio.get_event_loop().time() < deadline:
+                await asyncio.sleep(0.02)
+            await self._wait_for_track(run, "one")
+            await run.stop(restore=False)
+
+        asyncio.run(scenario())
+        self.assertEqual(["one", "two", "one"],
+                         [cid.split("/")[-1].split(".")[0]
+                          for _, cid in self.played])
+
+    def test_skip_outside_a_party_is_refused(self):
+        async def scenario():
+            run = conductor_mod.Conductor(_FakeEngine())
+            return run.skip(1)
+
+        result = asyncio.run(scenario())
+        self.assertIn("error", result)
+
+    def test_stop_wins_a_race_with_a_skip(self):
+        """A stop landing while a skip is in flight must still end the
+        party — the tell is the party task's own pending cancel."""
+        async def scenario():
+            run = conductor_mod.Conductor(_FakeEngine())
+            await run.start_party(["one", "two"],
+                                  media_player="media_player.living",
+                                  loader=self._long_show)
+            await self._wait_for_track(run, "one")
+            run.skip(1)          # cancel the track...
+            # ...and stop before it settles. The bound is the assertion
+            # that matters: without the pending-cancel tell, the party
+            # loop reads the stop as the skip, swallows it, and stop()
+            # blocks until the whole evening plays out on its own.
+            await asyncio.wait_for(run.stop(restore=False), 5)
+            return run
+
+        run = asyncio.run(scenario())
+        self.assertFalse(run.state.get("active"))
+        self.assertEqual("idle", run.state.get("status"))
+

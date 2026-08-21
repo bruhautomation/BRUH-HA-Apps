@@ -74,6 +74,7 @@ from director import compiler  # noqa: E402
 from director import palettes as director_palettes  # noqa: E402
 from director import preview as director_preview  # noqa: E402
 from director.compiler import CompileError  # noqa: E402
+from playback import autosync  # noqa: E402
 from playback import conductor as conductor_mod  # noqa: E402
 from director import effects as fx  # noqa: E402
 from stores import calibration as calibration_store  # noqa: E402
@@ -1378,6 +1379,43 @@ async def h_show_script_import(request: web.Request) -> web.Response:
                               "imported": True})
 
 
+async def h_show_revise(request: web.Request) -> web.Response:
+    """Notes on a show somebody watched, applied by the Claude director.
+
+    The request waits for the whole revision — same posture as compile,
+    which already lives with a minutes-long director run — and nothing is
+    written unless the revised script validates and compiles, so a failed
+    revision costs an error message and never the show.
+    """
+    hash_hex = request.match_info["hash"]
+    body = await _json_body(request)
+    feedback = str(body.get("feedback", "") or "").strip()
+    if not feedback:
+        return web.json_response({"error": "say what you want changed first"},
+                                 status=400)
+    if not claude_director.available():
+        return web.json_response(
+            {"error": "brAIn is not installed — revising a show with Claude "
+                      "runs through brAIn's task surface"}, status=409)
+    try:
+        show = await asyncio.to_thread(
+            director_build.revise_show, hash_hex, ENGINE.devices,
+            ENGINE.source, feedback, claude_director.revise_script)
+    except CompileError as exc:
+        return web.json_response({"error": str(exc)}, status=422)
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    except RuntimeError as exc:
+        # brAIn's side of it: not installed after all, timed out, task
+        # failed. The show on disk is untouched, and the message says so.
+        return web.json_response(
+            {"error": f"{exc} — the show is unchanged"}, status=502)
+    status, payload = await asyncio.to_thread(_script_payload, hash_hex)
+    return web.json_response({**payload, "stats": show["stats"],
+                              "director": show.get("director"),
+                              "revised": True})
+
+
 def _preview_inputs(hash_hex: str, body: dict) -> tuple[dict, list[dict], dict]:
     """The script, the cast and the song a preview is about.
 
@@ -1501,11 +1539,25 @@ def _conductor() -> conductor_mod.Conductor:
 
 
 async def _start_show_for(hash_hex: str, media_player: str,
-                          *, metronome: bool = False) -> tuple[int, dict]:
+                          *, metronome: bool = False,
+                          serials: list[str] | None = None
+                          ) -> tuple[int, dict]:
+    # A bulb selection reaches the METRONOME only: its cues are built from
+    # the device list, so filtering the list is filtering the show. A
+    # compiled show's cues are already built; parties filter those at
+    # dispatch (filter_cues), which is a different door for a different
+    # caller.
+    devices = ENGINE.devices
+    if metronome and serials:
+        wanted = set(serials)
+        devices = {s: d for s, d in devices.items() if s in wanted}
+        if not devices:
+            return 409, {"error": "none of the selected bulbs are known — "
+                                  "run Lab discovery first"}
     try:
         show = await asyncio.to_thread(
             lambda: conductor_mod.load_show_for_track(
-                hash_hex, ENGINE.devices, ENGINE.source, metronome=metronome))
+                hash_hex, devices, ENGINE.source, metronome=metronome))
     except ValueError:
         return 400, {"error": "not a track hash"}
     if show is None:
@@ -1555,8 +1607,11 @@ async def h_show_start(request: web.Request) -> web.Response:
     # The sync proof MUST get the metronome even when a compiled show
     # exists: it is a demo of the clock, not a way to start the evening.
     metronome = request.path.endswith("/metronome")
+    serials = [str(x) for x in (body.get("serials") or [])
+               if isinstance(x, str)]
     status, payload = await _start_show_for(hash_hex, media_player,
-                                            metronome=metronome)
+                                            metronome=metronome,
+                                            serials=serials or None)
     return web.json_response(payload, status=status)
 
 
@@ -1575,6 +1630,75 @@ async def h_show_nudge(request: web.Request) -> web.Response:
 
 async def h_show_nudge_keep(request: web.Request) -> web.Response:
     result = await asyncio.to_thread(_conductor().keep_nudge)
+    return web.json_response(result, status=200 if result.get("ok") else 409)
+
+
+async def h_show_autosync(request: web.Request) -> web.Response:
+    """The phone listened to the room; line the lights up with what it
+    heard. The page has already mapped its record-start moment onto OUR
+    clock (via /api/calibrate/ping), same contract as the calibration
+    wizard — the arithmetic here never compares two different clocks."""
+    body = await _json_body(request)
+    try:
+        record_start_ms = float(body["record_start_epoch_ms"])
+        wav = base64.b64decode(str(body["wav_b64"]))
+    except (KeyError, ValueError, TypeError):
+        return web.json_response({"error": "missing recording fields"},
+                                 status=400)
+    conductor = _conductor()
+    state = conductor.state
+    if not state.get("active") or not conductor.clock.anchored:
+        return web.json_response(
+            {"error": "nothing is playing to sync against"}, status=409)
+    track_hash = str(state.get("track_hash") or "")
+    analysis = await asyncio.to_thread(library.load_analysis, track_hash) \
+        if track_hash else None
+    if analysis is None:
+        return web.json_response(
+            {"error": "the running track has no analysis to match against"},
+            status=409)
+    track_file = Path(analysis.get("file") or "")
+    if not track_file.is_file():
+        return web.json_response(
+            {"error": f"the file this track was analysed from "
+                      f"({track_file or 'unknown'}) is not there any more — "
+                      f"re-analyse it from the Library tab"}, status=409)
+    # Where the show clock believed the room was when the phone started
+    # listening: its position now, walked back by how long ago that was.
+    expected_pos_s = conductor.clock.now() \
+        - (time.time() * 1000.0 - record_start_ms) / 1000.0
+    if expected_pos_s < -autosync.MARGIN_S:
+        return web.json_response(
+            {"error": "the track changed while the phone was listening — "
+                      "try again"}, status=409)
+    try:
+        result = await asyncio.to_thread(
+            autosync.measure, wav, track_file, expected_pos_s)
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=422)
+    if result["confidence"] < autosync.MIN_CONFIDENCE:
+        return web.json_response(
+            {"error": "could not match what it heard against the song — "
+                      "move the phone closer to the speaker and try again",
+             "confidence": result["confidence"]}, status=422)
+    delta_ms = result["delta_s"] * 1000.0
+    applied = conductor.apply_sync(delta_ms)
+    if applied.get("error"):
+        return web.json_response(applied, status=409)
+    return web.json_response({"ok": True,
+                              "delta_ms": round(delta_ms, 1),
+                              "confidence": result["confidence"],
+                              "nudge_ms": applied["nudge_ms"]})
+
+
+async def h_party_skip(request: web.Request) -> web.Response:
+    """Transport for a running party: next track (+1) or previous (-1)."""
+    body = await _json_body(request)
+    try:
+        step = int(body.get("step", 1))
+    except (TypeError, ValueError):
+        return web.json_response({"error": "step must be 1 or -1"}, status=400)
+    result = _conductor().skip(step)
     return web.json_response(result, status=200 if result.get("ok") else 409)
 
 
@@ -2142,6 +2266,8 @@ def build_app() -> web.Application:
     app.router.add_post("/api/show/stop_show", h_show_stop)
     app.router.add_post("/api/show/nudge", h_show_nudge)
     app.router.add_post("/api/show/nudge/keep", h_show_nudge_keep)
+    app.router.add_post("/api/party/skip", h_party_skip)
+    app.router.add_post("/api/show/autosync", h_show_autosync)
     app.router.add_post("/api/show/party_mode", h_show_party)
     # `start_party` is party_mode under the name the service uses: an
     # automation asks for a party, not for a mode.
@@ -2151,6 +2277,7 @@ def build_app() -> web.Application:
     app.router.add_get("/api/show/{hash}/script", h_show_script)
     app.router.add_put("/api/show/{hash}/script", h_show_script_save)
     app.router.add_post("/api/show/{hash}/script/import", h_show_script_import)
+    app.router.add_post("/api/show/{hash}/revise", h_show_revise)
     app.router.add_get("/api/show/{hash}/cues", h_show_cues)
     app.router.add_get("/api/show/{hash}/director", h_show_director)
     app.router.add_get("/api/show/{hash}/prompt", h_show_prompt)

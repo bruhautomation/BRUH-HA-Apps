@@ -5,6 +5,59 @@ All notable changes to the **BRight** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.15.0
+
+Stabs on the beat, notes to the director, and a party you can steer.
+
+### Added
+
+- **The analyzer ranks the song's hits.** A new low+mid band "punch"
+  measure finds the track's accents, scores each against the loudest one,
+  and marks which sit exactly on the beat (±70ms). The Claude director's
+  brief lists the strongest on-beat hits; the algorithmic choreographer
+  places up to six accent stabs of its own on them — only in the loud
+  sections, clear of the drops, never closer than eight beats. Shows
+  answer the song's punches now, not only its section changes.
+- **`"snap": "beat"` on a moment.** The compiler moves the moment onto
+  the nearest analyzed beat, so a rounded time in a script cannot smear a
+  hit that was meant to land on one.
+- **Notes to the director.** The show editor grew a feedback box: say
+  what you noticed watching the show ("the chorus needs more movement")
+  and **✍ Revise with Claude** hands the whole script back to the
+  director with your words (`POST /api/show/{hash}/revise`). Nothing is
+  written unless the revision validates and compiles — a failed revision
+  costs an error message, never the show.
+- **`director_model` option (default `opus`).** Which Claude writes and
+  revises shows and effects. Rides brAIn's task `model` field;
+  choreography is the one place BRight spends a big model on purpose.
+- **Party transport.** ⏮ Prev / ⏭ Next on the party live view
+  (`POST /api/party/skip`). A skip ends the track — cue task, its music,
+  any waveform still running on a bulb — and never the evening; previous
+  on the first track replays it. A stop that races a skip still wins,
+  told apart by the party task's own pending cancellation.
+- **🎤 Sync by ear, measured.** The phone records the room for four
+  seconds and BRight matches what it heard against the playing track
+  itself (`POST /api/show/autosync`) — same onset-envelope correlation
+  as calibration, with the song as the reference. The measured error is
+  applied whole: small corrections slew invisibly, large ones step
+  (`ShowClock.step_drift`), because at 8ms/s an 800ms fix would spend
+  100 seconds being wrong on purpose. Confidence floor measured against
+  synthesized ground truth; a quiet room answers "try again", not a
+  wrong number.
+- **Lab sync proof picks its lights.** Tick which bulbs join the
+  metronome test instead of strobing the whole house; the Shows tab
+  splits **▶ Show** (compiled choreography) from **♪ Beat sync** (the
+  metronome) per track, with the same ±25ms nudge available while either
+  runs.
+
+### Fixed
+
+- **`band_flux` normalized each band to its own peak**, which amplified
+  an empty band's noise floor to full scale — a track with no bass grew
+  phantom punch out of silence. Both bands now share one scale (the
+  full-band envelope's peak), which is also what makes weighting them
+  against each other meaningful.
+
 ## 0.14.1
 
 The prose diet.

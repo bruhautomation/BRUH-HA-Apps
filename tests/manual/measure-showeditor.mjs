@@ -63,7 +63,10 @@ for (const width of WIDTHS) {
 	await page.goto(URL, { waitUntil: 'networkidle' });
 	await page.click('.tab[data-tab="shows"]');
 	await page.waitForSelector('#showList .row');
-	await page.click('#showList .row');
+	// The track NAME, not the row's geometric middle: with four action
+	// buttons on a 390px row the middle IS a button, and the open handler
+	// rightly ignores button presses. A person taps the title.
+	await page.click('#showList .row .row-main');
 	await page.waitForSelector('#edScript .ed-block');
 	await page.waitForFunction(() =>
 		document.querySelectorAll('#edFloor .preview-dot').length > 0);

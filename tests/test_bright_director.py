@@ -341,5 +341,76 @@ class TestBuild(unittest.TestCase):
                 light_map.MAP_FILE = light_original
 
 
+class TestOnBeatMoments(unittest.TestCase):
+    """`"snap": "beat"` and the choreographer's accents — the batch that
+    moves hits from section boundaries onto the song's own punches."""
+
+    def _compile_moment(self, moment):
+        analysis = analysis_fixture()
+        script = {
+            "version": 2,
+            "scenes": [{"start": 0.0, "end": 180.0, "mood": "warm",
+                        "palette": [[30.0, 0.6]], "brightness": 0.5,
+                        "effects": []}],
+            "moments": [moment],
+        }
+        show = compiler.compile_show(script, FIXTURES, analysis, source=7)
+        cues = [c for c in show["cues"] if "snapme" in c.get("desc", "")]
+        self.assertTrue(cues, "the moment produced no cues at all")
+        return min(c["t"] for c in cues)
+
+    def test_snap_beat_moves_a_moment_onto_the_analyzed_grid(self):
+        effect = {"type": "stab", "name": "snapme",
+                  "select": {"roles": ["lamp"]}}
+        # The fixture's beats sit on the 0.5s grid, so 10.07 snaps to 10.0
+        # — the two compiles must differ by exactly the rounding error.
+        plain = self._compile_moment({"t": 10.07, "effect": dict(effect)})
+        snapped = self._compile_moment({"t": 10.07, "snap": "beat",
+                                        "effect": dict(effect)})
+        self.assertAlmostEqual(plain - snapped, 0.07, delta=0.005)
+
+    def test_accents_land_on_the_strongest_on_beat_hits_only(self):
+        analysis = analysis_fixture()  # peak section 60–120s, drop at 60
+        analysis["hits"] = [
+            {"t": 70.0, "strength": 0.9, "beat": 140, "on_beat": True},
+            {"t": 80.0, "strength": 0.8, "beat": 160, "on_beat": True},
+            # Stronger than both, but OFF the beat: must be passed over.
+            {"t": 90.0, "strength": 1.0, "beat": 180, "on_beat": False},
+            # On the beat and strong, but inside the drop's own window.
+            {"t": 61.0, "strength": 0.95, "beat": 122, "on_beat": True},
+            # Strong and on-beat, but in the quiet intro — no stabs there.
+            {"t": 30.0, "strength": 0.9, "beat": 60, "on_beat": True},
+            # Too close to the 70.0 accent (under eight beats away).
+            {"t": 71.5, "strength": 0.7, "beat": 143, "on_beat": True},
+            # Under the strength floor.
+            {"t": 100.0, "strength": 0.3, "beat": 200, "on_beat": True},
+        ]
+        script = choreographer.write_script(analysis, FIXTURES)
+        accents = [m for m in script["moments"]
+                   if m["effect"].get("name") == "accent"]
+        self.assertEqual([70.0, 80.0], sorted(m["t"] for m in accents))
+        for moment in accents:
+            self.assertEqual("stab", moment["effect"]["type"])
+            self.assertNotIn("ids", moment["effect"]["select"])
+
+    def test_accents_are_capped_at_six(self):
+        analysis = analysis_fixture()
+        analysis["hits"] = [
+            {"t": 63.0 + 5 * i, "strength": 0.9, "beat": 0, "on_beat": True}
+            for i in range(11)]  # 63..113s, all in the peak, all eligible
+        script = choreographer.write_script(analysis, FIXTURES)
+        accents = [m for m in script["moments"]
+                   if m["effect"].get("name") == "accent"]
+        self.assertEqual(6, len(accents))
+
+    def test_a_track_with_no_hits_gets_no_accents_and_no_crash(self):
+        analysis = analysis_fixture()
+        analysis.pop("hits", None)
+        script = choreographer.write_script(analysis, FIXTURES)
+        self.assertEqual([], [m for m in script["moments"]
+                              if m["effect"].get("name") == "accent"])
+        self.assertEqual([], choreographer.validate_script(script))
+
+
 if __name__ == "__main__":
     unittest.main()

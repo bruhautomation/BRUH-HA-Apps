@@ -381,3 +381,153 @@ class TestInventingEffectsFromTheRoom(ClaudeDirectorCase):
             {"type": "wash", "name": "g", "params": {}, "why": "w"}]})
         self.assertIn("DIFFERENT from each other", prompt)
         self.assertIn("Read the map", prompt)
+
+
+class TestTheDirectorRunsOnTheAskedModel(ClaudeDirectorCase):
+    """The host asked for Opus by name; the task file is where that
+    request either rides to brAIn or silently doesn't."""
+
+    def _task_written(self):
+        analysis = analysis_fixture()
+        script = choreographer.write_script(analysis, FIXTURES)
+        seen = {}
+
+        def answer(task):
+            seen.update(task)
+            return {"id": task["id"], "status": "completed",
+                    "result": json.dumps(script)}
+
+        brain = _FakeBrain(claude_director.TASKS_DIR,
+                           claude_director.RESULTS_DIR, answer)
+        brain.start()
+        claude_director.write_script(analysis, FIXTURES, timeout_s=5)
+        brain.join()
+        return seen
+
+    def test_the_task_asks_for_opus_by_default(self):
+        old = os.environ.pop("BRIGHT_DIRECTOR_MODEL", None)
+        try:
+            self.assertEqual("opus", self._task_written().get("model"))
+        finally:
+            if old is not None:
+                os.environ["BRIGHT_DIRECTOR_MODEL"] = old
+
+    def test_the_option_overrides_the_default(self):
+        old = os.environ.get("BRIGHT_DIRECTOR_MODEL")
+        os.environ["BRIGHT_DIRECTOR_MODEL"] = "sonnet"
+        try:
+            self.assertEqual("sonnet", self._task_written().get("model"))
+        finally:
+            if old is None:
+                os.environ.pop("BRIGHT_DIRECTOR_MODEL", None)
+            else:
+                os.environ["BRIGHT_DIRECTOR_MODEL"] = old
+
+
+class TestRevision(ClaudeDirectorCase):
+    """Feedback on a show somebody watched, applied by the director."""
+
+    def _revise(self, feedback, answer_script=None):
+        analysis = analysis_fixture()
+        current = choreographer.write_script(analysis, FIXTURES)
+        revised_body = answer_script or dict(current)
+        brain = _FakeBrain(claude_director.TASKS_DIR,
+                           claude_director.RESULTS_DIR,
+                           lambda task: {"id": task["id"],
+                                         "status": "completed",
+                                         "result": json.dumps(revised_body)})
+        brain.start()
+        revised = claude_director.revise_script(current, feedback, analysis,
+                                                FIXTURES, timeout_s=5)
+        brain.join()
+        return revised, brain.seen_prompt, current
+
+    def test_the_notes_and_the_current_script_ride_the_prompt(self):
+        _, prompt, current = self._revise("the chorus needs more movement")
+        self.assertIn("THE HOST'S NOTES", prompt)
+        self.assertIn("the chorus needs more movement", prompt)
+        self.assertIn("THE CURRENT SCRIPT", prompt)
+        # The show itself is in there — a scene the notes are about has to
+        # be visible to the director revising it.
+        self.assertIn('"scenes"', prompt)
+        # And the room and the song, same as a first draft.
+        self.assertIn("THE ROOM", prompt)
+        self.assertIn("SECTIONS", prompt)
+
+    def test_the_answer_is_stamped_like_any_claude_script(self):
+        revised, _, _ = self._revise("more candles")
+        self.assertEqual("claude", revised["tier"])
+        self.assertEqual(analysis_fixture()["hash"], revised["track_hash"])
+
+    def test_empty_feedback_never_reaches_claude(self):
+        with self.assertRaises(ValueError):
+            claude_director.revise_script({}, "   ", analysis_fixture(),
+                                          FIXTURES, timeout_s=5)
+
+    def test_a_failed_revision_leaves_the_show_on_disk_alone(self):
+        """revise_show writes NOTHING unless the revised script validates
+        and compiles — a revision must never cost the show it criticized."""
+        from unittest import mock
+
+        from director import build
+
+        analysis = analysis_fixture()
+        current = choreographer.write_script(analysis, FIXTURES)
+
+        def broken_reviser(script, feedback, ana, fixtures):
+            return {"scenes": "not even a list"}
+
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(build.library, "load_analysis",
+                                  return_value=analysis), \
+                mock.patch.object(build, "fixtures_for_show",
+                                  return_value=FIXTURES), \
+                mock.patch.object(build.library, "script_path",
+                                  return_value=Path(tmp) / "script.json"), \
+                mock.patch.object(build, "compile_and_save") as compiled:
+            (Path(tmp) / "script.json").write_text(json.dumps(current))
+            with self.assertRaises(ValueError):
+                build.revise_show("ab" * 20, {}, 7, "more!", broken_reviser)
+            compiled.assert_not_called()
+
+    def test_a_good_revision_compiles_and_records_its_report(self):
+        from unittest import mock
+
+        from director import build
+
+        analysis = analysis_fixture()
+        current = choreographer.write_script(analysis, FIXTURES)
+
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(build.library, "load_analysis",
+                                  return_value=analysis), \
+                mock.patch.object(build, "fixtures_for_show",
+                                  return_value=FIXTURES), \
+                mock.patch.object(build.library, "script_path",
+                                  return_value=Path(tmp) / "script.json"), \
+                mock.patch.object(build, "compile_and_save",
+                                  return_value={"stats": {"cues": 1}}), \
+                mock.patch.object(build, "save_report") as reported:
+            (Path(tmp) / "script.json").write_text(json.dumps(current))
+            show = build.revise_show("ab" * 20, {}, 7, "warmer verses",
+                                     lambda s, f, a, x: dict(current))
+            self.assertEqual("revise", show["director"]["asked"])
+            self.assertEqual("warmer verses", show["director"]["feedback"])
+            reported.assert_called_once()
+
+    def test_a_missing_show_is_a_clear_refusal(self):
+        from unittest import mock
+
+        from director import build
+
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(build.library, "load_analysis",
+                                  return_value=analysis_fixture()), \
+                mock.patch.object(build, "fixtures_for_show",
+                                  return_value=FIXTURES), \
+                mock.patch.object(build.library, "script_path",
+                                  return_value=Path(tmp) / "missing.json"):
+            with self.assertRaises(ValueError) as caught:
+                build.revise_show("ab" * 20, {}, 7, "notes",
+                                  lambda *a: {})
+            self.assertIn("compile one first", str(caught.exception))

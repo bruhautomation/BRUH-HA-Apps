@@ -193,6 +193,44 @@ def write_script(analysis: dict, fixtures: list[dict]) -> dict:
                                                 if r in roles_present]},
                            "params": {"state": "on"}}})
 
+    # Accents between the drops: the strongest ON-BEAT hits get a stab of
+    # their own, so the show answers the song's actual punches rather
+    # than only its section boundaries. Restraint is the design: only
+    # hits the analyzer ranked near the top, only in the loud half of the
+    # song (a stab in a verse is a wrong number), at least eight beats
+    # apart so they read as moments rather than a strobe, clear of the
+    # drops (which already own their hits), and never more than six —
+    # one intentional accent beats three busy ones.
+    drop_times = [float(d["t"]) for d in analysis.get("drops") or []]
+    loud = [s for s in analysis.get("sections") or []
+            if float(s.get("energy", 0)) >= 0.6]
+    hit_roles = [r for r in ("strip", "lamp", "downlight")
+                 if r in roles_present]
+    if hit_roles:
+        placed: list[float] = []
+        strongest = sorted((h for h in analysis.get("hits") or []
+                            if h.get("on_beat") and h.get("strength", 0) >= 0.55),
+                           key=lambda h: h["strength"], reverse=True)
+        for hit in strongest:
+            if len(placed) >= 6:
+                break
+            at = float(hit["t"])
+            if not any(float(s["start"]) <= at < float(s["end"]) for s in loud):
+                continue
+            if any(abs(at - d) < 2.0 for d in drop_times):
+                continue
+            if any(abs(at - p) < 8 * beat_s for p in placed):
+                continue
+            placed.append(at)
+            moments.append({
+                "t": at,
+                "effect": {"type": "stab", "name": "accent",
+                           "select": {"roles": hit_roles},
+                           "params": {"strength": round(
+                               0.5 + 0.4 * float(hit["strength"]), 2),
+                               "blackout_before_ms": 0,
+                               "hold_ms": 260, "white": False}}})
+
     return {
         "version": SCRIPT_VERSION,
         "tier": "algorithmic",

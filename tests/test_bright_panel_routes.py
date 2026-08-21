@@ -653,3 +653,83 @@ class TestNudgeRoutes(PanelCase):
     async def test_keep_with_nothing_nudged_is_refused(self):
         response = await self.client.post("/api/show/nudge/keep", json={})
         self.assertEqual(409, response.status)
+
+
+class TestPartyTransportRoutes(PanelCase):
+    async def test_a_skip_with_nothing_running_is_refused(self):
+        response = await self.client.post("/api/party/skip", json={"step": 1})
+        self.assertEqual(409, response.status)
+        self.assertIn("no party", (await response.json())["error"])
+
+    async def test_a_junk_step_is_refused(self):
+        response = await self.client.post("/api/party/skip",
+                                          json={"step": "sideways"})
+        self.assertEqual(400, response.status)
+
+
+class TestRevisionRoute(PanelCase):
+    async def test_empty_feedback_is_refused_before_anything_runs(self):
+        response = await self.client.post(
+            f"/api/show/{TRACK_HASH}/revise", json={"feedback": "  "})
+        self.assertEqual(400, response.status)
+        self.assertIn("changed", (await response.json())["error"])
+
+    async def test_without_brain_the_refusal_names_the_dependency(self):
+        response = await self.client.post(
+            f"/api/show/{TRACK_HASH}/revise", json={"feedback": "more"})
+        self.assertEqual(409, response.status)
+        self.assertIn("brAIn", (await response.json())["error"])
+
+
+class TestAutoSyncRoute(PanelCase):
+    async def test_missing_fields_are_a_400(self):
+        response = await self.client.post("/api/show/autosync", json={})
+        self.assertEqual(400, response.status)
+
+    async def test_with_nothing_running_it_is_refused(self):
+        response = await self.client.post("/api/show/autosync", json={
+            "record_start_epoch_ms": 1000.0,
+            "wav_b64": "UklGRg==",
+        })
+        self.assertEqual(409, response.status)
+        self.assertIn("nothing is playing",
+                      (await response.json())["error"])
+
+
+class TestMetronomePicksItsBulbs(PanelCase):
+    """The Lab's sync proof runs on the bulbs you ticked, not the house."""
+
+    async def test_unknown_serials_are_refused_by_name(self):
+        response = await self.client.post("/api/show/metronome", json={
+            "track_hash": TRACK_HASH,
+            "media_player": "media_player.living",
+            "serials": ["ffffffffffff"],
+        })
+        self.assertEqual(409, response.status)
+        self.assertIn("none of the selected bulbs",
+                      (await response.json())["error"])
+
+    async def test_known_serials_pass_the_filter(self):
+        # The next gate after the filter is calibration, which this
+        # scratch install has none of — reaching THAT refusal is the
+        # proof the selected bulb was accepted and cues were built.
+        response = await self.client.post("/api/show/metronome", json={
+            "track_hash": TRACK_HASH,
+            "media_player": "media_player.living",
+            "serials": [SERIALS[0]],
+        })
+        self.assertEqual(409, response.status)
+        self.assertIn("calibrated", (await response.json())["error"])
+
+    async def test_a_selection_does_not_reach_a_compiled_show(self):
+        # /start_show ignores serials by design: a compiled show's cues
+        # already exist, and parties filter at dispatch instead. The
+        # request must not 409 about bulbs it was never going to filter.
+        response = await self.client.post("/api/show/start_show", json={
+            "track_hash": TRACK_HASH,
+            "media_player": "media_player.living",
+            "serials": ["ffffffffffff"],
+        })
+        body = await response.json()
+        self.assertNotIn("none of the selected bulbs",
+                         body.get("error", ""))
