@@ -318,6 +318,7 @@ CATALOG: dict[str, dict[str, Any]] = {
             # Full is the vivid reading (an octave crosses the whole
             # palette); low values keep a scene's colour and let the
             # melody move only the brightness.
+            "follow": _choice(("pitch", "step"), "pitch"),
             "hue_spread": _num(0, 1, 0.6),
             "brightness": _num(0, 1, 0.85),
             "fade_ms": _num(0, 2000, 90, integer=True),
@@ -560,6 +561,11 @@ def catalog_payload() -> list[dict]:
 # ---------------------------------------------------------------------------
 # Selecting and ordering the cast
 # ---------------------------------------------------------------------------
+def _key(text) -> str:
+    """A name as it should be compared: trimmed and case-folded."""
+    return str(text or "").strip().casefold()
+
+
 def _is_switch(fixture: dict) -> bool:
     return bool(palettes.ROLE_RULES.get(fixture.get("role"), {}).get("switch"))
 
@@ -622,6 +628,18 @@ def resolve_fixtures(effect: dict, fixtures: list[dict]) -> list[dict]:
     exclude = set(select.get("exclude") or [])
     channel = CATALOG[effect["type"]]["channel"]
 
+    # Roles and zones are matched loosely, ids exactly.
+    #
+    # A zone is a name a person typed into the map and then typed again,
+    # from memory, into a script — or that a model read off the room
+    # description and wrote back with different capitals. "Inner
+    # Kitchen" and "inner kitchen" are one room, and an effect that
+    # silently drives no lights because of a capital letter is the worst
+    # kind of failure: it compiles, it saves, it plays, and nothing
+    # happens. Ids are generated rather than typed, so they stay exact.
+    roles = {_key(r) for r in roles}
+    zones = {_key(z) for z in zones}
+
     chosen = []
     for fixture in fixtures:
         if fixture.get("id") in exclude:
@@ -630,8 +648,8 @@ def resolve_fixtures(effect: dict, fixtures: list[dict]) -> list[dict]:
             continue
         if ids or roles or zones:
             if not (fixture.get("id") in ids
-                    or fixture.get("role") in roles
-                    or (fixture.get("zone") or "") in zones):
+                    or _key(fixture.get("role")) in roles
+                    or _key(fixture.get("zone")) in zones):
                 continue
         if effect.get("respect_roles", True) and channel == "light":
             rules = palettes.ROLE_RULES.get(fixture.get("role"), {})
@@ -676,6 +694,7 @@ class Grid:
                  energy: dict | None = None,
                  hits: list[dict] | None = None) -> None:
         self.notes = list(notes or [])
+        self._range: tuple[int, int] | None = None
         self.chords = list(chords or [])
         # The analyzer's ranked drum hits, each with which band won it.
         # This is the layer a light show is actually made of and the one
@@ -730,6 +749,21 @@ class Grid:
     @property
     def has_hits(self) -> bool:
         return bool(self.hits)
+
+    @property
+    def note_range(self) -> tuple[int, int]:
+        """The lowest and highest note in the WHOLE track.
+
+        Whole track, not the window, and that is the point: a light
+        chosen by pitch has to mean the same thing in the verse as in
+        the chorus, or the same note walks to a different place in the
+        room every section and the room stops meaning anything.
+        """
+        if self._range is None:
+            pitches = [int(n["m"]) for n in self.notes if "m" in n]
+            self._range = ((min(pitches), max(pitches)) if pitches
+                           else (60, 72))
+        return self._range
 
     def hits_in(self, start: float, end: float, *, band: str = "any",
                 min_strength: float = 0.0,
@@ -1285,6 +1319,21 @@ def _r_melody(out, effect, cast, grid, ctx) -> None:
         return
     voices = max(1, min(len(cast), int(p["voices"])))
     spread = p["hue_spread"]
+    # Where a note goes.
+    #
+    # `step` is what this always did: the next light along, per note, in
+    # a loop. It travels, but it travels the same way whatever the tune
+    # does — a run up the scale and a run back down look identical, and
+    # a held note that repeats keeps marching.
+    #
+    # `pitch` is the one worth having. The light is chosen by where the
+    # note sits in the track's own range, so a rising phrase really is a
+    # run of light across the room and a falling one runs back. Against
+    # the WHOLE track's range, never the window's, or the same note
+    # lands somewhere different in every section.
+    by_pitch = p["follow"] == "pitch"
+    low_note, high_note = grid.note_range
+    note_span = max(1, high_note - low_note)
     span = max(1, len(palette) - 1) if palette else 1
     for index, note in enumerate(notes):
         at = float(note["t"])
@@ -1299,8 +1348,13 @@ def _r_melody(out, effect, cast, grid, ctx) -> None:
         hue = home_hue + (hue - home_hue) * spread
         sat = home_sat + (sat - home_sat) * spread
         level = p["brightness"] * (0.45 + 0.55 * float(note.get("s", 1.0)))
+        if by_pitch:
+            place = (int(note.get("m", low_note)) - low_note) / note_span
+            seat = int(round(min(1.0, max(0.0, place)) * (len(cast) - 1)))
+        else:
+            seat = index * voices
         for voice in range(voices):
-            fixture = cast[(index * voices + voice) % len(cast)]
+            fixture = cast[(seat + voice) % len(cast)]
             out.append(_set(fixture, at, hue, sat, level, int(p["fade_ms"]),
                             effect["name"]))
         if not p["hold"]:

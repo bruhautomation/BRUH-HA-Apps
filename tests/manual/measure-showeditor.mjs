@@ -136,6 +136,19 @@ for (const width of WIDTHS) {
 	if (!fxInk) fail('the effect lanes are blank');
 	else ok(`the effect lanes painted (${fxInk} lit samples)`);
 
+	// The list under the editor is the EXCEPTIONS, not an inventory. It
+	// used to carry one row per effect — forty rows of fixture and move
+	// counts on a real show, pushing everything below it off the page.
+	const effectRows = await page.locator('#edFxLanes').count();
+	const problemRows = await page.locator('#scriptEffects .row').count();
+	const laneCount = await page.evaluate(() =>
+		((window.__edLanes || []).length) || 0);
+	if (problemRows > 6) {
+		fail(`the compiled-to list is an inventory again (${problemRows} rows)`);
+	} else ok(`only the exceptions are listed (${problemRows} rows)`);
+	if (!effectRows) fail('the effect lane canvas is gone');
+	void laneCount;
+
 	const nowLine = (await page.textContent('#edNow') || '').trim();
 	if (!/^Now:/.test(nowLine)) {
 		fail(`nothing says what is running: "${nowLine}"`);

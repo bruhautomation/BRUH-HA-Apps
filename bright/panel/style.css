@@ -658,3 +658,6 @@ select { max-width: 100%; }
 }
 .party-pick input { flex: none; }
 .party-order { margin-left: auto; }
+/* Narrow on purpose: it is a qualifier on the row, not the row's
+   subject, and at full width it competes with the song's name. */
+.party-version { max-width: 190px; }

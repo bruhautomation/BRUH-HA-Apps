@@ -261,9 +261,11 @@ is measured and listed below:
   lights that are NOT carrying the beat.
 - **The melody** is the line a person in the room is actually listening
   to. `melody` follows it note by note: the pitch picks the colour out of
-  your palette and each note lands on the next light along, so a rising
-  phrase climbs across the room. Put it on ONE kind of light — the lamps,
-  or the strip — and leave the rest to the rhythm, or it turns to mush.
+  your palette AND the light — a note is placed by where it sits in the
+  track's range, so a run up the scale is a run of light across the room
+  and coming back down runs back. Give it a set of lights the map spreads
+  out (`order: "x"` across the room reads best), put it on ONE kind of
+  light, and leave the rest to the rhythm, or it turns to mush.
 - **The phrases** are where the melody breathes. A gesture that travels
   (a sweep, a build) should start where a phrase starts and end where it
   ends; one that begins mid-phrase reads as an accident.

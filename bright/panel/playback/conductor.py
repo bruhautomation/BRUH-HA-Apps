@@ -796,7 +796,8 @@ def filter_cues(cues: list[dict], allow: set[str] | None) -> list[dict]:
 
 
 def load_show_for_track(hash_hex: str, devices: dict[str, dict],
-                        source: int, *, metronome: bool = False) -> dict | None:
+                        source: int, *, metronome: bool = False,
+                        version: str | None = None) -> dict | None:
     """A compiled show when the director has made one; the metronome show
     otherwise, so 'start_show' always has something honest to play.
 
@@ -819,7 +820,7 @@ def load_show_for_track(hash_hex: str, devices: dict[str, dict],
     title = (analysis.get("tags") or {}).get("title") or hash_hex[:8]
     # duration_of, never the tag: a lying VBR header parked the queue.
     duration = library.duration_of(analysis) or 60.0
-    compiled = None if metronome else library.load_show(hash_hex)
+    compiled = None if metronome else library.load_show(hash_hex, version)
     if compiled and compiled.get("cues"):
         baked = float(compiled.get("duration_s") or duration)
         # A show compiled before the duration heal has the header's lie

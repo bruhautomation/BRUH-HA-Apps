@@ -596,6 +596,98 @@ class TestEveryShapeKnowsWhereItPeaks(unittest.TestCase):
                     msg=f"{shape} peaks at {brightest}, table says {expected}")
 
 
+
+class TestTheTuneRunsAcrossTheRoom(unittest.TestCase):
+    """"Lights that run with musical runs" — the light a note lands on is
+    chosen by its PITCH, so the contour of the melody is the contour of
+    the light across the room."""
+
+    def _seats(self, follow, pitches):
+        beat = 0.5
+        notes = [{"t": round(i * 0.25, 3), "d": 0.25, "m": m, "pc": m % 12,
+                  "s": 0.9} for i, m in enumerate(pitches)]
+        room = lamps(6)
+        grid = fx.Grid([i * beat for i in range(40)], None, 120, notes=notes)
+        actions = fx.actions_for(
+            fx.clean_effect({"type": "melody", "name": "tune", "select": {},
+                             "params": {"follow": follow}}),
+            room, grid, window=(0.0, 10.0), palette=PALETTE)
+        order = [f["id"] for f in room]
+        return [order.index(a["fixture"]["id"]) for a in actions]
+
+    def test_a_rising_run_travels_one_way_and_a_falling_one_comes_back(self):
+        up = [60, 62, 64, 65, 67, 69, 71, 72]
+        seats = self._seats("pitch", up + up[::-1])
+        self.assertEqual(sorted(seats[:8]), seats[:8],
+                         f"a rising run should travel: {seats[:8]}")
+        self.assertEqual(sorted(seats[8:], reverse=True), seats[8:],
+                         f"a falling run should come back: {seats[8:]}")
+
+    def test_the_low_note_and_the_high_note_are_opposite_ends(self):
+        seats = self._seats("pitch", [60, 72, 60, 72])
+        self.assertEqual(0, seats[0])
+        self.assertEqual(5, seats[1])
+
+    def test_step_still_marches_for_anyone_who_wants_that(self):
+        seats = self._seats("step", [60, 72, 60, 72, 60, 72])
+        self.assertEqual([0, 1, 2, 3, 4, 5], seats)
+
+    def test_a_repeated_note_stays_on_its_light(self):
+        """The failure `step` has and `pitch` does not: a held note that
+        repeats used to keep marching across the room as though the tune
+        were moving."""
+        seats = self._seats("pitch", [64] * 6)
+        self.assertEqual(1, len(set(seats)),
+                         f"one note, {len(set(seats))} lights")
+
+    def test_the_range_is_the_whole_track_not_the_window(self):
+        """A note has to mean the same place in the verse and the chorus,
+        or the room stops meaning anything."""
+        beat = 0.5
+        notes = ([{"t": round(i * 0.25, 3), "d": 0.25, "m": 60, "pc": 0,
+                   "s": 0.9} for i in range(8)]
+                 + [{"t": round(4 + i * 0.25, 3), "d": 0.25, "m": 84,
+                     "pc": 0, "s": 0.9} for i in range(8)])
+        room = lamps(6)
+        grid = fx.Grid([i * beat for i in range(40)], None, 120, notes=notes)
+        early = fx.actions_for(
+            fx.clean_effect({"type": "melody", "name": "t", "select": {}}),
+            room, grid, window=(0.0, 2.0), palette=PALETTE)
+        late = fx.actions_for(
+            fx.clean_effect({"type": "melody", "name": "t", "select": {}}),
+            room, grid, window=(4.0, 6.0), palette=PALETTE)
+        order = [f["id"] for f in room]
+        self.assertEqual(0, order.index(early[0]["fixture"]["id"]))
+        self.assertEqual(5, order.index(late[0]["fixture"]["id"]))
+
+
+class TestAnEffectThatDrivesNoLightsSaysSo(unittest.TestCase):
+    def test_a_selection_that_matches_nothing_is_reported(self):
+        analysis = {"beats": [i * 0.5 for i in range(40)], "bpm": 120,
+                    "duration_s": 20.0, "hash": "ab" * 20}
+        script = {"version": 2, "scenes": [{
+            "start": 0.0, "end": 20.0, "mood": "roll",
+            "palette": [[40, 0.6]], "brightness": 0.5,
+            "effects": [{"type": "wash", "name": "ghost",
+                         "select": {"zones": ["a room that is not there"]}}]}]}
+        walked = compiler.script_actions(script, lamps(3), analysis)
+        # By NAME: a scene's own base wash is rendered first, so index 0
+        # is never the effect the test wrote.
+        row = next(e for e in walked["effects"] if e["name"] == "ghost")
+        note = row.get("note") or ""
+        self.assertIn("drives no lights", note)
+        self.assertIn("a room that is not there", note)
+
+    def test_a_zone_typed_with_different_capitals_still_matches(self):
+        """The failure that produced the report in the first place: a
+        name a person typed into the map and a model typed back."""
+        room = [dict(lamps(1)[0], zone="Inner Kitchen")]
+        chosen = fx.resolve_fixtures(
+            fx.clean_effect({"type": "wash", "name": "w",
+                             "select": {"zones": [" inner KITCHEN "]}}), room)
+        self.assertEqual(1, len(chosen))
+
+
 if __name__ == "__main__":
     unittest.main()
 

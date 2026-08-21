@@ -35,7 +35,12 @@ SHOWS_DIR = Path(os.environ.get("BRIGHT_STATE", "/data")) / "shows"
 # 3: `music` — harmony, melody, phrases, repetition.
 # 4: `hits` gain `band`/`tone` — which drum, so the kick and the snare
 #    can drive different lights instead of one undifferentiated "accent".
-ANALYSIS_VERSION = 4
+# 5: `hits` are actually FOUND. The peak-picking threshold was an
+#    absolute constant on a quantity that could never reach it, so every
+#    analysis ever written carried an empty or near-empty `hits` list —
+#    and the band field added in 4 was decided by a comparison the band
+#    edges had already settled. Every library has to be re-heard.
+ANALYSIS_VERSION = 5
 
 
 def is_stale(analysis: dict | None) -> bool:
@@ -335,12 +340,28 @@ def list_versions(hash_hex: str) -> dict:
     return {"active": index.get("active"), "versions": rows}
 
 
-def show_path(hash_hex: str) -> Path:
-    return _active_dir(hash_hex) / "show.json"
+def show_path(hash_hex: str, version_id: str | None = None) -> Path:
+    return _dir_for(hash_hex, version_id) / "show.json"
 
 
-def script_path(hash_hex: str) -> Path:
-    return _active_dir(hash_hex) / "script.json"
+def script_path(hash_hex: str, version_id: str | None = None) -> Path:
+    return _dir_for(hash_hex, version_id) / "script.json"
+
+
+def _dir_for(hash_hex: str, version_id: str | None) -> Path:
+    """A named version if one was asked for, otherwise the live one.
+
+    Naming a version here does NOT make it live — this is "play that one
+    tonight", which is a different intention from "this is the show for
+    this track now" and must not quietly become it. A party pins a
+    version per song; `activate_version` is the other verb.
+    """
+    if not version_id:
+        return _active_dir(hash_hex)
+    try:
+        return _version_dir(hash_hex, version_id)
+    except ValueError:
+        return _active_dir(hash_hex)
 
 
 def _active_dir(hash_hex: str) -> Path:
@@ -362,11 +383,21 @@ def _active_dir(hash_hex: str) -> Path:
         return _track_dir(hash_hex)
 
 
-def load_show(hash_hex: str) -> dict | None:
+def load_show(hash_hex: str, version_id: str | None = None) -> dict | None:
+    """The show this track plays, or a named version of it.
+
+    A pin that has gone — deleted, pruned — falls back to the live show
+    rather than to nothing. A party that skipped a song because a
+    version it named last month is no longer there would be a party
+    quietly playing less music than it was asked to.
+    """
     try:
-        return json.loads(show_path(hash_hex).read_text())
+        return json.loads(show_path(hash_hex, version_id).read_text())
     except (OSError, ValueError):
-        return None
+        pass
+    if version_id:
+        return load_show(hash_hex)
+    return None
 
 
 def save_show(hash_hex: str, script: dict, show: dict,
