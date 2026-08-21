@@ -136,6 +136,30 @@ class PanelCase(unittest.IsolatedAsyncioTestCase):
         response = await self.client.post(path, json=payload or {})
         return response.status, await response.json()
 
+    async def run_job(self, path, payload=None):
+        """POST a route that answers with a job handle, and wait it out.
+
+        Every route that asks Claude for something works this way: the
+        run is longer than the request that asked for it is allowed to
+        live, so it is started and polled. The status is normalised back
+        to what the route used to answer inline, which keeps the tests
+        about the ROUTE rather than about the transport.
+        """
+        import asyncio
+
+        status, started = await self.post(path, payload)
+        if "job" not in started:
+            return status, started
+        for _ in range(4000):
+            _, job = await self.get("/api/job/" + started["job"])
+            if job.get("status") == "running":
+                await asyncio.sleep(0.005)
+                continue
+            if job.get("status") == "error":
+                return 409, {"error": job.get("error") or "failed"}
+            return 200, job.get("result") or {}
+        raise AssertionError(f"{path} never finished")
+
     async def put(self, path, payload):
         response = await self.client.put(path, json=payload)
         return response.status, await response.json()
@@ -222,7 +246,8 @@ class TestTheEffectPreview(PanelCase):
 
 class TestTheShowFile(PanelCase):
     async def _compile(self):
-        return await self.post("/api/show/compile", {"track_hash": TRACK_HASH})
+        return await self.run_job("/api/show/compile",
+                                  {"track_hash": TRACK_HASH})
 
     async def test_the_script_is_readable_and_names_its_file(self):
         await self._compile()
@@ -379,7 +404,8 @@ class TestTheShowEditorsPreview(PanelCase):
     """The routes the visual editor is built on, over real HTTP."""
 
     async def _compile(self):
-        return await self.post("/api/show/compile", {"track_hash": TRACK_HASH})
+        return await self.run_job("/api/show/compile",
+                                  {"track_hash": TRACK_HASH})
 
     async def _script(self):
         _, body = await self.get(f"/api/show/{TRACK_HASH}/script")
@@ -482,10 +508,9 @@ class TestWhoWroteThisShow(PanelCase):
     """
 
     async def test_a_plain_compile_records_who_wrote_it(self):
-        response = await self.client.post(
-            "/api/show/compile", json={"track_hash": TRACK_HASH})
-        self.assertEqual(200, response.status)
-        body = await response.json()
+        status, body = await self.run_job(
+            "/api/show/compile", {"track_hash": TRACK_HASH})
+        self.assertEqual(200, status)
         report = body["director"]
         self.assertEqual("algorithmic", report["used"])
         self.assertFalse(report["fell_back"])
@@ -523,11 +548,10 @@ class TestWhoWroteThisShow(PanelCase):
     async def test_algorithmic_can_be_asked_for_explicitly(self):
         """The override is per-compile in both directions — a show you
         want rebuilt without spending a Claude run is the same button."""
-        response = await self.client.post(
+        status, body = await self.run_job(
             "/api/show/compile",
-            json={"track_hash": TRACK_HASH, "director": "algorithmic"})
-        self.assertEqual(200, response.status)
-        body = await response.json()
+            {"track_hash": TRACK_HASH, "director": "algorithmic"})
+        self.assertEqual(200, status)
         self.assertEqual("algorithmic", body["director"]["used"])
         self.assertFalse(body["director"]["fell_back"])
 
@@ -733,3 +757,65 @@ class TestMetronomePicksItsBulbs(PanelCase):
         body = await response.json()
         self.assertNotIn("none of the selected bulbs",
                          body.get("error", ""))
+
+
+class TestASlowClaudeRunOutlivesItsRequest(PanelCase):
+    """The bug this contract exists for.
+
+    A Claude-tier compile takes minutes. It used to be awaited inside the
+    request, so ingress cut the connection and the browser reported a
+    network error — "load failed" — about a director that was still
+    working and would go on to save a show nobody was told about. Every
+    route that asks Claude for something answers with a job id now, and
+    the run is polled.
+    """
+
+    async def test_compile_answers_a_job_rather_than_a_show(self):
+        status, body = await self.post("/api/show/compile",
+                                       {"track_hash": TRACK_HASH})
+        self.assertEqual(202, status)
+        self.assertIn("job", body)
+        # And the job is what carries the show.
+        _, result = await self.run_job("/api/show/compile",
+                                       {"track_hash": TRACK_HASH})
+        self.assertIn("stats", result)
+
+    async def test_a_failing_run_reports_its_reason_through_the_job(self):
+        """A refusal must still arrive. It used to be an HTTP status with
+        a body; it is a finished job carrying the message now, and losing
+        the reason on the way would be the same bug wearing a job."""
+        status, body = await self.run_job("/api/show/compile",
+                                          {"track_hash": "nope" * 10})
+        self.assertEqual(409, status)
+        self.assertTrue(body["error"])
+
+    async def test_a_bad_request_is_still_refused_before_any_job_starts(self):
+        """Argument checking does not become somebody's minute-long wait."""
+        status, body = await self.post(
+            "/api/show/compile",
+            {"track_hash": TRACK_HASH, "director": "gpt"})
+        self.assertEqual(400, status)
+        self.assertNotIn("job", body)
+
+    async def test_pressing_twice_follows_the_run_already_going(self):
+        """One Claude run per show. The second press gets the live job's
+        id rather than a collision message, so both presses watch the
+        same run instead of one of them reporting a failure."""
+        _, first = await self.post("/api/show/compile",
+                                   {"track_hash": TRACK_HASH})
+        status, second = await self.post("/api/show/compile",
+                                         {"track_hash": TRACK_HASH})
+        if status == 409:
+            self.assertEqual(first["job"], second["job"])
+        # Either the first finished between the presses (202 with a new
+        # id) or it was still going (409 with the same one). Both are
+        # correct; a 500 or a lost id is not.
+        self.assertIn("job", second)
+
+    async def test_revise_is_a_job_too(self):
+        status, body = await self.post(f"/api/show/{TRACK_HASH}/revise",
+                                       {"feedback": "more blue"})
+        # No brAIn in a scratch install, so this refuses before starting —
+        # but it refuses with a MESSAGE, which is the half that matters.
+        self.assertEqual(409, status)
+        self.assertIn("brAIn", body["error"])

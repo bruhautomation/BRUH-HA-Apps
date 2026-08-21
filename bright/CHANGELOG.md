@@ -5,6 +5,34 @@ All notable changes to the **BRight** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.16.1
+
+Asking Claude for a show is a job, not a request.
+
+### Fixed
+
+- **"failed: load failed" when compiling a show with Claude.** A
+  Claude-tier compile was awaited *inside* the HTTP request that asked
+  for it, and a show script takes minutes to write — so ingress cut the
+  connection first and what reached the browser was not the panel's error
+  but the absence of a reply, which Safari renders as `load failed`. The
+  director carried on working and saved a show nobody was told about.
+  All four routes that ask Claude for something (compile a show, revise
+  one, write an effect, invent effects) now start a **job** and hand back
+  its id, and the panel polls it — the move `jobs.py` exists for and says
+  so in its own docstring, and the one the Library's Analyze pass has
+  always used. The spinner counts the seconds while it waits, a second
+  press follows the run already going instead of starting another, and a
+  refusal still arrives as its own sentence rather than as silence.
+  Nothing about the director changed: this was always a latent limit, and
+  it became a bug when the brief grew and the model moved to Opus, with
+  no line of the code that broke being touched.
+- **The director's own budget was 240s because a request had to survive
+  it**, which is not a reason about writing a show. Now that the wait
+  belongs to a job, a script gets 600s and an effect 180s. brAIn passes
+  the number through as the CLI's own process limit, so it is the real
+  ceiling on an answer rather than a proxy's patience.
+
 ## 0.16.0
 
 The analyzer learns to hear the music, and the reason you could not tell
