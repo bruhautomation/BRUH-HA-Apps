@@ -35,6 +35,8 @@ import time
 from pathlib import Path
 
 from lifx import packets
+from analyzer import library
+
 from . import effects as fx
 from . import palettes
 
@@ -266,8 +268,12 @@ def script_actions(script: dict, fixtures: list[dict],
         raise CompileError("the light map has no reachable fixtures")
     grid = fx.Grid(analysis.get("beats"), analysis.get("downbeats"),
                    analysis.get("bpm"))
-    duration = float((analysis.get("tags") or {}).get("duration")
-                     or ((analysis.get("beats") or [0])[-1] + 5))
+    # Via duration_of, never the tag directly: a VBR header without a
+    # Xing frame reports a length wrong by whole multiples, the show is
+    # laid out over this number, and the conductor sleeps out its tail
+    # after the last cue — so a lying header parked the party queue for
+    # the difference, on top of drawing a 26-minute waveform.
+    duration = library.duration_of(analysis)
 
     actions: list[dict] = []
     breakdown: list[dict] = []

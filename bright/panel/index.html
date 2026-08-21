@@ -68,7 +68,6 @@
     <div class="card">
       <div class="card-head">
         <h3>Sync proof — the metronome show</h3>
-        <button id="btnLoadSync" class="btn">Load choices</button>
       </div>
       <p class="muted small">Plays an analyzed track on a calibrated speaker
         while every discovered bulb pulses on the beat — no choreography,
@@ -419,11 +418,11 @@
     <div class="card">
       <div class="card-head">
         <h3>Speaker</h3>
-        <button id="btnLoadPlayers" class="btn">Load media players</button>
       </div>
       <div class="demo-controls">
         <select id="calPlayer"><option value="">— pick a media player —</option></select>
         <button id="btnTestPlayback" class="btn">Test playback</button>
+        <button id="btnCalStop" class="btn">■ Stop the sound</button>
       </div>
       <p class="muted small">Start here if nothing has ever played. Test
         playback sends the click track and follows it the whole way —
@@ -475,7 +474,6 @@
     <div class="card">
       <div class="card-head">
         <h3>Stored profiles</h3>
-        <button id="btnProfiles" class="btn">Refresh</button>
       </div>
       <p class="muted small">Fine-tune nudges the whole show earlier
         (negative) or later (positive) on top of the measurement.</p>
@@ -497,15 +495,37 @@
         <select id="partySaved"><option value="">— ad-hoc party —</option></select>
         <select id="partyPlayer"><option value="">— calibrated player —</option></select>
         <input type="text" id="partyVibe" placeholder="vibe (optional): chill, rave, halloween…">
-        <button id="btnPartyLoad" class="btn">Load players</button>
       </div>
       <div class="demo-controls">
         <button id="btnPartyStart" class="btn">🎉 Start the party</button>
         <button id="btnPartyStop" class="btn" hidden>■ Stop</button>
       </div>
       <div id="partyStatus" class="cal-status"></div>
-      <div id="partyNow" class="cal-status"></div>
-      <pre id="partyState" class="report muted" hidden></pre>
+
+      <!-- What the party is doing, while it does it: the song with the
+           room's position on it, the floor live, the sync trim, and the
+           queue. All of it rides the same run state every Stop button
+           follows and the same position stamps the show editor's live
+           playhead uses — one clock, three views of it. -->
+      <div id="partyLive" hidden>
+        <div id="partyNow" class="party-now"></div>
+        <canvas id="partyWave" class="ed-wave party-wave" height="64"
+                aria-label="The playing song, with the room's position"></canvas>
+        <div id="partyFloor" class="map-floor preview-floor party-floor"
+             aria-label="The room, live"></div>
+        <div class="demo-controls party-trim">
+          <button id="btnNudgeLater" class="btn small"
+                  title="Press if the lights land before the beat">−25ms
+            lights later</button>
+          <button id="btnNudgeEarlier" class="btn small"
+                  title="Press if the lights land after the beat">+25ms
+            lights earlier</button>
+          <span id="nudgeReadout" class="muted small"></span>
+          <button id="btnNudgeKeep" class="btn small" hidden>Keep this
+            trim</button>
+        </div>
+        <div id="partyUpNext" class="muted small"></div>
+      </div>
     </div>
 
     <div class="card">
@@ -531,6 +551,13 @@
           <label class="fx-flag"><input type="checkbox" id="pfShuffle" checked>
             Shuffle</label>
         </div>
+        <p class="muted small">Playlist — the exact songs, in order. Leave
+          it empty and the party plays everything in the folder instead.</p>
+        <div class="demo-controls">
+          <select id="pfTrackPick"><option value="">— analyzed track —</option></select>
+          <button id="btnPfAddTrack" class="btn small">＋ Add to playlist</button>
+        </div>
+        <div id="pfTracks" class="list"></div>
         <p class="muted small">Lights this party may use — none ticked means
           all of them.</p>
         <div id="pfFixtures" class="fx-fixtures"></div>

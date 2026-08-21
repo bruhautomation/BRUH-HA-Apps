@@ -21,6 +21,7 @@ import time
 import uuid
 from pathlib import Path
 
+from analyzer import library
 from stores import effect_presets
 
 from . import room
@@ -164,7 +165,8 @@ def _digest(analysis: dict, fixtures: list[dict],
     lines += [
         f"TRACK: {tags.get('title') or 'unknown'} — "
         f"{tags.get('artist') or 'unknown artist'}",
-        f"bpm={analysis.get('bpm')} duration={tags.get('duration')}s "
+        f"bpm={analysis.get('bpm')} "
+        f"duration={library.duration_of(analysis):.0f}s "
         f"brightness_hint={analysis.get('brightness')} (0=dark/warm 1=bright)",
         "",
         "SECTIONS (start-end kind energy):",

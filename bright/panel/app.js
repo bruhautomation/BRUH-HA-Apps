@@ -687,7 +687,7 @@
   // ------------------------------------------------------------------
   // Party
   // ------------------------------------------------------------------
-  $("btnPartyLoad").addEventListener("click", async () => {
+  async function loadPartyPlayers() {
     try {
       const profiles = await api("api/calibrate/profiles");
       const select = $("partyPlayer");
@@ -701,7 +701,7 @@
     } catch (error) {
       $("partyStatus").textContent = "failed: " + error.message;
     }
-  });
+  }
 
   $("btnPartyStart").addEventListener("click", async () => {
     const status = $("partyStatus");
@@ -716,7 +716,12 @@
       });
       status.textContent = "Party on: " + result.queue +
         " tracks queued, anchored " + Math.round(result.offset_ms) +
-        "ms after each play.";
+        "ms after each play." +
+        ((result.skipped_tracks || []).length
+          ? " Skipped (no longer analyzed): " +
+            result.skipped_tracks.join(", ") + " — re-analyze from the " +
+            "Library tab."
+          : "");
       pollRunState();
     } catch (error) {
       status.textContent = "failed: " + error.message;
@@ -740,7 +745,7 @@
   // ------------------------------------------------------------------
   // Lab: sync proof (metronome show)
   // ------------------------------------------------------------------
-  $("btnLoadSync").addEventListener("click", async () => {
+  async function loadSyncChoices() {
     try {
       const [lib, profiles] = await Promise.all([
         api("api/library"),
@@ -766,7 +771,7 @@
     } catch (error) {
       $("syncStatus").textContent = "failed: " + error.message;
     }
-  });
+  }
 
   $("btnSyncStart").addEventListener("click", async () => {
     const status = $("syncStatus");
@@ -1086,7 +1091,7 @@
     box.appendChild(again);
   }
 
-  $("btnLoadPlayers").addEventListener("click", async () => {
+  async function loadCalPlayers() {
     const select = $("calPlayer");
     select.innerHTML = '<option value="">loading…</option>';
     try {
@@ -1108,7 +1113,7 @@
     } catch (error) {
       select.innerHTML = '<option value="">failed: ' + error.message + "</option>";
     }
-  });
+  }
 
   // Several ping exchanges; the lowest-RTT one carries the least clock
   // ambiguity. Returns (server_epoch - client_epoch) in ms.
@@ -1304,7 +1309,9 @@
         row.innerHTML = '<div class="row-main"><span class="small"></span></div>' +
           '<div class="row-actions"><label class="small">Nudge ms ' +
           '<input type="number" step="10" class="nudge"></label>' +
-          '<button class="btn small" data-act="nudge">Save</button></div>';
+          '<button class="btn small" data-act="nudge">Save</button>' +
+          '<button class="btn small" data-act="forget" ' +
+          'aria-label="Delete this calibration">✕</button></div>';
         row.querySelector(".row-main span").textContent = describeProfile(profile);
         row.querySelector(".nudge").value = profile.adjust_ms || 0;
         row.dataset.entity = profile.entity_id;
@@ -1315,19 +1322,39 @@
     }
   }
 
-  $("btnProfiles").addEventListener("click", loadProfiles);
   $("calProfiles").addEventListener("click", async (event) => {
-    const button = event.target.closest('button[data-act="nudge"]');
+    const button = event.target.closest("button[data-act]");
     if (!button) return;
     const row = button.closest(".row");
     try {
-      await post("api/calibrate/adjust", {
-        media_player: row.dataset.entity,
-        adjust_ms: Number(row.querySelector(".nudge").value) || 0,
-      });
+      if (button.dataset.act === "nudge") {
+        await post("api/calibrate/adjust", {
+          media_player: row.dataset.entity,
+          adjust_ms: Number(row.querySelector(".nudge").value) || 0,
+        });
+      } else if (button.dataset.act === "forget") {
+        // One press, no confirm dialog: a calibration is a measurement,
+        // and re-taking it is a minute in the wizard — cheaper than the
+        // dialog everyone clicks through would ever be worth.
+        const response = await fetch("api/calibrate/profile/" +
+          encodeURIComponent(row.dataset.entity), { method: "DELETE" });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body.error || response.status);
+      }
       loadProfiles();
     } catch (error) {
       row.querySelector(".row-main span").textContent = "failed: " + error.message;
+    }
+  });
+
+  $("btnCalStop").addEventListener("click", async () => {
+    const entityId = $("calPlayer").value;
+    const status = $("calStatus") || $("playbackCheck");
+    if (!entityId) return;
+    try {
+      await post("api/calibrate/stop", { media_player: entityId });
+    } catch (error) {
+      if (status) status.textContent = "could not stop it: " + error.message;
     }
   });
 
@@ -1363,31 +1390,156 @@
       const button = $(id);
       if (button) button.hidden = !running;
     }
-    const now = $("partyNow");
-    if (now) {
-      if (!running) {
-        now.textContent = "";
-      } else {
-        const bits = [];
-        if (state.party) bits.push("Party: " + state.party);
-        if (state.track) bits.push("Playing: " + state.track);
-        if (state.queue_left) bits.push(state.queue_left + " tracks left");
-        if (state.cues_total) {
-          bits.push((state.lights_busy ? "cue " : "cues done — ") +
-            (state.lights_busy
-              ? (state.cues_sent || 0) + " of " + state.cues_total
-              : state.cues_total + " sent"));
-        }
-        if (state.playback_warning) bits.push("⚠ " + state.playback_warning);
-        now.textContent = bits.join(" · ");
-      }
+    const live = $("partyLive");
+    if (live) live.hidden = !running;
+    if (!running) {
+      partyView.hash = null;
+      return;
     }
-    const pre = $("partyState");
-    if (pre) {
-      pre.hidden = !running;
-      if (running) pre.textContent = JSON.stringify(state, null, 2);
+    const bits = [];
+    if (state.party) bits.push(state.party);
+    if (state.track) bits.push("♪ " + state.track);
+    if (state.queue_left > 1) {
+      bits.push((state.queue_left - 1) + " more after this");
+    }
+    if (state.playback_warning) bits.push("⚠ " + state.playback_warning);
+    $("partyNow").textContent = bits.join(" · ");
+    const upNext = state.up_next || [];
+    $("partyUpNext").textContent = upNext.length
+      ? "Up next: " + upNext.join(" · ")
+      : "";
+    const trimmed = Number(state.nudge_ms || 0);
+    $("nudgeReadout").textContent = trimmed
+      ? "trimmed " + (trimmed > 0 ? "+" : "") + trimmed + "ms"
+      : "";
+    $("btnNudgeKeep").hidden = !trimmed;
+    partyFollowLive(state);
+  }
+
+  // -- the party's live picture -----------------------------------------
+  //
+  // The same three ingredients the show editor uses, pointed at whatever
+  // is playing right now: the waveform (with the analyser's sections and
+  // drops), the floor of dots, and the conductor's own position stamps,
+  // advanced locally between polls so the playhead moves through quiet
+  // stretches instead of lurching cue to cue. The frames come from the
+  // show outline — the compiler's own walk — so the dots on screen are
+  // the colours the room is being sent, not a second opinion about them.
+  const partyView = { hash: null, wave: null, outline: null, anchor: null,
+                      lastStamp: null };
+
+  async function partyFollowLive(state) {
+    const hash = state.track_hash;
+    if (!hash) return;
+    // Re-anchor only when the stamp MOVED. The conductor stamps position
+    // as it dispatches cues and not otherwise, so through a quiet stretch
+    // or the outro the same number arrives on every poll — re-anchoring
+    // to it snaps the playhead backwards to where the last cue was, over
+    // and over, which is the exact lurch the local advance exists to
+    // avoid.
+    if (typeof state.position_s === "number" &&
+        state.position_s !== partyView.lastStamp) {
+      partyView.lastStamp = state.position_s;
+      partyView.anchor = { at: performance.now(), position: state.position_s };
+    }
+    if (partyView.hash !== hash) {
+      partyView.hash = hash;
+      partyView.wave = null;
+      partyView.outline = null;
+      partyView.lastStamp = null;
+      // Fetched once per track, not per poll: the song does not change
+      // mid-song, and the outline simulates the whole show.
+      try {
+        partyView.wave = await api("api/track/" + hash + "/waveform");
+      } catch (ignored) { /* the floor still works without the song */ }
+      try {
+        partyView.outline = await post("api/show/" + hash + "/outline", {});
+      } catch (ignored) { /* the song still works without the floor */ }
+    }
+    partyPaint();
+  }
+
+  function partyPosition() {
+    if (!partyView.anchor) return 0;
+    return partyView.anchor.position +
+      (performance.now() - partyView.anchor.at) / 1000;
+  }
+
+  function partyPaint() {
+    const state = showState.data || {};
+    if (!state.active || partyView.hash !== state.track_hash) return;
+    const position = partyPosition();
+    const wave = partyView.wave;
+    if (wave && wave.duration_s) {
+      paintWave($("partyWave"), wave,
+                Math.min(1, Math.max(0, position / wave.duration_s)));
+    }
+    const outline = partyView.outline;
+    if (outline && outline.columns && outline.columns.length) {
+      const column = Math.min(outline.columns.length - 1, Math.max(0,
+        Math.floor(position / (outline.seconds_per_column || 1))));
+      // The outline simulates the WHOLE compiled show; a party may only
+      // be driving some of the room (conductor.filter_cues, at dispatch).
+      // Excluded lights are dropped from the picture, because a dot
+      // dancing on screen while its bulb sits still in the room is a
+      // second opinion — the one thing this view promises not to be.
+      const allow = state.allow || [];
+      let fixtures = outline.fixtures;
+      let frame = outline.columns[column];
+      let key = "party:" + partyView.hash;
+      if (allow.length) {
+        const keep = outline.fixtures
+          .map((fixture, i) => [fixture, i])
+          .filter(([fixture]) => allow.includes(fixture.id));
+        fixtures = keep.map(([fixture]) => fixture);
+        frame = keep.map(([, i]) => frame[i]);
+        key += ":" + allow.length;
+      }
+      paintFloor($("partyFloor"), fixtures, frame, key);
     }
   }
+
+  // Between polls the playhead keeps moving from the last anchor — same
+  // interpolation the editor's live follow does, for the same reason.
+  setInterval(() => {
+    if (document.hidden) return;
+    // The element being un-hidden is not the tab being in front: pane
+    // visibility is a class on the pane, and a canvas repaint five times
+    // a second behind another tab is heat with no audience.
+    if (!document.getElementById("pane-party").classList.contains("active")) {
+      return;
+    }
+    const state = showState.data || {};
+    if (state.active && !$("partyLive").hidden) partyPaint();
+  }, 200);
+
+  $("btnNudgeLater").addEventListener("click", () => partyNudge(-25));
+  $("btnNudgeEarlier").addEventListener("click", () => partyNudge(25));
+
+  async function partyNudge(ms) {
+    try {
+      const result = await post("api/show/nudge", { ms });
+      $("nudgeReadout").textContent = result.nudge_ms
+        ? "trimmed " + (result.nudge_ms > 0 ? "+" : "") + result.nudge_ms + "ms"
+        : "";
+      $("btnNudgeKeep").hidden = !result.nudge_ms;
+    } catch (error) {
+      $("partyStatus").textContent = error.message;
+    }
+  }
+
+  $("btnNudgeKeep").addEventListener("click", async () => {
+    try {
+      const result = await post("api/show/nudge/keep", {});
+      $("partyStatus").textContent = "Kept: " + result.entity_id +
+        " now plays lights at " + result.effective_offset_ms +
+        "ms — every future show starts in tune.";
+      $("nudgeReadout").textContent = "";
+      $("btnNudgeKeep").hidden = true;
+    } catch (error) {
+      $("partyStatus").textContent = error.message;
+    }
+  });
 
   async function pollRunState() {
     try {
@@ -2344,19 +2496,24 @@
   };
 
   function edDrawWave() {
-    const canvas = $("edWave");
+    paintWave($("edWave"), ed.wave, null, ed.duration);
+  }
+
+  // One painter for every picture of a song. The editor's playhead is a
+  // DOM element riding over the canvas (it survives repaints); the party
+  // has no overlay, so its playhead is drawn in when `playhead` is given.
+  function paintWave(canvas, wave, playhead, fallbackDuration) {
     if (!canvas || !canvas.getContext) return;
     const width = canvas.clientWidth || 800;
-    const height = 72;
+    const height = canvas.clientHeight || 72;
     const ratio = window.devicePixelRatio || 1;
     canvas.width = Math.round(width * ratio);
     canvas.height = Math.round(height * ratio);
     const ctx = canvas.getContext("2d");
     ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
     ctx.clearRect(0, 0, width, height);
-    const wave = ed.wave;
     if (!wave || !wave.envelope || !wave.envelope.length) return;
-    const duration = wave.duration_s || ed.duration || 1;
+    const duration = wave.duration_s || fallbackDuration || 1;
     const at = (seconds) => (seconds / duration) * width;
 
     // Sections first: they are the ground everything else sits on.
@@ -2393,6 +2550,16 @@
     for (const drop of wave.drops) {
       const x = Math.round(at(drop.t)) + 0.5;
       ctx.strokeStyle = "rgba(255,90,90,0.95)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, height);
+      ctx.stroke();
+    }
+
+    if (typeof playhead === "number") {
+      const x = Math.round(playhead * width) + 0.5;
+      ctx.strokeStyle = "rgba(255,255,255,0.9)";
       ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.moveTo(x, 0);
@@ -3172,6 +3339,26 @@
     $("pfVibe").value = (party && party.vibe) || "";
     $("pfFolder").value = (party && party.folder) || "";
     $("pfShuffle").checked = !party || party.shuffle !== false;
+    // Synchronously, BEFORE any await: the playlist belongs to the party
+    // being opened, and a Save pressed while the library fetch is still
+    // in flight must write this party's tracks — not whatever the last
+    // edited party left in the array. Names patch in when the fetch
+    // lands; a track that has left the library keeps its hash prefix
+    // rather than vanishing from the playlist it is in.
+    pfPlaylist = ((party && party.tracks) || []).map((hash) => ({
+      hash, name: hash.slice(0, 8) + "…",
+    }));
+    renderPfTracks();
+    loadPfTrackPick().then(() => {
+      const names = {};
+      for (const option of $("pfTrackPick").options) {
+        if (option.value) names[option.value] = option.dataset.name;
+      }
+      for (const track of pfPlaylist) {
+        if (names[track.hash]) track.name = names[track.hash];
+      }
+      renderPfTracks();
+    });
     try {
       const [profiles, scenes, catalog] = await Promise.all([
         api("api/calibrate/profiles"),
@@ -3218,6 +3405,86 @@
     }
   }
 
+  // The playlist under construction: [{hash, name}], in play order.
+  // Lives beside the form rather than in the DOM so reordering is an
+  // array move and the list is simply repainted.
+  let pfPlaylist = [];
+
+  function renderPfTracks() {
+    const box = $("pfTracks");
+    box.innerHTML = "";
+    if (!pfPlaylist.length) {
+      box.innerHTML = '<p class="muted small">No playlist — the whole ' +
+        "folder plays.</p>";
+      return;
+    }
+    pfPlaylist.forEach((track, index) => {
+      const row = document.createElement("div");
+      row.className = "row";
+      row.dataset.index = String(index);
+      row.innerHTML = '<div class="row-main"><strong></strong></div>' +
+        '<div class="row-actions">' +
+        '<button class="btn small" data-act="up" aria-label="Earlier">↑</button>' +
+        '<button class="btn small" data-act="down" aria-label="Later">↓</button>' +
+        '<button class="btn small" data-act="out" aria-label="Remove">✕</button>' +
+        "</div>";
+      row.querySelector("strong").textContent =
+        (index + 1) + ". " + track.name;
+      box.appendChild(row);
+    });
+  }
+
+  async function loadPfTrackPick() {
+    const pick = $("pfTrackPick");
+    try {
+      const lib = await api("api/library");
+      pick.innerHTML = '<option value="">— analyzed track —</option>';
+      for (const track of (lib.tracks || []).filter((t) => t.analyzed)) {
+        const option = document.createElement("option");
+        option.value = track.hash;
+        option.textContent = track.name;
+        option.dataset.name = track.name;
+        pick.appendChild(option);
+      }
+    } catch (error) {
+      pick.innerHTML = '<option value="">failed: ' + error.message +
+        "</option>";
+    }
+  }
+
+  $("btnPfAddTrack").addEventListener("click", () => {
+    const pick = $("pfTrackPick");
+    if (!pick.value) return;
+    // Building a playlist is choosing an order, so the first song added
+    // turns Shuffle off where the person can SEE it happen — a default
+    // that silently randomizes what they just ordered is the feature
+    // contradicting itself. Re-ticking it afterwards is still honoured.
+    if (!pfPlaylist.length) $("pfShuffle").checked = false;
+    // The same song twice in a playlist is a choice, not a mistake.
+    pfPlaylist.push({
+      hash: pick.value,
+      name: pick.selectedOptions[0].dataset.name || pick.value.slice(0, 8),
+    });
+    renderPfTracks();
+  });
+
+  $("pfTracks").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-act]");
+    if (!button) return;
+    const index = Number(button.closest(".row").dataset.index);
+    const act = button.dataset.act;
+    if (act === "out") pfPlaylist.splice(index, 1);
+    if (act === "up" && index > 0) {
+      [pfPlaylist[index - 1], pfPlaylist[index]] =
+        [pfPlaylist[index], pfPlaylist[index - 1]];
+    }
+    if (act === "down" && index < pfPlaylist.length - 1) {
+      [pfPlaylist[index + 1], pfPlaylist[index]] =
+        [pfPlaylist[index], pfPlaylist[index + 1]];
+    }
+    renderPfTracks();
+  });
+
   $("btnPartyNew").addEventListener("click", () => fillPartyForm(null));
   $("btnPartyCancel").addEventListener("click", () => {
     $("partyForm").hidden = true;
@@ -3237,6 +3504,7 @@
         end_scene: $("pfScene").value,
         shuffle: $("pfShuffle").checked,
         fixtures,
+        tracks: pfPlaylist.map((track) => track.hash),
       });
       $("partyForm").hidden = true;
       partyEditing = null;
@@ -3255,7 +3523,12 @@
     if (button.dataset.act === "start") {
       try {
         const result = await post("api/show/start_party", { party: name });
-        status.textContent = "Party on: " + result.queue + " tracks queued.";
+        status.textContent = "Party on: " + result.queue + " tracks queued." +
+          ((result.skipped_tracks || []).length
+            ? " Skipped (no longer analyzed): " +
+              result.skipped_tracks.join(", ") + " — re-analyze from the " +
+              "Library tab."
+            : "");
         pollRunState();
       } catch (error) {
         status.textContent = error.message;
@@ -3282,6 +3555,9 @@
     }
   });
 
+  // The Lab is the tab the page opens on, so its choices load with it.
+  loadSyncChoices();
+
   // Load each tab's data when it first opens.
   tabs.addEventListener("click", (event) => {
     const button = event.target.closest(".tab");
@@ -3295,10 +3571,18 @@
     // rescan is a stat per file rather than a megabyte read per file.
     if (button.dataset.tab === "library") scanLibrary();
     if (button.dataset.tab === "map") loadBulbCandidates();
+    if (button.dataset.tab === "calibrate") {
+      loadCalPlayers();
+      loadProfiles();
+    }
+    if (button.dataset.tab === "lab") loadSyncChoices();
     if (button.dataset.tab === "effects") {
       loadEffects();
       loadFxShowTracks();
     }
-    if (button.dataset.tab === "party") loadParties();
+    if (button.dataset.tab === "party") {
+      loadParties();
+      loadPartyPlayers();
+    }
   });
 })();

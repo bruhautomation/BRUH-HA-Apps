@@ -24,6 +24,7 @@ import time
 from pathlib import Path
 
 import atomic_write
+from analyzer import library
 
 PARTIES_FILE = (Path(os.environ.get("BRIGHT_STATE", "/data"))
                 / "parties.json")
@@ -73,8 +74,26 @@ def clean(raw: dict) -> dict:
         party["folder"] = folder[:200]
 
     party["vibe"] = str(raw.get("vibe", "") or "")[:120]
-    party["shuffle"] = bool(raw.get("shuffle", True))
     party["note"] = str(raw.get("note", "") or "")[:200]
+
+    # The playlist: exact tracks, in order, by content hash. When set it
+    # REPLACES the folder scan — a playlist is a choice of songs, and
+    # merging it with "everything in the folder" would un-choose them.
+    # Hashes rather than paths, because identity survives a rename and a
+    # playlist is a thing people keep. Order is the order given: that is
+    # what makes it a playlist rather than a filter.
+    tracks = raw.get("tracks")
+    party["tracks"] = ([str(t) for t in tracks
+                        if isinstance(t, str)
+                        and library.is_track_hash(t)][:500]
+                       if isinstance(tracks, list) else [])
+
+    # Shuffle defaults OFF the moment a playlist exists: its order IS the
+    # request, and a default that randomizes what somebody just ordered
+    # is the feature contradicting itself. A folder party still shuffles
+    # by default — a folder has no order to defend. Explicitly asking is
+    # still honoured either way.
+    party["shuffle"] = bool(raw.get("shuffle", not party["tracks"]))
 
     # Which lights this party is allowed to use. Empty means every light
     # on the map — the same "unset means all" rule an effect's selection

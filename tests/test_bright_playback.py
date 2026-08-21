@@ -437,3 +437,179 @@ class TestStoppingStopsTheBulbs(unittest.TestCase):
         self.assertEqual(["bb" * 6],
                          [serial for serial, _ in self._halts(engine)],
                          "the reachable half of the room still stops")
+
+
+class TestStoppingStopsTheMusic(unittest.TestCase):
+    """The speaker plays the track on its own, so it outlives every task
+    the conductor cancels — exactly like a waveform outlives the cue that
+    sent it. Stop used to end the cue list and put the lights back while
+    the song carried on, which is what pressing Stop at 1am actually
+    delivered."""
+
+    def _conductor(self):
+        engine = _FakeEngine()
+        run = conductor.Conductor.__new__(conductor.Conductor)
+        run.engine = engine
+        run.clock = ShowClock()
+        run._snapshot = {}
+        run._end_scene = None
+        run._driven = set()
+        run._playing_on = None
+        run._session_nudge_ms = 0.0
+        run._task = run._poller = run._verify = None
+        run.state = {}
+        run._update_state = lambda **kw: run.state.update(kw)
+        run._write_state = lambda **kw: None
+        return run
+
+    def test_an_interrupted_run_silences_the_player_it_started(self):
+        run = self._conductor()
+        run._playing_on = "media_player.kitchen"
+        stopped = []
+        original = conductor.ha_client.media_stop
+        conductor.ha_client.media_stop = lambda e, **kw: stopped.append(e)
+        try:
+            asyncio.run(run.stop())
+        finally:
+            conductor.ha_client.media_stop = original
+        self.assertEqual(["media_player.kitchen"], stopped)
+        self.assertIsNone(run._playing_on, "stopped once, not again")
+
+    def test_a_track_that_ended_by_itself_is_not_stopped(self):
+        """_run waits out the track, so natural completion means the song
+        is over — a media_stop then would clip the next track a party has
+        already started, or stop something else the person began."""
+        run = self._conductor()
+        run._playing_on = None  # what natural completion leaves behind
+        stopped = []
+        original = conductor.ha_client.media_stop
+        conductor.ha_client.media_stop = lambda e, **kw: stopped.append(e)
+        try:
+            asyncio.run(run.stop())
+        finally:
+            conductor.ha_client.media_stop = original
+        self.assertEqual([], stopped)
+
+    def test_an_unreachable_player_does_not_keep_the_lights_dancing(self):
+        run = self._conductor()
+        run._playing_on = "media_player.gone"
+        run._driven = {"aa" * 6}
+
+        def boom(entity, **kw):
+            raise OSError("no route to host")
+
+        original = conductor.ha_client.media_stop
+        conductor.ha_client.media_stop = boom
+        try:
+            asyncio.run(run.stop())
+        finally:
+            conductor.ha_client.media_stop = original
+        halts = [s for s, d in run.engine.sent
+                 if packets.parse_header(d)["type"] == packets.SET_WAVEFORM]
+        self.assertEqual(["aa" * 6], halts,
+                         "the waveform halt still went out")
+
+
+class TestTheNudge(unittest.TestCase):
+    """The by-ear sync trim, and the sign is the whole trick."""
+
+    def _running(self):
+        run = conductor.Conductor.__new__(conductor.Conductor)
+        run.engine = _FakeEngine()
+        run.clock = ShowClock()
+        run.clock.anchor(0.0, 0.0)
+        run._session_nudge_ms = 0.0
+        run.state = {"active": True, "media_player": "media_player.kitchen"}
+        run._update_state = lambda **kw: run.state.update(kw)
+        return run
+
+    def test_a_nudge_needs_a_running_show(self):
+        run = self._running()
+        run.state["active"] = False
+        self.assertIn("error", run.nudge(25))
+
+    def test_nudges_accumulate_and_are_clamped(self):
+        run = self._running()
+        run.nudge(25)
+        run.nudge(25)
+        self.assertEqual(50.0, run.state["nudge_ms"])
+        run.nudge(9999)
+        self.assertEqual(250.0, run.state["nudge_ms"],
+                         "a wild value is a typo, capped at 200 per press")
+
+    def test_keep_flips_the_sign_into_adjust(self):
+        """The clock anchors at play_call + effective_offset, and a nudge
+        of +n behaves like an anchor n EARLIER — so keeping it means
+        adjust -= n. Getting this backwards would double the error the
+        person just corrected, in the other direction."""
+        import tempfile
+        from stores import calibration as calibration_store
+        with tempfile.TemporaryDirectory() as tmp:
+            original = calibration_store.CALIBRATION_DIR
+            calibration_store.CALIBRATION_DIR = Path(tmp)
+            try:
+                calibration_store.add_run("media_player.kitchen", 500.0,
+                                          method="mic")
+                run = self._running()
+                run.nudge(40)
+                result = run.keep_nudge()
+                self.assertTrue(result.get("ok"), result)
+                profile = calibration_store.load("media_player.kitchen")
+                self.assertEqual(-40.0, profile["adjust_ms"])
+                self.assertEqual(460.0, profile["effective_offset_ms"],
+                                 "lights 40ms earlier, permanently")
+                self.assertEqual(0.0, run._session_nudge_ms,
+                                 "kept means moved, not copied — leaving it "
+                                 "would apply the trim twice next track")
+            finally:
+                calibration_store.CALIBRATION_DIR = original
+
+    def test_keep_with_nothing_nudged_says_so(self):
+        run = self._running()
+        self.assertIn("error", run.keep_nudge())
+
+
+class TestTheSyncProofPlaysTheMetronome(unittest.TestCase):
+    """The Lab's demo button, un-hijacked.
+
+    `load_show_for_track` preferred the compiled show whenever one
+    existed, so the moment a track was choreographed the sync-proof
+    button quietly started the whole show — a full party out of a button
+    labelled as a demo, with no way back to the plain proof short of
+    deleting the show it was proving."""
+
+    def test_metronome_wins_even_when_a_show_is_compiled(self):
+        import tempfile
+        from analyzer import library
+        with tempfile.TemporaryDirectory() as tmp:
+            original = library.SHOWS_DIR
+            library.SHOWS_DIR = Path(tmp)
+            try:
+                hash_hex = "ab" * 20
+                (library.SHOWS_DIR / hash_hex).mkdir(parents=True)
+                beats = [round(0.5 * b, 2) for b in range(1, 200)]
+                library.save_analysis(hash_hex, {
+                    "hash": hash_hex, "bpm": 120.0, "beats": beats,
+                    "duration_s": beats[-1] + 3,
+                    "file": "/media/music/x.mp3",
+                    "tags": {"title": "X", "duration": beats[-1] + 3},
+                })
+                library.save_show(hash_hex, {"scenes": []}, {
+                    "cues": [{"t": 0.0, "ch": "lifx", "serial": "aa" * 6,
+                              "payload_b64": ""}],
+                    "duration_s": beats[-1] + 3, "tier": "claude",
+                })
+                devices = {"aa" * 6: {"ip": "10.0.0.9", "rtt": {}}}
+                compiled = conductor.load_show_for_track(
+                    hash_hex, devices, 7)
+                self.assertEqual("claude", compiled["tier"],
+                                 "the ordinary start still gets the show")
+                demo = conductor.load_show_for_track(
+                    hash_hex, devices, 7, metronome=True)
+                self.assertEqual("metronome", demo["tier"])
+                for show in (compiled, demo):
+                    self.assertEqual(hash_hex, show["track_hash"],
+                                     "the identity the live playhead "
+                                     "follows rides in both")
+            finally:
+                library.SHOWS_DIR = original
