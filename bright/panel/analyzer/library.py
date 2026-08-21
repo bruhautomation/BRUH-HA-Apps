@@ -277,6 +277,13 @@ def _read_versions(hash_hex: str) -> dict:
         if isinstance(data, dict) and isinstance(data.get("versions"), list):
             return data
     except (OSError, ValueError):
+        # No index yet (a track compiled before versions existed, or one
+        # that has never been compiled at all) or an unreadable one.
+        # Every case has the same answer and it is below rather than
+        # here: adopt whatever show is on disk, or return an empty
+        # index. Raising would mean a single corrupt file made a track
+        # impossible to compile for, which is a worse failure than
+        # rebuilding the index from what is actually there.
         pass
 
     legacy_show = _track_dir(hash_hex) / "show.json"
@@ -421,6 +428,12 @@ def _remove_dir(hash_hex: str, version_id: str) -> None:
     try:
         directory.rmdir()
     except OSError:
+        # Something else is in there — a file this version of BRight does
+        # not write, or a half-finished write from another process. The
+        # version is already out of the index and its two files are gone,
+        # so the deletion HAS happened; an empty directory left behind
+        # costs a few bytes and nothing else. Failing here would report a
+        # delete that actually succeeded as an error.
         pass
 
 
