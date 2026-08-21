@@ -326,7 +326,15 @@ CATALOG: dict[str, dict[str, Any]] = {
 # Two rules, both about taste rather than hardware: a candle is ambience
 # and a switch cannot be dimmed, so nothing that fades or flickers goes
 # near either by default.
-_HARSH = {"strobe", "chase", "sparkle", "stab", "theater"}
+#
+# `melody` is on the list and `harmony` is deliberately not, which is the
+# whole distinction between them: a melody lands a note every few hundred
+# milliseconds with a 90ms fade, and that is flickering however musical
+# its reason — a candle asked to follow a tune is a candle strobing. A
+# harmony crossfades over a bar or two, which is exactly what a candle
+# SHOULD do, and is why the automatic director gives it the candles on
+# purpose.
+_HARSH = {"strobe", "chase", "sparkle", "stab", "theater", "melody"}
 
 
 # ---------------------------------------------------------------------------

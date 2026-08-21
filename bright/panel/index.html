@@ -165,8 +165,12 @@
         <input type="text" id="fxAsk" maxlength="200"
                placeholder="bounce a warm pulse between the two window lamps">
         <button id="btnFxAsk" class="btn">Write it</button>
+        <button id="btnFxInvent" class="btn small"
+                title="Claude proposes effects built for your light map">Or
+          suggest some</button>
       </div>
       <p id="fxAskStatus" class="muted small"></p>
+      <div id="fxIdeas" class="list"></div>
     </div>
 
     <div class="card">
@@ -304,6 +308,9 @@
         <span>
           <select id="showPlayer"><option value="">— calibrated player —</option></select>
           <button id="btnShowsRefresh" class="btn">Refresh</button>
+          <button id="btnDirectorCheck" class="btn small"
+                  title="Check every link between BRight and Claude">Test the
+            Claude director</button>
         </span>
       </div>
       <div id="showList" class="list"><p class="muted">Not loaded yet.</p></div>

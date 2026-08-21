@@ -531,3 +531,81 @@ class TestRevision(ClaudeDirectorCase):
                 build.revise_show("ab" * 20, {}, 7, "notes",
                                   lambda *a: {})
             self.assertIn("compile one first", str(caught.exception))
+
+
+class TestNobodyListeningIsItsOwnFailure(ClaudeDirectorCase):
+    """`available()` only says the tasks FOLDER exists, and that folder
+    outlives the listener that made it. A brAIn whose Automation
+    integration is off looks exactly like a working one — until the wait
+    expires, which used to cost ten minutes and then a message blaming a
+    timeout. The listener claims a task by renaming it, so an un-renamed
+    file is a definitive answer.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self._grace = claude_director.CLAIM_GRACE_S
+        claude_director.CLAIM_GRACE_S = 0.2
+
+    def tearDown(self):
+        claude_director.CLAIM_GRACE_S = self._grace
+        super().tearDown()
+
+    def test_an_unclaimed_task_says_nothing_is_reading_the_folder(self):
+        with self.assertRaises(RuntimeError) as caught:
+            claude_director._run_task("hello", timeout_s=30)
+        message = str(caught.exception)
+        self.assertIn("never picked this up", message)
+        self.assertIn("Automation", message,
+                      "the message has to name the switch to turn on")
+
+    def test_it_fails_in_the_grace_window_not_the_timeout(self):
+        """The whole point: a dead listener is answered in seconds, not
+        after the director's ten-minute budget."""
+        elapsed = []
+        started = time.monotonic()
+        with self.assertRaises(RuntimeError):
+            claude_director._run_task("hello", timeout_s=600)
+        elapsed.append(time.monotonic() - started)
+        self.assertLess(elapsed[0], 10,
+                        f"waited {elapsed[0]:.1f}s for a dead listener")
+
+    def test_an_unclaimed_task_is_not_left_behind(self):
+        with self.assertRaises(RuntimeError):
+            claude_director._run_task("hello", timeout_s=30)
+        self.assertEqual([], list(claude_director.TASKS_DIR.glob("*.json")))
+
+    def test_a_claimed_task_that_never_answers_blames_the_right_thing(self):
+        """Claimed and silent is a different failure with a different
+        remedy: brAIn has it, and brAIn's log is where the reason is."""
+        def claim_it():
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                for task in claude_director.TASKS_DIR.glob("*.json"):
+                    task.rename(task.with_suffix(".work.1"))
+                    return
+                time.sleep(0.01)
+
+        claimer = threading.Thread(target=claim_it, daemon=True)
+        claimer.start()
+        with self.assertRaises(RuntimeError) as caught:
+            claude_director._run_task("hello", timeout_s=1.5)
+        claimer.join()
+        message = str(caught.exception)
+        self.assertIn("did not answer", message)
+        self.assertNotIn("never picked this up", message)
+
+    def test_a_fast_claim_is_never_mistaken_for_a_dead_listener(self):
+        """The claim is checked before the grace expires, so a listener
+        that takes most of the window is still a listener."""
+        answer = {"scenes": [], "moments": []}
+
+        brain = _FakeBrain(claude_director.TASKS_DIR,
+                           claude_director.RESULTS_DIR,
+                           lambda task: {"id": task["id"],
+                                         "status": "completed",
+                                         "result": json.dumps(answer)})
+        brain.start()
+        text = claude_director._run_task("hello", timeout_s=5)
+        brain.join()
+        self.assertIn("scenes", text)

@@ -348,10 +348,34 @@ def _digest(analysis: dict, fixtures: list[dict],
 # ---------------------------------------------------------------------------
 # The task round-trip
 # ---------------------------------------------------------------------------
+# How long to wait for brAIn to CLAIM a task before concluding nothing is
+# listening. Its listener claims by renaming `<id>.json` to `<id>.work.<pid>`
+# the moment it sees the file — inotify when available, a 5s poll otherwise
+# — so thirty seconds is six fallback cycles and not a race.
+CLAIM_GRACE_S = 30
+
+
 def _run_task(prompt: str, timeout_s: float,
               sleep=time.sleep, clock=time.monotonic) -> str:
     """One brAIn automation task: write the request, poll for the answer.
-    Blocking — build_show already runs in a worker thread."""
+    Blocking — build_show already runs in a worker thread.
+
+    Two failures live here and they are NOT the same, which is the whole
+    reason this function watches the task file as well as the result
+    directory. `available()` only says the tasks directory exists, and
+    that directory outlives the listener that made it — so a brAIn whose
+    Automation integration is switched off (or which is simply not
+    running) looks exactly like a working one until the wait expires. It
+    used to cost ten minutes of spinner and then a message blaming a
+    timeout, which sends somebody to look at the slowest thing in the
+    system when the truth is that nobody was listening at all.
+
+    brAIn's listener CLAIMS a task by renaming it out of the way before
+    it does any work, so an un-renamed file is a definitive answer: no
+    listener. That one is caught in thirty seconds and says what to
+    switch on. A claimed task that never answers is a different sentence,
+    and it points at brAIn's own log, where the reason will be.
+    """
     task_id = uuid.uuid4().hex
     task = {
         "id": task_id,
@@ -371,7 +395,9 @@ def _run_task(prompt: str, timeout_s: float,
     scratch.replace(task_path)
 
     result_path = RESULTS_DIR / f"{task_id}.json"
-    deadline = clock() + timeout_s
+    started = clock()
+    deadline = started + timeout_s
+    claimed = False
     while clock() < deadline:
         if result_path.is_file():
             try:
@@ -385,9 +411,25 @@ def _run_task(prompt: str, timeout_s: float,
                 return text
             raise RuntimeError(
                 f"brAIn task ended {payload.get('status')!r}: {text[:200]}")
+        if not claimed:
+            # Renamed out of the way = the listener has it. Checked before
+            # the grace expires so a fast claim is never mistaken for a
+            # slow one.
+            if not task_path.exists():
+                claimed = True
+            elif clock() - started > CLAIM_GRACE_S:
+                task_path.unlink(missing_ok=True)
+                raise RuntimeError(
+                    f"brAIn never picked this up ({CLAIM_GRACE_S}s). Its "
+                    f"task folder is there but nothing is reading it: open "
+                    f"the brAIn add-on and check it is running with its "
+                    f"Automation integration switched on — that listener is "
+                    f"what answers BRight.")
         sleep(POLL_S)
     task_path.unlink(missing_ok=True)  # don't leave a stale ask behind
-    raise RuntimeError(f"brAIn did not answer within {int(timeout_s)}s")
+    raise RuntimeError(
+        f"brAIn picked this up but did not answer within {int(timeout_s)}s "
+        f"— its own log says why (Settings → Add-ons → brAIn → Log).")
 
 
 def _decomment(text: str) -> str:

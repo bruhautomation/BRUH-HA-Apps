@@ -5,6 +5,51 @@ All notable changes to the **BRight** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.16.2
+
+Why it still failed, and a button that answers the question.
+
+### Fixed
+
+- **A stopped brAIn looked exactly like a working one.** `available()` —
+  the only thing BRight checked — tests whether `/config/.brain/tasks` is
+  a directory, and that directory is created by brAIn's automation
+  listener at startup and then **outlives it**. A brAIn that is not
+  running, or running with its Automation integration switched off,
+  leaves the folder behind, so every Claude compile sailed past the check
+  and then sat in silence until the wait expired: ten minutes of spinner
+  and a message blaming a timeout, which sends you to look at the slowest
+  thing in the system when the truth is that nobody was listening at all.
+  The listener CLAIMS a task by renaming it before it does any work, so
+  an un-renamed file is proof rather than a guess — that is caught in
+  **30 seconds** now and the message names the switch to turn on. A task
+  that *was* claimed and never answered is a different sentence pointing
+  at brAIn's own log, because it is a different problem.
+- **A candle could be asked to follow the melody.** `melody` lands a note
+  every few hundred milliseconds with a 90ms fade, which is flickering
+  however musical its reason, and a candle is documented as "glows and
+  drifts, never strobes". It joins the harsh set that `respect_roles`
+  keeps off candles. `harmony` deliberately does not: a crossfade over a
+  bar or two is exactly what a candle should do, which is why the
+  automatic director gives it the candles on purpose.
+
+### Added
+
+- **"Test the Claude director"** on the Shows tab (`director_check.py`,
+  `POST /api/director/check`). The Claude director is a file handed to a
+  different add-on, picked up by a shell listener, run through a CLI with
+  its own login — six things have to be true and BRight could see one of
+  them. This walks the links (brAIn → its task folder → BRight can write
+  there → something claims a task → something answers it → there are
+  lights to write a show for) and stops at the first one that is broken,
+  the same shape `playback_check` uses for audio. It runs a real trivial
+  round trip rather than describing one, because a test of the actual
+  path is the only kind worth trusting.
+- **"Or suggest some" on the Effects tab.** Claude proposing effects
+  built for your light map has been implemented, tested and reachable by
+  API since it shipped — and had no button anywhere, which is a feature
+  nobody can use.
+
 ## 0.16.1
 
 Asking Claude for a show is a job, not a request.

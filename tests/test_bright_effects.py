@@ -558,3 +558,30 @@ class TestTheEffectsThatFollowTheMusic(unittest.TestCase):
         self.assertLessEqual(len(kept), fx.MAX_STEPS)
         self.assertEqual(sorted(kept, key=lambda n: n["t"]), kept,
                          "the cap reordered the tune")
+
+
+class TestRoleMannersCoverTheMusicalEffects(unittest.TestCase):
+    """A candle is ambience: "Glows and drifts. Never strobes." A melody
+    note lands every few hundred milliseconds — musical, and still a
+    flicker. Harmony is the opposite and keeps its candles."""
+
+    def test_a_candle_is_not_asked_to_follow_the_tune(self):
+        fixtures = lamps(2) + [CANDLE]
+        actions = render({"type": "melody", "name": "tune"}, fixtures)
+        self.assertTrue(actions)
+        touched = {a["fixture"]["role"] for a in actions}
+        self.assertNotIn("candle", touched)
+
+    def test_a_candle_does_follow_the_chords(self):
+        fixtures = lamps(2) + [CANDLE]
+        actions = render({"type": "harmony", "name": "chords"}, fixtures)
+        touched = {a["fixture"]["role"] for a in actions}
+        self.assertIn("candle", touched)
+
+    def test_an_effect_that_means_it_can_still_own_the_candle(self):
+        """`respect_roles: false` is the override, same as every other
+        harsh effect — the rule is a default, not a wall."""
+        fixtures = [CANDLE]
+        actions = render({"type": "melody", "name": "tune",
+                          "respect_roles": False}, fixtures)
+        self.assertTrue(actions)
