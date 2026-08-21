@@ -7,7 +7,25 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## 0.13.1
 
-Let Home Assistant say why it refused.
+Find the media source that actually holds the file, and let Home Assistant
+say why it refused.
+
+### Fixed
+
+- **A source that could NAME the file was taken for one that HAS it.**
+  Discovery probed each of Core's media sources with
+  `media_source/resolve_media` and treated a signed URL as proof — but
+  Core resolves for any source that exists, whether or not the path under
+  it does. On an install whose only media source was
+  `media: /config/media`, Core happily signed a URL for
+  `media-source://media_source/media/bright/calibration.wav` while the
+  click track sat under `/media` and nothing of the sort existed at
+  `/config/media/bright/`. BRight took that as the answer, built every
+  media id that way, and Core refused the eventual play with an HTTP 500
+  about a file that was never there. The resolved URL is now **fetched**:
+  a 200 is proof, a 404 is proof of absence, and a fetch that cannot run
+  at all is neither — it falls back to the resolve, because a probe that
+  cannot run must not veto the only candidate.
 
 ### Fixed
 

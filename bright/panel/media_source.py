@@ -14,9 +14,11 @@ cannot change anything. So the id is **discovered** instead:
 
 1. Browse the media-source root. Its children are the directories Core
    actually has, and their ids carry the real keys.
-2. Try each one against a file we know is there, with the same
-   `media_source/resolve_media` call the cast integration makes. The one
-   that resolves is the one that maps to our /media.
+2. Try each one against a file we know is there — `resolve_media`, the
+   same call the cast integration makes, AND a fetch of the URL it hands
+   back. Resolving alone is not enough: Core answers for any source that
+   exists, whether or not the path under it does, so a signed URL proves
+   the source id and says nothing about the file.
 3. Remember it.
 
 Empirical rather than declarative on purpose: Core does not publish the
@@ -34,6 +36,8 @@ import asyncio
 import logging
 import os
 from pathlib import Path
+
+import aiohttp
 
 import ha_ws
 
@@ -103,9 +107,57 @@ def state() -> dict:
             "media_root": str(MEDIA_ROOT)}
 
 
-async def _resolves(source_id: str, relative: str) -> bool:
+# Where Core's own HTTP lives from inside an add-on. The signed media path
+# is not under /api, so it hangs off the proxy root rather than the API base.
+CORE_HTTP = os.environ.get("BRIGHT_CORE_HTTP", "http://supervisor/core")
+FETCH_TIMEOUT_S = 10.0
+
+
+async def _fetch_ok(url_path: str) -> bool | None:
+    """Does the signed path actually serve? True/False, or None for "could
+    not ask" — which is not the same answer and must not vote like one."""
+    if not url_path.startswith("/"):
+        return None  # an absolute URL somewhere else; not ours to judge
+    try:
+        timeout = aiohttp.ClientTimeout(total=FETCH_TIMEOUT_S)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            # Range-limited: proving a file is there should not pull a
+            # whole track across the loopback to find out.
+            headers = {"Range": "bytes=0-0",
+                       "Authorization": f"Bearer {os.environ.get('SUPERVISOR_TOKEN', '')}"}
+            async with session.get(CORE_HTTP + url_path,
+                                   headers=headers) as response:
+                return response.status < 400
+    except Exception:  # noqa: BLE001 — a probe, and its failure is not a verdict
+        return None
+
+
+async def _serves(source_id: str, relative: str) -> bool:
+    """Does this source actually hold our file?
+
+    `resolve_media` answers for any source that EXISTS, whether or not the
+    path under it does — it builds and signs a URL rather than looking on
+    disk. That is the bug this function exists to fix, and it was found in
+    the field rather than reasoned about: an install whose only media
+    source was `media: /config/media` resolved
+    `media-source://media_source/media/bright/calibration.wav` happily and
+    handed back a signed URL, while the click track was under `/media` and
+    nothing of the sort existed at `/config/media/bright/`. BRight took
+    the successful resolve as proof it had found the right source, built
+    every media id that way, and Core answered the eventual play with an
+    HTTP 500 about a file that was never there.
+
+    So resolving is necessary and not sufficient: the URL is fetched. A
+    200 is proof, a 404 is proof of absence, and a transport failure is
+    NEITHER — it returns None above and is treated as the resolve alone,
+    because a probe that cannot run must not veto the only candidate on an
+    install where this fetch route does not work.
+    """
     answer = await ha_ws.resolve_media(build(source_id, relative))
-    return "error" not in answer and bool(answer.get("url"))
+    if "error" in answer or not answer.get("url"):
+        return False
+    served = await _fetch_ok(str(answer["url"]))
+    return True if served is None else served
 
 
 async def discover(probe_relative: str = PROBE_RELATIVE,
@@ -123,7 +175,7 @@ async def discover(probe_relative: str = PROBE_RELATIVE,
         _last_error = ""
 
         # The default first: right nearly everywhere, and one call.
-        if await _resolves(DEFAULT_ID, probe_relative):
+        if await _serves(DEFAULT_ID, probe_relative):
             _cached = DEFAULT_ID
             return state()
 
@@ -145,7 +197,7 @@ async def discover(probe_relative: str = PROBE_RELATIVE,
         for key in found:
             if key == DEFAULT_ID:
                 continue  # already tried, and it did not resolve
-            if await _resolves(key, probe_relative):
+            if await _serves(key, probe_relative):
                 _cached = key
                 log.info("Home Assistant's media source for %s is %r, not "
                          "the default %r", MEDIA_ROOT, key, DEFAULT_ID)
