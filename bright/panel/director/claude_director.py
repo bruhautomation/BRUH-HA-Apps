@@ -94,6 +94,36 @@ An <effect> is:
 name is left exactly as the scene put it. An empty `select` means all of
 them. Only use roles the fixture list below actually has.
 
+FOUR THINGS THE SHAPE ABOVE DOES NOT SHOW, and every one of them is a
+tool you will want:
+
+1. **An effect can carry its own `"start"` and `"end"`** (seconds), and
+   then it runs only for that stretch of its scene instead of all of it.
+   This is how you write "strobe for the last four bars", "the sweep
+   arrives halfway through", "hold, then move". A scene is a container,
+   not a straitjacket — without this every scene is one texture from end
+   to end, which is the single most common way a show reads as flat.
+2. **`"base": false` on a scene** stops it washing every light at its
+   start, so the room stays exactly as the previous scene left it and
+   your effects layer over that. Use it when a section should evolve out
+   of the one before rather than cut.
+3. **`"respect_roles": false` on an effect** lets it drive a fixture its
+   role would normally protect — a candle in a strobe. It is the
+   override for when you mean it. Leaving it out is right nearly always.
+4. **A scene's `brightness` is the ground everything moves against**, and
+   effects are read relative to it. A scene at 0.9 with a pulse on top
+   has nowhere to go; a scene at 0.45 does.
+
+THE ONE HARD LIMIT: a LIFX bulb accepts about 20 messages a second and
+BRight refuses to compile a show that exceeds 18 at any single bulb. Only
+STEPPING effects spend messages (chase, sparkle, theater, melody, level,
+colour_cycle, rainbow, fade, build) — one per light per step. The bulb
+routines cost ONE message each however long they run. So: a chase at
+`step_beats: 0.125` across three lights at 128bpm is about 21/s at one
+bulb and the whole show is REFUSED — not that effect, the show. Keep
+`step_beats` at 0.25 or slower unless the selection is wide, and do not
+stack three stepping effects on the same light.
+
 TYPES and their params:
 %s
 
@@ -118,7 +148,52 @@ and they are the only motion a candle can join.
 The `//` notes above are ANNOTATION, explaining the shape to you. JSON has
 no comments: your answer must be strict JSON — no `//`, no `/* */`, no
 trailing comma before a `}` or `]`, and no `<angle brackets>`, which mark
-where a value goes rather than being one."""
+where a value goes rather than being one.
+
+ONE SCENE, WRITTEN WELL — not a template to copy, an example of the
+density and the thinking. This is a verse in a room with two lamps, a
+strip and candles:
+
+{
+  "start": 48.0, "end": 76.0, "mood": "simmer", "base": false,
+  "palette": [[268, 0.75], [212, 0.6], [318, 0.5]],
+  "brightness": 0.42,
+  "effects": [
+    {"type": "harmony", "name": "chords on the candles",
+     "select": {"roles": ["candle"]},
+     "params": {"brightness": 0.4, "fade_ms": 1800}},
+    {"type": "melody", "name": "the tune, on the lamps",
+     "select": {"roles": ["lamp"]},
+     "params": {"hue_spread": 0.55, "voices": 1}},
+    {"type": "level", "name": "strip breathes with the kick",
+     "select": {"roles": ["strip"]},
+     "params": {"band": "low", "floor": 0.15, "ceiling": 0.7,
+                "gamma": 1.4}},
+    {"type": "build", "name": "lift into the chorus",
+     "start": 68.0, "end": 76.0,
+     "select": {"roles": ["lamp", "strip"]},
+     "params": {"from_brightness": 0.35, "to_brightness": 0.9,
+                "curve": "exp"}}
+  ]
+}
+
+Read what that scene is doing. `base: false` — it grows out of the
+section before it. Four effects and each one owns DIFFERENT lights, so
+nothing is fighting: harmony has the candles, the tune has the lamps, the
+kick has the strip. The build is windowed to the last eight seconds, so
+the verse is one thing and then becomes another. Nothing steps faster
+than the music. And every choice is about this room — it names the roles
+that exist in it.
+
+WHAT MAKES A SHOW BAD, so you can avoid it deliberately:
+- One texture per section, end to end, changing only at the boundaries.
+- Every effect selecting every light, so the room only ever does one
+  thing and effects overwrite each other.
+- Chases everywhere. A chase is one idea; four chases is one idea four
+  times.
+- The peaks doing everything and the verses doing nothing. Most of a
+  song is not its chorus.
+- Colour chosen at random rather than from the scene's palette."""
 
 
 def _catalog_lines() -> str:

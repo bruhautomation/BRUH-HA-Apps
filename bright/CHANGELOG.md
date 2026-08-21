@@ -39,6 +39,30 @@ Colour that moves without flickering, and lights that follow the audio.
   the strip breathing with the bass through the verses and choruses when
   something else is keeping time.
 
+### Changed
+
+- **The director's brief was audited as a document rather than added to,
+  and it was hiding four capabilities and one hard limit.** An effect has
+  always been able to carry its own `start`/`end` inside a scene — the
+  compiler has supported it from the beginning and the brief never said
+  so, which meant every scene the director wrote was one texture from end
+  to end. `"base": false` (a scene that layers over the one before rather
+  than washing the room) and `"respect_roles": false` were equally
+  invisible. And the per-bulb rate budget — 18 messages a second, past
+  which BRight **refuses the whole show** and falls back to the
+  algorithmic director — was never mentioned at all, so the one constraint
+  that can throw the work away was the one thing the model could not see.
+  All five are in the contract now, with which effects actually spend
+  messages and which cost one however long they run.
+- **The brief carries a worked example and a list of anti-patterns.** One
+  scene written well — four effects owning four different sets of lights,
+  a windowed build in its last eight seconds, `base: false` so it grows
+  out of the section before — followed by what the example is doing and
+  why. `test_the_worked_example_actually_compiles` pulls that scene back
+  out of the live prompt, validates it and compiles it inside the rate
+  budget, because a broken example teaches the model to write broken
+  scripts and does it convincingly.
+
 ### Fixed
 
 - **Two bulb routines on one light silently cancelled each other.** A LIFX

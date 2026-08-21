@@ -609,3 +609,93 @@ class TestNobodyListeningIsItsOwnFailure(ClaudeDirectorCase):
         text = claude_director._run_task("hello", timeout_s=5)
         brain.join()
         self.assertIn("scenes", text)
+
+
+class TestTheContractTeachesWhatTheCompilerAccepts(unittest.TestCase):
+    """The brief is the only thing standing between a good model and a
+    show that will not compile. These are the capabilities and limits it
+    must carry — every one of them was missing at some point, and a
+    capability the director does not know about is one it cannot use."""
+
+    def setUp(self):
+        from test_bright_director import FIXTURES, analysis_fixture
+        self.brief = claude_director.digest(analysis_fixture(), FIXTURES)
+
+    def test_it_says_an_effect_can_have_its_own_window(self):
+        """Without this every scene is one texture end to end, which is
+        the commonest way a show reads as flat — and the compiler has
+        always supported it."""
+        self.assertIn('"start"', self.brief)
+        self.assertIn("only for that stretch of its scene", self.brief)
+
+    def test_it_says_how_a_scene_can_decline_its_base_wash(self):
+        self.assertIn('"base": false', self.brief)
+
+    def test_it_states_the_rate_budget_that_can_refuse_the_show(self):
+        """A show over the per-bulb budget is REFUSED and falls back to
+        the algorithmic director. The model was never told the limit
+        existed, so it could not avoid it."""
+        from director import compiler
+
+        self.assertIn(str(int(compiler.MAX_RATE_HZ)), self.brief)
+        self.assertIn("step_beats", self.brief)
+
+    def test_it_names_the_effects_that_cannot_be_stacked(self):
+        from director import effects as fx
+
+        for name in sorted(fx.BULB_ROUTINES):
+            with self.subTest(effect=name):
+                self.assertIn(f"`{name}`", self.brief)
+
+    def test_it_carries_a_worked_example_and_says_what_is_good_about_it(self):
+        self.assertIn("ONE SCENE, WRITTEN WELL", self.brief)
+        self.assertIn("WHAT MAKES A SHOW BAD", self.brief)
+
+    def test_the_worked_example_actually_compiles(self):
+        """The example is teaching material, so a broken one teaches the
+        model to write broken scripts — and it would do it convincingly,
+        because it came from us."""
+        import json as _json
+
+        from director import choreographer, compiler
+        from test_bright_director import FIXTURES, analysis_fixture
+
+        # Pull the example scene straight out of the prompt the model
+        # gets, rather than a copy kept in the test that could drift.
+        start = self.brief.index("ONE SCENE, WRITTEN WELL")
+        block = self.brief[start:]
+        opening = block.index("{")
+        depth, end = 0, None
+        for index in range(opening, len(block)):
+            if block[index] == "{":
+                depth += 1
+            elif block[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    end = index + 1
+                    break
+        self.assertIsNotNone(end, "could not find the example scene")
+        scene = _json.loads(block[opening:end])
+
+        analysis = analysis_fixture()
+        analysis["music"] = {
+            "notes": [{"t": 48.0 + i * 0.5, "d": 0.4, "m": 60 + i % 12,
+                       "pc": (60 + i % 12) % 12, "s": 0.8} for i in range(40)],
+            "chords": [{"t": 48.0 + i * 4.0, "name": "C", "root": i % 12,
+                        "quality": "maj"} for i in range(7)],
+            "phrases": [], "repeats": [], "key": "C"}
+        analysis["features"] = {"hop_s": 0.05,
+                                "energy": [0.5] * 4000, "low": [0.6] * 4000,
+                                "mid": [0.4] * 4000, "high": [0.3] * 4000}
+        script = {"version": 2, "scenes": [scene], "moments": []}
+
+        self.assertEqual([], choreographer.validate_script(script),
+                         "the example in the prompt does not validate")
+        # The room in the example names candles, lamps and a strip; the
+        # shared fixture list has candles and lamps, which is enough to
+        # prove it renders. It must also stay inside the rate budget.
+        show = compiler.compile_show(script, FIXTURES, analysis, source=7)
+        self.assertTrue(show["cues"])
+        self.assertLessEqual(show["stats"]["peak_per_device_hz"],
+                             compiler.MAX_RATE_HZ,
+                             "the example we teach would be refused")
