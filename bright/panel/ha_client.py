@@ -148,6 +148,20 @@ def call_service(domain: str, service: str, data: dict | None = None,
                           data=data or {}, opener=opener)
 
 
+def media_stop(entity_id: str, *, opener=urllib.request.urlopen) -> Any:
+    """Silence a player this add-on started.
+
+    The missing half of `play_media`, and it was missing in the field:
+    Stop ended the cue list and put the lights back while the speaker
+    carried on with the track, because nothing ever told it otherwise —
+    the music is fetched and played by the device, so it outlives every
+    task the conductor cancels, exactly like a waveform outlives the cue
+    that sent it.
+    """
+    return call_service("media_player", "media_stop",
+                        {"entity_id": entity_id}, opener=opener)
+
+
 def play_media(entity_id: str, media_content_id: str,
                media_content_type: str = "music",
                *, opener=urllib.request.urlopen) -> Any:

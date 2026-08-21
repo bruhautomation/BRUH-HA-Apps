@@ -367,3 +367,46 @@ class TestTheLibraryIsNotRereadFromTheDiskUp(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTheDurationIsMeasuredNotBelieved(unittest.TestCase):
+    """The twenty-six-minute four-minute song.
+
+    mutagen's `info.length` is read from the file header, and a VBR file
+    without a proper Xing header reports an estimate from the first
+    frame's bitrate — wrong by whole multiples. The old pipeline let that
+    estimate win over the length of the PCM it had JUST DECODED
+    (`tags.setdefault`), and everything downstream schedules against the
+    number: the waveform drew 26 minutes, the compiler laid the show out
+    over 26 minutes, and the conductor slept out the phantom tail after
+    the last cue — parking the party queue for the difference.
+    """
+
+    def test_a_new_analysis_carries_the_measured_length(self):
+        measured = {"duration_s": 214.3,
+                    "tags": {"duration": 1562.0},  # the header's lie
+                    "beats": [float(b) for b in range(1, 210)]}
+        self.assertEqual(214.3, library.duration_of(measured))
+
+    def test_an_old_analysis_with_a_lying_header_is_healed_by_its_beats(self):
+        """Analyses from before `duration_s` cannot be re-measured without
+        a decode, but the beat tracker walked the whole file — the last
+        beat is near the real end, and a claimed duration far past it is
+        the header lying, not a quiet outro."""
+        old = {"tags": {"duration": 1562.0},
+               "beats": [float(b) for b in range(1, 236)]}  # ends ~235s
+        self.assertEqual(240.0, library.duration_of(old))
+
+    def test_a_long_quiet_outro_is_not_mistaken_for_a_lie(self):
+        """Sixty seconds of tolerance: a real outro can run well past the
+        last beat, and a header error is measured in multiples."""
+        old = {"tags": {"duration": 270.0},
+               "beats": [float(b) for b in range(1, 236)]}
+        self.assertEqual(270.0, library.duration_of(old))
+
+    def test_no_beats_means_the_tag_is_the_only_witness(self):
+        self.assertEqual(180.0, library.duration_of(
+            {"tags": {"duration": 180.0}, "beats": []}))
+
+    def test_nothing_at_all_is_zero_not_a_crash(self):
+        self.assertEqual(0.0, library.duration_of({"tags": {}}))

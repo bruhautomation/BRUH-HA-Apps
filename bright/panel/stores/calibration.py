@@ -90,6 +90,23 @@ def set_adjust(entity_id: str, adjust_ms: float) -> dict:
     return profile
 
 
+def remove(entity_id: str) -> bool:
+    """Delete a player's calibration. True if there was one.
+
+    A speaker that left the house should not go on being offered as a
+    calibrated player — `best_entity` picks from these files, so a stale
+    profile is not clutter, it is a candidate. Deleting is final and
+    cheap to reverse: calibration is a measurement, and the Calibrate tab
+    re-takes it in under a minute.
+    """
+    path = _path(entity_id)  # validates before it becomes a filesystem op
+    try:
+        path.unlink()
+        return True
+    except FileNotFoundError:
+        return False
+
+
 def all_profiles() -> list[dict]:
     profiles = []
     try:

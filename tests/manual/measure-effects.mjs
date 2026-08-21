@@ -122,7 +122,8 @@ for (const width of WIDTHS) {
 		status: 200, contentType: 'application/json',
 		body: JSON.stringify({ status: 'party', active: true, lights_busy: true,
 			party: 'Saturday', track: 'Demo Track', cues_sent: 12,
-			cues_total: 400, queue_left: 3 }),
+			cues_total: 400, queue_left: 3, nudge_ms: 50,
+			up_next: ['Second Song', 'Third Song'] }),
 	}));
 	await page.click('.tab[data-tab="party"]');
 	await page.waitForFunction(
@@ -131,6 +132,37 @@ for (const width of WIDTHS) {
 	const now = await page.textContent('#partyNow');
 	if (!/Saturday/.test(now || '')) fail(`the run line does not name it: ${now}`);
 	else ok(`Stop appears while running · ${now.trim()}`);
+
+	// The live view: what the party is doing has to be ON the party tab
+	// while it does it — up next, the trim, and controls a thumb can hit.
+	const liveHidden = await page.$eval('#partyLive', (el) => el.hidden);
+	if (liveHidden) fail('the live view stayed hidden during a run');
+	const upNext = await page.textContent('#partyUpNext');
+	if (!/Second Song/.test(upNext || '')) {
+		fail(`up next does not name the queue: "${upNext}"`);
+	} else ok(`up next reads: ${upNext.trim()}`);
+	const readout = await page.textContent('#nudgeReadout');
+	if (!/\+50ms/.test(readout || '')) {
+		fail(`the trim readout does not show the state's trim: "${readout}"`);
+	}
+	const keepHidden = await page.$eval('#btnNudgeKeep', (el) => el.hidden);
+	if (keepHidden) fail('Keep this trim is hidden while a trim exists');
+	for (const id of ['btnNudgeLater', 'btnNudgeEarlier', 'btnNudgeKeep']) {
+		const box = await page.$eval('#' + id,
+			(el) => el.getBoundingClientRect());
+		if (box.height < 40) fail(`${id} is ${Math.round(box.height)}px tall`);
+	}
+	await page.unroute('**/api/show/state');
+
+	// And when nothing runs, the live view is GONE — a picture of the
+	// last party beside an idle Start button reads as a running one.
+	await page.route('**/api/show/state', (route) => route.fulfill({
+		status: 200, contentType: 'application/json',
+		body: JSON.stringify({ status: 'idle', active: false }),
+	}));
+	await page.waitForFunction(
+		() => document.getElementById('partyLive').hidden,
+		{ timeout: 8000 }).catch(() => fail('the live view outlived the run'));
 	await page.unroute('**/api/show/state');
 
 	if (errors.length) fail(`page errors: ${errors.slice(0, 3).join(' | ')}`);

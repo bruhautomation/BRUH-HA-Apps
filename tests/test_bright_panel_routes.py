@@ -609,3 +609,47 @@ class TestSeeingTheMusic(PanelCase):
     async def test_a_bad_hash_is_refused_rather_than_globbed(self):
         response = await self.client.get("/api/track/not-a-hash/waveform")
         self.assertEqual(400, response.status)
+
+
+class TestCalibrationHousekeeping(PanelCase):
+    """The sound can be stopped, and a departed speaker can be forgotten."""
+
+    async def test_stopping_the_click_track_needs_a_player(self):
+        response = await self.client.post("/api/calibrate/stop", json={})
+        self.assertEqual(400, response.status)
+
+    async def test_a_profile_can_be_deleted(self):
+        from stores import calibration as calibration_store
+        calibration_store.add_run("media_player.departed", 320.0, method="mic")
+        response = await self.client.delete(
+            "/api/calibrate/profile/media_player.departed")
+        self.assertEqual(200, response.status)
+        body = await response.json()
+        self.assertEqual("media_player.departed", body["deleted"])
+        self.assertNotIn("media_player.departed",
+                         [p["entity_id"] for p in body["profiles"]])
+
+    async def test_deleting_a_profile_that_never_existed_is_a_404(self):
+        response = await self.client.delete(
+            "/api/calibrate/profile/media_player.never_here")
+        self.assertEqual(404, response.status)
+
+    async def test_a_junk_entity_is_refused_not_globbed(self):
+        response = await self.client.delete(
+            "/api/calibrate/profile/..%2F..%2Fetc")
+        self.assertEqual(400, response.status)
+
+
+class TestNudgeRoutes(PanelCase):
+    async def test_a_nudge_with_nothing_running_is_refused(self):
+        response = await self.client.post("/api/show/nudge", json={"ms": 25})
+        self.assertEqual(409, response.status)
+        self.assertIn("nothing is running", (await response.json())["error"])
+
+    async def test_a_zero_nudge_is_refused(self):
+        response = await self.client.post("/api/show/nudge", json={"ms": 0})
+        self.assertEqual(400, response.status)
+
+    async def test_keep_with_nothing_nudged_is_refused(self):
+        response = await self.client.post("/api/show/nudge/keep", json={})
+        self.assertEqual(409, response.status)

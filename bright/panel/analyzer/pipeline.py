@@ -25,9 +25,16 @@ def analyze_track(path: Path) -> dict:
     pcm = decode.pcm(path)
     duration_s = len(pcm) / decode.SAMPLE_RATE
     tags = decode.tags(path)
-    tags.setdefault("duration", round(duration_s, 2))
-    if not tags.get("duration"):
-        tags["duration"] = round(duration_s, 2)
+    # The measured length REPLACES whatever the header claimed. mutagen's
+    # `info.length` is read from the file's header, and a VBR file without
+    # a proper Xing header reports an estimate from the first frame's
+    # bitrate — wrong by whole multiples, which is how a four-minute song
+    # analysed as twenty-six. The PCM was just decoded; its length is not
+    # an estimate. Everything downstream schedules against this number:
+    # the compiler lays the show out over it, and the conductor sleeps out
+    # its tail after the last cue, so a lying header did not just draw a
+    # long waveform — it parked the party queue for the difference.
+    tags["duration"] = round(duration_s, 2)
 
     rhythm = beats.analyze_beats(pcm, decode.SAMPLE_RATE)
     bands = features.band_energies(pcm, decode.SAMPLE_RATE)
@@ -36,6 +43,11 @@ def analyze_track(path: Path) -> dict:
         "file": str(path),
         "hash": hash_hex,
         "analyzed_at": time.time(),
+        # The one authoritative length, measured from the decoded audio.
+        # `tags["duration"]` carries the same value for older readers, but
+        # this is the field new code should reach for — see
+        # `library.duration_of`, which also heals analyses from before it.
+        "duration_s": round(duration_s, 2),
         "tags": tags,
         "bpm": rhythm["bpm"],
         "beats": rhythm["beats"],

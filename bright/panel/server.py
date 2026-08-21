@@ -1192,7 +1192,7 @@ def _waveform_payload(hash_hex: str) -> tuple[int, dict]:
     tags = analysis.get("tags") or {}
     return 200, {
         "envelope": envelope,
-        "duration_s": tags.get("duration"),
+        "duration_s": library.duration_of(analysis),
         "bpm": analysis.get("bpm"),
         "title": tags.get("title") or "",
         "artist": tags.get("artist") or "",
@@ -1291,7 +1291,7 @@ def _script_payload(hash_hex: str) -> tuple[int, dict]:
         "track_hash": hash_hex,
         "title": (analysis.get("tags") or {}).get("title") or hash_hex[:8],
         "bpm": analysis.get("bpm"),
-        "duration_s": (analysis.get("tags") or {}).get("duration"),
+        "duration_s": library.duration_of(analysis),
         "script": script,
         "compiled": bool(show and show.get("cues")),
         "stats": (show or {}).get("stats"),
@@ -1500,11 +1500,12 @@ def _conductor() -> conductor_mod.Conductor:
     return CONDUCTOR
 
 
-async def _start_show_for(hash_hex: str, media_player: str) -> tuple[int, dict]:
+async def _start_show_for(hash_hex: str, media_player: str,
+                          *, metronome: bool = False) -> tuple[int, dict]:
     try:
         show = await asyncio.to_thread(
-            conductor_mod.load_show_for_track, hash_hex, ENGINE.devices,
-            ENGINE.source)
+            lambda: conductor_mod.load_show_for_track(
+                hash_hex, ENGINE.devices, ENGINE.source, metronome=metronome))
     except ValueError:
         return 400, {"error": "not a track hash"}
     if show is None:
@@ -1549,8 +1550,32 @@ async def h_show_start(request: web.Request) -> web.Response:
     if not hash_hex:
         return web.json_response({"error": "track or track_hash required"},
                                  status=400)
-    status, payload = await _start_show_for(hash_hex, media_player)
+    # One handler serves /start_show and /metronome — everything about
+    # them is identical except which cues play, so the path is the flag.
+    # The sync proof MUST get the metronome even when a compiled show
+    # exists: it is a demo of the clock, not a way to start the evening.
+    metronome = request.path.endswith("/metronome")
+    status, payload = await _start_show_for(hash_hex, media_player,
+                                            metronome=metronome)
     return web.json_response(payload, status=status)
+
+
+async def h_show_nudge(request: web.Request) -> web.Response:
+    """Trim the running show's sync by ear, a few ms per press."""
+    body = await _json_body(request)
+    try:
+        ms = float(body.get("ms", 0))
+    except (TypeError, ValueError):
+        return web.json_response({"error": "ms must be a number"}, status=400)
+    if not ms:
+        return web.json_response({"error": "ms must be non-zero"}, status=400)
+    result = _conductor().nudge(ms)
+    return web.json_response(result, status=200 if result.get("ok") else 409)
+
+
+async def h_show_nudge_keep(request: web.Request) -> web.Response:
+    result = await asyncio.to_thread(_conductor().keep_nudge)
+    return web.json_response(result, status=200 if result.get("ok") else 409)
 
 
 async def h_show_stop(request: web.Request) -> web.Response:
@@ -1620,16 +1645,44 @@ async def h_show_party(request: web.Request) -> web.Response:
         folders = [chosen]
     vibe = str(body.get("vibe", "") or "")[:120]
 
-    tracks = await asyncio.to_thread(library.scan_all, folders)
-    queue = [t["hash"] for t in tracks if t["analyzed"]]
-    if not queue:
-        where = " or ".join(str(f) for f in folders)
-        return web.json_response(
-            {"error": f"no analyzed tracks in {where} — run the Library "
-                      "tab first"},
-            status=409)
-    if body.get("shuffle", True):
-        random.shuffle(queue)
+    # A playlist beats the folder. It is a choice of exact songs in an
+    # exact order, and merging it with "everything in the folder" would
+    # un-choose them. Tracks that have lost their analysis since the list
+    # was made are skipped and NAMED, not silently dropped — a playlist
+    # that quietly shrinks is how one missing file becomes "the party
+    # skipped my song and I don't know why".
+    playlist = [str(t) for t in (body.get("tracks") or [])
+                if isinstance(t, str)]
+    skipped: list[str] = []
+    if playlist:
+        queue = []
+        for hash_hex in playlist:
+            analyzed = await asyncio.to_thread(library.load_analysis, hash_hex)
+            if analyzed is None:
+                skipped.append(hash_hex[:8])
+            else:
+                queue.append(hash_hex)
+        if not queue:
+            return web.json_response(
+                {"error": "none of the playlist's tracks are analyzed any "
+                          "more — re-analyze them from the Library tab"},
+                status=409)
+        # A playlist's order IS the point; shuffle only when asked, and
+        # the saved party's own flag decides (default off for playlists —
+        # you ordered the songs, so the order is the request).
+        if body.get("shuffle", False):
+            random.shuffle(queue)
+    else:
+        tracks = await asyncio.to_thread(library.scan_all, folders)
+        queue = [t["hash"] for t in tracks if t["analyzed"]]
+        if not queue:
+            where = " or ".join(str(f) for f in folders)
+            return web.json_response(
+                {"error": f"no analyzed tracks in {where} — run the Library "
+                          "tab first"},
+                status=409)
+        if body.get("shuffle", True):
+            random.shuffle(queue)
 
     mode = _options_from_env()["director_mode"]
     preparer = None
@@ -1650,6 +1703,8 @@ async def h_show_party(request: web.Request) -> web.Response:
             h, ENGINE.devices, ENGINE.source),
         preparer=preparer, name=(party or {}).get("name"),
         end_scene=end_scene, allow=allow)
+    if skipped and result.get("ok"):
+        result["skipped_tracks"] = skipped
     status = 200 if result.get("ok") else 409
     return web.json_response(result, status=status)
 
@@ -1766,6 +1821,50 @@ async def h_media_rediscover(request: web.Request) -> web.Response:
     if error:
         return web.json_response({"error": error}, status=500)
     return web.json_response(await media_source.discover(force=True))
+
+
+async def h_cal_stop(request: web.Request) -> web.Response:
+    """Silence the click track.
+
+    The reference is 13 seconds long, and thirteen seconds is a long time
+    in a quiet house at midnight with no way to end it — the wizard could
+    start a sound and could not stop one. Also what the Party and Shows
+    stops now do for their own music, offered here for the one player the
+    wizard is pointed at.
+    """
+    body = await _json_body(request)
+    entity_id = _entity(body)
+    if entity_id is None:
+        return web.json_response({"error": "media_player entity required"},
+                                 status=400)
+    result = await asyncio.to_thread(ha_client.media_stop, entity_id)
+    if isinstance(result, dict) and result.get("error"):
+        return web.json_response(
+            {"error": f"could not stop {entity_id}: {result['error']}"},
+            status=409)
+    return web.json_response({"stopped": entity_id})
+
+
+async def h_cal_profile_delete(request: web.Request) -> web.Response:
+    """Remove a calibrated player that is no longer used.
+
+    Not an archive: `best_entity` picks from these profiles, so a stale
+    one is a candidate for every show that names no speaker. Deleting is
+    cheap to reverse — calibration is a measurement, and re-taking it is
+    a minute in the wizard.
+    """
+    entity_id = request.match_info["entity"]
+    try:
+        removed = await asyncio.to_thread(calibration_store.remove, entity_id)
+    except ValueError:
+        return web.json_response({"error": "not an entity id"}, status=400)
+    if not removed:
+        return web.json_response(
+            {"error": f"{entity_id} has no calibration to delete"},
+            status=404)
+    return web.json_response(
+        {"deleted": entity_id,
+         "profiles": await asyncio.to_thread(calibration_store.all_profiles)})
 
 
 async def h_cal_ping(request: web.Request) -> web.Response:
@@ -2041,6 +2140,8 @@ def build_app() -> web.Application:
     app.router.add_post("/api/show/start_show", h_show_start)
     app.router.add_post("/api/show/metronome", h_show_start)
     app.router.add_post("/api/show/stop_show", h_show_stop)
+    app.router.add_post("/api/show/nudge", h_show_nudge)
+    app.router.add_post("/api/show/nudge/keep", h_show_nudge_keep)
     app.router.add_post("/api/show/party_mode", h_show_party)
     # `start_party` is party_mode under the name the service uses: an
     # automation asks for a party, not for a mode.
@@ -2068,6 +2169,9 @@ def build_app() -> web.Application:
     app.router.add_post("/api/calibrate/reference", h_cal_reference)
     app.router.add_post("/api/calibrate/ping", h_cal_ping)
     app.router.add_post("/api/calibrate/play", h_cal_play)
+    app.router.add_post("/api/calibrate/stop", h_cal_stop)
+    app.router.add_delete("/api/calibrate/profile/{entity}",
+                          h_cal_profile_delete)
     app.router.add_post("/api/calibrate/analyze", h_cal_analyze)
     app.router.add_post("/api/calibrate/taps", h_cal_taps)
     app.router.add_post("/api/calibrate/manual", h_cal_manual)

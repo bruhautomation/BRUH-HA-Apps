@@ -19,6 +19,7 @@ if PANEL_DIR not in sys.path:
     sys.path.append(PANEL_DIR)
 
 import ha_client  # noqa: E402
+from stores import parties  # noqa: E402
 from lifx import packets  # noqa: E402
 from playback import conductor as conductor_mod  # noqa: E402
 from stores import calibration  # noqa: E402
@@ -355,3 +356,37 @@ class TestBridge(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPartyPlaylists(unittest.TestCase):
+    """A playlist is a choice of exact songs in an exact order."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self._file = parties.PARTIES_FILE
+        parties.PARTIES_FILE = Path(self.tmp.name) / "parties.json"
+
+    def tearDown(self):
+        parties.PARTIES_FILE = self._file
+        self.tmp.cleanup()
+
+    def test_a_playlist_round_trips_in_order(self):
+        first, second = "ab" * 20, "cd" * 20
+        parties.save({"name": "Vinyl Night", "tracks": [second, first]})
+        saved = parties.get("vinyl night")
+        self.assertEqual([second, first], saved["tracks"],
+                         "the order given is the order kept — that is what "
+                         "makes it a playlist rather than a filter")
+
+    def test_junk_in_the_tracks_list_is_dropped_not_fatal(self):
+        parties.save({"name": "Messy", "tracks": [
+            "ab" * 20, "not-a-hash", 42, {"hash": "cd" * 20}]})
+        self.assertEqual(["ab" * 20], parties.get("Messy")["tracks"])
+
+    def test_the_same_song_twice_is_a_choice_not_a_mistake(self):
+        parties.save({"name": "Encore", "tracks": ["ab" * 20, "ab" * 20]})
+        self.assertEqual(2, len(parties.get("Encore")["tracks"]))
+
+    def test_a_party_without_a_playlist_has_an_empty_list(self):
+        parties.save({"name": "Folder Night"})
+        self.assertEqual([], parties.get("Folder Night")["tracks"])

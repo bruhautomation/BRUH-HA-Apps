@@ -55,6 +55,7 @@ class Conductor:
     # raising, and a set that only exists once a show has taken a snapshot
     # is not a set a stop path can read.
     _driven: set[str] = frozenset()  # type: ignore[assignment]
+    _playing_on: str | None = None
 
     def __init__(self, engine) -> None:
         self.engine = engine
@@ -65,6 +66,16 @@ class Conductor:
         self._snapshot: dict[str, dict] = {}
         self._end_scene: str | None = None
         self._driven: set[str] = set()
+        # The player a play command was sent to, while its track is still
+        # meant to be playing. Cleared on natural completion — the track
+        # ended by itself and there is nothing left to silence — so stop()
+        # only quiets a speaker this run actually started and interrupted.
+        self._playing_on: str | None = None
+        # By-ear trim, in milliseconds, accumulated across the run.
+        # Positive = the lights fire earlier. It rides into every new
+        # track's anchor so a party stays in tune once dialed, and it is
+        # what "Keep" folds into the player's calibration.
+        self._session_nudge_ms = 0.0
         self.state: dict[str, Any] = {"status": "idle"}
         self._write_state()
 
@@ -104,7 +115,14 @@ class Conductor:
             ha_client.play_media, media_player, media_content_id)
         if isinstance(result, dict) and result.get("error"):
             raise RuntimeError(result["error"])
-        self.clock.anchor(play_call, offset_ms / 1000.0)
+        self._playing_on = media_player
+        # The session nudge is baked into the anchor rather than slewed in
+        # afterwards: a new track must start already in tune, and the slew
+        # (8ms per second, chosen so a mid-track correction is invisible)
+        # would spend the first seconds of every song drifting back to
+        # where the last one had been dialed.
+        self.clock.anchor(play_call,
+                          (offset_ms - self._session_nudge_ms) / 1000.0)
         # `track` is the title, for a person; `track_hash` is the identity,
         # for anything that has to decide whether the show it is looking at
         # is the one that is running. Two tracks can share a title.
@@ -127,6 +145,10 @@ class Conductor:
             self._poller = asyncio.create_task(self._poll_position(media_player))
         try:
             await self._run(sorted(cues, key=self._send_time), duration_s)
+            # Natural completion: _run waited out the track, so the song is
+            # over and there is nothing to silence. Only an INTERRUPTED run
+            # leaves this set, which is what lets stop() tell the two apart.
+            self._playing_on = None
         finally:
             if self._poller is not None:
                 self._poller.cancel()
@@ -220,6 +242,18 @@ class Conductor:
         if not queue:
             return {"ok": False, "error": "no analyzed tracks to play"}
 
+        def _titles(hashes: list[str]) -> list[str]:
+            """Names for the queue's next few tracks — what the Party tab
+            renders as "up next". Titles rather than hashes, because a
+            party screen is read across a room; capped, because "and 31
+            more" is what the count is for."""
+            names = []
+            for upcoming in hashes[:5]:
+                analysis = library.load_analysis(upcoming)
+                names.append(((analysis or {}).get("tags") or {})
+                             .get("title") or upcoming[:8])
+            return names
+
         async def _party() -> None:
             for index, hash_hex in enumerate(queue):
                 show = await asyncio.to_thread(loader, hash_hex)
@@ -231,8 +265,10 @@ class Conductor:
                     # simply plays its floor show.
                     asyncio.create_task(
                         asyncio.to_thread(preparer, queue[index + 1]))
+                up_next = await asyncio.to_thread(_titles, queue[index + 1:])
                 self._update_state(status="party", active=True,
-                                   party=name,
+                                   party=name, up_next=up_next,
+                                   allow=sorted(allow) if allow else [],
                                    queue_left=len(queue) - index)
                 try:
                     await self._play_one(
@@ -357,6 +393,45 @@ class Conductor:
                             playback_check.flat(exc))
         await self._restore_snapshot()
 
+    def nudge(self, ms: float) -> dict:
+        """Bend the running show by `ms` — the by-ear sync trim.
+
+        Positive means the lights fire earlier. Applied as clock drift, so
+        it slews in over a couple of seconds instead of stepping — a step
+        is a visible stutter in every light at once, and the whole point
+        of a nudge is that you are watching. Clamped per press: ±200ms is
+        far past anything an ear asks for in one go, and a wild value is a
+        typo, not a request.
+        """
+        if not self.state.get("active") or not self.clock.anchored:
+            return {"error": "nothing is running to nudge"}
+        ms = max(-200.0, min(200.0, float(ms)))
+        self.clock.add_drift(ms / 1000.0)
+        self._session_nudge_ms = round(self._session_nudge_ms + ms, 1)
+        self._update_state(nudge_ms=self._session_nudge_ms)
+        return {"ok": True, "nudge_ms": self._session_nudge_ms}
+
+    def keep_nudge(self) -> dict:
+        """Fold the session's trim into the player's calibration.
+
+        The clock anchors at `play_call + effective_offset`, and a nudge
+        of +n behaves like an anchor n earlier — so keeping it means
+        `adjust -= n`, and the sign is the whole trick. The session trim
+        zeroes afterwards: it now lives in the calibration, and leaving it
+        would apply it twice on the next track.
+        """
+        entity = self.state.get("media_player")
+        if not self._session_nudge_ms or not entity:
+            return {"error": "nothing has been nudged"}
+        profile = calibration_store.load(entity)
+        updated = calibration_store.set_adjust(
+            entity,
+            float(profile.get("adjust_ms") or 0.0) - self._session_nudge_ms)
+        self._session_nudge_ms = 0.0
+        self._update_state(nudge_ms=0.0)
+        return {"ok": True, "entity_id": entity,
+                "effective_offset_ms": updated.get("effective_offset_ms")}
+
     async def stop(self, restore: bool = True) -> dict:
         for task in (self._task, self._poller, self._verify):
             if task is not None and not task.done():
@@ -366,6 +441,30 @@ class Conductor:
                 except (asyncio.CancelledError, Exception):  # noqa: BLE001
                     pass
         self._task = self._poller = self._verify = None
+        self._session_nudge_ms = 0.0
+        # The music first, and unconditionally — same reasoning as the
+        # waveforms below. The speaker fetched the track and plays it on
+        # its own, so it outlives every task cancelled above; a "stopped"
+        # party with the song still going is what pressing Stop at 1am
+        # actually delivered. Best-effort: a player that cannot be reached
+        # must not keep the lights dancing.
+        if self._playing_on:
+            entity, self._playing_on = self._playing_on, None
+            try:
+                result = await asyncio.to_thread(ha_client.media_stop, entity)
+            except Exception as exc:  # noqa: BLE001 — one speaker, not the stop
+                result = {"error": str(exc)}
+            # ha_client answers failures as {"error": ...} rather than
+            # raising, so the except above alone was dead code and a
+            # failed stop was SILENT — the one failure this feature exists
+            # to end, recurring with no trace. An answer that is dropped
+            # is a success nobody earned.
+            if isinstance(result, dict) and result.get("error"):
+                log.warning("could not stop the music on %s (%s)",
+                            playback_check.flat(entity),
+                            playback_check.flat(result["error"]))
+                self._update_state(playback_warning=f"the music on {entity} "
+                                   f"could not be stopped: {result['error']}")
         # Unconditional, and not part of `restore`: "put the room back" is a
         # choice a caller gets to decline, but "stop" is not a request to
         # keep strobing more quietly. A bulb left running its routine is the
@@ -584,27 +683,52 @@ def filter_cues(cues: list[dict], allow: set[str] | None) -> list[dict]:
 
 
 def load_show_for_track(hash_hex: str, devices: dict[str, dict],
-                        source: int) -> dict | None:
+                        source: int, *, metronome: bool = False) -> dict | None:
     """A compiled show when the director has made one; the metronome show
-    otherwise, so 'start_show' always has something honest to play."""
+    otherwise, so 'start_show' always has something honest to play.
+
+    `metronome=True` forces the plain beat pulses even when a compiled
+    show exists. The Lab's sync proof is the caller: its whole job is to
+    demonstrate that the clock, the offset and the bulbs agree, and the
+    moment a show was compiled for the chosen track its button quietly
+    started playing the entire choreography instead — a full party out of
+    a button labelled as a demo, and no way to run the plain proof again
+    without deleting the show it was proving.
+
+    `track_hash` rides in both branches because it is the identity the
+    run state carries — the editor's live playhead follows the room by
+    matching it, and a show without it is a show the panel cannot tell is
+    the one on screen.
+    """
     analysis = library.load_analysis(hash_hex)
     if analysis is None:
         return None
     title = (analysis.get("tags") or {}).get("title") or hash_hex[:8]
-    duration = (float((analysis.get("tags") or {}).get("duration") or 0)
-                or (analysis["beats"][-1] + 5 if analysis.get("beats") else 60))
-    compiled = library.load_show(hash_hex)
+    # duration_of, never the tag: a lying VBR header parked the queue.
+    duration = library.duration_of(analysis) or 60.0
+    compiled = None if metronome else library.load_show(hash_hex)
     if compiled and compiled.get("cues"):
+        baked = float(compiled.get("duration_s") or duration)
+        # A show compiled before the duration heal has the header's lie
+        # baked in, and _run sleeps out the tail after the last cue — so
+        # trusting it parks the party for the phantom minutes on every
+        # already-compiled VBR track. When the baked figure runs far past
+        # the healed one, the heal wins; a minute of tolerance is a real
+        # outro, a multiple is a lying header.
+        if duration and baked > duration + 60.0:
+            baked = duration
         return {
             "cues": compiled["cues"],
             "title": title,
-            "duration_s": float(compiled.get("duration_s") or duration),
+            "track_hash": hash_hex,
+            "duration_s": baked,
             "media_content_id": media_content_id_for(analysis),
             "tier": compiled.get("tier"),
         }
     return {
         "cues": metronome_cues(analysis, devices, source),
         "title": title,
+        "track_hash": hash_hex,
         "duration_s": duration,
         "media_content_id": media_content_id_for(analysis),
         "tier": "metronome",

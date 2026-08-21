@@ -586,3 +586,13 @@ select { max-width: 100%; }
   touch-action: none;
 }
 .ed-wave-note { padding: 2px 4px 4px; }
+
+/* The party's live picture. The wave is shorter than the editor's (it is
+   a glance, not a workbench) and the floor keeps the map's aspect so the
+   dots land where the person put them. */
+.party-wave { height: 64px; border-radius: 8px; }
+.party-floor { margin-top: 8px; }
+#partyLive { margin-top: 10px; }
+.party-now { font-weight: 600; margin-bottom: 8px; }
+.party-trim { align-items: center; }
+#partyUpNext { margin-top: 6px; }

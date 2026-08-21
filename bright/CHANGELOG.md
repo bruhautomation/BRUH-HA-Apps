@@ -5,6 +5,64 @@ All notable changes to the **BRight** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.14.0
+
+Stop means silence, the party shows its work, and a field-test batch of
+fixes.
+
+### Fixed
+
+- **Stop stops the music.** The speaker fetches the track and plays it on
+  its own, so it outlives every task the conductor cancels — exactly like
+  a bulb's waveform outlives the cue that sent it. Stopping a party or a
+  show now silences the player it started (only when interrupted: a track
+  that ended by itself is not re-stopped), and a failed stop is a warning
+  on the run state rather than silence about the silence that didn't
+  happen.
+- **The calibration sound can be stopped** (■ Stop the sound, on the
+  Calibrate tab). Thirteen seconds of clicks is a long time at midnight
+  with no way to end it.
+- **The 26-minute four-minute songs.** mutagen reads duration from the
+  file header, and a VBR file without a proper Xing header lies by whole
+  multiples — and that estimate used to win over the length of the PCM
+  BRight had just decoded. The measured length is authoritative now, old
+  analyses are healed using the beat grid as a witness (the tracker
+  walked the whole file, so a claimed duration far past the last beat is
+  a lie, not a quiet outro), and already-compiled shows have their baked
+  duration checked against the heal — that phantom tail is also what
+  parked the party queue for twenty minutes between songs.
+- **The sync-proof button plays the sync proof.** It used to start the
+  full compiled show the moment one existed — a party out of a button
+  labelled as a demo, with no way back short of deleting the show.
+- **The live playhead actually follows.** No show start ever carried its
+  track identity into the run state, so the editor's follow-the-room mode
+  never matched. Both branches carry `track_hash` now.
+
+### Added
+
+- **Party mode shows what it is doing.** While a party runs, the Party
+  tab carries the song (waveform, sections, drops) with the room's live
+  position on it, the floor plan animating with the colours actually
+  being sent (the compiler's own outline, filtered to the lights this
+  party is allowed to drive), the queue — now playing, up next — and the
+  trim.
+- **Live sync trim.** −25ms / +25ms while anything plays, slewed in so
+  nothing stutters; the trim carries across a party's tracks so an
+  evening stays dialed; **Keep this trim** folds it into the player's
+  calibration so every future show starts in tune.
+- **Playlists.** A saved party can name its exact songs in an exact
+  order, built in the party form from the analyzed library. A playlist
+  turns Shuffle off as you start one (order is the request); tracks that
+  have lost their analysis are skipped and named, never silently dropped.
+- **Calibrated players can be deleted** — a departed speaker was not
+  clutter, it was a candidate for every show that names no speaker.
+
+### Changed
+
+- Tabs load their own data: the calibrate players and profiles, the Lab's
+  sync choices, and the party pickers appear on open. Four "Load…"
+  buttons and the party tab's raw JSON state dump are gone.
+
 ## 0.13.1
 
 Find the media source that actually holds the file, and let Home Assistant

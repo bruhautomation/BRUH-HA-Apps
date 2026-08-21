@@ -146,6 +146,33 @@ def analysis_path(hash_hex: str) -> Path:
     return _track_dir(hash_hex) / "analysis.json"
 
 
+def duration_of(analysis: dict) -> float:
+    """How long the track actually is, from the best evidence on hand.
+
+    New analyses carry `duration_s`, measured from the decoded PCM, and
+    that is the answer. Older ones only have `tags["duration"]`, which is
+    mutagen's header read — and a VBR file without a proper Xing header
+    reports an estimate wrong by whole multiples, which is where the
+    twenty-six-minute four-minute songs came from. For those, the beat
+    grid is the witness: the tracker walked the whole file, so the last
+    beat is near the real end, and a claimed duration far past it is the
+    header lying rather than a long quiet outro. Sixty seconds of
+    tolerance is a generous outro and nowhere near a header's error,
+    which is measured in multiples.
+    """
+    measured = analysis.get("duration_s")
+    if measured:
+        return float(measured)
+    beats = analysis.get("beats") or []
+    floor = (float(beats[-1]) + 5.0) if beats else 0.0
+    tagged = (analysis.get("tags") or {}).get("duration")
+    if tagged:
+        tagged = float(tagged)
+        if not beats or tagged <= floor + 60.0:
+            return tagged
+    return floor or float(tagged or 0.0)
+
+
 def load_analysis(hash_hex: str) -> dict | None:
     try:
         return json.loads(analysis_path(hash_hex).read_text())
@@ -300,7 +327,10 @@ def scan(folder: Path, cache: "_HashCache | None" = None) -> list[dict]:
         if analysis:
             entry["summary"] = {
                 "bpm": analysis.get("bpm"),
-                "duration": (analysis.get("tags") or {}).get("duration"),
+                # duration_of, not the tag: the listing is where a person
+                # checks their music, and it must not be the one view
+                # still repeating a lying VBR header.
+                "duration": duration_of(analysis),
                 "sections": len(analysis.get("sections") or []),
                 "drops": len(analysis.get("drops") or []),
                 "lyrics": bool((analysis.get("lyrics") or {}).get("synced")),
