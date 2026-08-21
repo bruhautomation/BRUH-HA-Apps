@@ -1631,6 +1631,10 @@ def summarise(actions: list[dict]) -> dict:
     return {
         "actions": len(actions),
         "fixtures": len(per_fixture),
+        # WHICH lights, not only how many. The editor draws one lane per
+        # effect and has to say what it is on — "4 lights" beside a row
+        # is the same non-answer as "all lights" was beside a selection.
+        "fixture_ids": list(per_fixture),
         "busiest_fixture": max(per_fixture.values()) if per_fixture else 0,
         "first_t": round(min(span), 3) if span else 0.0,
         "last_t": round(max(span), 3) if span else 0.0,

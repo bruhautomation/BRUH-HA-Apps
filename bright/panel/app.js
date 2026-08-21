@@ -2707,6 +2707,9 @@
   function edPaint() {
     const frame = edFrameAt(ed.t);
     paintFloor($("edFloor"), ed.fixtures, frame, "show:" + ed.hash);
+    edDrawLanes();
+    edDrawFxLanes();
+    edNowNext();
     $("edClock").textContent = edClock(ed.t) + " / " + edClock(ed.duration);
     const head = $("edHead");
     if (ed.duration > 0) {
@@ -2771,12 +2774,14 @@
       ed.wave = body;
       const bits = [];
       if (body.bpm) bits.push(Math.round(body.bpm) + " bpm");
+      if (body.key) bits.push(body.key);
       if (body.sections.length) bits.push(body.sections.length + " sections");
       bits.push(body.drops.length
         ? body.drops.length + (body.drops.length === 1 ? " drop" : " drops")
         : "no drops found");
       $("edWaveNote").textContent = bits.join(" · ");
       edDrawWave();
+      edDrawLanes();
     } catch (error) {
       // A track analysed before envelopes existed, whose file has since
       // moved, is the honest 409 here — say it rather than drawing a flat
@@ -2868,7 +2873,15 @@
   // Clicking or dragging the song scrubs it, because a picture of a track
   // that you cannot put the playhead on is a picture and not a control.
   (function bindWaveScrub() {
-    const canvas = $("edWave");
+    // Both pictures of the song scrub it. They share one time axis, so a
+    // press on the chord lane and a press on the waveform directly above
+    // it mean the same instant, and only one of them being a control
+    // would be a difference nothing on screen explains.
+    ["edWave", "edLanes"].forEach(bindOneScrub);
+  })();
+
+  function bindOneScrub(id) {
+    const canvas = $(id);
     if (!canvas) return;
     let dragging = false;
     const seekTo = (event) => {
@@ -2893,7 +2906,241 @@
     };
     canvas.addEventListener("pointerup", release);
     canvas.addEventListener("pointercancel", release);
-  })();
+  }
+
+  // -- the song's own lanes: chords, the tune, the drums ----------------
+  //
+  // The half of the picture that was missing. The editor drew an envelope,
+  // the section tints and the bar lines and said `128 bpm · 7 sections ·
+  // 2 drops` — so a melody layer that rendered zero notes looked exactly
+  // like one that worked, and a stab 200ms off the hit it was meant to
+  // answer was invisible. You cannot tune what you cannot see.
+  //
+  // Three lanes, in the order they are useful: harmony (slow, labelled),
+  // the melody (a real pitch contour, so a rising line rises), and the
+  // drums split into the kick and everything above it, because those are
+  // two instruments and the whole point of `accent` is that they can
+  // drive different lights.
+  const LANE_ROWS = [
+    { key: "chords", label: "chords", height: 22 },
+    { key: "notes", label: "melody", height: 46 },
+    { key: "hits", label: "drums", height: 36 },
+  ];
+
+  function paintLanes(canvas, wave, duration) {
+    if (!canvas || !canvas.getContext) return;
+    const width = canvas.clientWidth || 800;
+    const total = LANE_ROWS.reduce((sum, row) => sum + row.height, 0);
+    const ratio = window.devicePixelRatio || 1;
+    canvas.width = Math.round(width * ratio);
+    canvas.height = Math.round(total * ratio);
+    canvas.style.height = total + "px";
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    ctx.clearRect(0, 0, width, total);
+    const span = (wave && wave.duration_s) || duration || 0;
+    if (!span) return;
+    const at = (seconds) => (seconds / span) * width;
+
+    let top = 0;
+    for (const row of LANE_ROWS) {
+      ctx.strokeStyle = "rgba(140,140,160,0.18)";
+      ctx.beginPath();
+      ctx.moveTo(0, top + 0.5);
+      ctx.lineTo(width, top + 0.5);
+      ctx.stroke();
+      ctx.fillStyle = "rgba(160,160,180,0.55)";
+      ctx.font = "10px system-ui, sans-serif";
+      ctx.textAlign = "left";
+      ctx.fillText(row.label, 4, top + 11);
+      row.top = top;
+      top += row.height;
+    }
+
+    // Chords: a block per change, running to the next one, with its name
+    // written in when there is room for it. A name that does not fit is
+    // omitted rather than clipped — half a chord symbol is a different
+    // chord.
+    const chords = (wave && wave.chords) || [];
+    const chordRow = LANE_ROWS[0];
+    chords.forEach((chord, index) => {
+      const start = at(chord[0]);
+      const end = index + 1 < chords.length ? at(chords[index + 1][0]) : width;
+      ctx.fillStyle = index % 2 ? "rgba(120,190,255,0.22)"
+                                : "rgba(120,190,255,0.13)";
+      ctx.fillRect(start, chordRow.top + 4, Math.max(1, end - start - 1),
+                   chordRow.height - 6);
+      if (end - start > 26) {
+        ctx.fillStyle = "rgba(225,235,255,0.85)";
+        ctx.font = "10px system-ui, sans-serif";
+        ctx.fillText(chord[1], start + 3, chordRow.top + 15);
+      }
+    });
+
+    // The melody, as pitch: each note a bar whose height in the lane is
+    // its place between the lowest and highest note in the song. Drawn
+    // against the track's OWN range rather than the full MIDI scale,
+    // because a vocal spans an octave and a fixed axis would flatten
+    // every song into the same middle stripe.
+    const notes = (wave && wave.notes) || [];
+    const noteRow = LANE_ROWS[1];
+    if (notes.length) {
+      let lo = Infinity;
+      let hi = -Infinity;
+      for (const note of notes) {
+        if (note[2] < lo) lo = note[2];
+        if (note[2] > hi) hi = note[2];
+      }
+      const range = Math.max(1, hi - lo);
+      for (const note of notes) {
+        const y = noteRow.top + noteRow.height - 4 -
+          ((note[2] - lo) / range) * (noteRow.height - 10);
+        const x = at(note[0]);
+        const w = Math.max(1.5, at(note[0] + note[1]) - x);
+        ctx.fillStyle = "rgba(255,205,110," +
+          (0.35 + 0.6 * Math.min(1, note[3])).toFixed(2) + ")";
+        ctx.fillRect(x, y, w, 3);
+      }
+    } else {
+      ctx.fillStyle = "rgba(160,160,180,0.5)";
+      ctx.font = "11px system-ui, sans-serif";
+      ctx.fillText("no melody in this analysis — re-run Analyze", 52,
+                   noteRow.top + 26);
+    }
+
+    // The drums. Kick low in the lane, everything above it high, height
+    // by the strength the analyzer ranked — so a fill reads as a fill.
+    const hits = (wave && wave.hits) || [];
+    const hitRow = LANE_ROWS[2];
+    for (const hit of hits) {
+      const low = hit[2] === "low";
+      const x = Math.round(at(hit[0])) + 0.5;
+      const size = 6 + 22 * Math.min(1, hit[1]);
+      const base = hitRow.top + hitRow.height - 3;
+      ctx.strokeStyle = low ? "rgba(255,120,90,0.9)" : "rgba(120,230,200,0.85)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(x, low ? base : base - hitRow.height + 6);
+      ctx.lineTo(x, low ? base - size : base - hitRow.height + 6 + size);
+      ctx.stroke();
+    }
+
+    if (ed.duration > 0) {
+      const x = Math.round((ed.t / ed.duration) * width) + 0.5;
+      ctx.strokeStyle = "rgba(255,255,255,0.85)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, total);
+      ctx.stroke();
+    }
+  }
+
+  function edDrawLanes() {
+    paintLanes($("edLanes"), ed.wave, ed.duration);
+    const wave = ed.wave || {};
+    const bits = [];
+    if (wave.key) bits.push(wave.key);
+    if ((wave.chords || []).length) {
+      bits.push(wave.chords.length + " chord changes");
+    }
+    if ((wave.notes || []).length) bits.push(wave.notes.length + " notes");
+    if ((wave.hits || []).length) {
+      const kicks = wave.hits.filter((h) => h[2] === "low").length;
+      bits.push(wave.hits.length + " drum hits (" + kicks + " kick)");
+    }
+    $("edLanesNote").textContent = bits.length ? bits.join(" · ")
+      : "This track was analysed before BRight could hear chords, melody " +
+        "and drums. Press Analyze on the Library tab and compile again.";
+  }
+
+  // -- the effect lanes: what is running, and when ----------------------
+  //
+  // Drawn from what the COMPILER rendered rather than from the script, so
+  // an effect that produced nothing has a visibly empty row. That is the
+  // distinction the panel could not make anywhere: a melody effect on a
+  // track with no melody looks, in every other view, exactly like one
+  // that is working.
+  const FX_ROW_H = 16;
+  const FX_LANE_COLOURS = {
+    accent: "rgba(255,120,90,0.85)", hit: "rgba(255,150,90,0.85)",
+    melody: "rgba(255,205,110,0.85)", harmony: "rgba(120,190,255,0.8)",
+    wash: "rgba(140,140,170,0.5)", stab: "rgba(255,90,120,0.9)",
+    build: "rgba(200,140,255,0.85)", chase: "rgba(120,230,200,0.85)",
+  };
+
+  function edDrawFxLanes() {
+    const canvas = $("edFxLanes");
+    if (!canvas || !canvas.getContext) return;
+    const lanes = ((ed.outline || {}).lanes) || [];
+    const width = canvas.clientWidth || 800;
+    const rows = Math.max(1, lanes.length);
+    const height = rows * FX_ROW_H;
+    const ratio = window.devicePixelRatio || 1;
+    canvas.width = Math.round(width * ratio);
+    canvas.height = Math.round(height * ratio);
+    canvas.style.height = height + "px";
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+    if (!lanes.length || !ed.duration) return;
+    const at = (seconds) => (seconds / ed.duration) * width;
+
+    lanes.forEach((lane, index) => {
+      const top = index * FX_ROW_H;
+      ctx.fillStyle = index % 2 ? "rgba(255,255,255,0.03)" : "transparent";
+      ctx.fillRect(0, top, width, FX_ROW_H);
+      if (lane.actions) {
+        const x = at(lane.start);
+        const w = Math.max(2, at(lane.end) - x);
+        ctx.fillStyle = FX_LANE_COLOURS[lane.type] || "rgba(150,170,255,0.7)";
+        ctx.fillRect(x, top + 3, w, FX_ROW_H - 6);
+      }
+      // The name, always — a bar with no name is a bar you cannot act
+      // on, and an EMPTY row with no name is indistinguishable from
+      // padding. An effect that rendered nothing says so here, which is
+      // the whole reason this row exists.
+      ctx.font = "10px system-ui, sans-serif";
+      ctx.textAlign = "left";
+      ctx.fillStyle = lane.actions ? "rgba(240,244,255,0.92)"
+                                   : "rgba(255,170,170,0.9)";
+      const label = lane.actions ? lane.name
+        : lane.name + " — renders nothing";
+      ctx.fillText(label, 5, top + FX_ROW_H - 5);
+    });
+
+    const x = Math.round((ed.t / ed.duration) * width) + 0.5;
+    ctx.strokeStyle = "rgba(255,255,255,0.85)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, height);
+    ctx.stroke();
+  }
+
+  // What is happening at the playhead, and what happens next. A picture
+  // answers "when"; this answers "what am I looking at", which is the
+  // question somebody watching a preview actually has.
+  function edNowNext() {
+    const box = $("edNow");
+    if (!box) return;
+    const lanes = ((ed.outline || {}).lanes) || [];
+    if (!lanes.length) { box.textContent = ""; return; }
+    const running = lanes.filter(
+      (lane) => lane.actions && lane.start <= ed.t && lane.end >= ed.t - 0.5);
+    const next = lanes
+      .filter((lane) => lane.actions && lane.start > ed.t)
+      .sort((a, b) => a.start - b.start)[0];
+    const parts = [];
+    parts.push(running.length
+      ? "Now: " + running.map((lane) => lane.name).slice(0, 5).join(", ")
+      : "Now: nothing");
+    if (next) {
+      parts.push("next: " + next.name + " in " +
+                 Math.max(0, next.start - ed.t).toFixed(1) + "s");
+    }
+    box.textContent = parts.join(" · ");
+  }
 
   // -- the strip: the whole show, one row per light --------------------
   function edDrawStrip() {
@@ -3090,6 +3337,9 @@
       ed.duration = body.duration_s || 0;
       edDrawStrip();
       edDrawWave();
+      edDrawLanes();
+      edDrawFxLanes();
+      edNowNext();
       edRenderScenes();
       edStatus("");
     } catch (error) {
@@ -3399,6 +3649,8 @@
   window.addEventListener("resize", () => {
     edDrawStrip();
     edDrawWave();
+    edDrawLanes();
+    edDrawFxLanes();
     edRenderScenes();
   });
 
@@ -3474,7 +3726,9 @@
         ed.timeline = null;
         ed.fixtures = [];
         edDrawStrip();
-      edDrawWave();
+        edDrawWave();
+        edDrawLanes();
+        edDrawFxLanes();
         edRenderScenes();
         edPaint();
       }

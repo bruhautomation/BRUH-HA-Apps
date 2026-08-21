@@ -361,10 +361,27 @@
         <canvas id="edWave" class="ed-wave" height="72"
                 aria-label="The song, with its sections and drops"></canvas>
         <div id="edWaveNote" class="muted small ed-wave-note"></div>
+
+        <!-- What the song is PLAYING, under the same ruler as everything
+             else: chord changes, the melody as a pitch contour, and the
+             kick and snare the analyzer ranked. None of this was visible
+             anywhere in the panel, so a melody layer that rendered zero
+             notes looked exactly like one that worked. -->
+        <canvas id="edLanes" class="ed-lanes" height="104"
+                aria-label="Chords, melody and drum hits"></canvas>
+        <div id="edLanesNote" class="muted small ed-wave-note"></div>
+
         <div id="edScenes" class="ed-scenes"></div>
         <canvas id="edStrip" class="ed-strip" height="120"></canvas>
+
+        <!-- One named row per effect, over the same ruler. Drawn from
+             what the compiler actually rendered, so an effect that
+             produced nothing has a visibly empty row. -->
+        <canvas id="edFxLanes" class="ed-fxlanes" height="80"
+                aria-label="When each effect runs"></canvas>
         <div id="edHead" class="ed-head" hidden></div>
       </div>
+      <div id="edNow" class="muted small ed-now"></div>
 
       <div class="ed-transport">
         <button id="btnEdPlay" class="btn" aria-label="Play the preview">▶ Play</button>

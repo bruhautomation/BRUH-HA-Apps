@@ -92,7 +92,7 @@ track_dir = DEMO / "shows" / TRACK_HASH
 track_dir.mkdir(parents=True, exist_ok=True)
 duration = BEATS[-1] + 4
 (track_dir / "analysis.json").write_text(json.dumps({
-    "version": 1, "hash": TRACK_HASH, "bpm": BPM, "beats": BEATS,
+    "version": library.ANALYSIS_VERSION, "hash": TRACK_HASH, "bpm": BPM, "beats": BEATS,
     "downbeats": BEATS[::4], "onsets": BEATS, "brightness": 0.7,
     "file": str(TRACK_FILE),
     "tags": {"title": "Demo Track", "artist": "BRUH", "duration": duration},
@@ -104,6 +104,37 @@ duration = BEATS[-1] + 4
     ],
     "drops": [{"t": 70.0, "strength": 0.9}],
     "lyrics": {"synced": False, "lines": []},
+    # A backbeat and a tune, seeded for the same reason the envelope is:
+    # the demo's "track" is a few bytes on disk, and the lanes that draw
+    # what a song is PLAYING are exactly the thing a measure has to be
+    # able to see. Kick on 1 and 3, snare on 2 and 4, a scale walking
+    # over a four-chord loop.
+    "hits": [
+        {"t": beat, "strength": 0.95 if index % 2 == 0 else 0.7,
+         "band": "low" if index % 2 == 0 else "mid",
+         "tone": 0.85 if index % 2 == 0 else 0.25,
+         "on_beat": True}
+        for index, beat in enumerate(BEATS)
+    ],
+    "music": {
+        "key": "A minor",
+        "notes": [
+            {"t": round(beat, 3), "d": 0.24,
+             "m": 64 + (0, 2, 3, 5, 7, 8, 10, 12)[index % 8],
+             "pc": (64 + (0, 2, 3, 5, 7, 8, 10, 12)[index % 8]) % 12,
+             "s": 0.9}
+            for index, beat in enumerate(BEATS)
+        ],
+        "chords": [
+            {"t": round(beat, 3),
+             "name": ("Am", "F", "C", "G")[index % 4],
+             "root": (9, 5, 0, 7)[index % 4],
+             "quality": "min" if index % 4 == 0 else "maj",
+             "confidence": 0.9}
+            for index, beat in enumerate(BEATS[::8])
+        ],
+        "phrases": [], "repeats": [],
+    },
     # The waveform, seeded rather than decoded. This demo has no ffmpeg and
     # its "track" is a few bytes on disk, so the panel's on-demand decode
     # path cannot run here — and it should not have to: every other field

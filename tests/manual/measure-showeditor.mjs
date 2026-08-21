@@ -46,6 +46,15 @@ const stripHash = (page) => page.evaluate(() => {
 	return h;
 });
 
+const canvasInk = (page, id) => page.evaluate((elementId) => {
+	const c = document.getElementById(elementId);
+	if (!c || !c.getContext || !c.width) return 0;
+	const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+	let ink = 0;
+	for (let i = 3; i < d.length; i += 400) if (d[i] > 8) ink += 1;
+	return ink;
+}, id);
+
 const roomColours = (page) => page.evaluate(() =>
 	Array.from(document.querySelectorAll('#edFloor .preview-dot'))
 		.map((d) => d.style.background));
@@ -106,6 +115,43 @@ for (const width of WIDTHS) {
 	if (!/bpm/.test(waveNote)) {
 		fail(`the waveform says nothing about the track: "${waveNote}"`);
 	} else ok(`the song reports: ${waveNote}`);
+
+	// The musical lanes: chords, the melody as a pitch contour, and the
+	// kick and snare. A blank lane stack is the whole feature missing and
+	// looks identical to a track with no music in it — which is precisely
+	// the confusion these lanes exist to end.
+	const laneInk = await canvasInk(page, 'edLanes');
+	if (!laneInk) fail('the chord/melody/drum lanes are blank');
+	else ok(`the song's own lanes painted (${laneInk} lit samples)`);
+
+	const laneNote = (await page.textContent('#edLanesNote') || '').trim();
+	if (!/chord changes/.test(laneNote)) {
+		fail(`the lanes report nothing musical: "${laneNote}"`);
+	} else ok(`the lanes report: ${laneNote}`);
+
+	// One named row per effect, over the same ruler. This is the row that
+	// tells "this effect rendered nothing" apart from "this effect is
+	// fine", which no other view in the panel can do.
+	const fxInk = await canvasInk(page, 'edFxLanes');
+	if (!fxInk) fail('the effect lanes are blank');
+	else ok(`the effect lanes painted (${fxInk} lit samples)`);
+
+	const nowLine = (await page.textContent('#edNow') || '').trim();
+	if (!/^Now:/.test(nowLine)) {
+		fail(`nothing says what is running: "${nowLine}"`);
+	} else ok(`running now: ${nowLine.slice(0, 70)}`);
+
+	// The lanes share the wave's ruler, so they must share its width to
+	// the pixel — two pictures of one song that do not line up are worse
+	// than one.
+	const widths = await page.evaluate(() => ['edWave', 'edLanes', 'edStrip',
+		'edFxLanes'].map((id) => {
+			const el = document.getElementById(id);
+			return el ? Math.round(el.getBoundingClientRect().width) : -1;
+		}));
+	if (new Set(widths).size !== 1) {
+		fail(`the lanes do not share one time axis: ${widths.join(' / ')}`);
+	} else ok(`one ruler across all four lanes (${widths[0]}px)`);
 
 	// Clicking the song moves the playhead — a picture of a track you
 	// cannot put the playhead on is a picture, not a control.

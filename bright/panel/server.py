@@ -1297,6 +1297,11 @@ def _waveform_payload(hash_hex: str) -> tuple[int, dict]:
         "downbeats": analysis.get("downbeats") or [],
         "sections": analysis.get("sections") or [],
         "drops": analysis.get("drops") or [],
+        # The same lanes the editor's outline carries, from the same
+        # function — the party view draws the song too, and two encodings
+        # of "what is this track playing" would drift the first time one
+        # of them gained a field.
+        **director_preview.music_lanes(analysis),
     }
 
 
