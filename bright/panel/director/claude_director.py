@@ -34,6 +34,14 @@ RESULTS_DIR = BRAIN_SHARED / "task_results"
 TASK_TIMEOUT_S = 240
 POLL_S = 1.0
 
+# Which Claude writes the shows. Creative choreography is the one place
+# BRight spends a big model on purpose — the host asked for Opus by name —
+# and it is an option (`director_model`) rather than a constant so a
+# different account's answer can differ. brAIn's automation listener reads
+# the task's `model` field and passes it to the CLI as `--model`.
+def _director_model() -> str:
+    return (os.environ.get("BRIGHT_DIRECTOR_MODEL") or "opus").strip()
+
 MAX_LYRIC_LINES = 60
 
 
@@ -151,18 +159,11 @@ Principles:
 - Less is more: one intentional motif per scene beats three busy ones."""
 
 
-def _digest(analysis: dict, fixtures: list[dict],
-            vibe: str | None = None) -> str:
+def _digest_facts(analysis: dict) -> str:
+    """What was measured from the audio — shared by the first draft and
+    every revision, because a director with notes still needs the song."""
     tags = analysis.get("tags") or {}
     lines = [
-        _DIRECTION,
-        "",
-        _SCHEMA_CONTRACT % _catalog_lines(),
-        "",
-    ]
-    if vibe:
-        lines += [f"THE HOST ASKED FOR THIS VIBE: {vibe[:120]}", ""]
-    lines += [
         f"TRACK: {tags.get('title') or 'unknown'} — "
         f"{tags.get('artist') or 'unknown artist'}",
         f"bpm={analysis.get('bpm')} "
@@ -179,6 +180,37 @@ def _digest(analysis: dict, fixtures: list[dict],
         f"{d['t']:.1f}s (strength {d.get('strength')})" for d in drops)
         if drops else "none detected"))
 
+    hits = sorted((h for h in analysis.get("hits") or []
+                   if h.get("on_beat")),
+                  key=lambda h: h.get("strength", 0), reverse=True)[:24]
+    if hits:
+        hits.sort(key=lambda h: h["t"])
+        lines.append(
+            "STRONGEST HITS (measured accents sitting ON the beat — the "
+            "moments a stab lands where the ear expects it; strength is "
+            "relative to the track's own loudest hit):")
+        lines.append("  " + ", ".join(
+            f"{h['t']:.2f}s ({h['strength']:.2f})" for h in hits))
+        lines.append(
+            '  Put a moment\'s "t" on one of these and add "snap": "beat" '
+            "beside it — the compiler then lands it exactly on the "
+            "analyzed beat, so a slightly rounded time cannot smear the "
+            "hit. Choose a FEW: one intentional accent beats three busy "
+            "ones.")
+    return "\n".join(lines)
+
+
+def _digest(analysis: dict, fixtures: list[dict],
+            vibe: str | None = None) -> str:
+    lines = [
+        _DIRECTION,
+        "",
+        _SCHEMA_CONTRACT % _catalog_lines(),
+        "",
+    ]
+    if vibe:
+        lines += [f"THE HOST ASKED FOR THIS VIBE: {vibe[:120]}", ""]
+    lines.append(_digest_facts(analysis))
     lines.append("")
     lines.append(room.describe(fixtures))
 
@@ -211,6 +243,9 @@ def _run_task(prompt: str, timeout_s: float,
         "ts": time.time(),
         "timeout": int(timeout_s),
     }
+    model = _director_model()
+    if model:
+        task["model"] = model
     TASKS_DIR.mkdir(parents=True, exist_ok=True)
     task_path = TASKS_DIR / f"{task_id}.json"
     # Unique-by-id scratch name; same rename discipline as everything else.
@@ -358,6 +393,73 @@ def write_script(analysis: dict, fixtures: list[dict],
     script["track_hash"] = analysis.get("hash")
     script.setdefault("version", 1)
     return script
+
+# ---------------------------------------------------------------------------
+# A show, revised to a sentence
+# ---------------------------------------------------------------------------
+# Feedback is a note to the director, not a diff. The whole current script
+# goes back with it, because "the chorus is too dark" is about a scene the
+# model has to be able to see — and the answer is a complete script again,
+# through the same validator and compiler as everything else, so a revision
+# gets no privileges a hand edit doesn't.
+MAX_FEEDBACK_CHARS = 600
+
+_REVISE_DIRECTION = """\
+You are the lighting director for a home light show. You already wrote the
+script below, the host watched it run, and they have notes. Revise the
+script to LAND their notes.
+
+- Change what the notes are about, decisively — a revision nobody can see
+  is worse than none. If they say the drop was weak, make the drop hit.
+- Keep everything the notes are NOT about. The rest of the show is what
+  they liked well enough not to mention; a rewrite from scratch throws
+  that away.
+- The notes are in the host's own words. Read them for intent: "too much
+  flashing" is about strobes and pulses wherever they are, not one scene.
+- Answer with the COMPLETE revised script in the same JSON shape — scenes
+  covering the track, moments, all of it — not a fragment or a diff."""
+
+
+def revise_script(script: dict, feedback: str, analysis: dict,
+                  fixtures: list[dict],
+                  timeout_s: float = TASK_TIMEOUT_S) -> dict:
+    """The host's notes, applied by the director who wrote the show.
+
+    Raises on any failure — the caller keeps the current script, because a
+    revision that failed must never cost the show that was running last
+    night."""
+    feedback = (feedback or "").strip()
+    if not feedback:
+        raise ValueError("say what you want changed first")
+    if not available():
+        raise RuntimeError("brAIn is not installed (no /config/.brain/tasks) "
+                           "— revising a show with Claude needs it")
+    current = {k: v for k, v in script.items()
+               if k not in ("tier", "track_hash")}
+    prompt = "\n".join([
+        _REVISE_DIRECTION,
+        "",
+        _SCHEMA_CONTRACT % _catalog_lines(),
+        "",
+        _digest_facts(analysis),
+        "",
+        room.describe(fixtures),
+        "",
+        effect_presets.describe(),
+        "",
+        "THE CURRENT SCRIPT (the one they watched):",
+        json.dumps(current, indent=1),
+        "",
+        "THE HOST'S NOTES:",
+        feedback[:MAX_FEEDBACK_CHARS],
+    ])
+    answer = _run_task(prompt, timeout_s)
+    revised = _extract_json(answer)
+    revised["tier"] = "claude"
+    revised["track_hash"] = analysis.get("hash")
+    revised.setdefault("version", script.get("version", 2))
+    return revised
+
 
 # ---------------------------------------------------------------------------
 # One effect, from a sentence

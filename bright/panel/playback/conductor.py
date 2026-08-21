@@ -76,6 +76,12 @@ class Conductor:
         # track's anchor so a party stays in tune once dialed, and it is
         # what "Keep" folds into the player's calibration.
         self._session_nudge_ms = 0.0
+        # The track currently playing inside a party, as its own task, so
+        # a skip can end one song without ending the evening. `_party_jump`
+        # is how the loop tells a skip from a stop: skip() sets it before
+        # cancelling, and a cancellation with no jump is the party ending.
+        self._track_task: asyncio.Task | None = None
+        self._party_jump: int | None = None
         self.state: dict[str, Any] = {"status": "idle"}
         self._write_state()
 
@@ -255,10 +261,19 @@ class Conductor:
             return names
 
         async def _party() -> None:
-            for index, hash_hex in enumerate(queue):
+            # A while over an index rather than a for over the queue,
+            # because the queue has transport controls now: a skip moves
+            # the index, and "previous" on the first track replays it —
+            # the clamp, not a refusal, because the button was pressed to
+            # hear a song again and the first track has no earlier answer.
+            index = 0
+            while index < len(queue):
+                hash_hex = queue[index]
+                self._party_jump = None
                 show = await asyncio.to_thread(loader, hash_hex)
                 if not show or not show.get("cues") \
                         or not show.get("media_content_id"):
+                    index += 1
                     continue
                 if preparer is not None and index + 1 < len(queue):
                     # Fire-and-forget: a failed prepare means that track
@@ -269,23 +284,57 @@ class Conductor:
                 self._update_state(status="party", active=True,
                                    party=name, up_next=up_next,
                                    allow=sorted(allow) if allow else [],
-                                   queue_left=len(queue) - index)
+                                   queue_left=len(queue) - index,
+                                   queue_pos=index + 1,
+                                   queue_total=len(queue))
+                track = asyncio.create_task(self._play_one(
+                    filter_cues(show["cues"], allow),
+                    media_player=media_player,
+                    media_content_id=show["media_content_id"],
+                    title=show["title"],
+                    duration_s=show["duration_s"],
+                    offset_ms=self._calibrated_offset(media_player)
+                              or offset_ms,
+                    status="party",
+                    track_hash=show.get("track_hash", "")))
+                self._track_task = track
                 try:
-                    await self._play_one(
-                        filter_cues(show["cues"], allow),
-                        media_player=media_player,
-                        media_content_id=show["media_content_id"],
-                        title=show["title"],
-                        duration_s=show["duration_s"],
-                        offset_ms=self._calibrated_offset(media_player)
-                                  or offset_ms,
-                        status="party",
-                        track_hash=show.get("track_hash", ""))
+                    await track
                 except asyncio.CancelledError:
-                    raise
+                    # `cancelling()` asks whether the PARTY task has a
+                    # cancel of its own pending — the tell between "the
+                    # track was skipped" and "stop() cancelled the party
+                    # while a skip was in flight". Without it, a stop that
+                    # raced a skip would be read as the skip, swallowed,
+                    # and the evening would play on through its own stop.
+                    me = asyncio.current_task()
+                    stopping = getattr(me, "cancelling", lambda: 0)() > 0
+                    if self._party_jump is None or stopping:
+                        # The party itself is ending. Awaiting a task from
+                        # a cancelled coroutine does not cancel the task,
+                        # so the track has to be taken down by hand or it
+                        # plays on past its own party.
+                        track.cancel()
+                        try:
+                            await track
+                        except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                            pass
+                        raise
+                    # A skip: quiet what the interrupted track leaves
+                    # behind, then let the loop move the index.
+                    await self._skip_silence()
                 except Exception as exc:  # noqa: BLE001 — next track, not the night
                     log.warning("party: %s failed: %s", show.get("title"), exc)
-                await asyncio.sleep(1.5)  # breath between tracks
+                finally:
+                    self._track_task = None
+                jumped = self._party_jump is not None
+                step = self._party_jump if jumped else 1
+                self._party_jump = None
+                index = max(0, index + step)
+                if index < len(queue):
+                    # A shorter breath on a skip: somebody is at the
+                    # controls and waiting.
+                    await asyncio.sleep(0.3 if jumped else 1.5)
             self._write_state()
 
         self._write_state()
@@ -393,6 +442,44 @@ class Conductor:
                             playback_check.flat(exc))
         await self._restore_snapshot()
 
+    async def _skip_silence(self) -> None:
+        """What an interrupted track leaves behind: the song the speaker is
+        still playing on its own, and any waveform still running on a bulb.
+        The same pair stop() quiets, minus the restore — the party goes on
+        and the next track takes the room from wherever this one left it,
+        exactly as a natural transition would.
+        """
+        if self._verify is not None and not self._verify.done():
+            self._verify.cancel()
+            self._verify = None
+        if self._playing_on:
+            entity, self._playing_on = self._playing_on, None
+            try:
+                result = await asyncio.to_thread(ha_client.media_stop, entity)
+            except Exception as exc:  # noqa: BLE001 — one speaker, not the skip
+                result = {"error": str(exc)}
+            if isinstance(result, dict) and result.get("error"):
+                log.warning("could not stop the music on %s (%s)",
+                            playback_check.flat(entity),
+                            playback_check.flat(result["error"]))
+        await self._halt_waveforms()
+
+    def skip(self, step: int) -> dict:
+        """Jump the running party to the next (+1) or previous (-1) track.
+
+        Only a party — a single show has no queue to move through, and the
+        Stop button is its whole transport. The current track's task is
+        cancelled and `_party_jump` is what tells the loop this was a
+        request, not the end of the evening.
+        """
+        if self.state.get("status") != "party" or not self.state.get("active"):
+            return {"error": "no party is running to skip"}
+        if self._track_task is None or self._track_task.done():
+            return {"error": "between tracks — give it a second"}
+        self._party_jump = 1 if int(step) >= 0 else -1
+        self._track_task.cancel()
+        return {"ok": True, "step": self._party_jump}
+
     def nudge(self, ms: float) -> dict:
         """Bend the running show by `ms` — the by-ear sync trim.
 
@@ -410,6 +497,30 @@ class Conductor:
         self._session_nudge_ms = round(self._session_nudge_ms + ms, 1)
         self._update_state(nudge_ms=self._session_nudge_ms)
         return {"ok": True, "nudge_ms": self._session_nudge_ms}
+
+    def apply_sync(self, ms: float) -> dict:
+        """A measured correction (auto-sync's), applied whole.
+
+        Same books as nudge — it lands in `_session_nudge_ms`, so "Keep
+        this trim" folds a measurement into the calibration exactly as it
+        folds a by-ear one. The clamps differ because the sources do: a
+        nudge is a human guess and ±200 catches typos, while a measurement
+        is bounded by autosync's own search margin. Small corrections slew
+        (invisible); one bigger than the slew can honestly deliver steps,
+        because a room that far out is already visibly wrong and one jump
+        beats twenty seconds of deliberate wrongness.
+        """
+        if not self.state.get("active") or not self.clock.anchored:
+            return {"error": "nothing is running to sync"}
+        ms = max(-2000.0, min(2000.0, float(ms)))
+        if abs(ms) <= 150.0:
+            self.clock.add_drift(ms / 1000.0)
+        else:
+            self.clock.step_drift(ms / 1000.0)
+        self._session_nudge_ms = round(self._session_nudge_ms + ms, 1)
+        self._update_state(nudge_ms=self._session_nudge_ms)
+        return {"ok": True, "nudge_ms": self._session_nudge_ms,
+                "applied_ms": round(ms, 1)}
 
     def keep_nudge(self) -> dict:
         """Fold the session's trim into the player's calibration.
@@ -441,6 +552,8 @@ class Conductor:
                 except (asyncio.CancelledError, Exception):  # noqa: BLE001
                     pass
         self._task = self._poller = self._verify = None
+        self._track_task = None
+        self._party_jump = None
         self._session_nudge_ms = 0.0
         # The music first, and unconditionally — same reasoning as the
         # waveforms below. The speaker fetched the track and plays it on

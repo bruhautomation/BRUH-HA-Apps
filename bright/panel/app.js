@@ -571,12 +571,16 @@
           '<div class="row-actions">' +
           '<button class="btn small" data-act="compile">Compile</button>' +
           '<button class="btn small" data-act="claude">✨ Claude</button>' +
-          '<button class="btn small" data-act="play">▶ Play</button></div>';
+          (show ? '<button class="btn small" data-act="play">▶ Show</button>'
+                : "") +
+          '<button class="btn small" data-act="sync">♪ Beat sync</button>' +
+          "</div>";
         row.querySelector("strong").textContent = track.name;
         row.querySelector(".rtt").textContent = show
           ? "compiled: " + show.tier + " · " + show.palette + " · " +
             show.cues + " cues"
-          : "not compiled (▶ plays the plain beat pulse)";
+          : "not compiled — Beat sync plays plain pulses; Compile builds "
+            + "the show";
         list.appendChild(row);
       }
     } catch (error) {
@@ -650,13 +654,16 @@
           result.stats.peak_per_device_hz + "/s per bulb)" +
           (who ? " — " + who : "");
         openScript(row.dataset.hash, row.querySelector("strong").textContent);
-      } else if (button.dataset.act === "play") {
+      } else if (button.dataset.act === "play"
+                 || button.dataset.act === "sync") {
         const player = $("showPlayer").value;
         if (!player) {
           status.textContent = "Pick a calibrated player first.";
           return;
         }
-        const result = await post("api/show/start_show", {
+        const route = button.dataset.act === "sync"
+          ? "api/show/metronome" : "api/show/start_show";
+        const result = await post(route, {
           track_hash: row.dataset.hash, media_player: player,
         });
         status.textContent = "Playing (" + result.cues + " cues, anchored " +
@@ -747,10 +754,26 @@
   // ------------------------------------------------------------------
   async function loadSyncChoices() {
     try {
-      const [lib, profiles] = await Promise.all([
+      const [lib, profiles, devices] = await Promise.all([
         api("api/library"),
         api("api/calibrate/profiles"),
+        api("api/lifx/devices").catch(() => ({ devices: [] })),
       ]);
+      const bulbs = $("syncBulbs");
+      bulbs.innerHTML = "";
+      for (const device of devices.devices || []) {
+        const label = document.createElement("label");
+        label.className = "fx-fixture";
+        const check = document.createElement("input");
+        check.type = "checkbox";
+        check.checked = true;
+        check.dataset.serial = device.serial;
+        const text = document.createElement("span");
+        text.textContent = (device.label || device.serial);
+        label.appendChild(check);
+        label.appendChild(text);
+        bulbs.appendChild(label);
+      }
       const trackSelect = $("syncTrack");
       trackSelect.innerHTML = '<option value="">— analyzed track —</option>';
       for (const track of (lib.tracks || []).filter((t) => t.analyzed)) {
@@ -782,8 +805,12 @@
       return;
     }
     try {
+      const serials = Array.from(
+        $("syncBulbs").querySelectorAll("input[data-serial]:checked"))
+        .map((input) => input.dataset.serial);
       const result = await post("api/show/metronome", {
         track_hash: hash, media_player: player,
+        serials: serials.length ? serials : undefined,
       });
       status.textContent = "Running: " + result.cues + " cues, anchored " +
         Math.round(result.offset_ms) + "ms after the play command. " +
@@ -1392,6 +1419,18 @@
     }
     const live = $("partyLive");
     if (live) live.hidden = !running;
+    // The Shows tab gets the same trim while anything runs — sync is
+    // judged wherever you happen to be standing when you notice it.
+    for (const id of ["btnShowNudgeLater", "btnShowNudgeEarlier"]) {
+      const button = $(id);
+      if (button) button.hidden = !running;
+    }
+    const showReadout = $("showNudgeReadout");
+    if (showReadout) {
+      const trim = Number((state.nudge_ms) || 0);
+      showReadout.textContent = running && trim
+        ? "trim " + (trim > 0 ? "+" : "") + trim + "ms" : "";
+    }
     if (!running) {
       partyView.hash = null;
       return;
@@ -1413,6 +1452,13 @@
       ? "trimmed " + (trimmed > 0 ? "+" : "") + trimmed + "ms"
       : "";
     $("btnNudgeKeep").hidden = !trimmed;
+    // Transport is a queue's, not a show's: a single show has nothing to
+    // skip to, so the buttons render only while a party is running.
+    const isParty = state.status === "party";
+    for (const id of ["btnPartyPrev", "btnPartyNext"]) {
+      const button = $(id);
+      if (button) button.hidden = !isParty;
+    }
     partyFollowLive(state);
   }
 
@@ -1513,8 +1559,23 @@
     if (state.active && !$("partyLive").hidden) partyPaint();
   }, 200);
 
+  $("btnPartyPrev").addEventListener("click", () => partySkip(-1));
+  $("btnPartyNext").addEventListener("click", () => partySkip(1));
+
+  async function partySkip(step) {
+    try {
+      await post("api/party/skip", { step });
+      $("partyStatus").textContent = step > 0
+        ? "Skipping to the next track…" : "Going back a track…";
+    } catch (error) {
+      $("partyStatus").textContent = error.message;
+    }
+  }
+
   $("btnNudgeLater").addEventListener("click", () => partyNudge(-25));
   $("btnNudgeEarlier").addEventListener("click", () => partyNudge(25));
+  $("btnShowNudgeLater").addEventListener("click", () => partyNudge(-25));
+  $("btnShowNudgeEarlier").addEventListener("click", () => partyNudge(25));
 
   async function partyNudge(ms) {
     try {
@@ -1527,6 +1588,75 @@
       $("partyStatus").textContent = error.message;
     }
   }
+
+  // The nudge, measured instead of guessed. Same recording plumbing as
+  // the calibration wizard — clocks mapped via ping, raw mic (no echo
+  // cancellation: the music IS the signal), 16-bit wav up — but the
+  // reference it is matched against is the playing song itself, so the
+  // answer comes back as "the room is Xms off" and is applied whole.
+  $("btnAutoSync").addEventListener("click", async () => {
+    const status = $("autoSyncStatus");
+    const button = $("btnAutoSync");
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      status.textContent = "This browser won't share the microphone here " +
+        "(it usually needs HTTPS) — use the nudge buttons instead.";
+      return;
+    }
+    button.disabled = true;
+    try {
+      const offset = await clockOffset();
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+        },
+      });
+      const context = new (window.AudioContext || window.webkitAudioContext)();
+      const source = context.createMediaStreamSource(stream);
+      const processor = context.createScriptProcessor(4096, 1, 1);
+      const chunks = [];
+      let recordStartClient = null;
+      processor.onaudioprocess = (event) => {
+        if (recordStartClient === null) {
+          recordStartClient = Date.now() -
+            (event.inputBuffer.length / context.sampleRate) * 1000;
+        }
+        chunks.push(new Float32Array(event.inputBuffer.getChannelData(0)));
+      };
+      source.connect(processor);
+      processor.connect(context.destination);
+      for (let s = 4; s > 0; s--) {
+        status.textContent = "Listening to the room… " + s + "s";
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+      processor.disconnect();
+      source.disconnect();
+      stream.getTracks().forEach((track) => track.stop());
+      context.close();
+      status.textContent = "Matching against the song…";
+      const wav = floatTo16BitWav(chunks, context.sampleRate);
+      const result = await post("api/show/autosync", {
+        wav_b64: bufferToBase64(wav),
+        record_start_epoch_ms: recordStartClient + offset,
+      });
+      const ms = Math.round(result.delta_ms);
+      status.textContent = Math.abs(ms) < 25
+        ? "In tune — the room was only " + Math.abs(ms) + "ms off."
+        : "Heard the room " + Math.abs(ms) + "ms " +
+          (ms > 0 ? "ahead of" : "behind") + " the lights — shifted them " +
+          "to match. Keep this trim saves it for every show.";
+      $("nudgeReadout").textContent = result.nudge_ms
+        ? "trimmed " + (result.nudge_ms > 0 ? "+" : "") +
+          result.nudge_ms + "ms"
+        : "";
+      $("btnNudgeKeep").hidden = !result.nudge_ms;
+    } catch (error) {
+      status.textContent = "Failed: " + error.message;
+    } finally {
+      button.disabled = false;
+    }
+  });
 
   $("btnNudgeKeep").addEventListener("click", async () => {
     try {
@@ -3255,6 +3385,42 @@
       loadShows();
     } catch (error) {
       status.textContent = error.message;
+    }
+  });
+
+  // Notes to the director. The revised show comes back through openScript
+  // so the strip, the forms and the Code view are all the new script —
+  // a revision that only updated one of them would be three editors
+  // disagreeing about which show is open.
+  $("btnRevise").addEventListener("click", async () => {
+    const status = $("reviseStatus");
+    const button = $("btnRevise");
+    if (!scriptTrack) {
+      status.textContent = "Open a track's show first.";
+      return;
+    }
+    const feedback = $("reviseText").value.trim();
+    if (!feedback) {
+      status.textContent = "Say what you want changed first.";
+      return;
+    }
+    button.disabled = true;
+    status.textContent = "Claude is revising the show — this can take a " +
+      "couple of minutes…";
+    try {
+      const body = await post("api/show/" + scriptTrack + "/revise",
+        { feedback });
+      const took = body.director && body.director.seconds
+        ? " in " + Math.round(body.director.seconds) + "s" : "";
+      $("reviseText").value = "";
+      await openScript(scriptTrack);
+      status.textContent = "Revised" + took + " — " + body.stats.cues +
+        " cues. The preview above is the new show.";
+      loadShows();
+    } catch (error) {
+      status.textContent = "Not revised — " + error.message;
+    } finally {
+      button.disabled = false;
     }
   });
 

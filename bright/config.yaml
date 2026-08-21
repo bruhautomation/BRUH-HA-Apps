@@ -1,7 +1,7 @@
 ---
 name: "BRight"
 description: "Music-driven light show director: analyzes your local music, choreographs LIFX bulbs over the LAN plus switch-driven party lights, and keeps it all in sync with the speaker"
-version: "0.14.1"
+version: "0.15.0"
 slug: "bright"
 init: false
 
@@ -120,6 +120,10 @@ options:
   #   claude      — Claude only; compiling fails without a working login
   #                 rather than silently downgrading.
   director_mode: auto
+  # director_model: the Claude model every director task runs on — the
+  # show writer, the effect writer, the inventor and revisions. A tier
+  # alias like "opus" resolves to the account's best of that tier.
+  director_model: opus
 
   # enable_ha_integration: deploy the companion `bright` custom integration
   # and run the file-IPC bridge, exposing bright.party_mode / start_show /
@@ -133,6 +137,7 @@ schema:
   additional_music_folders:
     - "match(^/media(/.*)?$)"
   director_mode: "list(auto|algorithmic|claude)"
+  director_model: "str"
   enable_ha_integration: bool
   log_level: "list(trace|debug|info|notice|warning|error|fatal)"
 

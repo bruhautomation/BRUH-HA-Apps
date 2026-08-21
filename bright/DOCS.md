@@ -83,7 +83,8 @@ Nothing here changes your lights permanently; it measures.
 - **Sync proof — the metronome show.** Plays an analyzed track on a
   calibrated speaker while every discovered bulb pulses on the beat. No
   choreography, just the whole chain end to end. If this hits the beat,
-  shows will.
+  shows will. Tick which bulbs join in — the proof needs one light you can
+  see, not every light in the house blinking at once.
 - **Latency report.** Everything measured so far, in one read.
 
 ### Light Map — where the lights are
@@ -235,6 +236,20 @@ and a cue list. Compile after changing the Light Map — the show is built for
 the lights that existed when it was compiled. Playing needs a calibrated
 speaker.
 
+Each track row has two ways to hear it: **▶ Show** runs the compiled
+choreography, **♪ Beat sync** runs the metronome — every mapped light
+pulsing on the analyzed beat, which is the honest test of whether the sync
+is right before you spend an evening on it. While either runs, the same
+**±25ms** nudge buttons the party has appear under the list.
+
+**Notes for the director.** Under the show's editor there is a box for
+what you noticed watching it — "the chorus needs more movement", "less
+strobe, warmer verses" — and **✍ Revise with Claude** sends the whole
+script back to the director with your words. The revision goes through the
+same validator and compiler as everything else; a failed one costs an
+error message and never the show. Needs brAIn, like everything else the
+Claude director does, and runs on the `director_model` below.
+
 **The show, as a picture.** Select a track and the show opens as what it is:
 your room on the floor plan at the top, the whole song as a strip beneath it
 with one row per light, the scenes as blocks across the top of that strip,
@@ -357,6 +372,14 @@ always present is a button nobody trusts, so it renders only while the
 add-on says a run is actually in progress, and the line beside it says what
 is playing and how far through the queue it is.
 
+While a party runs, the live view is the transport: **⏮ Prev / ⏭ Next**
+move through the queue (previous on the first track replays it), the
+**±25ms** buttons trim the sync by ear, and **🎤 Sync by ear** does the same
+trim measured — the phone records the room for four seconds, BRight matches
+what it heard against the playing track itself, and the lights shift by
+exactly the difference. **Keep this trim** folds either kind into the
+speaker's calibration so every future show starts in tune.
+
 **Saved parties** are the evening set up once — the speaker, the folder, the
 vibe, which lights may join in, and what the room should look like when it
 stops. Start one from the list, from an automation with
@@ -427,7 +450,11 @@ actual left-to-right order of your lights, the front-to-back order, and a
 walk around the room from each light to its nearest neighbour — because
 sorting a dozen coordinates is exactly the kind of arithmetic a language
 model does badly and confidently. It designs for the room you drew, and it
-can name a light rather than only a kind of light.
+can name a light rather than only a kind of light. It also gets the song's
+measured accents — the strongest hits that sit exactly on the beat — and a
+`"snap": "beat"` it can put on any moment, so a stab lands where the ear
+expects it rather than only at section changes. The algorithmic
+choreographer reads the same accents and places up to six of its own.
 
 **Writing a single effect.** The Effects tab has a **Describe it** box:
 say what you want in a sentence ("bounce a warm pulse between the two
@@ -435,6 +462,15 @@ window lamps") and Claude writes the effect into the form, for this room.
 It lands unsaved — preview it, change anything, then save it as a preset or
 drop it into a show. This needs brAIn too; everything else in the tab works
 without it.
+
+### `director_model`
+
+*Default: `opus`.* Which Claude model writes and revises shows and effects
+(any tier alias or model id brAIn's login can run — `opus`, `sonnet`, or a
+full model id). Choreography is the one place BRight spends a big model on
+purpose: a show is written once and watched many times. This rides into
+brAIn's task as its `model` field; everything else brAIn does for you keeps
+its own settings.
 
 ### `enable_ha_integration`
 

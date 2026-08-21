@@ -364,6 +364,21 @@ select { max-width: 100%; }
   tab-size: 2;
 }
 
+/* Notes to the director: ordinary prose in an ordinary box — this is
+   feedback, not code, and it should not look like the editor below it. */
+.revise-box { margin-top: 14px; }
+.revise-input {
+  width: 100%;
+  margin-top: 6px;
+  padding: 10px;
+  font: inherit;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  resize: vertical;
+}
+
 .party-form {
   margin: 10px 0;
   padding: 10px;

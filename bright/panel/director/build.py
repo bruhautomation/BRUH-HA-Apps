@@ -126,6 +126,48 @@ def build_show(hash_hex: str, devices: dict[str, dict], source: int,
     return show
 
 
+def revise_show(hash_hex: str, devices: dict[str, dict], source: int,
+                feedback: str, reviser) -> dict:
+    """The host's notes, applied to the show on disk. Raises on any failure.
+
+    Deliberately NO algorithmic floor here, unlike build_show: a revision
+    that fails must leave the show exactly as it was — the person asked
+    for their show *adjusted*, and answering with a different director's
+    show would lose everything they already liked. Nothing is written
+    until the revised script has validated AND compiled.
+
+    `reviser` is claude_director.revise_script, pluggable the same way
+    build_show's script_writer is.
+    """
+    analysis = library.load_analysis(hash_hex)
+    if analysis is None:
+        raise ValueError("track not analyzed — run the Library tab first")
+    fixtures = fixtures_for_show(devices)
+    if not fixtures:
+        raise ValueError("no reachable fixtures — run Lab discovery, then "
+                         "place your lights on the Light Map")
+    try:
+        current = json.loads(library.script_path(hash_hex).read_text())
+    except (OSError, ValueError):
+        raise ValueError("no show for this track yet — compile one first, "
+                         "then there is something to give notes on") from None
+
+    report: dict = {"asked": "revise", "used": "claude", "available": True,
+                    "fell_back": False, "reason": None, "seconds": None,
+                    "feedback": feedback[:600]}
+    started = time.monotonic()
+    revised = reviser(current, feedback, analysis, fixtures)
+    problems = choreographer.validate_script(revised)
+    if problems:
+        raise ValueError("the revised script did not validate: "
+                         + "; ".join(problems[:5]))
+    report["seconds"] = round(time.monotonic() - started, 1)
+    show = compile_and_save(hash_hex, revised, analysis, fixtures, source)
+    show["director"] = report
+    save_report(hash_hex, report)
+    return show
+
+
 def compile_and_save(hash_hex: str, script: dict, analysis: dict,
                      fixtures: list[dict], source: int) -> dict:
     """Compile a script that already exists and persist both halves.

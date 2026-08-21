@@ -34,6 +34,30 @@ def pcm(path: Path, sample_rate: int = SAMPLE_RATE) -> np.ndarray:
     return np.frombuffer(result.stdout, dtype="<i2").astype(np.float32) / 32768.0
 
 
+def pcm_window(path: Path, start_s: float, duration_s: float,
+               sample_rate: int = SAMPLE_RATE) -> np.ndarray:
+    """A slice of the track as float32 mono — what auto-sync compares the
+    phone's recording against. `-ss` before `-i` is the fast seek, and with
+    a re-encode (which raw PCM out is) ffmpeg decodes from the nearest
+    point and trims to the exact time, so the slice starts where asked."""
+    command = [
+        "ffmpeg", "-v", "error",
+        "-ss", f"{max(0.0, start_s):.3f}",
+        "-t", f"{max(0.1, duration_s):.3f}",
+        "-i", str(path),
+        "-ac", "1",
+        "-ar", str(sample_rate),
+        "-f", "s16le",
+        "-",
+    ]
+    result = subprocess.run(command, capture_output=True, timeout=60)
+    if result.returncode != 0 or not result.stdout:
+        tail = result.stderr.decode(errors="replace").strip().splitlines()
+        raise ValueError(f"ffmpeg could not decode {path.name}: "
+                         f"{tail[-1] if tail else 'no output'}")
+    return np.frombuffer(result.stdout, dtype="<i2").astype(np.float32) / 32768.0
+
+
 def tags(path: Path) -> dict:
     """title/artist/album/duration, best-effort — lyrics lookup wants them,
     nothing else depends on them."""

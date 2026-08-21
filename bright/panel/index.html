@@ -79,6 +79,9 @@
         <button id="btnSyncStart" class="btn">Start</button>
         <button id="btnSyncStop" class="btn" hidden>Stop &amp; restore</button>
       </div>
+      <p class="muted small">Which bulbs pulse — untick the bedroom before
+        testing in the lounge.</p>
+      <div id="syncBulbs" class="fx-fixtures"></div>
       <div id="syncStatus" class="cal-status"></div>
     </div>
 
@@ -301,6 +304,11 @@
       <div id="showList" class="list"><p class="muted">Not loaded yet.</p></div>
       <div class="demo-controls">
         <button id="btnShowStop" class="btn" hidden>■ Stop &amp; restore lights</button>
+        <button id="btnShowNudgeLater" class="btn small" hidden
+                title="Press if the lights land before the beat">−25ms</button>
+        <button id="btnShowNudgeEarlier" class="btn small" hidden
+                title="Press if the lights land after the beat">+25ms</button>
+        <span id="showNudgeReadout" class="muted small"></span>
         <span id="showStatus" class="cal-status"></span>
       </div>
     </div>
@@ -356,6 +364,22 @@
 
       <!-- The GUI proper: scenes, their effects, and the moments. -->
       <div id="edScript" class="ed-script"></div>
+
+      <!-- Notes to the director. The whole show goes back to Claude with
+           these words, and the revised script lands in this editor the
+           same as any other compile — nothing is kept if it fails. -->
+      <div class="revise-box">
+        <label class="muted small" for="reviseText">Watched it? Tell Claude
+          what to change and it revises this show — in your words, like
+          "the chorus needs more movement" or "less strobe, warmer
+          verses".</label>
+        <textarea id="reviseText" class="revise-input" rows="2"
+                  placeholder="What should be different next time it plays?"></textarea>
+        <div class="demo-controls">
+          <button id="btnRevise" class="btn">✍ Revise with Claude</button>
+          <span id="reviseStatus" class="cal-status"></span>
+        </div>
+      </div>
 
       <details id="edCode" class="ed-code">
         <summary>Code</summary>
@@ -492,6 +516,12 @@
         <div id="partyFloor" class="map-floor preview-floor party-floor"
              aria-label="The room, live"></div>
         <div class="demo-controls party-trim">
+          <button id="btnPartyPrev" class="btn small"
+                  aria-label="Previous track"
+                  title="Back to the previous song">⏮ Prev</button>
+          <button id="btnPartyNext" class="btn small"
+                  aria-label="Next track"
+                  title="Skip to the next song">⏭ Next</button>
           <button id="btnNudgeLater" class="btn small"
                   title="Press if the lights land before the beat">−25ms
             lights later</button>
@@ -501,6 +531,15 @@
           <span id="nudgeReadout" class="muted small"></span>
           <button id="btnNudgeKeep" class="btn small" hidden>Keep this
             trim</button>
+        </div>
+        <!-- The same trim, measured instead of guessed: the phone listens
+             to the room for a few seconds and the lights are shifted by
+             what it actually heard. -->
+        <div class="demo-controls">
+          <button id="btnAutoSync" class="btn small"
+                  title="The phone listens and the lights shift to match">🎤
+            Sync by ear</button>
+          <span id="autoSyncStatus" class="muted small"></span>
         </div>
         <div id="partyUpNext" class="muted small"></div>
       </div>

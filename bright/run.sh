@@ -85,6 +85,7 @@ load_config() {
 
     MUSIC_FOLDER=$(bashio::config 'music_folder' '/media/music')
     DIRECTOR_MODE=$(bashio::config 'director_mode' 'auto')
+    DIRECTOR_MODEL=$(bashio::config 'director_model' 'opus')
     ENABLE_HA_INTEGRATION=$(bashio::config 'enable_ha_integration' 'true')
     LOG_LEVEL=$(bashio::config 'log_level' 'info')
     export MUSIC_FOLDER DIRECTOR_MODE ENABLE_HA_INTEGRATION LOG_LEVEL
@@ -92,6 +93,7 @@ load_config() {
     {
         echo "export BRIGHT_MUSIC_FOLDER='${MUSIC_FOLDER}'"
         echo "export BRIGHT_DIRECTOR_MODE='${DIRECTOR_MODE}'"
+        echo "export BRIGHT_DIRECTOR_MODEL='${DIRECTOR_MODEL}'"
         echo "export BRIGHT_ENABLE_HA_INTEGRATION='${ENABLE_HA_INTEGRATION}'"
         echo "export BRIGHT_LOG_LEVEL='${LOG_LEVEL}'"
         echo "export BRIGHT_PANEL_PORT='${PANEL_PORT}'"

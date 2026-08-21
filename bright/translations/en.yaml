@@ -19,6 +19,14 @@ configuration:
       its track by handing your media player a media-source link, and Home
       Assistant only serves those for files in its media folder. Subfolders
       are already included — each folder is scanned all the way down.
+  director_model:
+    name: Director model
+    description: >-
+      The Claude model choreography runs on — writing a show, writing or
+      inventing effects, and revising a show from feedback. "opus" (the
+      default) is the strongest tier and shows are written rarely, so the
+      cost lands where the quality shows. Any model id brAIn's Claude
+      accepts works here.
   director_mode:
     name: Show director
     description: >-

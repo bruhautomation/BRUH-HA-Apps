@@ -181,6 +181,113 @@ def detect_onsets(envelope: np.ndarray, env_rate: float) -> list[float]:
     return onsets
 
 
+def band_flux(pcm: np.ndarray, sample_rate: int,
+              low_hz: float = 250.0, high_hz: float = 2000.0
+              ) -> tuple[np.ndarray, np.ndarray, float]:
+    """Onset strength split at the band edges that matter for accents.
+
+    The full-band envelope above treats a hi-hat tick and a brass stab as
+    the same event — both are flux. What makes a hit worth a light is
+    PUNCH: energy arriving in the low band (the kick, the drop's first
+    beat) and the mids (snare, stab, vocal hit). Highs are deliberately
+    left out of the accent score; shimmer is texture, not an event.
+
+    Same frame/hop as `onset_strength`, same front-padding, so indices
+    line up with the full-band envelope and with audio time.
+    """
+    usable = (len(pcm) - FRAME) // HOP
+    rate = sample_rate / HOP
+    if usable <= 2:
+        empty = np.zeros(0, dtype=np.float32)
+        return empty, empty, rate
+    window = np.hanning(FRAME).astype(np.float32)
+    frames = np.lib.stride_tricks.as_strided(
+        pcm, shape=(usable, FRAME),
+        strides=(pcm.strides[0] * HOP, pcm.strides[0]))
+    spectra = np.abs(np.fft.rfft(frames * window, axis=1))
+    logspec = np.log1p(10.0 * spectra)
+    flux = np.clip(np.diff(logspec, axis=0), 0.0, None)
+    freqs = np.fft.rfftfreq(FRAME, 1.0 / sample_rate)
+    pad = np.zeros(FRAME // HOP, dtype=np.float32)
+
+    # ONE scale for both bands: the full-band envelope's own peak. Each
+    # band then reads as "what fraction of the track's loudest moment
+    # arrived here", which is what makes weighting them against each
+    # other meaningful. Normalizing each band to its own max — the first
+    # draft — amplified an empty band's noise floor to full scale, so a
+    # track with no bass grew phantom punch out of silence.
+    scale = float(flux.sum(axis=1).max()) or 1.0
+
+    def banded(mask) -> np.ndarray:
+        env = flux[:, mask].sum(axis=1) / scale
+        return np.concatenate([pad, env.astype(np.float32)])
+
+    return banded(freqs < low_hz), banded((freqs >= low_hz)
+                                          & (freqs < high_hz)), rate
+
+
+MAX_HITS = 160
+HIT_SPACING_S = 0.10
+ON_BEAT_S = 0.07
+
+
+def detect_hits(pcm: np.ndarray, sample_rate: int,
+                beats: list[float]) -> list[dict]:
+    """The track's accents, ranked — what a stab wants to land on.
+
+    `onsets` answers WHERE something happened; this answers what was
+    WORTH it. Each hit carries a strength (low- and mid-band punch,
+    normalized to the track's own loudest hit) and its place against the
+    beat grid: the nearest beat's index, and whether it is close enough
+    (±70ms) to count as ON the beat. That last field is the whole
+    feature: a director placing stabs reads the strongest on-beat hits
+    and lands lights exactly where the ear expects them, instead of only
+    at section boundaries.
+
+    Capped at the strongest MAX_HITS so a four-minute track's analysis
+    stays a readable file, and sorted by TIME on the way out because
+    every consumer walks the song forwards.
+    """
+    low, mid, rate = band_flux(pcm, sample_rate)
+    if low.size == 0:
+        return []
+    # Punch: the kick and the snare/stab body, low weighted harder —
+    # a light show is felt from the floor up.
+    punch = 0.6 * low + 0.4 * mid
+    kernel = max(3, int(rate * 0.35))
+    padded = np.pad(punch, kernel, mode="edge")
+    local = np.convolve(padded, np.ones(2 * kernel + 1) / (2 * kernel + 1),
+                        mode="valid")
+    spacing = max(1, int(HIT_SPACING_S * rate))
+    beat_times = np.asarray(beats, dtype=np.float64) if beats else None
+
+    found = []
+    last = -spacing
+    for i in range(1, punch.size - 1):
+        if not (punch[i] > local[i] + 0.10
+                and punch[i] >= punch[i - 1]
+                and punch[i] > punch[i + 1]):
+            continue
+        if i - last < spacing:
+            continue
+        last = i
+        t = i / rate
+        hit = {"t": round(t, 4), "strength": float(punch[i])}
+        if beat_times is not None and beat_times.size:
+            nearest = int(np.argmin(np.abs(beat_times - t)))
+            distance = abs(float(beat_times[nearest]) - t)
+            hit["beat"] = nearest
+            hit["on_beat"] = bool(distance <= ON_BEAT_S)
+        found.append(hit)
+    found.sort(key=lambda h: h["strength"], reverse=True)
+    top = float(found[0]["strength"]) if found else 1.0
+    kept = found[:MAX_HITS]
+    for hit in kept:
+        hit["strength"] = round(hit["strength"] / (top or 1.0), 3)
+    kept.sort(key=lambda h: h["t"])
+    return kept
+
+
 def analyze_beats(pcm: np.ndarray, sample_rate: int) -> dict:
     envelope, env_rate = onset_strength(pcm, sample_rate)
     if envelope.size == 0:
@@ -194,5 +301,6 @@ def analyze_beats(pcm: np.ndarray, sample_rate: int) -> dict:
         "beats": beats,
         "downbeats": pick_downbeats(beats, envelope, env_rate),
         "onsets": detect_onsets(envelope, env_rate),
+        "hits": detect_hits(pcm, sample_rate, beats),
         "method": "numpy",
     }

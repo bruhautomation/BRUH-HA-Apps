@@ -53,6 +53,10 @@ def analyze_track(path: Path) -> dict:
         "beats": rhythm["beats"],
         "downbeats": rhythm["downbeats"],
         "onsets": rhythm["onsets"],
+        # Ranked accents with their place against the beat grid — what a
+        # stab lands on. `onsets` says where something happened; `hits`
+        # says what was worth a light.
+        "hits": rhythm.get("hits", []),
         "beat_method": rhythm["method"],
         "features": bands,
         "brightness": features.brightness_hint(pcm, decode.SAMPLE_RATE),

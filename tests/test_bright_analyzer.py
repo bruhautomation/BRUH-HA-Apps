@@ -86,6 +86,97 @@ class TestBeats(unittest.TestCase):
         self.assertIsInstance(result["beats"], list)
 
 
+def hat(sample_rate=SR, length_s=0.03) -> np.ndarray:
+    """A hi-hat tick: high-frequency, fast decay — flux, but not punch."""
+    t = np.arange(int(length_s * sample_rate)) / sample_rate
+    return (np.sin(2 * np.pi * 6000.0 * t)
+            * np.exp(-t * 220.0) * 0.5).astype(np.float32)
+
+
+def stab(sample_rate=SR, length_s=0.15) -> np.ndarray:
+    """A broadband stab: kick weight plus a mid-band body, loud."""
+    t = np.arange(int(length_s * sample_rate)) / sample_rate
+    body = np.sin(2 * np.pi * 800.0 * t) * np.exp(-t * 22.0)
+    hit = kick(sample_rate, length_s)
+    hit = np.pad(hit, (0, max(0, len(body) - len(hit))))[:len(body)]
+    return ((body + 2.0 * hit) * 0.9).astype(np.float32)
+
+
+class TestHits(unittest.TestCase):
+    """detect_hits, graded against audio with a KNOWN accent in it."""
+
+    def _audio(self, stab_t=10.0, seconds=20.0):
+        audio = drum_track(120.0, seconds)
+        tick = hat()
+        t = 0.125
+        while t < seconds:  # constant hi-hats: texture, not events
+            start = int(t * SR)
+            end = min(len(audio), start + len(tick))
+            audio[start:end] += tick[:end - start]
+            t += 0.25
+        burst = stab()
+        start = int(stab_t * SR)
+        audio[start:start + len(burst)] += burst[:len(audio) - start]
+        return audio
+
+    # detect_hits is graded against the TRUE grid, handed in directly —
+    # the constant synthetic hi-hats that make this fixture a good ranking
+    # test are exactly the pathological input that derails the tempo
+    # estimator, and grading the ranker through a tempo lock it is not
+    # responsible for would fail the right code for the wrong reason.
+    GRID = [round(0.5 * i, 2) for i in range(1, 40)]
+
+    def test_the_stab_outranks_the_hats_and_sits_on_the_beat(self):
+        audio = self._audio(stab_t=10.0)
+        hits = beats.detect_hits(audio, SR, self.GRID)
+        self.assertTrue(hits, "no hits detected at all")
+        top = max(hits, key=lambda h: h["strength"])
+        self.assertLess(abs(top["t"] - 10.0), 0.08,
+                        f"the loudest hit was at {top['t']}, not the stab")
+        self.assertEqual(1.0, top["strength"])
+        self.assertTrue(top["on_beat"])
+
+    def test_an_off_beat_stab_is_marked_as_such(self):
+        # 10.22s is 220ms from the nearest beat of a 120bpm grid — far
+        # outside the ±70ms window that means "on the beat".
+        audio = self._audio(stab_t=10.22)
+        hits = beats.detect_hits(audio, SR, self.GRID)
+        near = [h for h in hits if abs(h["t"] - 10.22) < 0.08]
+        self.assertTrue(near, "the stab was not detected")
+        self.assertFalse(near[0]["on_beat"])
+
+    def test_analysis_carries_the_hits(self):
+        result = beats.analyze_beats(drum_track(120.0, 20.0), SR)
+        self.assertIn("hits", result)
+        self.assertTrue(result["hits"])
+        for hit in result["hits"]:
+            self.assertIn("on_beat", hit)
+
+    def test_hits_are_sorted_spaced_and_capped(self):
+        hits = beats.detect_hits(self._audio(), SR, self.GRID)
+        times = [h["t"] for h in hits]
+        self.assertEqual(times, sorted(times))
+        self.assertLessEqual(len(hits), beats.MAX_HITS)
+        gaps = [b - a for a, b in zip(times, times[1:])]
+        if gaps:
+            self.assertGreaterEqual(min(gaps), beats.HIT_SPACING_S - 1e-6)
+
+    def test_silence_has_no_hits(self):
+        result = beats.analyze_beats(np.zeros(SR * 5, dtype=np.float32), SR)
+        self.assertEqual([], result.get("hits", []))
+
+    def test_band_flux_separates_punch_from_shimmer(self):
+        t = np.arange(SR * 4) / SR
+        # Pulsed tones, so there is flux to see in the band it lives in.
+        gate = (np.sin(2 * np.pi * 2.0 * t) > 0).astype(np.float32)
+        bass = (np.sin(2 * np.pi * 80.0 * t) * gate).astype(np.float32)
+        treble = (np.sin(2 * np.pi * 6000.0 * t) * gate).astype(np.float32)
+        low_b, mid_b, _ = beats.band_flux(bass, SR)
+        low_t, mid_t, _ = beats.band_flux(treble, SR)
+        self.assertGreater(low_b.sum(), 5 * low_t.sum())
+        self.assertLess(mid_t.sum(), low_b.sum())
+
+
 class TestFeatures(unittest.TestCase):
     def test_bands_separate(self):
         t = np.arange(SR * 4) / SR
