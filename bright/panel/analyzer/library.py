@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import re
+import time
 from pathlib import Path
 
 import atomic_write
@@ -32,7 +33,9 @@ SHOWS_DIR = Path(os.environ.get("BRIGHT_STATE", "/data")) / "shows"
 #
 # 2: `hits` — ranked accents with their place against the beat.
 # 3: `music` — harmony, melody, phrases, repetition.
-ANALYSIS_VERSION = 3
+# 4: `hits` gain `band`/`tone` — which drum, so the kick and the snare
+#    can drive different lights instead of one undifferentiated "accent".
+ANALYSIS_VERSION = 4
 
 
 def is_stale(analysis: dict | None) -> bool:
@@ -218,12 +221,145 @@ def save_analysis(hash_hex: str, analysis: dict) -> None:
     atomic_write.write_json(analysis_path(hash_hex), analysis)
 
 
+# ---------------------------------------------------------------- versions
+#
+# A track has MANY shows, and one of them is the one that plays.
+#
+# Every compile used to overwrite `show.json`, so asking Claude to try
+# again destroyed the show you had — including the one you had spent an
+# evening editing. That is not a risk people take twice: it makes the
+# rewrite button something you avoid, which is the opposite of what a
+# director is for. So every save lands in its own directory and a pointer
+# says which one is live.
+#
+# The pointer, not a copy, is what makes this cheap. A compiled show is
+# most of a megabyte on a busy track, and keeping the active one as a
+# second copy beside the archive would double every track's storage on a
+# machine that is usually a Pi with an SD card. `show_path` resolves
+# through `versions.json` instead, so every existing caller — the
+# conductor, the party queue, the editor, the mirror — goes on asking for
+# "this track's show" and gets the active one without knowing versions
+# exist.
+#
+# Names are what make an archive usable, and a name is also a decision:
+# naming a version PINS it, because the only reason to name something is
+# to be able to come back to it. Unnamed versions are the ones the prune
+# eats when there are too many.
+VERSIONS_FILE = "versions.json"
+MAX_VERSIONS = 12
+
+# What made this show. Kept as data rather than prose because the list is
+# sorted and filtered by it, and because "who wrote this" is the first
+# question anyone asks of a version they do not recognise.
+SOURCES = ("algorithmic", "claude", "revision", "edit", "import")
+
+
+def versions_path(hash_hex: str) -> Path:
+    return _track_dir(hash_hex) / VERSIONS_FILE
+
+
+def _version_dir(hash_hex: str, version_id: str) -> Path:
+    if not re.fullmatch(r"[0-9a-z]{1,24}", str(version_id)):
+        raise ValueError(f"not a version id: {version_id!r}")
+    return _track_dir(hash_hex) / "versions" / version_id
+
+
+def _read_versions(hash_hex: str) -> dict:
+    """The version index, migrating a pre-versions track on the way past.
+
+    Migration moves the legacy files rather than copying them, which is
+    the whole reason it is safe to do lazily on a read: `os.replace`
+    within one directory tree is atomic, so a track is either migrated or
+    not, never half of each, however the add-on dies in the middle.
+    """
+    try:
+        data = json.loads(versions_path(hash_hex).read_text())
+        if isinstance(data, dict) and isinstance(data.get("versions"), list):
+            return data
+    except (OSError, ValueError):
+        # No index yet (a track compiled before versions existed, or one
+        # that has never been compiled at all) or an unreadable one.
+        # Every case has the same answer and it is below rather than
+        # here: adopt whatever show is on disk, or return an empty
+        # index. Raising would mean a single corrupt file made a track
+        # impossible to compile for, which is a worse failure than
+        # rebuilding the index from what is actually there.
+        pass
+
+    legacy_show = _track_dir(hash_hex) / "show.json"
+    legacy_script = _track_dir(hash_hex) / "script.json"
+    if not legacy_show.exists():
+        return {"version": 1, "active": None, "versions": []}
+    entry = _new_entry("import", note="the show that was here before "
+                                      "BRight kept versions")
+    target = _version_dir(hash_hex, entry["id"])
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+        os.replace(legacy_show, target / "show.json")
+        if legacy_script.exists():
+            os.replace(legacy_script, target / "script.json")
+    except OSError:
+        return {"version": 1, "active": None, "versions": []}
+    index = {"version": 1, "active": entry["id"], "versions": [entry]}
+    _write_versions(hash_hex, index)
+    return index
+
+
+def _write_versions(hash_hex: str, index: dict) -> None:
+    atomic_write.write_json(versions_path(hash_hex), index, indent=2)
+
+
+def _new_entry(source: str, note: str = "", name: str = "") -> dict:
+    # The id is time-ordered and short: it sorts by age without anybody
+    # parsing a date out of it, and it is a directory name a person may
+    # end up reading in a shell.
+    stamp = format(int(time.time()), "x")
+    salt = hashlib.sha1(os.urandom(8)).hexdigest()[:4]
+    return {"id": f"{stamp}{salt}", "name": str(name or "")[:60],
+            "created_at": time.time(),
+            "source": source if source in SOURCES else "edit",
+            "note": str(note or "")[:300], "pinned": bool(name)}
+
+
+def list_versions(hash_hex: str) -> dict:
+    """Every show this track has, newest first, and which one is live."""
+    index = _read_versions(hash_hex)
+    rows = []
+    for entry in index.get("versions") or []:
+        if not isinstance(entry, dict) or not entry.get("id"):
+            continue
+        row = dict(entry)
+        row["active"] = entry["id"] == index.get("active")
+        rows.append(row)
+    rows.sort(key=lambda r: r.get("created_at") or 0, reverse=True)
+    return {"active": index.get("active"), "versions": rows}
+
+
 def show_path(hash_hex: str) -> Path:
-    return _track_dir(hash_hex) / "show.json"
+    return _active_dir(hash_hex) / "show.json"
 
 
 def script_path(hash_hex: str) -> Path:
-    return _track_dir(hash_hex) / "script.json"
+    return _active_dir(hash_hex) / "script.json"
+
+
+def _active_dir(hash_hex: str) -> Path:
+    """Where the live show lives, or where it would live if there were one.
+
+    The fallback matters: `load_show` on a track with no show at all has
+    always answered None by failing to read a file, and every caller is
+    written against that. Returning the track's own directory keeps that
+    true — nothing is there either — rather than raising a new kind of
+    error into paths that have never had to handle one.
+    """
+    index = _read_versions(hash_hex)
+    active = index.get("active")
+    if not active:
+        return _track_dir(hash_hex)
+    try:
+        return _version_dir(hash_hex, active)
+    except ValueError:
+        return _track_dir(hash_hex)
 
 
 def load_show(hash_hex: str) -> dict | None:
@@ -234,10 +370,130 @@ def load_show(hash_hex: str) -> dict | None:
 
 
 def save_show(hash_hex: str, script: dict, show: dict,
-              title: str = "") -> None:
-    atomic_write.write_json(script_path(hash_hex), script)
-    atomic_write.write_json(show_path(hash_hex), show)
+              title: str = "", *, source: str = "edit",
+              note: str = "", name: str = "") -> str:
+    """Save a new version and make it the live one. Returns its id.
+
+    New versions are always live, because every route into here is
+    somebody asking for this show: a compile, a revision, a hand edit. An
+    old version becoming live again is `activate`, which is a different
+    verb a person presses on purpose.
+    """
+    index = _read_versions(hash_hex)
+    entry = _new_entry(source, note=note, name=name)
+    entry["cues"] = len((show or {}).get("cues") or [])
+    entry["scenes"] = len((script or {}).get("scenes") or [])
+    directory = _version_dir(hash_hex, entry["id"])
+    directory.mkdir(parents=True, exist_ok=True)
+    atomic_write.write_json(directory / "script.json", script)
+    atomic_write.write_json(directory / "show.json", show)
+
+    index["versions"] = [e for e in (index.get("versions") or [])
+                         if isinstance(e, dict) and e.get("id")] + [entry]
+    index["active"] = entry["id"]
+    _prune(hash_hex, index)
+    _write_versions(hash_hex, index)
     publish_script(hash_hex, script, title)
+    return entry["id"]
+
+
+def _prune(hash_hex: str, index: dict) -> None:
+    """Drop the oldest unnamed versions over the cap.
+
+    Named and active ones are never eaten — naming is how a person says
+    "keep this", and eating the live show would leave a track playing
+    nothing. A track whose versions are ALL named simply goes over the
+    cap: refusing the save instead would mean the archive filling up
+    stops you working, which is a worse failure than a long list.
+    """
+    entries = sorted(index.get("versions") or [],
+                     key=lambda e: e.get("created_at") or 0)
+    droppable = [e for e in entries
+                 if not e.get("pinned") and not e.get("name")
+                 and e.get("id") != index.get("active")]
+    while len(entries) > MAX_VERSIONS and droppable:
+        victim = droppable.pop(0)
+        entries.remove(victim)
+        _remove_dir(hash_hex, victim["id"])
+    index["versions"] = entries
+
+
+def _remove_dir(hash_hex: str, version_id: str) -> None:
+    try:
+        directory = _version_dir(hash_hex, version_id)
+    except ValueError:
+        return
+    for name in ("script.json", "show.json"):
+        (directory / name).unlink(missing_ok=True)
+    try:
+        directory.rmdir()
+    except OSError:
+        # Something else is in there — a file this version of BRight does
+        # not write, or a half-finished write from another process. The
+        # version is already out of the index and its two files are gone,
+        # so the deletion HAS happened; an empty directory left behind
+        # costs a few bytes and nothing else. Failing here would report a
+        # delete that actually succeeded as an error.
+        pass
+
+
+def activate_version(hash_hex: str, version_id: str, title: str = "") -> dict:
+    """Make an old show the live one again.
+
+    The mirror is republished from it, because the mirror is a copy of
+    the live show and a stale one is the file somebody hand-edits by
+    mistake.
+    """
+    index = _read_versions(hash_hex)
+    entry = next((e for e in index.get("versions") or []
+                  if e.get("id") == version_id), None)
+    if entry is None:
+        raise ValueError("no such version")
+    if not (_version_dir(hash_hex, version_id) / "show.json").exists():
+        raise ValueError("that version's files are gone")
+    index["active"] = version_id
+    _write_versions(hash_hex, index)
+    try:
+        script = json.loads(
+            (_version_dir(hash_hex, version_id) / "script.json").read_text())
+    except (OSError, ValueError):
+        script = None
+    if isinstance(script, dict):
+        publish_script(hash_hex, script, title)
+    return entry
+
+
+def rename_version(hash_hex: str, version_id: str, name: str) -> dict:
+    """Name a version, which also pins it.
+
+    Clearing the name unpins it — the two are one decision said twice,
+    and a version with no name that survives the prune forever would be a
+    pin nobody can see or undo.
+    """
+    index = _read_versions(hash_hex)
+    entry = next((e for e in index.get("versions") or []
+                  if e.get("id") == version_id), None)
+    if entry is None:
+        raise ValueError("no such version")
+    entry["name"] = str(name or "").strip()[:60]
+    entry["pinned"] = bool(entry["name"])
+    _write_versions(hash_hex, index)
+    return entry
+
+
+def delete_version(hash_hex: str, version_id: str) -> None:
+    """Remove a version for good. The live one is refused."""
+    index = _read_versions(hash_hex)
+    entry = next((e for e in index.get("versions") or []
+                  if e.get("id") == version_id), None)
+    if entry is None:
+        raise ValueError("no such version")
+    if index.get("active") == version_id:
+        raise ValueError("that is the show this track plays — make another "
+                         "one live first, then delete this")
+    index["versions"] = [e for e in index["versions"] if e is not entry]
+    _write_versions(hash_hex, index)
+    _remove_dir(hash_hex, version_id)
 
 
 def _slug(text: str) -> str:

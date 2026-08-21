@@ -5,6 +5,79 @@ All notable changes to the **BRight** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.18.0
+
+Lights with an attack, four layers, and the song on screen.
+
+### Fixed
+
+- **The beat pulse peaked on the OFF-beat, in every show BRight has ever
+  compiled.** A LIFX waveform runs from the bulb's *current* colour to the
+  one in the packet and back, so a sine anchored on the beat is at its
+  dimmest exactly where the kick is and brightest halfway to the next one.
+  The one effect whose entire job was "the beat" was inverted. Every shape
+  now knows where in its cycle it is brightest (`PEAK_PHASE`) and the cue
+  goes out that far early, so the room answers the beat on the beat.
+
+### Added
+
+- **`hit` and `accent`: lights with an attack.** Every rhythmic effect
+  BRight had was a *swell* — smoothly up to a level and smoothly back —
+  which is what "just a bunch of fading lights" describes. A `hit` is full
+  brightness the instant the beat lands and decays before the next one.
+  `saw` is the only one of LIFX's five shapes that is monotone across a
+  cycle, so it is not a parameter here; the others come back up inside the
+  cycle and duck rather than decay. Still one packet for eight beats.
+- **`accent` follows the record, not the grid.** It lands on the drums the
+  analyzer actually heard, at the strength it heard them, so it catches
+  the fills a beat grid knows nothing about — and the analyzer now records
+  **which band won each hit**, so the kick and the snare are different
+  instruments and can drive different lights (`band: "low"` / `"mid"`).
+- **The song is drawn.** Three lanes under the waveform, on the same
+  ruler: chord changes as labelled blocks, the melody as a pitch contour
+  against the track's own range, and the drums with the kick low and
+  everything above it high. Until now the panel drew an envelope and the
+  sentence `128 bpm · 7 sections · 2 drops`, so a melody layer that
+  rendered zero notes looked exactly like one that worked.
+- **One named row per effect**, under the strip, drawn from what the
+  compiler rendered rather than from the script — an effect that produced
+  nothing has a visibly empty row saying so. Plus a line saying what is
+  running at the playhead and what starts next.
+- **Show versions.** Every compile, revision and hand edit is kept, with
+  who wrote it and how big it is; one pointer says which plays. Naming a
+  version keeps it for good. A track that predates this is migrated on
+  first read, by moving its files rather than copying them.
+
+### Changed
+
+- **The automatic director builds four layers on different lights**
+  instead of giving each section a texture and running it end to end — a
+  four-minute track used to change about eight times and do nothing in
+  between. Ground (the harmony), pulse (the beat), hits (kick and snare)
+  and voice (the melody — **in the chorus too**, which the previous rule
+  explicitly forbade). A fixture belongs to one layer, which is a
+  correctness rule as much as a taste one, and where a room has fewer
+  kinds of light than there are layers a role is **split**: the left lamps
+  are the kick, the right ones the snare. A layer *arriving* now gets a
+  stab of its own, because that is what actually makes a chorus land.
+- **Claude's brief teaches the same model**, and its list of bulb-side
+  effects is generated from the set the compiler enforces — the
+  hand-written copy had already drifted by two, so a model following the
+  brief exactly could write a show whose kick cancelled its snare.
+- **One party mode.** Tick the shows you want, press Play; nothing ticked
+  plays everything. The songs run in the order you ticked them and each
+  shows its place. Saved parties are now saved **sets** — a name on
+  exactly what is on that screen — and **Load** puts one back so you can
+  see what Play would do before pressing it.
+- **The vibe field is gone from the Party tab and lives beside Compile.**
+  It steers the *director*, which is a compile-time decision, and there it
+  only ever reached a track with no show yet: on a library with shows
+  already built it did nothing at all, on a fresh one it silently decided
+  what went to disk forever, and two parties naming different vibes over
+  one song gave whichever ran first.
+- `ANALYSIS_VERSION` is **4** — hits carry their band. Existing libraries
+  re-analyse themselves on the next **Analyze** pass.
+
 ## 0.17.0
 
 Colour that moves without flickering, and lights that follow the audio.

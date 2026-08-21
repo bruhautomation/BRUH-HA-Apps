@@ -125,14 +125,14 @@ bulb and the whole show is REFUSED — not that effect, the show. Keep
 stack three stepping effects on the same light.
 
 TYPES and their params:
-%s
+%(catalog)s
 
 Types and parameter names are EXACTLY as listed. Out-of-range numbers are
 clamped rather than rejected, and any parameter you leave out takes its
 default — write the two or three that matter and skip the rest.
 
 ONE RULE ABOUT LAYERING, and it is physics rather than taste. These
-effects are run BY THE BULB: `pulse`, `strobe`, `breathe`, `sweep`, `stab`, `colour_drift`, `saturate`. A bulb runs exactly one of them at a
+effects are run BY THE BULB: %(routines)s. A bulb runs exactly one of them at a
 time, so two overlapping on the SAME light is not a layered effect — the
 later one cancels the earlier, and from across the room that reads as an
 effect that mysteriously does nothing. Give them different lights, or
@@ -218,6 +218,26 @@ def _catalog_lines() -> str:
     return "\n".join(lines)
 
 
+
+def _routine_names() -> str:
+    """The bulb-side effects, named from the set the compiler enforces.
+
+    Written out by hand once, and it drifted the moment two more effects
+    joined the class — the brief went on listing seven while the compiler
+    warned about nine, so a model following the brief exactly could
+    still write a show whose kick silently cancelled its snare. There is
+    one list, and this is it.
+    """
+    from . import effects as fx
+
+    return ", ".join(f"`{name}`" for name in sorted(fx.BULB_ROUTINES))
+
+
+def schema_contract() -> str:
+    """The contract, with the parts that are generated filled in."""
+    return _SCHEMA_CONTRACT % {"catalog": _catalog_lines(),
+                               "routines": _routine_names()}
+
 _DIRECTION = """\
 You are the lighting director for a home light show. Design the show for
 the track below: professional, musical, restrained where the song is and
@@ -260,6 +280,45 @@ are what happens inside them. A verse with a `harmony` ground, the tune on
 the lamps and a soft pulse underneath is worth more than any number of
 chases.
 
+BUILD THE SHOW OUT OF FOUR LAYERS, ON DIFFERENT LIGHTS
+------------------------------------------------------
+This is the single most useful structure for this job. A show is four
+layers with different time constants, and what makes it read as musical
+rather than busy is that they are SEPARATE:
+
+- **ground** — the room's colour, moving with the harmony. Seconds-long.
+  This is the only layer that should ever feel like fading. Give it the
+  lights that are not keeping time: candles, a strip, whatever is left.
+- **pulse** — the beat, on lights doing nothing else. Use `hit`, not
+  `pulse`: a hit STRIKES on the beat and decays, a pulse swells. Mostly
+  felt rather than watched.
+- **hits** — the kick and the snare, as separate instruments on
+  different lights. `accent` with `band: "low"` is the kick and
+  `band: "mid"` is the snare, and they land on the drums the analyzer
+  actually heard rather than on the beat grid, so they catch the fills
+  a grid knows nothing about.
+- **voice** — the melody, tracking real pitch (`melody`). This is the
+  layer that makes a room feel like it is playing along. PUT IT IN THE
+  CHORUS TOO. A chorus is the part of a song people know the tune of,
+  and a room that stops following it exactly there stops playing along
+  where it matters most — it works in a chorus because it owns its own
+  lights, not because the chorus is quiet.
+
+Two rules follow, and both are hard:
+
+1. **One fixture, one rhythmic layer.** A LIFX bulb runs ONE waveform at
+   a time, so two of the bulb-side effects on one light is the second
+   cancelling the first. If the room has fewer kinds of light than you
+   have layers, SPLIT a role by naming ids: the left two lamps are the
+   kick, the right two are the snare. That is what a designer does with
+   six lamps and four ideas, and it is far better than one effect across
+   every bulb.
+2. **A layer arriving is itself an event.** A chorus does not land
+   because it is brighter than the verse. It lands because something NEW
+   starts happening on lights that were doing something else a moment
+   ago — the strip joins the kick, the lamps stop washing and start
+   following the tune. Design the entrances, not just the levels.
+
 Principles:
 - The section map and drops are measured from the audio — trust them.
   Scenes should follow the section boundaries (merge or split a little
@@ -281,6 +340,12 @@ Principles:
   natural unit for "one area of the house".
 - With fewer than three moving lights a chase is a flicker — alternate
   them instead (theater).
+- `pulse`, `breathe` and `sweep` are SWELLS: they travel smoothly up to a
+  level and back. `hit`, `accent`, `stab` and `strobe` have an ATTACK:
+  they are at full brightness the instant they land and decay from
+  there. A show made only of swells is what "just a bunch of fading
+  lights" means — reach for the second group for anything rhythmic and
+  keep the swells for the ground.
 - Effects can own different parts of the room at once. A chase across the
   lamps while the strip holds a wash is one scene with two effects and
   two selections, and it reads far better than one effect over everything.
@@ -411,7 +476,7 @@ def _digest(analysis: dict, fixtures: list[dict],
     lines = [
         _DIRECTION,
         "",
-        _SCHEMA_CONTRACT % _catalog_lines(),
+        schema_contract(),
         "",
     ]
     if vibe:
@@ -687,7 +752,7 @@ def revise_script(script: dict, feedback: str, analysis: dict,
     prompt = "\n".join([
         _REVISE_DIRECTION,
         "",
-        _SCHEMA_CONTRACT % _catalog_lines(),
+        schema_contract(),
         "",
         _digest_facts(analysis),
         "",
@@ -742,7 +807,7 @@ Timing is in BEATS, not seconds: this will be dropped into a song and the
 tempo is not yours to choose.
 
 TYPES and their params:
-%s
+%(catalog)s
 
 Types and parameter names are EXACTLY as listed. Out-of-range numbers are
 clamped rather than rejected, and anything you leave out takes its default
@@ -764,7 +829,7 @@ def _effect_prompt(description: str, fixtures: list[dict]) -> str:
     return "\n".join([
         _EFFECT_DIRECTION,
         "",
-        _EFFECT_CONTRACT % _catalog_lines(),
+        _EFFECT_CONTRACT % {"catalog": _catalog_lines()},
         "",
         room.describe(fixtures),
         "",
@@ -873,7 +938,7 @@ def invent_effects(fixtures: list[dict], count: int = 4,
     prompt = "\n".join([
         _INVENT_DIRECTION % {"count": count},
         "",
-        _EFFECT_CONTRACT % _catalog_lines(),
+        _EFFECT_CONTRACT % {"catalog": _catalog_lines()},
         "",
         _INVENT_CONTRACT,
         "",

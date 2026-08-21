@@ -306,7 +306,8 @@ def script_actions(script: dict, fixtures: list[dict],
     grid = fx.Grid(analysis.get("beats"), analysis.get("downbeats"),
                    analysis.get("bpm"),
                    notes=musical.get("notes"), chords=musical.get("chords"),
-                   energy=analysis.get("features"))
+                   energy=analysis.get("features"),
+                   hits=analysis.get("hits"))
     # Via duration_of, never the tag directly: a VBR header without a
     # Xing frame reports a length wrong by whole multiples, the show is
     # laid out over this number, and the conductor sleeps out its tail
@@ -369,6 +370,12 @@ def script_actions(script: dict, fixtures: list[dict],
             entry["note"] = ("this effect follows the song's loudness and "
                              "this track has no analysis to read it from — "
                              "analyse it on the Library tab")
+        elif (not rendered and effect["type"] in fx.NEEDS_HITS
+                and not grid.has_hits):
+            entry["note"] = ("this effect lands on the drum hits the "
+                             "analyzer ranked, and this track was analysed "
+                             "before it ranked them — re-run Analyze on the "
+                             "Library tab, then compile again")
         breakdown.append(entry)
 
     for index, scene in enumerate(script.get("scenes") or []):

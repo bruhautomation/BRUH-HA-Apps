@@ -117,7 +117,43 @@ def overview(script: dict, fixtures: list[dict], analysis: dict, *,
         "fixtures": frames["fixtures"],
         "duration_s": round(duration, 3),
         "seconds_per_column": round(duration / columns, 4),
+        "lanes": lanes(walked),
     }
+
+
+def lanes(walked: dict) -> list[dict]:
+    """One row per effect: when it runs, what it drives, what it cost.
+
+    Drawn from the WALK rather than from the script, which is the whole
+    value of it. A script says an effect exists; this says whether it
+    produced anything, over which stretch, and on which lights — so an
+    effect that rendered to nothing has a visibly empty row instead of
+    looking exactly like one that worked. That distinction was
+    unavailable anywhere in the panel, and it is the first thing you
+    want when a show "feels like it is doing nothing".
+    """
+    out = []
+    for index, entry in enumerate(walked.get("effects") or []):
+        if not entry.get("actions"):
+            out.append({"index": index, "type": entry.get("type"),
+                        "name": entry.get("name") or entry.get("type"),
+                        "where": entry.get("where"), "actions": 0,
+                        "start": None, "end": None, "fixtures": [],
+                        "note": entry.get("note")})
+            continue
+        out.append({
+            "index": index,
+            "type": entry.get("type"),
+            "name": entry.get("name") or entry.get("type"),
+            "where": entry.get("where"),
+            "actions": entry["actions"],
+            "start": entry["first_t"],
+            "end": entry["last_t"],
+            "fixtures": entry.get("fixture_ids") or [],
+            "busiest": entry.get("busiest_fixture"),
+            "note": entry.get("note"),
+        })
+    return out
 
 
 def timeline(script: dict, analysis: dict) -> dict:
@@ -184,4 +220,70 @@ def timeline(script: dict, analysis: dict) -> dict:
                       for b in (analysis.get("downbeats") or [])
                       if isinstance(b, (int, float))],
         "bpm": analysis.get("bpm"),
+        **music_lanes(analysis),
     }
+
+
+# What the editor draws of the song itself. Capped because these are
+# per-note and per-hit lists on a four-minute track and the payload is
+# fetched on every edit; the caps are generous enough that a whole song
+# fits and small enough that a pathological analysis cannot make the
+# editor unusable.
+MAX_NOTES = 1500
+MAX_CHORDS = 400
+MAX_HITS = 500
+
+
+def music_lanes(analysis: dict) -> dict:
+    """The song, as lanes to draw under the same ruler as the effects.
+
+    This is the half of the picture that was missing. The panel drew an
+    envelope, the section tints and the bar lines, and said `128 bpm ·
+    7 sections · 2 drops` — so a melody layer that rendered zero notes
+    looked exactly like one that worked, and there was no way to see
+    that a stab sat 200ms off the hit it was meant to answer. You cannot
+    tune what you cannot see, and until now none of the musical analysis
+    was visible ANYWHERE in the add-on.
+
+    Encoded as flat arrays rather than objects: this is drawing data,
+    read once per lane, and `[t, d, midi]` is a third of the bytes of
+    `{"t": ..., "d": ..., "m": ...}` on a list that is a thousand long.
+    """
+    music = analysis.get("music") or {}
+    notes = []
+    for note in (music.get("notes") or [])[:MAX_NOTES]:
+        try:
+            notes.append([round(float(note["t"]), 3),
+                          round(float(note.get("d", 0.2)), 3),
+                          int(note["m"]),
+                          round(float(note.get("s", 1.0)), 2)])
+        except (KeyError, TypeError, ValueError):
+            continue
+    chords = []
+    for chord in (music.get("chords") or [])[:MAX_CHORDS]:
+        try:
+            chords.append([round(float(chord["t"]), 3),
+                           str(chord.get("name") or "")[:8]])
+        except (KeyError, TypeError, ValueError):
+            continue
+    hits = []
+    for hit in (analysis.get("hits") or [])[:MAX_HITS]:
+        try:
+            hits.append([round(float(hit["t"]), 3),
+                         round(float(hit.get("strength", 0)), 2),
+                         str(hit.get("band") or "")])
+        except (KeyError, TypeError, ValueError):
+            continue
+    phrases = []
+    for phrase in (music.get("phrases") or [])[:MAX_CHORDS]:
+        try:
+            phrases.append([round(float(phrase["start"]), 3),
+                            round(float(phrase["end"]), 3),
+                            str(phrase.get("dir") or "")[:8]])
+        except (KeyError, TypeError, ValueError):
+            continue
+    return {"notes": notes, "chords": chords, "hits": hits,
+            "phrases": phrases, "key": music.get("key") or "",
+            "drops": [round(float(d["t"]), 3)
+                      for d in (analysis.get("drops") or [])
+                      if isinstance(d, dict) and "t" in d]}

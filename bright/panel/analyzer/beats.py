@@ -272,7 +272,17 @@ def detect_hits(pcm: np.ndarray, sample_rate: int,
             continue
         last = i
         t = i / rate
-        hit = {"t": round(t, 4), "strength": float(punch[i])}
+        # Which drum this was. `low` and `mid` are normalised against the
+        # same full-band peak, so comparing them directly is meaningful,
+        # and the ratio is the useful form: a light show wants the kick
+        # and the snare on different fixtures, and "which band won" is
+        # the cheapest honest answer to which one this is. Kept as a
+        # number as well as a name because an effect selecting hits by
+        # tone wants a threshold, not two buckets.
+        tone = float(low[i]) / max(1e-9, float(low[i]) + float(mid[i]))
+        hit = {"t": round(t, 4), "strength": float(punch[i]),
+               "tone": round(tone, 3),
+               "band": "low" if tone >= 0.5 else "mid"}
         if beat_times is not None and beat_times.size:
             nearest = int(np.argmin(np.abs(beat_times - t)))
             distance = abs(float(beat_times[nearest]) - t)

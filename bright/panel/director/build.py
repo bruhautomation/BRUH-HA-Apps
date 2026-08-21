@@ -120,7 +120,9 @@ def build_show(hash_hex: str, devices: dict[str, dict], source: int,
     if script is None:
         script = choreographer.write_script(analysis, fixtures)
 
-    show = compile_and_save(hash_hex, script, analysis, fixtures, source)
+    show = compile_and_save(hash_hex, script, analysis, fixtures, source,
+                            wrote=report["used"],
+                            note=(f"vibe: {vibe}" if vibe else ""))
     show["director"] = report
     save_report(hash_hex, report)
     return show
@@ -162,14 +164,16 @@ def revise_show(hash_hex: str, devices: dict[str, dict], source: int,
         raise ValueError("the revised script did not validate: "
                          + "; ".join(problems[:5]))
     report["seconds"] = round(time.monotonic() - started, 1)
-    show = compile_and_save(hash_hex, revised, analysis, fixtures, source)
+    show = compile_and_save(hash_hex, revised, analysis, fixtures, source,
+                            wrote="revision", note=feedback[:300])
     show["director"] = report
     save_report(hash_hex, report)
     return show
 
 
 def compile_and_save(hash_hex: str, script: dict, analysis: dict,
-                     fixtures: list[dict], source: int) -> dict:
+                     fixtures: list[dict], source: int, *,
+                     wrote: str = "edit", note: str = "") -> dict:
     """Compile a script that already exists and persist both halves.
 
     The tier ladder above chooses a script; this is what happens to one
@@ -192,5 +196,9 @@ def compile_and_save(hash_hex: str, script: dict, analysis: dict,
     script = effect_presets.expand_script(script)
     show = compiler.compile_show(script, fixtures, analysis, source)
     title = (analysis.get("tags") or {}).get("title") or ""
-    library.save_show(hash_hex, script, show, title)
+    # Every save is a version, and `wrote`/`note` are how the list of them
+    # stays readable a month later: "Claude, 3 Aug" and "my edit, 4 Aug"
+    # are the difference between an archive and a pile of timestamps.
+    show["version_id"] = library.save_show(hash_hex, script, show, title,
+                                           source=wrote, note=note)
     return show

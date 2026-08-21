@@ -51,6 +51,14 @@ def grid(bpm: float = 120.0, seconds: float = 16.0,
     is tested as one."""
     beat = 60.0 / bpm
     beats = [round(i * beat, 4) for i in range(int(seconds / beat) + 1)]
+    # A backbeat: kick on 1 and 3, snare on 2 and 4. `hits` rides with
+    # the melody rather than with the beats because it is the same claim
+    # — this is a track a current analyzer heard — and `music=False` is
+    # the older analysis that has none of it.
+    hits = [{"t": beats[i], "strength": 0.95 if i % 2 == 0 else 0.7,
+             "band": "low" if i % 2 == 0 else "mid",
+             "tone": 0.8 if i % 2 == 0 else 0.3, "on_beat": True}
+            for i in range(len(beats))]
     if not music:
         return fx.Grid(beats, beats[::4], bpm)
     scale = (0, 2, 4, 5, 7, 9, 11, 12)
@@ -70,7 +78,7 @@ def grid(bpm: float = 120.0, seconds: float = 16.0,
     energy = {"hop_s": hop, "energy": swell, "low": swell,
               "mid": swell, "high": swell}
     return fx.Grid(beats, beats[::4], bpm, notes=notes, chords=chords,
-                   energy=energy)
+                   energy=energy, hits=hits)
 
 
 PALETTE = [[200, 0.9], [300, 0.8], [40, 0.7]]
@@ -439,6 +447,153 @@ class TestPresetsAndParties(unittest.TestCase):
     def test_no_fixtures_means_all_of_them(self):
         party = self.parties.save({"name": "Everything"})
         self.assertEqual([], party["fixtures"])
+
+
+
+class TestLightsWithAnAttack(unittest.TestCase):
+    """The difference between a light show and mood lighting.
+
+    Every rhythmic effect BRight had was a SWELL: a sine travelling from
+    the bulb's current level up to a target and back. Two things follow
+    from that and both are audible from a sofa — the brightest instant
+    lands halfway to the next beat rather than on it, and the motion has
+    no attack, which is what "just a bunch of fading lights" describes.
+    """
+
+    def _levels(self, effect, seconds=8.0, fps=30, base=0.5):
+        fixture = lamps(1)
+        actions = fx.actions_for(fx.clean_effect(effect), fixture,
+                                 grid(seconds=seconds), window=(0.0, seconds),
+                                 palette=PALETTE, base_brightness=base)
+        sim = fx.simulate(actions, fixture, duration_s=seconds, fps=fps)
+        # The simulator clamps its own frame rate — it is a preview, not
+        # a sampler — so the rate to index frames by is the one it used,
+        # never the one that was asked for.
+        return [frame[0][2] for frame in sim["frames"]], sim["fps"]
+
+    def test_the_beat_pulse_is_brightest_on_the_beat(self):
+        levels, fps = self._levels(
+            {"type": "pulse", "name": "beat",
+             "params": {"every_beats": 1, "depth": 0.4, "cycles_per_cue": 4}})
+        beat_s = 0.5  # 120bpm
+        for beat in (4, 5, 6, 7, 8):
+            on = levels[int(beat * beat_s * fps)]
+            off = levels[int((beat + 0.5) * beat_s * fps)]
+            self.assertGreater(
+                on, off + 0.15,
+                f"beat {beat}: the room is at {on:.2f} on the beat and "
+                f"{off:.2f} between beats — the pulse is inverted")
+
+    def test_a_hit_strikes_and_decays_rather_than_swelling(self):
+        levels, fps = self._levels(
+            {"type": "hit", "name": "kick",
+             "params": {"every_beats": 1, "peak": 1.0, "floor": 0.1,
+                        "cycles_per_cue": 4}})
+        beat_s = 0.5
+        for beat in (4, 5, 6):
+            start = int(beat * beat_s * fps)
+            quarter = int((beat + 0.25) * beat_s * fps)
+            late = int((beat + 0.9) * beat_s * fps)
+            self.assertGreater(levels[start], levels[quarter],
+                               "a hit is brightest the instant it lands")
+            self.assertGreater(levels[quarter], levels[late],
+                               "and keeps falling until the next one")
+
+    def test_a_hit_covers_more_of_the_range_than_a_swell_of_the_same_depth(self):
+        """The measurement that started this: count how many distinct
+        levels the room actually visits."""
+        swell, _ = self._levels(
+            {"type": "pulse", "name": "swell",
+             "params": {"every_beats": 1, "depth": 0.9, "cycles_per_cue": 4,
+                        "shape": "sine"}}, base=0.05)
+        strike, _ = self._levels(
+            {"type": "hit", "name": "strike",
+             "params": {"every_beats": 1, "peak": 0.95, "floor": 0.05,
+                        "cycles_per_cue": 4}})
+        self.assertGreater(max(strike) - min(strike), 0.6)
+        # And the shape differs where it matters: a swell is symmetric
+        # about its peak, a strike is not.
+        self.assertGreater(max(swell), 0.6)
+
+    def test_an_accent_lands_on_the_analyzed_hits_not_on_a_grid(self):
+        actions = render({"type": "accent", "name": "drums",
+                          "params": {"min_strength": 0.0, "min_gap_beats": 0}},
+                         lamps(1))
+        beat = 0.5
+        hit_times = {round(i * beat, 3) for i in range(33)}
+        self.assertTrue(actions)
+        for action in actions:
+            self.assertIn(round(action["t"], 3), hit_times)
+
+    def test_an_accent_can_take_the_kick_and_leave_the_snare(self):
+        kick = render({"type": "accent", "name": "k",
+                       "params": {"band": "low", "min_strength": 0.0,
+                                  "min_gap_beats": 0}}, lamps(1))
+        snare = render({"type": "accent", "name": "s",
+                        "params": {"band": "mid", "min_strength": 0.0,
+                                   "min_gap_beats": 0}}, lamps(1))
+        kick_times = {round(a["t"], 3) for a in kick}
+        snare_times = {round(a["t"], 3) for a in snare}
+        self.assertTrue(kick_times and snare_times)
+        self.assertEqual(set(), kick_times & snare_times,
+                         "the kick and the snare are different instruments "
+                         "and must be able to drive different lights")
+
+    def test_a_quiet_hit_is_dimmer_than_a_loud_one(self):
+        actions = render({"type": "accent", "name": "a",
+                          "params": {"min_strength": 0.0, "min_gap_beats": 0,
+                                     "follow_strength": True}}, lamps(1))
+        peaks = [a["bri"] for a in actions if a["kind"] == "set"]
+        self.assertGreater(max(peaks), min(peaks),
+                           "the analyzer ranked these hits and the room "
+                           "should say so")
+
+    def test_an_accent_thins_a_cluster_to_its_strongest(self):
+        dense = render({"type": "accent", "name": "a",
+                        "params": {"min_strength": 0.0, "min_gap_beats": 0}},
+                       lamps(1))
+        thinned = render({"type": "accent", "name": "a",
+                          "params": {"min_strength": 0.0, "min_gap_beats": 2}},
+                         lamps(1))
+        self.assertLess(len(thinned), len(dense))
+
+    def test_an_older_analysis_renders_nothing_rather_than_something_wrong(self):
+        actions = fx.actions_for(
+            fx.clean_effect({"type": "accent", "name": "a"}), lamps(1),
+            grid(music=False), window=(0.0, 16.0), palette=PALETTE)
+        self.assertEqual([], actions)
+        self.assertIn("accent", fx.NEEDS_HITS)
+
+    def test_a_hit_before_the_song_starts_is_dropped_never_clamped(self):
+        """Clamping would move the peak off the beat, quietly, for the
+        one cue nobody is watching for."""
+        actions = render({"type": "pulse", "name": "p",
+                          "params": {"every_beats": 1, "cycles_per_cue": 8}},
+                         lamps(1))
+        self.assertTrue(all(a["t"] >= 0 for a in actions))
+        self.assertTrue(actions)
+
+
+class TestEveryShapeKnowsWhereItPeaks(unittest.TestCase):
+    def test_the_table_covers_every_shape_the_vocabulary_offers(self):
+        self.assertEqual(set(fx.SHAPES), set(fx.PEAK_PHASE))
+
+    def test_the_table_agrees_with_the_simulator(self):
+        """Two answers to "where is this waveform brightest" is one
+        answer too many — and the simulator is what the preview draws."""
+        for shape in fx.SHAPES:
+            with self.subTest(shape=shape):
+                samples = [(phase / 200.0,
+                            fx._wave_position(shape, phase / 200.0, 0.5))
+                           for phase in range(200)]
+                brightest = max(samples, key=lambda pair: pair[1])[0]
+                expected = fx.PEAK_PHASE[shape]
+                # saw peaks at the very end of its cycle, which sampling
+                # inside [0, 1) reaches as 0.995.
+                self.assertAlmostEqual(
+                    expected, brightest if expected < 1.0 else 1.0,
+                    delta=0.02,
+                    msg=f"{shape} peaks at {brightest}, table says {expected}")
 
 
 if __name__ == "__main__":

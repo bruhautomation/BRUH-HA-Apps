@@ -331,7 +331,7 @@ class TestTheShowFile(PanelCase):
 class TestSavedParties(PanelCase):
     async def test_a_party_round_trips(self):
         status, body = await self.post("/api/parties", {
-            "name": "Saturday Night", "vibe": "rave",
+            "name": "Saturday Night",
             "media_player": "media_player.lounge",
             "end_scene": "scene.good_night",
             "fixtures": [f"lifx-{SERIALS[0]}"]})
@@ -340,6 +340,17 @@ class TestSavedParties(PanelCase):
         status, listing = await self.get("/api/parties")
         self.assertEqual(["Saturday Night"],
                          [p["name"] for p in listing["parties"]])
+
+    async def test_a_set_carries_no_vibe(self):
+        """It steered the DIRECTOR, which is a compile-time decision, and
+        it only ever reached a track with no show yet — so on a library
+        with shows already built it did nothing at all, and on a fresh
+        one it silently rewrote what went to disk. It lives beside the
+        compile button now."""
+        status, body = await self.post("/api/parties", {
+            "name": "No Vibe", "vibe": "rave"})
+        self.assertEqual(200, status)
+        self.assertNotIn("vibe", body["party"])
 
     async def test_the_names_are_mirrored_where_core_can_read_them(self):
         await self.post("/api/parties", {"name": "Mirror Test"})

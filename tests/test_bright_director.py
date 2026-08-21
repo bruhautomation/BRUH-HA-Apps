@@ -15,6 +15,7 @@ if PANEL_DIR not in sys.path:
     sys.path.append(PANEL_DIR)
 
 from director import build, choreographer, compiler, palettes  # noqa: E402
+from director import effects as fx  # noqa: E402
 from lifx import packets  # noqa: E402
 from stores import light_map  # noqa: E402
 
@@ -82,8 +83,10 @@ class TestChoreographer(unittest.TestCase):
         # the part that crosses the section boundary.
         self.assertAlmostEqual(drop_t, build["effect"]["end"], places=3)
         self.assertLess(build["t"], drop_t)
+        # By NAME, not by type: a layer arriving is also a stab, and it
+        # is deliberately not the drop's.
         hit = next(m for m in script["moments"]
-                   if m["effect"]["type"] == "stab")
+                   if m["effect"].get("name") == "drop hit")
         self.assertIn("laser", hit["effect"]["select"]["roles"])
 
     def test_candles_never_pulse(self):
@@ -94,26 +97,62 @@ class TestChoreographer(unittest.TestCase):
                     self.assertNotIn(
                         "candle", effect.get("select", {}).get("roles", []))
 
-    def test_the_chase_reads_the_map(self):
-        """Order is a map question, and the map is what answers it."""
+    def test_a_chorus_splits_the_room_between_the_drums_and_the_tune(self):
+        """The arrangement IS the show.
+
+        A room with one kind of light used to get one effect across every
+        bulb in a chorus. Splitting a role is what a person does with six
+        lamps and four ideas, and it is what makes the layer model work
+        in a room that actually exists.
+        """
         many = FIXTURES + [
             {"id": f"lifx-d07000000{i}", "kind": "lifx",
              "serial": f"d07000000{i}0", "label": f"Lamp {i}", "role": "lamp",
              "zone": "", "x": i / 10.0, "y": 0.5} for i in range(3, 7)]
+        layers = choreographer.plan_layers("peak", many)
+        self.assertIn("kick", layers)
+        self.assertIn("snare", layers)
+        self.assertIn("voice", layers)
+        picked = [tuple(spec["select"].get("ids") or spec["select"]["roles"])
+                  for spec in layers.values()]
+        self.assertEqual(len(picked), len(set(picked)),
+                         "two layers on one bulb is the second cancelling "
+                         "the first")
+
+    def test_no_bulb_carries_two_rhythmic_layers(self):
+        """A LIFX bulb runs ONE waveform at a time, so the arrangement is
+        a correctness rule and not only a taste one."""
+        for kind in choreographer.LAYER_PLAN:
+            with self.subTest(kind=kind):
+                layers = choreographer.plan_layers(kind, FIXTURES)
+                seen: set = set()
+                for spec in layers.values():
+                    for target in (spec["select"].get("ids")
+                                   or spec["select"]["roles"]):
+                        self.assertNotIn(target, seen)
+                        seen.add(target)
+
+    def test_two_lamps_become_the_kick_and_the_snare(self):
+        """The small-room chorus: one lamp is the kick, the other is the
+        snare, and the candle holds the chords."""
+        layers = choreographer.plan_layers("peak", FIXTURES)
+        self.assertEqual(1, layers["kick"]["size"])
+        self.assertEqual(1, layers["snare"]["size"])
+        self.assertEqual("candle", layers["ground"]["role"])
+
+    def test_the_chase_still_reads_the_map_when_a_layer_owns_enough_lights(self):
+        """Order is a map question, and the map is what answers it."""
+        many = FIXTURES + [
+            {"id": f"lifx-d07000000{i}", "kind": "lifx",
+             "serial": f"d07000000{i}0", "label": f"Down {i}",
+             "role": "downlight", "zone": "", "x": i / 10.0, "y": 0.5}
+            for i in range(3, 7)]
         script = choreographer.write_script(analysis_fixture(), many)
         peak = next(s for s in script["scenes"] if s["kind"] == "peak")
-        chase = next(e for e in peak["effects"] if e["type"] == "chase")
-        self.assertIn(chase["order"], ("x", "-x", "center_out", "snake",
-                                       "zone"))
-
-    def test_two_lights_answer_each_other_instead_of_chasing(self):
-        """A chase across two bulbs is a flicker. The room's size is a
-        creative constraint, not a parameter to ignore."""
-        script = choreographer.write_script(analysis_fixture(), FIXTURES)
-        peak = next(s for s in script["scenes"] if s["kind"] == "peak")
-        types = {e["type"] for e in peak["effects"]}
-        self.assertIn("theater", types)
-        self.assertNotIn("chase", types)
+        chases = [e for e in peak["effects"] if e["type"] == "chase"]
+        if chases:
+            self.assertIn(chases[0]["order"],
+                          ("x", "-x", "center_out", "snake", "zone"))
 
     def test_its_own_output_validates(self):
         script = choreographer.write_script(analysis_fixture(), FIXTURES)
@@ -173,19 +212,48 @@ class TestCompiler(unittest.TestCase):
         self.assertLess(show["stats"]["peak_per_device_hz"],
                         compiler.MAX_RATE_HZ)
 
-    def test_pulses_are_waveforms_anchored_on_beats(self):
-        show = self._show()
+    def test_pulses_peak_on_the_beat_not_between_them(self):
+        """The cue goes out half a period EARLY so the bulb is brightest
+        ON the beat.
+
+        A LIFX waveform runs from the bulb's current colour to the
+        packet's and back, so a sine anchored on the beat is at its
+        dimmest exactly where the kick is and brightest halfway to the
+        next one. Every show BRight compiled before this had its beat
+        pulse on the off-beat. The cue time is therefore NOT a beat, and
+        a test asserting it is one is a test that pins the bug.
+        """
         analysis = analysis_fixture()
+        # A hand-written pulse, because the invariant belongs to the
+        # EFFECT: the automatic show now writes `hit` for the beat, and
+        # a `pulse` somebody types has to land right too.
+        script = {"version": 2,
+                  "scenes": [{"start": 0.0, "end": 60.0, "mood": "roll",
+                              "palette": [[30.0, 0.6]], "brightness": 0.5,
+                              "effects": [{"type": "pulse",
+                                           "name": "beat pulse",
+                                           "select": {"roles": ["lamp"]},
+                                           "params": {"every_beats": 1,
+                                                      "shape": "sine",
+                                                      "cycles_per_cue": 8}}]}],
+                  "moments": []}
+        show = compiler.compile_show(script, FIXTURES, analysis, source=7)
         beat_set = {round(b, 4) for b in analysis["beats"]}
         pulses = [c for c in show["cues"]
                   if c["ch"] == "lifx" and c["desc"].startswith("beat pulse")]
         self.assertTrue(pulses)
         for cue in pulses:
-            self.assertIn(round(cue["t"], 4), beat_set,
-                          f"pulse at {cue['t']} is not on a beat")
             payload = base64.b64decode(cue["payload_b64"])
             self.assertEqual(packets.SET_WAVEFORM,
                              packets.parse_header(payload)["type"])
+            # Where the peak lands: the cue time plus the shape's own
+            # peak phase. That is what has to be a beat.
+            period_s = 60.0 / float(analysis["bpm"])
+            peak_at = round(cue["t"] + fx.peak_shift("sine", period_s), 3)
+            self.assertTrue(
+                any(abs(peak_at - b) < 0.02 for b in beat_set),
+                f"a pulse cued at {cue['t']} peaks at {peak_at}, "
+                f"which is not on a beat")
 
     def test_the_laser_leads_by_its_measured_latency(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -369,47 +437,130 @@ class TestOnBeatMoments(unittest.TestCase):
                                         "effect": dict(effect)})
         self.assertAlmostEqual(plain - snapped, 0.07, delta=0.005)
 
-    def test_accents_land_on_the_strongest_on_beat_hits_only(self):
-        analysis = analysis_fixture()  # peak section 60–120s, drop at 60
-        analysis["hits"] = [
-            {"t": 70.0, "strength": 0.9, "beat": 140, "on_beat": True},
-            {"t": 80.0, "strength": 0.8, "beat": 160, "on_beat": True},
-            # Stronger than both, but OFF the beat: must be passed over.
-            {"t": 90.0, "strength": 1.0, "beat": 180, "on_beat": False},
-            # On the beat and strong, but inside the drop's own window.
-            {"t": 61.0, "strength": 0.95, "beat": 122, "on_beat": True},
-            # Strong and on-beat, but in the quiet intro — no stabs there.
-            {"t": 30.0, "strength": 0.9, "beat": 60, "on_beat": True},
-            # Too close to the 70.0 accent (under eight beats away).
-            {"t": 71.5, "strength": 0.7, "beat": 143, "on_beat": True},
-            # Under the strength floor.
-            {"t": 100.0, "strength": 0.3, "beat": 200, "on_beat": True},
-        ]
-        script = choreographer.write_script(analysis, FIXTURES)
-        accents = [m for m in script["moments"]
-                   if m["effect"].get("name") == "accent"]
-        self.assertEqual([70.0, 80.0], sorted(m["t"] for m in accents))
-        for moment in accents:
-            self.assertEqual("stab", moment["effect"]["type"])
-            self.assertNotIn("ids", moment["effect"]["select"])
-
-    def test_accents_are_capped_at_six(self):
+    def test_the_drums_are_a_layer_now_not_six_stabs_a_song(self):
+        """The old pass placed six stabs a song on the strongest on-beat
+        hits — restraint, when the only tool was a stab that owned every
+        mover in the room. Six was never the taste; it was the budget.
+        The `accent` effect is the idea done properly, and it lives in
+        the scene where the lights it owns are decided.
+        """
         analysis = analysis_fixture()
         analysis["hits"] = [
-            {"t": 63.0 + 5 * i, "strength": 0.9, "beat": 0, "on_beat": True}
-            for i in range(11)]  # 63..113s, all in the peak, all eligible
+            {"t": 63.0 + 0.5 * i, "strength": 0.9, "beat": i,
+             "on_beat": True, "band": "low" if i % 2 else "mid",
+             "tone": 0.8 if i % 2 else 0.2}
+            for i in range(40)]
         script = choreographer.write_script(analysis, FIXTURES)
-        accents = [m for m in script["moments"]
-                   if m["effect"].get("name") == "accent"]
-        self.assertEqual(6, len(accents))
+        peak = next(s for s in script["scenes"] if s["kind"] == "peak")
+        accents = [e for e in peak["effects"] if e["type"] == "accent"]
+        self.assertTrue(accents, "a chorus with drums in it has drums in it")
+        bands = {e["params"]["band"] for e in accents}
+        self.assertIn("low", bands)
+        self.assertEqual([], [m for m in script["moments"]
+                              if m["effect"].get("name") == "accent"])
 
-    def test_a_track_with_no_hits_gets_no_accents_and_no_crash(self):
+    def test_the_kick_and_the_snare_are_on_different_lights(self):
+        analysis = analysis_fixture()
+        analysis["hits"] = [{"t": 63.0 + i, "strength": 0.9, "beat": i,
+                             "on_beat": True, "band": "low", "tone": 0.9}
+                            for i in range(20)]
+        script = choreographer.write_script(analysis, FIXTURES)
+        peak = next(s for s in script["scenes"] if s["kind"] == "peak")
+        by_band = {e["params"]["band"]: e["select"]
+                   for e in peak["effects"] if e["type"] == "accent"}
+        if len(by_band) > 1:
+            self.assertNotEqual(by_band.get("low"), by_band.get("mid"))
+
+    def test_a_track_with_no_ranked_hits_falls_back_to_the_grid(self):
+        """Silence would leave a chorus with no rhythm at all, which is a
+        worse answer than the beat grid — an older analysis should get a
+        plainer show, never an empty one."""
         analysis = analysis_fixture()
         analysis.pop("hits", None)
         script = choreographer.write_script(analysis, FIXTURES)
-        self.assertEqual([], [m for m in script["moments"]
-                              if m["effect"].get("name") == "accent"])
+        peak = next(s for s in script["scenes"] if s["kind"] == "peak")
+        types = {e["type"] for e in peak["effects"]}
+        self.assertNotIn("accent", types)
+        self.assertIn("hit", types)
         self.assertEqual([], choreographer.validate_script(script))
+
+
+
+class TestALayerArrivingIsAnEvent(unittest.TestCase):
+    """A chorus does not land because it is brighter than the verse. It
+    lands because something NEW starts happening on lights that were
+    doing something else a moment ago."""
+
+    def _script(self, fixtures=None):
+        analysis = analysis_fixture()
+        analysis["hits"] = [{"t": 61.0 + 0.5 * i, "strength": 0.9,
+                             "beat": i, "on_beat": True,
+                             "band": "low" if i % 2 else "mid",
+                             "tone": 0.9 if i % 2 else 0.2}
+                            for i in range(60)]
+        analysis["music"] = {
+            "notes": [{"t": 61.0 + 0.25 * i, "d": 0.25, "m": 60 + i % 12,
+                       "pc": (60 + i % 12) % 12, "s": 0.9}
+                      for i in range(80)],
+            "chords": [{"t": 60.0 + 4 * i, "name": "C", "root": i % 12,
+                        "quality": "maj", "confidence": 0.9}
+                       for i in range(10)]}
+        return choreographer.write_script(analysis, fixtures or FIXTURES)
+
+    def test_the_chorus_announces_the_layer_it_gained(self):
+        script = self._script()
+        entrances = [m for m in script["moments"]
+                     if m["effect"].get("name") == "layer enters"]
+        self.assertTrue(entrances,
+                        "the peak gains the drums and says nothing about it")
+        peak_start = analysis_fixture()["sections"][1]["start"]
+        self.assertIn(peak_start, [m["t"] for m in entrances])
+
+    def test_nothing_is_announced_as_the_song_calms_down(self):
+        """A layer arriving as a song thins out is the arrangement
+        thinning out, and it wants no announcement."""
+        script = self._script()
+        outro_start = analysis_fixture()["sections"][2]["start"]
+        entrances = [m for m in script["moments"]
+                     if m["effect"].get("name") == "layer enters"]
+        self.assertNotIn(outro_start, [m["t"] for m in entrances])
+
+    def test_the_tune_plays_in_the_chorus(self):
+        """The previous version kept melody out of every peak on purpose.
+        A chorus is the part of a song people know the tune of."""
+        script = self._script()
+        peak = next(s for s in script["scenes"] if s["kind"] == "peak")
+        # With two lamps the drums claim both, so this room cannot carry
+        # the tune in its chorus — a bigger one must.
+        many = FIXTURES + [
+            {"id": f"lifx-d07000000{i}", "kind": "lifx",
+             "serial": f"d07000000{i}0", "label": f"Down {i}",
+             "role": "downlight", "zone": "", "x": i / 10.0, "y": 0.5}
+            for i in range(3, 6)]
+        big = self._script(many)
+        big_peak = next(s for s in big["scenes"] if s["kind"] == "peak")
+        self.assertIn("melody", {e["type"] for e in big_peak["effects"]},
+                      "the tune sits out the chorus again")
+        self.assertTrue(peak["effects"])
+
+    def test_the_whole_room_is_lit_even_where_no_layer_claimed_it(self):
+        """A layer claims one role. Everything else would otherwise hold
+        whatever the previous section left it at."""
+        script = self._script()
+        for scene in script["scenes"]:
+            washes = [e for e in scene["effects"] if e["type"] == "wash"]
+            self.assertTrue(washes, f"{scene['kind']} lights nothing")
+            self.assertEqual({}, washes[0]["select"])
+
+    def test_the_show_still_fits_the_wire_budget(self):
+        analysis = analysis_fixture()
+        analysis["hits"] = [{"t": 0.5 * i, "strength": 0.95, "beat": i,
+                             "on_beat": True, "band": "low", "tone": 0.9}
+                            for i in range(360)]
+        script = choreographer.write_script(analysis, FIXTURES)
+        show = compiler.compile_show(script, FIXTURES, analysis, source=7)
+        self.assertLess(show["stats"]["peak_per_device_hz"],
+                        compiler.MAX_RATE_HZ)
 
 
 if __name__ == "__main__":

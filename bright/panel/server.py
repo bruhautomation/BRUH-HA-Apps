@@ -874,8 +874,19 @@ def _preview_grid(body: dict) -> fx.Grid:
              for i in range(int(duration / hop) + 1)]
     energy = {"hop_s": hop, "energy": swell, "low": swell, "mid": swell,
               "high": swell}
+    # A stand-in backbeat, for the same reason as the stand-in tune: an
+    # `accent` effect previewing blank on the bench is indistinguishable
+    # from one that is broken. Kick on 1 and 3, snare on 2 and 4 — the
+    # pattern the effect exists to answer, so its `band` control does
+    # something visible on the bench rather than only on a real track.
+    hits = []
+    for index in range(len(beats)):
+        low = index % 2 == 0
+        hits.append({"t": beats[index], "strength": 0.95 if low else 0.7,
+                     "band": "low" if low else "mid",
+                     "tone": 0.8 if low else 0.3, "on_beat": True})
     return fx.Grid(beats, beats[::4], bpm, notes=notes, chords=chords,
-                   energy=energy)
+                   energy=energy, hits=hits)
 
 
 def _preview_palette(body: dict) -> list:
@@ -1286,6 +1297,11 @@ def _waveform_payload(hash_hex: str) -> tuple[int, dict]:
         "downbeats": analysis.get("downbeats") or [],
         "sections": analysis.get("sections") or [],
         "drops": analysis.get("drops") or [],
+        # The same lanes the editor's outline carries, from the same
+        # function — the party view draws the song too, and two encodings
+        # of "what is this track playing" would drift the first time one
+        # of them gained a field.
+        **director_preview.music_lanes(analysis),
     }
 
 
@@ -1380,7 +1396,71 @@ def _script_payload(hash_hex: str) -> tuple[int, dict]:
         "stats": (show or {}).get("stats"),
         "effects": (show or {}).get("effects"),
         "file": str(mirror) if mirror else None,
+        **library.list_versions(hash_hex),
     }
+
+
+# ---------------------------------------------------------------------------
+# Show versions — every show this track has had, and which one plays
+# ---------------------------------------------------------------------------
+def _version_title(hash_hex: str) -> str:
+    analysis = library.load_analysis(hash_hex) or {}
+    return (analysis.get("tags") or {}).get("title") or ""
+
+
+async def h_show_versions(request: web.Request) -> web.Response:
+    hash_hex = request.match_info["hash"]
+    try:
+        return web.json_response(
+            await asyncio.to_thread(library.list_versions, hash_hex))
+    except ValueError:
+        return web.json_response({"error": "not a track hash"}, status=400)
+
+
+async def _version_action(request: web.Request, run) -> web.Response:
+    """The three version verbs share their whole error surface.
+
+    A bad hash, a version id that is not one, and a version that has gone
+    are all ValueError from the store with a sentence already in them —
+    which is the point of raising them there rather than checking here in
+    three places that would each phrase it differently.
+    """
+    hash_hex = request.match_info["hash"]
+    version_id = request.match_info["id"]
+    try:
+        result = await asyncio.to_thread(run, hash_hex, version_id)
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    except OSError as exc:
+        return web.json_response({"error": str(exc)}, status=500)
+    payload = await asyncio.to_thread(library.list_versions, hash_hex)
+    return web.json_response({**payload,
+                              "changed": result if isinstance(result, dict)
+                              else None})
+
+
+async def h_show_version_activate(request: web.Request) -> web.Response:
+    """Make an older show this track's live one.
+
+    A show that is playing right now is deliberately not stopped: the
+    conductor is running off a cue list it already loaded, and yanking
+    the room mid-song to apply a version change nobody asked to hear
+    immediately would be the surprising answer. It plays next time.
+    """
+    return await _version_action(
+        request,
+        lambda h, v: library.activate_version(h, v, _version_title(h)))
+
+
+async def h_show_version_rename(request: web.Request) -> web.Response:
+    body = await _json_body(request)
+    name = str(body.get("name", "") or "")
+    return await _version_action(
+        request, lambda h, v: library.rename_version(h, v, name))
+
+
+async def h_show_version_delete(request: web.Request) -> web.Response:
+    return await _version_action(request, library.delete_version)
 
 
 async def h_show_script(request: web.Request) -> web.Response:
@@ -1393,7 +1473,8 @@ async def h_show_script(request: web.Request) -> web.Response:
     return web.json_response(payload, status=status)
 
 
-def _compile_script(hash_hex: str, script: dict) -> dict:
+def _compile_script(hash_hex: str, script: dict, *, wrote: str = "edit",
+                    note: str = "") -> dict:
     analysis = library.load_analysis(hash_hex)
     if analysis is None:
         raise ValueError("track not analyzed — run the Library tab first")
@@ -1407,7 +1488,8 @@ def _compile_script(hash_hex: str, script: dict) -> dict:
     script = {**script, "track_hash": hash_hex,
               "tier": script.get("tier") or "edited"}
     return director_build.compile_and_save(hash_hex, script, analysis,
-                                           fixtures, ENGINE.source)
+                                           fixtures, ENGINE.source,
+                                           wrote=wrote, note=note)
 
 
 async def h_show_script_save(request: web.Request) -> web.Response:
@@ -1451,7 +1533,9 @@ async def h_show_script_import(request: web.Request) -> web.Response:
             {"error": "there is no file to read yet — compile the show once "
                       "and it appears in /config/.bright/shows/"}, status=404)
     try:
-        show = await asyncio.to_thread(_compile_script, hash_hex, script)
+        show = await asyncio.to_thread(
+            _compile_script, hash_hex, script, wrote="import",
+            note="read back from the file on the shared volume")
     except CompileError as exc:
         return web.json_response({"error": str(exc)}, status=422)
     except ValueError as exc:
@@ -1843,8 +1927,6 @@ async def h_show_party(request: web.Request) -> web.Response:
             return web.json_response({"error": "folder must live under /media"},
                                      status=400)
         folders = [chosen]
-    vibe = str(body.get("vibe", "") or "")[:120]
-
     # A playlist beats the folder. It is a choice of exact songs in an
     # exact order, and merging it with "everything in the folder" would
     # un-choose them. Tracks that have lost their analysis since the list
@@ -1893,7 +1975,7 @@ async def h_show_party(request: web.Request) -> web.Response:
             try:
                 director_build.build_show(
                     hash_hex, ENGINE.devices, ENGINE.source, mode,
-                    lambda a, f: claude_director.write_script(a, f, vibe=vibe))
+                    claude_director.write_script)
             except Exception as exc:  # noqa: BLE001 — that track plays its floor show
                 log.warning("party prepare failed for %s: %s", hash_hex[:8], exc)
 
@@ -2351,6 +2433,13 @@ def build_app() -> web.Application:
     app.router.add_post("/api/show/start_party", h_show_party)
     app.router.add_post("/api/show/list_parties", h_party_list_for_bridge)
     app.router.add_get("/api/show/state", h_show_state)
+    app.router.add_get("/api/show/{hash}/versions", h_show_versions)
+    app.router.add_post("/api/show/{hash}/versions/{id}/activate",
+                        h_show_version_activate)
+    app.router.add_post("/api/show/{hash}/versions/{id}/rename",
+                        h_show_version_rename)
+    app.router.add_delete("/api/show/{hash}/versions/{id}",
+                          h_show_version_delete)
     app.router.add_get("/api/show/{hash}/script", h_show_script)
     app.router.add_put("/api/show/{hash}/script", h_show_script_save)
     app.router.add_post("/api/show/{hash}/script/import", h_show_script_import)

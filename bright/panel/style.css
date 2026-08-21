@@ -612,6 +612,17 @@ select { max-width: 100%; }
 }
 .ed-wave-note { padding: 2px 4px 4px; }
 
+/* The song's own lanes, and the effects' lanes, in the same wrapper and
+   at the same width as the wave and the strip — the whole point is that
+   one vertical line through this stack is one instant. `display: block`
+   on every canvas because an inline one carries a text baseline gap,
+   which would slide the lanes a few pixels out of the ruler they exist
+   to share. */
+.ed-lanes { display: block; width: 100%; height: 104px; cursor: pointer;
+            touch-action: none; }
+.ed-fxlanes { display: block; width: 100%; }
+.ed-now { padding: 6px 2px 0; min-height: 1.2em; }
+
 /* The party's live picture. The wave is shorter than the editor's (it is
    a glance, not a workbench) and the floor keeps the map's aspect so the
    dots land where the person put them. */
@@ -626,3 +637,24 @@ select { max-width: 100%; }
    tab strip are gone. Tight above (the bar already separates), a little
    air below before the first card. */
 .tab-intro { margin: 4px 0 14px; max-width: 640px; }
+
+/* The set: a scrollable list of the whole library with tick boxes, which
+   is the party. Capped in height because a library of three hundred
+   songs would otherwise push Play, the speaker and the live view off
+   the screen — the list is the long part of this tab and the controls
+   above it are the part somebody came for. */
+.party-set {
+  max-height: 46vh;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 10px;
+}
+.party-pick {
+  cursor: pointer;
+  /* A whole row is the target, not the 16px box in it — this list is
+     used on a phone with the music already playing. */
+  min-height: 44px;
+}
+.party-pick input { flex: none; }
+.party-order { margin-left: auto; }
