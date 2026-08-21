@@ -266,8 +266,10 @@ def script_actions(script: dict, fixtures: list[dict],
     """
     if not fixtures:
         raise CompileError("the light map has no reachable fixtures")
+    musical = analysis.get("music") or {}
     grid = fx.Grid(analysis.get("beats"), analysis.get("downbeats"),
-                   analysis.get("bpm"))
+                   analysis.get("bpm"),
+                   notes=musical.get("notes"), chords=musical.get("chords"))
     # Via duration_of, never the tag directly: a VBR header without a
     # Xing frame reports a length wrong by whole multiples, the show is
     # laid out over this number, and the conductor sleeps out its tail
@@ -286,9 +288,19 @@ def script_actions(script: dict, fixtures: list[dict],
         except fx.EffectError as exc:
             raise CompileError(f"{where}: {exc}") from None
         actions.extend(rendered)
-        breakdown.append({
-            "where": where, "type": effect["type"],
-            "name": effect.get("name"), **fx.summarise(rendered)})
+        entry = {"where": where, "type": effect["type"],
+                 "name": effect.get("name"), **fx.summarise(rendered)}
+        # An effect that follows the music and found none renders to
+        # nothing, which is right — and reads exactly like a broken
+        # effect. The reason goes on the effect's own row, because that
+        # is where somebody is looking when they wonder why the melody
+        # they added does not appear in the preview.
+        if (not rendered and effect["type"] in fx.NEEDS_MUSIC
+                and not grid.has_music):
+            entry["note"] = ("this track was analysed before BRight could "
+                             "hear melody and harmony — re-run Analyze on "
+                             "the Library tab, then compile again")
+        breakdown.append(entry)
 
     for index, scene in enumerate(script.get("scenes") or []):
         if not isinstance(scene, dict):

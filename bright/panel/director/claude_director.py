@@ -128,6 +128,43 @@ You are the lighting director for a home light show. Design the show for
 the track below: professional, musical, restrained where the song is and
 unleashed where it earns it.
 
+The difference between a show that is SYNCHRONIZED and a show that is
+MUSICAL is what it answers. A synchronized show marks the structure —
+brighter in the chorus, a hit on the drop, a chase while the energy is
+high — and it is what you get by reading only the section map. It looks
+correct and it is boring by the second chorus, because the song does a
+hundred things in between and the lights do none of them.
+
+A musical show answers what is being PLAYED. Everything you need for that
+is measured and listed below:
+
+- **The chord changes** are the single most valuable thing in this brief.
+  Harmony turns over every bar or two, on its own clock, almost never
+  where the energy changes — so a palette that follows the chords moves
+  with the song continuously, in the long stretches where the structure
+  is doing nothing. Use the `harmony` effect for this and give it the
+  lights that are NOT carrying the beat.
+- **The melody** is the line a person in the room is actually listening
+  to. `melody` follows it note by note: the pitch picks the colour out of
+  your palette and each note lands on the next light along, so a rising
+  phrase climbs across the room. Put it on ONE kind of light — the lamps,
+  or the strip — and leave the rest to the rhythm, or it turns to mush.
+- **The phrases** are where the melody breathes. A gesture that travels
+  (a sweep, a build) should start where a phrase starts and end where it
+  ends; one that begins mid-phrase reads as an accident.
+- **The repeats** are where the song comes back to something. When a
+  passage repeats an earlier one, give it the look it had the first time
+  — recognition is most of what makes a show feel composed rather than
+  reactive. This is the one place you should deliberately NOT invent
+  something new.
+- **The accents** (below) are the punches. A stab lands on one of those,
+  never near one.
+
+So: scenes and drops are the skeleton, and the chords, melody and phrases
+are what happens inside them. A verse with a `harmony` ground, the tune on
+the lamps and a soft pulse underneath is worth more than any number of
+chases.
+
 Principles:
 - The section map and drops are measured from the audio — trust them.
   Scenes should follow the section boundaries (merge or split a little
@@ -197,7 +234,81 @@ def _digest_facts(analysis: dict) -> str:
             "analyzed beat, so a slightly rounded time cannot smear the "
             "hit. Choose a FEW: one intentional accent beats three busy "
             "ones.")
+    lines.extend(_musical_lines(analysis))
     return "\n".join(lines)
+
+
+# How much of each musical list the brief can afford. A four-minute track
+# can carry 600 notes and they are the least useful thing here per
+# character: the `melody` effect reads the full list at compile time
+# straight from the analysis, so the model never needs the notes
+# themselves — only enough of the shape to decide WHERE to put a melody
+# effect and what it will look like. The chords are the opposite: they
+# are the thing to design around, so they get the room.
+MAX_BRIEF_CHORDS = 60
+MAX_BRIEF_PHRASES = 14
+MAX_BRIEF_REPEATS = 8
+
+
+def _musical_lines(analysis: dict) -> list[str]:
+    """The musical map: harmony, the shape of the tune, and what repeats.
+
+    Everything here is measured. It is rendered as prose-shaped lines
+    rather than JSON because the model is being asked to make decisions
+    about it, not to parse it — and because a list of 600 note events
+    would crowd out the room description, which is the other half of
+    every good decision it makes.
+    """
+    musical = analysis.get("music") or {}
+    chords = musical.get("chords") or []
+    notes = musical.get("notes") or []
+    phrases = musical.get("phrases") or []
+    repeats = musical.get("repeats") or []
+    if not (chords or notes or phrases or repeats):
+        # Said out loud rather than left as four missing sections: a
+        # model that is not told the melody is absent will assume it was
+        # simply not worth mentioning and write a melody effect anyway,
+        # which compiles to nothing.
+        return ["", "MUSICAL MAP: not available for this track (it was "
+                "analysed by an older version of BRight). Do NOT use the "
+                "`melody` or `harmony` effects — they would render to "
+                "nothing. Design from the sections, drops and accents."]
+
+    lines = ["", "MUSICAL MAP — what the song is playing:"]
+    if musical.get("key"):
+        lines.append(f"  key: {musical['key']}")
+    if chords:
+        shown = chords[:MAX_BRIEF_CHORDS]
+        lines.append(f"  chord changes ({len(chords)} in the track, "
+                     f"{len(shown)} listed — time: chord):")
+        lines.append("    " + ", ".join(
+            f"{c['t']:.1f}s {c['name']}" for c in shown))
+        if len(chords) > len(shown):
+            lines.append(f"    … {len(chords) - len(shown)} more. The "
+                         "`harmony` effect reads ALL of them at compile "
+                         "time — you are choosing where it runs, not "
+                         "listing the chords yourself.")
+    if notes:
+        pitches = [int(n.get("m", 0)) for n in notes]
+        lines.append(
+            f"  melody: {len(notes)} notes, from {min(pitches)} to "
+            f"{max(pitches)} (MIDI), tracked from the loudest melodic "
+            f"voice. The `melody` effect reads them all; you decide which "
+            f"lights follow it and where.")
+    if phrases:
+        shown = phrases[:MAX_BRIEF_PHRASES]
+        lines.append(f"  phrases ({len(phrases)}, {len(shown)} listed — a "
+                     "gesture that travels should start and end with one):")
+        for phrase in shown:
+            lines.append(f"    {phrase['start']:.1f}-{phrase['end']:.1f}s "
+                         f"{phrase['dir']}, {phrase['notes']} notes")
+    if repeats:
+        lines.append("  repeats — these passages come back; give a repeat "
+                     "the look its original had:")
+        for repeat in repeats[:MAX_BRIEF_REPEATS]:
+            lines.append(f"    {repeat['start']:.1f}-{repeat['end']:.1f}s "
+                         f"repeats {repeat['same_as']:.1f}s")
+    return lines
 
 
 def _digest(analysis: dict, fixtures: list[dict],

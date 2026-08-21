@@ -364,6 +364,16 @@ select { max-width: 100%; }
   tab-size: 2;
 }
 
+/* The open show's name and the path its script is mirrored to. That path
+   is one long unbreakable token — `/config/.bright/shows/<title>-<hash>.json`
+   — and a phone is 390px wide, so it pushed the whole page 7px sideways.
+   It breaks anywhere now, which is the only thing to do with a path that
+   is longer than the screen. Found by fixing the measure that should
+   have caught it: at 390px it had been clicking a button rather than the
+   row, so the editor never opened and its overflow check passed on a
+   page that was not showing an editor at all. */
+#scriptWhich { overflow-wrap: anywhere; }
+
 /* Notes to the director: ordinary prose in an ordinary box — this is
    feedback, not code, and it should not look like the editor below it. */
 .revise-box { margin-top: 14px; }

@@ -189,7 +189,15 @@ Every effect has four parts:
 | `theater` | Alternating groups answering each other. |
 | `stab` | One hit, at one moment. |
 | `blackout` | Take the selected lights down. Silence is a lighting cue. |
+| `melody` | Follow the tune. Each note lands on the next light along and its pitch picks the colour, so a rising phrase climbs across the room. |
+| `harmony` | The palette follows the chords: the selection crossfades on every harmony change, so the room turns over with the song rather than with its sections. |
 | `aux` | Party lights and lasers: on, off, or flashed on the beat. |
+
+`melody` and `harmony` are the two that need the song's *musical* analysis
+(see below) rather than just its beat grid. On the Effects tab they preview
+against a stand-in tune, because the bench has no track; in a show they use
+the real one. On a track analysed by an older version of BRight they render
+to nothing, and the effect's row in the show editor says so.
 
 **Preview** renders the effect and shows it two ways: the room, animated on
 the same floor plan you placed the lights on, and the whole effect as a
@@ -210,6 +218,33 @@ Saved effects keep their **lights** as well as their settings, because
 "kitchen chase" is the chase *and* the three lights it runs across — which is
 the part that took the time. **Put it in a show** drops the effect into one
 scene of one track's show and recompiles.
+
+### What BRight hears in a song
+
+Analysis answers two different questions, and shows need both.
+
+**When it hits** — the beat grid, the sections, the drops, and the ranked
+*accents* (the punches that sit exactly on the beat). This is the
+skeleton: it tells a show where to be bright, where to build, and where a
+stab lands.
+
+**What it is playing** — the harmony (chord changes, and the track's key),
+the melody (the dominant line, note by note), the phrases that melody
+breathes in, and the passages that repeat. This is the half that lets a
+show follow the *song* rather than its structure. Chords in particular
+change every bar or two on their own clock, almost never where the energy
+changes — so a palette that follows them keeps moving through the long
+stretches where the section map is doing nothing at all.
+
+The `melody` and `harmony` effects consume this directly, the automatic
+director places both, and Claude gets all of it in its brief.
+
+**If a track was analysed by an older version of BRight it has none of
+this**, and its row in the Library says so (`⟳ analysed by an older
+version`). Press **Analyze** — out-of-date tracks are re-heard without
+being asked twice, and the status line says how many were refreshed. A
+stale track still plays and its shows still run; it is just answering
+with less than BRight can now hear.
 
 ### Library — the music, analyzed ahead of time
 

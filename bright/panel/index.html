@@ -79,8 +79,13 @@
         <button id="btnSyncStart" class="btn">Start</button>
         <button id="btnSyncStop" class="btn" hidden>Stop &amp; restore</button>
       </div>
-      <p class="muted small">Which bulbs pulse — untick the bedroom before
-        testing in the lounge.</p>
+      <div class="demo-controls">
+        <span class="muted small">Which bulbs pulse — untick the bedroom
+          before testing in the lounge.</span>
+        <button id="btnSyncAll" class="btn small">All</button>
+        <button id="btnSyncNone" class="btn small">None</button>
+        <span id="syncCount" class="muted small"></span>
+      </div>
       <div id="syncBulbs" class="fx-fixtures"></div>
       <div id="syncStatus" class="cal-status"></div>
     </div>

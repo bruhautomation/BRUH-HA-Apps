@@ -13,9 +13,11 @@ import time
 from pathlib import Path
 from typing import Callable
 
-from . import beats, decode, features, library, lyrics, sections
-
-ANALYSIS_VERSION = 1
+from . import beats, decode, features, library, lyrics, music, sections
+# One definition, two readers: `scan` decides staleness with it and every
+# analysis is stamped with it. See library.ANALYSIS_VERSION for why a
+# version that nothing compares against is not a version.
+from .library import ANALYSIS_VERSION
 
 
 def analyze_track(path: Path) -> dict:
@@ -38,6 +40,12 @@ def analyze_track(path: Path) -> dict:
 
     rhythm = beats.analyze_beats(pcm, decode.SAMPLE_RATE)
     bands = features.band_energies(pcm, decode.SAMPLE_RATE)
+    beat_s = 60.0 / max(1.0, float(rhythm.get("bpm") or 120.0))
+    # What the song is PLAYING, as opposed to when it hits: chords, the
+    # melodic line, its phrases, and the passages that come back. One
+    # extra STFT pass over audio that is already decoded.
+    musical = music.analyze_music(pcm, decode.SAMPLE_RATE,
+                                  rhythm.get("beats") or [], beat_s)
     analysis = {
         "version": ANALYSIS_VERSION,
         "file": str(path),
@@ -58,6 +66,11 @@ def analyze_track(path: Path) -> dict:
         # says what was worth a light.
         "hits": rhythm.get("hits", []),
         "beat_method": rhythm["method"],
+        # The musical map: `key`, `chords` (changes only), `notes` (the
+        # melodic line), `phrases`, `repeats`. Rhythm says when the song
+        # hits; this says what it is playing, and it is what lets a show
+        # follow the tune instead of only marking the structure.
+        "music": musical,
         "features": bands,
         "brightness": features.brightness_hint(pcm, decode.SAMPLE_RATE),
         # The picture of the song, computed here because the decode has
@@ -93,7 +106,14 @@ async def analyze_folders(folders,
     is what a per-folder loop would have made it.
     """
     tracks = await asyncio.to_thread(library.scan_all, list(folders))
-    todo = [t for t in tracks if force or not t["analyzed"]]
+    # An out-of-date analysis is re-run without being asked twice. This is
+    # the whole point of the version: a person who has already scanned
+    # their library is exactly the person a new analyzer field can never
+    # reach otherwise, and "press Analyze again" is not something anybody
+    # knows to do about a feature they were never told they were missing.
+    todo = [t for t in tracks
+            if force or not t["analyzed"] or t.get("stale")]
+    stale = sum(1 for t in todo if t["analyzed"] and t.get("stale"))
     done, failed = 0, []
     for index, track in enumerate(todo):
         if progress:
@@ -105,7 +125,10 @@ async def analyze_folders(folders,
         except Exception as exc:  # noqa: BLE001 — one bad file must not end the folder
             failed.append({"file": track["file"], "error": str(exc)})
     result = {"analyzed": done, "skipped": len(tracks) - len(todo),
-              "failed": failed}
+              # Named separately because it is a different sentence: nine
+              # new tracks and nine re-read ones are the same number and
+              # not the same news.
+              "refreshed": stale, "failed": failed}
     if progress:
         progress({"total": len(todo), "done": done, "failed": len(failed),
                   "current": None})
