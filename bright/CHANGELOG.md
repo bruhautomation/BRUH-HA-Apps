@@ -5,6 +5,66 @@ All notable changes to the **BRight** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.18.1
+
+The drum detector was returning nothing, on everything.
+
+### Fixed
+
+- **`detect_hits` found ZERO accents in ordinary music.** The peak-picking
+  test was `punch > local + 0.10` — an absolute constant — but
+  `band_flux` scales both bands by the FULL-band flux peak while `punch`
+  sums only the two bands under 2kHz, about a hundred of a thousand FFT
+  bins. So punch is structurally a small fraction of 1: measured on a
+  clean, loud, isolated kick-and-snare loop it peaks at **0.0795**, and
+  the bar it had to clear was 0.10. Not "few hits on quiet music" —
+  none, on everything, since ranked accents shipped. Every effect built
+  on them rendered nothing, which from a sofa is indistinguishable from
+  a feature that does nothing. The threshold is now a percentile spread
+  of the track's own punch, which cannot be wrong by a factor nobody
+  notices.
+- **`band` was decided by the band edges, not by the drum.** Under 250Hz
+  is about a dozen FFT bins and 250–2000Hz is nearly a hundred, so
+  comparing the raw sums said "mid" for almost every hit whatever it
+  was, and `band: "low"` — the kick layer — selected nothing. The bands
+  are scaled to each other now. Measured on three synthetic mixes (a
+  bare loop, the same over a pad and a bassline, and one with the kick
+  replaced by a second snare) every on-beat drum is classified correctly
+  in all three.
+- **An effect whose selection matched no light said nothing at all.** It
+  compiled, it saved, it played, and the room stayed exactly as it was —
+  the only trace anywhere was `0 lights` on a list nobody reads. The
+  compiler names it on that effect's own row now. Roles and zones are
+  also matched trimmed and case-insensitively, because "Inner Kitchen"
+  and "inner kitchen" are one room and a capital letter is not a reason
+  for a show to do nothing.
+
+### Added
+
+- **The tune runs across the room.** `melody` places each note by its
+  PITCH within the track's own range rather than stepping to the next
+  light, so a run up the scale is a run of light across the room and
+  coming back down runs back — and a repeated note stays where it is
+  instead of marching. `follow: "step"` keeps the old behaviour.
+- **A party can pin which version of a show each song plays.** The
+  default is whatever is live, so the newest is what plays without
+  anyone choosing it; the picker on each row of the set is for the
+  evening you want last month's version of one track.
+
+### Changed
+
+- **"What it compiled to" is gone.** It listed every effect in the show
+  with its fixture and move counts — forty rows of numbers on a real
+  show, pushing everything below it off the page. The effect lanes in
+  the editor draw the same walk against the song, which is the form that
+  answers a question. What is left is the exceptions: an effect that
+  drives no lights, one whose analysis is too old, one whose waveform
+  another effect cancels. When the show is fine, that block is empty.
+- `ANALYSIS_VERSION` is **5**. Every library has to be re-heard — the
+  hits in every analysis ever written are empty or near-empty, and the
+  band field added in 0.18.0 was decided by a comparison that could not
+  see the drum.
+
 ## 0.18.0
 
 Lights with an attack, four layers, and the song on screen.

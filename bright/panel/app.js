@@ -788,6 +788,7 @@
         end_scene: $("partyScene").value || undefined,
         shuffle: $("partyShuffle").checked,
         tracks: partySet.slice(),
+        versions: partyPinsFor(partySet),
       });
       status.textContent = "Party on: " + result.queue +
         " tracks queued, anchored " + Math.round(result.offset_ms) +
@@ -3774,6 +3775,17 @@
     import: "read from the file",
   };
 
+  // Only the pins for songs actually in the set. A pin for a song that
+  // is not playing is a line that can never do anything, and it would
+  // outlive every edit that removed the song it was about.
+  function partyPinsFor(hashes) {
+    const out = {};
+    for (const hash of hashes) {
+      if (partyPins[hash]) out[hash] = partyPins[hash];
+    }
+    return out;
+  }
+
   function versionButton(label, onClick) {
     const button = document.createElement("button");
     button.type = "button";
@@ -3874,20 +3886,29 @@
     }
   }
 
+  // Only the effects with something wrong with them.
+  //
+  // This listed every effect in the show — name, scene, fixture count,
+  // move count, busiest bulb — which on a real show is forty rows of
+  // numbers nobody reads, pushing the rest of the page down. The effect
+  // lanes above draw the same walk, and they draw it against the song,
+  // which is the form that answers a question. What a LIST is still the
+  // right shape for is the exceptions, so that is what is left: when the
+  // show is fine, this whole block is gone.
   function renderScriptEffects(body) {
     const list = $("scriptEffects");
     list.innerHTML = "";
-    for (const entry of body.effects || []) {
+    const problems = (body.effects || []).filter((entry) => entry.note);
+    $("scriptProblemsHead").hidden = !problems.length;
+    for (const entry of problems) {
       const row = document.createElement("div");
       row.className = "row";
       row.innerHTML = '<div class="row-main"><strong></strong>' +
         '<span class="muted small"></span></div>';
       row.querySelector("strong").textContent =
-        (entry.name || entry.type) + " (" + entry.type + ")";
-      row.querySelector(".muted").textContent = entry.where + " · " +
-        entry.fixtures + " lights · " + entry.actions + " moves · busiest " +
-        "light gets " + entry.busiest_fixture +
-        (entry.note ? " — ⚠ " + entry.note : "");
+        "⚠ " + (entry.name || entry.type) + " (" + entry.type + ")";
+      row.querySelector(".muted").textContent =
+        entry.where + " — " + entry.note;
       list.appendChild(row);
     }
   }
@@ -4054,6 +4075,11 @@
   // it.
   let partySet = [];
 
+  // hash -> version id, for the songs that are not simply playing their
+  // live show. Absent is the default and it means "the latest one",
+  // which is why this is a sparse map rather than a value per song.
+  let partyPins = {};
+
   async function loadPartySet() {
     const box = $("partySet");
     try {
@@ -4069,6 +4095,9 @@
       // starts and reports every one of them as skipped.
       const known = new Set(tracks.map((t) => t.hash));
       partySet = partySet.filter((hash) => known.has(hash));
+      for (const hash of Object.keys(partyPins)) {
+        if (!known.has(hash)) delete partyPins[hash];
+      }
       for (const track of tracks) {
         const row = document.createElement("label");
         row.className = "row party-pick";
@@ -4096,6 +4125,27 @@
         main.appendChild(note);
         row.appendChild(check);
         row.appendChild(main);
+
+        // Which of this song's shows to play. Filled in when somebody
+        // reaches for it, never on load: a library of two hundred songs
+        // would otherwise cost two hundred requests to render a list
+        // that almost nobody changes. The empty option is the default
+        // and it means "whatever is live", so the newest show is what
+        // plays without anyone having chosen it.
+        const pick = document.createElement("select");
+        pick.className = "party-version";
+        pick.dataset.hash = track.hash;
+        pick.title = "Which of this song's shows to play";
+        pick.innerHTML = '<option value="">latest show</option>';
+        if (partyPins[track.hash]) {
+          const pinned = document.createElement("option");
+          pinned.value = partyPins[track.hash];
+          pinned.textContent = "pinned version";
+          pinned.selected = true;
+          pick.appendChild(pinned);
+        }
+        if (track.show) row.appendChild(pick);
+
         const order = document.createElement("span");
         order.className = "muted small party-order";
         row.appendChild(order);
@@ -4123,7 +4173,45 @@
       : "🎉 Play everything";
   }
 
+  // Populate a song's version list the first time somebody opens it.
+  ["pointerdown", "focus"].forEach((event) =>
+    $("partySet").addEventListener(event, async (ev) => {
+      const pick = ev.target.closest("select[data-hash]");
+      if (!pick || pick.dataset.filled) return;
+      pick.dataset.filled = "1";
+      try {
+        const body = await api("api/show/" + pick.dataset.hash + "/versions");
+        const chosen = partyPins[pick.dataset.hash] || "";
+        pick.innerHTML = "";
+        const latest = document.createElement("option");
+        latest.value = "";
+        latest.textContent = "latest show";
+        latest.selected = !chosen;
+        pick.appendChild(latest);
+        for (const version of body.versions || []) {
+          const option = document.createElement("option");
+          option.value = version.id;
+          option.textContent = (version.name ||
+            VERSION_SOURCES[version.source] || version.source) +
+            (version.active ? " (live)" : "") +
+            (version.created_at ? " · " + whenShort(version.created_at) : "");
+          option.selected = version.id === chosen;
+          pick.appendChild(option);
+        }
+      } catch (error) {
+        // The song has no versions the panel can read. Leaving the
+        // default in place is the honest answer — it still plays.
+        pick.dataset.filled = "";
+      }
+    }, true));
+
   $("partySet").addEventListener("change", (event) => {
+    const pick = event.target.closest("select[data-hash]");
+    if (pick) {
+      if (pick.value) partyPins[pick.dataset.hash] = pick.value;
+      else delete partyPins[pick.dataset.hash];
+      return;
+    }
     const check = event.target.closest("input[data-hash]");
     if (!check) return;
     const hash = check.dataset.hash;
@@ -4210,6 +4298,7 @@
         end_scene: $("partyScene").value,
         shuffle: $("partyShuffle").checked,
         tracks: partySet.slice(),
+        versions: partyPinsFor(partySet),
       });
       status.textContent = 'Saved "' + body.party.name + '".';
       loadParties();
@@ -4229,6 +4318,7 @@
     if (party.media_player) $("partyPlayer").value = party.media_player;
     partyScene(party.end_scene || "");
     partySet = (party.tracks || []).slice();
+    partyPins = { ...(party.versions || {}) };
     for (const check of $("partySet").querySelectorAll("input[data-hash]")) {
       check.checked = partySet.includes(check.dataset.hash);
     }

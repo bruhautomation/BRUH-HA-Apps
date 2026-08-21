@@ -1979,10 +1979,18 @@ async def h_show_party(request: web.Request) -> web.Response:
             except Exception as exc:  # noqa: BLE001 — that track plays its floor show
                 log.warning("party prepare failed for %s: %s", hash_hex[:8], exc)
 
+    # Which show each song plays. A set may pin an older version per
+    # song — "play the one I liked last month for this track" — and
+    # anything unpinned plays whatever is live, which is what makes the
+    # default the newest without anybody choosing it.
+    pins = body.get("versions")
+    pins = {str(k): str(v) for k, v in pins.items()} \
+        if isinstance(pins, dict) else {}
+
     result = await _conductor().start_party(
         queue, media_player=media_player,
         loader=lambda h: conductor_mod.load_show_for_track(
-            h, ENGINE.devices, ENGINE.source),
+            h, ENGINE.devices, ENGINE.source, version=pins.get(h)),
         preparer=preparer, name=(party or {}).get("name"),
         end_scene=end_scene, allow=allow)
     if skipped and result.get("ok"):

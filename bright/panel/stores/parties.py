@@ -1,9 +1,9 @@
 """Named sets: a saved answer to "put the usual thing on".
 
 A set is the handful of decisions somebody would otherwise make in the
-panel every time — which speaker, which songs (or which folder), which
-lights are allowed to join in, and what the room should look like when
-it ends. Named, so an automation, a dashboard button or a voice command
+panel every time — which speaker, which songs (and which of each song's
+shows), which lights are allowed to join in, and what the room should
+look like when it ends. Named, so an automation, a dashboard button or a voice command
 can ask for one by name and get exactly the evening that was set up
 rather than the defaults.
 
@@ -95,6 +95,22 @@ def clean(raw: dict) -> dict:
                         if isinstance(t, str)
                         and library.is_track_hash(t)][:500]
                        if isinstance(tracks, list) else [])
+
+    # Which show each song plays, when it is not simply the live one.
+    #
+    # A pin, not a copy of the show: the version stays where it is and
+    # keeps its own name, and un-pinning is deleting a key. Only songs
+    # in the playlist may be pinned — a pin for a song this set does not
+    # play is a line that can never do anything, and it would survive
+    # every edit that removed the song it was about.
+    wanted = raw.get("versions")
+    party["versions"] = {}
+    if isinstance(wanted, dict):
+        allowed = set(party["tracks"])
+        for track, version in list(wanted.items())[:500]:
+            if (isinstance(version, str) and track in allowed
+                    and re.fullmatch(r"[0-9a-z]{1,24}", version)):
+                party["versions"][track] = version
 
     # Shuffle defaults OFF the moment a playlist exists: its order IS the
     # request, and a default that randomizes what somebody just ordered

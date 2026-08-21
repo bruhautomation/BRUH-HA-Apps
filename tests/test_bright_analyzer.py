@@ -102,6 +102,164 @@ def stab(sample_rate=SR, length_s=0.15) -> np.ndarray:
     return ((body + 2.0 * hit) * 0.9).astype(np.float32)
 
 
+
+def snare(sample_rate=SR, length_s=0.22, seed=7) -> np.ndarray:
+    """A snare: noise with a little body, energy mostly above the kick."""
+    rng = np.random.default_rng(seed)
+    t = np.arange(int(length_s * sample_rate)) / sample_rate
+    noise = rng.normal(0.0, 1.0, len(t)).astype(np.float32)
+    body = np.sin(2 * np.pi * 190.0 * t) * 0.5
+    return ((noise * 0.9 + body) * np.exp(-t * 22.0)).astype(np.float32)
+
+
+def backbeat(bpm: float = 120.0, bars: int = 8, sample_rate=SR,
+             kicks: bool = True, pad: bool = False, bass: bool = False,
+             ) -> tuple[np.ndarray, list[float]]:
+    """Kick on 1 and 3, snare on 2 and 4, hats on the off-beats.
+
+    At ORDINARY levels, which is the whole point of this fixture. The
+    other hit test in this file builds a stab out of twice a kick plus a
+    body — deliberately enormous, because it is grading a RANKING — and
+    that loudness is exactly what let `detect_hits` pass its tests for
+    months while returning nothing on real music.
+
+    `pad` and `bass` add sustained tones, because a mix is not a drum
+    loop and the two bands behave differently once something else is
+    sitting in them.
+    """
+    rng = np.random.default_rng(11)
+    beat = 60.0 / bpm
+    total = int(beat * 4 * bars * sample_rate) + sample_rate
+    audio = np.zeros(total, dtype=np.float32)
+    grid: list[float] = []
+    for index in range(4 * bars):
+        at = index * beat
+        grid.append(round(at, 3))
+        start = int(at * sample_rate)
+        one = kick(sample_rate, 0.35) if (kicks and index % 2 == 0) \
+            else snare(sample_rate) * 0.7
+        audio[start:start + len(one)] += one[:total - start]
+        # Hats on the off-beats: flux, and deliberately not punch.
+        tick = int((at + beat / 2) * sample_rate)
+        hiss = (rng.normal(0.0, 1.0, int(0.06 * sample_rate)).astype(np.float32)
+                * np.exp(-np.arange(int(0.06 * sample_rate))
+                         / sample_rate * 90.0) * 0.35)
+        audio[tick:tick + len(hiss)] += hiss[:total - tick]
+    clock = np.arange(total) / sample_rate
+    # Faded in, because a mix that starts on a full chord is one enormous
+    # transient and that is a different test.
+    swell = np.minimum(1.0, clock / 2.0).astype(np.float32)
+    if pad:
+        audio += (swell * (0.25 * np.sin(2 * np.pi * 220.0 * clock)
+                           + 0.2 * np.sin(2 * np.pi * 330.0 * clock))
+                  ).astype(np.float32)
+    if bass:
+        audio += (swell * 0.3 * np.sin(2 * np.pi * 82.0 * clock)
+                  ).astype(np.float32)
+    return audio / np.max(np.abs(audio)), grid
+
+
+class TestHitsAreFoundInOrdinaryMusic(unittest.TestCase):
+    """The bug this class exists for, and it is the worst kind.
+
+    `detect_hits` required a peak to stand `+ 0.10` above its
+    neighbourhood — an absolute constant. But `band_flux` scales both
+    bands by the FULL-band flux peak, and `punch` sums only the two
+    bands under 2kHz, which are about a hundred of a thousand bins. So
+    punch is structurally a small fraction of 1: on a clean, loud,
+    isolated kick-and-snare loop it peaks at 0.0795, and the bar it had
+    to clear was 0.10.
+
+    It returned ZERO hits. Not few — none, on everything, since ranked
+    accents shipped. Every effect built on them rendered nothing, which
+    from a sofa is indistinguishable from a feature that does nothing.
+    The test suite was green throughout, because the only fixture that
+    exercised it was a synthetic stab built to be enormous.
+    """
+
+    def test_a_plain_backbeat_produces_hits(self):
+        audio, grid = backbeat()
+        hits = beats.detect_hits(audio, SR, grid)
+        self.assertGreater(
+            len(hits), 20,
+            "a kick-and-snare loop at ordinary level produced no accents")
+
+    def test_the_hits_land_on_the_drums(self):
+        audio, grid = backbeat()
+        hits = beats.detect_hits(audio, SR, grid)
+        on_beat = [h for h in hits if h.get("on_beat")]
+        self.assertGreaterEqual(
+            len(on_beat), 28,
+            "the drums are on the beat and the hits should be too")
+
+    def test_the_threshold_scales_with_the_track_not_with_a_constant(self):
+        """Halve the whole mix and the same drums are still drums."""
+        audio, grid = backbeat()
+        loud = len(beats.detect_hits(audio, SR, grid))
+        quiet = len(beats.detect_hits(audio * 0.25, SR, grid))
+        self.assertGreater(quiet, loud * 0.8,
+                           f"{loud} hits loud, {quiet} quiet — the threshold "
+                           f"is absolute again")
+
+
+class TestWhichDrumWasIt(unittest.TestCase):
+    """`band` is what puts the kick and the snare on different lights, so
+    it has to be right about which is which — and it was not, because the
+    two bands cover very different numbers of FFT bins and were being
+    compared raw."""
+
+    def _graded(self, **kwargs):
+        audio, grid = backbeat(**kwargs)
+        hits = beats.detect_hits(audio, SR, grid)
+        beat = 0.5
+        right = wrong = 0
+        for hit in hits:
+            index = round(hit["t"] / beat)
+            if abs(hit["t"] - index * beat) > 0.08:
+                continue  # an off-beat hat, not one of the drums
+            wanted = "low" if (kwargs.get("kicks", True)
+                               and index % 2 == 0) else "mid"
+            right += hit["band"] == wanted
+            wrong += hit["band"] != wanted
+        return right, wrong
+
+    def test_a_bare_loop_tells_the_kick_from_the_snare(self):
+        right, wrong = self._graded()
+        # Not "exactly zero wrong": this is synthesised audio and one
+        # snare whose noise happens to land low is a fact about the
+        # random seed, not about the classifier. A rate is the honest
+        # claim, and the measured rate here is 30 of 31.
+        self.assertGreater(right / max(1, right + wrong), 0.95,
+                           f"{right} right, {wrong} wrong")
+        self.assertGreater(right, 24)
+
+    def test_a_mix_with_a_bassline_still_tells_them_apart(self):
+        """The case a ratio guard got wrong: the low band is ALWAYS the
+        smaller of the two, so "low is much smaller than mid" is not
+        evidence of anything, and treating it as evidence classified
+        every kick in the song as a snare."""
+        right, wrong = self._graded(pad=True, bass=True)
+        self.assertGreater(right / max(1, right + wrong), 0.95,
+                           f"{right} right, {wrong} wrong")
+        self.assertGreater(right, 24)
+
+    def test_a_track_with_no_kick_grows_no_kicks(self):
+        """The failure per-band scaling can cause: a band with nothing in
+        it, stretched to full scale, wins on noise. `KICK_TONE` is what
+        stops that, and 0.5 was measured to be too generous."""
+        # Zero here, not a rate: every wrong answer in this case is a
+        # phantom kick, which is the exact failure the threshold exists
+        # to prevent.
+        right, wrong = self._graded(kicks=False, pad=True)
+        self.assertEqual(0, wrong, f"{right} right, {wrong} wrong")
+
+    def test_every_hit_carries_which_drum_it_was(self):
+        audio, grid = backbeat()
+        for hit in beats.detect_hits(audio, SR, grid):
+            self.assertIn(hit["band"], ("low", "mid"))
+            self.assertGreaterEqual(hit["tone"], 0.0)
+            self.assertLessEqual(hit["tone"], 1.0)
+
 class TestHits(unittest.TestCase):
     """detect_hits, graded against audio with a KNOWN accent in it."""
 

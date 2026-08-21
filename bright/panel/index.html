@@ -446,8 +446,18 @@
       </details>
 
       <div id="scriptStatus" class="cal-status"></div>
+      <!-- What went wrong, and nothing else.
+           This used to be every effect in the show with its fixture and
+           move counts — one row per effect, so a real show ran to forty
+           of them and pushed everything below it off the page. The
+           effect lanes above are that picture, drawn rather than listed,
+           and they show the same walk. What a list is still good for is
+           the handful of rows with something WRONG on them, so that is
+           all that is left here: an effect that drives no lights, one
+           whose analysis is too old, one whose waveform another effect
+           cancels. When the show is fine, this is empty. -->
       <div class="card-head">
-        <h4>What it compiled to</h4>
+        <h4 id="scriptProblemsHead" hidden>Worth looking at</h4>
         <button id="btnShowCues" class="btn small">Show the cue list</button>
       </div>
       <div id="scriptEffects" class="list"></div>

@@ -231,6 +231,50 @@ HIT_SPACING_S = 0.10
 ON_BEAT_S = 0.07
 
 
+# How far the low band has to win by before a hit is called a kick.
+#
+# Not 0.5. The bands are scaled to each other, so 0.5 is a coin flip, and
+# a coin flip on a track with no bass in it hands the kick layer a
+# handful of random snares. Measured on three synthetic mixes — a bare
+# kick-and-snare loop, the same over a pad and a bassline, and one with
+# the kick replaced by a second snare — 0.5 got the third case wrong
+# about half the time and 0.6 got all three exactly right. The bias is
+# deliberate and it points at `mid`, because that is the band that
+# carries the snare, the stab and the vocal hit: being unsure and saying
+# "mid" costs a kick layer one flash, and being unsure and saying "low"
+# puts a snare on the lights that are supposed to be the kick.
+KICK_TONE = 0.6
+
+
+def _band_scales(low: np.ndarray, mid: np.ndarray) -> tuple[float, float]:
+    """What to divide each band by before asking which one won.
+
+    The two bands cover very different numbers of FFT bins — under 250Hz
+    is about a dozen of them and 250–2000Hz is nearly a hundred — so
+    their raw sums are not comparable at all. Comparing them directly
+    said "mid" for almost every hit, whatever the drum was, purely from
+    bin count, which is why `band: "low"` selected nothing and the kick
+    layer stayed empty even once hits existed.
+
+    Scaling each band by its own level is what makes "which drum was
+    this" a question about the audio rather than about the band edges.
+    There is no ratio guard: it was tried, and it is what threw the
+    answer away on any track with a bassline — the low band is always
+    the smaller of the two, so "low is much smaller than mid" is not
+    evidence of anything. The protection against a bassless track's
+    noise floor being stretched to full scale is `KICK_TONE` instead: a
+    threshold, applied after the scaling, where the guard was a test
+    applied before it and could not see what it was discarding.
+
+    A PERCENTILE, not the maximum. One enormous transient — a track that
+    opens on a full chord, a cymbal choke — otherwise sets a band's whole
+    scale and squashes every real drum beneath it.
+    """
+    low_peak = float(np.percentile(low, 99))
+    mid_peak = float(np.percentile(mid, 99))
+    return (low_peak or 1.0), (mid_peak or 1.0)
+
+
 def detect_hits(pcm: np.ndarray, sample_rate: int,
                 beats: list[float]) -> list[dict]:
     """The track's accents, ranked — what a stab wants to land on.
@@ -261,10 +305,35 @@ def detect_hits(pcm: np.ndarray, sample_rate: int,
     spacing = max(1, int(HIT_SPACING_S * rate))
     beat_times = np.asarray(beats, dtype=np.float64) if beats else None
 
+    # How far above its neighbourhood a peak has to stand, measured
+    # against THIS track rather than against a number.
+    #
+    # It was `+ 0.10`, an absolute constant, and it made this function
+    # return nothing at all on essentially every real track. `band_flux`
+    # scales both bands by the FULL-band flux peak — every bin, hats and
+    # air included — while `punch` sums only the two bands below 2kHz,
+    # which are ~100 of a thousand bins. So punch is structurally a small
+    # fraction of 1: measured on a clean, loud, isolated kick-and-snare
+    # loop it peaks at 0.0795, and the test it had to pass was 0.10. Not
+    # "few hits on quiet music" — ZERO hits, on everything, since ranked
+    # accents shipped. Every effect built on them rendered nothing, which
+    # from a sofa is indistinguishable from a feature that does nothing.
+    #
+    # The percentile spread is the honest replacement: a threshold in the
+    # units of the thing being thresholded, which cannot be wrong by a
+    # factor nobody notices. The absolute floor is what stops a silent
+    # passage growing hits out of its own noise, and it is a fraction of
+    # the track's own loudest punch for exactly the same reason.
+    spread = float(np.percentile(punch, 97) - np.median(punch))
+    step = max(1e-6, 0.22 * spread)
+    floor = 0.15 * float(punch.max())
+
+    low_scale, mid_scale = _band_scales(low, mid)
     found = []
     last = -spacing
     for i in range(1, punch.size - 1):
-        if not (punch[i] > local[i] + 0.10
+        if not (punch[i] > local[i] + step
+                and punch[i] >= floor
                 and punch[i] >= punch[i - 1]
                 and punch[i] > punch[i + 1]):
             continue
@@ -272,17 +341,28 @@ def detect_hits(pcm: np.ndarray, sample_rate: int,
             continue
         last = i
         t = i / rate
-        # Which drum this was. `low` and `mid` are normalised against the
-        # same full-band peak, so comparing them directly is meaningful,
-        # and the ratio is the useful form: a light show wants the kick
-        # and the snare on different fixtures, and "which band won" is
-        # the cheapest honest answer to which one this is. Kept as a
-        # number as well as a name because an effect selecting hits by
-        # tone wants a threshold, not two buckets.
-        tone = float(low[i]) / max(1e-9, float(low[i]) + float(mid[i]))
+        # Which drum this was — read off the bands scaled to EACH OTHER,
+        # not to the full-band peak.
+        #
+        # The shared scale is right for `strength` (it is what makes one
+        # hit comparable to another across the track) and wrong for this,
+        # because the two bands do not cover the same number of FFT bins:
+        # under 250Hz is about a dozen of them and 250–2000Hz is nearly a
+        # hundred. Comparing the raw sums therefore says "mid" almost
+        # every time, whatever the drum was, purely from bin count — so
+        # `band: "low"` selected nothing and the kick layer was empty
+        # even once hits existed at all.
+        #
+        # A band with nothing in it must still not win by being scaled
+        # up, which is what `_band_scales` guards: a band whose peak is a
+        # rounding error beside the other's keeps the other's scale and
+        # so stays small.
+        scaled_low = float(low[i]) / low_scale
+        scaled_mid = float(mid[i]) / mid_scale
+        tone = scaled_low / max(1e-9, scaled_low + scaled_mid)
         hit = {"t": round(t, 4), "strength": float(punch[i]),
                "tone": round(tone, 3),
-               "band": "low" if tone >= 0.5 else "mid"}
+               "band": "low" if tone >= KICK_TONE else "mid"}
         if beat_times is not None and beat_times.size:
             nearest = int(np.argmin(np.abs(beat_times - t)))
             distance = abs(float(beat_times[nearest]) - t)

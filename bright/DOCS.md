@@ -262,6 +262,9 @@ director places both, and Claude gets all of it in its brief.
 The accents carry **which drum** as well as how hard: the analyzer compares
 the low band against the mid at each hit, so a kick and a snare are
 different events and the `accent` effect can put them on different lights.
+The two bands are scaled to each other before that comparison, because
+they cover very different numbers of frequency bins and comparing them raw
+answers a question about the band edges rather than about the drum.
 
 ### How a show is built: four layers, on different lights
 
@@ -280,9 +283,11 @@ as musical rather than busy is that they are **separate**:
 - **hits** — the kick and the snare as different instruments, landing on
   the drums the analyzer actually heard rather than on the beat grid, so
   they catch the fills a grid knows nothing about.
-- **voice** — the melody, tracking real pitch. The layer that makes a room
-  feel like it is playing along, and it belongs in the chorus as much as
-  anywhere else.
+- **voice** — the melody, tracking real pitch. Each note lands on the
+  light its pitch points at, so a run up the scale is a run of light
+  across the room and coming back down runs back. The layer that makes a
+  room feel like it is playing along, and it belongs in the chorus as
+  much as anywhere else.
 
 Two rules hold the arrangement together, and the first is physics: **a LIFX
 bulb runs one waveform at a time**, so two rhythmic layers on one bulb is
@@ -522,6 +527,11 @@ trim measured — the phone records the room for four seconds, BRight matches
 what it heard against the playing track itself, and the lights shift by
 exactly the difference. **Keep this trim** folds either kind into the
 speaker's calibration so every future show starts in tune.
+
+Each song in the set can also name **which of its shows to play**. The
+default is whatever is live — so the newest is what plays without anyone
+choosing it — and the picker beside a song is there for the evening you
+want last month's version of one track.
 
 **Saved sets** are a name on exactly what is on that screen — the speaker,
 the songs, which lights may join in, and what the room should look like when

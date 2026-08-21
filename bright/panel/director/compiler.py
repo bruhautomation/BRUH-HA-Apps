@@ -357,7 +357,24 @@ def script_actions(script: dict, fixtures: list[dict],
                          action["t"] + action["period_ms"] / 1000.0
                          * action["cycles"],
                          effect.get("name") or effect["type"]))
-        if (not rendered and effect["type"] in fx.NEEDS_MUSIC
+        # An effect that names lights the map does not have. This is the
+        # one silence that is nobody's analysis being out of date and
+        # nothing to do with the music: the selection matched no fixture,
+        # so the effect was never going to do anything. It compiled, it
+        # saved, it played, and the room stayed exactly as it was — and
+        # the only trace anywhere was a `0 lights` on a list nobody
+        # reads. Checked FIRST, because it explains the zero better than
+        # any of the reasons below it.
+        if not rendered and not fx.resolve_fixtures(effect, fixtures):
+            named = effect.get("select") or {}
+            wanted = ", ".join(
+                str(value) for key in ("ids", "roles", "zones")
+                for value in (named.get(key) or []))
+            entry["note"] = (
+                f"this effect drives no lights: nothing on the map matches "
+                f"{wanted or 'its selection'} — check the names against the "
+                f"Light Map, or widen the selection")
+        elif (not rendered and effect["type"] in fx.NEEDS_MUSIC
                 and not grid.has_music):
             entry["note"] = ("this track was analysed before BRight could "
                              "hear melody and harmony — re-run Analyze on "
