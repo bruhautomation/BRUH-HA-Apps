@@ -101,6 +101,20 @@ Types and parameter names are EXACTLY as listed. Out-of-range numbers are
 clamped rather than rejected, and any parameter you leave out takes its
 default — write the two or three that matter and skip the rest.
 
+ONE RULE ABOUT LAYERING, and it is physics rather than taste. These
+effects are run BY THE BULB: `pulse`, `strobe`, `breathe`, `sweep`, `stab`, `colour_drift`, `saturate`. A bulb runs exactly one of them at a
+time, so two overlapping on the SAME light is not a layered effect — the
+later one cancels the earlier, and from across the room that reads as an
+effect that mysteriously does nothing. Give them different lights, or
+different windows. Everything else layers freely, and layering a bulb
+routine with those is exactly right: a pulse on the lamps under a chase
+across them is two different things happening at once.
+
+`colour_drift` and `saturate` are the two that move COLOUR while leaving
+the brightness alone, which nothing else here can do. They are what a
+quiet section wants — the room changing without anything flickering —
+and they are the only motion a candle can join.
+
 The `//` notes above are ANNOTATION, explaining the shape to you. JSON has
 no comments: your answer must be strict JSON — no `//`, no `/* */`, no
 trailing comma before a `}` or `]`, and no `<angle brackets>`, which mark

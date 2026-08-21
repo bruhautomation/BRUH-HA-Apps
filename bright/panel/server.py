@@ -868,7 +868,14 @@ def _preview_grid(body: dict) -> fx.Grid:
         name, root, quality = _BENCH_CHORDS[index % len(_BENCH_CHORDS)]
         chords.append({"t": round(index * beat_s * 4, 4), "name": name,
                        "root": root, "quality": quality, "confidence": 1.0})
-    return fx.Grid(beats, beats[::4], bpm, notes=notes, chords=chords)
+    hop = 0.05
+    swell = [round(0.25 + 0.7 * abs(((i * hop / (beat_s * 4)) % 1.0) - 0.5) * 2,
+                   3)
+             for i in range(int(duration / hop) + 1)]
+    energy = {"hop_s": hop, "energy": swell, "low": swell, "mid": swell,
+              "high": swell}
+    return fx.Grid(beats, beats[::4], bpm, notes=notes, chords=chords,
+                   energy=energy)
 
 
 def _preview_palette(body: dict) -> list:

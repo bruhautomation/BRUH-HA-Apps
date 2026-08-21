@@ -5,6 +5,52 @@ All notable changes to the **BRight** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.17.0
+
+Colour that moves without flickering, and lights that follow the audio.
+
+### Added
+
+- **BRight speaks `SetWaveformOptional`** (LIFX message 119), and it
+  matters more than a protocol line sounds. Every effect BRight had ran on
+  `SetWaveform`, which carries a whole colour and moves all of it — so a
+  measured audit of the catalog found **only two of seventeen effects
+  moving brightness through more than two levels**, and not one able to
+  move colour while leaving the level alone. The vocabulary was "which
+  light is bright, and when". This message is the same engine with a
+  per-channel mask, and it still runs on the bulb for one packet however
+  long it lasts.
+- **`colour_drift`** — the bulb walks its hue around the wheel and the
+  brightness never moves. Measured on the simulator: 356° of travel with
+  the level frozen to three decimal places. The only motion a candle can
+  join, and the ground a whole quiet section can sit on.
+- **`saturate`** — saturation breathes, washing the room out toward white
+  and back with the level untouched. A chorus lifting without getting
+  brighter.
+- **`level`** — brightness follows how loud the song actually *is*,
+  moment to moment. It reads the analyzer's own 20Hz loudness envelope,
+  which until now was used only to find where the sections and drops are:
+  the song's real shape, instant by instant, and nothing was following it.
+  Pick a band and the lights breathe with the kick, the vocal or the
+  shimmer; `gamma` decides whether the quiet parts stay alive or fall
+  away, which is what turns a meter into a lighting choice.
+- **The automatic show uses all three**: colour drift through the intros
+  and outros (where nothing else is running a bulb routine to cancel), and
+  the strip breathing with the bass through the verses and choruses when
+  something else is keeping time.
+
+### Fixed
+
+- **Two bulb routines on one light silently cancelled each other.** A LIFX
+  bulb runs exactly one waveform at a time — sending a second is how you
+  end the first, which is precisely how BRight's own "stop the lights"
+  works. Stacking `pulse` under `breathe` on the same fixture was
+  therefore never a layered effect, and from a sofa it reads as an effect
+  that does nothing. The compiler now says so on that effect's row,
+  naming what it is replacing, and the Claude director is told the rule in
+  its brief. It is reported rather than refused: a stab interrupting a
+  pulse on the drop is a real technique.
+
 ## 0.16.2
 
 Why it still failed, and a button that answers the question.

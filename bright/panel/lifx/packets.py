@@ -28,6 +28,7 @@ GET_COLOR = 101
 SET_COLOR = 102
 SET_WAVEFORM = 103
 LIGHT_STATE = 107
+SET_WAVEFORM_OPTIONAL = 119
 SET_LIGHT_POWER = 117
 
 # Waveform shapes SetWaveform runs on the bulb itself.
@@ -50,6 +51,13 @@ _TAGGED = 1 << 13
 
 _SET_COLOR = struct.Struct("<BHHHHI")
 _SET_WAVEFORM = struct.Struct("<BBHHHHIfhB")
+# SetWaveformOptional is SetWaveform plus one flag per HSBK channel: the
+# bulb runs the same routine but only touches the channels whose flag is
+# set. That is the whole reason it is here — every effect BRight had
+# modulated BRIGHTNESS, because a waveform that carries a colour carries
+# all of it. With these flags a bulb can drift its hue while the
+# brightness the scene chose stays exactly where it is.
+_SET_WAVEFORM_OPTIONAL = struct.Struct("<BBHHHHIfhBBBBB")
 _SET_LIGHT_POWER = struct.Struct("<HI")
 _STATE_SERVICE = struct.Struct("<BI")
 _STATE_VERSION = struct.Struct("<III")
@@ -185,6 +193,41 @@ def set_waveform(*, transient: bool, hue: int, saturation: int,
                                  kelvin & 0xFFFF, period_ms & 0xFFFFFFFF,
                                  float(cycles), skew_ratio, waveform)
     return build(SET_WAVEFORM, payload, **hdr)
+
+
+def set_waveform_optional(*, transient: bool, hue: int, saturation: int,
+                          brightness: int, kelvin: int, period_ms: int,
+                          cycles: float, skew_ratio: int = 0,
+                          waveform: int = WAVEFORM_SINE,
+                          set_hue: bool = False, set_saturation: bool = False,
+                          set_brightness: bool = False,
+                          set_kelvin: bool = False, **hdr) -> bytes:
+    """A waveform that moves only the channels you name.
+
+    `set_waveform` above hands the bulb a whole HSBK colour to travel to,
+    so every routine it can run is a brightness routine — which is why an
+    audit of BRight's effects found thirteen of seventeen showing nothing
+    but the palette's three colours, and only two moving brightness
+    through more than two levels. The vocabulary was "which light is
+    bright, and when".
+
+    This is the same engine with a mask. Set `set_hue` alone and the bulb
+    walks its hue around the wheel at the level the scene left it at —
+    colour that moves without anything flickering, which no combination
+    of the messages BRight already spoke could produce. It still costs one
+    packet for the whole run, and it still executes on the bulb, so it
+    keeps time through network jitter exactly as the others do.
+
+    A routine with no flag set does nothing at all, which the caller is
+    responsible for not asking for — the bulb will happily accept it.
+    """
+    payload = _SET_WAVEFORM_OPTIONAL.pack(
+        0, 1 if transient else 0, hue & 0xFFFF, saturation & 0xFFFF,
+        brightness & 0xFFFF, kelvin & 0xFFFF, period_ms & 0xFFFFFFFF,
+        float(cycles), skew_ratio, waveform,
+        1 if set_hue else 0, 1 if set_saturation else 0,
+        1 if set_brightness else 0, 1 if set_kelvin else 0)
+    return build(SET_WAVEFORM_OPTIONAL, payload, **hdr)
 
 
 # How long the halting waveform below runs for. A bulb runs ONE waveform

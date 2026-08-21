@@ -120,18 +120,37 @@ class _Cues:
     def waveform(self, fixture: dict, t: float, hue: float, sat: float,
                  brightness: float, period_ms: int, cycles: float,
                  desc: str, shape: int = packets.WAVEFORM_SINE,
-                 skew_ratio: int = 0) -> None:
+                 skew_ratio: int = 0,
+                 channels: tuple = fx.ALL_CHANNELS) -> None:
+        """One waveform, on the bulb.
+
+        A routine that moves every channel is `SetWaveform`, which is what
+        every effect sent before a mask existed; one that moves a subset
+        is `SetWaveformOptional`, the same engine told which channels to
+        leave alone. The default is the whole colour, so nothing that was
+        already compiled changes shape — an effect gets the narrower
+        message only by asking for it.
+        """
         color = _hsbk(hue, sat, brightness)
-        self.lifx(fixture, t,
-                  packets.set_waveform(
-                      transient=True, hue=color["hue"],
-                      saturation=color["saturation"],
-                      brightness=color["brightness"], kelvin=color["kelvin"],
-                      period_ms=period_ms, cycles=cycles, waveform=shape,
-                      skew_ratio=skew_ratio,
-                      target=bytes.fromhex(fixture["serial"]),
-                      source=self.source),
-                  desc)
+        target = bytes.fromhex(fixture["serial"])
+        if tuple(channels) == tuple(fx.ALL_CHANNELS):
+            packet = packets.set_waveform(
+                transient=True, hue=color["hue"],
+                saturation=color["saturation"],
+                brightness=color["brightness"], kelvin=color["kelvin"],
+                period_ms=period_ms, cycles=cycles, waveform=shape,
+                skew_ratio=skew_ratio, target=target, source=self.source)
+        else:
+            packet = packets.set_waveform_optional(
+                transient=True, hue=color["hue"],
+                saturation=color["saturation"],
+                brightness=color["brightness"], kelvin=color["kelvin"],
+                period_ms=period_ms, cycles=cycles, waveform=shape,
+                skew_ratio=skew_ratio,
+                set_hue="h" in channels, set_saturation="s" in channels,
+                set_brightness="b" in channels,
+                target=target, source=self.source)
+        self.lifx(fixture, t, packet, desc)
 
     def ha(self, fixture: dict, t: float, service: str, desc: str) -> None:
         entity = fixture["entity_id"]
@@ -164,7 +183,8 @@ def render_actions(actions: list[dict], out: _Cues) -> None:
                          action["desc"],
                          shape=_SHAPE_CODES.get(action["shape"],
                                                 packets.WAVEFORM_SINE),
-                         skew_ratio=max(-32768, min(32767, skew)))
+                         skew_ratio=max(-32768, min(32767, skew)),
+                         channels=action.get("channels", fx.ALL_CHANNELS))
         elif action["kind"] == "aux":
             out.ha(fixture, action["t"],
                    "homeassistant.turn_on" if action["on"]
@@ -249,6 +269,22 @@ def scene_effects(scene: dict) -> list[dict]:
     return out
 
 
+def _routine_clash(rendered: list[dict], routines: dict) -> str | None:
+    """The name of an already-placed bulb routine this one overlaps, if
+    any. One name is enough — the point is to say what is being replaced,
+    not to enumerate every fixture it happens on."""
+    for action in rendered:
+        if action["kind"] != "wave":
+            continue
+        start = action["t"]
+        end = start + action["period_ms"] / 1000.0 * action["cycles"]
+        for other_start, other_end, name in routines.get(
+                action["fixture"]["id"], []):
+            if start < other_end - 1e-6 and other_start < end - 1e-6:
+                return name
+    return None
+
+
 def script_actions(script: dict, fixtures: list[dict],
                    analysis: dict) -> dict:
     """A whole script, walked once, as actions.
@@ -269,7 +305,8 @@ def script_actions(script: dict, fixtures: list[dict],
     musical = analysis.get("music") or {}
     grid = fx.Grid(analysis.get("beats"), analysis.get("downbeats"),
                    analysis.get("bpm"),
-                   notes=musical.get("notes"), chords=musical.get("chords"))
+                   notes=musical.get("notes"), chords=musical.get("chords"),
+                   energy=analysis.get("features"))
     # Via duration_of, never the tag directly: a VBR header without a
     # Xing frame reports a length wrong by whole multiples, the show is
     # laid out over this number, and the conductor sleeps out its tail
@@ -279,6 +316,9 @@ def script_actions(script: dict, fixtures: list[dict],
 
     actions: list[dict] = []
     breakdown: list[dict] = []
+    # fixture id -> [(start, end, effect name)] of bulb-side routines
+    # already placed, so a later one can say what it is interrupting.
+    routines: dict[str, list] = {}
 
     def _run(effect: dict, window: tuple[float, float], palette: list,
              base: float, where: str) -> None:
@@ -295,11 +335,40 @@ def script_actions(script: dict, fixtures: list[dict],
         # effect. The reason goes on the effect's own row, because that
         # is where somebody is looking when they wonder why the melody
         # they added does not appear in the preview.
+        # Two bulb-side routines on one fixture in one window is the
+        # second cancelling the first, because a bulb runs one waveform at
+        # a time. Reported on the effect's own row rather than refused:
+        # the overlap may be deliberate (a stab is MEANT to interrupt a
+        # pulse on the drop), and a compiler that refused it would be
+        # refusing a real technique.
+        if effect["type"] in fx.BULB_ROUTINES:
+            clash = _routine_clash(rendered, routines)
+            if clash:
+                entry["note"] = (
+                    f"a bulb runs one waveform at a time, and "
+                    f"{clash} is already running one on some of these "
+                    f"lights here — the later effect replaces it rather "
+                    f"than layering with it")
+            for action in rendered:
+                if action["kind"] == "wave":
+                    routines.setdefault(action["fixture"]["id"], []).append(
+                        (action["t"],
+                         action["t"] + action["period_ms"] / 1000.0
+                         * action["cycles"],
+                         effect.get("name") or effect["type"]))
         if (not rendered and effect["type"] in fx.NEEDS_MUSIC
                 and not grid.has_music):
             entry["note"] = ("this track was analysed before BRight could "
                              "hear melody and harmony — re-run Analyze on "
                              "the Library tab, then compile again")
+        elif (not rendered and effect["type"] in fx.NEEDS_ENERGY
+                and not grid.has_energy):
+            # A different missing thing with a different remedy: every
+            # analysis carries the loudness envelope, so this is a track
+            # with no analysis rather than an out-of-date one.
+            entry["note"] = ("this effect follows the song's loudness and "
+                             "this track has no analysis to read it from — "
+                             "analyse it on the Library tab")
         breakdown.append(entry)
 
     for index, scene in enumerate(script.get("scenes") or []):

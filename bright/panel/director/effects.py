@@ -51,6 +51,12 @@ ORDERS = ("x", "-x", "y", "-y", "center_out", "edges_in", "snake",
 # effect's own row rather than leaving a silent zero there.
 NEEDS_MUSIC = frozenset({"melody", "harmony"})
 
+# `level` needs the loudness envelope instead, which is a different
+# requirement with a different remedy: every analysis BRight has ever
+# written carries `features`, so a track that cannot drive a level effect
+# is one with no analysis at all rather than an out-of-date one.
+NEEDS_ENERGY = frozenset({"level"})
+
 ALIGNMENTS = ("beat", "downbeat", "bar", "time")
 
 # What an effect that names neither does. These are shipped to the panel in
@@ -308,6 +314,47 @@ CATALOG: dict[str, dict[str, Any]] = {
             "minor_shift": _num(-180, 180, -25),
         },
     },
+    "colour_drift": {
+        "label": "Colour drift",
+        "blurb": "The colour travels and the brightness never moves — the "
+                 "bulb walks its hue around the wheel on its own. The one "
+                 "kind of motion a candle can join, and the ground a whole "
+                 "quiet section can sit on without a single flicker.",
+        "channel": "light",
+        "params": {
+            "period_beats": _num(1, 64, 16),
+            "span": _num(-360, 360, 70),
+            "shape": _choice(SHAPES, "sine"),
+        },
+    },
+    "saturate": {
+        "label": "Colour swell",
+        "blurb": "Saturation breathes: the room washes out toward white and "
+                 "back, or deepens into colour, with the level untouched. A "
+                 "chorus lifting without getting brighter.",
+        "channel": "light",
+        "params": {
+            "period_beats": _num(1, 64, 8),
+            "to_saturation": _num(0, 1, 0.1),
+            "shape": _choice(SHAPES, "sine"),
+        },
+    },
+    "level": {
+        "label": "Level",
+        "blurb": "Brightness follows how loud the song actually IS, moment "
+                 "to moment — not the beat grid, the audio itself. Pick a "
+                 "band and the lights breathe with the kick, the vocal or "
+                 "the shimmer. The one effect whose shape is the waveform.",
+        "channel": "light",
+        "params": {
+            "band": _choice(("energy", "low", "mid", "high"), "energy"),
+            "floor": _num(0, 1, 0.12),
+            "ceiling": _num(0, 1, 1.0),
+            "step_beats": _num(0.25, 8, 1),
+            "gamma": _num(0.25, 4, 1.0),
+            "fade_ms": _num(0, 2000, 140, integer=True),
+        },
+    },
     "aux": {
         "label": "Aux switch",
         "blurb": "Party lights and lasers: on, off, or flashed on the beat. "
@@ -563,9 +610,15 @@ class Grid:
                  downbeats: list[float] | None = None,
                  bpm: float | None = None,
                  notes: list[dict] | None = None,
-                 chords: list[dict] | None = None) -> None:
+                 chords: list[dict] | None = None,
+                 energy: dict | None = None) -> None:
         self.notes = list(notes or [])
         self.chords = list(chords or [])
+        # The loudness envelope the analyzer already measures at 20Hz and
+        # which, until `level` existed, was read only to find where the
+        # sections and drops are. It is the song's actual shape, instant
+        # by instant, and nothing was following it.
+        self.energy = energy or {}
         self.beats = sorted(float(b) for b in (beats or []))
         self.downbeats = sorted(float(b) for b in (downbeats or []))
         if len(self.beats) >= 2:
@@ -579,6 +632,29 @@ class Grid:
     @property
     def beat_ms(self) -> int:
         return max(20, int(round(self.beat_s * 1000)))
+
+    def loudness(self, band: str, start: float, end: float) -> float:
+        """Mean level of one band over a window, 0..1.
+
+        Averaged rather than sampled: the envelope is 20Hz and a light
+        cue is not, so a point sample would catch whichever 50ms happened
+        to line up and jitter between steps that should have read as one
+        gesture.
+        """
+        series = self.energy.get(band) or []
+        hop = float(self.energy.get("hop_s") or 0.05)
+        if not series or hop <= 0 or end <= start:
+            return 0.0
+        lo = max(0, int(start / hop))
+        hi = min(len(series), max(lo + 1, int(end / hop)))
+        if lo >= len(series):
+            return 0.0
+        window = series[lo:hi]
+        return max(0.0, min(1.0, sum(window) / len(window)))
+
+    @property
+    def has_energy(self) -> bool:
+        return bool(self.energy.get("energy"))
 
     @property
     def has_music(self) -> bool:
@@ -667,15 +743,40 @@ def _set(fixture: dict, t: float, hue: float, sat: float, bri: float,
             "fade_ms": max(0, int(fade_ms)), "desc": desc, "resend": resend}
 
 
+# Which channels a waveform is allowed to move. All three is what
+# `SetWaveform` does and therefore what every effect did before this
+# existed — which is why an audit found thirteen of seventeen effects
+# showing nothing but the palette's three colours and only two moving
+# brightness through more than two levels. A mask rides to the bulb as
+# `SetWaveformOptional`, and it is the difference between colour that
+# moves and colour that flickers.
+ALL_CHANNELS = ("h", "s", "b")
+
+# The effects the BULB runs, rather than ones we step from here.
+#
+# A LIFX bulb runs exactly ONE waveform at a time: sending a second is how
+# you end the first (`packets.halt_waveform` is built on precisely that).
+# So two of these on the same fixture in the same window is not a layered
+# effect, it is the later one cancelling the earlier — and from across a
+# room that reads as an effect that mysteriously does nothing. They layer
+# happily with everything that steps (`set` actions) and with each other
+# on DIFFERENT fixtures; the director is told this in its brief and the
+# compiler warns when a script does it anyway.
+BULB_ROUTINES = frozenset({"pulse", "strobe", "breathe", "sweep", "stab",
+                           "colour_drift", "saturate"})
+
+
 def _wave(fixture: dict, t: float, hue: float, sat: float, bri: float,
           period_ms: int, cycles: float, shape: str, duty: float,
-          desc: str) -> dict:
+          desc: str, channels: tuple = ALL_CHANNELS) -> dict:
     return {"kind": "wave", "fixture": fixture, "t": round(float(t), 4),
             "hue": float(hue) % 360.0, "sat": min(1.0, max(0.0, float(sat))),
             "bri": min(1.0, max(0.0, float(bri))),
             "period_ms": max(20, int(period_ms)), "cycles": float(cycles),
             "shape": shape if shape in SHAPES else "sine",
-            "duty": min(1.0, max(0.0, float(duty))), "desc": desc}
+            "duty": min(1.0, max(0.0, float(duty))), "desc": desc,
+            "channels": tuple(c for c in ALL_CHANNELS if c in channels)
+                        or ALL_CHANNELS}
 
 
 def _aux(fixture: dict, t: float, on: bool, desc: str) -> dict:
@@ -1057,6 +1158,78 @@ def _r_harmony(out, effect, cast, grid, ctx) -> None:
                             int(p["fade_ms"]), effect["name"], resend=True))
 
 
+def _optional_wave(out, effect, cast, grid, ctx, *, channel: str,
+                   target) -> None:
+    """One masked waveform per fixture, spanning the effect's window.
+
+    Shared by the two effects that move colour without touching level,
+    because the only thing that differs between them is which channel the
+    bulb is told to walk and where to. Everything else — one packet per
+    fixture for the whole window, the cycle count derived from the window
+    rather than guessed, `transient` so the light returns to what the
+    scene left it at — is identical, and writing it twice would be two
+    answers to one question.
+    """
+    p = effect["params"]
+    period_s = max(0.05, float(p["period_beats"]) * grid.beat_s)
+    span_s = max(0.0, ctx["end"] - ctx["start"])
+    cycles = max(1.0, round(span_s / period_s, 2))
+    for index, fixture in enumerate(cast):
+        hue, sat = _colour(ctx["palette"], index)
+        bri = ctx["base"]
+        aim_hue, aim_sat = target(hue, sat)
+        out.append(_wave(fixture, ctx["start"], aim_hue, aim_sat, bri,
+                         int(period_s * 1000), cycles, p["shape"], 0.5,
+                         effect["name"], channels=(channel,)))
+
+
+def _r_colour_drift(out, effect, cast, grid, ctx) -> None:
+    span = float(effect["params"]["span"])
+    _optional_wave(out, effect, cast, grid, ctx, channel="h",
+                   target=lambda hue, sat: (hue + span, sat))
+
+
+def _r_saturate(out, effect, cast, grid, ctx) -> None:
+    aim = float(effect["params"]["to_saturation"])
+    _optional_wave(out, effect, cast, grid, ctx, channel="s",
+                   target=lambda hue, sat: (hue, aim))
+
+
+def _r_level(out, effect, cast, grid, ctx) -> None:
+    """The room breathing with the actual audio.
+
+    Every other effect here modulates brightness between two values on a
+    grid — an audit of the catalog found exactly two moving it through
+    more than two levels, which is why a show could feel busy and still
+    feel flat. This one has no levels at all: it reads the analyzer's own
+    loudness envelope and maps it, so a swell swells and a breakdown
+    drops away without anybody choosing a number for it.
+
+    `gamma` is the shape of that mapping. Below 1 lifts the quiet parts
+    (the room stays alive through a verse); above 1 pushes them down and
+    keeps the top (only the loud moments read). It is the one control
+    that turns this from a meter into a lighting choice.
+    """
+    p = effect["params"]
+    if not grid.has_energy:
+        return
+    ticks = grid.ticks(ctx["start"], ctx["end"], p["step_beats"],
+                       effect.get("align", DEFAULT_ALIGN))
+    if not ticks:
+        return
+    floor, ceiling = p["floor"], p["ceiling"]
+    gamma = max(0.05, float(p["gamma"]))
+    palette = ctx["palette"]
+    for index, at in enumerate(ticks):
+        nxt = ticks[index + 1] if index + 1 < len(ticks) else ctx["end"]
+        loud = grid.loudness(p["band"], at, nxt) ** gamma
+        level = floor + (ceiling - floor) * loud
+        for slot, fixture in enumerate(cast):
+            hue, sat = _colour(palette, slot)
+            out.append(_set(fixture, at, hue, sat, _cap(fixture, level, effect),
+                            int(p["fade_ms"]), effect["name"]))
+
+
 RENDERERS: dict[str, Renderer] = {
     "wash": _r_wash,
     "fade": _r_fade,
@@ -1074,6 +1247,9 @@ RENDERERS: dict[str, Renderer] = {
     "blackout": _r_blackout,
     "melody": _r_melody,
     "harmony": _r_harmony,
+    "colour_drift": _r_colour_drift,
+    "saturate": _r_saturate,
+    "level": _r_level,
     "aux": _r_aux,
 }
 
@@ -1206,6 +1382,7 @@ def simulate(actions: list[dict], fixtures: list[dict], *,
                              "period": action["period_ms"] / 1000.0,
                              "cycles": action["cycles"],
                              "shape": action["shape"], "duty": action["duty"],
+                             "channels": action.get("channels", ALL_CHANNELS),
                              "t0": action["t"]}}
             elif action["kind"] == "aux":
                 state[slot] = {"from": current,
@@ -1243,9 +1420,13 @@ def _sample(slot: dict, now: float) -> tuple[float, float, float]:
         return base
     k = _wave_position(wave["shape"], elapsed / max(0.001, wave["period"]),
                        wave["duty"])
-    return (_hue_lerp(base[0], wave["hue"], k),
-            _lerp(base[1], wave["sat"], k),
-            _lerp(base[2], wave["bri"], k))
+    # Only the channels the routine actually moves. A hue drift that the
+    # preview drew as a brightness pulse would be a preview of a different
+    # effect — the one thing this module exists to prevent.
+    channels = wave.get("channels", ALL_CHANNELS)
+    return (_hue_lerp(base[0], wave["hue"], k) if "h" in channels else base[0],
+            _lerp(base[1], wave["sat"], k) if "s" in channels else base[1],
+            _lerp(base[2], wave["bri"], k) if "b" in channels else base[2])
 
 
 def summarise(actions: list[dict]) -> dict:
