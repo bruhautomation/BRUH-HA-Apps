@@ -5,6 +5,18 @@ All notable changes to the **BRight** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.14.1
+
+The prose diet.
+
+### Changed
+
+- Every tab opened with a heading repeating the tab strip and an essay
+  before its first control — six lines on Party before the Start button,
+  a whole first phone screen of words on Effects. Each tab opens with one
+  sentence now; the essays live in DOCS, where somebody who wants them is
+  somebody who went looking. No control changed and no id changed.
+
 ## 0.14.0
 
 Stop means silence, the party shows its work, and a field-test batch of

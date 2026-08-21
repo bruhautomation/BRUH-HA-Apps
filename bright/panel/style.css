@@ -596,3 +596,8 @@ select { max-width: 100%; }
 .party-now { font-weight: 600; margin-bottom: 8px; }
 .party-trim { align-items: center; }
 #partyUpNext { margin-top: 6px; }
+
+/* The one line each tab opens with, now that the headings repeating the
+   tab strip are gone. Tight above (the bar already separates), a little
+   air below before the first card. */
+.tab-intro { margin: 4px 0 14px; max-width: 640px; }
