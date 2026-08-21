@@ -29,9 +29,9 @@
 
 <main class="wrap">
   <section class="pane active" id="pane-lab">
-    <h2>Lab</h2>
-    <p class="muted">Latency and feasibility, measured in <em>your</em> house.
-      These numbers are what the director compiles cue lead-times from.</p>
+    <p class="muted tab-intro">Latency and feasibility, measured in
+      <em>your</em> house — the numbers every show's cue timing is built
+      from.</p>
 
     <div class="card">
       <div class="card-head">
@@ -91,11 +91,9 @@
     </div>
   </section>
   <section class="pane" id="pane-map">
-    <h2>Light Map</h2>
-    <p class="muted">Place each light, give it a role and a spot in the
-      house. The director choreographs from this map: candles glow and never
-      strobe, lamps and downlights carry the beat, strips carry sweeps, and
-      party lights and lasers are saved for the moments that earn them.</p>
+
+    <p class="muted tab-intro">Place each light and give it a role — the
+      director choreographs from this map.</p>
 
     <div class="card">
       <div class="card-head">
@@ -146,21 +144,15 @@
     </div>
   </section>
   <section class="pane" id="pane-effects">
-    <h2>Effects</h2>
-    <p class="muted">An effect is a thing some of your lights do for a
-      stretch of music: a chase across the room, a build into the drop, a
-      strobe on the last four bars. Pick the lights it owns — everything you
-      do not pick is left exactly as it was — set it up against a tempo,
-      watch it, then save it or drop it into a show.</p>
+    <p class="muted tab-intro">One thing some of your lights do for a
+      stretch of music. Build it, preview it, keep the good ones.</p>
 
     <div class="card" id="fxAskCard">
       <div class="card-head">
         <h3>Describe it</h3>
       </div>
-      <p class="muted small">Say what you want in a sentence and Claude
-        writes the effect into the form below, for this room — it is given
-        every light by name, what each one is, and where you put it on the
-        map. Nothing is saved: look at it, preview it, change anything.</p>
+      <p class="muted small">A sentence becomes an effect for this
+        room, unsaved — look at it, then keep it or change it.</p>
       <div class="demo-controls">
         <input type="text" id="fxAsk" maxlength="200"
                placeholder="bounce a warm pulse between the two window lamps">
@@ -264,13 +256,9 @@
     </div>
   </section>
   <section class="pane" id="pane-library">
-    <h2>Library</h2>
-    <p class="muted">Your music, analyzed ahead of time: tempo and the
-      beat grid, song sections and drops, and time-synced lyrics where they
-      exist. Analysis is the slow part of a show, done once per track — the
-      show itself compiles from this. Add more folders with the add-on's
-      <em>Extra music folders</em> option; each one is scanned all the way
-      down, so subfolders need no entry of their own.</p>
+
+    <p class="muted tab-intro">Your music, analyzed once per track —
+      beats, sections, drops, lyrics. Every show compiles from this.</p>
 
     <div class="card">
       <div class="card-head">
@@ -299,10 +287,8 @@
     </div>
   </section>
   <section class="pane" id="pane-shows">
-    <h2>Shows</h2>
-    <p class="muted">Compiled shows — one per track, built ahead of time so
-      playback is nothing but a clock and a cue list. Compile after changing
-      the Light Map; play needs a calibrated speaker.</p>
+    <p class="muted tab-intro">One show per track, compiled ahead so
+      playback is nothing but a clock and a cue list.</p>
 
     <div class="card">
       <div class="card-head">
@@ -409,11 +395,9 @@
     </div>
   </section>
   <section class="pane" id="pane-calibrate">
-    <h2>Calibrate</h2>
-    <p class="muted">Measures how long your speaker takes from "play" to
-      audible sound — so the lights land on the beat instead of two seconds
-      behind an AirPlay buffer. Open this page <strong>on your phone</strong>,
-      in the same room as the speaker.</p>
+    <p class="muted tab-intro">How long your speaker takes from "play"
+      to sound. Open this page <strong>on your phone</strong>, in the room
+      with the speaker.</p>
 
     <div class="card">
       <div class="card-head">
@@ -481,14 +465,8 @@
     </div>
   </section>
   <section class="pane" id="pane-party">
-    <h2>Party</h2>
-    <p class="muted">Every analyzed track in the folder, shuffled, each with
-      its own show — the next one choreographs itself while the current one
-      plays. Save the whole arrangement as a named party and an automation,
-      a dashboard button or a voice command can ask for it by name:
-      <code>bright.start_party</code>. Stopping restores every light to how
-      it was, unless the party names a scene to call instead — which is what
-      you want when the show <em>was</em> the evening.</p>
+    <p class="muted tab-intro">A whole evening: every track gets its
+      own show, the next one choreographs itself while this one plays.</p>
 
     <div class="card">
       <div class="demo-controls">
@@ -533,11 +511,9 @@
         <h3>Saved parties</h3>
         <button id="btnPartyNew" class="btn small">New party…</button>
       </div>
-      <p class="muted small">A saved party is the evening set up once: which
-        speaker, which folder, the vibe to steer the director with, which
-        lights may join in, and what the room looks like when it stops. Start
-        one from here, from an automation
-        (<code>bright.start_party</code>), or from a voice command.</p>
+      <p class="muted small">The evening set up once — start it from
+        here, an automation, or a voice command
+        (<code>bright.start_party</code>).</p>
       <div id="partyForm" class="party-form" hidden>
         <div class="demo-controls">
           <label>Name <input type="text" id="pfName" maxlength="48"></label>
