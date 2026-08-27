@@ -604,14 +604,16 @@
           '<button class="btn small" data-act="claude">✨ Claude</button>' +
           (show ? '<button class="btn small" data-act="play">▶ Show</button>'
                 : "") +
-          '<button class="btn small" data-act="sync">♪ Beat sync</button>' +
+          '<button class="btn small" data-act="sync" title="Beat pulses ' +
+          'and drop flashes, no choreography — proves sync and drop ' +
+          'detection">🧪 Test</button>' +
           "</div>";
         row.querySelector("strong").textContent = track.name;
         row.querySelector(".rtt").textContent = show
           ? "compiled: " + show.tier + " · " + show.palette + " · " +
             show.cues + " cues"
-          : "not compiled — Beat sync plays plain pulses; Compile builds "
-            + "the show";
+          : "not compiled — 🧪 Test plays plain beat pulses and drop "
+            + "flashes; Compile builds the show";
         list.appendChild(row);
       }
     } catch (error) {
@@ -763,11 +765,16 @@
     try {
       const profiles = await api("api/calibrate/profiles");
       const select = $("partyPlayer");
+      // Keep the chosen speaker across a reload — this runs on every
+      // visit to the tab, and losing the pick meant the party quietly
+      // fell back to whichever player calibrated best, in another room.
+      const previous = select.value;
       select.innerHTML = '<option value="">— calibrated player —</option>';
       for (const profile of profiles.profiles || []) {
         const option = document.createElement("option");
         option.value = profile.entity_id;
         option.textContent = profile.entity_id;
+        option.selected = profile.entity_id === previous;
         select.appendChild(option);
       }
     } catch (error) {
@@ -874,21 +881,29 @@
         bulbs.appendChild(label);
       }
       syncCount();
+      // Same memory as the tick-boxes above, for the same reason: this
+      // list reloads on every tab open and every Discover, and a picker
+      // that forgets the track you chose because you pressed Discover is
+      // a picker you fill in twice.
       const trackSelect = $("syncTrack");
+      const hadTrack = trackSelect.value;
       trackSelect.innerHTML = '<option value="">— analyzed track —</option>';
       for (const track of (lib.tracks || []).filter((t) => t.analyzed)) {
         const option = document.createElement("option");
         option.value = track.hash;
         option.textContent = track.name;
+        option.selected = track.hash === hadTrack;
         trackSelect.appendChild(option);
       }
       const playerSelect = $("syncPlayer");
+      const hadPlayer = playerSelect.value;
       playerSelect.innerHTML = '<option value="">— calibrated player —</option>';
       for (const profile of profiles.profiles || []) {
         const option = document.createElement("option");
         option.value = profile.entity_id;
         option.textContent = profile.entity_id + " (" +
           profile.effective_offset_ms + "ms)";
+        option.selected = profile.entity_id === hadPlayer;
         playerSelect.appendChild(option);
       }
     } catch (error) {
@@ -925,7 +940,8 @@
       });
       status.textContent = "Running: " + result.cues + " cues, anchored " +
         Math.round(result.offset_ms) + "ms after the play command. " +
-        "Watch the bulbs against the beat.";
+        "Watch the pulses against the beat and the flashes against " +
+        "the drops.";
       pollRunState();
     } catch (error) {
       status.textContent = "failed: " + error.message;

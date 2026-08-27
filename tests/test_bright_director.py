@@ -87,7 +87,54 @@ class TestChoreographer(unittest.TestCase):
         # is deliberately not the drop's.
         hit = next(m for m in script["moments"]
                    if m["effect"].get("name") == "drop hit")
-        self.assertIn("laser", hit["effect"]["select"]["roles"])
+        # The drop is the whole room: empty select is every bulb, role
+        # manners are off so the candles come too, and a timidly-detected
+        # drop still lands hard.
+        self.assertEqual({}, hit["effect"]["select"])
+        self.assertFalse(hit["effect"]["respect_roles"])
+        self.assertGreaterEqual(hit["effect"]["params"]["strength"], 0.85)
+        # The switches still get their own moment on the drop.
+        aux = next(m for m in script["moments"]
+                   if m["effect"].get("name") == "drop aux")
+        self.assertIn("laser", aux["effect"]["select"]["roles"])
+
+    def test_every_section_has_a_beat_on_some_light(self):
+        """The beat guarantee: whatever the section's energy, some bulb is
+        striking on the grid — intros and outros included."""
+        for kind in choreographer.LAYER_PLAN:
+            layers = choreographer.plan_layers(kind, FIXTURES)
+            self.assertTrue(
+                choreographer.RHYTHMIC_LAYERS & set(layers),
+                f"{kind}: no rhythmic layer got any lights")
+
+    def test_the_beat_lands_even_in_a_one_lamp_room(self):
+        one_lamp = [FIXTURES[0]]
+        for kind in choreographer.LAYER_PLAN:
+            layers = choreographer.plan_layers(kind, one_lamp)
+            rhythmic = choreographer.RHYTHMIC_LAYERS & set(layers)
+            self.assertTrue(rhythmic,
+                            f"{kind}: the one lamp carries no beat")
+
+    def test_the_beat_lands_even_in_a_candles_only_room(self):
+        candles = [dict(FIXTURES[2], id=f"lifx-c{i}", x=i / 3)
+                   for i in range(3)]
+        layers = choreographer.plan_layers("quiet", candles)
+        self.assertIn("pulse", layers)
+
+    def test_a_layer_never_shares_a_bulb(self):
+        """One bulb runs one waveform: the guarantee pass must not put
+        two layers on one fixture."""
+        for fixtures in (FIXTURES, [FIXTURES[0]], FIXTURES[:2]):
+            for kind in choreographer.LAYER_PLAN:
+                layers = choreographer.plan_layers(kind, fixtures)
+                claimed: list[str] = []
+                for spec in layers.values():
+                    ids = spec["select"].get("ids") \
+                        or [f["id"] for f in fixtures
+                            if f.get("role") in spec["select"].get("roles", [])]
+                    claimed.extend(ids)
+                self.assertEqual(len(claimed), len(set(claimed)),
+                                 f"{kind}: two layers share a bulb")
 
     def test_candles_never_pulse(self):
         script = choreographer.write_script(analysis_fixture(), FIXTURES)

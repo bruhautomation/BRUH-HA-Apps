@@ -67,12 +67,17 @@
 
     <div class="card">
       <div class="card-head">
-        <h3>Sync proof — the metronome show</h3>
+        <h3>🧪 Test mode — beats &amp; drops</h3>
       </div>
       <p class="muted small">Plays an analyzed track on a calibrated speaker
-        while every discovered bulb pulses on the beat — no choreography,
-        just the whole sync chain end to end. If this hits the beat, shows
-        will. Stop restores the lights.</p>
+        while every ticked bulb pulses on the beat, and the whole selection
+        goes dark-then-full-blast on every drop the analyzer heard — no
+        choreography, just the sync chain and the drop detection end to
+        end. If the pulses ride the beat and the flashes land on the drops,
+        shows will too. Pulses late or early everywhere? Nudge the
+        calibration. Flashes landing where the music does nothing? The
+        analysis misheard — re-analyze the track. Stop restores the
+        lights.</p>
       <div class="demo-controls">
         <select id="syncTrack"><option value="">— analyzed track —</option></select>
         <select id="syncPlayer"><option value="">— calibrated player —</option></select>
@@ -300,7 +305,9 @@
   </section>
   <section class="pane" id="pane-shows">
     <p class="muted tab-intro">One show per track, compiled ahead so
-      playback is nothing but a clock and a cue list.</p>
+      playback is nothing but a clock and a cue list. 🧪 Test plays plain
+      beat pulses and drop flashes — proof of sync before any
+      choreography. The Party tab plays a whole evening of these.</p>
 
     <div class="card">
       <div class="card-head">
@@ -552,9 +559,14 @@
   </section>
   <section class="pane" id="pane-party">
     <p class="muted tab-intro">A whole evening: every track gets its
-      own show, the next one choreographs itself while this one plays.</p>
+      own show, the next one choreographs itself while this one plays.
+      One track at a time — and building or testing a show — lives on the
+      Shows tab; this tab is for pressing Play on an evening.</p>
 
     <div class="card">
+      <div class="card-head">
+        <h3>Play</h3>
+      </div>
       <div class="demo-controls">
         <label>Speaker
           <select id="partyPlayer"><option value="">— calibrated player —</option></select>
@@ -567,7 +579,8 @@
       </div>
       <div class="demo-controls">
         <button id="btnPartyStart" class="btn">🎉 Play</button>
-        <button id="btnPartyStop" class="btn" hidden>■ Stop</button>
+        <button id="btnPartyStop" class="btn" hidden>■ Stop &amp; restore
+          lights</button>
       </div>
       <div id="partyStatus" class="cal-status"></div>
 

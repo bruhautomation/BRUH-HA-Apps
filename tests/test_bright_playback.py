@@ -300,6 +300,29 @@ class TestMetronomeShow(unittest.TestCase):
         measured = next(c for c in cues if c["serial"] == "d073d5000001")
         self.assertEqual(3.0, measured["lead_ms"], "half the p50 RTT")
 
+    def test_a_drop_gets_a_dark_then_full_flash_on_every_bulb(self):
+        analysis = {**self.ANALYSIS,
+                    "drops": [{"t": 60.0, "strength": 0.9}]}
+        cues = conductor.metronome_cues(analysis, self.DEVICES, source=1)
+        for serial in self.DEVICES:
+            mine = [c for c in cues if c["serial"] == serial]
+            dark = next(c for c in mine if c["desc"] == "drop blackout")
+            flash = next(c for c in mine if c["desc"] == "drop flash")
+            back = next(c for c in mine if c["desc"] == "back to base")
+            # Dark just before, full blast ON the drop, base afterwards.
+            self.assertLess(dark["t"], 60.0)
+            self.assertEqual(60.0, flash["t"])
+            self.assertGreater(back["t"], 60.0)
+            payload = base64.b64decode(flash["payload_b64"])
+            header = packets.parse_header(payload)
+            self.assertEqual(packets.SET_COLOR, header["type"])
+        self.assertLess(conductor.peak_rate_per_device(cues), 20.0)
+
+    def test_no_drops_means_the_old_metronome_exactly(self):
+        cues = conductor.metronome_cues(self.ANALYSIS, self.DEVICES, source=1)
+        self.assertFalse([c for c in cues
+                          if c["desc"].startswith("drop")])
+
     def test_media_content_id_stays_inside_media(self):
         self.assertEqual(
             "media-source://media_source/local/music/test.mp3",

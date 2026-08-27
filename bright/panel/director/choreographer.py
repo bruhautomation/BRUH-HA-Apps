@@ -76,12 +76,22 @@ BUILD_BEATS = 16
 # because a verse with a snare on every light and nothing carrying the
 # tune is a chorus that arrived early.
 LAYER_PLAN = {
-    "intro": ("ground", "voice"),
-    "quiet": ("ground", "voice"),
+    "intro": ("ground", "voice", "pulse"),
+    "quiet": ("ground", "voice", "pulse"),
     "mid":   ("voice", "ground", "kick", "pulse"),
     "peak":  ("kick", "snare", "voice", "pulse", "ground"),
-    "outro": ("ground", "voice"),
+    "outro": ("ground", "voice", "pulse"),
 }
+
+# The layers that strike rather than swell. Every section must land at
+# least one of these on at least one light — a room with no beat anywhere
+# is the single loudest way a show stops following the music, and it used
+# to be the DEFAULT for every intro, quiet and outro section.
+RHYTHMIC_LAYERS = frozenset({"pulse", "kick", "snare"})
+
+# The roles the guarantee below may reach for. Bulbs only — a beat on a
+# party-light smart plug is a relay clicking twice a second.
+_BEAT_ROLES = ("lamp", "downlight", "strip", "candle")
 
 # How many layers may share one kind of light by splitting its fixtures.
 #
@@ -162,6 +172,30 @@ def plan_layers(kind: str, fixtures: list[dict]) -> dict[str, dict]:
             wanted.setdefault(role, []).append(layer)
             order.append((layer, role))
             break
+
+    # The beat guarantee: some light, in every section, is striking on
+    # the grid. The plan above is taste and taste can strand the pulse —
+    # a candles-only room has no role in LAYER_ROLES["pulse"] at all, and
+    # a one-lamp room gives the lamp to the ground and calls the rest
+    # impossible. If no rhythmic layer landed, the pulse first tries to
+    # SHARE the roomiest bulb role, and in a room too small to share it
+    # takes a role outright from its last (lowest-priority) claimant —
+    # because if only one thing can happen, it should be the beat.
+    if not any(layer in RHYTHMIC_LAYERS for layer, _ in order):
+        def _room(role: str) -> int:
+            return len(by_role.get(role) or [])
+        candidates = [r for r in _BEAT_ROLES if _room(r)]
+        shareable = [r for r in candidates
+                     if len(wanted.get(r, ())) < min(MAX_SHARERS, _room(r))]
+        if shareable:
+            role = max(shareable, key=_room)
+            wanted.setdefault(role, []).append("pulse")
+            order.append(("pulse", role))
+        elif candidates:
+            role = max(candidates, key=_room)
+            victim = wanted[role][-1]
+            wanted[role][-1] = "pulse"
+            order[order.index((victim, role))] = ("pulse", role)
 
     out: dict[str, dict] = {}
     for layer, role in order:
@@ -400,13 +434,21 @@ def write_script(analysis: dict, fixtures: list[dict]) -> dict:
                     "params": {"from_brightness": 0.15, "to_brightness": 0.95,
                                "step_beats": 1, "stagger": True,
                                "curve": "exp", "saturate": True}}})
-        hit_roles = [r for r in ("laser", "party", "strip", "lamp", "downlight")
-                     if r in roles_present]
+        # The drop is the WHOLE room: every light off in the last breath
+        # before it, every light on when it lands. It used to stab a few
+        # roles at the drop's own strength, which read as one more accent
+        # — a drop that only moves some of the lights is a drop the room
+        # can miss. An empty select is every bulb, `respect_roles` off
+        # means the candles come too, and the strength floor keeps a
+        # timidly-detected drop from landing as a flicker.
         moments.append({
             "t": at,
             "effect": {"type": "stab", "name": "drop hit",
-                       "select": {"roles": hit_roles or movers},
-                       "params": {"strength": float(drop.get("strength", 0.8)),
+                       "select": {},
+                       "respect_roles": False,
+                       "params": {"strength": max(0.85,
+                                                  float(drop.get("strength",
+                                                                 0.8))),
                                   "blackout_before_ms": 400, "hold_ms": 500}}})
         if "party" in roles_present or "laser" in roles_present:
             moments.append({

@@ -27,6 +27,7 @@ import ha_client
 import media_source
 import playback_check
 from analyzer import library
+from director.effects import peak_shift
 from lifx import packets
 from playback.clock import ShowClock
 from playback.drift import DriftEstimator
@@ -702,17 +703,27 @@ class Conductor:
 # ---------------------------------------------------------------------------
 def metronome_cues(analysis: dict, devices: dict[str, dict],
                    source: int) -> list[dict]:
-    """Beat pulses for every known bulb, straight from the analysis.
+    """The test show: beat pulses plus a whole-room flash on every drop,
+    straight from the analysis — no director involved.
 
     One SetWaveform per fixture every 8 beats (the bulb runs the beats in
     between), phase-anchored at the send moment — steady state is well
-    under 1 msg/s/device against the 20/s ceiling.
-    """
+    under 1 msg/s/device against the 20/s ceiling. Each drop the analyzer
+    found gets the same shape the real choreography gives it — every bulb
+    dark just before, every bulb full-on at the moment itself, back to the
+    base a breath later — so this one run answers both questions a show
+    depends on: does the pulse land ON the beat, and does the flash land
+    ON the drop. If either misses here, no choreography was going to fix
+    it; if the flash lands somewhere the music does nothing, the analyzer
+    misheard the drop, which is a different repair (re-analyze) from a
+    calibration that is off (nudge)."""
     beats = analysis.get("beats") or []
     if len(beats) < 8:
         return []
     intervals = sorted(b - a for a, b in zip(beats, beats[1:]))
     period_ms = int(intervals[len(intervals) // 2] * 1000)
+    drops = [float(d.get("t", 0)) for d in (analysis.get("drops") or [])
+             if isinstance(d, dict)]
     cues: list[dict] = []
     for serial, device in devices.items():
         lead_ms = ((device.get("rtt") or {}).get("p50_ms") or
@@ -726,7 +737,16 @@ def metronome_cues(analysis: dict, devices: dict[str, dict],
                      "lead_ms": lead_ms, "resend": True,
                      "payload_b64": base64.b64encode(base).decode(),
                      "desc": "base"})
+        # A sine waveform starts at the bulb's CURRENT level and is
+        # brightest half a period in — anchoring it ON the beat put the
+        # peak on the off-beat, in the one show whose whole job is the
+        # beat. Same fix as the compiled `pulse` effect: start the wave
+        # `peak_shift` ahead, and drop an anchor whose lead-in would land
+        # before t=0 rather than clamping it back onto the off-beat.
+        lead_s = peak_shift("sine", period_ms / 1000.0)
         for start in beats[::8]:
+            if start - lead_s < 0:
+                continue
             pulse = packets.set_waveform(
                 transient=True,
                 hue=int(200 / 360 * 65535), saturation=int(0.9 * 65535),
@@ -734,10 +754,33 @@ def metronome_cues(analysis: dict, devices: dict[str, dict],
                 period_ms=period_ms, cycles=8.0,
                 waveform=packets.WAVEFORM_SINE,
                 target=bytes.fromhex(serial), source=source)
-            cues.append({"t": round(start, 4), "ch": "lifx", "serial": serial,
-                         "lead_ms": lead_ms,
+            cues.append({"t": round(start - lead_s, 4), "ch": "lifx",
+                         "serial": serial, "lead_ms": lead_ms,
                          "payload_b64": base64.b64encode(pulse).decode(),
                          "desc": "beat pulse x8"})
+        for at in drops:
+            # Dark first, with no fade — the attack is the test. The
+            # flash is a cold white so it cannot be mistaken for a beat
+            # pulse, and the base is re-sent afterwards so the next
+            # 8-beat waveform starts from the colour it expects.
+            dark = packets.set_color(
+                hue=0, saturation=0, brightness=0, kelvin=3500,
+                duration_ms=120, target=bytes.fromhex(serial), source=source)
+            cues.append({"t": round(max(0.0, at - 0.4), 4), "ch": "lifx",
+                         "serial": serial, "lead_ms": lead_ms,
+                         "payload_b64": base64.b64encode(dark).decode(),
+                         "desc": "drop blackout"})
+            flash = packets.set_color(
+                hue=0, saturation=0, brightness=65535, kelvin=4000,
+                duration_ms=0, target=bytes.fromhex(serial), source=source)
+            cues.append({"t": round(at, 4), "ch": "lifx", "serial": serial,
+                         "lead_ms": lead_ms,
+                         "payload_b64": base64.b64encode(flash).decode(),
+                         "desc": "drop flash"})
+            cues.append({"t": round(at + 0.8, 4), "ch": "lifx",
+                         "serial": serial, "lead_ms": lead_ms,
+                         "payload_b64": base64.b64encode(base).decode(),
+                         "desc": "back to base"})
     return cues
 
 
