@@ -5,6 +5,55 @@ All notable changes to the **BRight** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.19.0
+
+Test mode, and a show that never loses the beat.
+
+### Added
+
+- **🧪 Test mode — beats & drops.** The Lab's sync proof grew the other
+  half of the question: alongside the beat pulses, every selected bulb
+  now goes dark just before each drop the analyzer heard and lands
+  full-blast on the drop itself, then returns to the base. One run
+  answers both "do the lights ride the beat" and "did the analyzer hear
+  the drops where the music has them" — pulses late everywhere means
+  nudge the calibration; a flash where the music does nothing means
+  re-analyze the track. The Shows tab's per-track button is now labelled
+  **🧪 Test** and plays the same thing.
+
+### Changed
+
+- **There is always a beat on some light.** Intros, quiet sections and
+  outros now run the pulse layer too, and `plan_layers` guarantees a
+  rhythmic layer lands in *every* section: when the taste plan strands
+  the pulse (a candles-only room, a one-lamp room whose lamp the ground
+  claimed), it shares the roomiest bulb role — or in a room too small to
+  share, takes one outright, because if only one thing can happen it
+  should be the beat.
+- **A drop is the whole room.** The drop's stab used to pick a few roles
+  at the drop's own detected strength, which read as one more accent. It
+  now selects every bulb, with role manners off (the candles come too)
+  and a strength floor of 0.85 — the room goes dark in the last breath
+  before the drop and lands together, full on.
+- **Shows and Party say which is which.** The Party tab's play card has
+  a head like every other card, its Stop matches the Shows tab's
+  wording, and both tab intros say what belongs where: build and test on
+  Shows, press Play on an evening on Party.
+
+### Fixed
+
+- **The sync proof itself pulsed on the off-beat.** A LIFX sine waveform
+  starts at the bulb's current level and peaks half a period in; the
+  metronome anchored it ON the beat, so the one show whose job was the
+  beat flashed between the beats — the same inversion the compiled
+  `pulse` effect was cured of, now cured with the same `peak_shift`.
+- **Discover no longer wipes the test's picks.** Rebuilding the Lab's
+  lists kept the bulb ticks and forgot the chosen track and player, so
+  "pick, pick, Discover, Start" answered "pick an analyzed track".
+- **Revisiting the Party tab no longer drops the chosen speaker.** The
+  player list rebuilt from scratch on every visit, and a lost pick fell
+  back silently to whichever player calibrated best — a different room.
+
 ## 0.18.1
 
 The drum detector was returning nothing, on everything.
