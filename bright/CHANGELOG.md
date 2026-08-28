@@ -5,6 +5,42 @@ All notable changes to the **BRight** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.20.0
+
+The Manual tab: you are the director, live.
+
+### Added
+
+- **Manual — play the lights yourself.** A new tab between Shows and
+  Party: start a session (with a song on a calibrated player, or with no
+  music at all, to whatever is already playing) and every mapped bulb is
+  snapshotted so Stop puts the room back. While it runs:
+  - **DROP** and **FLASH** pads — everything to black, or a full-white
+    pulse the bulb itself undoes — always the whole room, sized for a
+    thumb in a dark room.
+  - **Tapped loops**: tap a beat and *♩ Loop beat* keeps it striking on
+    the lights you ticked; tap a repeating figure and *𝄆 Loop pattern*
+    replays exactly that rhythm — press it on the next repeat's first
+    beat, which is how it learns the length. *Chase* walks the taps
+    across the lights left to right (a tapped melody travelling through
+    the room); *Pulse* lands every tap on all of them. Loops run on the
+    server, so they hold time when the phone's browser naps; a new loop
+    replaces any loop sharing a light, because a bulb runs one waveform
+    at a time; and a rhythm faster than the bulbs can follow is refused
+    with the reason, not sent.
+  - **One-shot effects**: the catalog's looks, fired once for eight
+    beats at the tapped tempo on the ticked lights — and saved effects
+    fire with the lights they were saved with. Switch lights get plain
+    on/off buttons.
+  - Everything renders through the compiler's own packet builder — the
+    same strike shape the compiled `hit` uses — and every stop path
+    (the tab's own, any Stop button, a show or party starting) ends the
+    loops, halts the waveforms and restores the room.
+  - `tests/manual/measure-manual.mjs` measures the tab the way it is
+    used: pad sizes, the touch floor, the tap pad counting, and a
+    gesture before a session exists coming back with its reason. It
+    runs in CI with the other layout measures.
+
 ## 0.19.0
 
 Test mode, and a show that never loses the beat.

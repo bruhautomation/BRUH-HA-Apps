@@ -661,3 +661,55 @@ select { max-width: 100%; }
 /* Narrow on purpose: it is a qualifier on the row, not the row's
    subject, and at full width it competes with the song's name. */
 .party-version { max-width: 190px; }
+
+/* -- The Manual tab: a performance surface, sized for thumbs ----------- */
+/* Pads are pressed mid-song, in the dark, without looking — so they are
+   the biggest targets on the panel, and each carries its own colour as
+   well as its word. */
+.mn-pads {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.mn-pad {
+  min-height: 84px;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  border-radius: 12px;
+}
+.mn-drop {
+  background: #05070a;
+  color: var(--ink);
+  border-color: var(--line);
+}
+.mn-drop:hover { background: #000; }
+.mn-flash {
+  background: var(--warn);
+  color: #141002;
+  border-color: var(--warn);
+}
+.mn-flash:hover { background: #f4c352; }
+.mn-tap {
+  width: 100%;
+  min-height: 96px;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  border-radius: 12px;
+  /* A tap pad that selects its own label on a double-tap is a pad that
+     fights the rhythm it exists to record. */
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+}
+.mn-pad, .btn.mn-tap { touch-action: manipulation; }
+.mn-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+.mn-grid .btn { min-height: 48px; }
+/* A running loop's row: the ✕ is the whole point of listing it. */
+#mnLoops .row-actions .btn { min-height: 40px; }

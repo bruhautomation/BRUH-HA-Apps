@@ -126,6 +126,13 @@ jobs:
       - name: Measure BRight's show editor
         run: node tests/manual/measure-showeditor.mjs
 
+      # The Manual tab, on the same booted panel: a performance surface
+      # used one-handed in a dark room, so the measures are about the
+      # hand — pad sizes, the tap pad counting, and a gesture before a
+      # session exists coming back with its reason.
+      - name: Measure BRight's Manual tab
+        run: node tests/manual/measure-manual.mjs
+
   hassfest:
     name: HA integration validation
     runs-on: ubuntu-latest

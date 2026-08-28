@@ -58,6 +58,12 @@ class Conductor:
     _driven: set[str] = frozenset()  # type: ignore[assignment]
     _playing_on: str | None = None
     _restorer: "asyncio.Task | None" = None
+    # Awaited at the top of stop(), before anything else. The Manual
+    # tab's loops hang here: they run on their own tasks outside the
+    # conductor, and a loop that survived a stop — or a show starting,
+    # which stops first — would fight the new run for its own bulbs
+    # forever.
+    before_stop = None
 
     def __init__(self, engine) -> None:
         self.engine = engine
@@ -592,6 +598,11 @@ class Conductor:
                 "effective_offset_ms": updated.get("effective_offset_ms")}
 
     async def stop(self, restore: bool = True) -> dict:
+        if self.before_stop is not None:
+            try:
+                await self.before_stop()
+            except Exception as exc:  # noqa: BLE001 — the stop still happens
+                log.warning("live loops did not stop cleanly: %s", exc)
         for task in (self._task, self._poller, self._verify, self._restorer):
             if task is not None and not task.done():
                 task.cancel()
@@ -714,12 +725,59 @@ class Conductor:
                 log.info("drift correction: %.0fms", correction * 1000)
                 self.clock.add_drift(correction)
 
+    async def start_manual(self, *, serials: list[str],
+                           media_player: str | None = None,
+                           media_content_id: str | None = None,
+                           title: str = "Manual session",
+                           track_hash: str = "") -> dict:
+        """A session with no cue list: the Manual tab's ground.
+
+        Snapshot the named bulbs, optionally start the music, and hold —
+        every light change comes from live gestures, dispatched outside
+        the conductor. What the conductor owns is the CONTRACT around
+        them: the snapshot taken before anything is touched, the music
+        claimed so stop() can silence it, and the state every Stop
+        button and sensor follows. No calibration is required because
+        there are no cues to sync — the person's own hands are the
+        clock.
+        """
+        await self.stop(restore=True)
+        self.set_end_scene(None)
+        await self.engine.start()
+        await self._snapshot_serials(set(serials))
+        warning = None
+        if media_player and media_content_id:
+            # Claimed before the command, same as _play_one and for the
+            # same race. A music failure is a warning, not a refusal:
+            # performing to music something else is playing (or none) is
+            # half the point of a manual session.
+            self._playing_on = media_player
+            try:
+                result = await asyncio.to_thread(
+                    ha_client.play_media, media_player, media_content_id)
+            except Exception as exc:  # noqa: BLE001 — the session still starts
+                result = {"error": str(exc)}
+            if isinstance(result, dict) and result.get("error"):
+                self._playing_on = None
+                warning = f"the music could not start: {result['error']}"
+        self._write_state()
+        self._update_state(status="manual", active=True, lights_busy=True,
+                           track=title, track_hash=track_hash,
+                           media_player=media_player or "",
+                           **({"playback_warning": warning} if warning
+                              else {}))
+        return {"ok": True, "snapshotted": len(self._snapshot),
+                **({"warning": warning} if warning else {})}
+
     # -- snapshot / restore ----------------------------------------------------
     async def _take_snapshot(self, cues: list[dict]) -> None:
         """What every LIFX fixture in the show looks like before we touch
         it, so stop puts the room back instead of leaving party colors."""
-        self._snapshot = {}
         serials = {cue["serial"] for cue in cues if cue.get("ch") == "lifx"}
+        await self._snapshot_serials(serials)
+
+    async def _snapshot_serials(self, serials: set[str]) -> None:
+        self._snapshot = {}
         # Kept separately from the snapshot, and this is the distinction the
         # old code did not draw: a bulb that does not answer GetColor gets no
         # snapshot entry, but it is still a bulb this show is about to hand a

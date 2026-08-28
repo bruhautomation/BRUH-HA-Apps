@@ -4392,6 +4392,373 @@
     }
   });
 
+  // ------------------------------------------------------------------
+  // Manual — lights played by hand, live (semi-manual, semi-automated)
+  // ------------------------------------------------------------------
+  // The phone is the instrument: taps are recorded here (timing between
+  // taps is what matters, so the browser's own clock is the right one)
+  // and the SERVER runs the loops, because a phone tab sleeps and
+  // throttles and the beat must not.
+  const mn = { taps: [], bpm: 0, catalog: [], presets: [] };
+
+  // The curated one-shot rack, in the order a performance reaches for
+  // them. Filtered against the real catalog, so a renamed effect drops
+  // out instead of firing errors.
+  const MN_SHOTS = ["stab", "strobe", "sparkle", "chase", "theater",
+                    "sweep", "rainbow", "colour_cycle", "colour_drift",
+                    "saturate", "breathe", "wash"];
+
+  function mnSelect() {
+    // Same contract as the Test card's bulb picker: everything ticked
+    // (or nothing to tick) means the whole room, but a populated list
+    // with NOTHING ticked is a refusal, not "all" — unticking the house
+    // must not aim at the house.
+    const boxes = Array.from(
+      $("mnFixtures").querySelectorAll("input[data-id]"));
+    const ids = boxes.filter((i) => i.checked).map((i) => i.dataset.id);
+    if (boxes.length && !ids.length) return null;
+    return ids.length && ids.length < boxes.length ? { ids } : {};
+  }
+
+  function mnStyle() {
+    const picked = document.querySelector("input[name='mnStyle']:checked");
+    return picked ? picked.value : "pulse";
+  }
+
+  async function loadManual() {
+    try {
+      const [lib, profiles, map, catalog, presets] = await Promise.all([
+        api("api/library"), api("api/calibrate/profiles"), api("api/map"),
+        api("api/effects/catalog"),
+        api("api/effects/presets").catch(() => ({ presets: [] })),
+      ]);
+      mn.catalog = catalog.catalog || [];
+      mn.presets = presets.presets || [];
+      const trackSelect = $("mnTrack");
+      const hadTrack = trackSelect.value;
+      trackSelect.innerHTML = '<option value="">— no music (something ' +
+        "else is playing) —</option>";
+      for (const track of (lib.tracks || []).filter((t) => t.analyzed)) {
+        const option = document.createElement("option");
+        option.value = track.hash;
+        option.textContent = track.name;
+        option.selected = track.hash === hadTrack;
+        trackSelect.appendChild(option);
+      }
+      const playerSelect = $("mnPlayer");
+      const hadPlayer = playerSelect.value;
+      playerSelect.innerHTML =
+        '<option value="">— calibrated player —</option>';
+      for (const profile of profiles.profiles || []) {
+        const option = document.createElement("option");
+        option.value = profile.entity_id;
+        option.textContent = profile.entity_id;
+        option.selected = profile.entity_id === hadPlayer;
+        playerSelect.appendChild(option);
+      }
+      // The lights, with ticks remembered across a reload of this list.
+      const bulbs = (map.fixtures || []).filter((f) => f.kind === "lifx");
+      const box = $("mnFixtures");
+      const was = new Map(Array.from(box.querySelectorAll("input[data-id]"))
+        .map((input) => [input.dataset.id, input.checked]));
+      box.innerHTML = "";
+      for (const fixture of bulbs) {
+        const label = document.createElement("label");
+        label.className = "fx-fixture";
+        const check = document.createElement("input");
+        check.type = "checkbox";
+        check.checked = was.has(fixture.id) ? was.get(fixture.id) : true;
+        check.dataset.id = fixture.id;
+        check.dataset.role = fixture.role || "";
+        const text = document.createElement("span");
+        text.textContent = (fixture.label || fixture.id) +
+          (fixture.role ? " · " + fixture.role : "");
+        label.appendChild(check);
+        label.appendChild(text);
+        box.appendChild(label);
+      }
+      const roles = Array.from(new Set(bulbs.map((f) => f.role)
+        .filter(Boolean)));
+      const quick = $("mnRoleQuick");
+      quick.innerHTML = "";
+      for (const role of roles) {
+        const chip = document.createElement("button");
+        chip.className = "btn small";
+        chip.textContent = role;
+        chip.dataset.role = role;
+        quick.appendChild(chip);
+      }
+      // The one-shot rack.
+      const rack = $("mnEffects");
+      rack.innerHTML = "";
+      const byType = new Map(mn.catalog.map((e) => [e.type, e]));
+      for (const type of MN_SHOTS) {
+        const spec = byType.get(type);
+        if (!spec) continue;
+        const shot = document.createElement("button");
+        shot.className = "btn";
+        shot.textContent = spec.label || type;
+        shot.dataset.fx = type;
+        shot.title = spec.blurb || "";
+        rack.appendChild(shot);
+      }
+      const presetRack = $("mnPresets");
+      presetRack.innerHTML = "";
+      for (const preset of mn.presets) {
+        const shot = document.createElement("button");
+        shot.className = "btn";
+        shot.textContent = "★ " + preset.name;
+        shot.dataset.preset = preset.name;
+        shot.title = "Saved effect — fires with the lights it was saved with";
+        presetRack.appendChild(shot);
+      }
+      // Switch lights, if the map has any.
+      const auxRoles = Array.from(new Set((map.fixtures || [])
+        .filter((f) => f.kind !== "lifx").map((f) => f.role)
+        .filter(Boolean)));
+      $("mnAuxCard").hidden = !auxRoles.length;
+      const aux = $("mnAux");
+      aux.innerHTML = "";
+      for (const role of auxRoles) {
+        for (const state of ["on", "off"]) {
+          const swb = document.createElement("button");
+          swb.className = "btn small";
+          swb.textContent = role + " " + state;
+          swb.dataset.auxRole = role;
+          swb.dataset.auxState = state;
+          aux.appendChild(swb);
+        }
+      }
+      refreshMnState();
+    } catch (error) {
+      $("mnStatus").textContent = "failed: " + error.message;
+    }
+  }
+
+  async function refreshMnState() {
+    try {
+      const state = await api("api/live/state");
+      const session = state.session || {};
+      const live = session.active && session.status === "manual";
+      $("btnMnStart").hidden = live;
+      $("btnMnStop").hidden = !live;
+      if (live) {
+        $("mnStatus").textContent = "Session running" +
+          (session.track && session.track !== "Manual session"
+            ? " · ♪ " + session.track : "") +
+          (session.playback_warning
+            ? " · ⚠ " + session.playback_warning : "");
+      }
+      const list = $("mnLoops");
+      list.innerHTML = "";
+      for (const loop of state.loops || []) {
+        const row = document.createElement("div");
+        row.className = "row";
+        row.innerHTML = '<div class="row-main"><strong></strong>' +
+          '<span class="rtt small"></span></div>' +
+          '<div class="row-actions"><button class="btn small" ' +
+          'data-loop="' + loop.id + '">✕ Stop</button></div>';
+        row.querySelector("strong").textContent = loop.label +
+          " (" + loop.style + ")";
+        row.querySelector(".rtt").textContent =
+          loop.strikes + " strike" + (loop.strikes === 1 ? "" : "s") +
+          " / " + loop.period_s + "s · " + (loop.lights || []).join(", ");
+        list.appendChild(row);
+      }
+    } catch (ignored) { /* the next poll answers */ }
+  }
+
+  setInterval(() => {
+    if ($("pane-manual").classList.contains("active")) refreshMnState();
+  }, 3000);
+
+  $("btnMnStart").addEventListener("click", async () => {
+    const status = $("mnStatus");
+    const track = $("mnTrack").value;
+    const player = $("mnPlayer").value;
+    if (track && !player) {
+      status.textContent = "Pick a player to hear the track on — or " +
+        "clear the track to perform without music.";
+      return;
+    }
+    try {
+      const result = await post("api/live/start", {
+        track_hash: track || undefined,
+        media_player: player || undefined,
+      });
+      status.textContent = "Session on: " + result.snapshotted +
+        " lights snapshotted." +
+        (result.warning ? " ⚠ " + result.warning : "");
+      refreshMnState();
+      pollRunState();
+    } catch (error) {
+      status.textContent = "failed: " + error.message;
+    }
+  });
+
+  $("btnMnStop").addEventListener("click", async () => {
+    try {
+      await post("api/live/stop", {});
+      $("mnStatus").textContent = "Stopped; lights restored.";
+      refreshMnState();
+      pollRunState();
+    } catch (error) {
+      $("mnStatus").textContent = "stop failed: " + error.message;
+    }
+  });
+
+  // Pads fire on pointerDOWN — the press is the beat, and waiting for
+  // the release adds the one latency a hand can feel.
+  for (const [id, pad] of [["btnMnDrop", "drop"], ["btnMnFlash", "flash"]]) {
+    $(id).addEventListener("pointerdown", async (event) => {
+      event.preventDefault();
+      try {
+        await post("api/live/pad", { pad });
+      } catch (error) {
+        $("mnStatus").textContent = error.message;
+      }
+    });
+  }
+
+  $("btnMnTap").addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    mn.taps.push(performance.now());
+    if (mn.taps.length > 64) mn.taps.shift();
+    const gaps = [];
+    for (let i = 1; i < mn.taps.length; i += 1) {
+      gaps.push(mn.taps[i] - mn.taps[i - 1]);
+    }
+    if (gaps.length) {
+      const sorted = gaps.slice(-16).sort((a, b) => a - b);
+      const median = sorted[Math.floor(sorted.length / 2)];
+      mn.bpm = Math.round(60000 / median);
+    }
+    $("mnTapReadout").textContent = mn.taps.length + " tap" +
+      (mn.taps.length === 1 ? "" : "s") +
+      (mn.bpm ? " · ~" + mn.bpm + " BPM" : "");
+  });
+
+  $("btnMnTapClear").addEventListener("click", () => {
+    mn.taps = [];
+    $("mnTapReadout").textContent = "no taps yet";
+  });
+
+  async function mnStartLoop(mode) {
+    const status = $("mnStatus");
+    const select = mnSelect();
+    if (select === null) {
+      status.textContent = "Tick at least one light — or press All.";
+      return;
+    }
+    if (mn.taps.length < (mode === "beat" ? 2 : 1)) {
+      status.textContent = mode === "beat"
+        ? "Tap the beat at least twice first."
+        : "Tap the pattern first, then press Loop on the next repeat.";
+      return;
+    }
+    const first = mn.taps[0];
+    const body = {
+      mode,
+      style: mnStyle(),
+      select,
+      taps_ms: mn.taps.map((t) => Math.round(t - first)),
+    };
+    if (mode === "pattern") {
+      // The press IS the loop's length: you tap the figure, then press
+      // Loop exactly where it would start again.
+      body.period_ms = Math.round(performance.now() - first);
+    }
+    try {
+      const result = await post("api/live/loop", body);
+      mn.taps = [];
+      $("mnTapReadout").textContent = "looping · " + result.strikes +
+        " strike" + (result.strikes === 1 ? "" : "s") + " / " +
+        result.period_s + "s";
+      refreshMnState();
+    } catch (error) {
+      status.textContent = error.message;
+    }
+  }
+
+  $("btnMnLoopBeat").addEventListener("click", () => mnStartLoop("beat"));
+  $("btnMnLoopPattern").addEventListener("click",
+    () => mnStartLoop("pattern"));
+
+  $("mnLoops").addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-loop]");
+    if (!button) return;
+    try {
+      await fetch("api/live/loop/" + button.dataset.loop,
+                  { method: "DELETE" });
+      refreshMnState();
+    } catch (error) {
+      $("mnStatus").textContent = error.message;
+    }
+  });
+
+  $("btnMnAll").addEventListener("click", () => {
+    for (const input of $("mnFixtures").querySelectorAll("input[data-id]")) {
+      input.checked = true;
+    }
+  });
+  $("btnMnNone").addEventListener("click", () => {
+    for (const input of $("mnFixtures").querySelectorAll("input[data-id]")) {
+      input.checked = false;
+    }
+  });
+  $("mnRoleQuick").addEventListener("click", (event) => {
+    const chip = event.target.closest("button[data-role]");
+    if (!chip) return;
+    for (const input of $("mnFixtures").querySelectorAll("input[data-id]")) {
+      input.checked = input.dataset.role === chip.dataset.role;
+    }
+  });
+
+  $("mnEffects").addEventListener("pointerdown", async (event) => {
+    const button = event.target.closest("button[data-fx]");
+    if (!button) return;
+    event.preventDefault();
+    const select = mnSelect();
+    if (select === null) {
+      $("mnStatus").textContent = "Tick at least one light — or press All.";
+      return;
+    }
+    try {
+      await post("api/live/effect", {
+        type: button.dataset.fx, select,
+        bpm: mn.bpm || 120, seconds: 8,
+      });
+    } catch (error) {
+      $("mnStatus").textContent = error.message;
+    }
+  });
+
+  $("mnPresets").addEventListener("pointerdown", async (event) => {
+    const button = event.target.closest("button[data-preset]");
+    if (!button) return;
+    event.preventDefault();
+    const preset = mn.presets.find((p) => p.name === button.dataset.preset);
+    if (!preset) return;
+    try {
+      await post("api/live/effect", {
+        effect: preset.effect, bpm: mn.bpm || 120, seconds: 8,
+      });
+    } catch (error) {
+      $("mnStatus").textContent = error.message;
+    }
+  });
+
+  $("mnAux").addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-aux-role]");
+    if (!button) return;
+    try {
+      await post("api/live/aux", { role: button.dataset.auxRole,
+                                   state: button.dataset.auxState });
+    } catch (error) {
+      $("mnStatus").textContent = error.message;
+    }
+  });
+
   // The Lab is the tab the page opens on, so its choices load with it.
   loadSyncChoices();
 
@@ -4422,5 +4789,6 @@
       loadPartyPlayers();
       loadPartySet();
     }
+    if (button.dataset.tab === "manual") loadManual();
   });
 })();
