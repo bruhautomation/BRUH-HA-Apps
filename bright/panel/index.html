@@ -488,13 +488,26 @@
       </div>
     </div>
   </section>
-  <!-- Manual: the room IS the instrument. One screen, no scrolling to
-       perform — the map is where you tap, and every other control is a
-       row sized to a thumb around it. Nothing here is a card, because a
-       stack of cards on a phone is a stack of things you cannot see at
-       once, and this tab is used mid-song without looking. -->
+  <!-- Manual: the room IS the instrument, and the transport is what tells
+       you the instrument is in time. One screen, no scrolling to perform —
+       the map is where you tap, and every other control is a row sized to
+       a thumb around it. Nothing here is a card, because a stack of cards
+       on a phone is a stack of things you cannot see at once, and this tab
+       is used mid-song without looking. -->
   <section class="pane" id="pane-manual">
-    <div class="mn-session">
+    <!-- The transport. A DAW answers three questions before you ask them —
+         how fast, where in the bar, and where the loop is — and every one
+         of these is drawn from a clock running in this page, never from a
+         message arriving over the network. -->
+    <div class="mn-transport">
+      <span id="mnBeatDot" class="mn-beatdot" aria-hidden="true"></span>
+      <span id="mnBpm" class="mn-bpm">— BPM</span>
+      <span id="mnBarBeat" class="mn-barbeat">bar — · beat —</span>
+      <span id="mnSource" class="mn-src" hidden></span>
+      <button id="btnMnTempoTap" class="btn mn-tt" hidden
+              title="Tap four beats to set the tempo">TAP</button>
+      <button id="btnMnDownbeat" class="btn mn-tt" hidden
+              title="Call this instant bar 1">⤓ 1</button>
       <details id="mnSetup" open>
         <summary title="Session setup" aria-label="Session setup"><span
           class="mn-caret">▾</span></summary>
@@ -504,19 +517,33 @@
         <select id="mnPlayer"><option value="">— speaker —</option></select>
         <button id="btnMnStart" class="btn">▶ Start</button>
       </details>
-      <button id="btnMnStop" class="btn mn-stop" hidden>■ Stop &amp;
-        restore</button>
-      <span id="mnStatus" class="mn-status"></span>
+      <button id="btnMnStop" class="btn mn-stop" hidden
+              title="Stop &amp; restore the room">■</button>
     </div>
+    <div id="mnStatus" class="mn-status"></div>
 
     <div id="mnFloor" class="map-floor mn-floor"></div>
 
-    <div class="mn-row mn-loop-row">
-      <button id="btnMnLoop" class="btn mn-loop">⟳ Loop</button>
-      <button id="btnMnTapClear" class="btn mn-clear"
-              title="Forget the taps">✕</button>
-      <span id="mnTapReadout" class="mn-readout">no taps yet</span>
+    <!-- Arming, and then the clips it makes. You choose the LENGTH before
+         you play, which is the whole difference from v1: a loop whose
+         length is inferred from when you stopped tapping can only ever be
+         approximately a bar. The button is also the state readout — REC,
+         then the count-in, then the bar it is on — because a control that
+         changed nothing you can see is a control nobody presses twice. -->
+    <div class="mn-rec" id="mnRec">
+      <div class="mn-seg" id="mnRecBars" role="group"
+           aria-label="Loop length in bars"></div>
+      <div class="mn-seg" id="mnRecQuant" role="group"
+           aria-label="Snap notes to"></div>
+      <button id="btnMnRec" class="mn-recbtn"><span class="mn-recfill"
+        id="mnRecFill" aria-hidden="true"></span><span class="mn-reclabel"
+        id="mnRecLabel">● REC</span></button>
     </div>
+
+    <!-- One tile per clip: a ring sweeping its own cycle, its length, and
+         its pattern drawn out. A loop you cannot see the contents of is a
+         loop you cannot tell from a broken one. -->
+    <div class="mn-cliprail" id="mnClipRail"></div>
 
     <!-- The two panic pads. The biggest targets on the panel, because
          they are pressed in a dark room without looking, and they always
@@ -528,9 +555,6 @@
     </div>
 
     <div id="mnFx" class="mn-fx"></div>
-
-    <p class="mn-hint">Tap bulbs to play them · tap a rhythm then ⟳ on the
-      repeat · hold a glowing bulb to stop its loop</p>
   </section>
   <section class="pane" id="pane-calibrate">
     <p class="muted tab-intro">How long your speaker takes from "play"
