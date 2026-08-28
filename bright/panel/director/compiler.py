@@ -393,6 +393,17 @@ def script_actions(script: dict, fixtures: list[dict],
                              "analyzer ranked, and this track was analysed "
                              "before it ranked them — re-run Analyze on the "
                              "Library tab, then compile again")
+        elif not rendered and effect["type"] in fx.NEEDS_HITS:
+            # The track HAS ranked hits — this effect's window just holds
+            # none that clear its own filters. Without the note, a verse
+            # whose accent goes silent is pixel-identical to a broken
+            # effect, and the track-wide check above cannot see it.
+            band = (effect.get("params") or {}).get("band") or "any"
+            entry["note"] = (
+                f"no {'ranked' if band == 'any' else band} drum hits above "
+                f"this effect's min_strength inside its window — it renders "
+                f"nothing here; lower min_strength, widen the band, or use "
+                f"a `hit` on the beat grid instead")
         breakdown.append(entry)
 
     for index, scene in enumerate(script.get("scenes") or []):

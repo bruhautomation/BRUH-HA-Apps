@@ -392,6 +392,10 @@ CATALOG: dict[str, dict[str, Any]] = {
         "channel": "light",
         "params": {
             "every_beats": _num(0.25, 8, 1),
+            # A uniform shift of every strike, in beats — what puts a
+            # backbeat instrument on 2 and 4 while the kick holds 1 and
+            # 3. `stagger_beats` cannot say this: it is per-fixture.
+            "offset_beats": _num(0, 8, 0),
             "peak": _num(0, 1, 1.0),
             "floor": _num(0, 1, 0.1),
             "cycles_per_cue": _num(1, 32, 8, integer=True),
@@ -818,9 +822,18 @@ class Grid:
             step = every * self.beat_s
             count = min(MAX_STEPS, int((end - start) / step) + 1)
             return [start + i * step for i in range(count)]
-        source = self.downbeats if (align in ("downbeat", "bar")
-                                    and self.downbeats) else self.beats
-        inside = [b for b in source if start - 1e-6 <= b < end]
+        # Bar and downbeat alignment pick WHERE the stepping starts, not
+        # what a step is: `every_beats` is in beats everywhere a caller
+        # does arithmetic with it (period_ms, cycles_per_cue). Striding
+        # the downbeat list itself by `every` counted bars instead, so an
+        # every-8-beats hit anchored every 32 beats and each 8-beat
+        # packet was followed by 24 beats of silence.
+        inside = [b for b in self.beats if start - 1e-6 <= b < end]
+        if align in ("downbeat", "bar") and self.downbeats:
+            first = next((d for d in self.downbeats
+                          if start - 1e-6 <= d < end), None)
+            if first is not None:
+                inside = [b for b in inside if b >= first - 1e-6]
         if not inside:
             step = every * self.beat_s
             count = min(MAX_STEPS, int((end - start) / step) + 1)
@@ -1197,6 +1210,21 @@ def _r_stab(out, effect, cast, grid, ctx) -> None:
         out.append(_wave(fixture, ctx["start"], hue, sat,
                          _cap(fixture, 0.7 + 0.3 * p["strength"], effect),
                          int(p["hold_ms"]), 1.0, p["shape"], 0.2, "stab"))
+        if blackout_s > 0:
+            # The wave is transient — the bulb returns to its "current"
+            # colour when it ends, and the dip above IS that colour. A
+            # stab with no dip lands back where the scene had the light;
+            # one with a dip used to land back at 2% and sit there until
+            # some other effect happened to name the bulb — on a
+            # whole-room drop, that was most of the room going dark for
+            # the rest of the section. Hand the light back to the scene:
+            # its palette colour at the scene's own base level.
+            scene_hue, scene_sat = _colour(ctx["palette"], index)
+            out.append(_set(fixture,
+                            ctx["start"] + p["hold_ms"] / 1000.0,
+                            scene_hue, scene_sat,
+                            _cap(fixture, ctx["base"], effect),
+                            400, "back to the scene"))
 
 
 def _r_blackout(out, effect, cast, grid, ctx) -> None:
@@ -1240,9 +1268,10 @@ def _r_hit(out, effect, cast, grid, ctx) -> None:
     period_s = p["every_beats"] * grid.beat_s
     anchors = grid.ticks(ctx["start"], ctx["end"],
                          p["every_beats"] * cycles, effect.get("align", "beat"))
+    phase = p["offset_beats"] * grid.beat_s
     for index, fixture in enumerate(cast):
         hue, sat = (0.0, 0.0) if p["white"] else _colour(ctx["palette"], index)
-        offset = index * p["stagger_beats"] * grid.beat_s
+        offset = phase + index * p["stagger_beats"] * grid.beat_s
         peak = _cap(fixture, p["peak"], effect)
         floor = _cap(fixture, min(p["floor"], p["peak"]), effect)
         for anchor in anchors:

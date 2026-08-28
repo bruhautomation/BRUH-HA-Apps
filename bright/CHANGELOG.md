@@ -5,6 +5,124 @@ All notable changes to the **BRight** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.19.0
+
+Test mode, and a show that never loses the beat.
+
+### Added
+
+- **🧪 Test mode — beats & drops.** The Lab's sync proof grew the other
+  half of the question: alongside the beat pulses, every selected bulb
+  now goes dark just before each drop the analyzer heard and lands
+  full-blast on the drop itself, then returns to the base. One run
+  answers both "do the lights ride the beat" and "did the analyzer hear
+  the drops where the music has them" — pulses late everywhere means
+  nudge the calibration; a flash where the music does nothing means
+  re-analyze the track. The Shows tab's per-track button is now labelled
+  **🧪 Test** and plays the same thing.
+
+### Changed
+
+- **There is always a beat on some light.** Intros, quiet sections and
+  outros now run the pulse layer too, and `plan_layers` guarantees a
+  rhythmic layer lands in *every* section: when the taste plan strands
+  the pulse (a candles-only room, a one-lamp room whose lamp the ground
+  claimed), it shares the roomiest bulb role — or in a room too small to
+  share, takes one outright, because if only one thing can happen it
+  should be the beat.
+- **A drop is the whole room.** The drop's stab used to pick a few roles
+  at the drop's own detected strength, which read as one more accent. It
+  now selects every bulb, with role manners off (the candles come too)
+  and a strength floor of 0.85 — the room goes dark in the last breath
+  before the drop and lands together, full on.
+- **Shows and Party say which is which.** The Party tab's play card has
+  a head like every other card, its Stop matches the Shows tab's
+  wording, and both tab intros say what belongs where: build and test on
+  Shows, press Play on an evening on Party.
+
+### Fixed
+
+- **The sync proof itself pulsed on the off-beat.** A LIFX sine waveform
+  starts at the bulb's current level and peaks half a period in; the
+  metronome anchored it ON the beat, so the one show whose job was the
+  beat flashed between the beats — the same inversion the compiled
+  `pulse` effect was cured of, now cured with the same `peak_shift`.
+- **Discover no longer wipes the test's picks.** Rebuilding the Lab's
+  lists kept the bulb ticks and forgot the chosen track and player, so
+  "pick, pick, Discover, Start" answered "pick an analyzed track".
+- **Revisiting the Party tab no longer drops the chosen speaker.** The
+  player list rebuilt from scratch on every visit, and a lost pick fell
+  back silently to whichever player calibrated best — a different room.
+- **A dipped stab no longer strands its lights at 2%.** The stab's wave
+  is transient — the bulb returns to its "current" colour when it ends,
+  and the pre-stab dip *was* that colour — so every light a drop
+  touched sat near-dark until something else happened to name it. The
+  stab now hands each light back to the scene's palette at the scene's
+  base level after its hold.
+- **A candles-only room's peak carries a beat again.** The pulse layer
+  picked a chase or theater alternation by fixture *count*, both of
+  which the harsh-effect filter keeps candles out of — so the compiled
+  beat drove zero lights. A role that does not pulse now takes the
+  `hit` form, which candles are allowed to run.
+- **A party's end scene fired between every two songs.** `_restore()`
+  used the run's end scene on every track's natural completion, so the
+  good-night scene was called after song one of the evening it was
+  configured to close. A track ending inside a party restores the
+  snapshot only; the scene fires once, when the run actually ends —
+  and it is consumed on use, so a stale scene can no longer refire on
+  a later bare stop of a show that never asked for one.
+- **The run state collapsed to idle between party tracks.** Every Stop
+  button, the trim readout and the live picture vanished for the
+  seconds between songs, while nudge/skip/auto-sync all refused
+  against `active: false` — and the accumulated trim readout never
+  came back for the rest of the evening. `_run` no longer writes the
+  idle base mid-party; the party loop ends the evening.
+- **A show is stoppable from the first second, and a failed one says
+  so.** `start()` wrote `active: false` until after the snapshot round
+  and the play command — seconds, with a slow bulb — so the panel hid
+  Stop exactly when someone most wants it. It now reports
+  `starting`/active immediately; a show that dies also drops `active`
+  with its error instead of leaving a Stop button over a dead run, and
+  its restore task is held so a quick restart cannot be hit by the old
+  snapshot's colours.
+- **A Stop racing the play command left the music playing.** The
+  player was only recorded as "ours to silence" after `play_media`
+  returned, and a stop in that window cancelled the coroutine while
+  the command still reached the speaker. The claim now precedes the
+  command.
+- **Every scene compiled two full-room washes, and the second ran the
+  dynamics backwards.** The choreographer's own wash silently overrode
+  the scene brightness the compiler had just set — with constants that
+  grounded quiet sections out *brighter* than choruses — and doubled
+  the packet burst at every section boundary. The wash now carries
+  SECTION_LEVELS' base and the scene says `"base": false`.
+- **A verse with drums under the accent's threshold had no rhythm at
+  all.** The accent-or-grid choice was made once per track, so a
+  section whose window held no qualifying hits ran an accent that
+  rendered zero actions, with no note anywhere. The choice is
+  per-section now, and a hand-written accent that renders nothing in
+  its window says why on its own row.
+- **The grid-fallback snare played beats 1 and 3.** With no ranked
+  hits, the snare layer anchored on the section's first beat in unison
+  with the kick. `hit` grew `offset_beats`, and the fallback snare
+  sits on the backbeat.
+- **Bar and downbeat alignment counted bars, not beats.** `Grid.ticks`
+  strode the downbeat list by `every_beats`, so an every-8-beats hit
+  anchored every 32 beats — each 8-beat packet followed by 24 beats of
+  silence. Alignment now picks where the stepping *starts*; the
+  spacing stays in beats, which is what every caller's period
+  arithmetic assumes.
+- **Party lights never turned off until the track ended.** Each
+  mid/peak section said "on" and nothing ever said "off", so a switch
+  lit in the first chorus burned through every breakdown. Every
+  section now states which way its switches should be.
+- **The editor's live playhead snapped backwards through quiet
+  stretches.** The conductor stamps position only as cues dispatch, so
+  the same stamp arrived on every poll and the playhead lurched back
+  2.5 seconds, over and over, exactly where the show goes still. The
+  editor now re-anchors only when the stamp moves — the guard the
+  party view already had.
+
 ## 0.18.1
 
 The drum detector was returning nothing, on everything.

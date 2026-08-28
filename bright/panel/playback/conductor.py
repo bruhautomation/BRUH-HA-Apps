@@ -27,6 +27,7 @@ import ha_client
 import media_source
 import playback_check
 from analyzer import library
+from director.effects import peak_shift
 from lifx import packets
 from playback.clock import ShowClock
 from playback.drift import DriftEstimator
@@ -56,6 +57,7 @@ class Conductor:
     # is not a set a stop path can read.
     _driven: set[str] = frozenset()  # type: ignore[assignment]
     _playing_on: str | None = None
+    _restorer: "asyncio.Task | None" = None
 
     def __init__(self, engine) -> None:
         self.engine = engine
@@ -63,6 +65,7 @@ class Conductor:
         self._task: asyncio.Task | None = None
         self._poller: asyncio.Task | None = None
         self._verify: asyncio.Task | None = None
+        self._restorer: asyncio.Task | None = None
         self._snapshot: dict[str, dict] = {}
         self._end_scene: str | None = None
         self._driven: set[str] = set()
@@ -111,17 +114,33 @@ class Conductor:
                         media_content_id: str, title: str,
                         duration_s: float, offset_ms: float,
                         status: str = "playing",
-                        track_hash: str = "") -> None:
+                        track_hash: str = "",
+                        scene_on_end: bool = True) -> None:
         """One track, start to restored lights. Awaited inline by the party
-        loop; wrapped in a task by single-show start()."""
+        loop; wrapped in a task by single-show start().
+
+        `scene_on_end=False` is the party's per-track case: an end scene
+        belongs to the END of the run, and a track finishing naturally
+        inside a party is not that — the good-night scene used to fire
+        between every two songs of the evening it was configured to end.
+        """
         await self.engine.start()
         await self._take_snapshot(cues)
         play_call = time.monotonic()
+        # Claimed BEFORE the command goes out, not after it returns: the
+        # play call runs in a thread, so a stop() racing it cancels this
+        # coroutine without stopping the thread — the command still
+        # reaches Core and the speaker still starts, and with nothing in
+        # `_playing_on` the stop had nothing to silence. A claim on a
+        # play that then fails is withdrawn below; a stray media_stop to
+        # a player that never started is harmless where a song playing
+        # through its own stop is not.
+        self._playing_on = media_player
         result = await asyncio.to_thread(
             ha_client.play_media, media_player, media_content_id)
         if isinstance(result, dict) and result.get("error"):
+            self._playing_on = None
             raise RuntimeError(result["error"])
-        self._playing_on = media_player
         # The session nudge is baked into the anchor rather than slewed in
         # afterwards: a new track must start already in tune, and the slew
         # (8ms per second, chosen so a mid-track correction is invisible)
@@ -150,7 +169,8 @@ class Conductor:
         if (profile.get("position_attr") or {}).get("reliable"):
             self._poller = asyncio.create_task(self._poll_position(media_player))
         try:
-            await self._run(sorted(cues, key=self._send_time), duration_s)
+            await self._run(sorted(cues, key=self._send_time), duration_s,
+                            scene_on_end=scene_on_end)
             # Natural completion: _run waited out the track, so the song is
             # over and there is nothing to silence. Only an INTERRUPTED run
             # leaves this set, which is what lets stop() tell the two apart.
@@ -194,6 +214,15 @@ class Conductor:
                     "error": f"{media_player} has never been calibrated — "
                              "run the Calibrate tab first"}
         self._write_state()
+        # Active from the moment the request is accepted, the way
+        # start_party already is. `_play_one` refines this to "playing"
+        # only after the snapshot round and the play command — seconds,
+        # with a slow bulb in the room — and a panel that polls in that
+        # window used to see `active: false` and hide the Stop button for
+        # exactly the seconds someone most wants it.
+        self._update_state(status="starting", active=True, track=title,
+                           track_hash=track_hash, media_player=media_player,
+                           cues_total=len(cues))
         self._task = asyncio.create_task(self._play_one(
             cues, media_player=media_player,
             media_content_id=media_content_id, title=title,
@@ -225,8 +254,16 @@ class Conductor:
         if error is None:
             return
         log.error("show stopped: %s", error)
-        self._update_state(status="error", error=str(error))
-        asyncio.get_running_loop().create_task(self._restore())
+        # `active` goes false WITH the error, or the Stop button stays
+        # rendered over a dead run and nudge/skip/autosync keep accepting
+        # against it.
+        self._update_state(status="error", error=str(error),
+                           active=False, lights_busy=False)
+        # Held, not fire-and-forget: an orphan restore racing the next
+        # start() would fire the old snapshot's colours into the middle
+        # of the new show. stop() cancels it with everything else.
+        self._restorer = asyncio.get_running_loop().create_task(
+            self._restore())
 
     async def start_party(self, queue: list[str], *, media_player: str,
                           loader, preparer=None, name: str | None = None,
@@ -296,7 +333,8 @@ class Conductor:
                     offset_ms=self._calibrated_offset(media_player)
                               or offset_ms,
                     status="party",
-                    track_hash=show.get("track_hash", "")))
+                    track_hash=show.get("track_hash", ""),
+                    scene_on_end=False))
                 self._track_task = track
                 try:
                     await track
@@ -335,6 +373,12 @@ class Conductor:
                     # A shorter breath on a skip: somebody is at the
                     # controls and waiting.
                     await asyncio.sleep(0.3 if jumped else 1.5)
+            # The evening ending naturally is the moment the end scene
+            # was named for. Each track restored the snapshot as it
+            # finished (scene_on_end=False keeps the scene out of the
+            # between-songs restores); this is the run-level ending.
+            if self._end_scene:
+                await self._restore()
             self._write_state()
 
         self._write_state()
@@ -417,9 +461,13 @@ class Conductor:
                             playback_check.flat(exc))
         self._driven = set()
 
-    async def _restore(self) -> None:
-        if self._end_scene:
-            entity = self._end_scene
+    async def _restore(self, *, use_scene: bool = True) -> None:
+        if self._end_scene and use_scene:
+            # Consumed on use, success or failure: a scene that has been
+            # fired (or tried) for this run's ending must not fire again
+            # on a later bare stop of a show that never asked for one —
+            # the stale good-night scene used to outlive its party.
+            entity, self._end_scene = self._end_scene, None
             try:
                 await asyncio.to_thread(ha_client.call_service, "scene",
                                         "turn_on", {"entity_id": entity})
@@ -544,14 +592,14 @@ class Conductor:
                 "effective_offset_ms": updated.get("effective_offset_ms")}
 
     async def stop(self, restore: bool = True) -> dict:
-        for task in (self._task, self._poller, self._verify):
+        for task in (self._task, self._poller, self._verify, self._restorer):
             if task is not None and not task.done():
                 task.cancel()
                 try:
                     await task
                 except (asyncio.CancelledError, Exception):  # noqa: BLE001
                     pass
-        self._task = self._poller = self._verify = None
+        self._task = self._poller = self._verify = self._restorer = None
         self._track_task = None
         self._party_jump = None
         self._session_nudge_ms = 0.0
@@ -593,7 +641,8 @@ class Conductor:
     def _send_time(cue: dict) -> float:
         return cue["t"] - cue.get("lead_ms", 0) / 1000.0
 
-    async def _run(self, cues: list[dict], duration_s: float) -> None:
+    async def _run(self, cues: list[dict], duration_s: float,
+                   *, scene_on_end: bool = True) -> None:
         try:
             for index, cue in enumerate(cues):
                 wait = self.clock.sleep_needed(self._send_time(cue))
@@ -614,8 +663,17 @@ class Conductor:
             tail = self.clock.sleep_needed(duration_s)
             if tail > 0:
                 await asyncio.sleep(tail)
-            await self._restore()
-            self._write_state()
+            await self._restore(use_scene=scene_on_end)
+            # Not mid-party: a party track ending is not the run ending,
+            # and resetting to the idle base here is what used to hide
+            # every Stop button, the trim readout and the live picture
+            # for the seconds between songs — while nudge/skip/autosync
+            # all refused because `active` had gone false. The party loop
+            # writes the real idle state once the evening is over.
+            # (getattr, like the class-level defaults above: a test may
+            # drive _run on a conductor that never wrote a state.)
+            if getattr(self, "state", {}).get("status") != "party":
+                self._write_state()
         except asyncio.CancelledError:
             raise
 
@@ -702,17 +760,27 @@ class Conductor:
 # ---------------------------------------------------------------------------
 def metronome_cues(analysis: dict, devices: dict[str, dict],
                    source: int) -> list[dict]:
-    """Beat pulses for every known bulb, straight from the analysis.
+    """The test show: beat pulses plus a whole-room flash on every drop,
+    straight from the analysis — no director involved.
 
     One SetWaveform per fixture every 8 beats (the bulb runs the beats in
     between), phase-anchored at the send moment — steady state is well
-    under 1 msg/s/device against the 20/s ceiling.
-    """
+    under 1 msg/s/device against the 20/s ceiling. Each drop the analyzer
+    found gets the same shape the real choreography gives it — every bulb
+    dark just before, every bulb full-on at the moment itself, back to the
+    base a breath later — so this one run answers both questions a show
+    depends on: does the pulse land ON the beat, and does the flash land
+    ON the drop. If either misses here, no choreography was going to fix
+    it; if the flash lands somewhere the music does nothing, the analyzer
+    misheard the drop, which is a different repair (re-analyze) from a
+    calibration that is off (nudge)."""
     beats = analysis.get("beats") or []
     if len(beats) < 8:
         return []
     intervals = sorted(b - a for a, b in zip(beats, beats[1:]))
     period_ms = int(intervals[len(intervals) // 2] * 1000)
+    drops = [float(d.get("t", 0)) for d in (analysis.get("drops") or [])
+             if isinstance(d, dict)]
     cues: list[dict] = []
     for serial, device in devices.items():
         lead_ms = ((device.get("rtt") or {}).get("p50_ms") or
@@ -726,7 +794,16 @@ def metronome_cues(analysis: dict, devices: dict[str, dict],
                      "lead_ms": lead_ms, "resend": True,
                      "payload_b64": base64.b64encode(base).decode(),
                      "desc": "base"})
+        # A sine waveform starts at the bulb's CURRENT level and is
+        # brightest half a period in — anchoring it ON the beat put the
+        # peak on the off-beat, in the one show whose whole job is the
+        # beat. Same fix as the compiled `pulse` effect: start the wave
+        # `peak_shift` ahead, and drop an anchor whose lead-in would land
+        # before t=0 rather than clamping it back onto the off-beat.
+        lead_s = peak_shift("sine", period_ms / 1000.0)
         for start in beats[::8]:
+            if start - lead_s < 0:
+                continue
             pulse = packets.set_waveform(
                 transient=True,
                 hue=int(200 / 360 * 65535), saturation=int(0.9 * 65535),
@@ -734,10 +811,33 @@ def metronome_cues(analysis: dict, devices: dict[str, dict],
                 period_ms=period_ms, cycles=8.0,
                 waveform=packets.WAVEFORM_SINE,
                 target=bytes.fromhex(serial), source=source)
-            cues.append({"t": round(start, 4), "ch": "lifx", "serial": serial,
-                         "lead_ms": lead_ms,
+            cues.append({"t": round(start - lead_s, 4), "ch": "lifx",
+                         "serial": serial, "lead_ms": lead_ms,
                          "payload_b64": base64.b64encode(pulse).decode(),
                          "desc": "beat pulse x8"})
+        for at in drops:
+            # Dark first, with no fade — the attack is the test. The
+            # flash is a cold white so it cannot be mistaken for a beat
+            # pulse, and the base is re-sent afterwards so the next
+            # 8-beat waveform starts from the colour it expects.
+            dark = packets.set_color(
+                hue=0, saturation=0, brightness=0, kelvin=3500,
+                duration_ms=120, target=bytes.fromhex(serial), source=source)
+            cues.append({"t": round(max(0.0, at - 0.4), 4), "ch": "lifx",
+                         "serial": serial, "lead_ms": lead_ms,
+                         "payload_b64": base64.b64encode(dark).decode(),
+                         "desc": "drop blackout"})
+            flash = packets.set_color(
+                hue=0, saturation=0, brightness=65535, kelvin=4000,
+                duration_ms=0, target=bytes.fromhex(serial), source=source)
+            cues.append({"t": round(at, 4), "ch": "lifx", "serial": serial,
+                         "lead_ms": lead_ms,
+                         "payload_b64": base64.b64encode(flash).decode(),
+                         "desc": "drop flash"})
+            cues.append({"t": round(at + 0.8, 4), "ch": "lifx",
+                         "serial": serial, "lead_ms": lead_ms,
+                         "payload_b64": base64.b64encode(base).decode(),
+                         "desc": "back to base"})
     return cues
 
 

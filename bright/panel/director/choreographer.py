@@ -76,12 +76,22 @@ BUILD_BEATS = 16
 # because a verse with a snare on every light and nothing carrying the
 # tune is a chorus that arrived early.
 LAYER_PLAN = {
-    "intro": ("ground", "voice"),
-    "quiet": ("ground", "voice"),
+    "intro": ("ground", "voice", "pulse"),
+    "quiet": ("ground", "voice", "pulse"),
     "mid":   ("voice", "ground", "kick", "pulse"),
     "peak":  ("kick", "snare", "voice", "pulse", "ground"),
-    "outro": ("ground", "voice"),
+    "outro": ("ground", "voice", "pulse"),
 }
+
+# The layers that strike rather than swell. Every section must land at
+# least one of these on at least one light — a room with no beat anywhere
+# is the single loudest way a show stops following the music, and it used
+# to be the DEFAULT for every intro, quiet and outro section.
+RHYTHMIC_LAYERS = frozenset({"pulse", "kick", "snare"})
+
+# The roles the guarantee below may reach for. Bulbs only — a beat on a
+# party-light smart plug is a relay clicking twice a second.
+_BEAT_ROLES = ("lamp", "downlight", "strip", "candle")
 
 # How many layers may share one kind of light by splitting its fixtures.
 #
@@ -163,6 +173,30 @@ def plan_layers(kind: str, fixtures: list[dict]) -> dict[str, dict]:
             order.append((layer, role))
             break
 
+    # The beat guarantee: some light, in every section, is striking on
+    # the grid. The plan above is taste and taste can strand the pulse —
+    # a candles-only room has no role in LAYER_ROLES["pulse"] at all, and
+    # a one-lamp room gives the lamp to the ground and calls the rest
+    # impossible. If no rhythmic layer landed, the pulse first tries to
+    # SHARE the roomiest bulb role, and in a room too small to share it
+    # takes a role outright from its last (lowest-priority) claimant —
+    # because if only one thing can happen, it should be the beat.
+    if not any(layer in RHYTHMIC_LAYERS for layer, _ in order):
+        def _room(role: str) -> int:
+            return len(by_role.get(role) or [])
+        candidates = [r for r in _BEAT_ROLES if _room(r)]
+        shareable = [r for r in candidates
+                     if len(wanted.get(r, ())) < min(MAX_SHARERS, _room(r))]
+        if shareable:
+            role = max(shareable, key=_room)
+            wanted.setdefault(role, []).append("pulse")
+            order.append(("pulse", role))
+        elif candidates:
+            role = max(candidates, key=_room)
+            victim = wanted[role][-1]
+            wanted[role][-1] = "pulse"
+            order[order.index((victim, role))] = ("pulse", role)
+
     out: dict[str, dict] = {}
     for layer, role in order:
         sharing = wanted[role]
@@ -185,7 +219,8 @@ def plan_layers(kind: str, fixtures: list[dict]) -> dict[str, dict]:
 
 def _layer_effects(layer: str, spec: dict, kind: str,
                    seed: int, zones: bool, depth: float,
-                   has_music: bool, has_hits: bool) -> list[dict]:
+                   has_music: bool, has_hits: bool,
+                   section_hits: dict | None = None) -> list[dict]:
     """One layer, as the effect that carries it in a section of this
     energy. Returns a list because a layer may be silent here."""
     select = spec["select"]
@@ -232,17 +267,27 @@ def _layer_effects(layer: str, spec: dict, kind: str,
                             "voices": 1, "hold": True}}]
 
     if layer in ("kick", "snare"):
-        if not has_hits:
-            # No ranked drums in this analysis: fall back to the grid,
-            # which is a worse answer and still a real one. Silence here
-            # would leave a chorus with no rhythm at all.
+        band = "low" if layer == "kick" else "mid"
+        if not has_hits or not (section_hits or {}).get(band, True):
+            # Fall back to the grid — a worse answer and still a real
+            # one. Two cases, one shape: an analysis with no ranked
+            # drums at all, and a SECTION whose window holds no hits of
+            # this band above the accent's own threshold. The choice
+            # used to be made once for the whole track, so a verse whose
+            # kick sat under the accent floor ran an accent that
+            # rendered zero actions — a whole section with no rhythm
+            # anywhere, which is the loudest way a show stops following
+            # the music. The snare's offset puts it on the backbeat
+            # (beats 2 and 4): without it the grid fallback landed the
+            # snare on 1 and 3, in unison with every other kick.
             return [{"type": "hit", "name": f"{layer} (on the grid)",
                      "select": select,
                      "params": {"every_beats": 1 if layer == "kick" else 2,
+                                "offset_beats": 0 if layer == "kick" else 1,
                                 "peak": 0.95, "floor": 0.15,
                                 "cycles_per_cue": 8}}]
         return [{"type": "accent", "name": layer, "select": select,
-                 "params": {"band": "low" if layer == "kick" else "mid",
+                 "params": {"band": band,
                             "min_strength": 0.3 if kind == "peak" else 0.45,
                             "min_gap_beats": 0.5 if layer == "kick" else 1,
                             "peak": 1.0 if kind == "peak" else 0.85,
@@ -250,7 +295,15 @@ def _layer_effects(layer: str, spec: dict, kind: str,
                             "follow_strength": True, "white": False}}]
 
     if layer == "pulse":
-        if kind == "peak" and size >= 3:
+        # A chase and a theater alternation are in the harsh set, and
+        # `resolve_fixtures` keeps roles that do not pulse (candles) out
+        # of the harsh set — so handing either to a candle role compiles
+        # an effect that drives zero lights. `size` counts the map, not
+        # the cast that will survive that filter; a role that does not
+        # pulse takes the `hit` below, which candles are allowed to run.
+        pulses = palettes.ROLE_RULES.get(spec.get("role"), {}) \
+            .get("pulses", True)
+        if pulses and kind == "peak" and size >= 3:
             # Three or more of one kind of light and the beat can TRAVEL
             # rather than blink in place. Below three a chase is a
             # flicker, which is why this is a count and not a preference.
@@ -260,7 +313,7 @@ def _layer_effects(layer: str, spec: dict, kind: str,
                                 "width": max(1, size // 3),
                                 "bounce": bool(seed % 2), "background": 0.12,
                                 "brightness": 1.0, "fade_ms": 80}}]
-        if size == 2 and kind == "peak":
+        if pulses and size == 2 and kind == "peak":
             return [{"type": "theater", "name": "beat alternation",
                      "select": select,
                      "params": {"step_beats": 1, "groups": 2,
@@ -274,32 +327,52 @@ def _layer_effects(layer: str, spec: dict, kind: str,
 
 def _effects_for(kind: str, roles: set, seed: int, zones: bool,
                  depth: float, has_music: bool, has_hits: bool,
-                 layers: dict) -> list[dict]:
+                 layers: dict, section_hits: dict | None = None) -> list[dict]:
     """Everything that happens during a section of this energy.
 
     A wash goes down first and covers the WHOLE room, because a layer
     only claims one role and everything else would otherwise hold
     whatever the last section left it at. It is made of `set` actions,
     so every routine above it layers cleanly.
+
+    Its brightness is SECTION_LEVELS' base — the same figure the scene
+    carries and the Claude tier is briefed on. It used to be a pair of
+    constants here (0.8 for the calm kinds, 0.55 for the loud ones),
+    which stacked on top of the compiler's own base wash: two full-room
+    washes per scene, the second silently overriding the first, and the
+    override ran the dynamics BACKWARDS — quiet sections grounded out
+    brighter than choruses. The scenes this file writes now say
+    `"base": false`, because this wash IS their base.
     """
+    base, _ = palettes.SECTION_LEVELS.get(kind, palettes.SECTION_LEVELS["mid"])
     effects: list[dict] = [{
         "type": "wash", "name": "scene colour", "select": {},
-        "params": {"brightness": 0.55 if kind in ("mid", "peak") else 0.8,
+        "params": {"brightness": base,
                    "spread": "cycle",
                    "fade_ms": 1200 if kind in ("intro", "quiet", "outro")
                    else 500}}]
 
     for layer, spec in layers.items():
         effects.extend(_layer_effects(layer, spec, kind, seed, zones,
-                                      depth, has_music, has_hits))
+                                      depth, has_music, has_hits,
+                                      section_hits))
 
+    # Switches are stateful: nothing turns one off except another cue,
+    # so every section states which way its switches should be, not just
+    # the ones that turn something on. "On at the first chorus" used to
+    # be the only cue a party light ever got — it then burned through
+    # every breakdown and outro until the show-end sweep. A redundant
+    # off (the light is already off) is one idempotent HA call per
+    # section, which is what stateful outputs cost.
     for switch_role in ("party", "laser"):
-        if switch_role in roles and kind in ("mid", "peak"):
-            if switch_role == "laser" and kind != "peak":
-                continue
-            effects.append({"type": "aux", "name": f"{switch_role} on",
-                            "select": {"roles": [switch_role]},
-                            "params": {"state": "on"}})
+        if switch_role not in roles:
+            continue
+        on = kind == "peak" if switch_role == "laser" \
+            else kind in ("mid", "peak")
+        effects.append({"type": "aux",
+                        "name": f"{switch_role} {'on' if on else 'off'}",
+                        "select": {"roles": [switch_role]},
+                        "params": {"state": "on" if on else "off"}})
     return effects
 
 
@@ -364,10 +437,25 @@ def write_script(analysis: dict, fixtures: list[dict]) -> dict:
                 if isinstance(s, dict)]
     plans = [plan_layers(s["kind"], fixtures) for s in sections]
 
+    hits = [h for h in (analysis.get("hits") or []) if isinstance(h, dict)]
+
     scenes = []
     for section, layers in zip(sections, plans):
         base, depth = palettes.SECTION_LEVELS.get(
             section["kind"], palettes.SECTION_LEVELS["mid"])
+        # Which drum bands this SECTION actually holds, above the
+        # threshold the accent effect itself will apply — the per-track
+        # `has_hits` answers a different question, and answering the
+        # per-section one with it is how a verse ran an accent that
+        # rendered nothing.
+        min_strength = 0.3 if section["kind"] == "peak" else 0.45
+        window_hits = {
+            band: any(float(section["start"]) <= float(h.get("t", -1.0))
+                      < float(section["end"])
+                      and h.get("band") == band
+                      and float(h.get("strength", 0.0)) >= min_strength
+                      for h in hits)
+            for band in ("low", "mid")}
         scenes.append({
             "start": float(section["start"]),
             "end": float(section["end"]),
@@ -375,9 +463,14 @@ def write_script(analysis: dict, fixtures: list[dict]) -> dict:
             "kind": section["kind"],
             "palette": palette,
             "brightness": base,
+            # The "scene colour" wash below carries this base itself;
+            # without this flag the compiler prepends a second full-room
+            # wash and the two double every scene boundary's packet
+            # burst while only one of them can win.
+            "base": False,
             "effects": _effects_for(section["kind"], roles_present,
                                     seed, zones, depth, has_music, has_hits,
-                                    layers),
+                                    layers, window_hits),
         })
 
     # Moments: the build into a drop and the hit itself. The build is a
@@ -400,13 +493,21 @@ def write_script(analysis: dict, fixtures: list[dict]) -> dict:
                     "params": {"from_brightness": 0.15, "to_brightness": 0.95,
                                "step_beats": 1, "stagger": True,
                                "curve": "exp", "saturate": True}}})
-        hit_roles = [r for r in ("laser", "party", "strip", "lamp", "downlight")
-                     if r in roles_present]
+        # The drop is the WHOLE room: every light off in the last breath
+        # before it, every light on when it lands. It used to stab a few
+        # roles at the drop's own strength, which read as one more accent
+        # — a drop that only moves some of the lights is a drop the room
+        # can miss. An empty select is every bulb, `respect_roles` off
+        # means the candles come too, and the strength floor keeps a
+        # timidly-detected drop from landing as a flicker.
         moments.append({
             "t": at,
             "effect": {"type": "stab", "name": "drop hit",
-                       "select": {"roles": hit_roles or movers},
-                       "params": {"strength": float(drop.get("strength", 0.8)),
+                       "select": {},
+                       "respect_roles": False,
+                       "params": {"strength": max(0.85,
+                                                  float(drop.get("strength",
+                                                                 0.8))),
                                   "blackout_before_ms": 400, "hold_ms": 500}}})
         if "party" in roles_present or "laser" in roles_present:
             moments.append({

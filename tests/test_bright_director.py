@@ -87,7 +87,172 @@ class TestChoreographer(unittest.TestCase):
         # is deliberately not the drop's.
         hit = next(m for m in script["moments"]
                    if m["effect"].get("name") == "drop hit")
-        self.assertIn("laser", hit["effect"]["select"]["roles"])
+        # The drop is the whole room: empty select is every bulb, role
+        # manners are off so the candles come too, and a timidly-detected
+        # drop still lands hard.
+        self.assertEqual({}, hit["effect"]["select"])
+        self.assertFalse(hit["effect"]["respect_roles"])
+        self.assertGreaterEqual(hit["effect"]["params"]["strength"], 0.85)
+        # The switches still get their own moment on the drop.
+        aux = next(m for m in script["moments"]
+                   if m["effect"].get("name") == "drop aux")
+        self.assertIn("laser", aux["effect"]["select"]["roles"])
+
+    def test_every_section_has_a_beat_on_some_light(self):
+        """The beat guarantee: whatever the section's energy, some bulb is
+        striking on the grid — intros and outros included."""
+        for kind in choreographer.LAYER_PLAN:
+            layers = choreographer.plan_layers(kind, FIXTURES)
+            self.assertTrue(
+                choreographer.RHYTHMIC_LAYERS & set(layers),
+                f"{kind}: no rhythmic layer got any lights")
+
+    def test_the_beat_lands_even_in_a_one_lamp_room(self):
+        one_lamp = [FIXTURES[0]]
+        for kind in choreographer.LAYER_PLAN:
+            layers = choreographer.plan_layers(kind, one_lamp)
+            rhythmic = choreographer.RHYTHMIC_LAYERS & set(layers)
+            self.assertTrue(rhythmic,
+                            f"{kind}: the one lamp carries no beat")
+
+    def test_the_beat_lands_even_in_a_candles_only_room(self):
+        candles = [dict(FIXTURES[2], id=f"lifx-c{i}", x=i / 3)
+                   for i in range(3)]
+        layers = choreographer.plan_layers("quiet", candles)
+        self.assertIn("pulse", layers)
+
+    def test_the_candle_beat_survives_the_harsh_filter(self):
+        """A peak's pulse layer used to become a chase or a theater
+        alternation by fixture COUNT alone — both are in the harsh set,
+        which keeps candles out, so a candles-only room compiled a beat
+        that drove zero lights. The count is the map; the cast is what
+        survives the filter."""
+        candles = [dict(FIXTURES[2], id=f"lifx-c{i}", x=i / 5)
+                   for i in range(6)]
+        script = choreographer.write_script(analysis_fixture(), candles)
+        peak = next(s for s in script["scenes"] if s["kind"] == "peak")
+        rhythmic = [e for e in peak["effects"]
+                    if e["type"] in ("hit", "accent", "chase", "theater")]
+        self.assertTrue(rhythmic, "the peak has no rhythmic effect at all")
+        for effect in rhythmic:
+            cleaned = fx.clean_effect(effect)
+            self.assertTrue(fx.resolve_fixtures(cleaned, candles),
+                            f"{effect['type']} drives no candles")
+
+    def test_a_dipped_stab_hands_the_lights_back_to_the_scene(self):
+        """The stab's wave is transient: the bulb returns to its current
+        colour, and the pre-stab dip IS that colour — so a whole-room
+        drop used to leave every light it touched sitting at 2% until
+        something else happened to name it."""
+        script = choreographer.write_script(analysis_fixture(), FIXTURES)
+        analysis = analysis_fixture()
+        show = compiler.compile_show(script, FIXTURES, analysis, source=7)
+        drop_t = analysis["drops"][0]["t"]
+        recoveries = [c for c in show["cues"]
+                      if c["desc"] == "drop hit · back to the scene"]
+        self.assertTrue(recoveries, "the drop leaves no recovery cues")
+        for cue in recoveries:
+            self.assertGreater(cue["t"], drop_t)
+
+    def test_a_layer_never_shares_a_bulb(self):
+        """One bulb runs one waveform: the guarantee pass must not put
+        two layers on one fixture."""
+        for fixtures in (FIXTURES, [FIXTURES[0]], FIXTURES[:2]):
+            for kind in choreographer.LAYER_PLAN:
+                layers = choreographer.plan_layers(kind, fixtures)
+                claimed: list[str] = []
+                for spec in layers.values():
+                    ids = spec["select"].get("ids") \
+                        or [f["id"] for f in fixtures
+                            if f.get("role") in spec["select"].get("roles", [])]
+                    claimed.extend(ids)
+                self.assertEqual(len(claimed), len(set(claimed)),
+                                 f"{kind}: two layers share a bulb")
+
+    def test_one_wash_per_scene_and_the_dynamics_run_forward(self):
+        """Every scene used to compile TWO full-room washes — the
+        compiler's base from scene brightness and the choreographer's
+        own, with constants that ran the dynamics backwards: quiet
+        sections grounded out brighter than choruses."""
+        script = choreographer.write_script(analysis_fixture(), FIXTURES)
+        for scene in script["scenes"]:
+            self.assertFalse(scene["base"],
+                             "the scene wash IS the base — no second one")
+            washes = [e for e in compiler.scene_effects(scene)
+                      if e["type"] == "wash"]
+            self.assertEqual(1, len(washes), scene["kind"])
+            self.assertEqual(
+                palettes.SECTION_LEVELS[scene["kind"]][0],
+                washes[0]["params"]["brightness"],
+                "the wash carries SECTION_LEVELS' base, not a constant")
+        by_kind = {s["kind"]: s for s in script["scenes"]}
+        intro_wash = [e for e in by_kind["intro"]["effects"]
+                      if e["type"] == "wash"][0]
+        peak_wash = [e for e in by_kind["peak"]["effects"]
+                     if e["type"] == "wash"][0]
+        self.assertGreater(peak_wash["params"]["brightness"],
+                           intro_wash["params"]["brightness"],
+                           "a chorus is brighter than an intro")
+
+    def test_a_section_with_no_usable_hits_falls_back_to_the_grid(self):
+        """The accent-or-grid choice used to be made once for the whole
+        track, so a verse whose drums sat under the accent's threshold
+        ran an accent that rendered zero actions — a whole section with
+        no rhythm anywhere."""
+        analysis = analysis_fixture()
+        analysis["sections"] = [
+            {"start": 0.0, "end": 60.0, "kind": "mid", "energy": 0.5},
+            {"start": 60.0, "end": 120.0, "kind": "peak", "energy": 0.9},
+            {"start": 120.0, "end": 180.0, "kind": "outro", "energy": 0.2},
+        ]
+        # Every ranked hit lives inside the peak; the verse holds none.
+        analysis["hits"] = [
+            {"t": 63.0 + 0.5 * i, "strength": 0.9, "beat": i,
+             "on_beat": True, "band": "low" if i % 2 else "mid",
+             "tone": 0.8 if i % 2 else 0.2}
+            for i in range(40)]
+        script = choreographer.write_script(analysis, FIXTURES)
+        verse, peak = script["scenes"][0], script["scenes"][1]
+        verse_kick = [e for e in verse["effects"]
+                      if "kick" in (e.get("name") or "")]
+        self.assertTrue(verse_kick, "the verse has a kick layer")
+        self.assertEqual("hit", verse_kick[0]["type"],
+                         "no usable hits in the verse: the grid carries it")
+        peak_kick = [e for e in peak["effects"] if e.get("name") == "kick"]
+        self.assertTrue(peak_kick)
+        self.assertEqual("accent", peak_kick[0]["type"],
+                         "the peak holds real hits: the accent follows them")
+
+    def test_the_grid_snare_lands_on_the_backbeat(self):
+        """analysis_fixture has no ranked hits, so both drums fall back
+        to the grid — and the snare must sit on beats 2 and 4, not in
+        unison with the kick on 1 and 3."""
+        script = choreographer.write_script(analysis_fixture(), FIXTURES)
+        peak = next(s for s in script["scenes"] if s["kind"] == "peak")
+        snare = next(e for e in peak["effects"]
+                     if e.get("name") == "snare (on the grid)")
+        self.assertEqual(1, snare["params"]["offset_beats"])
+        kick = next(e for e in peak["effects"]
+                    if e.get("name") == "kick (on the grid)")
+        self.assertEqual(0, kick["params"].get("offset_beats", 0))
+
+    def test_switches_are_told_off_as_well_as_on(self):
+        """A switch is stateful: a party light turned on at the first
+        chorus used to burn through every breakdown and outro because
+        nothing ever said off until the show-end sweep."""
+        script = choreographer.write_script(analysis_fixture(), FIXTURES)
+        by_kind = {s["kind"]: s for s in script["scenes"]}
+
+        def aux_state(scene):
+            aux = [e for e in scene["effects"] if e["type"] == "aux"]
+            self.assertEqual(1, len(aux), scene["kind"])
+            return aux[0]["params"]["state"]
+
+        self.assertEqual("on", aux_state(by_kind["peak"]),
+                         "the laser joins the peak")
+        self.assertEqual("off", aux_state(by_kind["intro"]))
+        self.assertEqual("off", aux_state(by_kind["outro"]),
+                         "the outro turns the party lights back off")
 
     def test_candles_never_pulse(self):
         script = choreographer.write_script(analysis_fixture(), FIXTURES)
