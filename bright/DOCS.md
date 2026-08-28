@@ -507,32 +507,48 @@ if it did. BRight creates that folder at startup.
 ### Manual — play the lights yourself
 
 The other kind of evening: you are the director, live, from your phone.
-Start a **session** — pick a song and a calibrated player, or pick
-nothing and perform to whatever is already playing — and BRight
-snapshots every mapped bulb so **Stop** puts the room back exactly as it
-found it.
+The whole tab is **one screen** — the room, the loop button, both pads
+and the effect rack, with nothing to scroll past to reach any of them,
+because scrolling to find DROP is the same as not having DROP.
 
-While a session runs, everything on the tab is immediate:
+Start a **session** from the row at the top — pick a song and a
+calibrated player, or pick nothing and perform to whatever is already
+playing — and BRight snapshots every mapped bulb so **Stop** puts the
+room back exactly as it found it. Once it is running that row collapses
+to Stop and one line saying what is playing.
 
+**The map is the instrument.** The middle of the screen is your light
+map, and the lights are where you put them: tap a bulb and *that bulb*
+plays, right there, under your finger. It lights up the instant you
+touch it — the room's own answer travels over the network and arrives
+after your hand has gone, and a control that waits for it feels broken.
+
+- **Tap a rhythm onto the bulbs**, then press **⟳ Loop** on the next
+  repeat's first beat — which is how it learns the figure's length —
+  and the pattern keeps running on the bulbs you tapped it onto. A
+  tapped melody travels the room because you tapped it across the room.
+  The loops run on the server, so they hold time even when your phone's
+  browser naps. A looping bulb wears a pulsing ring; **hold it** for
+  half a second to stop that loop. **✕** forgets the taps.
 - **DROP** takes every light to black, right now. **FLASH** pulses every
   light to full white and back — the bulb itself does the returning, so
   a flash can never strand the room bright. Both always take the whole
-  room, because a drop that misses the lamps you forgot to tick is not a
-  drop.
-- **Tap a rhythm** on the big pad. **♩ Loop beat** keeps that tempo
-  striking on the ticked lights until you stop it. **𝄆 Loop pattern**
-  repeats *exactly* what you tapped — tap the figure (the melody's
-  rhythm, a drum fill), then press the button right on the next repeat's
-  first beat, which is how it learns the length. *Chase* walks the taps
-  across the ticked lights left to right, so a tapped melody travels
-  through the room; *Pulse* lands every tap on all of them. The loops
-  run on the server, so they hold time even when your phone's browser
-  naps — and starting a new loop replaces any loop that shares a light
-  with it, because a bulb runs one waveform at a time.
-- **One-shot effects** fire any of the catalog's looks once, for eight
-  beats at your tapped tempo, on the ticked lights — and your saved
-  effects fire with the lights they were saved with. **Switch lights**
-  (party lights, lasers) get plain on/off buttons.
+  room, because a drop that misses the lamps you forgot to pick is not a
+  drop, and both are the biggest targets on the panel because they are
+  pressed in the dark without looking.
+- The **rack** along the bottom scrolls sideways: one-shot effects, then
+  your saved effects (★), then a switch per kind of party light. An
+  effect fires on **the bulbs in your current taps** — tap two lamps,
+  hit Sparkle, and it sparkles on those two — and on the whole room when
+  you have not tapped anything. It fires at your tapped tempo, 120 BPM
+  until you have tapped one.
+
+Gestures ride a **live socket**, not one web request each. v1 opened an
+HTTP round trip per tap — through ingress, from a phone, over wifi — and
+somebody tapping sixteenths opened requests faster than they finished, so
+the commands backed up and the room fell behind the hand. If the socket
+cannot be opened the tab still works, one request per gesture, which is
+the old speed rather than nothing.
 
 Semi-manual, semi-automated: you decide *what* and *when*, the bulbs run
 the envelopes in between. Starting a show or party — or pressing any

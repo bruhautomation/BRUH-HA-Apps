@@ -662,7 +662,168 @@ select { max-width: 100%; }
    subject, and at full width it competes with the song's name. */
 .party-version { max-width: 190px; }
 
-/* -- The Manual tab: a performance surface, sized for thumbs ----------- */
+/* -- The Manual tab: the room is the instrument ------------------------ */
+/* One screen. The pane's height is measured at runtime (`mnFit`) rather
+   than guessed at in vh, because the top bar's own height depends on how
+   many rows the tabs wrap onto — so a fixed offset is right on exactly
+   one phone. Everything inside is a fixed row except the floor, which is
+   what gives way. */
+#pane-manual.active {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  /* Scrolls rather than clips on a window too short to hold the rows at
+     their floors — a control you cannot reach is worse than one you have
+     to scroll to, and clipping is how you get the first. */
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+/* Drumming on a dot must not select the name under it, and a double-tap
+   on any of this must not zoom the page. */
+#pane-manual {
+  user-select: none;
+  -webkit-user-select: none;
+}
+#pane-manual button, #pane-manual .mn-fx { touch-action: manipulation; }
+
+/* The session row. `details` is the flex container itself, so the
+   summary and the two selects and Start lay out as one row and the
+   whole thing collapses to a single chip once a session is running. */
+.mn-session {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex: none;
+}
+/* nowrap on purpose: the caret and the row it opens are one line, and a
+   wrapping container line-breaks on the content box's max-content width
+   — which puts a 30px caret alone on a row of its own. What gives way is
+   inside the row, not around it. */
+#mnSetup {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* A caret and nothing else. The two selects say what they are, and at
+   390px a word here is the word that pushes Start onto a second row —
+   which costs the floor 44px of the room it is drawing. */
+/* An id beats [hidden], so a `display` set by id has to say so itself —
+   otherwise "hide the setup while a session runs" silently does nothing
+   and the row shows Start and Stop at the same time. */
+#mnSetup[hidden] { display: none; }
+#mnSetup > summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  min-height: 44px;
+  color: var(--muted);
+  cursor: pointer;
+  flex: none;
+}
+#mnSetup > summary::-webkit-details-marker { display: none; }
+.mn-caret { transition: transform 120ms ease; }
+#mnSetup:not([open]) .mn-caret { transform: rotate(-90deg); }
+/* Everything that is not the summary lives inside one anonymous box, and
+   left as the block it is by default the selects flow inline and Start
+   wraps under them — three rows where one will do. It is made the row
+   itself rather than given `display: contents`, which does lay out
+   correctly and then never hides when the details is closed. An engine
+   too old for this pseudo-element gets the wrapped shape and a smaller
+   floor, which is a worse tab and not a broken one. */
+#mnSetup::details-content {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+#mnSetup select { flex: 1 1 80px; min-width: 0; }
+#mnSetup .btn { flex: none; }
+.mn-stop { flex: none; }
+/* One line, and it is the only place a warning or a refusal lands — it
+   doubles as the toast, which is why it may never wrap the row into a
+   second one it would then keep. */
+.mn-status {
+  flex: 1 1 120px;
+  min-width: 0;
+  /* Reserved whether or not there is anything to say: a line that
+     appears mid-song would shrink the floor and move every dot on it. */
+  min-height: 18px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--azure-light);
+  font-size: 14px;
+}
+.mn-status.warn { color: var(--warn); }
+
+/* The floor: the light map, tappable. It is the only thing on the tab
+   allowed to shrink, and it never grows past its share of the screen —
+   a floor that eats the pads has taken the two controls that matter. */
+.mn-floor {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 180px;
+  max-height: 42vh;
+  margin: 0;
+}
+.mn-dot {
+  cursor: pointer;
+  transition: background 120ms linear, box-shadow 120ms linear;
+}
+/* Feedback is LOCAL and immediate: the network's answer arrives after
+   the hand has already left, which is exactly late enough to feel like
+   a broken button. */
+.mn-dot.struck {
+  background: var(--ink);
+  border-color: var(--ink);
+  box-shadow: 0 0 22px rgba(244, 248, 251, 0.85);
+}
+/* A bulb the server is running a loop on. The ring is what makes "hold
+   this one to stop it" a thing you can see rather than a thing the hint
+   line told you once. */
+.mn-dot.looping { border-color: var(--warn); }
+.mn-dot.looping::before {
+  content: "";
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  border: 2px solid var(--warn);
+  animation: mn-ring 1.1s ease-out infinite;
+  pointer-events: none;
+}
+@keyframes mn-ring {
+  0% { transform: scale(0.86); opacity: 0.9; }
+  100% { transform: scale(1.25); opacity: 0; }
+}
+
+.mn-row { display: flex; align-items: center; gap: 8px; flex: none; }
+.mn-loop {
+  flex: 1 1 auto;
+  min-height: 52px;
+  font-size: 18px;
+  font-weight: 700;
+  border-radius: 12px;
+}
+.mn-clear { flex: none; min-height: 52px; width: 52px; padding: 0; }
+.mn-readout {
+  flex: 1 1 90px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 14px;
+  text-align: right;
+}
+
 /* Pads are pressed mid-song, in the dark, without looking — so they are
    the biggest targets on the panel, and each carries its own colour as
    well as its word. */
@@ -670,9 +831,10 @@ select { max-width: 100%; }
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px;
+  flex: none;
 }
 .mn-pad {
-  min-height: 84px;
+  min-height: 80px;
   font-size: 20px;
   font-weight: 700;
   letter-spacing: 0.04em;
@@ -690,26 +852,34 @@ select { max-width: 100%; }
   border-color: var(--warn);
 }
 .mn-flash:hover { background: #f4c352; }
-.mn-tap {
-  width: 100%;
-  min-height: 96px;
-  font-size: 22px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  border-radius: 12px;
-  /* A tap pad that selects its own label on a double-tap is a pad that
-     fights the rhythm it exists to record. */
-  user-select: none;
-  -webkit-user-select: none;
-  touch-action: manipulation;
-}
-.mn-pad, .btn.mn-tap { touch-action: manipulation; }
-.mn-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+
+/* The rack: one row that scrolls sideways, so a dozen looks cost the
+   height of one and never the height of a grid. */
+.mn-fx {
+  display: flex;
   gap: 8px;
-  margin-top: 8px;
+  flex: none;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 2px;
+  -webkit-overflow-scrolling: touch;
 }
-.mn-grid .btn { min-height: 48px; }
-/* A running loop's row: the ✕ is the whole point of listing it. */
-#mnLoops .row-actions .btn { min-height: 40px; }
+.mn-fx .btn {
+  flex: none;
+  min-height: 44px;
+  padding: 6px 12px;
+  font-size: 14px;
+  white-space: nowrap;
+}
+.mn-fx .btn.on {
+  background: rgba(232, 178, 58, 0.22);
+  border-color: var(--warn);
+  color: var(--ink);
+}
+.mn-hint {
+  flex: none;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}

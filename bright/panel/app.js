@@ -4393,39 +4393,469 @@
   });
 
   // ------------------------------------------------------------------
-  // Manual — lights played by hand, live (semi-manual, semi-automated)
+  // Manual — the room is the instrument
   // ------------------------------------------------------------------
-  // The phone is the instrument: taps are recorded here (timing between
-  // taps is what matters, so the browser's own clock is the right one)
-  // and the SERVER runs the loops, because a phone tab sleeps and
-  // throttles and the beat must not.
-  const mn = { taps: [], bpm: 0, catalog: [], presets: [] };
+  // Three things make this tab work, and none of them is a card:
+  //
+  //  * you tap the BULBS, on the map, where they are. An abstract pad
+  //    with a tick-box picker beside it asks you to hold a mapping in
+  //    your head while the song is playing.
+  //  * feedback is LOCAL and immediate. The room's answer travels over
+  //    the network and arrives after your hand has gone; a control that
+  //    waits for it to light up is a control that feels broken.
+  //  * it is one screen. Scrolling to reach DROP is the same as not
+  //    having DROP.
+  //
+  // Timing between taps is measured with the browser's own clock, because
+  // that is the clock the hand is on; the SERVER runs the loops, because
+  // a phone tab sleeps and throttles and the beat must not.
+  const mn = {
+    taps: [],          // {t, id} — the rhythm being tapped, in order
+    catalog: [],
+    presets: [],
+    aux: {},           // role → the state it was last sent
+    loops: [],
+    loopIds: new Set(),
+    socket: null,
+    tries: 0,
+    retry: null,
+    poll: null,
+    warned: false,
+    statusTimer: null,
+    session: "",       // the standing status line a toast returns to
+  };
 
-  // The curated one-shot rack, in the order a performance reaches for
-  // them. Filtered against the real catalog, so a renamed effect drops
-  // out instead of firing errors.
-  const MN_SHOTS = ["stab", "strobe", "sparkle", "chase", "theater",
-                    "sweep", "rainbow", "colour_cycle", "colour_drift",
-                    "saturate", "breathe", "wash"];
+  // The one-shot rack, in the order a performance reaches for them.
+  // Filtered against the real catalog, so a renamed effect drops out of
+  // the strip instead of firing errors from it.
+  const MN_SHOTS = ["stab", "strobe", "sparkle", "chase", "rainbow",
+                    "colour_cycle", "colour_drift", "saturate", "sweep"];
+  const MN_LONG_PRESS_MS = 500;
+  const MN_MOVED_PX = 8;
+  const MN_STRUCK_MS = 250;
 
-  function mnSelect() {
-    // Same contract as the Test card's bulb picker: everything ticked
-    // (or nothing to tick) means the whole room, but a populated list
-    // with NOTHING ticked is a refusal, not "all" — unticking the house
-    // must not aim at the house.
-    const boxes = Array.from(
-      $("mnFixtures").querySelectorAll("input[data-id]"));
-    const ids = boxes.filter((i) => i.checked).map((i) => i.dataset.id);
-    if (boxes.length && !ids.length) return null;
-    return ids.length && ids.length < boxes.length ? { ids } : {};
+  function mnActive() {
+    return $("pane-manual").classList.contains("active");
   }
 
-  function mnStyle() {
-    const picked = document.querySelector("input[name='mnStyle']:checked");
-    return picked ? picked.value : "pulse";
+  // The pane is exactly as tall as what is left below the top bar, which
+  // is not a number this file gets to know: the bar wraps its tabs onto
+  // one row or two depending on the width, so a fixed offset in vh is
+  // right on one phone and wrong on the rest. Measured, then set.
+  function mnFit() {
+    const pane = $("pane-manual");
+    if (!mnActive()) return;
+    const top = pane.getBoundingClientRect().top;
+    pane.style.height =
+      Math.max(360, Math.round(window.innerHeight - top - 8)) + "px";
+  }
+  window.addEventListener("resize", mnFit);
+
+  // ---- the wire ----------------------------------------------------
+  // One socket, opened while the tab is in front. Sends are
+  // fire-and-forget: a gesture handler that awaits anything has already
+  // cost the latency this whole tab exists to remove.
+  function mnWsUrl() {
+    // Relative, like every other request here — the panel is served under
+    // the ingress prefix and an absolute path escapes it.
+    const scheme = location.protocol === "https:" ? "wss://" : "ws://";
+    return scheme + location.host +
+      new URL("api/live/ws", location.href).pathname;
   }
 
+  function mnConnect() {
+    if (!mnActive() || document.visibilityState === "hidden") return;
+    const open = mn.socket &&
+      (mn.socket.readyState === WebSocket.CONNECTING ||
+       mn.socket.readyState === WebSocket.OPEN);
+    if (open) return;
+    let socket;
+    try {
+      socket = new WebSocket(mnWsUrl());
+    } catch (error) {
+      mnWarnOnce(error);
+      mnReconnect();
+      return;
+    }
+    mn.socket = socket;
+    socket.onopen = () => {
+      mn.tries = 0;
+      mnStopPoll();
+      mnRawSend({ op: "hello" });
+    };
+    socket.onmessage = (event) => {
+      let message;
+      try {
+        message = JSON.parse(event.data);
+      } catch (ignored) {
+        return;   // an event we cannot read is an event we cannot render
+      }
+      if (message.ev === "state") {
+        mnRenderState(message);
+        // A session whose music did not start still starts, and the
+        // sentence saying so rides the state it arrived with.
+        if (message.warning) mnFlash("⚠ " + message.warning, true);
+      } else if (message.ev === "error") {
+        mnFlash(message.message || "", true);
+      }
+    };
+    // An `error` event on a socket carries nothing worth reporting and is
+    // always followed by `close`, which is where the retry lives — so a
+    // server without the live socket costs one warning, not one a second.
+    socket.onerror = () => { mnWarnOnce("live socket unavailable"); };
+    socket.onclose = () => {
+      // A route that is not there closes cleanly rather than erroring, so
+      // the warning belongs here too — the gestures have quietly changed
+      // transport and that is worth exactly one line.
+      mnWarnOnce("live socket closed");
+      if (mn.socket === socket) mn.socket = null;
+      mnStartPoll();
+      mnReconnect();
+    };
+  }
+
+  function mnWarnOnce(reason) {
+    if (mn.warned) return;
+    mn.warned = true;
+    console.warn("BRight: live socket unavailable, falling back to " +
+                 "one request per gesture", reason);
+  }
+
+  function mnReconnect() {
+    if (mn.retry || !mnActive()) return;
+    const wait = Math.min(4000, 500 * Math.pow(2, mn.tries));
+    mn.tries = Math.min(mn.tries + 1, 3);
+    mn.retry = setTimeout(() => { mn.retry = null; mnConnect(); }, wait);
+  }
+
+  function mnDisconnect() {
+    if (mn.retry) { clearTimeout(mn.retry); mn.retry = null; }
+    mnStopPoll();
+    const socket = mn.socket;
+    mn.socket = null;
+    if (socket) {
+      socket.onclose = null;
+      socket.onerror = null;
+      try { socket.close(); } catch (ignored) { /* already gone */ }
+    }
+  }
+
+  function mnRawSend(message) {
+    const socket = mn.socket;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+    try {
+      socket.send(JSON.stringify(message));
+      return true;
+    } catch (ignored) {
+      return false;   // the socket is dying; the HTTP path takes it
+    }
+  }
+
+  // Every gesture goes through here. The socket if there is one, one POST
+  // if there is not — never awaited, so a slow request cannot hold up the
+  // next tap, and never queued, because a beat played late is worse than
+  // a beat not played.
+  function mnDo(message) {
+    if (mnRawSend(message)) return;
+    let sent = null;
+    if (message.op === "pad") {
+      sent = post("api/live/pad", { pad: message.pad });
+    } else if (message.op === "tap") {
+      // No HTTP verb is a tap, so it degrades to what a tap IS — one
+      // strike on one bulb, fired once.
+      sent = post("api/live/effect", {
+        type: "hit", select: { ids: [message.id] },
+        bpm: mnBpm() || 120, seconds: 2,
+      });
+    } else if (message.op === "loop") {
+      sent = post("api/live/loop", { taps: message.taps,
+                                     pressed_ms: message.pressed_ms })
+        .then(mnRefresh);
+    } else if (message.op === "stop_loop") {
+      sent = api("api/live/loop/" + encodeURIComponent(message.id),
+                 { method: "DELETE" }).then(mnRefresh);
+    } else if (message.op === "shot") {
+      const body = { bpm: message.bpm, seconds: 8 };
+      if (message.effect) body.effect = message.effect;
+      else {
+        body.type = message.type;
+        body.select = message.ids ? { ids: message.ids } : {};
+      }
+      sent = post("api/live/effect", body);
+    } else if (message.op === "aux") {
+      sent = post("api/live/aux", { role: message.role,
+                                    state: message.state });
+    } else if (message.op === "start") {
+      sent = post("api/live/start", {
+        track_hash: message.track_hash, media_player: message.media_player,
+      }).then(mnRefresh);
+    } else if (message.op === "stop") {
+      sent = post("api/live/stop", {}).then(mnRefresh);
+    }
+    if (sent) sent.catch((error) => mnFlash(error.message, true));
+  }
+
+  // Polling exists only for the window in which there is no socket. With
+  // one open the server pushes, and a poll beside a push is two answers
+  // to one question.
+  function mnStartPoll() {
+    if (mn.poll || !mnActive()) return;
+    mn.poll = setInterval(() => {
+      if (mnActive() && !mn.socket) mnRefresh();
+      else mnStopPoll();
+    }, 5000);
+  }
+
+  function mnStopPoll() {
+    if (mn.poll) { clearInterval(mn.poll); mn.poll = null; }
+  }
+
+  function mnRefresh() {
+    return api("api/live/state").then(mnRenderState)
+      .catch(() => { /* the next push or poll answers */ });
+  }
+
+  // ---- what the server says ----------------------------------------
+  function mnRenderState(state) {
+    const session = (state && state.session) || {};
+    const live = !!session.active && session.status === "manual";
+    $("mnSetup").hidden = live;
+    $("btnMnStop").hidden = !live;
+    const was = mn.session;
+    mn.session = live
+      ? "Running" +
+        (session.track && session.track !== "Manual session"
+          ? " · ♪ " + session.track : "") +
+        (session.playback_warning ? " · ⚠ " + session.playback_warning : "")
+      : "";
+    // A session that has just started or stopped outranks whatever the
+    // line was saying about it — "Starting…" over a session that has
+    // started is the one message guaranteed to be wrong.
+    if (mn.session !== was && mn.statusTimer) {
+      clearTimeout(mn.statusTimer);
+      mn.statusTimer = null;
+    }
+    if (!mn.statusTimer) mnSetStatus(mn.session, false);
+
+    // Which bulbs a loop is currently striking. The dots are the only
+    // place a running loop is listed, and holding one is the only way to
+    // stop it — a list of loops under the floor was a second answer to
+    // "what is playing" that nobody looked at.
+    mn.loops = (state && state.loops) || [];
+    mn.loopIds = new Set();
+    for (const loop of mn.loops) {
+      for (const id of loop.ids || []) mn.loopIds.add(id);
+    }
+    for (const dot of $("mnFloor").querySelectorAll(".mn-dot")) {
+      dot.classList.toggle("looping", mn.loopIds.has(dot.dataset.id));
+    }
+  }
+
+  function mnLoopFor(id) {
+    // The loop a held bulb belongs to. A bulb runs one waveform at a
+    // time, so it belongs to at most one — but the newest is the one you
+    // are hearing, and it is the one the hold means.
+    for (const loop of mn.loops) {
+      if ((loop.ids || []).indexOf(id) >= 0) return loop;
+    }
+    return null;
+  }
+
+  function mnSetStatus(text, warn) {
+    const line = $("mnStatus");
+    line.textContent = text;
+    line.classList.toggle("warn", !!warn);
+  }
+
+  // The status line doubles as the toast — there is no room on this
+  // screen for a second place to say things, and a refusal about a
+  // session belongs beside the session.
+  function mnFlash(text, warn, ms) {
+    if (!text) return;
+    mnSetStatus(text, warn);
+    if (mn.statusTimer) clearTimeout(mn.statusTimer);
+    mn.statusTimer = setTimeout(() => {
+      mn.statusTimer = null;
+      mnSetStatus(mn.session, false);
+    }, ms || 4000);
+  }
+
+  // ---- the floor ---------------------------------------------------
+  function mnPaintFloor(fixtures) {
+    const floor = $("mnFloor");
+    floor.innerHTML = "";
+    for (const fixture of fixtures) {
+      const dot = document.createElement("div");
+      // Same three geometry details the Light Map's dots have: the drawing
+      // is clamped inward (a 44px dot hangs half outside its own
+      // coordinate), the name rides on the map rather than in a title, and
+      // it flips inward at the edges so it is not clipped off the floor.
+      const edge = fixture.x > 0.85 ? " edge-right"
+        : fixture.x < 0.15 ? " edge-left" : "";
+      dot.className = "map-dot mn-dot" + edge;
+      placeDot(dot, fixture.x, fixture.y);
+      dot.dataset.id = fixture.id;
+      const glyph = document.createElement("span");
+      glyph.className = "dot-glyph";
+      glyph.textContent = ROLE_GLYPH[fixture.role] || "?";
+      const name = document.createElement("span");
+      name.className = "dot-name";
+      name.textContent = fixture.label || fixture.id;
+      dot.appendChild(glyph);
+      dot.appendChild(name);
+      if (mn.loopIds.has(fixture.id)) dot.classList.add("looping");
+      floor.appendChild(dot);
+    }
+  }
+
+  function mnStrike(dot) {
+    dot.classList.add("struck");
+    setTimeout(() => dot.classList.remove("struck"), MN_STRUCK_MS);
+  }
+
+  function mnBpm() {
+    const gaps = [];
+    for (let i = 1; i < mn.taps.length; i += 1) {
+      gaps.push(mn.taps[i].t - mn.taps[i - 1].t);
+    }
+    if (!gaps.length) return 0;
+    const sorted = gaps.slice(-16).sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)];
+    return median > 0 ? Math.round(60000 / median) : 0;
+  }
+
+  function mnReadout() {
+    const bpm = mnBpm();
+    $("mnTapReadout").textContent = mn.taps.length
+      ? mn.taps.length + " tap" + (mn.taps.length === 1 ? "" : "s") +
+        (bpm ? " · ~" + bpm + " BPM" : "")
+      : "no taps yet";
+  }
+
+  function mnClearTaps() {
+    mn.taps = [];
+    mnReadout();
+  }
+
+  (function () {
+    // A tap and a hold start as the same press. The tap is unconditional
+    // and immediate — you have played that bulb either way — and the hold
+    // is what stops the loop the bulb is running, which is why the hold
+    // takes its own tap back out of the rhythm: holding a bulb is not
+    // tapping one.
+    const floor = $("mnFloor");
+    let held = null;
+    let timer = null;
+    let from = null;
+
+    function release() {
+      if (timer) { clearTimeout(timer); timer = null; }
+      held = null;
+      from = null;
+    }
+
+    floor.addEventListener("pointerdown", (event) => {
+      const dot = event.target.closest(".mn-dot");
+      if (!dot) return;
+      // The floor is `touch-action: none`, and this is what stops a
+      // drummed rhythm from scrolling or zooming the page under it.
+      event.preventDefault();
+      const id = dot.dataset.id;
+      mnStrike(dot);
+      mnDo({ op: "tap", id });
+      mn.taps.push({ t: performance.now(), id });
+      if (mn.taps.length > 64) mn.taps.shift();
+      mnReadout();
+      held = dot;
+      from = { x: event.clientX, y: event.clientY };
+      timer = setTimeout(() => {
+        timer = null;
+        if (!held || !mn.loopIds.has(id)) return;
+        const loop = mnLoopFor(id);
+        mnDo({ op: "stop_loop", id: loop ? loop.id : id });
+        const last = mn.taps[mn.taps.length - 1];
+        if (last && last.id === id) mn.taps.pop();
+        mnReadout();
+        mnFlash("Loop stopped.", false);
+      }, MN_LONG_PRESS_MS);
+      try { dot.setPointerCapture(event.pointerId); } catch (ignored) {
+        /* a mouse without capture still gets pointerup */
+      }
+    });
+    floor.addEventListener("pointermove", (event) => {
+      if (!held || !from) return;
+      if (Math.abs(event.clientX - from.x) > MN_MOVED_PX ||
+          Math.abs(event.clientY - from.y) > MN_MOVED_PX) release();
+    });
+    floor.addEventListener("pointerup", release);
+    floor.addEventListener("pointercancel", release);
+  })();
+
+  // ---- the rack ----------------------------------------------------
+  function mnPaintFx(fixtures) {
+    const strip = $("mnFx");
+    strip.innerHTML = "";
+    const byType = new Map(mn.catalog.map((entry) => [entry.type, entry]));
+    for (const type of MN_SHOTS) {
+      const spec = byType.get(type);
+      if (!spec) continue;
+      const chip = document.createElement("button");
+      chip.className = "btn";
+      chip.textContent = spec.label || type;
+      chip.dataset.fx = type;
+      chip.title = spec.blurb || "";
+      strip.appendChild(chip);
+    }
+    for (const preset of mn.presets) {
+      const chip = document.createElement("button");
+      chip.className = "btn";
+      chip.textContent = "★ " + preset.name;
+      chip.dataset.preset = preset.name;
+      chip.title = "Saved effect — fires with the lights it was saved with";
+      strip.appendChild(chip);
+    }
+    // Switch lights are not bulbs and cannot be tapped: they are on or
+    // they are off, and the chip says which it will make them.
+    const roles = Array.from(new Set(fixtures
+      .filter((f) => f.kind !== "lifx").map((f) => f.role).filter(Boolean)));
+    for (const role of roles) {
+      const chip = document.createElement("button");
+      chip.className = "btn" + (mn.aux[role] === "on" ? " on" : "");
+      chip.textContent = role + " ⏻";
+      chip.dataset.auxRole = role;
+      strip.appendChild(chip);
+    }
+  }
+
+  $("mnFx").addEventListener("pointerdown", (event) => {
+    const chip = event.target.closest("button");
+    if (!chip) return;
+    event.preventDefault();
+    // The bulbs you have just tapped are the bulbs the effect lands on:
+    // tap two lamps, hit Sparkle, and it sparkles on those two. Nothing
+    // tapped means the whole room, which is what a rack chip means when
+    // you have not said otherwise.
+    const ids = Array.from(new Set(mn.taps.map((tap) => tap.id)));
+    const bpm = mnBpm() || 120;
+    if (chip.dataset.fx) {
+      const message = { op: "shot", type: chip.dataset.fx, bpm };
+      if (ids.length) message.ids = ids;
+      mnDo(message);
+    } else if (chip.dataset.preset) {
+      const preset = mn.presets.find((p) => p.name === chip.dataset.preset);
+      if (preset) mnDo({ op: "shot", effect: preset.effect, bpm });
+    } else if (chip.dataset.auxRole) {
+      const role = chip.dataset.auxRole;
+      const state = mn.aux[role] === "on" ? "off" : "on";
+      mn.aux[role] = state;
+      chip.classList.toggle("on", state === "on");
+      mnDo({ op: "aux", role, state });
+    }
+  });
+
+  // ---- loading -----------------------------------------------------
   async function loadManual() {
+    mnFit();
     try {
       const [lib, profiles, map, catalog, presets] = await Promise.all([
         api("api/library"), api("api/calibrate/profiles"), api("api/map"),
@@ -4436,8 +4866,7 @@
       mn.presets = presets.presets || [];
       const trackSelect = $("mnTrack");
       const hadTrack = trackSelect.value;
-      trackSelect.innerHTML = '<option value="">— no music (something ' +
-        "else is playing) —</option>";
+      trackSelect.innerHTML = '<option value="">— no music —</option>';
       for (const track of (lib.tracks || []).filter((t) => t.analyzed)) {
         const option = document.createElement("option");
         option.value = track.hash;
@@ -4447,8 +4876,7 @@
       }
       const playerSelect = $("mnPlayer");
       const hadPlayer = playerSelect.value;
-      playerSelect.innerHTML =
-        '<option value="">— calibrated player —</option>';
+      playerSelect.innerHTML = '<option value="">— speaker —</option>';
       for (const profile of profiles.profiles || []) {
         const option = document.createElement("option");
         option.value = profile.entity_id;
@@ -4456,307 +4884,75 @@
         option.selected = profile.entity_id === hadPlayer;
         playerSelect.appendChild(option);
       }
-      // The lights, with ticks remembered across a reload of this list.
-      const bulbs = (map.fixtures || []).filter((f) => f.kind === "lifx");
-      const box = $("mnFixtures");
-      const was = new Map(Array.from(box.querySelectorAll("input[data-id]"))
-        .map((input) => [input.dataset.id, input.checked]));
-      box.innerHTML = "";
-      for (const fixture of bulbs) {
-        const label = document.createElement("label");
-        label.className = "fx-fixture";
-        const check = document.createElement("input");
-        check.type = "checkbox";
-        check.checked = was.has(fixture.id) ? was.get(fixture.id) : true;
-        check.dataset.id = fixture.id;
-        check.dataset.role = fixture.role || "";
-        const text = document.createElement("span");
-        text.textContent = (fixture.label || fixture.id) +
-          (fixture.role ? " · " + fixture.role : "");
-        label.appendChild(check);
-        label.appendChild(text);
-        box.appendChild(label);
-      }
-      const roles = Array.from(new Set(bulbs.map((f) => f.role)
-        .filter(Boolean)));
-      const quick = $("mnRoleQuick");
-      quick.innerHTML = "";
-      for (const role of roles) {
-        const chip = document.createElement("button");
-        chip.className = "btn small";
-        chip.textContent = role;
-        chip.dataset.role = role;
-        quick.appendChild(chip);
-      }
-      // The one-shot rack.
-      const rack = $("mnEffects");
-      rack.innerHTML = "";
-      const byType = new Map(mn.catalog.map((e) => [e.type, e]));
-      for (const type of MN_SHOTS) {
-        const spec = byType.get(type);
-        if (!spec) continue;
-        const shot = document.createElement("button");
-        shot.className = "btn";
-        shot.textContent = spec.label || type;
-        shot.dataset.fx = type;
-        shot.title = spec.blurb || "";
-        rack.appendChild(shot);
-      }
-      const presetRack = $("mnPresets");
-      presetRack.innerHTML = "";
-      for (const preset of mn.presets) {
-        const shot = document.createElement("button");
-        shot.className = "btn";
-        shot.textContent = "★ " + preset.name;
-        shot.dataset.preset = preset.name;
-        shot.title = "Saved effect — fires with the lights it was saved with";
-        presetRack.appendChild(shot);
-      }
-      // Switch lights, if the map has any.
-      const auxRoles = Array.from(new Set((map.fixtures || [])
-        .filter((f) => f.kind !== "lifx").map((f) => f.role)
-        .filter(Boolean)));
-      $("mnAuxCard").hidden = !auxRoles.length;
-      const aux = $("mnAux");
-      aux.innerHTML = "";
-      for (const role of auxRoles) {
-        for (const state of ["on", "off"]) {
-          const swb = document.createElement("button");
-          swb.className = "btn small";
-          swb.textContent = role + " " + state;
-          swb.dataset.auxRole = role;
-          swb.dataset.auxState = state;
-          aux.appendChild(swb);
-        }
-      }
-      refreshMnState();
+      const fixtures = map.fixtures || [];
+      mnPaintFloor(fixtures.filter((f) => f.kind === "lifx"));
+      mnPaintFx(fixtures);
+      await mnRefresh();
     } catch (error) {
-      $("mnStatus").textContent = "failed: " + error.message;
+      mnFlash("failed: " + error.message, true);
     }
+    mnFit();
   }
 
-  async function refreshMnState() {
-    try {
-      const state = await api("api/live/state");
-      const session = state.session || {};
-      const live = session.active && session.status === "manual";
-      $("btnMnStart").hidden = live;
-      $("btnMnStop").hidden = !live;
-      if (live) {
-        $("mnStatus").textContent = "Session running" +
-          (session.track && session.track !== "Manual session"
-            ? " · ♪ " + session.track : "") +
-          (session.playback_warning
-            ? " · ⚠ " + session.playback_warning : "");
-      }
-      const list = $("mnLoops");
-      list.innerHTML = "";
-      for (const loop of state.loops || []) {
-        const row = document.createElement("div");
-        row.className = "row";
-        row.innerHTML = '<div class="row-main"><strong></strong>' +
-          '<span class="rtt small"></span></div>' +
-          '<div class="row-actions"><button class="btn small" ' +
-          'data-loop="' + loop.id + '">✕ Stop</button></div>';
-        row.querySelector("strong").textContent = loop.label +
-          " (" + loop.style + ")";
-        row.querySelector(".rtt").textContent =
-          loop.strikes + " strike" + (loop.strikes === 1 ? "" : "s") +
-          " / " + loop.period_s + "s · " + (loop.lights || []).join(", ");
-        list.appendChild(row);
-      }
-    } catch (ignored) { /* the next poll answers */ }
-  }
-
-  setInterval(() => {
-    if ($("pane-manual").classList.contains("active")) refreshMnState();
-  }, 3000);
-
-  $("btnMnStart").addEventListener("click", async () => {
-    const status = $("mnStatus");
+  // ---- the controls ------------------------------------------------
+  $("btnMnStart").addEventListener("click", () => {
     const track = $("mnTrack").value;
     const player = $("mnPlayer").value;
     if (track && !player) {
-      status.textContent = "Pick a player to hear the track on — or " +
-        "clear the track to perform without music.";
+      mnFlash("Pick a speaker to hear the track on — or clear the track " +
+              "to perform without music.", true);
       return;
     }
-    try {
-      const result = await post("api/live/start", {
-        track_hash: track || undefined,
-        media_player: player || undefined,
-      });
-      status.textContent = "Session on: " + result.snapshotted +
-        " lights snapshotted." +
-        (result.warning ? " ⚠ " + result.warning : "");
-      refreshMnState();
-      pollRunState();
-    } catch (error) {
-      status.textContent = "failed: " + error.message;
-    }
+    // Starting takes a snapshot of every mapped bulb, which is seconds
+    // of LAN round trips — long enough that a silent button reads as a
+    // dead one, and long enough to press twice.
+    // Held long, not four seconds: the state event that replaces it is
+    // what says it worked, and it cannot arrive until every mapped bulb
+    // has been snapshotted.
+    mnFlash("Starting…", false, 30000);
+    mnDo({ op: "start", track_hash: track || undefined,
+           media_player: player || undefined });
   });
 
-  $("btnMnStop").addEventListener("click", async () => {
-    try {
-      await post("api/live/stop", {});
-      $("mnStatus").textContent = "Stopped; lights restored.";
-      refreshMnState();
-      pollRunState();
-    } catch (error) {
-      $("mnStatus").textContent = "stop failed: " + error.message;
-    }
+  $("btnMnStop").addEventListener("click", () => {
+    mnFlash("Stopping…", false, 30000);
+    mnDo({ op: "stop" });
+    mnClearTaps();
   });
 
-  // Pads fire on pointerDOWN — the press is the beat, and waiting for
-  // the release adds the one latency a hand can feel.
+  // Pads fire on pointerDOWN — the press is the beat, and waiting for the
+  // release adds the one latency a hand can feel.
   for (const [id, pad] of [["btnMnDrop", "drop"], ["btnMnFlash", "flash"]]) {
-    $(id).addEventListener("pointerdown", async (event) => {
+    $(id).addEventListener("pointerdown", (event) => {
       event.preventDefault();
-      try {
-        await post("api/live/pad", { pad });
-      } catch (error) {
-        $("mnStatus").textContent = error.message;
-      }
+      mnDo({ op: "pad", pad });
     });
   }
 
-  $("btnMnTap").addEventListener("pointerdown", (event) => {
-    event.preventDefault();
-    mn.taps.push(performance.now());
-    if (mn.taps.length > 64) mn.taps.shift();
-    const gaps = [];
-    for (let i = 1; i < mn.taps.length; i += 1) {
-      gaps.push(mn.taps[i] - mn.taps[i - 1]);
-    }
-    if (gaps.length) {
-      const sorted = gaps.slice(-16).sort((a, b) => a - b);
-      const median = sorted[Math.floor(sorted.length / 2)];
-      mn.bpm = Math.round(60000 / median);
-    }
-    $("mnTapReadout").textContent = mn.taps.length + " tap" +
-      (mn.taps.length === 1 ? "" : "s") +
-      (mn.bpm ? " · ~" + mn.bpm + " BPM" : "");
-  });
-
-  $("btnMnTapClear").addEventListener("click", () => {
-    mn.taps = [];
-    $("mnTapReadout").textContent = "no taps yet";
-  });
-
-  async function mnStartLoop(mode) {
-    const status = $("mnStatus");
-    const select = mnSelect();
-    if (select === null) {
-      status.textContent = "Tick at least one light — or press All.";
+  // Closing the pattern: what you tapped, and how long the whole figure
+  // is. Pressing Loop ON the next repeat's first beat is what tells it
+  // the length — there is no other way to know where a figure ends.
+  $("btnMnLoop").addEventListener("click", () => {
+    if (!mn.taps.length) {
+      mnFlash("Tap a rhythm on the bulbs first.", true);
       return;
     }
-    if (mn.taps.length < (mode === "beat" ? 2 : 1)) {
-      status.textContent = mode === "beat"
-        ? "Tap the beat at least twice first."
-        : "Tap the pattern first, then press Loop on the next repeat.";
-      return;
-    }
-    const first = mn.taps[0];
-    const body = {
-      mode,
-      style: mnStyle(),
-      select,
-      taps_ms: mn.taps.map((t) => Math.round(t - first)),
-    };
-    if (mode === "pattern") {
-      // The press IS the loop's length: you tap the figure, then press
-      // Loop exactly where it would start again.
-      body.period_ms = Math.round(performance.now() - first);
-    }
-    try {
-      const result = await post("api/live/loop", body);
-      mn.taps = [];
-      $("mnTapReadout").textContent = "looping · " + result.strikes +
-        " strike" + (result.strikes === 1 ? "" : "s") + " / " +
-        result.period_s + "s";
-      refreshMnState();
-    } catch (error) {
-      status.textContent = error.message;
-    }
-  }
-
-  $("btnMnLoopBeat").addEventListener("click", () => mnStartLoop("beat"));
-  $("btnMnLoopPattern").addEventListener("click",
-    () => mnStartLoop("pattern"));
-
-  $("mnLoops").addEventListener("click", async (event) => {
-    const button = event.target.closest("button[data-loop]");
-    if (!button) return;
-    try {
-      await fetch("api/live/loop/" + button.dataset.loop,
-                  { method: "DELETE" });
-      refreshMnState();
-    } catch (error) {
-      $("mnStatus").textContent = error.message;
-    }
+    const first = mn.taps[0].t;
+    mnDo({
+      op: "loop",
+      taps: mn.taps.map((tap) => ({ t: Math.round(tap.t - first),
+                                    id: tap.id })),
+      pressed_ms: Math.round(performance.now() - first),
+    });
+    mnClearTaps();
   });
 
-  $("btnMnAll").addEventListener("click", () => {
-    for (const input of $("mnFixtures").querySelectorAll("input[data-id]")) {
-      input.checked = true;
-    }
-  });
-  $("btnMnNone").addEventListener("click", () => {
-    for (const input of $("mnFixtures").querySelectorAll("input[data-id]")) {
-      input.checked = false;
-    }
-  });
-  $("mnRoleQuick").addEventListener("click", (event) => {
-    const chip = event.target.closest("button[data-role]");
-    if (!chip) return;
-    for (const input of $("mnFixtures").querySelectorAll("input[data-id]")) {
-      input.checked = input.dataset.role === chip.dataset.role;
-    }
-  });
+  $("btnMnTapClear").addEventListener("click", mnClearTaps);
 
-  $("mnEffects").addEventListener("pointerdown", async (event) => {
-    const button = event.target.closest("button[data-fx]");
-    if (!button) return;
-    event.preventDefault();
-    const select = mnSelect();
-    if (select === null) {
-      $("mnStatus").textContent = "Tick at least one light — or press All.";
-      return;
-    }
-    try {
-      await post("api/live/effect", {
-        type: button.dataset.fx, select,
-        bpm: mn.bpm || 120, seconds: 8,
-      });
-    } catch (error) {
-      $("mnStatus").textContent = error.message;
-    }
-  });
-
-  $("mnPresets").addEventListener("pointerdown", async (event) => {
-    const button = event.target.closest("button[data-preset]");
-    if (!button) return;
-    event.preventDefault();
-    const preset = mn.presets.find((p) => p.name === button.dataset.preset);
-    if (!preset) return;
-    try {
-      await post("api/live/effect", {
-        effect: preset.effect, bpm: mn.bpm || 120, seconds: 8,
-      });
-    } catch (error) {
-      $("mnStatus").textContent = error.message;
-    }
-  });
-
-  $("mnAux").addEventListener("click", async (event) => {
-    const button = event.target.closest("button[data-aux-role]");
-    if (!button) return;
-    try {
-      await post("api/live/aux", { role: button.dataset.auxRole,
-                                   state: button.dataset.auxState });
-    } catch (error) {
-      $("mnStatus").textContent = error.message;
-    }
+  document.addEventListener("visibilitychange", () => {
+    if (!mnActive()) return;
+    if (document.visibilityState === "visible") mnConnect();
+    else mnDisconnect();
   });
 
   // The Lab is the tab the page opens on, so its choices load with it.
@@ -4789,6 +4985,14 @@
       loadPartyPlayers();
       loadPartySet();
     }
-    if (button.dataset.tab === "manual") loadManual();
+    // The live socket is open only while the Manual tab is in front — it
+    // is a performance connection, and nothing off that tab has anything
+    // to say down it.
+    if (button.dataset.tab === "manual") {
+      loadManual();
+      mnConnect();
+    } else {
+      mnDisconnect();
+    }
   });
 })();
