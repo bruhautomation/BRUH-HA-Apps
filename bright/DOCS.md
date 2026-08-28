@@ -504,6 +504,40 @@ speaker fetches it from Home Assistant rather than from the add-on: a
 Chromecast has no route to BRight's panel and would not be allowed through it
 if it did. BRight creates that folder at startup.
 
+### Manual — play the lights yourself
+
+The other kind of evening: you are the director, live, from your phone.
+Start a **session** — pick a song and a calibrated player, or pick
+nothing and perform to whatever is already playing — and BRight
+snapshots every mapped bulb so **Stop** puts the room back exactly as it
+found it.
+
+While a session runs, everything on the tab is immediate:
+
+- **DROP** takes every light to black, right now. **FLASH** pulses every
+  light to full white and back — the bulb itself does the returning, so
+  a flash can never strand the room bright. Both always take the whole
+  room, because a drop that misses the lamps you forgot to tick is not a
+  drop.
+- **Tap a rhythm** on the big pad. **♩ Loop beat** keeps that tempo
+  striking on the ticked lights until you stop it. **𝄆 Loop pattern**
+  repeats *exactly* what you tapped — tap the figure (the melody's
+  rhythm, a drum fill), then press the button right on the next repeat's
+  first beat, which is how it learns the length. *Chase* walks the taps
+  across the ticked lights left to right, so a tapped melody travels
+  through the room; *Pulse* lands every tap on all of them. The loops
+  run on the server, so they hold time even when your phone's browser
+  naps — and starting a new loop replaces any loop that shares a light
+  with it, because a bulb runs one waveform at a time.
+- **One-shot effects** fire any of the catalog's looks once, for eight
+  beats at your tapped tempo, on the ticked lights — and your saved
+  effects fire with the lights they were saved with. **Switch lights**
+  (party lights, lasers) get plain on/off buttons.
+
+Semi-manual, semi-automated: you decide *what* and *when*, the bulbs run
+the envelopes in between. Starting a show or party — or pressing any
+Stop — ends the session, stops every loop, and restores the room.
+
 ### Party — the sentence the add-on was built for
 
 One screen: tick the shows you want, pick the speaker, press **Play**.
