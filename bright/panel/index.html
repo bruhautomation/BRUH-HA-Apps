@@ -488,105 +488,49 @@
       </div>
     </div>
   </section>
+  <!-- Manual: the room IS the instrument. One screen, no scrolling to
+       perform — the map is where you tap, and every other control is a
+       row sized to a thumb around it. Nothing here is a card, because a
+       stack of cards on a phone is a stack of things you cannot see at
+       once, and this tab is used mid-song without looking. -->
   <section class="pane" id="pane-manual">
-    <p class="muted tab-intro">Play the lights yourself, live. Start a
-      session (with a song, or to whatever is already playing), tap a beat
-      or a pattern onto the lights you pick, and fire drops, flashes and
-      effects by hand. Stop puts the room back.</p>
-
-    <div class="card">
-      <div class="card-head">
-        <h3>Session</h3>
-      </div>
-      <div class="demo-controls">
+    <div class="mn-session">
+      <details id="mnSetup" open>
+        <summary title="Session setup" aria-label="Session setup"><span
+          class="mn-caret">▾</span></summary>
         <select id="mnTrack">
-          <option value="">— no music (something else is playing) —</option>
+          <option value="">— no music —</option>
         </select>
-        <select id="mnPlayer"><option value="">— calibrated player —</option></select>
-      </div>
-      <div class="demo-controls">
-        <button id="btnMnStart" class="btn">▶ Start session</button>
-        <button id="btnMnStop" class="btn" hidden>■ Stop &amp; restore
-          lights</button>
-        <span id="mnStatus" class="cal-status"></span>
-      </div>
+        <select id="mnPlayer"><option value="">— speaker —</option></select>
+        <button id="btnMnStart" class="btn">▶ Start</button>
+      </details>
+      <button id="btnMnStop" class="btn mn-stop" hidden>■ Stop &amp;
+        restore</button>
+      <span id="mnStatus" class="mn-status"></span>
     </div>
 
-    <!-- The two panic pads. Huge, because they are pressed mid-song in a
-         dark room without looking. They always take the WHOLE room —
-         a drop that misses the lamps you forgot to tick is not a drop. -->
-    <div class="card">
-      <div class="mn-pads">
-        <button id="btnMnDrop" class="btn mn-pad mn-drop"
-                title="Everything to black, right now">● DROP</button>
-        <button id="btnMnFlash" class="btn mn-pad mn-flash"
-                title="Every light flashes full white and returns">⚡
-          FLASH</button>
-      </div>
+    <div id="mnFloor" class="map-floor mn-floor"></div>
+
+    <div class="mn-row mn-loop-row">
+      <button id="btnMnLoop" class="btn mn-loop">⟳ Loop</button>
+      <button id="btnMnTapClear" class="btn mn-clear"
+              title="Forget the taps">✕</button>
+      <span id="mnTapReadout" class="mn-readout">no taps yet</span>
     </div>
 
-    <div class="card">
-      <div class="card-head">
-        <h3>Which lights</h3>
-        <span>
-          <button id="btnMnAll" class="btn small">All</button>
-          <button id="btnMnNone" class="btn small">None</button>
-        </span>
-      </div>
-      <p class="muted small">Taps, loops and effects land on the ticked
-        lights. Tap a role chip to pick just that kind. Drop and Flash
-        always take the whole room.</p>
-      <div id="mnRoleQuick" class="fx-quick"></div>
-      <div id="mnFixtures" class="fx-fixtures"></div>
+    <!-- The two panic pads. The biggest targets on the panel, because
+         they are pressed in a dark room without looking, and they always
+         take the WHOLE room — a drop that misses the lamps you forgot to
+         pick is not a drop. -->
+    <div class="mn-pads">
+      <button id="btnMnDrop" class="btn mn-pad mn-drop">● DROP</button>
+      <button id="btnMnFlash" class="btn mn-pad mn-flash">⚡ FLASH</button>
     </div>
 
-    <div class="card">
-      <div class="card-head">
-        <h3>Tap a rhythm</h3>
-      </div>
-      <p class="muted small"><strong>♩ Loop beat</strong>: tap the beat a
-        few times and the lights keep that pulse going. <strong>𝄆 Loop
-        pattern</strong>: tap a repeating figure — the melody's rhythm, a
-        drum fill — then press it <em>right on the next repeat's first
-        beat</em>, so it knows the length. <em>Chase</em> walks your taps
-        across the ticked lights left to right; <em>Pulse</em> lands every
-        tap on all of them. A new loop replaces any loop on the same
-        lights.</p>
-      <button id="btnMnTap" class="btn mn-tap">TAP</button>
-      <div class="demo-controls">
-        <span id="mnTapReadout" class="muted small">no taps yet</span>
-        <button id="btnMnTapClear" class="btn small">Clear taps</button>
-      </div>
-      <div class="demo-controls">
-        <label class="fx-flag"><input type="radio" name="mnStyle"
-          value="pulse" checked> Pulse together</label>
-        <label class="fx-flag"><input type="radio" name="mnStyle"
-          value="chase"> Chase across</label>
-      </div>
-      <div class="demo-controls">
-        <button id="btnMnLoopBeat" class="btn">♩ Loop beat</button>
-        <button id="btnMnLoopPattern" class="btn">𝄆 Loop pattern</button>
-      </div>
-      <div id="mnLoops" class="list"></div>
-    </div>
+    <div id="mnFx" class="mn-fx"></div>
 
-    <div class="card">
-      <div class="card-head">
-        <h3>One-shot effects</h3>
-      </div>
-      <p class="muted small">Each fires once on the ticked lights, at your
-        tapped tempo (120 BPM until you tap one). Saved effects fire with
-        the lights they were saved with.</p>
-      <div id="mnEffects" class="mn-grid"></div>
-      <div id="mnPresets" class="mn-grid"></div>
-    </div>
-
-    <div class="card" id="mnAuxCard" hidden>
-      <div class="card-head">
-        <h3>Switch lights</h3>
-      </div>
-      <div class="demo-controls" id="mnAux"></div>
-    </div>
+    <p class="mn-hint">Tap bulbs to play them · tap a rhythm then ⟳ on the
+      repeat · hold a glowing bulb to stop its loop</p>
   </section>
   <section class="pane" id="pane-calibrate">
     <p class="muted tab-intro">How long your speaker takes from "play"

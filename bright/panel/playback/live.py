@@ -1,34 +1,42 @@
 """The Manual tab's engine: lights played by hand, against real music.
 
 A show is compiled ahead and played by the conductor; this is the other
-kind of evening — a person with a phone, tapping the beat into one set of
-lights, dropping the room to black on the breakdown and flashing it back
+kind of evening — a person with a phone, striking bulbs on the floor
+plan, dropping the room to black on the breakdown and flashing it back
 on the landing. Semi-manual, semi-automated: every press is immediate,
 and the loops a press starts keep running on their own until they are
 stopped or replaced.
 
-Three kinds of output, all through the compiler's own packet builder
+Four kinds of output, all through the compiler's own packet builder
 (`compiler._Cues` + `render_actions`), because a second answer to "how
 does an action become bytes" is a second answer waiting to drift:
 
-* **pads** — one-shot, right now: drop (everything to black, fast) and
-  flash (a transient pulse to full white that returns to whatever colour
-  the bulb was holding — the bulb does the returning, so a flash can
-  never strand the room bright).
-* **loops** — a tapped rhythm, repeated: the phone records tap moments,
-  the server turns one period of them into strike cues (the same
-  set-to-peak-then-saw-decay shape the compiled `hit` effect uses) and a
-  task replays the period forever. `chase` walks the strikes across the
-  selection in map order — a tapped melody travelling through the room —
-  and `pulse` lands every strike on every selected light.
+* **taps** — one bulb, struck now, because a finger landed on its dot.
+  Two packets, and the whole reason the socket exists: this is the
+  feedback that has to arrive while the finger is still down.
+* **pads** — one-shot, right now, over everything: drop (to black,
+  fast) and flash (a transient pulse to full white that returns to
+  whatever colour the bulb was holding — the bulb does the returning,
+  so a flash can never strand the room bright).
+* **loops** — a struck rhythm, repeated. An event is a moment and the
+  bulbs it strikes (`{"t": seconds, "ids": [...]}`) — the person played
+  a path through the room and the loop replays exactly that. There is
+  no pattern vocabulary on top of it, because there was nothing a
+  `chase` could say that a list of taps could not.
 * **one-shots** — any catalog effect, fired once for a few seconds at
-  the tapped tempo, rendered by `compile_preview` exactly as the Effects
-  tab's "run it on the lights" is.
+  the tapped tempo, rendered by `compile_preview` exactly as the
+  Effects tab's "run it on the lights" is.
 
 A LIFX bulb runs ONE waveform at a time, so starting a loop stops any
 loop that shares a fixture with it — replacement is the gesture, not an
 error. Timing lives here rather than in the browser because a phone tab
 sleeps, throttles and disconnects; the loop must not.
+
+**Late work is dropped, never queued.** `engine.TokenBucket` runs its
+per-bulb token count NEGATIVE on purpose, so every over-budget send
+deepens a debt the next caller waits out — which is right for a
+compiled show and exactly wrong here, where the next caller is a person
+pressing a pad. See `_too_late`.
 """
 from __future__ import annotations
 
@@ -60,9 +68,28 @@ STRIKE_FLOOR = 0.08
 # 120ms is invisible, longer than 4s is a light that looks stuck.
 MIN_DECAY_S = 0.12
 MAX_DECAY_S = 4.0
+# A tap has no next strike to decay into, so it gets a length: long
+# enough to read as a hit from across the room, short enough that
+# tapping four dots in a bar does not smear them into one glow.
+TAP_DECAY_MS = 350
 
 FLASH_MS = 420
 DROP_FADE_MS = 80
+
+# How far past its moment a scheduled send may be and still be worth
+# sending. A loop strike is a beat, so its window is tight; a one-shot
+# effect is a gesture whose shape survives being a fifth of a second
+# out.
+LOOP_LATE_S = 0.15
+SHOT_LATE_S = 0.25
+
+# Two presses of the same pad inside this window are one press. A DROP
+# is mashed, not clicked.
+PAD_COALESCE_S = 0.15
+
+# How close to a whole number of beats "close enough" is, as a fraction
+# of the beat. See `snap_period`.
+SNAP_TOLERANCE = 0.15
 
 
 def infer_period(taps_s: list[float]) -> float | None:
@@ -77,59 +104,135 @@ def infer_period(taps_s: list[float]) -> float | None:
     return gaps[len(gaps) // 2]
 
 
-def loop_cues(cast: list[dict], events: list[float], period_s: float,
-              style: str, palette: list, source: int,
+def snap_period(taps_s: list[float], pressed_s: float) -> float:
+    """The loop's length: what was pressed, snapped to the tapped beat.
+
+    Nobody presses LOOP frame-perfectly on the repeat, and a loop 40ms
+    long in the wrong direction drifts audibly within four bars. So the
+    press names the length and the taps name the grid: if the press is
+    within `SNAP_TOLERANCE` of a whole number of beats, that whole
+    number is what the person meant. Fewer than two taps carries no
+    grid, so the press stands as it is.
+    """
+    pressed_s = float(pressed_s)
+    beat = infer_period(list(taps_s))
+    if not beat or beat <= 0.0:
+        return pressed_s
+    whole = round(pressed_s / beat)
+    if whole >= 1 and abs(pressed_s - whole * beat) <= SNAP_TOLERANCE * beat:
+        return whole * beat
+    return pressed_s
+
+
+def _strike(fixture: dict, at: float, decay_ms: int, hue: float, sat: float,
+            manners: dict, label: str) -> list[dict]:
+    """The compiled `hit` effect's exact shape, as two actions.
+
+    A set to the peak with no fade (the attack — a fade still in flight
+    would start the decay from somewhere between the two levels and lose
+    exactly the attack), then a saw travelling to the floor: the bulb
+    runs the envelope, so this costs two packets however long it lasts.
+    """
+    peak = fx._cap(fixture, STRIKE_PEAK, manners)
+    floor = fx._cap(fixture, min(STRIKE_FLOOR, peak), manners)
+    return [fx._set(fixture, at, hue, sat, peak, 0, f"{label} strike"),
+            fx._wave(fixture, at, hue, sat, floor, decay_ms, 1.0, "saw",
+                     0.5, f"{label} decay")]
+
+
+def loop_cues(cast: list[dict], events: list[dict], period_s: float,
+              palette: list, source: int,
               respect_roles: bool = True) -> list[dict]:
-    """One period of a tapped loop, as cues from t=0.
+    """One period of a played loop, as cues from t=0.
+
+    `cast` is every bulb the session can drive; an event names the ones
+    it strikes, so what a loop touches is what was tapped and the rest
+    of the room is left alone. Colour is per BULB — the palette indexed
+    by a bulb's place in the cast — so a light keeps its colour across
+    every strike of every loop it is in, which is what makes a tapped
+    path read as a path rather than a flicker.
 
     Raises ValueError with a person-readable reason — these come straight
     from a phone screen and the refusal is read there.
     """
     if not cast:
-        raise ValueError("no lights selected — tick at least one")
+        raise ValueError("no reachable mapped bulbs to play")
     period_s = float(period_s)
     if not MIN_PERIOD_S <= period_s <= MAX_PERIOD_S:
         raise ValueError(
             f"loop period {period_s:.2f}s is outside "
             f"{MIN_PERIOD_S}–{MAX_PERIOD_S}s")
-    cleaned = sorted({round(max(0.0, float(t)), 3) for t in events
-                      if float(t) < period_s})
-    if not cleaned:
-        raise ValueError("no taps inside the loop")
-    if len(cleaned) > MAX_EVENTS:
+    spot_of = {str(f.get("id")): spot for spot, f in enumerate(cast)}
+    # moment -> the cast positions struck there. A dict because two
+    # events at one instant are one instant, whatever the phone sent.
+    struck: dict[float, set[int]] = {}
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        try:
+            at = round(max(0.0, float(event.get("t", 0.0))), 3)
+        except (TypeError, ValueError):
+            continue
+        if at >= period_s:
+            continue
+        # An id that is not in the cast is a bulb that has gone off the
+        # map since the tap: skipped, never a refusal — the rest of the
+        # rhythm is still what the person played.
+        hit = {spot_of[str(i)] for i in (event.get("ids") or [])
+               if str(i) in spot_of}
+        if hit:
+            struck.setdefault(at, set()).update(hit)
+    if not struck:
+        raise ValueError("no taps inside the loop — tap some lights first")
+    if len(struck) > MAX_EVENTS:
         raise ValueError(f"more than {MAX_EVENTS} taps in one loop")
-    strikes_per_fixture = (len(cleaned) if style != "chase"
-                           else -(-len(cleaned) // len(cast)))
-    rate = strikes_per_fixture * 2 / period_s
-    if rate > MAX_PER_FIXTURE_HZ:
+
+    # Per bulb, in order, because a bulb is what runs the packets and
+    # what the rate ceiling is about.
+    times_for: dict[int, list[float]] = {}
+    for at in sorted(struck):
+        for spot in struck[at]:
+            times_for.setdefault(spot, []).append(at)
+    busiest = max(len(times) for times in times_for.values())
+    if busiest * 2 / period_s > MAX_PER_FIXTURE_HZ:
         raise ValueError(
-            "that rhythm is faster than the bulbs can follow — slow it "
-            "down or spread it across more lights (chase)")
+            "that rhythm is faster than one bulb can follow — slow it "
+            "down or spread it across more lights")
 
     manners = {"respect_roles": bool(respect_roles)}
     actions: list[dict] = []
-    for index, at in enumerate(cleaned):
-        nxt = cleaned[index + 1] if index + 1 < len(cleaned) \
-            else cleaned[0] + period_s
-        decay_ms = int(min(MAX_DECAY_S, max(MIN_DECAY_S, nxt - at)) * 1000)
-        targets = [cast[index % len(cast)]] if style == "chase" else cast
-        for spot, fixture in enumerate(targets):
-            # A chase colours by STEP so the pattern travels through the
-            # palette as it travels through the room; a pulse colours by
-            # fixture so the room holds one look per light.
-            hue, sat = fx._colour(palette, index if style == "chase"
-                                  else spot)
-            peak = fx._cap(fixture, STRIKE_PEAK, manners)
-            floor = fx._cap(fixture, min(STRIKE_FLOOR, peak), manners)
-            # The compiled `hit` effect's exact shape: a set to the peak
-            # with no fade (the attack), then a saw travelling to the
-            # floor (the decay) — the bulb runs the envelope.
-            actions.append(fx._set(fixture, at, hue, sat, peak, 0,
-                                   "live strike"))
-            actions.append(fx._wave(fixture, at, hue, sat, floor, decay_ms,
-                                    1.0, "saw", 0.5, "live decay"))
+    for spot, times in sorted(times_for.items()):
+        fixture = cast[spot]
+        hue, sat = fx._colour(palette, spot)
+        for index, at in enumerate(times):
+            # The decay runs to this BULB's next strike, not the loop's
+            # next event: a bulb struck on beats 1 and 3 glows through
+            # beat 2 rather than cutting off under somebody else's hit.
+            nxt = times[index + 1] if index + 1 < len(times) \
+                else times[0] + period_s
+            decay_ms = int(min(MAX_DECAY_S,
+                               max(MIN_DECAY_S, nxt - at)) * 1000)
+            actions.extend(_strike(fixture, at, decay_ms, hue, sat, manners,
+                                   "live"))
     out = compiler._Cues(source, {})
     compiler.render_actions(actions, out)
+    return sorted(out.cues, key=_send_time)
+
+
+def tap_cues(fixture: dict, palette_index: int, palette: list, source: int,
+             respect_roles: bool = True) -> list[dict]:
+    """One bulb, struck now: the answer to a finger landing on a dot.
+
+    Two packets, deliberately — this is the cheapest thing the session
+    sends and the one whose latency a person can feel, so it renders the
+    strike and nothing else.
+    """
+    hue, sat = fx._colour(palette, palette_index)
+    manners = {"respect_roles": bool(respect_roles)}
+    out = compiler._Cues(source, {})
+    compiler.render_actions(
+        _strike(fixture, 0.0, TAP_DECAY_MS, hue, sat, manners, "live tap"),
+        out)
     return sorted(out.cues, key=_send_time)
 
 
@@ -174,28 +277,38 @@ class LiveLoops:
 
     def __init__(self, engine) -> None:
         self.engine = engine
+        # Sends dropped for being late, over the session's life. Read by
+        # the tests and the log; nothing acts on it.
+        self.skipped = 0
         self._loops: dict[int, dict] = {}
         self._shots: list[asyncio.Task] = []
+        self._pads: dict[str, float] = {}
         self._counter = 0
 
     # -- what the panel renders ---------------------------------------------
     def describe(self) -> list[dict]:
         return [{"id": loop_id, "label": entry["label"],
-                 "style": entry["style"],
                  "period_s": entry["period_s"],
                  "strikes": entry["strikes"],
                  "bpm": round(60.0 / entry["period_s"] * entry["strikes"], 1)
                  if entry["strikes"] else None,
-                 "lights": entry["names"]}
+                 "lights": entry["names"],
+                 # Which dots the panel marks as looping — the bulbs the
+                 # loop actually drives, not the cast it chose them from.
+                 "ids": entry["ids"]}
                 for loop_id, entry in sorted(self._loops.items())]
 
     # -- loops ---------------------------------------------------------------
-    async def start_loop(self, *, cast: list[dict], events: list[float],
-                         period_s: float, style: str, palette: list,
-                         label: str, respect_roles: bool = True) -> dict:
-        cues = loop_cues(cast, events, period_s, style, palette,
-                         self.engine.source, respect_roles)
-        serials = {f["serial"] for f in cast if f.get("serial")}
+    async def start_loop(self, *, cast: list[dict], events: list[dict],
+                         period_s: float, palette: list, label: str,
+                         respect_roles: bool = True) -> dict:
+        cues = loop_cues(cast, events, period_s, palette, self.engine.source,
+                         respect_roles)
+        # What the loop drives is read back off the cues rather than
+        # re-resolved from the events: one resolver, and the answer is
+        # then what was rendered rather than what was asked for.
+        serials = {cue["serial"] for cue in cues if cue.get("serial")}
+        driven = [f for f in cast if f.get("serial") in serials]
         # One waveform per bulb: a new loop REPLACES any loop it shares a
         # light with. That is the gesture — tapping a new beat onto the
         # lamps means the old beat on the lamps is over.
@@ -208,14 +321,14 @@ class LiveLoops:
             "task": asyncio.create_task(self._run_loop(cues, period_s)),
             "serials": serials,
             "label": label,
-            "style": style,
             "period_s": round(float(period_s), 3),
-            "strikes": len({c["t"] for c in cues}),
-            "names": [f.get("label") or f.get("id") for f in cast],
+            "strikes": len({cue["t"] for cue in cues}),
+            "ids": [f.get("id") for f in driven],
+            "names": [f.get("label") or f.get("id") for f in driven],
         }
         self._loops[loop_id] = entry
         return {"id": loop_id, "period_s": entry["period_s"],
-                "strikes": entry["strikes"]}
+                "strikes": entry["strikes"], "ids": entry["ids"]}
 
     async def stop_loop(self, loop_id: int, halt: bool = True) -> bool:
         entry = self._loops.pop(loop_id, None)
@@ -243,14 +356,41 @@ class LiveLoops:
                 except (asyncio.CancelledError, Exception):  # noqa: BLE001
                     pass
         self._shots = []
+        self._pads = {}
+
+    def _too_late(self, due: float, tolerance: float) -> bool:
+        """Is this send past saving? Counted if so, and then dropped.
+
+        Two reasons, and the second is the one this rework exists for. A
+        strike sent late lands off the beat, which is worse than a
+        strike nobody hears. And `engine.send_governed` takes its delay
+        from a `TokenBucket` whose tokens go NEGATIVE by design: every
+        over-budget send deepens a debt the NEXT caller waits out. So a
+        stalled loop that catches up by sending its backlog does not
+        just arrive late — it buys a queue that the pads, the taps and
+        every gesture after them stand behind. Dropping is what keeps a
+        stall to the beats it stalled through.
+
+        Pads and taps never come through here: they have no scheduled
+        moment to be late for, and they are the presses whose latency is
+        the whole product.
+        """
+        late = time.monotonic() - due
+        if late <= tolerance:
+            return False
+        self.skipped += 1
+        return True
 
     async def _run_loop(self, cues: list[dict], period_s: float) -> None:
         anchor = time.monotonic()
         while True:
             for cue in cues:
-                delay = anchor + _send_time(cue) - time.monotonic()
+                due = anchor + _send_time(cue)
+                delay = due - time.monotonic()
                 if delay > 0:
                     await asyncio.sleep(delay)
+                if self._too_late(due, LOOP_LATE_S):
+                    continue
                 try:
                     await self._send(cue)
                 except Exception as exc:  # noqa: BLE001 — one strike, not the loop
@@ -273,7 +413,9 @@ class LiveLoops:
 
         Unlike `conductor.run_cues` this does not stop anything or touch
         the snapshot — it is a gesture INSIDE a manual session, layered
-        over whatever the loops are doing.
+        over whatever the loops are doing. It returns as soon as the task
+        exists, because the caller is a socket frame and the person who
+        sent it is waiting on light, not on a reply.
         """
         self._shots = [t for t in self._shots if not t.done()]
         task = asyncio.create_task(
@@ -281,12 +423,30 @@ class LiveLoops:
         self._shots.append(task)
         return {"ok": True, "cues": len(cues), "label": label}
 
+    def fire_pad(self, cues: list[dict], pad: str) -> dict:
+        """A pad, at most once per `PAD_COALESCE_S`.
+
+        A drop is mashed — three fingers, or one hand hitting it twice
+        on the way down — and every repeat is the same room going to the
+        same black. Sending them all costs a packet per bulb per press
+        against a ceiling the taps are also spending, so the repeats are
+        answered and not sent.
+        """
+        now = time.monotonic()
+        if now - self._pads.get(pad, 0.0) < PAD_COALESCE_S:
+            return {"ok": True, "coalesced": True, "label": pad}
+        self._pads[pad] = now
+        return self.fire(cues, label=pad)
+
     async def _run_once(self, cues: list[dict]) -> None:
         anchor = time.monotonic()
         for cue in cues:
-            delay = anchor + _send_time(cue) - time.monotonic()
+            due = anchor + _send_time(cue)
+            delay = due - time.monotonic()
             if delay > 0:
                 await asyncio.sleep(delay)
+            if self._too_late(due, SHOT_LATE_S):
+                continue
             try:
                 await self._send(cue)
             except Exception as exc:  # noqa: BLE001 — one cue, not the gesture

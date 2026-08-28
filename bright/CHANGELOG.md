@@ -5,6 +5,37 @@ All notable changes to the **BRight** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.21.0
+
+Manual mode is an instrument now.
+
+### Changed
+
+- **The map is the instrument.** The Manual tab is one phone screen: the
+  room's floor plan fills it, and tapping a bulb strikes it — instantly,
+  with the dot flashing before the network is even consulted. Tap a
+  rhythm across whichever bulbs you like and press **⟳ Loop**: exactly
+  that — which bulb, when — repeats. There is no pulse/chase switch any
+  more, because you tap the path you mean; there is no light-picker,
+  because the map is the picker; and the loop's length **snaps** to the
+  beat you tapped, so ⟳ pressed roughly on the repeat is enough. A
+  looping bulb glows on screen; hold it to stop its loop. Effect chips
+  aim at the bulbs you just tapped (tap two lamps, hit Sparkle) or the
+  whole room when the buffer is empty.
+- **Gestures ride one WebSocket, and nothing queues.** v0.20 sent one
+  HTTP request per gesture through ingress — auth, proxy hop and fetch
+  overhead per tap, which is what "it loses responsiveness" was. Taps,
+  pads and loops are fire-and-forget frames on a persistent socket now,
+  state is pushed rather than polled, and the HTTP routes remain as the
+  automatic fallback.
+- **Late work is dropped, never queued.** The engine's per-bulb rate
+  bucket runs debt on purpose — right for a compiled show, and exactly
+  how a burst of loop strikes made a DROP press wait in line. A loop
+  strike that is already late is now skipped (a late strike lands off
+  the beat and taxes the pads), and a mashed pad coalesces to one
+  press, so DROP and FLASH are instant no matter what the loops are
+  doing.
+
 ## 0.20.0
 
 The Manual tab: you are the director, live.

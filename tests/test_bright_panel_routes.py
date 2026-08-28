@@ -830,3 +830,84 @@ class TestASlowClaudeRunOutlivesItsRequest(PanelCase):
         # but it refuses with a MESSAGE, which is the half that matters.
         self.assertEqual(409, status)
         self.assertIn("brAIn", body["error"])
+
+
+class TestTheManualSocket(PanelCase):
+    """Manual mode's wire, driven as the phone drives it.
+
+    v1 spent an HTTP round trip on every gesture and the commands backed
+    up behind each other; the protocol below is what replaced it, so it
+    is worth one test that speaks it rather than trusting the handlers
+    it dispatches to.
+    """
+
+    async def socket(self):
+        return await self.client.ws_connect("/api/live/ws")
+
+    async def ask(self, ws, op):
+        await ws.send_json(op)
+        return await ws.receive_json(timeout=10)
+
+    async def test_hello_answers_with_the_state_the_panel_renders(self):
+        ws = await self.socket()
+        try:
+            event = await self.ask(ws, {"op": "hello"})
+        finally:
+            await ws.close()
+        self.assertEqual("state", event["ev"])
+        self.assertIn("status", event["session"])
+        self.assertEqual([], event["loops"])
+
+    async def test_an_op_nobody_implements_is_answered(self):
+        # A frame the panel drops is a phone waiting forever on a reply
+        # that is never coming.
+        ws = await self.socket()
+        try:
+            event = await self.ask(ws, {"op": "levitate"})
+            self.assertEqual("error", event["ev"])
+            self.assertIn("levitate", event["message"])
+            junk = await self.ask(ws, "not an op at all")
+        finally:
+            await ws.close()
+        self.assertEqual("error", junk["ev"])
+
+    async def test_a_gesture_without_a_session_says_which_button(self):
+        ws = await self.socket()
+        try:
+            event = await self.ask(ws, {"op": "pad", "pad": "drop"})
+        finally:
+            await ws.close()
+        self.assertEqual("error", event["ev"])
+        self.assertIn("Manual session", event["message"])
+
+    async def test_a_played_loop_comes_back_as_looping_dots(self):
+        ws = await self.socket()
+        try:
+            started = await self.ask(ws, {"op": "start"})
+            self.assertEqual("state", started["ev"])
+            self.assertEqual("manual", started["session"]["status"])
+
+            # A tap is answered by light, not by a frame — so the next
+            # thing off the socket is the loop's own state.
+            await ws.send_json({"op": "tap", "id": f"lifx-{SERIALS[0]}"})
+            looping = await self.ask(ws, {
+                "op": "loop",
+                "taps": [{"t": 0, "id": f"lifx-{SERIALS[0]}"},
+                         {"t": 20, "id": f"lifx-{SERIALS[1]}"},
+                         {"t": 500, "id": f"lifx-{SERIALS[2]}"}],
+                "pressed_ms": 1000})
+            self.assertEqual("state", looping["ev"])
+            self.assertEqual(1, len(looping["loops"]))
+            loop = looping["loops"][0]
+            self.assertEqual([f"lifx-{s}" for s in SERIALS[:3]], loop["ids"],
+                             "two taps 20ms apart are one hit, all three "
+                             "bulbs are marked")
+            self.assertEqual(2, loop["strikes"])
+
+            stopped = await self.ask(ws, {"op": "stop_loop",
+                                          "id": loop["id"]})
+            self.assertEqual([], stopped["loops"])
+            ended = await self.ask(ws, {"op": "stop"})
+            self.assertFalse(ended["session"]["active"])
+        finally:
+            await ws.close()
