@@ -5,6 +5,59 @@ All notable changes to the **BRight** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.22.0
+
+Manual mode has a transport. It is an instrument you can keep time with.
+
+### Changed
+
+- **The song's own grid is the clock.** Manual mode used to loop from
+  wherever a button was pressed, at a tempo guessed from tap gaps — so
+  it drifted against the music within a few bars, and nothing on screen
+  ever said where the bar was. The analyzer has always produced every
+  beat and downbeat of a track, and the show clock has always mapped
+  those onto real time against the speaker's measured latency; the new
+  `playback/transport.py` is what finally reads them. In a session with
+  an analyzed track the transport IS the song: bars and beats come from
+  its downbeats, and **every loop repetition is re-derived from that
+  grid rather than accumulated from a period**, so a loop cannot drift
+  even on a record whose tempo breathes. With no track (someone else's
+  music in the room) tap tempo sets the grid and one press re-phases
+  the downbeat.
+- **Loops are clips, recorded the way a DAW records them.** You choose
+  the length in **bars** (1/2/4/8) and a **quantize** (¼, ⅛, 1/16, off)
+  *before* you play, press ● REC, and recording starts on the **next
+  downbeat** with a count-in — not on the press, which is what made
+  "press it exactly on the repeat" an impossible ask. Taps land on the
+  grid, the clip closes itself after N bars and loops from then on, and
+  more taps overdub into it. Clips mute, clear and delete
+  independently, and each shows its own pattern and playhead.
+- **The screen says what it is doing.** A transport bar with BPM, the
+  bar and beat, and a dot that pulses on the beat and harder on the
+  one; per-clip rings sweeping their cycle; ARMED counting in, then
+  `REC bar 2/4`. **The phone animates all of it locally** from the
+  transport's parameters rather than from a message per strike — so the
+  dots on the map play the pattern in time even when a bulb is off,
+  unreachable, or the room is dark.
+
+### Fixed
+
+- **Nothing in BRight ever turned a bulb ON.** `set_light_power` has
+  existed in the LIFX packet library since the first release with zero
+  callers anywhere in the add-on. A powered-off bulb accepts every
+  colour and waveform packet and displays none of them — so starting a
+  manual session in a dark room did exactly nothing, which is
+  indistinguishable from an add-on that is broken. A session now powers
+  the room on and lays down a dim base before anything else.
+- **Live gestures no longer wait in the rate limiter.** Every send went
+  through `send_governed`, which sleeps for whatever the per-bulb token
+  bucket asks — and that bucket drives its token count negative on
+  purpose, so rapid presses were told 50, 100, 150ms and those sleeps
+  queued in order and landed late. Right for a compiled show, exactly
+  wrong for a finger. Live sends take a token or **drop** (`try_acquire`
+  never deepens the debt a dropped packet did not spend), pads bypass
+  the bucket outright, and nothing on the gesture path can sleep.
+
 ## 0.21.0
 
 Manual mode is an instrument now.
