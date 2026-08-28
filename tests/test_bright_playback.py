@@ -7,6 +7,8 @@ import base64
 import os
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -460,6 +462,178 @@ class TestStoppingStopsTheBulbs(unittest.TestCase):
         self.assertEqual(["bb" * 6],
                          [serial for serial, _ in self._halts(engine)],
                          "the reachable half of the room still stops")
+
+
+class TestThePartyEndsOnce(unittest.TestCase):
+    """The end scene belongs to the END of the run. It used to fire after
+    every track — the good-night scene called between song one and song
+    two of the evening it was configured to close — and the run state
+    collapsed to idle between songs, hiding every Stop button and trim
+    control while nudge/skip/autosync refused against `active: false`."""
+
+    def _scenario(self):
+        events = []
+        persisted = []
+
+        async def run_it():
+            run = conductor.Conductor.__new__(conductor.Conductor)
+            run.engine = _FakeEngine()
+            run.clock = ShowClock()
+            run._snapshot = {}
+            run._driven = set()
+            run._playing_on = None
+            run._end_scene = None
+            run._session_nudge_ms = 0.0
+            run._task = run._poller = run._verify = run._restorer = None
+            run._track_task = None
+            run._party_jump = None
+            run.state = {"status": "idle"}
+            run._write_state()
+
+            def loader(hash_hex):
+                return {"cues": [{"t": 0.0, "ch": "ha",
+                                  "service": "switch.turn_on", "data": {}}],
+                        "title": hash_hex, "track_hash": hash_hex,
+                        "duration_s": 0.05,
+                        "media_content_id": "media-source://x/" + hash_hex}
+
+            result = await run.start_party(
+                ["h1", "h2"], media_player="media_player.k",
+                loader=loader, name="test", end_scene="scene.good_night")
+            assert result.get("ok"), result
+            await run._task
+            return run
+
+        async def fake_verify(entity):
+            return {"ok": True, "detail": ""}
+
+        originals = (conductor.calibration_store.load,
+                     conductor.ha_client.play_media,
+                     conductor.ha_client.call_service,
+                     conductor.ha_client.media_stop,
+                     conductor.playback_check.wait_for_playing,
+                     conductor.atomic_write.write_json,
+                     conductor.POSITION_POLL_S)
+        conductor.calibration_store.load = lambda *a, **k: {
+            "effective_offset_ms": 0.0}
+        conductor.ha_client.play_media = lambda entity, mid: (
+            events.append(("play", mid.rsplit("/", 1)[-1])) or {})
+        conductor.ha_client.call_service = lambda domain, service, data: (
+            events.append((domain, data.get("entity_id"))) or {})
+        conductor.ha_client.media_stop = lambda entity, **kw: {}
+        conductor.playback_check.wait_for_playing = fake_verify
+        conductor.atomic_write.write_json = \
+            lambda path, payload: persisted.append(dict(payload))
+        try:
+            run = asyncio.run(run_it())
+        finally:
+            (conductor.calibration_store.load, conductor.ha_client.play_media,
+             conductor.ha_client.call_service, conductor.ha_client.media_stop,
+             conductor.playback_check.wait_for_playing,
+             conductor.atomic_write.write_json,
+             conductor.POSITION_POLL_S) = originals
+        return run, events, persisted
+
+    def test_the_end_scene_fires_once_after_the_last_track(self):
+        run, events, _ = self._scenario()
+        scenes = [e for e in events if e[0] == "scene"]
+        self.assertEqual([("scene", "scene.good_night")], scenes,
+                         "the end scene is the run's ending, once")
+        # And it fired AFTER both tracks played, not between them.
+        self.assertEqual(("scene", "scene.good_night"), events[-1])
+        self.assertEqual([("play", "h1"), ("play", "h2")],
+                         [e for e in events if e[0] == "play"])
+        self.assertIsNone(run._end_scene, "the scene is consumed on use")
+
+    def test_the_state_never_goes_idle_between_tracks(self):
+        _, _, persisted = self._scenario()
+        first_party = next(i for i, s in enumerate(persisted)
+                           if s.get("status") == "party")
+        inactive = [i for i, s in enumerate(persisted)
+                    if i > first_party and not s.get("active")]
+        self.assertEqual([len(persisted) - 1], inactive,
+                         "only the evening's end writes an inactive state")
+
+
+class TestAShowIsStoppableFromTheFirstSecond(unittest.TestCase):
+    """`start()` used to write `active: false` and only flip it after the
+    snapshot round and the play command — seconds, with a slow bulb — so
+    the panel hid the Stop button for exactly the window someone most
+    wants it. And a stop racing the play command found `_playing_on`
+    unset and left the song playing through its own stop."""
+
+    def _conductor(self):
+        run = conductor.Conductor.__new__(conductor.Conductor)
+        run.engine = _FakeEngine()
+        run.clock = ShowClock()
+        run._snapshot = {}
+        run._driven = set()
+        run._playing_on = None
+        run._end_scene = None
+        run._session_nudge_ms = 0.0
+        run._task = run._poller = run._verify = run._restorer = None
+        run._track_task = None
+        run._party_jump = None
+        run.state = {"status": "idle"}
+        return run
+
+    def test_active_before_the_play_command_returns(self):
+        stopped = []
+
+        async def run_it():
+            run = self._conductor()
+            started = threading.Event()
+
+            def slow_play(entity, mid):
+                started.set()
+                time.sleep(0.2)
+                return {}
+
+            conductor.ha_client.play_media = slow_play
+            result = await run.start(
+                [{"t": 0.0, "ch": "ha", "service": "switch.turn_on",
+                  "data": {}}],
+                media_player="media_player.k",
+                media_content_id="media-source://x/y.mp3",
+                title="y", duration_s=0.05)
+            assert result.get("ok"), result
+            # The play command has not returned yet; the state must
+            # already offer a Stop.
+            state_early = dict(run.state)
+            await asyncio.wait_for(
+                asyncio.to_thread(started.wait, 1.0), 2.0)
+            # A stop racing the play command still silences the player.
+            await run.stop()
+            return state_early
+
+        originals = (conductor.calibration_store.load,
+                     conductor.ha_client.play_media,
+                     conductor.ha_client.media_stop,
+                     conductor.playback_check.wait_for_playing,
+                     conductor.atomic_write.write_json)
+
+        async def fake_verify(entity):
+            return {"ok": True, "detail": ""}
+
+        conductor.calibration_store.load = lambda *a, **k: {
+            "effective_offset_ms": 0.0}
+        conductor.ha_client.media_stop = \
+            lambda entity, **kw: stopped.append(entity) or {}
+        conductor.playback_check.wait_for_playing = fake_verify
+        conductor.atomic_write.write_json = lambda path, payload: None
+        try:
+            state_early = asyncio.run(run_it())
+        finally:
+            (conductor.calibration_store.load, conductor.ha_client.play_media,
+             conductor.ha_client.media_stop,
+             conductor.playback_check.wait_for_playing,
+             conductor.atomic_write.write_json) = originals
+
+        self.assertTrue(state_early.get("active"),
+                        "a show that has been asked for is stoppable")
+        self.assertEqual("starting", state_early.get("status"))
+        self.assertIn("media_player.k", stopped,
+                      "a stop racing the play command silences the player")
 
 
 class TestStoppingStopsTheMusic(unittest.TestCase):

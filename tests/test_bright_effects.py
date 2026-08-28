@@ -282,10 +282,22 @@ class TestTheBeatGrid(unittest.TestCase):
         half = g.ticks(0.0, 4.0, 0.5, "beat")
         self.assertGreater(len(half), len(whole))
 
-    def test_downbeat_alignment_uses_the_downbeats(self):
+    def test_downbeat_alignment_anchors_on_the_downbeat(self):
+        """Alignment picks WHERE the stepping starts; `every_beats` stays
+        in beats — every caller's period arithmetic (period_ms,
+        cycles_per_cue) counts beats. Striding the downbeat list itself
+        counted bars: an every-8-beats hit anchored every 32 beats, and
+        each 8-beat packet was followed by 24 beats of silence."""
         g = grid(bpm=120)
-        ticks = g.ticks(0.0, 16.0, 1, "downbeat")
-        self.assertTrue(set(ticks).issubset(set(g.downbeats)))
+        # A window starting mid-bar steps from the NEXT downbeat, not
+        # from the window's first beat.
+        ticks = g.ticks(0.3, 16.0, 1, "downbeat")
+        self.assertIn(ticks[0], g.downbeats)
+        # And the spacing is every_beats, in beats: 8 beats at 120bpm
+        # is 4 seconds, whatever the alignment.
+        eight = g.ticks(0.0, 16.0, 8, "bar")
+        gaps = [round(b - a, 3) for a, b in zip(eight, eight[1:])]
+        self.assertEqual({4.0}, set(gaps))
 
     def test_no_beats_still_produces_a_grid(self):
         """A preview on the bench has no track, and every stepping effect

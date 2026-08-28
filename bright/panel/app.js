@@ -1843,10 +1843,20 @@
     }
     if (!ed.following) {
       ed.following = true;
+      ed.liveStamp = null;
       edPlay(false);  // the room is the clock now, not the animation loop
     }
-    ed.liveAnchor = { at: performance.now(), position: state.position_s };
-    edSeek(state.position_s);
+    // Re-anchor only when the stamp MOVED — the same guard
+    // partyFollowLive has, for the same reason: the conductor stamps
+    // position as it dispatches cues and not otherwise, so through a
+    // quiet stretch the identical number arrives on every poll, and
+    // re-anchoring to it snapped the playhead backwards 2.5 seconds,
+    // over and over, exactly where the show goes still.
+    if (state.position_s !== ed.liveStamp) {
+      ed.liveStamp = state.position_s;
+      ed.liveAnchor = { at: performance.now(), position: state.position_s };
+      edSeek(state.position_s);
+    }
   }
 
   // Between polls, keep the playhead moving from the last anchor.
