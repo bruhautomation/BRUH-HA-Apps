@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""BRight's Manual tab engine: tapped loops, the drop/flash pads, and the
-manual session's snapshot-and-restore contract."""
+"""BRight's Manual tab engine: played loops, the drop/flash pads, the
+drop-stale dispatch that keeps a stall from backing up the session, and
+the manual session's snapshot-and-restore contract."""
 
 import asyncio
 import base64
 import os
+import struct
 import sys
 import unittest
 
@@ -35,6 +37,30 @@ def _payload_type(cue: dict) -> int:
     return packets.parse_header(base64.b64decode(cue["payload_b64"]))["type"]
 
 
+def _body(cue: dict) -> bytes:
+    return base64.b64decode(cue["payload_b64"])[packets.HEADER_SIZE:]
+
+
+def _set_colour(cue: dict) -> tuple[int, int, int]:
+    """hue, saturation, brightness out of a SetColor (a reserved byte,
+    then four u16s)."""
+    return struct.unpack_from("<HHH", _body(cue), 1)
+
+
+def _wave_colour(cue: dict) -> tuple[int, int, int]:
+    """The same three out of a SetWaveform (reserved, transient, then the
+    HSBK)."""
+    return struct.unpack_from("<HHH", _body(cue), 2)
+
+
+def _wave_period_ms(cue: dict) -> int:
+    return struct.unpack_from("<I", _body(cue), 10)[0]
+
+
+def _strike(at: float, *fixtures: dict) -> dict:
+    return {"t": at, "ids": [f["id"] for f in fixtures]}
+
+
 class TestTapInference(unittest.TestCase):
     def test_the_period_is_the_median_gap(self):
         # One hesitant first gap must not bend the tempo — that is what
@@ -47,69 +73,173 @@ class TestTapInference(unittest.TestCase):
         self.assertIsNone(live.infer_period([]))
 
 
-class TestLoopCues(unittest.TestCase):
-    def test_pulse_strikes_every_light_on_every_event(self):
-        cues = live.loop_cues(CAST, [0.0, 0.5], 1.0, "pulse", PALETTE,
-                              source=7)
-        # Two actions per strike (the set and the decay wave), on every
-        # light, for both events.
-        self.assertEqual(2 * 2 * len(CAST), len(cues))
+class TestSnapPeriod(unittest.TestCase):
+    def test_a_press_near_the_beat_is_the_beat(self):
+        # Four taps half a second apart; LOOP pressed 42ms late on what
+        # was plainly meant to be the fifth beat.
+        taps = [0.0, 0.5, 1.0, 1.5]
+        self.assertAlmostEqual(2.0, live.snap_period(taps, 2.042), places=3)
 
-    def test_chase_walks_the_events_across_the_cast(self):
-        cues = live.loop_cues(CAST, [0.0, 0.25, 0.5], 1.0, "chase", PALETTE,
-                              source=7)
-        self.assertEqual(2 * 3, len(cues), "one light per event")
+    def test_a_press_nowhere_near_the_beat_is_taken_literally(self):
+        # 30% of a beat out is not a missed downbeat, it is a loop that
+        # is meant to be that long — guessing here would fight the
+        # person rather than help them.
+        taps = [0.0, 0.5, 1.0, 1.5]
+        self.assertAlmostEqual(2.15, live.snap_period(taps, 2.15), places=3)
+
+    def test_the_snap_reaches_past_one_beat(self):
+        taps = [0.0, 0.5, 1.0]
+        self.assertAlmostEqual(4.0, live.snap_period(taps, 3.96), places=3)
+
+    def test_too_few_taps_carry_no_grid(self):
+        self.assertAlmostEqual(1.7, live.snap_period([0.0], 1.7), places=3)
+        self.assertAlmostEqual(1.7, live.snap_period([], 1.7), places=3)
+
+    def test_a_press_before_the_first_beat_is_not_snapped_to_zero(self):
+        # k rounds to 0 for a very short press, and a zero-length loop
+        # is not a loop — the literal value goes on to fail the period
+        # bounds with a sentence about the period.
+        taps = [0.0, 1.0, 2.0]
+        self.assertAlmostEqual(0.2, live.snap_period(taps, 0.2), places=3)
+
+
+class TestLoopCues(unittest.TestCase):
+    def test_an_event_strikes_exactly_the_bulbs_it_names(self):
+        events = [_strike(0.0, CAST[0]), _strike(0.25, CAST[1]),
+                  _strike(0.5, CAST[2])]
+        cues = live.loop_cues(CAST, events, 1.0, PALETTE, source=7)
+        self.assertEqual(2 * 3, len(cues), "two packets per strike")
         by_time = {}
         for cue in cues:
             by_time.setdefault(cue["t"], set()).add(cue["serial"])
-        # Each event lands on exactly one light, and no two consecutive
-        # events land on the same one.
-        serial_order = [next(iter(by_time[t])) for t in sorted(by_time)]
-        self.assertEqual(3, len(set(serial_order)))
+        self.assertEqual({0.0: {CAST[0]["serial"]},
+                          0.25: {CAST[1]["serial"]},
+                          0.5: {CAST[2]["serial"]}}, by_time,
+                         "the melody path lands where it was played")
 
-    def test_the_decay_spans_the_gap_to_the_next_strike(self):
-        cues = live.loop_cues([CAST[0]], [0.0, 0.6], 1.0, "pulse", PALETTE,
-                              source=7)
-        waves = [c for c in cues if _payload_type(c) == packets.SET_WAVEFORM]
-        first = next(c for c in waves if c["t"] == 0.0)
-        payload = base64.b64decode(first["payload_b64"])
-        parsed = packets.parse_set_waveform(payload) \
-            if hasattr(packets, "parse_set_waveform") else None
-        if parsed is not None:
-            self.assertEqual(600, parsed["period_ms"])
+    def test_two_bulbs_in_one_event_are_one_hit(self):
+        cues = live.loop_cues(CAST, [_strike(0.0, CAST[0], CAST[2])], 1.0,
+                              PALETTE, source=7)
+        self.assertEqual({CAST[0]["serial"], CAST[2]["serial"]},
+                         {c["serial"] for c in cues})
+        self.assertNotIn(CAST[1]["serial"], {c["serial"] for c in cues},
+                         "a bulb nobody tapped is left alone")
+
+    def test_a_bulb_keeps_its_colour_across_its_strikes(self):
+        events = [_strike(0.0, CAST[1]), _strike(0.5, CAST[1])]
+        cues = live.loop_cues(CAST, events, 1.0, PALETTE, source=7)
+        sets = [_set_colour(c) for c in cues
+                if _payload_type(c) == packets.SET_COLOR]
+        self.assertEqual(2, len(sets))
+        self.assertEqual(sets[0][:2], sets[1][:2],
+                         "hue and saturation come from the BULB's place "
+                         "in the cast, not from which strike it was")
+        # And a different bulb gets a different entry in the palette.
+        other = live.loop_cues(CAST, [_strike(0.0, CAST[2])], 1.0, PALETTE,
+                               source=7)
+        self.assertNotEqual(
+            sets[0][:2],
+            _set_colour(next(c for c in other
+                             if _payload_type(c) == packets.SET_COLOR))[:2])
+
+    def test_the_decay_spans_the_gap_to_that_bulbs_next_strike(self):
+        # Bulb 1 on beats 1 and 3, bulb 2 on beat 2: bulb 1's first
+        # decay must run the whole 0.5s to its OWN next strike, not stop
+        # at 0.25s under somebody else's.
+        events = [_strike(0.0, CAST[0]), _strike(0.25, CAST[1]),
+                  _strike(0.5, CAST[0])]
+        cues = live.loop_cues(CAST, events, 1.0, PALETTE, source=7)
+        first = next(c for c in cues
+                     if c["serial"] == CAST[0]["serial"] and c["t"] == 0.0
+                     and _payload_type(c) == packets.SET_WAVEFORM)
+        self.assertEqual(500, _wave_period_ms(first))
+
+    def test_the_last_strike_decays_around_the_loop(self):
+        events = [_strike(0.0, CAST[0]), _strike(0.6, CAST[0])]
+        cues = live.loop_cues(CAST, events, 1.0, PALETTE, source=7)
+        last = next(c for c in cues
+                    if c["t"] == 0.6 and _payload_type(c) ==
+                    packets.SET_WAVEFORM)
+        self.assertEqual(400, _wave_period_ms(last),
+                         "0.6 to 1.0 is the wrap back to the first strike")
+
+    def test_an_unknown_id_is_skipped_not_refused(self):
+        events = [_strike(0.0, CAST[0]),
+                  {"t": 0.5, "ids": ["lifx-gone-off-the-map"]}]
+        cues = live.loop_cues(CAST, events, 1.0, PALETTE, source=7)
+        self.assertEqual({0.0}, {c["t"] for c in cues},
+                         "the rest of the rhythm is still what was played")
 
     def test_a_rhythm_faster_than_the_bulbs_is_refused(self):
-        # 32 events in 2.5s on one bulb: 25.6 packets/s, over any ceiling.
-        events = [i * 0.078 for i in range(32)]
+        # 32 strikes on ONE bulb in 2.5s: 25.6 packets/s, over any
+        # ceiling.
+        events = [_strike(i * 0.078, CAST[0]) for i in range(32)]
         with self.assertRaises(ValueError):
-            live.loop_cues([CAST[0]], events, 2.5, "pulse", PALETTE, source=7)
+            live.loop_cues(CAST, events, 2.5, PALETTE, source=7)
 
-    def test_the_same_rhythm_spread_as_a_chase_is_fine(self):
-        events = [i * 0.3 for i in range(16)]
-        cues = live.loop_cues(CAST, events, 4.8, "chase", PALETTE, source=7)
-        self.assertTrue(cues)
+    def test_the_same_rhythm_spread_across_bulbs_is_fine(self):
+        # The ceiling is per bulb, so the same 32 hits dealt round-robin
+        # cost each of three bulbs a third of the rate.
+        events = [_strike(i * 0.078, CAST[i % 3]) for i in range(32)]
+        self.assertTrue(live.loop_cues(CAST, events, 2.5, PALETTE, source=7))
+
+    def test_more_than_the_event_cap_is_refused(self):
+        events = [_strike(i * 0.2, CAST[i % 3])
+                  for i in range(live.MAX_EVENTS + 1)]
+        with self.assertRaises(ValueError):
+            live.loop_cues(CAST, events, 15.0, PALETTE, source=7)
 
     def test_bounds_are_person_readable(self):
         with self.assertRaises(ValueError):
-            live.loop_cues(CAST, [0.0], 0.1, "pulse", PALETTE, source=7)
+            live.loop_cues(CAST, [_strike(0.0, CAST[0])], 0.1, PALETTE,
+                           source=7)
         with self.assertRaises(ValueError):
-            live.loop_cues([], [0.0], 1.0, "pulse", PALETTE, source=7)
+            live.loop_cues([], [_strike(0.0, CAST[0])], 1.0, PALETTE,
+                           source=7)
         with self.assertRaises(ValueError):
             # Every tap outside the period: nothing left to loop.
-            live.loop_cues(CAST, [5.0], 1.0, "pulse", PALETTE, source=7)
+            live.loop_cues(CAST, [_strike(5.0, CAST[0])], 1.0, PALETTE,
+                           source=7)
+        with self.assertRaises(ValueError):
+            # Taps that name no bulb at all.
+            live.loop_cues(CAST, [{"t": 0.0, "ids": []}], 1.0, PALETTE,
+                           source=7)
 
     def test_candles_keep_their_manners(self):
         candle = bulb(4, role="candle")
-        cues = live.loop_cues([candle], [0.0], 1.0, "pulse", PALETTE,
+        cues = live.loop_cues([candle], [_strike(0.0, candle)], 1.0, PALETTE,
                               source=7)
-        # The strike's set carries the capped peak: read the SetColor
-        # payload's brightness field (HSBK brightness at offset 40).
+        # The strike's set carries the capped peak, and so does the floor
+        # the decay travels to.
         strike = next(c for c in cues
                       if _payload_type(c) == packets.SET_COLOR)
-        payload = base64.b64decode(strike["payload_b64"])
-        brightness = int.from_bytes(payload[40:42], "little")
-        self.assertLessEqual(brightness, int(0.45 * 65535) + 1,
+        self.assertLessEqual(_set_colour(strike)[2], int(0.45 * 65535) + 1,
                              "a candle's ceiling holds in a live strike")
+
+
+class TestTapCues(unittest.TestCase):
+    def test_a_tap_is_two_packets_a_set_then_a_decay(self):
+        cues = live.tap_cues(CAST[0], 0, PALETTE, source=7)
+        self.assertEqual(2, len(cues), "the cheapest thing the session sends")
+        self.assertEqual([packets.SET_COLOR, packets.SET_WAVEFORM],
+                         [_payload_type(c) for c in cues],
+                         "the attack first, then the envelope the bulb runs")
+        self.assertEqual([0.0, 0.0], [c["t"] for c in cues])
+
+    def test_a_tap_decays_over_its_own_length(self):
+        cues = live.tap_cues(CAST[0], 0, PALETTE, source=7)
+        self.assertEqual(live.TAP_DECAY_MS, _wave_period_ms(cues[1]))
+
+    def test_a_tapped_candle_keeps_its_ceiling(self):
+        candle = bulb(4, role="candle")
+        cues = live.tap_cues(candle, 0, PALETTE, source=7)
+        self.assertLessEqual(_set_colour(cues[0])[2], int(0.45 * 65535) + 1)
+        self.assertLessEqual(_wave_colour(cues[1])[2], int(0.45 * 65535) + 1)
+
+    def test_a_tap_takes_its_colour_from_the_index_it_is_given(self):
+        first = _set_colour(live.tap_cues(CAST[0], 0, PALETTE, source=7)[0])
+        second = _set_colour(live.tap_cues(CAST[0], 1, PALETTE, source=7)[0])
+        self.assertNotEqual(first[:2], second[:2])
 
 
 class TestPads(unittest.TestCase):
@@ -117,11 +247,8 @@ class TestPads(unittest.TestCase):
         cues = live.pad_cues(CAST, "drop", source=7)
         self.assertEqual(len(CAST), len(cues))
         for cue in cues:
-            payload = base64.b64decode(cue["payload_b64"])
-            self.assertEqual(packets.SET_COLOR,
-                             packets.parse_header(payload)["type"])
-            self.assertEqual(0, int.from_bytes(payload[40:42], "little"),
-                             "drop means black")
+            self.assertEqual(packets.SET_COLOR, _payload_type(cue))
+            self.assertEqual(0, _set_colour(cue)[2], "drop means black")
 
     def test_flash_is_a_transient_wave_the_bulb_undoes(self):
         cues = live.pad_cues(CAST, "flash", source=7)
@@ -158,16 +285,76 @@ class _FakeEngine:
         return None
 
 
+class _StalledClock:
+    """A `time` stand-in that jumps forward after the anchor is read.
+
+    Enough of the module for `live` (which reads nothing but
+    `monotonic`), so a test can put the dispatcher's cues in the past
+    without spending seconds or racing the event loop.
+    """
+
+    def __init__(self, jump: float = 10.0) -> None:
+        self.reads = 0
+        self.jump = jump
+
+    def monotonic(self) -> float:
+        self.reads += 1
+        return 0.0 if self.reads == 1 else self.jump
+
+
+class TestDropStale(unittest.TestCase):
+    def test_a_late_send_is_counted_and_dropped(self):
+        loops = live.LiveLoops(_FakeEngine())
+        # `due` well in the past: the loop stalled through this strike.
+        self.assertTrue(loops._too_late(live.time.monotonic() - 1.0,
+                                        live.LOOP_LATE_S))
+        self.assertEqual(1, loops.skipped)
+
+    def test_a_send_inside_its_window_is_sent(self):
+        loops = live.LiveLoops(_FakeEngine())
+        self.assertFalse(loops._too_late(live.time.monotonic() - 0.02,
+                                         live.LOOP_LATE_S))
+        self.assertEqual(0, loops.skipped, "an on-time send is not a skip")
+
+    def test_a_one_shot_gets_the_wider_window(self):
+        loops = live.LiveLoops(_FakeEngine())
+        due = live.time.monotonic() - 0.2
+        self.assertTrue(loops._too_late(due, live.LOOP_LATE_S))
+        self.assertFalse(loops._too_late(due, live.SHOT_LATE_S),
+                         "a gesture survives what a beat does not")
+
+    def test_a_stalled_dispatch_drops_rather_than_machine_gunning(self):
+        # Every cue is already ten seconds old by the time the loop gets
+        # to it: sending them would land a burst off the beat AND deepen
+        # the TokenBucket debt the pads then wait out.
+        async def scenario():
+            engine = _FakeEngine()
+            loops = live.LiveLoops(engine)
+            cues = live.pad_cues(CAST, "flash", source=engine.source)
+            original = live.time
+            live.time = _StalledClock()
+            try:
+                loops.fire(cues, label="flash")
+                await asyncio.gather(*loops._shots)
+            finally:
+                live.time = original
+            return engine.sent, loops.skipped
+
+        sent, skipped = asyncio.run(scenario())
+        self.assertEqual([], sent, "nothing stale reaches the wire")
+        self.assertEqual(len(CAST), skipped, "and every drop is counted")
+
+
 class TestLiveLoops(unittest.TestCase):
     def test_a_new_loop_replaces_the_loop_on_its_lights(self):
         async def scenario():
             loops = live.LiveLoops(_FakeEngine())
             first = await loops.start_loop(
-                cast=[CAST[0], CAST[1]], events=[0.0], period_s=1.0,
-                style="pulse", palette=PALETTE, label="first")
+                cast=CAST, events=[_strike(0.0, CAST[0], CAST[1])],
+                period_s=1.0, palette=PALETTE, label="first")
             second = await loops.start_loop(
-                cast=[CAST[1], CAST[2]], events=[0.0], period_s=1.0,
-                style="pulse", palette=PALETTE, label="second")
+                cast=CAST, events=[_strike(0.0, CAST[1], CAST[2])],
+                period_s=1.0, palette=PALETTE, label="second")
             described = loops.describe()
             await loops.stop_all()
             return first, second, described
@@ -177,13 +364,46 @@ class TestLiveLoops(unittest.TestCase):
         self.assertEqual(["second"], [d["label"] for d in described],
                          "sharing one bulb replaces the whole loop")
 
+    def test_a_loop_that_shares_no_bulb_runs_beside_the_first(self):
+        async def scenario():
+            loops = live.LiveLoops(_FakeEngine())
+            await loops.start_loop(
+                cast=CAST, events=[_strike(0.0, CAST[0])], period_s=1.0,
+                palette=PALETTE, label="kick")
+            await loops.start_loop(
+                cast=CAST, events=[_strike(0.0, CAST[2])], period_s=1.0,
+                palette=PALETTE, label="snare")
+            described = loops.describe()
+            await loops.stop_all()
+            return described
+
+        described = asyncio.run(scenario())
+        self.assertEqual(["kick", "snare"], [d["label"] for d in described])
+
+    def test_a_loop_reports_the_dots_the_panel_marks(self):
+        async def scenario():
+            loops = live.LiveLoops(_FakeEngine())
+            started = await loops.start_loop(
+                cast=CAST, events=[_strike(0.0, CAST[0]),
+                                   _strike(0.5, CAST[2])],
+                period_s=1.0, palette=PALETTE, label="loop")
+            described = loops.describe()
+            await loops.stop_all()
+            return started, described
+
+        started, described = asyncio.run(scenario())
+        self.assertEqual([CAST[0]["id"], CAST[2]["id"]], started["ids"])
+        self.assertEqual([CAST[0]["id"], CAST[2]["id"]], described[0]["ids"],
+                         "the union of what it drives, not the cast")
+        self.assertNotIn("style", described[0])
+
     def test_loops_actually_send_and_repeat(self):
         async def scenario():
             engine = _FakeEngine()
             loops = live.LiveLoops(engine)
             await loops.start_loop(
-                cast=[CAST[0]], events=[0.0], period_s=0.45,
-                style="pulse", palette=PALETTE, label="beat")
+                cast=CAST, events=[_strike(0.0, CAST[0])], period_s=0.45,
+                palette=PALETTE, label="beat")
             await asyncio.sleep(1.0)
             await loops.stop_all()
             return len(engine.sent)
@@ -197,8 +417,8 @@ class TestLiveLoops(unittest.TestCase):
             engine = _FakeEngine()
             loops = live.LiveLoops(engine)
             started = await loops.start_loop(
-                cast=[CAST[0]], events=[0.0], period_s=1.0,
-                style="pulse", palette=PALETTE, label="beat")
+                cast=CAST, events=[_strike(0.0, CAST[0])], period_s=1.0,
+                palette=PALETTE, label="beat")
             engine.sent = []
             await loops.stop_loop(started["id"])
             return engine.sent, loops.describe()
@@ -225,6 +445,54 @@ class TestLiveLoops(unittest.TestCase):
         then, later = asyncio.run(scenario())
         self.assertEqual(1, then)
         self.assertEqual(then, later, "a one-shot does not repeat")
+
+
+class TestPadCoalescing(unittest.TestCase):
+    def test_a_mashed_pad_is_one_press(self):
+        async def scenario():
+            engine = _FakeEngine()
+            loops = live.LiveLoops(engine)
+            cues = live.pad_cues(CAST, "drop", source=engine.source)
+            first = loops.fire_pad(cues, "drop")
+            second = loops.fire_pad(cues, "drop")
+            await asyncio.sleep(0.1)
+            await loops.stop_all()
+            return first, second, len(engine.sent)
+
+        first, second, sent = asyncio.run(scenario())
+        self.assertNotIn("coalesced", first)
+        self.assertTrue(second.get("coalesced"))
+        self.assertEqual(len(CAST), sent, "one drop reached the room")
+
+    def test_the_window_closes(self):
+        async def scenario():
+            engine = _FakeEngine()
+            loops = live.LiveLoops(engine)
+            cues = live.pad_cues(CAST, "drop", source=engine.source)
+            loops.fire_pad(cues, "drop")
+            await asyncio.sleep(0.2)
+            second = loops.fire_pad(cues, "drop")
+            await asyncio.sleep(0.1)
+            await loops.stop_all()
+            return second, len(engine.sent)
+
+        second, sent = asyncio.run(scenario())
+        self.assertNotIn("coalesced", second)
+        self.assertEqual(2 * len(CAST), sent)
+
+    def test_two_different_pads_do_not_coalesce_each_other(self):
+        async def scenario():
+            engine = _FakeEngine()
+            loops = live.LiveLoops(engine)
+            drop = live.pad_cues(CAST, "drop", source=engine.source)
+            flash = live.pad_cues(CAST, "flash", source=engine.source)
+            loops.fire_pad(drop, "drop")
+            second = loops.fire_pad(flash, "flash")
+            await asyncio.sleep(0.1)
+            await loops.stop_all()
+            return second
+
+        self.assertNotIn("coalesced", asyncio.run(scenario()))
 
 
 class TestManualSession(unittest.TestCase):

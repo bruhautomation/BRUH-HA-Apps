@@ -2031,8 +2031,9 @@ def _live_cast(body: dict) -> list[dict]:
                 or str(fixture.get("role") or "").casefold() in roles):
             continue
         cast.append(fixture)
-    # Map order (left to right), so a chase travels the room the way
-    # every compiled ordering does.
+    # Map order (left to right), so a loop's colours travel the room the
+    # way every compiled ordering does — a bulb's place in this list is
+    # what picks its colour out of the palette.
     return sorted(cast, key=lambda f: (float(f.get("x", 0.5)),
                                        f.get("id", "")))
 
@@ -2042,8 +2043,22 @@ def _live_session_active() -> bool:
     return bool(state.get("active")) and state.get("status") == "manual"
 
 
-async def h_live_start(request: web.Request) -> web.Response:
-    body = await _json_body(request)
+NO_SESSION = ("start a Manual session first — that is what takes the "
+              "snapshot Stop restores")
+
+# Two taps this close together are one hit: somebody struck two dots
+# with two thumbs, and a touchscreen does not report them in the same
+# millisecond. Well under what anyone hears as two events.
+TAP_MERGE_S = 0.04
+
+
+async def _live_begin(body: dict) -> tuple[int, dict]:
+    """Start a manual session, or say why not.
+
+    Split from the route because the socket starts sessions too and a
+    second copy of "is that track playable" is a second answer waiting
+    to disagree with this one.
+    """
     media_player = _entity(body) if body.get("media_player") else None
     hash_hex = str(body.get("track_hash", "") or "")
     media_content_id = None
@@ -2051,29 +2066,30 @@ async def h_live_start(request: web.Request) -> web.Response:
     if hash_hex:
         analysis = await asyncio.to_thread(library.load_analysis, hash_hex)
         if analysis is None:
-            return web.json_response(
-                {"error": "track not analyzed — run the Library tab first"},
-                status=404)
+            return 404, {"error": "track not analyzed — run the Library tab "
+                                  "first"}
         media_content_id = conductor_mod.media_content_id_for(analysis)
         if media_content_id is None:
-            return web.json_response(
-                {"error": "track is outside /media, so the player cannot "
-                          "be handed it"}, status=409)
+            return 409, {"error": "track is outside /media, so the player "
+                                  "cannot be handed it"}
         if media_player is None:
-            return web.json_response(
-                {"error": "pick a player to hear the track on — or clear "
-                          "the track to perform without music"}, status=400)
+            return 400, {"error": "pick a player to hear the track on — or "
+                                  "clear the track to perform without music"}
         title = (analysis.get("tags") or {}).get("title") or hash_hex[:8]
     serials = [f["serial"] for f in _live_cast({})]
     if not serials:
-        return web.json_response(
-            {"error": "no reachable mapped bulbs — run Lab discovery and "
-                      "the Light Map first"}, status=409)
+        return 409, {"error": "no reachable mapped bulbs — run Lab discovery "
+                              "and the Light Map first"}
     result = await _conductor().start_manual(
         serials=serials, media_player=media_player,
         media_content_id=media_content_id, title=title,
         track_hash=hash_hex)
-    return web.json_response(result, status=200 if result.get("ok") else 409)
+    return (200 if result.get("ok") else 409), result
+
+
+async def h_live_start(request: web.Request) -> web.Response:
+    status, result = await _live_begin(await _json_body(request))
+    return web.json_response(result, status=status)
 
 
 async def h_live_stop(request: web.Request) -> web.Response:
@@ -2082,64 +2098,126 @@ async def h_live_stop(request: web.Request) -> web.Response:
     return web.json_response(result)
 
 
+def _live_state() -> dict:
+    """What every surface reads: the session, and what is looping."""
+    return {"session": _conductor().state, "loops": _loops().describe()}
+
+
+def _live_state_event(**extra) -> dict:
+    return {"ev": "state", **_live_state(), **extra}
+
+
 async def h_live_state(request: web.Request) -> web.Response:
-    return web.json_response({"session": _conductor().state,
-                              "loops": _loops().describe()})
+    return web.json_response(_live_state())
 
 
 async def h_live_pad(request: web.Request) -> web.Response:
     """Drop and flash: immediate, whole-selection, no schedule."""
     body = await _json_body(request)
     if not _live_session_active():
-        return web.json_response(
-            {"error": "start a Manual session first — that is what takes "
-                      "the snapshot Stop restores"}, status=409)
+        return web.json_response({"error": NO_SESSION}, status=409)
     pad = str(body.get("pad", ""))
     try:
         cues = live_mod.pad_cues(_live_cast(body), pad, ENGINE.source)
     except ValueError as exc:
         return web.json_response({"error": str(exc)}, status=400)
-    return web.json_response(_loops().fire(cues, label=pad))
+    return web.json_response(_loops().fire_pad(cues, pad))
+
+
+def _live_events(body: dict) -> tuple[list[dict], float]:
+    """Taps off the wire, as loop events, plus when LOOP was pressed.
+
+    A tap is `{"t": ms, "id": fixture}`; taps inside `TAP_MERGE_S` of
+    each other become one event with both ids, because two thumbs on two
+    dots are one hit. Times are re-based on the first tap, so a phone
+    may send its own clock or offsets from the first and both mean the
+    same loop.
+    """
+    raw: list[tuple[float, str]] = []
+    for tap in (body.get("taps") or []):
+        if not isinstance(tap, dict):
+            continue
+        try:
+            at = float(tap.get("t", 0.0)) / 1000.0
+        except (TypeError, ValueError):
+            continue
+        raw.append((at, str(tap.get("id", ""))))
+    raw.sort(key=lambda pair: pair[0])
+    first = raw[0][0] if raw else 0.0
+    events: list[dict] = []
+    for at, fixture_id in raw:
+        at = round(at - first, 3)
+        if events and at - events[-1]["t"] <= TAP_MERGE_S:
+            if fixture_id not in events[-1]["ids"]:
+                events[-1]["ids"].append(fixture_id)
+            continue
+        events.append({"t": at, "ids": [fixture_id]})
+    pressed = _number(body, "pressed_ms", 0.0, 0.0, 120000.0) / 1000.0
+    return events, max(0.0, pressed - first)
+
+
+async def _live_start_loop(body: dict) -> tuple[int, dict]:
+    """A played rhythm becomes a running loop.
+
+    The phone sends what it recorded — the moment of each tap and which
+    bulb it landed on — and the moment LOOP was pressed, which is the
+    loop's length. `snap_period` is what lets that press be roughly on
+    the repeat rather than frame-perfect.
+    """
+    events, pressed_s = _live_events(body)
+    if not events:
+        return 400, {"error": "tap some lights first, then press LOOP"}
+    period = live_mod.snap_period([e["t"] for e in events], pressed_s)
+    try:
+        started = await _loops().start_loop(
+            cast=_live_cast({}), events=events, period_s=period,
+            palette=_preview_palette(body),
+            label=str(body.get("label") or "loop")[:40],
+            respect_roles=body.get("respect_roles", True))
+    except ValueError as exc:
+        return 400, {"error": str(exc)}
+    return 200, {"ok": True, **started}
+
+
+def _live_events_from_legacy(body: dict, cast: list[dict]) -> dict:
+    """A pre-v2 loop body (`taps_ms` + `mode`), as the new schema.
+
+    Translated rather than kept as a second rendering path: there is one
+    loop renderer and it takes events with ids. A body from before the
+    bulbs were tappable named no bulbs, so every tap strikes the whole
+    selection — which is what its `pulse` style did. `chase` is gone
+    with the style field, and degrades to the same thing.
+    """
+    ids = [f.get("id") for f in cast]
+    taps = [float(t) / 1000.0 for t in (body.get("taps_ms") or [])
+            if isinstance(t, (int, float))]
+    if body.get("mode") == "beat":
+        period = live_mod.infer_period(taps) or 0.0
+        return {"taps": [{"t": 0.0, "id": i} for i in ids],
+                "pressed_ms": period * 1000.0, **_carried(body)}
+    period = _number(body, "period_ms", 0.0, 0.0, 120000.0) / 1000.0
+    first = taps[0] if taps else 0.0
+    return {"taps": [{"t": (t - first) * 1000.0, "id": i}
+                     for t in taps for i in ids],
+            "pressed_ms": period * 1000.0, **_carried(body)}
+
+
+def _carried(body: dict) -> dict:
+    """The keys a translated body keeps: how it looks, not what it plays."""
+    return {k: body[k] for k in ("palette", "palette_name", "label",
+                                 "respect_roles") if k in body}
 
 
 async def h_live_loop(request: web.Request) -> web.Response:
-    """A tapped rhythm becomes a running loop.
-
-    The phone sends its taps (ms, relative to the first) and the loop's
-    period: for a plain beat that is the median tap gap ×1 (one strike a
-    period); for a pattern it is the moment Loop was pressed, which the
-    UI teaches as "press Loop on the next repeat's downbeat"."""
     body = await _json_body(request)
     if not _live_session_active():
-        return web.json_response(
-            {"error": "start a Manual session first"}, status=409)
-    taps = [float(t) / 1000.0 for t in (body.get("taps_ms") or [])
-            if isinstance(t, (int, float))]
-    style = "chase" if body.get("style") == "chase" else "pulse"
-    mode = "beat" if body.get("mode") == "beat" else "pattern"
-    if mode == "beat":
-        period = live_mod.infer_period(taps)
-        if period is None:
-            return web.json_response(
-                {"error": "tap at least twice to set a tempo"}, status=400)
-        events = [0.0]
-    else:
-        try:
-            period = float(body.get("period_ms", 0)) / 1000.0
-        except (TypeError, ValueError):
-            period = 0.0
-        events = [t - taps[0] for t in taps] if taps else []
-    cast = _live_cast(body)
-    try:
-        started = await _loops().start_loop(
-            cast=cast, events=events, period_s=period, style=style,
-            palette=_preview_palette(body),
-            label=str(body.get("label") or mode)[:40],
-            respect_roles=body.get("respect_roles", True))
-    except ValueError as exc:
-        return web.json_response({"error": str(exc)}, status=400)
-    return web.json_response({"ok": True, **started,
-                              "loops": _loops().describe()})
+        return web.json_response({"error": NO_SESSION}, status=409)
+    if body.get("taps") is None:
+        body = _live_events_from_legacy(body, _live_cast(body))
+    status, result = await _live_start_loop(body)
+    if result.get("ok"):
+        result["loops"] = _loops().describe()
+    return web.json_response(result, status=status)
 
 
 async def h_live_loop_stop(request: web.Request) -> web.Response:
@@ -2152,14 +2230,10 @@ async def h_live_loop_stop(request: web.Request) -> web.Response:
                              status=200 if stopped else 404)
 
 
-async def h_live_effect(request: web.Request) -> web.Response:
+async def _live_shot(body: dict) -> tuple[int, dict]:
     """One catalog effect, fired once for a few seconds — the Effects
     tab's "run it on the lights", as a gesture inside the session rather
     than a run that owns the room."""
-    body = await _json_body(request)
-    if not _live_session_active():
-        return web.json_response(
-            {"error": "start a Manual session first"}, status=409)
     raw = body.get("effect")
     if isinstance(raw, dict):
         # A saved preset, whole: its selection, order and manners are the
@@ -2177,8 +2251,7 @@ async def h_live_effect(request: web.Request) -> web.Response:
                   "params": body.get("params") or {},
                   "respect_roles": body.get("respect_roles", True)}
     if effect_type not in fx.CATALOG:
-        return web.json_response({"error": f"unknown effect {effect_type!r}"},
-                                 status=400)
+        return 400, {"error": f"unknown effect {effect_type!r}"}
     seconds = _number(body, "seconds", 8, 2, 30)
     fixtures = [f for f in _map_fixtures() if f.get("reachable")]
     try:
@@ -2188,25 +2261,26 @@ async def h_live_effect(request: web.Request) -> web.Response:
             duration_s=seconds, palette=_preview_palette(body),
             base_brightness=0.0, source=ENGINE.source)
     except fx.EffectError as exc:
-        return web.json_response({"error": str(exc)}, status=400)
+        return 400, {"error": str(exc)}
     if rendered["over_budget"]:
-        return web.json_response(
-            {"error": "that would exceed the bulbs' message ceiling — "
-                      "slow it down or narrow the selection"}, status=422)
+        return 422, {"error": "that would exceed the bulbs' message ceiling "
+                              "— slow it down or narrow the selection"}
     if not rendered["cues"]:
-        return web.json_response(
-            {"error": "that effect drives no lights — check the selection"},
-            status=409)
-    return web.json_response(
-        _loops().fire(rendered["cues"], label=effect_type))
+        return 409, {"error": "that effect drives no lights — check the "
+                              "selection"}
+    return 200, _loops().fire(rendered["cues"], label=effect_type)
 
 
-async def h_live_aux(request: web.Request) -> web.Response:
-    """Party lights and lasers, by hand: on or off, right now."""
+async def h_live_effect(request: web.Request) -> web.Response:
     body = await _json_body(request)
     if not _live_session_active():
-        return web.json_response(
-            {"error": "start a Manual session first"}, status=409)
+        return web.json_response({"error": NO_SESSION}, status=409)
+    status, result = await _live_shot(body)
+    return web.json_response(result, status=status)
+
+
+async def _live_aux(body: dict) -> tuple[int, dict]:
+    """Party lights and lasers, by hand: on or off, right now."""
     role = str(body.get("role", "")).strip().casefold()
     state = "on" if body.get("state") == "on" else "off"
     entities = [f.get("entity_id") for f in _map_fixtures()
@@ -2214,8 +2288,7 @@ async def h_live_aux(request: web.Request) -> web.Response:
                 and str(f.get("role") or "").casefold() == role
                 and f.get("entity_id")]
     if not entities:
-        return web.json_response(
-            {"error": f"no {role or 'aux'} lights on the map"}, status=404)
+        return 404, {"error": f"no {role or 'aux'} lights on the map"}
     try:
         result = await asyncio.to_thread(
             ha_client.call_service, "homeassistant", f"turn_{state}",
@@ -2223,9 +2296,142 @@ async def h_live_aux(request: web.Request) -> web.Response:
     except Exception as exc:  # noqa: BLE001 — the press deserves the reason
         result = {"error": str(exc)}
     if isinstance(result, dict) and result.get("error"):
-        return web.json_response({"error": result["error"]}, status=502)
-    return web.json_response({"ok": True, "entities": entities,
-                              "state": state})
+        return 502, {"error": result["error"]}
+    return 200, {"ok": True, "entities": entities, "state": state}
+
+
+async def h_live_aux(request: web.Request) -> web.Response:
+    body = await _json_body(request)
+    if not _live_session_active():
+        return web.json_response({"error": NO_SESSION}, status=409)
+    status, result = await _live_aux(body)
+    return web.json_response(result, status=status)
+
+
+# -- the socket -------------------------------------------------------------
+# Manual mode is played, so its wire is a socket. v1 spent an HTTP round
+# trip on every gesture — through ingress, from a phone, over wifi — and
+# a person tapping sixteenths was opening requests faster than they
+# finished: the commands backed up and the room fell behind the hand.
+# One socket, JSON frames, and nothing on this loop awaits anything slow:
+# a dispatch is a task (`LiveLoops.fire`), never an await, or the next
+# frame waits behind the last one's packets and we are back where we
+# started.
+async def _live_send(ws: web.WebSocketResponse, event: dict) -> None:
+    try:
+        await ws.send_json(event)
+    except (ConnectionResetError, RuntimeError):
+        pass  # the phone went; the gesture is over either way
+
+
+async def _live_deferred(ws: web.WebSocketResponse, body: dict,
+                         work) -> None:
+    """Run one slow op off the socket loop, and report only a refusal.
+
+    A shot renders a whole effect and an aux press is an HTTP call into
+    Core; both are far too slow to hold a frame behind. A success says
+    nothing — the answer is the room — and a refusal is a sentence.
+    """
+    try:
+        _, result = await work(body)
+    except Exception as exc:  # noqa: BLE001 — one gesture, not the socket
+        result = {"error": str(exc)}
+    if result.get("error"):
+        await _live_send(ws, {"ev": "error", "message": result["error"]})
+
+
+async def _live_op(ws: web.WebSocketResponse, op: dict) -> dict | None:
+    """One frame in, at most one frame out. None means "no reply owed"."""
+    verb = str(op.get("op", ""))
+    if verb == "hello":
+        return _live_state_event()
+    if verb == "start":
+        _, result = await _live_begin(op)
+        if result.get("error"):
+            return {"ev": "error", "message": result["error"]}
+        # A session whose music did not start still starts, and the
+        # sentence saying so rides the state rather than being dropped.
+        return _live_state_event(
+            **({"warning": result["warning"]} if result.get("warning")
+               else {}))
+    if verb == "stop":
+        await _conductor().stop(restore=True)
+        return _live_state_event()
+    # The name is checked before the session, or an op nobody implements
+    # is answered "start a Manual session first" and sends somebody to
+    # press Start about a typo.
+    if verb not in ("tap", "pad", "loop", "stop_loop", "shot", "aux"):
+        return {"ev": "error", "message": f"unknown op {verb!r}"}
+    if not _live_session_active():
+        return {"ev": "error", "message": NO_SESSION}
+    if verb == "tap":
+        cast = _live_cast({})
+        wanted = str(op.get("id", ""))
+        spot = next((i for i, f in enumerate(cast)
+                     if f.get("id") == wanted), None)
+        if spot is None:
+            return {"ev": "error",
+                    "message": f"no reachable bulb {wanted!r} on the map"}
+        _loops().fire(
+            live_mod.tap_cues(cast[spot], spot, _preview_palette(op),
+                              ENGINE.source,
+                              respect_roles=op.get("respect_roles", True)),
+            label="tap")
+        return None
+    if verb == "pad":
+        pad = str(op.get("pad", ""))
+        try:
+            cues = live_mod.pad_cues(_live_cast({}), pad, ENGINE.source)
+        except ValueError as exc:
+            return {"ev": "error", "message": str(exc)}
+        _loops().fire_pad(cues, pad)
+        return None
+    if verb == "loop":
+        _, result = await _live_start_loop(op)
+        if result.get("error"):
+            return {"ev": "error", "message": result["error"]}
+        return _live_state_event()
+    if verb == "stop_loop":
+        try:
+            loop_id = int(op.get("id"))
+        except (TypeError, ValueError):
+            return {"ev": "error", "message": "not a loop id"}
+        await _loops().stop_loop(loop_id)
+        return _live_state_event()
+    if verb == "shot":
+        ids = [str(x) for x in (op.get("ids") or [])]
+        asyncio.create_task(_live_deferred(
+            ws, {**op, "select": {"ids": ids} if ids else {}}, _live_shot))
+        return None
+    if verb == "aux":
+        asyncio.create_task(_live_deferred(ws, op, _live_aux))
+        return None
+    # Reachable only if the list above and the branches below disagree,
+    # which is the drift this line exists to answer rather than drop.
+    return {"ev": "error", "message": f"unknown op {verb!r}"}
+
+
+async def h_live_ws(request: web.Request) -> web.WebSocketResponse:
+    ws = web.WebSocketResponse(heartbeat=30)
+    await ws.prepare(request)
+    async for msg in ws:
+        if msg.type is not web.WSMsgType.TEXT:
+            continue
+        try:
+            op = json.loads(msg.data)
+        except (ValueError, TypeError):
+            op = None
+        if not isinstance(op, dict):
+            await _live_send(ws, {"ev": "error", "message": "not a JSON op"})
+            continue
+        try:
+            reply = await _live_op(ws, op)
+        except Exception as exc:  # noqa: BLE001 — one op, not the session
+            log.warning("live op failed: %s", exc)
+            reply = {"ev": "error", "message": str(exc)}
+        if reply is not None:
+            await _live_send(ws, reply)
+    return ws
 
 
 # ---------------------------------------------------------------------------
@@ -2671,6 +2877,8 @@ def build_app() -> web.Application:
     app.router.add_delete("/api/live/loop/{id}", h_live_loop_stop)
     app.router.add_post("/api/live/effect", h_live_effect)
     app.router.add_post("/api/live/aux", h_live_aux)
+    # The socket every gesture rides; the routes above are its fallback.
+    app.router.add_get("/api/live/ws", h_live_ws)
     app.router.add_post("/api/show/autosync", h_show_autosync)
     app.router.add_post("/api/show/party_mode", h_show_party)
     # `start_party` is party_mode under the name the service uses: an
