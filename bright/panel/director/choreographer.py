@@ -284,7 +284,15 @@ def _layer_effects(layer: str, spec: dict, kind: str,
                             "follow_strength": True, "white": False}}]
 
     if layer == "pulse":
-        if kind == "peak" and size >= 3:
+        # A chase and a theater alternation are in the harsh set, and
+        # `resolve_fixtures` keeps roles that do not pulse (candles) out
+        # of the harsh set — so handing either to a candle role compiles
+        # an effect that drives zero lights. `size` counts the map, not
+        # the cast that will survive that filter; a role that does not
+        # pulse takes the `hit` below, which candles are allowed to run.
+        pulses = palettes.ROLE_RULES.get(spec.get("role"), {}) \
+            .get("pulses", True)
+        if pulses and kind == "peak" and size >= 3:
             # Three or more of one kind of light and the beat can TRAVEL
             # rather than blink in place. Below three a chase is a
             # flicker, which is why this is a count and not a preference.
@@ -294,7 +302,7 @@ def _layer_effects(layer: str, spec: dict, kind: str,
                                 "width": max(1, size // 3),
                                 "bounce": bool(seed % 2), "background": 0.12,
                                 "brightness": 1.0, "fade_ms": 80}}]
-        if size == 2 and kind == "peak":
+        if pulses and size == 2 and kind == "peak":
             return [{"type": "theater", "name": "beat alternation",
                      "select": select,
                      "params": {"step_beats": 1, "groups": 2,

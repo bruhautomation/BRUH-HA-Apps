@@ -1197,6 +1197,21 @@ def _r_stab(out, effect, cast, grid, ctx) -> None:
         out.append(_wave(fixture, ctx["start"], hue, sat,
                          _cap(fixture, 0.7 + 0.3 * p["strength"], effect),
                          int(p["hold_ms"]), 1.0, p["shape"], 0.2, "stab"))
+        if blackout_s > 0:
+            # The wave is transient — the bulb returns to its "current"
+            # colour when it ends, and the dip above IS that colour. A
+            # stab with no dip lands back where the scene had the light;
+            # one with a dip used to land back at 2% and sit there until
+            # some other effect happened to name the bulb — on a
+            # whole-room drop, that was most of the room going dark for
+            # the rest of the section. Hand the light back to the scene:
+            # its palette colour at the scene's own base level.
+            scene_hue, scene_sat = _colour(ctx["palette"], index)
+            out.append(_set(fixture,
+                            ctx["start"] + p["hold_ms"] / 1000.0,
+                            scene_hue, scene_sat,
+                            _cap(fixture, ctx["base"], effect),
+                            400, "back to the scene"))
 
 
 def _r_blackout(out, effect, cast, grid, ctx) -> None:

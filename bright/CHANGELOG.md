@@ -53,6 +53,17 @@ Test mode, and a show that never loses the beat.
 - **Revisiting the Party tab no longer drops the chosen speaker.** The
   player list rebuilt from scratch on every visit, and a lost pick fell
   back silently to whichever player calibrated best — a different room.
+- **A dipped stab no longer strands its lights at 2%.** The stab's wave
+  is transient — the bulb returns to its "current" colour when it ends,
+  and the pre-stab dip *was* that colour — so every light a drop
+  touched sat near-dark until something else happened to name it. The
+  stab now hands each light back to the scene's palette at the scene's
+  base level after its hold.
+- **A candles-only room's peak carries a beat again.** The pulse layer
+  picked a chase or theater alternation by fixture *count*, both of
+  which the harsh-effect filter keeps candles out of — so the compiled
+  beat drove zero lights. A role that does not pulse now takes the
+  `hit` form, which candles are allowed to run.
 
 ## 0.18.1
 

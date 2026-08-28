@@ -121,6 +121,39 @@ class TestChoreographer(unittest.TestCase):
         layers = choreographer.plan_layers("quiet", candles)
         self.assertIn("pulse", layers)
 
+    def test_the_candle_beat_survives_the_harsh_filter(self):
+        """A peak's pulse layer used to become a chase or a theater
+        alternation by fixture COUNT alone — both are in the harsh set,
+        which keeps candles out, so a candles-only room compiled a beat
+        that drove zero lights. The count is the map; the cast is what
+        survives the filter."""
+        candles = [dict(FIXTURES[2], id=f"lifx-c{i}", x=i / 5)
+                   for i in range(6)]
+        script = choreographer.write_script(analysis_fixture(), candles)
+        peak = next(s for s in script["scenes"] if s["kind"] == "peak")
+        rhythmic = [e for e in peak["effects"]
+                    if e["type"] in ("hit", "accent", "chase", "theater")]
+        self.assertTrue(rhythmic, "the peak has no rhythmic effect at all")
+        for effect in rhythmic:
+            cleaned = fx.clean_effect(effect)
+            self.assertTrue(fx.resolve_fixtures(cleaned, candles),
+                            f"{effect['type']} drives no candles")
+
+    def test_a_dipped_stab_hands_the_lights_back_to_the_scene(self):
+        """The stab's wave is transient: the bulb returns to its current
+        colour, and the pre-stab dip IS that colour — so a whole-room
+        drop used to leave every light it touched sitting at 2% until
+        something else happened to name it."""
+        script = choreographer.write_script(analysis_fixture(), FIXTURES)
+        analysis = analysis_fixture()
+        show = compiler.compile_show(script, FIXTURES, analysis, source=7)
+        drop_t = analysis["drops"][0]["t"]
+        recoveries = [c for c in show["cues"]
+                      if c["desc"] == "drop hit · back to the scene"]
+        self.assertTrue(recoveries, "the drop leaves no recovery cues")
+        for cue in recoveries:
+            self.assertGreater(cue["t"], drop_t)
+
     def test_a_layer_never_shares_a_bulb(self):
         """One bulb runs one waveform: the guarantee pass must not put
         two layers on one fixture."""
