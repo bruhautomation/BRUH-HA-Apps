@@ -626,40 +626,90 @@ async def _rename_device(hass: HomeAssistant, call: ServiceCall) -> None:
     )
 
 
+# The via_device chain is a tree in theory and a linked list in practice —
+# but nothing in Home Assistant enforces either, because via_device_id is
+# just whatever id an integration reported. `alexa_media` points every
+# device at ITSELF, so a chain walked by recursion is infinitely deep: the
+# service died with RecursionError on each of an Echo/Wyze/Ecobee household's
+# devices, after disabling some of them, which is the worst place for a
+# registry write to stop. Both walks are iterative and carry a `seen` set,
+# so a self-reference and a longer A -> B -> A cycle both end the walk at
+# the point it would repeat itself rather than at the interpreter's limit.
+# Stopping there loses nothing: every device on the cycle has been visited
+# by the time it closes, so there is no parent left to reach.
+
+
+@callback
+def _via_device_chain(
+    registry: dr.DeviceRegistry, device_id: str
+) -> list[str]:
+    """`device_id` and its via-parents, nearest first, cycle-safe.
+
+    Stops at the first id already walked (a self-referential or looping
+    via_device_id) and at the first id the registry no longer holds.
+    """
+    chain: list[str] = []
+    seen: set[str] = set()
+    current: str | None = device_id
+    while current is not None and current not in seen:
+        seen.add(current)
+        device = registry.async_get(current)
+        if device is None:
+            break
+        chain.append(current)
+        current = device.via_device_id
+    return chain
+
+
 @callback
 def _disable_device_and_parent_if_needed(
     registry: dr.DeviceRegistry, device_id: str
 ) -> None:
     """Disable a device; also disable its via-parent once no enabled
     children remain (from Spook)."""
-    device = registry.async_get(device_id)
-    if device is None:
-        return
-    if device.disabled_by is None:
-        registry.async_update_device(
-            device_id, disabled_by=dr.DeviceEntryDisabler.USER
-        )
-    if device.via_device_id is None:
-        return
-    if all(
-        child.id == device_id or child.disabled_by is not None
-        for child in registry.devices.values()
-        if child.via_device_id == device.via_device_id
-    ):
-        _disable_device_and_parent_if_needed(registry, device.via_device_id)
+    seen: set[str] = set()
+    current: str | None = device_id
+    while current is not None and current not in seen:
+        seen.add(current)
+        device = registry.async_get(current)
+        if device is None:
+            return
+        if device.disabled_by is None:
+            registry.async_update_device(
+                current, disabled_by=dr.DeviceEntryDisabler.USER
+            )
+        parent_id = device.via_device_id
+        if parent_id is None or parent_id in seen:
+            if parent_id is not None:
+                _LOGGER.debug(
+                    "device %s is its own via_device ancestor; "
+                    "stopping the parent walk at %s",
+                    device_id,
+                    current,
+                )
+            return
+        # The just-disabled device counts as disabled whether or not the
+        # registry entry we are holding has caught up with the write.
+        if not all(
+            child.id == current or child.disabled_by is not None
+            for child in registry.devices.values()
+            if child.via_device_id == parent_id
+        ):
+            return
+        current = parent_id
 
 
 @callback
 def _enable_device_and_parents(
     registry: dr.DeviceRegistry, device_id: str
 ) -> None:
-    """Enable a device and its via-parent chain (from Spook)."""
-    device = registry.async_get(device_id)
-    if device is None:
-        return
-    if device.via_device_id is not None:
-        _enable_device_and_parents(registry, device.via_device_id)
-    registry.async_update_device(device_id, disabled_by=None)
+    """Enable a device and its via-parent chain (from Spook).
+
+    Parents first, so a child is never briefly enabled under a disabled
+    parent — which is the order the recursion this replaced produced.
+    """
+    for current in reversed(_via_device_chain(registry, device_id)):
+        registry.async_update_device(current, disabled_by=None)
 
 
 async def _disable_device(hass: HomeAssistant, call: ServiceCall) -> None:

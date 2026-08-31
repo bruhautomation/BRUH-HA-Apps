@@ -2,6 +2,24 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.28.5
+
+### Fixed
+
+- **`brain.disable_device` no longer dies on a device that is its own
+  via_device.** The service walks `via_device_id` up to the hub a device
+  hangs off, so disabling the last live child disables the lonely parent
+  too — and it walked it by recursion. Nothing in Home Assistant makes that
+  chain acyclic (`via_device_id` is whatever id an integration reported),
+  and `alexa_media` reports every device as its OWN via_device: the walk
+  had no end, and the service raised `RecursionError` on each Echo, Wyze
+  and Ecobee device it was given, after writing some of the disables. Both
+  walks (`disable_device` and `enable_device`) are iterative and carry a
+  seen-set now, so a self-reference and a longer A → B → A loop both end
+  where they would repeat rather than at the interpreter's stack limit.
+  Nothing is lost by stopping there: every device on the cycle has been
+  visited by the time it closes.
+
 ## 1.28.4
 
 ### Changed
