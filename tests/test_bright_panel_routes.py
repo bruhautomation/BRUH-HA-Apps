@@ -839,7 +839,20 @@ class TestTheManualSocket(PanelCase):
     up behind each other; the protocol below is what replaced it, so it
     is worth one test that speaks it rather than trusting the handlers
     it dispatches to.
+
+    It is an EVENT socket, not a request/response one: a clip changing
+    pushes `{ev: "state"}` to every open phone whether or not anybody
+    asked, because armed → recording → looping happen on the transport's
+    schedule and nobody presses for them. So the tests read frames until
+    the one they are about, exactly as the panel does.
     """
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        # The session is module state and outlives one test's app, so
+        # every test here says out loud that it starts from nothing
+        # running.
+        await self.post("/api/live/stop", {})
 
     async def socket(self):
         return await self.client.ws_connect("/api/live/ws")
@@ -848,19 +861,43 @@ class TestTheManualSocket(PanelCase):
         await ws.send_json(op)
         return await ws.receive_json(timeout=10)
 
-    async def test_hello_answers_with_the_state_the_panel_renders(self):
+    async def until(self, ws, kind, check=None):
+        """The next frame of `kind` that satisfies `check`."""
+        for _ in range(12):
+            event = await ws.receive_json(timeout=10)
+            if event["ev"] == kind and (check is None or check(event)):
+                return event
+        raise AssertionError(f"no {kind} frame arrived")
+
+    async def start(self, ws):
+        """A session, and the two frames starting one owes: what the
+        panel renders, and where the transport is."""
+        await ws.send_json({"op": "start"})
+        state = await self.until(ws, "state")
+        self.assertEqual("manual", state["session"]["status"])
+        return state, await self.until(ws, "transport")
+
+    async def tempo(self, ws):
+        for _ in range(3):
+            await ws.send_json({"op": "tempo_tap"})
+        return await self.until(ws, "transport", lambda e: e["ready"])
+
+    async def test_hello_answers_with_the_state_and_the_grid(self):
         ws = await self.socket()
         try:
-            event = await self.ask(ws, {"op": "hello"})
+            await ws.send_json({"op": "hello"})
+            state = await self.until(ws, "state")
+            transport = await self.until(ws, "transport")
         finally:
             await ws.close()
-        self.assertEqual("state", event["ev"])
-        self.assertIn("status", event["session"])
-        self.assertEqual([], event["loops"])
+        self.assertIn("status", state["session"])
+        self.assertEqual([], state["clips"])
+        self.assertFalse(transport["ready"], "nothing is playing yet")
 
     async def test_an_op_nobody_implements_is_answered(self):
         # A frame the panel drops is a phone waiting forever on a reply
-        # that is never coming.
+        # that is never coming — and the name is checked before the
+        # session, or a typo is answered "start a session first".
         ws = await self.socket()
         try:
             event = await self.ask(ws, {"op": "levitate"})
@@ -880,34 +917,91 @@ class TestTheManualSocket(PanelCase):
         self.assertEqual("error", event["ev"])
         self.assertIn("Manual session", event["message"])
 
-    async def test_a_played_loop_comes_back_as_looping_dots(self):
+    async def test_a_tapped_tempo_is_what_a_clip_is_armed_against(self):
         ws = await self.socket()
         try:
-            started = await self.ask(ws, {"op": "start"})
-            self.assertEqual("state", started["ev"])
-            self.assertEqual("manual", started["session"]["status"])
+            await self.start(ws)
+            # No music is playing, so the grid is tapped: three taps are
+            # a tempo, and until there is one there is nothing to count
+            # a clip in against.
+            armed = await self.ask(ws, {"op": "rec", "bars": 1})
+            self.assertEqual("error", armed["ev"])
+            self.assertIn("tempo", armed["message"])
 
-            # A tap is answered by light, not by a frame — so the next
-            # thing off the socket is the loop's own state.
+            transport = await self.tempo(ws)
+            self.assertEqual("tapped", transport["kind"])
+            self.assertGreater(transport["bpm"], 0)
+            self.assertIsNotNone(transport["next_bar_at"])
+
+            await ws.send_json({"op": "downbeat"})
+            phased = await self.until(ws, "transport")
+            self.assertAlmostEqual(transport["bpm"], phased["bpm"], places=6,
+                                   msg="marking the 1 moves phase, not tempo")
+            await self.ask(ws, {"op": "stop"})
+        finally:
+            await ws.close()
+
+    async def test_a_clip_is_armed_counted_in_and_taken_away_again(self):
+        ws = await self.socket()
+        try:
+            await self.start(ws)
+            await self.tempo(ws)
+
+            # A tap is answered by light, not by a frame.
             await ws.send_json({"op": "tap", "id": f"lifx-{SERIALS[0]}"})
-            looping = await self.ask(ws, {
-                "op": "loop",
-                "taps": [{"t": 0, "id": f"lifx-{SERIALS[0]}"},
-                         {"t": 20, "id": f"lifx-{SERIALS[1]}"},
-                         {"t": 500, "id": f"lifx-{SERIALS[2]}"}],
-                "pressed_ms": 1000})
-            self.assertEqual("state", looping["ev"])
-            self.assertEqual(1, len(looping["loops"]))
-            loop = looping["loops"][0]
-            self.assertEqual([f"lifx-{s}" for s in SERIALS[:3]], loop["ids"],
-                             "two taps 20ms apart are one hit, all three "
-                             "bulbs are marked")
-            self.assertEqual(2, loop["strikes"])
+            await ws.send_json({"op": "rec", "bars": 2, "quantize": 0.5})
+            armed = await self.until(ws, "state", lambda e: e["clips"])
+            clip = armed["clips"][0]
+            self.assertEqual("armed", clip["state"],
+                             "recording starts on the next bar line")
+            self.assertEqual(2, clip["bars"])
+            self.assertEqual(0.5, clip["quantize"])
+            self.assertEqual([], clip["events"])
 
-            stopped = await self.ask(ws, {"op": "stop_loop",
-                                          "id": loop["id"]})
-            self.assertEqual([], stopped["loops"])
-            ended = await self.ask(ws, {"op": "stop"})
+            await ws.send_json({"op": "clip", "id": clip["id"],
+                                "action": "delete"})
+            gone = await self.until(ws, "state", lambda e: not e["clips"])
+            self.assertEqual([], gone["clips"])
+            missing = await self.ask(ws, {"op": "clip", "id": clip["id"],
+                                          "action": "delete"})
+            self.assertEqual("error", missing["ev"])
+            bad = await self.ask(ws, {"op": "clip", "id": 1,
+                                      "action": "levitate"})
+            self.assertEqual("error", bad["ev"])
+
+            await ws.send_json({"op": "stop"})
+            ended = await self.until(ws, "state")
             self.assertFalse(ended["session"]["active"])
         finally:
             await ws.close()
+
+    async def test_a_tap_at_a_bulb_nobody_has_is_a_sentence(self):
+        ws = await self.socket()
+        try:
+            await self.start(ws)
+            event = await self.ask(ws, {"op": "tap", "id": "lifx-nope"})
+            self.assertEqual("error", event["ev"])
+            await self.ask(ws, {"op": "stop"})
+        finally:
+            await ws.close()
+
+    async def test_the_http_fallback_still_taps_and_still_pads(self):
+        # Not every caller is the phone: an automation, a curl, a browser
+        # with no socket. Same clips underneath, or there are two answers
+        # to what a tap does.
+        status, started = await self.post("/api/live/start", {})
+        self.assertEqual(200, status)
+        self.assertEqual(len(SERIALS) - 1, started["powered_on"],
+                         "every mapped bulb is turned on, or the room "
+                         "answers nothing it is sent")
+        status, tapped = await self.post("/api/live/tap",
+                                         {"id": f"lifx-{SERIALS[0]}"})
+        self.assertEqual(200, status)
+        self.assertTrue(tapped["ok"])
+        status, padded = await self.post("/api/live/pad", {"pad": "drop"})
+        self.assertEqual(200, status)
+        self.assertTrue(padded["ok"])
+        status, state = await self.get("/api/live/state")
+        self.assertEqual([], state["clips"])
+        self.assertIn("transport", state)
+        await self.post("/api/live/stop", {})

@@ -507,15 +507,37 @@ if it did. BRight creates that folder at startup.
 ### Manual — play the lights yourself
 
 The other kind of evening: you are the director, live, from your phone.
-The whole tab is **one screen** — the room, the loop button, both pads
-and the effect rack, with nothing to scroll past to reach any of them,
-because scrolling to find DROP is the same as not having DROP.
+The whole tab is **one screen** — the transport, the room, your loops,
+both pads and the effect rack, with nothing to scroll past to reach any
+of them, because scrolling to find DROP is the same as not having DROP.
 
 Start a **session** from the row at the top — pick a song and a
 calibrated player, or pick nothing and perform to whatever is already
 playing — and BRight snapshots every mapped bulb so **Stop** puts the
 room back exactly as it found it. Once it is running that row collapses
-to Stop and one line saying what is playing.
+to a ■ and one line saying what is playing.
+
+**The transport is the top row, and everything else hangs off it.** It
+reads the tempo, the bar and the beat you are on, and a dot that strikes
+on every beat and harder on the *one* — which is the answer, at a
+glance, to "is this actually locked to the music". Two grids can be
+under it, and the chip says which:
+
+- **♪ track** — you started the session on an analysed song, so the
+  grid is the song's own beats and downbeats. It cannot be argued with,
+  which is why no tempo controls appear beside it, and it *breathes*:
+  a track that pushes and pulls carries the bars with it.
+- **✋ tapped** — external music, or none. Press **TAP** on four or more
+  beats to set the tempo, and **⤓ 1** on a downbeat when the speed is
+  right and the phase is half a beat out. That is the one thing a tempo
+  tap cannot fix, because every tempo tap also moves the tempo.
+
+Your phone runs its own playhead off that grid rather than waiting to be
+told where the beat is — the server sends the tempo and a phase, not a
+message per beat — so the pulse, the bar count, every loop's sweep and
+every flash on the map are drawn locally at frame rate. Which is why a
+pattern is visibly playing on the map **even when the bulb is off,
+unreachable, or the room is dark**.
 
 **The map is the instrument.** The middle of the screen is your light
 map, and the lights are where you put them: tap a bulb and *that bulb*
@@ -523,36 +545,67 @@ plays, right there, under your finger. It lights up the instant you
 touch it — the room's own answer travels over the network and arrives
 after your hand has gone, and a control that waits for it feels broken.
 
-- **Tap a rhythm onto the bulbs**, then press **⟳ Loop** on the next
-  repeat's first beat — which is how it learns the figure's length —
-  and the pattern keeps running on the bulbs you tapped it onto. A
-  tapped melody travels the room because you tapped it across the room.
-  The loops run on the server, so they hold time even when your phone's
-  browser naps. A looping bulb wears a pulsing ring; **hold it** for
-  half a second to stop that loop. **✕** forgets the taps.
+**Loops are clips, and you choose their length before you play them.**
+
+1. Pick a length — **1, 2, 4 or 8 bars** — and what notes should snap
+   to: **¼**, **⅛**, **16**ths, or **—** for nothing straightened at
+   all, which is what a swung or hand-placed figure wants.
+2. Press **● REC**. It arms, and counts you in to the next downbeat —
+   `ARMED · in 3 … 2 … 1` — so recording starts on a bar line rather
+   than wherever your thumb landed.
+3. Play the figure on the bulbs. The button says `REC bar 2/4` and fills
+   as it goes, so how much of the loop is left is never a guess.
+4. At the end of the last bar it closes itself and starts looping.
+
+That is the whole difference from the first version of this tab, and it
+is the difference between a loop that stays with the song and one that
+does not: a length **inferred** from when somebody stopped tapping can
+only ever be approximately a bar, and approximately a bar is a loop that
+walks away from the music over a minute. Every repetition is re-derived
+from the song's own bar lines rather than counted off a stopwatch, so a
+tempo that moves takes the loop with it.
+
+Each clip gets a **tile** under the map, in its own colour: a ring
+sweeping its cycle, its length, and its pattern drawn out as ticks with
+the playhead crossing them. The bulbs it drives wear a ring in the same
+colour on the map, so the picture and the rail agree about what is
+playing.
+
+- **Tap a tile** to mute or unmute it.
+- **Hold a tile** for the two endings — **Clear** empties it and keeps
+  the loop, **Delete** takes it away — and **⏺ Dub**, which points the
+  next taps into that clip so you can overdub onto a loop that is
+  already running. Record-enable is exclusive: one clip takes the taps,
+  because a tap recorded into two places is a tap you cannot see happen.
+- Pressing **REC** while a clip is waiting to start cancels it.
+
+Then the two things you press without looking:
+
 - **DROP** takes every light to black, right now. **FLASH** pulses every
   light to full white and back — the bulb itself does the returning, so
   a flash can never strand the room bright. Both always take the whole
   room, because a drop that misses the lamps you forgot to pick is not a
-  drop, and both are the biggest targets on the panel because they are
-  pressed in the dark without looking.
+  drop, and both are the biggest targets on the panel.
 - The **rack** along the bottom scrolls sideways: one-shot effects, then
   your saved effects (★), then a switch per kind of party light. An
-  effect fires on **the bulbs in your current taps** — tap two lamps,
+  effect fires on **the bulbs you tapped most recently** — tap two lamps,
   hit Sparkle, and it sparkles on those two — and on the whole room when
-  you have not tapped anything. It fires at your tapped tempo, 120 BPM
-  until you have tapped one.
+  you have not tapped anything. It fires at the transport's tempo, 120
+  BPM until there is one.
 
 Gestures ride a **live socket**, not one web request each. v1 opened an
-HTTP round trip per tap — through ingress, from a phone, over wifi — and
-somebody tapping sixteenths opened requests faster than they finished, so
-the commands backed up and the room fell behind the hand. If the socket
-cannot be opened the tab still works, one request per gesture, which is
-the old speed rather than nothing.
+HTTP round trip per tap — through ingress, from a phone, over wifi — so
+somebody tapping sixteenths opened requests faster than they finished and
+the room fell behind the hand. Nothing on this tab ever waits for a
+reply. If the socket cannot be opened, tapping, the pads and the rack
+still work at one request per gesture, which is the old speed rather than
+nothing; the transport controls say so out loud instead of doing nothing,
+because they are a conversation with a running grid and there is no
+web request that is one.
 
 Semi-manual, semi-automated: you decide *what* and *when*, the bulbs run
 the envelopes in between. Starting a show or party — or pressing any
-Stop — ends the session, stops every loop, and restores the room.
+Stop — ends the session, stops every clip, and restores the room.
 
 ### Party — the sentence the add-on was built for
 

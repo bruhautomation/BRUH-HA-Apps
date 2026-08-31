@@ -752,6 +752,7 @@ class Conductor:
             # performing to music something else is playing (or none) is
             # half the point of a manual session.
             self._playing_on = media_player
+            play_call = time.monotonic()
             try:
                 result = await asyncio.to_thread(
                     ha_client.play_media, media_player, media_content_id)
@@ -760,6 +761,17 @@ class Conductor:
             if isinstance(result, dict) and result.get("error"):
                 self._playing_on = None
                 warning = f"the music could not start: {result['error']}"
+            else:
+                # The clock is what the Manual transport reads bars off,
+                # so a session playing a track has to anchor it exactly
+                # as a show does. Calibration stays optional here —
+                # there are no compiled cues to sync — and an
+                # uncalibrated speaker anchors at the play command,
+                # which is the same grid a few tens of milliseconds out
+                # rather than no grid at all.
+                self.clock.anchor(
+                    play_call,
+                    (self._calibrated_offset(media_player) or 0.0) / 1000.0)
         self._write_state()
         self._update_state(status="manual", active=True, lights_busy=True,
                            track=title, track_hash=track_hash,

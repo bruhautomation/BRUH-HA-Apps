@@ -69,6 +69,26 @@ class TokenBucket:
             return 0.0
         return -self._tokens / self.rate
 
+    def try_acquire(self) -> bool:
+        """Take a token only if there is one. No debt either way.
+
+        `acquire` is right for a compiled show, where every packet has to
+        arrive eventually and the queue is the price. It is exactly wrong
+        for a played gesture: the debt it deepens is paid by the NEXT
+        caller, who is a person pressing a pad, so ten strikes in a busy
+        bar taught the bucket to make the drop wait 500ms. A refusal here
+        costs the caller its own packet and nothing else — a strike
+        nobody hears beats a room that runs half a second behind the
+        hand and never catches up.
+        """
+        now = self._clock()
+        self._tokens = min(self.burst, self._tokens + (now - self._stamp) * self.rate)
+        self._stamp = now
+        if self._tokens < 1.0:
+            return False
+        self._tokens -= 1.0
+        return True
+
 
 def percentile(samples: list[float], pct: float) -> float:
     """Nearest-rank percentile (rank = ceil(P/100 x N), 1-based).
@@ -129,6 +149,9 @@ class LifxEngine:
         self._discovered: dict[str, dict] = {}
         self._discovering: asyncio.Event | None = None
         self._buckets: dict[str, TokenBucket] = {}
+        # Live sends refused by the bucket, over this engine's life. Read
+        # by the Manual tab and the tests; nothing acts on it.
+        self.dropped = 0
         self.devices: dict[str, dict] = self._load_devices()
 
     # -- lifecycle ---------------------------------------------------------
@@ -216,6 +239,52 @@ class LifxEngine:
         if delay > 0:
             await asyncio.sleep(delay)
         self.send(data, addr)
+
+    def send_live(self, serial: str, data: bytes, addr, *,
+                  priority: bool = False) -> bool:
+        """A played gesture's send: it goes now, or it does not go.
+
+        Nothing here awaits, which is the whole point. `send_governed`
+        sleeps out the bucket's delay, and those sleeps queue in the order
+        they were taken — so a manual session's latency did not just
+        spike, it STACKED: every over-budget strike lengthened the wait
+        the next press served. A live send takes a token if one is there
+        and drops the packet if it is not.
+
+        `priority` bypasses the bucket outright. It is for the pads, which
+        are rate-limited by the human pressing them and are the one
+        gesture that must never be the packet that got dropped.
+        """
+        if not priority:
+            bucket = self._buckets.setdefault(serial, TokenBucket())
+            if not bucket.try_acquire():
+                self.dropped += 1
+                return False
+        self.send(data, addr)
+        return True
+
+    def power_on(self, serials, addr_of=None) -> int:
+        """Turn these bulbs on. Returns how many packets went out.
+
+        A LIFX bulb that is powered off accepts every colour and every
+        waveform and displays exactly nothing — so a manual session in a
+        dark room was a person tapping dots and watching a dark room,
+        with every packet sent and acknowledged. `set_light_power` had
+        zero callers in this repo until this one. Duration 0: the session
+        is starting, and a fade here is a second of nothing happening.
+        """
+        addr_of = addr_of or self._addr
+        sent = 0
+        for serial in serials:
+            try:
+                addr = addr_of(serial)
+            except KeyError:
+                continue  # a bulb off the registry, not a failed session
+            self.send(packets.set_light_power(
+                65535, 0, target=bytes.fromhex(serial), source=self.source,
+                sequence=self._next_sequence()), addr)
+            sent += 1
+        return sent
 
     async def request(self, addr, packet: bytes, sequence: int,
                       expect_type: int, timeout: float = 1.0) -> dict | None:

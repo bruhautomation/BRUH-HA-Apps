@@ -17,6 +17,11 @@
     for (const pane of document.querySelectorAll(".pane")) {
       pane.classList.toggle("active", pane.id === "pane-" + name);
     }
+    // Manual sizes its pane to what is left below the top bar, so the
+    // page must not be taller than that either: 40px of wrap padding and
+    // a version footer under it is 40px the room can be dragged away by,
+    // mid-song, by a thumb that missed a pad.
+    document.body.classList.toggle("mn-open", name === "manual");
   });
 
   const $ = (id) => document.getElementById(id);
@@ -4393,29 +4398,43 @@
   });
 
   // ------------------------------------------------------------------
-  // Manual — the room is the instrument
+  // Manual — the room is the instrument, the grid is the clock
   // ------------------------------------------------------------------
-  // Three things make this tab work, and none of them is a card:
+  // v1 was a drum pad with no transport, and every complaint about it was
+  // the same complaint: you could tap a figure and ask for it back, but
+  // nothing on the screen said how fast, how long, or where in the bar you
+  // were — so a loop that drifted and a loop that was fine looked
+  // identical, and a melody could not be played into one at all.
   //
-  //  * you tap the BULBS, on the map, where they are. An abstract pad
-  //    with a tick-box picker beside it asks you to hold a mapping in
-  //    your head while the song is playing.
-  //  * feedback is LOCAL and immediate. The room's answer travels over
-  //    the network and arrives after your hand has gone; a control that
-  //    waits for it to light up is a control that feels broken.
-  //  * it is one screen. Scrolling to reach DROP is the same as not
-  //    having DROP.
+  // A DAW answers those before you ask. So:
   //
-  // Timing between taps is measured with the browser's own clock, because
-  // that is the clock the hand is on; the SERVER runs the loops, because
-  // a phone tab sleeps and throttles and the beat must not.
+  //  * there is a TRANSPORT — a tempo, a bar, a beat, and a playhead —
+  //    and it is the same grid the server records against.
+  //  * you choose the loop's length in BARS before you play it. A length
+  //    inferred from when somebody stopped tapping can only ever be
+  //    approximately a bar, which is what "the loop doesn't stay with the
+  //    music" was.
+  //  * arming counts you in on a downbeat and notes snap to a grid.
+  //  * every animation on this tab is EXTRAPOLATED LOCALLY from that
+  //    grid, at frame rate, with no network traffic — the beat dot, the
+  //    bar readout, each clip's sweep, and the dots on the map lighting
+  //    where a clip's notes fall. Which means the pattern is visibly
+  //    playing even when the bulb is off, unreachable, or the room is
+  //    dark. Animating from arriving messages would draw the network.
+  //
+  // And unchanged from v1, because they were right: you tap the BULBS on
+  // the map where they are, feedback is local and immediate, and the whole
+  // tab is one screen — scrolling to reach DROP is the same as not having
+  // DROP.
   const mn = {
-    taps: [],          // {t, id} — the rhythm being tapped, in order
     catalog: [],
     presets: [],
     aux: {},           // role → the state it was last sent
-    loops: [],
-    loopIds: new Set(),
+    dots: new Map(),   // fixture id → its dot, so a clip can light one
+    recent: [],        // ids tapped lately — what a rack chip aims at
+    clips: [],
+    heads: new Map(),  // clip id → where its playhead was last frame
+    tiles: new Map(),  // clip id → the elements the clock writes into
     socket: null,
     tries: 0,
     retry: null,
@@ -4423,6 +4442,22 @@
     warned: false,
     statusTimer: null,
     session: "",       // the standing status line a toast returns to
+    live: false,
+    // The grid, as a position in beats at a moment on THIS page's clock.
+    // Null until a transport event has arrived: an invented grid is worse
+    // than a blank one, because it looks exactly like a working one.
+    anchor: null,      // {at, beat, beatS, barBeats}
+    drift: 0,          // beats of correction still being eased out
+    kind: null,        // "track" | "tapped" | null
+    bpm: 0,
+    frame: null,
+    lastFrame: 0,
+    text: {},          // what each readout already says
+    recBars: 4,
+    recQuant: 0.5,
+    armEcho: 0,        // ms until which REC shows the press it has not been told about
+    tempoTaps: 0,
+    tempoAt: 0,
   };
 
   // The one-shot rack, in the order a performance reaches for them.
@@ -4432,7 +4467,18 @@
                     "colour_cycle", "colour_drift", "saturate", "sweep"];
   const MN_LONG_PRESS_MS = 500;
   const MN_MOVED_PX = 8;
-  const MN_STRUCK_MS = 250;
+  const MN_STRUCK_MS = 170;
+  const MN_RECENT = 6;
+  const MN_BARS = [1, 2, 4, 8];
+  // Value in beats, then the note it is. 0 is off — a melody nobody wants
+  // straightened has to be able to say so.
+  const MN_QUANT = [[1, "¼"], [0.5, "⅛"], [0.25, "16"], [0, "—"]];
+  // Past this, a difference between the local grid and the server's is a
+  // re-phase (a downbeat, a tempo tap, a new session) and is meant to be
+  // a jump. Under it, it is a correction and is walked off.
+  const MN_EASE_BEATS = 1;
+  const MN_ARM_ECHO_MS = 2500;
+  const MN_TEMPO_IDLE_MS = 2500;
 
   function mnActive() {
     return $("pane-manual").classList.contains("active");
@@ -4451,6 +4497,259 @@
   }
   window.addEventListener("resize", mnFit);
 
+  // ---- the clock ---------------------------------------------------
+  function mnNow() { return performance.now() / 1000; }
+
+  // Where the grid is, in beats since bar 1 beat 1, at this instant.
+  function mnPos(now) {
+    const a = mn.anchor;
+    if (!a) return null;
+    return a.beat + (now - a.at) / a.beatS + mn.drift;
+  }
+
+  // A transport event is the ONLY thing that moves the anchor. One clock
+  // offset is taken from it and everything after that is arithmetic.
+  function mnTransport(ev) {
+    mn.kind = ev.kind || null;
+    mn.bpm = Number(ev.bpm) || 0;
+    // `ready: false` is a transport with no grid — a session on external
+    // music that nobody has tapped a tempo into yet. It reports a bar of
+    // 0, and drawing that as bar 1 would be a working-looking clock made
+    // out of nothing, which is the one failure that cannot be seen.
+    if (ev.ready === false) {
+      mn.anchor = null;
+      mn.drift = 0;
+      mnSourceChip();
+      mnPaintClock();
+      return;
+    }
+    const barBeats = Math.max(1, Math.round(Number(ev.bar_beats)) || 4);
+    const bpm = mn.bpm;
+    let beatS = Number(ev.beat_s) || (bpm ? 60 / bpm : 0);
+    if (!(beatS > 0.05 && beatS < 6)) beatS = 0.5;
+    const now = mnNow();
+    const serverNow = Number(ev.server_now) || 0;
+    const offset = now - serverNow;
+    const bar = Math.max(1, Math.round(Number(ev.bar)) || 1);
+    const nextBar = ev.next_bar_at === null || ev.next_bar_at === undefined
+      ? NaN : Number(ev.next_bar_at);
+    // `next_bar_at` is a phase EDGE; `bar`/`beat` are a rounded reading of
+    // where one instant fell between two. The edge is preferred wherever
+    // the server sent one that lands inside the bar it says it is in.
+    let at, beat;
+    if (isFinite(nextBar) && nextBar > serverNow - beatS &&
+        nextBar - serverNow <= barBeats * beatS * 1.5) {
+      at = nextBar + offset;
+      beat = bar * barBeats;          // bar + 1, beat 1
+    } else {
+      at = serverNow + offset;
+      beat = (bar - 1) * barBeats +
+        Math.max(0, (Math.round(Number(ev.beat)) || 1) - 1);
+    }
+    const was = mnPos(now);
+    mn.anchor = { at, beat, beatS, barBeats };
+    const is = beat + (now - at) / beatS;
+    // Never jump the playhead backwards, and never lurch it forwards for
+    // a correction small enough to walk off — the heartbeat lands every
+    // five seconds, and a visible step on each one reads as the music
+    // stuttering rather than as the page catching up.
+    mn.drift = (was === null || Math.abs(was - is) > MN_EASE_BEATS)
+      ? 0 : was - is;
+    mnSourceChip();
+    mnPaintClock();
+  }
+
+  function mnStartClock() {
+    if (mn.frame !== null) return;
+    mn.lastFrame = 0;
+    const tick = () => {
+      mn.frame = requestAnimationFrame(tick);
+      mnPaintClock();
+    };
+    mn.frame = requestAnimationFrame(tick);
+  }
+
+  function mnStopClock() {
+    if (mn.frame !== null) cancelAnimationFrame(mn.frame);
+    mn.frame = null;
+  }
+
+  function mnText(id, text) {
+    if (mn.text[id] === text) return;
+    mn.text[id] = text;
+    $(id).textContent = text;
+  }
+
+  function mnPaintClock() {
+    const now = mnNow();
+    const dt = mn.lastFrame ? Math.min(0.25, now - mn.lastFrame) : 0;
+    mn.lastFrame = now;
+    if (mn.drift && dt) {
+      // Spending a correction may never stop the playhead, let alone
+      // reverse it: a bar number that ticks backwards is worse than one
+      // that is forty milliseconds out.
+      const advance = dt / (mn.anchor ? mn.anchor.beatS : 0.5);
+      const cap = mn.drift > 0 ? advance * 0.85 : advance * 2;
+      const step = Math.min(Math.abs(mn.drift), Math.max(0.002, cap));
+      mn.drift -= Math.sign(mn.drift) * step;
+      if (Math.abs(mn.drift) < 0.002) mn.drift = 0;
+    }
+    const pos = mnPos(now);
+    mnPaintBeat(pos);
+    mnPaintClips(pos);
+    mnPaintRec(pos);
+    mnPaintTempoTap();
+  }
+
+  function mnPaintBeat(pos) {
+    const dot = $("mnBeatDot");
+    const a = mn.anchor;
+    if (pos === null || !a) {
+      dot.style.transform = "scale(0.5)";
+      dot.style.opacity = "0.3";
+      mnText("mnBpm", "— BPM");
+      mnText("mnBarBeat", "bar — · beat —");
+      return;
+    }
+    const bar = Math.floor(pos / a.barBeats) + 1;
+    const inBar = pos - (bar - 1) * a.barBeats;
+    const beat = Math.floor(inBar) + 1;
+    const phase = inBar - Math.floor(inBar);
+    // A strike, not a sine: brightest ON the beat and gone before the
+    // next one. A wave that peaks between beats is the same shape as the
+    // bug that inverted every beat pulse BRight ever compiled.
+    const env = Math.max(0, 1 - phase * 2.4);
+    const down = beat === 1;
+    dot.style.transform =
+      "scale(" + (0.5 + env * (down ? 0.5 : 0.3)).toFixed(3) + ")";
+    dot.style.opacity = (0.25 + env * 0.75).toFixed(3);
+    dot.style.background = down ? "var(--ink)" : "var(--azure)";
+    mnText("mnBpm", (mn.bpm ? mn.bpm.toFixed(1) : "—") + " BPM");
+    mnText("mnBarBeat", "bar " + bar + " · beat " + beat);
+  }
+
+  // ---- the clips, drawn from the grid ------------------------------
+  function mnClipInk(id) {
+    let hue = 0;
+    const text = String(id);
+    for (let i = 0; i < text.length; i += 1) {
+      hue = (hue * 31 + text.charCodeAt(i)) % 360;
+    }
+    return "hsl(" + hue + ", 78%, 62%)";
+  }
+
+  function mnClipAt(clip, pos) {
+    const a = mn.anchor;
+    if (pos === null || !a) return null;
+    const len = Math.max(1, Math.round(Number(clip.bars)) || 1) * a.barBeats;
+    // `start_bar` is the transport's own bar NUMBER, and bar N begins at
+    // beat (N-1) * bar_beats in the same numbering the anchor was taken
+    // in — so the phone's cycle and the server's are the same cycle, not
+    // two clocks that happen to agree for a while.
+    const startBar = Number(clip.start_bar);
+    const start = ((isFinite(startBar) ? startBar : 1) - 1) * a.barBeats;
+    let p = (pos - start) % len;
+    if (p < 0) p += len;
+    return { p, len };
+  }
+
+  function mnFlashDots(ids, ink) {
+    for (const id of ids || []) {
+      const dot = mn.dots && mn.dots.get(id);
+      if (!dot) continue;
+      dot.style.setProperty("--clip-ink", ink);
+      dot.classList.add("fired");
+      clearTimeout(dot._mnFired);
+      dot._mnFired = setTimeout(() => dot.classList.remove("fired"),
+                                MN_STRUCK_MS);
+    }
+  }
+
+  function mnPaintClips(pos) {
+    // No grid, no playheads — and no remembered ones either, or the next
+    // frame that has one fires every note between here and there.
+    if (pos === null) { mn.heads.clear(); return; }
+    for (const clip of mn.clips) {
+      const tile = mn.tiles.get(clip.id);
+      const at = mnClipAt(clip, pos);
+      if (at === null) continue;
+      // An armed clip has no cycle yet — its `start_bar` is the bar it
+      // will begin on, which is not a position to sweep.
+      const frac = clip.state === "armed" ? 0 : at.p / at.len;
+      if (tile) {
+        tile.arc.style.strokeDashoffset =
+          (tile.circumference * (1 - frac)).toFixed(2);
+        tile.head.style.left = (frac * 100).toFixed(2) + "%";
+      }
+      // The notes themselves, on the map, from this page's clock. A clip
+      // that is looping shows it on the bulbs whether or not the bulbs
+      // are answering.
+      const was = mn.heads.get(clip.id);
+      mn.heads.set(clip.id, at.p);
+      if (was === undefined || clip.muted || clip.state !== "looping") continue;
+      const ink = mnClipInk(clip.id);
+      for (const event of clip.events || []) {
+        let beat = Number(event.beat);
+        if (!isFinite(beat)) continue;
+        beat = ((beat % at.len) + at.len) % at.len;
+        const due = was <= at.p
+          ? (beat > was && beat <= at.p)
+          : (beat > was || beat <= at.p);
+        if (due) mnFlashDots(event.ids, ink);
+      }
+    }
+  }
+
+  function mnPaintRec(pos) {
+    const button = $("btnMnRec");
+    const a = mn.anchor;
+    const recording = mn.clips.find((c) => c.state === "recording");
+    const armed = mn.clips.find((c) => c.state === "armed");
+    let label = "● REC";
+    let state = "";
+    let frac = 0;
+    if (recording) {
+      state = "recording";
+      const bars = Math.max(1, Math.round(Number(recording.bars)) || 1);
+      const at = mnClipAt(recording, pos);
+      if (at && a) {
+        const barIn = Math.min(bars, Math.floor(at.p / a.barBeats) + 1);
+        label = "REC bar " + barIn + "/" + bars;
+        frac = at.p / at.len;
+      } else {
+        label = "REC · " + bars + " bars";
+      }
+    } else if (armed) {
+      state = "armed";
+      let left = null;
+      if (a && pos !== null) {
+        const startBar = Number(armed.start_bar);
+        const start = isFinite(startBar) && startBar > 0
+          ? (startBar - 1) * a.barBeats
+          : (Math.floor(pos / a.barBeats) + 1) * a.barBeats;
+        left = start - pos;
+      }
+      label = left !== null && left > 0
+        ? "ARMED · in " + Math.ceil(left) : "ARMED";
+    } else if (performance.now() < mn.armEcho) {
+      // The press, before the server has said anything about it. A
+      // control that looks unchanged for a round trip is a control that
+      // gets pressed twice, and two arms is a lost take.
+      state = "armed";
+      label = "ARMED…";
+    }
+    mnText("mnRecLabel", label);
+    button.classList.toggle("armed", state === "armed");
+    button.classList.toggle("recording", state === "recording");
+    $("mnRecFill").style.width = (frac * 100).toFixed(1) + "%";
+  }
+
+  function mnPaintTempoTap() {
+    if (!mn.tempoTaps) return;
+    if (performance.now() - mn.tempoAt > MN_TEMPO_IDLE_MS) mn.tempoTaps = 0;
+    mnText("btnMnTempoTap", mn.tempoTaps ? "TAP " + mn.tempoTaps : "TAP");
+  }
+
   // ---- the wire ----------------------------------------------------
   // One socket, opened while the tab is in front. Sends are
   // fire-and-forget: a gesture handler that awaits anything has already
@@ -4465,6 +4764,7 @@
 
   function mnConnect() {
     if (!mnActive() || document.visibilityState === "hidden") return;
+    mnStartClock();
     const open = mn.socket &&
       (mn.socket.readyState === WebSocket.CONNECTING ||
        mn.socket.readyState === WebSocket.OPEN);
@@ -4495,6 +4795,8 @@
         // A session whose music did not start still starts, and the
         // sentence saying so rides the state it arrived with.
         if (message.warning) mnFlash("⚠ " + message.warning, true);
+      } else if (message.ev === "transport") {
+        mnTransport(message);
       } else if (message.ev === "error") {
         mnFlash(message.message || "", true);
       }
@@ -4531,6 +4833,7 @@
   function mnDisconnect() {
     if (mn.retry) { clearTimeout(mn.retry); mn.retry = null; }
     mnStopPoll();
+    mnStopClock();
     const socket = mn.socket;
     mn.socket = null;
     if (socket) {
@@ -4551,6 +4854,17 @@
     }
   }
 
+  // The transport ops have no HTTP verb, and cannot have one: they are a
+  // conversation with a running grid. Saying so is the point — a REC
+  // button that silently did nothing is exactly the ambiguity this
+  // rewrite exists to remove.
+  const MN_NEEDS_SOCKET = {
+    tempo_tap: "Tap tempo needs the live connection — reconnecting.",
+    downbeat: "The downbeat needs the live connection — reconnecting.",
+    rec: "Recording needs the live connection — reconnecting.",
+    clip: "Clips need the live connection — reconnecting.",
+  };
+
   // Every gesture goes through here. The socket if there is one, one POST
   // if there is not — never awaited, so a slow request cannot hold up the
   // next tap, and never queued, because a beat played late is worse than
@@ -4565,15 +4879,8 @@
       // strike on one bulb, fired once.
       sent = post("api/live/effect", {
         type: "hit", select: { ids: [message.id] },
-        bpm: mnBpm() || 120, seconds: 2,
+        bpm: Math.round(mn.bpm) || 120, seconds: 2,
       });
-    } else if (message.op === "loop") {
-      sent = post("api/live/loop", { taps: message.taps,
-                                     pressed_ms: message.pressed_ms })
-        .then(mnRefresh);
-    } else if (message.op === "stop_loop") {
-      sent = api("api/live/loop/" + encodeURIComponent(message.id),
-                 { method: "DELETE" }).then(mnRefresh);
     } else if (message.op === "shot") {
       const body = { bpm: message.bpm, seconds: 8 };
       if (message.effect) body.effect = message.effect;
@@ -4591,6 +4898,8 @@
       }).then(mnRefresh);
     } else if (message.op === "stop") {
       sent = post("api/live/stop", {}).then(mnRefresh);
+    } else if (MN_NEEDS_SOCKET[message.op]) {
+      mnFlash(MN_NEEDS_SOCKET[message.op], true);
     }
     if (sent) sent.catch((error) => mnFlash(error.message, true));
   }
@@ -4619,6 +4928,7 @@
   function mnRenderState(state) {
     const session = (state && state.session) || {};
     const live = !!session.active && session.status === "manual";
+    mn.live = live;
     $("mnSetup").hidden = live;
     $("btnMnStop").hidden = !live;
     const was = mn.session;
@@ -4636,29 +4946,26 @@
       mn.statusTimer = null;
     }
     if (!mn.statusTimer) mnSetStatus(mn.session, false);
+    // The grid belongs to the session, and only the session ENDING takes
+    // it away — clearing it on every idle state would fight a transport
+    // event that arrived first.
+    if (!live && was) { mn.anchor = null; mn.kind = null; mn.bpm = 0; }
 
-    // Which bulbs a loop is currently striking. The dots are the only
-    // place a running loop is listed, and holding one is the only way to
-    // stop it — a list of loops under the floor was a second answer to
-    // "what is playing" that nobody looked at.
-    mn.loops = (state && state.loops) || [];
-    mn.loopIds = new Set();
-    for (const loop of mn.loops) {
-      for (const id of loop.ids || []) mn.loopIds.add(id);
+    // `/api/live/state` answers with a transport beside the clips; the
+    // socket sends it as its own event. One reader either way.
+    if (state && state.transport) mnTransport(state.transport);
+    mn.clips = Array.isArray(state && state.clips) ? state.clips : [];
+    // The arm has been acknowledged; the local echo has nothing left to
+    // stand in for.
+    if (mn.clips.some((c) => c.state === "armed" || c.state === "recording")) {
+      mn.armEcho = 0;
     }
-    for (const dot of $("mnFloor").querySelectorAll(".mn-dot")) {
-      dot.classList.toggle("looping", mn.loopIds.has(dot.dataset.id));
+    for (const id of Array.from(mn.heads.keys())) {
+      if (!mn.clips.some((c) => c.id === id)) mn.heads.delete(id);
     }
-  }
-
-  function mnLoopFor(id) {
-    // The loop a held bulb belongs to. A bulb runs one waveform at a
-    // time, so it belongs to at most one — but the newest is the one you
-    // are hearing, and it is the one the hold means.
-    for (const loop of mn.loops) {
-      if ((loop.ids || []).indexOf(id) >= 0) return loop;
-    }
-    return null;
+    mnPaintRail();
+    mnPaintRings();
+    mnSourceChip();
   }
 
   function mnSetStatus(text, warn) {
@@ -4680,10 +4987,24 @@
     }, ms || 4000);
   }
 
+  // Which grid is authoritative, and therefore which controls exist. A
+  // song carries its own analysed beats; nothing beside it offers to
+  // overrule them, because they are the thing the room is meant to match.
+  function mnSourceChip() {
+    const chip = $("mnSource");
+    const track = mn.kind === "track";
+    const tapped = mn.kind === "tapped";
+    chip.hidden = !mn.kind;
+    chip.textContent = track ? "♪ track" : tapped ? "✋ tapped" : "";
+    $("btnMnTempoTap").hidden = track || !(mn.live || tapped);
+    $("btnMnDownbeat").hidden = !tapped;
+  }
+
   // ---- the floor ---------------------------------------------------
   function mnPaintFloor(fixtures) {
     const floor = $("mnFloor");
     floor.innerHTML = "";
+    mn.dots = new Map();
     for (const fixture of fixtures) {
       const dot = document.createElement("div");
       // Same three geometry details the Light Map's dots have: the drawing
@@ -4703,47 +5024,243 @@
       name.textContent = fixture.label || fixture.id;
       dot.appendChild(glyph);
       dot.appendChild(name);
-      if (mn.loopIds.has(fixture.id)) dot.classList.add("looping");
       floor.appendChild(dot);
+      mn.dots.set(fixture.id, dot);
+    }
+    mnPaintRings();
+  }
+
+  // A bulb any clip is looping on wears that clip's colour, so the map
+  // and the rail agree about what is playing without either being read.
+  function mnPaintRings() {
+    if (!mn.dots) return;
+    const ink = new Map();
+    for (const clip of mn.clips) {
+      if (clip.state !== "looping" || clip.muted) continue;
+      for (const id of clip.ids || []) {
+        if (!ink.has(id)) ink.set(id, mnClipInk(clip.id));
+      }
+    }
+    for (const [id, dot] of mn.dots) {
+      const colour = ink.get(id);
+      if (colour) dot.style.setProperty("--clip-ink", colour);
+      dot.classList.toggle("looping", !!colour);
     }
   }
 
   function mnStrike(dot) {
     dot.classList.add("struck");
-    setTimeout(() => dot.classList.remove("struck"), MN_STRUCK_MS);
+    clearTimeout(dot._mnStruck);
+    dot._mnStruck = setTimeout(() => dot.classList.remove("struck"),
+                               MN_STRUCK_MS);
   }
 
-  function mnBpm() {
-    const gaps = [];
-    for (let i = 1; i < mn.taps.length; i += 1) {
-      gaps.push(mn.taps[i].t - mn.taps[i - 1].t);
+  $("mnFloor").addEventListener("pointerdown", (event) => {
+    const dot = event.target.closest(".mn-dot");
+    if (!dot) return;
+    // The floor is `touch-action: none`, and this is what stops a
+    // drummed rhythm from scrolling or zooming the page under it.
+    event.preventDefault();
+    const id = dot.dataset.id;
+    mnStrike(dot);
+    mnDo({ op: "tap", id });
+    mn.recent = [id].concat(mn.recent.filter((x) => x !== id))
+      .slice(0, MN_RECENT);
+  });
+
+  // ---- arming ------------------------------------------------------
+  (function mnBuildRec() {
+    // Built from the two tables above rather than typed into the markup:
+    // the label and the value it sends have to be one fact, or a segment
+    // arms a length nobody picked.
+    const bars = $("mnRecBars");
+    for (const count of MN_BARS) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = String(count);
+      button.dataset.bars = String(count);
+      button.title = count === 1 ? "A one bar loop" : "A " + count + " bar loop";
+      bars.appendChild(button);
     }
-    if (!gaps.length) return 0;
-    const sorted = gaps.slice(-16).sort((a, b) => a - b);
-    const median = sorted[Math.floor(sorted.length / 2)];
-    return median > 0 ? Math.round(60000 / median) : 0;
+    const quant = $("mnRecQuant");
+    for (const [value, label] of MN_QUANT) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = label;
+      button.dataset.quant = String(value);
+      button.title = value
+        ? "Snap notes to " + label : "Do not straighten what you play";
+      quant.appendChild(button);
+    }
+    mnPaintSeg();
+  })();
+
+  function mnPaintSeg() {
+    for (const button of $("mnRecBars").querySelectorAll("button")) {
+      button.classList.toggle("on",
+                              Number(button.dataset.bars) === mn.recBars);
+    }
+    for (const button of $("mnRecQuant").querySelectorAll("button")) {
+      button.classList.toggle("on",
+                              Number(button.dataset.quant) === mn.recQuant);
+    }
   }
 
-  function mnReadout() {
-    const bpm = mnBpm();
-    $("mnTapReadout").textContent = mn.taps.length
-      ? mn.taps.length + " tap" + (mn.taps.length === 1 ? "" : "s") +
-        (bpm ? " · ~" + bpm + " BPM" : "")
-      : "no taps yet";
+  $("mnRecBars").addEventListener("pointerdown", (event) => {
+    const button = event.target.closest("button");
+    if (!button) return;
+    event.preventDefault();
+    mn.recBars = Number(button.dataset.bars);
+    mnPaintSeg();
+  });
+
+  $("mnRecQuant").addEventListener("pointerdown", (event) => {
+    const button = event.target.closest("button");
+    if (!button) return;
+    event.preventDefault();
+    mn.recQuant = Number(button.dataset.quant);
+    mnPaintSeg();
+  });
+
+  $("btnMnRec").addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    const recording = mn.clips.find((c) => c.state === "recording");
+    if (recording) {
+      mnFlash("Recording — it closes itself at the end of the loop.", false);
+      return;
+    }
+    // Pressing REC on an armed clip is what "no, not yet" means. There is
+    // no cancel verb; deleting the clip that is waiting IS the cancel.
+    const armed = mn.clips.find((c) => c.state === "armed");
+    if (armed) {
+      mn.armEcho = 0;
+      mnDo({ op: "clip", id: armed.id, action: "delete" });
+      mnFlash("Cancelled.", false, 2000);
+      return;
+    }
+    mn.armEcho = performance.now() + MN_ARM_ECHO_MS;
+    mnDo({ op: "rec", bars: mn.recBars, quantize: mn.recQuant });
+  });
+
+  // ---- the clip rail -----------------------------------------------
+  function mnClipSig() {
+    return mn.clips.map((clip) => [clip.id, clip.bars, clip.state,
+      clip.muted ? 1 : 0, clip.rec_enabled ? 1 : 0,
+      (clip.events || []).length].join(":")).join("|");
   }
 
-  function mnClearTaps() {
-    mn.taps = [];
-    mnReadout();
+  function mnPaintRail() {
+    const rail = $("mnClipRail");
+    const sig = (mn.live ? "live|" : "idle|") + mnClipSig();
+    if (rail.dataset.sig === sig) return;   // the clock owns the rest
+    rail.dataset.sig = sig;
+    rail.innerHTML = "";
+    mn.tiles.clear();
+    if (!mn.clips.length) {
+      const empty = document.createElement("span");
+      empty.className = "mn-empty";
+      empty.textContent = mn.live
+        ? "No clips yet — pick a length and press REC."
+        : "Start a session, then record a loop.";
+      rail.appendChild(empty);
+      return;
+    }
+    for (const clip of mn.clips) {
+      rail.appendChild(mnClipTile(clip));
+    }
+  }
+
+  const MN_SVG = "http://www.w3.org/2000/svg";
+
+  function mnClipTile(clip) {
+    const ink = mnClipInk(clip.id);
+    const bars = Math.max(1, Math.round(Number(clip.bars)) || 1);
+    const tile = document.createElement("div");
+    tile.className = "mn-clip" + (clip.muted ? " muted" : "");
+    tile.dataset.id = clip.id;
+    tile.style.setProperty("--clip-ink", ink);
+
+    // The sweep. An arc rather than a bar because a loop is a cycle, and
+    // the whole question it answers is "where in the cycle are we".
+    const radius = 16;
+    const circumference = 2 * Math.PI * radius;
+    const svg = document.createElementNS(MN_SVG, "svg");
+    svg.setAttribute("class", "mn-clip-ring");
+    svg.setAttribute("viewBox", "0 0 42 42");
+    const track = document.createElementNS(MN_SVG, "circle");
+    const arc = document.createElementNS(MN_SVG, "circle");
+    for (const circle of [track, arc]) {
+      circle.setAttribute("cx", "21");
+      circle.setAttribute("cy", "21");
+      circle.setAttribute("r", String(radius));
+      circle.setAttribute("fill", "none");
+      circle.setAttribute("stroke-width", "4");
+    }
+    track.setAttribute("stroke", "var(--line)");
+    arc.setAttribute("stroke", ink);
+    arc.setAttribute("stroke-linecap", "round");
+    arc.setAttribute("transform", "rotate(-90 21 21)");
+    arc.setAttribute("stroke-dasharray", circumference.toFixed(2));
+    arc.setAttribute("stroke-dashoffset", circumference.toFixed(2));
+    svg.appendChild(track);
+    svg.appendChild(arc);
+    tile.appendChild(svg);
+
+    const name = document.createElement("span");
+    name.className = "mn-clip-name" +
+      (clip.state === "armed" ? " mn-clip-armed" : "");
+    name.textContent = clip.state === "armed" ? "armed · " + bars
+      : clip.state === "recording" ? "rec · " + bars
+      : bars + (bars === 1 ? " bar" : " bars");
+    tile.appendChild(name);
+
+    // The pattern. Ticks where the notes are, a hairline where the clip
+    // is now — the two together are how "this loop is doing something,
+    // and it is doing it in time" stops being a matter of opinion.
+    const strip = document.createElement("div");
+    strip.className = "mn-clip-strip";
+    const a = mn.anchor;
+    const span = bars * (a ? a.barBeats : 4);
+    for (const event of clip.events || []) {
+      const beat = Number(event.beat);
+      if (!isFinite(beat)) continue;
+      const tick = document.createElement("i");
+      tick.className = "mn-clip-tick";
+      tick.style.left = (Math.min(1, Math.max(0, (beat % span) / span)) * 100)
+        .toFixed(2) + "%";
+      strip.appendChild(tick);
+    }
+    const head = document.createElement("i");
+    head.className = "mn-clip-head";
+    strip.appendChild(head);
+    tile.appendChild(strip);
+
+    const confirm = document.createElement("div");
+    confirm.className = "mn-clip-confirm";
+    // Record-enable is exclusive server-side — one clip takes the taps —
+    // so this is a real state and not a guess at one.
+    const dub = clip.rec_enabled
+      ? ["rec_disable", "⏹ Dub"] : ["rec_enable", "⏺ Dub"];
+    for (const [verb, label, danger] of [dub, ["clear", "Clear"],
+                                         ["delete", "Delete", true]]) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = label;
+      button.dataset.clipAct = verb;
+      if (danger) button.className = "danger";
+      confirm.appendChild(button);
+    }
+    tile.appendChild(confirm);
+
+    mn.tiles.set(clip.id, { tile, arc, head, circumference });
+    return tile;
   }
 
   (function () {
-    // A tap and a hold start as the same press. The tap is unconditional
-    // and immediate — you have played that bulb either way — and the hold
-    // is what stops the loop the bulb is running, which is why the hold
-    // takes its own tap back out of the rhythm: holding a bulb is not
-    // tapping one.
-    const floor = $("mnFloor");
+    // A tap and a hold start as the same press: the tap mutes, the hold
+    // opens the two endings. Muting is the one that is reached for
+    // mid-song, so it is the one that costs nothing to be wrong about.
+    const rail = $("mnClipRail");
     let held = null;
     let timer = null;
     let from = null;
@@ -4754,42 +5271,69 @@
       from = null;
     }
 
-    floor.addEventListener("pointerdown", (event) => {
-      const dot = event.target.closest(".mn-dot");
-      if (!dot) return;
-      // The floor is `touch-action: none`, and this is what stops a
-      // drummed rhythm from scrolling or zooming the page under it.
-      event.preventDefault();
-      const id = dot.dataset.id;
-      mnStrike(dot);
-      mnDo({ op: "tap", id });
-      mn.taps.push({ t: performance.now(), id });
-      if (mn.taps.length > 64) mn.taps.shift();
-      mnReadout();
-      held = dot;
+    rail.addEventListener("pointerdown", (event) => {
+      const tile = event.target.closest(".mn-clip");
+      if (!tile) return;
+      const action = event.target.closest("[data-clip-act]");
+      const id = tile.dataset.id;
+      if (action) {
+        // Only the endings cancel the gesture. A press on the tile body
+        // must not, or `overflow-x` on the rail stops scrolling and eight
+        // clips become four — `touch-action: pan-x` sorts the two out.
+        event.preventDefault();
+        tile.classList.remove("confirming");
+        mnDo({ op: "clip", id, action: action.dataset.clipAct });
+        return;
+      }
+      if (tile.classList.contains("confirming")) {
+        tile.classList.remove("confirming");
+        return;
+      }
+      held = tile;
       from = { x: event.clientX, y: event.clientY };
       timer = setTimeout(() => {
         timer = null;
-        if (!held || !mn.loopIds.has(id)) return;
-        const loop = mnLoopFor(id);
-        mnDo({ op: "stop_loop", id: loop ? loop.id : id });
-        const last = mn.taps[mn.taps.length - 1];
-        if (last && last.id === id) mn.taps.pop();
-        mnReadout();
-        mnFlash("Loop stopped.", false);
+        if (held) held.classList.add("confirming");
+        held = null;
       }, MN_LONG_PRESS_MS);
-      try { dot.setPointerCapture(event.pointerId); } catch (ignored) {
+      // Without capture, a press that ends a few pixels outside the tile
+      // never gets its `pointerup` — and the hold it started goes on to
+      // open a confirm face nobody asked for.
+      try { tile.setPointerCapture(event.pointerId); } catch (ignored) {
         /* a mouse without capture still gets pointerup */
       }
     });
-    floor.addEventListener("pointermove", (event) => {
+    rail.addEventListener("pointermove", (event) => {
       if (!held || !from) return;
       if (Math.abs(event.clientX - from.x) > MN_MOVED_PX ||
           Math.abs(event.clientY - from.y) > MN_MOVED_PX) release();
     });
-    floor.addEventListener("pointerup", release);
-    floor.addEventListener("pointercancel", release);
+    rail.addEventListener("pointerup", () => {
+      // A press that never became a hold is the mute. Optimistic, because
+      // the answer arrives after the bar it was meant for.
+      if (held && timer) {
+        const id = held.dataset.id;
+        const clip = mn.clips.find((c) => c.id === id);
+        if (clip) {
+          clip.muted = !clip.muted;
+          held.classList.toggle("muted", clip.muted);
+          mnPaintRings();
+          mnDo({ op: "clip", id,
+                 action: clip.muted ? "mute" : "unmute" });
+        }
+      }
+      release();
+    });
+    rail.addEventListener("pointercancel", release);
   })();
+
+  // A confirm face is a question, and pressing anywhere else answers it.
+  document.addEventListener("pointerdown", (event) => {
+    if (!mnActive()) return;
+    for (const tile of $("mnClipRail").querySelectorAll(".confirming")) {
+      if (!tile.contains(event.target)) tile.classList.remove("confirming");
+    }
+  }, true);
 
   // ---- the rack ----------------------------------------------------
   function mnPaintFx(fixtures) {
@@ -4835,8 +5379,8 @@
     // tap two lamps, hit Sparkle, and it sparkles on those two. Nothing
     // tapped means the whole room, which is what a rack chip means when
     // you have not said otherwise.
-    const ids = Array.from(new Set(mn.taps.map((tap) => tap.id)));
-    const bpm = mnBpm() || 120;
+    const ids = mn.recent.slice();
+    const bpm = Math.round(mn.bpm) || 120;
     if (chip.dataset.fx) {
       const message = { op: "shot", type: chip.dataset.fx, bpm };
       if (ids.length) message.ids = ids;
@@ -4856,6 +5400,7 @@
   // ---- loading -----------------------------------------------------
   async function loadManual() {
     mnFit();
+    mnStartClock();
     try {
       const [lib, profiles, map, catalog, presets] = await Promise.all([
         api("api/library"), api("api/calibrate/profiles"), api("api/map"),
@@ -4887,6 +5432,7 @@
       const fixtures = map.fixtures || [];
       mnPaintFloor(fixtures.filter((f) => f.kind === "lifx"));
       mnPaintFx(fixtures);
+      mnPaintRail();
       await mnRefresh();
     } catch (error) {
       mnFlash("failed: " + error.message, true);
@@ -4917,7 +5463,11 @@
   $("btnMnStop").addEventListener("click", () => {
     mnFlash("Stopping…", false, 30000);
     mnDo({ op: "stop" });
-    mnClearTaps();
+    mn.recent = [];
+    mn.anchor = null;
+    mn.kind = null;
+    mn.bpm = 0;
+    mnSourceChip();
   });
 
   // Pads fire on pointerDOWN — the press is the beat, and waiting for the
@@ -4929,25 +5479,32 @@
     });
   }
 
-  // Closing the pattern: what you tapped, and how long the whole figure
-  // is. Pressing Loop ON the next repeat's first beat is what tells it
-  // the length — there is no other way to know where a figure ends.
-  $("btnMnLoop").addEventListener("click", () => {
-    if (!mn.taps.length) {
-      mnFlash("Tap a rhythm on the bulbs first.", true);
-      return;
-    }
-    const first = mn.taps[0].t;
-    mnDo({
-      op: "loop",
-      taps: mn.taps.map((tap) => ({ t: Math.round(tap.t - first),
-                                    id: tap.id })),
-      pressed_ms: Math.round(performance.now() - first),
-    });
-    mnClearTaps();
+  $("btnMnTempoTap").addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    // The count is local and immediate; the tempo it produces is the
+    // server's, because the server is what the recording is graded
+    // against and two answers to "how fast" is one too many.
+    if (performance.now() - mn.tempoAt > MN_TEMPO_IDLE_MS) mn.tempoTaps = 0;
+    mn.tempoTaps += 1;
+    mn.tempoAt = performance.now();
+    mnDo({ op: "tempo_tap" });
   });
 
-  $("btnMnTapClear").addEventListener("click", mnClearTaps);
+  $("btnMnDownbeat").addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    // The one control whose whole job is to move the playhead, so it is
+    // the one place a backwards jump is correct: you pressed it because
+    // the bar line is not where the lights think it is.
+    const a = mn.anchor;
+    const pos = mnPos(mnNow());
+    if (a && pos !== null) {
+      mn.anchor = { at: mnNow(),
+                    beat: Math.round(pos / a.barBeats) * a.barBeats,
+                    beatS: a.beatS, barBeats: a.barBeats };
+      mn.drift = 0;
+    }
+    mnDo({ op: "downbeat" });
+  });
 
   document.addEventListener("visibilitychange", () => {
     if (!mnActive()) return;
