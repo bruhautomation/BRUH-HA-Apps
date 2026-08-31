@@ -25,8 +25,11 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
   "Task exception was never retrieved" traceback into the add-on log at some
   later collection, attributed to nothing. The losing pump was cancelled but
   never awaited, so it was still inside a send when the upstream socket
-  closed under it. Both are `_settle` now, and the reason lands on the
-  proxy's own warning line.
+  closed under it. Both are `_settle` now, which waits the cancellations
+  out and reads every task's outcome — the losing pump's own parting
+  error must not become the one reported, when the winner's is the
+  reason for the shutdown — so the reason lands on the proxy's own
+  warning line.
 
 ## 1.28.5
 

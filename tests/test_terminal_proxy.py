@@ -427,8 +427,8 @@ class TestSettlingTheTwoPumps(unittest.IsolatedAsyncioTestCase):
         task = asyncio.create_task(cancelled_immediately())
         await asyncio.sleep(0)
         task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
+        await asyncio.wait({task})
+        self.assertTrue(task.cancelled())
         await terminal_proxy._settle({task}, set())
 
     async def test_nothing_is_left_unretrieved(self):
@@ -447,3 +447,52 @@ class TestSettlingTheTwoPumps(unittest.IsolatedAsyncioTestCase):
              if "never retrieved" in str(c.get("message", ""))],
             [],
         )
+
+    async def test_the_losers_parting_error_does_not_mask_the_reason(self):
+        """A pump cancelled mid-send can come back with an error of its own.
+
+        The first fix awaited each losing task under
+        `suppress(CancelledError)`, so a loser that raised anything else
+        propagated from there — the proxy logged `BrokenPipeError: send
+        failed` (incidental to the shutdown) while the winner's
+        `ConnectionResetError` (the reason for it) went unread, and left the
+        bare "Task exception was never retrieved" traceback behind. The bug
+        this function exists to stop, one case narrower.
+        """
+        with _CapturedLoopErrors() as captured:
+            async def winner():
+                raise ConnectionResetError("ttyd hung up")
+
+            async def loser():
+                try:
+                    await asyncio.sleep(30)
+                except asyncio.CancelledError:
+                    raise BrokenPipeError("send failed on the way out") from None
+
+            with self.assertRaises(ConnectionResetError) as caught:
+                await self._race(winner, loser)
+            self.assertIn("ttyd hung up", str(caught.exception))
+            await asyncio.sleep(0.05)
+
+        self.assertEqual(
+            [c for c in captured.errors
+             if "never retrieved" in str(c.get("message", ""))],
+            [],
+            "the loser's own failure must be retrieved too, not left for the "
+            "garbage collector to print",
+        )
+
+    async def test_waiting_for_the_loser_never_raises_by_itself(self):
+        """Whatever the losing pump does on its way out, _settle reaches the
+        loop that decides what to report."""
+        async def clean_winner():
+            return None
+
+        async def messy_loser():
+            try:
+                await asyncio.sleep(30)
+            except asyncio.CancelledError:
+                raise BrokenPipeError("noise") from None
+
+        with self.assertRaises(BrokenPipeError):
+            await self._race(clean_winner, messy_loser)

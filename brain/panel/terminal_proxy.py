@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import contextlib
 import logging
 import os
 
@@ -148,7 +147,9 @@ async def _settle(done: set, pending: set) -> None:
 
     Cancelling only ASKS. Un-awaited, the losing pump is still inside
     `dst.send_*` when the caller closes the upstream socket out from under
-    it — a second failure, raised on the way out of the first.
+    it — a second failure, raised on the way out of the first. That second
+    failure must not become the one reported, either: it is incidental to
+    the shutdown, where the winner's is the reason for it.
 
     And an exception inside a task never reaches `asyncio.wait`: a bridge
     that broke mid-frame returned here indistinguishable from one the
@@ -160,12 +161,27 @@ async def _settle(done: set, pending: set) -> None:
     """
     for task in pending:
         task.cancel()
-    for task in pending:
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
-    for task in done:
-        if not task.cancelled() and (exc := task.exception()) is not None:
-            raise exc
+    # `asyncio.wait`, not `await task`: waiting must not itself raise. A pump
+    # cancelled mid-send can come back carrying a ConnectionResetError of its
+    # own, and letting that propagate from here would skip the loop below —
+    # reporting the loser's incidental error while the winner's real reason
+    # went unread and unretrieved. That is this function's own bug, one case
+    # narrower.
+    if pending:
+        await asyncio.wait(pending)
+    # Read EVERY outcome, not just the winner's: an exception nobody
+    # retrieves is exactly the bare traceback this exists to stop. `done`
+    # comes first because the pump that finished on its own is the one that
+    # knows why the bridge ended.
+    failures: list[BaseException] = []
+    for task in (*done, *pending):
+        if task.cancelled():
+            continue
+        exc = task.exception()
+        if exc is not None:
+            failures.append(exc)
+    if failures:
+        raise failures[0]
 
 
 async def _proxy_ws(request: web.Request, url: str) -> web.StreamResponse:
