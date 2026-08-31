@@ -2,6 +2,32 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.28.6
+
+### Fixed
+
+- **The terminal proxy dropped the client's `Authorization` header only if
+  it was spelled one of two ways.** ttyd takes a generated Basic credential
+  — its port is reachable from the LAN if anyone publishes it — and the
+  panel holds that credential and presents it upstream so an ingress user
+  never meets a prompt. Whatever the client sent was supposed to be dropped
+  first, so a browser holding a credential for the ingress origin could not
+  present it to ttyd instead. The drop was two case-sensitive `pop`s over a
+  dict keyed by the case the client actually sent, and HTTP considers every
+  spelling of a header name identical: `AUTHORIZATION: Basic …` survived
+  both and went upstream *beside* the real credential, leaving ttyd to pick
+  between them. It is filtered by the same lower-cased pass the hop-by-hop
+  headers already got.
+- **A terminal websocket that broke mid-frame closed silently.** The two
+  pumps race under `asyncio.wait(FIRST_COMPLETED)`, and an exception inside
+  a task never reaches `asyncio.wait` — so the proxy's own handler never saw
+  it, the log carried no reason for the drop, and Python printed a bare
+  "Task exception was never retrieved" traceback into the add-on log at some
+  later collection, attributed to nothing. The losing pump was cancelled but
+  never awaited, so it was still inside a send when the upstream socket
+  closed under it. Both are `_settle` now, and the reason lands on the
+  proxy's own warning line.
+
 ## 1.28.5
 
 ### Fixed

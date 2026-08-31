@@ -142,13 +142,32 @@ class TestTerminalPortIsNotOpen(unittest.TestCase):
         self.assertIn("terminal-credential", proxy)
         self.assertIn("Basic ", proxy)
 
-    def test_the_proxy_does_not_trust_a_client_supplied_credential(self):
+    def test_the_proxy_drops_the_client_credential_by_case_folding(self):
+        """The client's Authorization must be dropped however it is spelled.
+
+        This asserted the source contained `headers.pop("Authorization",
+        None)` — and passed for as long as the guarantee was broken, because
+        that pop is case-sensitive over a dict keyed by whatever case the
+        client sent, so `AUTHORIZATION:` rode upstream beside the credential
+        added on the next line. A grep for a line is not a test of what the
+        line does: tests/test_terminal_proxy.py drives the function with
+        five spellings. What is worth pinning HERE is the structure that
+        makes it true — the drop goes through the same lower-cased filter
+        the hop-by-hop headers use, so it cannot regress to a literal
+        spelling again.
+        """
         with open(os.path.join(ADDONS["brain"], "panel", "terminal_proxy.py")) as f:
             proxy = f.read()
-        self.assertIn(
-            'headers.pop("Authorization", None)', proxy,
-            "the proxy must drop the client's Authorization header before "
-            "adding its own, or a browser can present its own credential",
+        self.assertIn("CLIENT_DROPPED", proxy)
+        self.assertIn('"authorization"', proxy,
+                      "the dropped name must be lower-cased, because that is "
+                      "what _clean compares against")
+        self.assertIn("HOP_BY_HOP | CLIENT_DROPPED", proxy,
+                      "the credential must be filtered by the same "
+                      "case-folding pass as the hop-by-hop headers")
+        self.assertNotIn(
+            'headers.pop("Authorization"', proxy,
+            "a case-sensitive pop is the bug this replaced",
         )
 
 
