@@ -15,8 +15,9 @@ authenticated the request before aiohttp ever sees it. ttyd itself now
 requires HTTP Basic auth, because its port *is* reachable from outside if
 a user publishes it — so the proxy holds the credential and presents it
 upstream, and the person coming in through ingress never sees a prompt.
-The credential is deliberately added after `_clean()`, so a browser that
-sends its own `Authorization` header cannot override ours.
+The credential is deliberately added after `_clean()`, which drops any
+`Authorization` the client sent — in any spelling — so a browser holding
+one for the ingress origin cannot present it to ttyd in place of ours.
 """
 from __future__ import annotations
 
@@ -64,6 +65,22 @@ HOP_BY_HOP = {
     "www-authenticate",
 }
 
+# Dropped from every request going upstream. Not hop-by-hop in the RFC
+# sense — this one is a credential. The proxy presents ttyd its OWN, and a
+# client holding a credential for the ingress origin must not be able to
+# present it in ttyd's place.
+#
+# It has to be filtered by the same case-folding pass HOP_BY_HOP gets.
+# Popping the two spellings "Authorization" and "authorization" off a plain
+# dict was not that: `_clean` keys the dict by whatever case the client sent,
+# HTTP considers every spelling of a header name identical, and aiohttp
+# hands the name through as received. So `AUTHORIZATION: Basic ...` survived
+# both pops and rode upstream *beside* the credential added on the next
+# line — two Authorization headers, and which one ttyd honours was never
+# ours to decide. Lower-casing the comparison is the whole fix; the guard
+# only ever needed to be spelled the way the rest of the filtering is.
+CLIENT_DROPPED = {"authorization"}
+
 DISABLED_PAGE = """<!doctype html><meta charset="utf-8">
 <title>Terminal disabled</title>
 <style>body{font:16px/1.6 system-ui,sans-serif;background:#0A1622;color:#e8eef5;
@@ -75,8 +92,9 @@ restart to use it.</p>
 """
 
 
-def _clean(headers) -> dict:
-    return {k: v for k, v in headers.items() if k.lower() not in HOP_BY_HOP}
+def _clean(headers, drop: set[str] = HOP_BY_HOP) -> dict:
+    """Copy `headers`, dropping any whose name case-folds into `drop`."""
+    return {k: v for k, v in headers.items() if k.lower() not in drop}
 
 
 def _auth_header() -> dict:
@@ -99,12 +117,12 @@ def _auth_header() -> dict:
 
 
 def _upstream_headers(request: web.Request) -> dict:
-    headers = _clean(request.headers)
-    # Drop whatever the client sent before adding ours — a browser that has
-    # cached credentials for the ingress origin must not be able to present
-    # them to ttyd in place of the real one.
-    headers.pop("Authorization", None)
-    headers.pop("authorization", None)
+    """The client's headers, minus this hop's, carrying ttyd's credential.
+
+    Whatever the client sent is dropped before ours is added, however the
+    client spelled it — see CLIENT_DROPPED.
+    """
+    headers = _clean(request.headers, HOP_BY_HOP | CLIENT_DROPPED)
     headers.update(_auth_header())
     return headers
 
@@ -120,6 +138,50 @@ def _upstream_url(request: web.Request) -> str:
 
 def _enabled() -> bool:
     return os.environ.get("BRAIN_ENABLE_TERMINAL", "true").lower() != "false"
+
+
+async def _settle(done: set, pending: set) -> None:
+    """End the losing pump, and surface the winning one's failure.
+
+    Two things `asyncio.wait` does not do, and the bridge needed both.
+
+    Cancelling only ASKS. Un-awaited, the losing pump is still inside
+    `dst.send_*` when the caller closes the upstream socket out from under
+    it — a second failure, raised on the way out of the first. That second
+    failure must not become the one reported, either: it is incidental to
+    the shutdown, where the winner's is the reason for it.
+
+    And an exception inside a task never reaches `asyncio.wait`: a bridge
+    that broke mid-frame returned here indistinguishable from one the
+    browser closed politely. The caller's `except` never saw it, nothing was
+    logged about why the terminal dropped, and Python printed a bare "Task
+    exception was never retrieved" traceback into the add-on log at some
+    later collection, attributed to nothing. Re-raising puts the reason on
+    the proxy's own warning line, beside the session it belongs to.
+    """
+    for task in pending:
+        task.cancel()
+    # `asyncio.wait`, not `await task`: waiting must not itself raise. A pump
+    # cancelled mid-send can come back carrying a ConnectionResetError of its
+    # own, and letting that propagate from here would skip the loop below —
+    # reporting the loser's incidental error while the winner's real reason
+    # went unread and unretrieved. That is this function's own bug, one case
+    # narrower.
+    if pending:
+        await asyncio.wait(pending)
+    # Read EVERY outcome, not just the winner's: an exception nobody
+    # retrieves is exactly the bare traceback this exists to stop. `done`
+    # comes first because the pump that finished on its own is the one that
+    # knows why the bridge ended.
+    failures: list[BaseException] = []
+    for task in (*done, *pending):
+        if task.cancelled():
+            continue
+        exc = task.exception()
+        if exc is not None:
+            failures.append(exc)
+    if failures:
+        raise failures[0]
 
 
 async def _proxy_ws(request: web.Request, url: str) -> web.StreamResponse:
@@ -165,8 +227,7 @@ async def _proxy_ws(request: web.Request, url: str) -> web.StreamResponse:
                  asyncio.create_task(pump(upstream, client))],
                 return_when=asyncio.FIRST_COMPLETED,
             )
-            for task in pending:
-                task.cancel()
+            await _settle(done, pending)
     except (aiohttp.ClientError, OSError) as exc:
         log.warning("terminal websocket upstream failed: %s", exc)
     finally:

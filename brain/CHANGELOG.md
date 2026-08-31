@@ -2,6 +2,53 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.28.6
+
+### Fixed
+
+- **The terminal proxy dropped the client's `Authorization` header only if
+  it was spelled one of two ways.** ttyd takes a generated Basic credential
+  — its port is reachable from the LAN if anyone publishes it — and the
+  panel holds that credential and presents it upstream so an ingress user
+  never meets a prompt. Whatever the client sent was supposed to be dropped
+  first, so a browser holding a credential for the ingress origin could not
+  present it to ttyd instead. The drop was two case-sensitive `pop`s over a
+  dict keyed by the case the client actually sent, and HTTP considers every
+  spelling of a header name identical: `AUTHORIZATION: Basic …` survived
+  both and went upstream *beside* the real credential, leaving ttyd to pick
+  between them. It is filtered by the same lower-cased pass the hop-by-hop
+  headers already got.
+- **A terminal websocket that broke mid-frame closed silently.** The two
+  pumps race under `asyncio.wait(FIRST_COMPLETED)`, and an exception inside
+  a task never reaches `asyncio.wait` — so the proxy's own handler never saw
+  it, the log carried no reason for the drop, and Python printed a bare
+  "Task exception was never retrieved" traceback into the add-on log at some
+  later collection, attributed to nothing. The losing pump was cancelled but
+  never awaited, so it was still inside a send when the upstream socket
+  closed under it. Both are `_settle` now, which waits the cancellations
+  out and reads every task's outcome — the losing pump's own parting
+  error must not become the one reported, when the winner's is the
+  reason for the shutdown — so the reason lands on the proxy's own
+  warning line.
+
+## 1.28.5
+
+### Fixed
+
+- **`brain.disable_device` no longer dies on a device that is its own
+  via_device.** The service walks `via_device_id` up to the hub a device
+  hangs off, so disabling the last live child disables the lonely parent
+  too — and it walked it by recursion. Nothing in Home Assistant makes that
+  chain acyclic (`via_device_id` is whatever id an integration reported),
+  and `alexa_media` reports every device as its OWN via_device: the walk
+  had no end, and the service raised `RecursionError` on each Echo, Wyze
+  and Ecobee device it was given, after writing some of the disables. Both
+  walks (`disable_device` and `enable_device`) are iterative and carry a
+  seen-set now, so a self-reference and a longer A → B → A loop both end
+  where they would repeat rather than at the interpreter's stack limit.
+  Nothing is lost by stopping there: every device on the cycle has been
+  visited by the time it closes.
+
 ## 1.28.4
 
 ### Changed

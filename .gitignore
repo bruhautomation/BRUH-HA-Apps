@@ -43,3 +43,7 @@ __pycache__/
 .DS_Store
 Thumbs.db
 .claude/
+
+# Coverage artifacts (local audit runs)
+.coverage
+htmlcov/
