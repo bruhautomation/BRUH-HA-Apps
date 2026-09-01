@@ -380,20 +380,100 @@ if [ -e "$RUN_SOURCES" ]; then
 else
     info "run-sources ledger not created yet (first background run makes it)"
 fi
-# A consolidation pass holds a lock; one that has outlived any plausible
-# pass (the Claude timeout is 480s) is a crashed pass still blocking the
-# queue — every later pass exits 75 and the Memory tab's button "does
-# nothing" with no error anywhere.
-CONSOLIDATE_LOCK=/config/.brain/memory/.consolidate.lock
-if [ -e "$CONSOLIDATE_LOCK" ]; then
-    lock_age=$(( $(date +%s) - $(stat -c %Y "$CONSOLIDATE_LOCK" 2>/dev/null || date +%s) ))
-    if [ "$lock_age" -gt 900 ]; then
-        warn "consolidator lock is ${lock_age}s old (a pass caps at ~480s) — if 'File into memory now' does nothing, restart the add-on and report this"
-    else
-        info "consolidator lock present (${lock_age}s old — a pass may be running)"
+# Is a consolidation pass running right now — and if so, has it outlived any
+# plausible one? Both questions are answered by PROBING THE FLOCK, and
+# neither can be answered by the lock file at all.
+#
+# `with_lock` in brain-memory-consolidate.sh takes the lock with `exec 9>`
+# and releases it with `exec 9>&-`, which drops the flock and leaves the file
+# on disk for good. So its presence means "a pass has run at some point" and
+# its mtime means "when the last pass started" — and this check used to stat
+# that mtime and warn past 900s, which fires on every home that has not
+# consolidated in the last quarter of an hour, i.e. nearly every run. Worse,
+# the remedy it named could not work: it sent people to restart the add-on
+# over a file under /config, which survives the restart, so the warning came
+# back and taught them to stop reading the report. The panel has always asked
+# the right question (`_consolidation_running()` in server.py) and this is the
+# same probe in shell.
+#
+# It also means a warning here is worth acting on: an flock dies with the
+# process holding it, so a lock held past any plausible pass is a live
+# process genuinely stuck, and restarting really is the remedy.
+consolidator_lock_check() {
+    local dir="${BRAIN_MEMORY_DIR:-/config/.brain/memory}"
+    local lock="$dir/.consolidate.lock"
+    local marker="$dir/.consolidating"
+    local stamp="$dir/.last_consolidated"
+    local now started age mins ago pending probe rc=0
+
+    now=$(date +%s)
+    # When a pass last LANDED. This is the number people were reading the
+    # lock's age as, and it lives in a different file.
+    if [ -e "$stamp" ]; then
+        mins=$(( (now - $(stat -c %Y "$stamp" 2>/dev/null || echo "$now")) / 60 ))
+        ago="${mins}m"
+        [ "$mins" -ge 120 ] && ago="$((mins / 60))h"
+        info "last consolidation landed ${ago} ago"
+        # A queue nothing has filed for longer than a day is the failure the
+        # old check was pretending to look for: the daemon consolidates
+        # daily, so anything past 26h is a consolidator that is not working,
+        # not a busy one. Same threshold the panel's stale-queue check uses.
+        pending=$(cat "$dir/inbox"/*.jsonl 2>/dev/null | grep -c . || true)
+        if [ "${pending:-0}" -gt 0 ] && [ "$mins" -gt 1560 ]; then
+            warn "${pending} fact(s) have been queued for ${ago} with nothing filing them — check the add-on log for the consolidator"
+        fi
     fi
-fi
-MEMORY_DOC=/config/.brain/memory/memory.md
+
+    [ -e "$lock" ] || { info "no consolidator lock file yet (no pass has run)"; return; }
+    # Unreadable is its own answer, not contention — the probe below opens the
+    # file, and a refusal to open must not be reported as somebody holding it.
+    [ -r "$lock" ] || { info "consolidator lock not readable as $(id -un) — cannot tell whether a pass is running"; return; }
+    command -v flock > /dev/null 2>&1 || {
+        info "no flock in this image — the consolidator runs unlocked here"
+        return
+    }
+
+    # Ask whether flock can do what we are about to ask of it, on a scratch
+    # file, before reading a refusal as contention. That confusion is the
+    # exact bug that once stopped memory updating at all: BusyBox answers an
+    # unsupported flag with the same exit status as "the lock is held".
+    probe=$(mktemp 2>/dev/null) || probe=""
+    if [ -n "$probe" ]; then
+        ( exec 8< "$probe" && flock -sn 8 ) > /dev/null 2>&1 || rc=1
+        rm -f "$probe"
+        if [ "$rc" -ne 0 ]; then
+            info "flock is unusable in this image — the consolidator runs unlocked here"
+            return
+        fi
+    fi
+
+    # A SHARED, non-blocking probe: shared so that asking the question can
+    # never be something a real pass blocks on, non-blocking so this check
+    # cannot become the stall it is looking for. Read-only `9<` and never
+    # `9>`, which would truncate the holder's lock file at open.
+    if ( exec 9< "$lock" && flock -sn 9 ) > /dev/null 2>&1; then
+        pass "consolidator lock free (no pass in flight)"
+        return
+    fi
+
+    # Held, so a pass really is running. `.consolidating` is stamped after
+    # the lock is taken and removed when the pass ends, so while the lock is
+    # held its mtime is that pass's own start.
+    started=0
+    [ -e "$marker" ] && started=$(stat -c %Y "$marker" 2>/dev/null || echo 0)
+    if [ "$started" -gt 0 ]; then
+        age=$(( now - started ))
+        if [ "$age" -gt 900 ]; then
+            warn "a consolidation pass has held the lock for ${age}s (one caps at ~480s) — it is stuck; restart the add-on and report this"
+        else
+            info "a consolidation pass is running (${age}s so far)"
+        fi
+    else
+        info "a consolidation pass is running (just started)"
+    fi
+}
+consolidator_lock_check
+MEMORY_DOC="${BRAIN_MEMORY_DIR:-/config/.brain/memory}/memory.md"
 if [ -s "$MEMORY_DOC" ]; then
     pass "memory.md present ($(wc -c < "$MEMORY_DOC") bytes)"
 else
