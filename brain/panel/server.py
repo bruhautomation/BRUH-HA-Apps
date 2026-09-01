@@ -2699,7 +2699,7 @@ def _consolidate_now() -> tuple[bool, str]:
         return False, f"consolidation passed its {CONSOLIDATE_TIMEOUT_S}s limit"
     if rc == CONSOLIDATE_BUSY_RC:
         return False, ("another consolidation is already running — "
-                       "give it a moment and press it again")
+                       + "give it a moment and press it again")
     if rc != 0:
         return False, (tail[-1][:300] if tail else
                        f"the consolidator exited {rc}")
@@ -2736,8 +2736,8 @@ async def _consolidate_task() -> None:
         if ok and before and not drained:
             ok, error = False, (
                 "the consolidator finished but the queue didn't move — see "
-                "the add-on log's [brain-memory] lines for why it kept the "
-                "facts")
+                + "the add-on log's [brain-memory] lines for why it kept "
+                + "the facts")
         if not ok:
             log.warning("consolidation failed: %s", error)
         MEMORY_STATE.update(error="" if ok else (error or "consolidation failed"),

@@ -439,6 +439,9 @@ def _parse_retry_after(headers):
     try:
         return max(0.0, float(int(raw)))
     except ValueError:
+        # Not the delay-seconds form. That is the other half of what RFC 9110
+        # allows, not a failure, so it falls through to the HTTP-date parse
+        # below and only a value neither form accepts ends up as None.
         pass
 
     try:

@@ -1649,7 +1649,6 @@ def test_share_login_token_mode_writes_contract_file(tmp_path):
     assert stat.S_IMODE(auth_dir.stat().st_mode) == 0o700
 
     # The stored token must match the regex bruh-insights uses to detect it
-    import re
     insights_re = re.compile(r"sk-ant-oat\d{2}-[A-Za-z0-9_\-]{20,}")
     assert insights_re.fullmatch(data["value"])
 

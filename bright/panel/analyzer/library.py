@@ -394,6 +394,9 @@ def load_show(hash_hex: str, version_id: str | None = None) -> dict | None:
     try:
         return json.loads(show_path(hash_hex, version_id).read_text())
     except (OSError, ValueError):
+        # No file there, or an unreadable one: a version that has been
+        # pruned reads exactly like a version that never existed, and both
+        # answers are the same — fall through to the live show below.
         pass
     if version_id:
         return load_show(hash_hex)

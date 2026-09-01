@@ -2,6 +2,20 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.28.10
+
+### Fixed
+
+- **A code-scanning sweep, in the two places it found something real.** The
+  `Retry-After` parser's "not the delay-seconds form" branch and BRight's
+  "no such show version" branch were both silent `pass`es — the query is
+  "an `except` that does nothing and has no comment", and in a codebase
+  whose comments carry the reasoning the missing comment *is* the finding.
+  Each now says what is being ignored and why falling through is the
+  answer. Two message strings that sat in a list or a tuple as implicit
+  concatenations — the shape that reads as a missing comma — are explicit
+  concatenations now. No behaviour changes.
+
 ## 1.28.9
 
 ### Fixed
