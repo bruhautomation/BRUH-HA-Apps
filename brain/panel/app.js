@@ -380,15 +380,24 @@ function renderUsageChip() {
     return;
   }
   const hasWeek = u.week_percent != null;
-  $("#usageChipPct").textContent = `${Math.round(u.used_percent)}%`;
+  // An estimate is a different reading, and the pill has to say so on its
+  // face. When the tracker fails the fallback counts brAIn's own insight
+  // runs, which on a home that mostly uses the terminal and the chat is 0%
+  // that never moves — a live-looking number that is neither live nor the
+  // account's. The `~` is the same prefix the spinner's token estimate
+  // uses, and the dot carries the trouble so nothing gains a second chip.
+  const est = u.source !== "account";
+  $("#usageChipPct").textContent = `${est ? "~" : ""}${Math.round(u.used_percent)}%`;
   $("#usageChipWeekPct").textContent = hasWeek ? `${Math.round(u.week_percent)}%` : "";
   $("#usageChipWeek").classList.toggle("hidden", !hasWeek);
-  chip.classList.toggle("ok", !u.blocked);
-  chip.classList.toggle("warn", !!u.blocked);
+  chip.classList.toggle("ok", !u.blocked && !est);
+  chip.classList.toggle("warn", !!u.blocked || est);
   chip.removeAttribute("title");
   chip.setAttribute("aria-label",
-    `Claude usage — session ${Math.round(u.used_percent)}%`
+    `Claude usage — session ${est ? "an estimated " : ""}`
+    + `${Math.round(u.used_percent)}%`
     + (hasWeek ? `, week ${Math.round(u.week_percent)}%` : "")
+    + (est ? ". Your account's own usage is unavailable." : "")
     + (u.blocked ? ". Automatic insights are paused until it resets." : "")
     + ". Press for detail.");
   chip.classList.remove("hidden");
@@ -407,12 +416,16 @@ function fillUsagePop() {
     `<div class="prow"><span class="pname">${esc(name)}`
     + (when ? `<span class="pwhen">${esc(when)}</span>` : "")
     + `</span><span class="pval">${Math.round(pct)}%</span></div>`;
-  rows.push(row("Session · 5 hours", u.used_percent || 0,
+  rows.push(row(u.source === "account" ? "Session · 5 hours"
+                                       : "Session · 5 hours (estimated)",
+    u.used_percent || 0,
     u.resets_at ? `resets ${fmtClock(u.resets_at)}` : ""));
   if (u.week_percent != null) {
     rows.push(row("This week", u.week_percent,
       u.week_resets_at ? `resets ${fmtDayClock(u.week_resets_at)}` : ""));
   }
+  const trouble = limitsNote(u);
+  if (trouble) rows.push(trouble);
   // The budget only ever throttles brAIn's own scheduled work, so it belongs
   // here beside the number it is measured against — not in a separate chip
   // repeating a percentage the pill is already showing. When it has been
@@ -431,6 +444,64 @@ function fillUsagePop() {
   }
   rows.push(spendRows(u));
   setChipPop($("#usageChip"), "Claude usage", rows.join(""));
+}
+
+// Why the percentage above is an estimate rather than the account's own.
+//
+// When the usage tracker fails, its file goes stale, the panel falls back
+// to counting brAIn's own insight runs against a rough plan allowance, and
+// the weekly window disappears entirely — so on a home that mostly uses the
+// terminal and the chat the pill sits at 0% and never moves. That is
+// indistinguishable from a broken sensor, and the only thing this popover
+// used to say about it was "sign in with your Claude subscription", which
+// sends somebody who IS signed in to redo the one thing that was working.
+//
+// The tracker knows exactly what stopped it, so its own status is what gets
+// said, with the two codes people misread spelled out: a rate limit is the
+// endpoint's, not the account's, and an API key has no window to report.
+function limitsNote(u) {
+  const lim = u && u.limits;
+  if (!lim || !lim.code) return "";
+  const back = lim.next_attempt
+    ? ` brAIn tries again at <b>${esc(fmtClock(lim.next_attempt))}</b>.` : "";
+  const say = (head, body) =>
+    `<p class="pnote"><b>${head}</b> ${body}${back}</p>`;
+  switch (lim.code) {
+    case "no_oauth_token":
+      return say("Your account's real usage is not available.",
+        `Nothing has signed in with a Claude subscription yet — the figure `
+        + `above is an estimate from brAIn's own runs. Sign in from the `
+        + `terminal, or with <b>ha login</b>.`);
+    case "api_key_has_no_usage_limits":
+      return say("An API key has no usage window.",
+        `It bills per token instead, so there is no session or weekly `
+        + `percentage to report. The figure above is brAIn's own spend `
+        + `against a rough allowance.`);
+    case "http_401":
+      return say("Anthropic refused the saved credential.",
+        `The sign-in has expired or been revoked, so the figure above is an `
+        + `estimate. Signing in again restores the real numbers.`);
+    case "http_429":
+      return say("Anthropic is rate-limiting the usage endpoint itself.",
+        `This is not your account's usage and no amount of quota clears it. `
+        + `The figure above is an estimate until it lifts.`);
+    case "network_error":
+      return say("brAIn could not reach Anthropic.",
+        `The figure above is an estimate from brAIn's own runs until the `
+        + `connection comes back.`);
+    case "not_running":
+      return say("The usage tracker has not reported yet.",
+        `It writes its first reading shortly after the add-on starts; until `
+        + `then the figure above is an estimate.`);
+    case "stale":
+      return say("The usage tracker has stopped reporting.",
+        `The figure above is an estimate from brAIn's own runs. The add-on `
+        + `log says what happened.`);
+    default:
+      return say("brAIn could not read your account's usage.",
+        `The tracker reported <b>${esc(lim.code)}</b>, so the figure above `
+        + `is an estimate from brAIn's own runs.`);
+  }
 }
 
 // A run id, as the name of the thing that spent the tokens.
@@ -476,8 +547,9 @@ function spendRows(u) {
         + `Anthropic account, so the terminal, the chat and voice are in that `
         + `number and not in this list.`
       : `Insight, fix and setup runs in the last 5 hours, against a rough `
-        + `<b>${esc(u.plan_label || "plan")}</b> allowance. Sign in with your Claude `
-        + `subscription for your account's real usage instead of this estimate.`)
+        + `<b>${esc(u.plan_label || "plan")}</b> allowance — which is what the `
+        + `percentage above is measured from while your account's own usage `
+        + `is unavailable.`)
     + `</p>`);
   return out.join("");
 }
