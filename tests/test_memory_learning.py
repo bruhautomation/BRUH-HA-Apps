@@ -27,6 +27,7 @@ import ast
 import importlib.util
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -1103,6 +1104,205 @@ def test_a_held_lock_exits_busy_rather_than_claiming_success(tmp_path):
     assert result.returncode == 75, result.stdout + result.stderr
     assert "already running" in result.stdout + result.stderr
     assert len(inbox_lines(memory_dir)) == 1  # still pending
+
+
+# ---------------------------------------------------------------------------
+# `brain doctor`: is a consolidation pass running?
+# ---------------------------------------------------------------------------
+
+SELFTEST = ADDON / "scripts" / "ha-selftest.sh"
+
+
+def selftest_lock_check(memory_dir: Path) -> str:
+    """Drive ha-selftest.sh's consolidator check, and only that.
+
+    The function is lifted out of the real script by name rather than
+    reimplemented here: a copy of the check in the test would agree with
+    itself forever, which is exactly how the bug below survived — the check
+    had a test, and it asserted the source contained a line rather than
+    driving what the line does.
+    """
+    src = SELFTEST.read_text()
+    match = re.search(r"^consolidator_lock_check\(\) \{\n.*?^\}$", src,
+                      re.S | re.M)
+    assert match, "ha-selftest.sh no longer defines consolidator_lock_check"
+    harness = (
+        'pass() { echo "PASS $1"; }\n'
+        'fail() { echo "FAIL $1"; }\n'
+        'warn() { echo "WARN $1"; }\n'
+        'info() { echo "INFO $1"; }\n'
+        + match.group(0) + "\nconsolidator_lock_check\n"
+    )
+    result = subprocess.run(
+        ["bash", "-c", harness], capture_output=True, text=True, check=False,
+        env={**os.environ, "BRAIN_MEMORY_DIR": str(memory_dir)},
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    return result.stdout
+
+
+def hold_the_lock(lock: Path):
+    """A subprocess actually holding the flock, the way a pass does."""
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.touch()
+    holder = subprocess.Popen(["flock", str(lock), "sleep", "30"])
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        probe = subprocess.run(["flock", "-n", str(lock), "true"], check=False)
+        if probe.returncode != 0:
+            return holder
+        time.sleep(0.05)
+    holder.kill()
+    holder.wait()
+    raise AssertionError("the holder never took the lock")
+
+
+def test_a_lock_file_left_behind_is_not_a_running_pass(tmp_path):
+    """The false positive, reproduced.
+
+    `with_lock` releases with `exec 9>&-`, which drops the flock and leaves
+    the file on disk for good — so the lock file's age is when the last pass
+    STARTED, and its existence means nothing at all. Statting that mtime
+    warned on every home that had not consolidated in the last 15 minutes,
+    and sent people to restart an add-on that was working over a file under
+    /config that survives the restart.
+    """
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir(parents=True)
+    lock = memory_dir / ".consolidate.lock"
+    lock.touch()
+    # The exact shape of the report that prompted this: a pass took the lock
+    # over an hour ago, ran for two minutes, and finished cleanly.
+    old = time.time() - 4200
+    os.utime(lock, (old, old))
+    (memory_dir / ".last_consolidated").touch()
+    os.utime(memory_dir / ".last_consolidated", (old + 120, old + 120))
+
+    # The old recipe, on this fixture, so the guard is measured against a
+    # demonstrated failure rather than a described one.
+    was = subprocess.run(
+        ["bash", "-c",
+         f'age=$(( $(date +%s) - $(stat -c %Y "{lock}") )); '
+         f'[ "$age" -gt 900 ] && echo WARN'],
+        capture_output=True, text=True, check=False)
+    assert was.stdout.strip() == "WARN", "the fixture no longer trips the old check"
+
+    out = selftest_lock_check(memory_dir)
+    assert "WARN" not in out, out
+    assert "lock free" in out
+
+
+def test_a_pass_that_really_is_stuck_still_warns(tmp_path):
+    """The fix must not turn the check off. An flock dies with the process
+    holding it, so a lock still held past any plausible pass is a live
+    process genuinely stuck — the one case where "restart the add-on" is
+    the right advice."""
+    if shutil.which("flock") is None:
+        pytest.skip("no flock in this image")
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir(parents=True)
+    marker = memory_dir / ".consolidating"
+    marker.touch()
+    started = time.time() - 1800
+    os.utime(marker, (started, started))
+
+    holder = hold_the_lock(memory_dir / ".consolidate.lock")
+    try:
+        out = selftest_lock_check(memory_dir)
+    finally:
+        holder.kill()
+        holder.wait()
+    assert "WARN" in out, out
+    assert "held the lock" in out
+
+
+def test_a_pass_in_flight_is_reported_as_running_not_stuck(tmp_path):
+    if shutil.which("flock") is None:
+        pytest.skip("no flock in this image")
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir(parents=True)
+    marker = memory_dir / ".consolidating"
+    marker.touch()
+    started = time.time() - 60
+    os.utime(marker, (started, started))
+
+    holder = hold_the_lock(memory_dir / ".consolidate.lock")
+    try:
+        out = selftest_lock_check(memory_dir)
+    finally:
+        holder.kill()
+        holder.wait()
+    assert "WARN" not in out, out
+    assert "is running (60s so far)" in out
+
+
+def test_the_probe_neither_blocks_a_pass_nor_truncates_its_lock(tmp_path):
+    """Asking the question must cost the pass nothing.
+
+    Shared and non-blocking, so a real pass is never something this check
+    can stall on; opened `9<` and never `9>`, because `>` truncates the
+    holder's lock file at open — which is why the consolidator's own comment
+    forbids it for a waiting caller.
+    """
+    if shutil.which("flock") is None:
+        pytest.skip("no flock in this image")
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir(parents=True)
+    lock = memory_dir / ".consolidate.lock"
+    lock.write_text("held by a pass\n")
+    holder = hold_the_lock(lock)
+    try:
+        started = time.time()
+        out = selftest_lock_check(memory_dir)
+        elapsed = time.time() - started
+    finally:
+        holder.kill()
+        holder.wait()
+    assert "is running" in out
+    assert elapsed < 5, "the check waited on a lock it should only have probed"
+    assert lock.read_text() == "held by a pass\n", \
+        "the probe truncated the holder's lock file"
+
+
+def test_a_queue_nothing_files_is_what_actually_warns(tmp_path):
+    """The failure the old check was pretending to look for. The daemon
+    consolidates daily, so facts queued past 26 hours mean a consolidator
+    that is not working — and unlike a lock file's age, that is a fact about
+    the queue rather than about a file nobody deletes."""
+    memory_dir = tmp_path / "memory"
+    (memory_dir / "inbox").mkdir(parents=True)
+    (memory_dir / "inbox" / "1-terminal.jsonl").write_text(
+        '{"ts": 1, "source": "terminal", "fact": "x", "confidence": "high"}\n')
+    stamp = memory_dir / ".last_consolidated"
+    stamp.touch()
+    old = time.time() - 40 * 3600
+    os.utime(stamp, (old, old))
+
+    out = selftest_lock_check(memory_dir)
+    assert "WARN" in out and "queued" in out, out
+
+    # The same queue, filed an hour ago, is not news.
+    recent = time.time() - 3600
+    os.utime(stamp, (recent, recent))
+    assert "WARN" not in selftest_lock_check(memory_dir)
+
+
+def test_the_check_never_reads_the_lock_files_mtime(tmp_path):
+    """A grep, deliberately: the whole bug was a check that asked the file
+    system a question the file could not answer, and the cheapest way to
+    stop it coming back is to say so about the source."""
+    src = SELFTEST.read_text()
+    match = re.search(r"^consolidator_lock_check\(\) \{\n.*?^\}$", src,
+                      re.S | re.M)
+    body = match.group(0)
+    for line in body.splitlines():
+        code = line.split("#", 1)[0]
+        if "stat -c %Y" in code:
+            assert '"$lock"' not in code, (
+                "the consolidator lock's mtime is when the last pass STARTED "
+                "and says nothing about whether one is running: probe the "
+                "flock instead"
+            )
 
 
 # ---------------------------------------------------------------------------

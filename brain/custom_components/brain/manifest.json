@@ -16,5 +16,5 @@
   "documentation": "https://github.com/bruhautomation/BRUH-HA-Apps/tree/main/brain",
   "integration_type": "service",
   "iot_class": "local_polling",
-  "version": "1.28.8"
+  "version": "1.28.9"
 }

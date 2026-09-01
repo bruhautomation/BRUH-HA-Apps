@@ -2,6 +2,40 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.28.9
+
+### Fixed
+
+- **`brain doctor` warned about a consolidator lock that nothing was
+  holding.** The check stat-ed the mtime of
+  `/config/.brain/memory/.consolidate.lock` and warned past 15 minutes — but
+  that file is an advisory flock target, not a lock-by-existence marker. The
+  consolidator takes it with `exec 9>` and releases it with `exec 9>&-`,
+  which drops the flock and leaves the file on disk permanently, so its
+  mtime records when the last pass *started* and its presence means nothing
+  at all. Any home that had not consolidated in the last quarter of an hour
+  tripped it, which is nearly every run of the report. The remedy it named
+  could not work either: the file lives under `/config` and survives a
+  restart, so restarting the add-on left the same warning behind — over a
+  memory system that was working the whole time (the panel has always asked
+  the right question, so "File into memory now" was never actually
+  blocked). The check now probes the flock the way the panel does — shared
+  and non-blocking, so asking can never be something a real pass blocks on
+  — and it distinguishes a flock that cannot be taken in this image from
+  one somebody is holding, which is the confusion that once stopped memory
+  updating at all. A warning from it is now worth acting on: an flock dies
+  with the process holding it, so a lock still held past any plausible pass
+  is a live process genuinely stuck, and restarting really is the remedy.
+
+### Added
+
+- **`brain doctor` reports when a pass last landed, and warns when the queue
+  is the thing that is stuck.** The consolidator runs daily, so facts that
+  have sat in the inbox for more than 26 hours with nothing filing them are
+  a consolidator that is not working — which is the failure the lock warning
+  was pretending to look for, asked of the queue rather than of a file
+  nobody deletes.
+
 ## 1.28.8
 
 ### Fixed
