@@ -447,7 +447,29 @@ VERBOSE_ACCESS_LOG = os.environ.get("BRAIN_ACCESS_LOG", "").lower() in (
 # JOBS[insight_id] = {state, phase, started_at, error, question}
 JOBS: dict[str, dict] = {}
 QUEUE: asyncio.Queue[str] = asyncio.Queue()
-AUTH_CHECK: dict = {"state": "unchecked", "error": "", "checked_at": 0}
+AUTH_CHECK: dict = {"state": "unchecked", "error": "", "checked_at": 0,
+                    "running": False}
+# How old a settled auth verdict may get before it is re-earned.
+#
+# The check used to run at startup, after a credential was saved, and after
+# the guided sign-in — and never again. So a credential that died on a
+# Tuesday afternoon was reported by nothing: /api/status went on serving
+# `state: "ok"` from a check made days earlier, the chip stayed hidden
+# because a working login is not news, and the first real symptom was voice
+# and automations failing while the terminal carried on working off a
+# different store. A verdict nothing re-earns is the same failure the usage
+# tracker had — a reading nothing can correct.
+#
+# It is re-earned lazily off /api/status rather than on a timer, because
+# `validate_auth` is a real `claude -p` call and an unattended timer would
+# spend account tokens forever on a question nobody is asking. The panel
+# polls status while it is open, so the check costs one tiny turn per
+# interval while somebody is looking and nothing at all when they are not.
+# Six hours because a credential dies on the scale of hours, not minutes.
+#
+# A *failed* verdict ages out too: somebody who fixes their login in the
+# terminal should not have to restart the add-on for the panel to notice.
+AUTH_RECHECK_S = int(os.environ.get("BRAIN_AUTH_RECHECK_S", 6 * 3600))
 
 
 ACTIVE_STATES = ("queued", "collecting", "generating", "parsing", "fixing")
@@ -1262,13 +1284,58 @@ async def _options_poller() -> None:
 
 
 async def _check_auth_bg() -> None:
-    AUTH_CHECK.update(state="checking", error="")
-    result = await asyncio.to_thread(engine.validate_auth)
-    AUTH_CHECK.update(
-        state="ok" if result["ok"] else "failed",
-        error=result["error"],
-        checked_at=time.time(),
-    )
+    try:
+        result = await asyncio.to_thread(engine.validate_auth)
+        AUTH_CHECK.update(
+            state="ok" if result["ok"] else "failed",
+            error=result["error"],
+            checked_at=time.time(),
+        )
+    finally:
+        # The guard below is only a guard while this is honest about
+        # finishing — including when validate_auth raises.
+        AUTH_CHECK["running"] = False
+
+
+def start_auth_check(announce: bool = True) -> bool:
+    """Begin a verification, unless one is already running. True if started.
+
+    `running` is flipped **here**, synchronously, rather than inside the
+    coroutine. `asyncio.create_task` only schedules — nothing in it runs
+    until the loop yields — so a guard reading state its own task has not
+    set yet is no guard at all, and two callers in one tick both spawn a
+    real `claude -p`. That was already reachable through the polled
+    `h_setup_status`, and `/api/status` is polled far harder.
+
+    `announce` is what separates a check somebody asked for from one that
+    is merely due. A sign-in is a moment with a person in front of it and
+    "Verifying Claude…" is the answer to what they just did; a six-hourly
+    re-verification is not news, and a chip appearing unbidden in the top
+    bar — shifting its layout — while somebody reads a card is the "a
+    status chip that is permanently green does not belong there" rule with
+    the timing changed. An unannounced check leaves the previous verdict
+    standing until it has a new one, which is also the more honest answer:
+    the last thing we actually established is the best we know.
+    """
+    if AUTH_CHECK.get("running"):
+        return False
+    AUTH_CHECK["running"] = True
+    if announce:
+        AUTH_CHECK.update(state="checking", error="")
+    asyncio.create_task(_check_auth_bg())
+    return True
+
+
+def _auth_verdict_is_stale(now: float | None = None) -> bool:
+    """True when the last verdict is old enough to be worth re-earning.
+
+    An unchecked or in-flight state is not stale — the first has no verdict
+    to age and the second is already earning one.
+    """
+    if AUTH_CHECK["state"] not in ("ok", "failed") or AUTH_CHECK.get("running"):
+        return False
+    now = time.time() if now is None else now
+    return now - (AUTH_CHECK["checked_at"] or 0) >= AUTH_RECHECK_S
 
 
 # ---------------------------------------------------------------------------
@@ -1335,6 +1402,13 @@ def _category_status(c: dict, insights: dict) -> dict:
 
 async def h_status(request: web.Request) -> web.Response:
     auth = engine.get_auth()
+    # Re-earn a verdict that has gone stale. Lazy on purpose — see
+    # AUTH_RECHECK_S: this is the one path a person looking at the panel
+    # already drives, so the cost lands where somebody is asking and
+    # nowhere else. `start_auth_check` is the guard against the poll
+    # spawning a second check over an unfinished one.
+    if auth and _auth_verdict_is_stale():
+        start_auth_check(announce=False)
     insights = {i["id"]: i.get("generated_at") for i in load_insights()}
     settings = settings_store.load()
     return web.json_response({
@@ -3057,7 +3131,7 @@ async def h_auth_token(request: web.Request) -> web.Response:
         saved = engine.save_auth(token)
     except ValueError as exc:
         raise web.HTTPBadRequest(text=str(exc))
-    asyncio.create_task(_check_auth_bg())
+    start_auth_check()
     return web.json_response({"saved": True, "type": saved["type"]})
 
 
@@ -3085,7 +3159,7 @@ async def h_setup_code(request: web.Request) -> web.Response:
 async def h_setup_status(request: web.Request) -> web.Response:
     status = engine.SETUP_FLOW.status()
     if status["phase"] == "done" and AUTH_CHECK["state"] == "unchecked":
-        asyncio.create_task(_check_auth_bg())
+        start_auth_check()
     return web.json_response(status)
 
 
@@ -3738,7 +3812,7 @@ def make_app() -> web.Application:
         if addon_options.available():
             app["options"] = asyncio.create_task(_options_poller())
         if engine.get_auth():
-            asyncio.create_task(_check_auth_bg())
+            start_auth_check()
 
     async def on_cleanup(app: web.Application) -> None:
         # The chat session is a child process of ours; leaving it running
