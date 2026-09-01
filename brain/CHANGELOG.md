@@ -2,6 +2,40 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.28.8
+
+### Fixed
+
+- **A passing Claude auth check was never re-earned.** The verification ran
+  at panel startup, after a credential was saved, and after the guided
+  sign-in — and never again. So a credential that died mid-week was
+  reported by nothing: the panel went on serving the startup verdict, the
+  auth chip stayed hidden because a working login is not news, and the
+  first real symptom was voice, automations and the consolidator failing
+  off one credential store while the terminal carried on working off
+  another. The verdict now ages out after six hours and is re-earned the
+  next time somebody looks at the panel — lazily, off the status the panel
+  already polls, because the check is a real Claude turn and an unattended
+  timer would spend account tokens forever on a question nobody asked. A
+  *failed* verdict ages out too, so fixing a login in the terminal no
+  longer needs an add-on restart for the panel to notice.
+  The re-check is silent: "Verifying Claude…" answers what a person just
+  did, so a six-hourly re-verification leaves the standing verdict on
+  screen rather than flashing a chip into the top bar — and shifting its
+  layout — while you are reading a card.
+- **Two pollers could start two verifications for one question.** The
+  in-flight guard read a state its own task had not set yet —
+  `asyncio.create_task` only schedules, so nothing inside the coroutine
+  runs until the loop yields. It is a flag set synchronously now, in the
+  same breath as the check that reads it.
+- **The panel wrote `saved_at` in a format the contract does not describe.**
+  Both credential files document `"saved_at": <epoch int>`, and
+  `ha-share-login` writes an int and greps for one; the panel's own store
+  wrote an ISO string. Latent, because each reader happens to read the file
+  it wrote — but one documented shape covering two formats is a trap for
+  the next one. The shell half has asserted this since it was written; the
+  panel half now does too, which is why it drifted.
+
 ## 1.28.7
 
 ### Fixed

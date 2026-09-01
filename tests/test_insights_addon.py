@@ -18,6 +18,7 @@ import os
 import stat
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -741,6 +742,25 @@ class TestSharedAuth(unittest.TestCase):
         engine.save_auth("sk-ant-oat01-" + "a" * 30)
         self.assertEqual(engine.get_auth()["source"], "local")
 
+    def test_saved_at_is_the_shape_both_stores_document(self):
+        """Epoch seconds, matching `ha-share-login`'s half of the contract.
+
+        `_read_shared_auth` documents `"saved_at": <epoch int>` for both
+        credential files, and the shell half writes an int and greps for
+        one (`"saved_at":[ ]*[0-9]+`). The panel wrote an ISO string, so
+        one documented shape covered two formats — latent only because each
+        reader happens to read the file it wrote, which is not a property
+        worth relying on. The shell side has had this assertion since it was
+        written (test_share_login_token_mode_writes_contract_file); this is
+        the half that was missing, which is why it drifted.
+        """
+        before = int(time.time())
+        engine.save_auth("sk-ant-oat01-" + "a" * 30)
+        with open(engine.AUTH_FILE) as fh:
+            saved = json.load(fh)
+        self.assertIsInstance(saved["saved_at"], int)
+        self.assertGreaterEqual(saved["saved_at"], before)
+
     def test_malformed_shared_tolerated(self):
         for payload in ("not json", ["a", "b"],
                         {"type": "weird", "value": "x"},
@@ -762,6 +782,139 @@ class TestSharedAuth(unittest.TestCase):
         # after logout, the shared credential takes over again
         auth = engine.get_auth()
         self.assertEqual(auth["source"], "shared")
+
+    async def _settle_startup_check(self, server):
+        """Wait out the check make_app() fires on startup.
+
+        It runs because a credential exists, which is correct and is not
+        what these two tests are measuring — so they take their baseline
+        after it, rather than pretending it does not happen.
+        """
+        for _ in range(200):
+            if server.AUTH_CHECK["state"] != "checking":
+                return
+            await asyncio.sleep(0.01)
+        self.fail("the startup auth check never settled")
+
+    def test_a_stale_verdict_is_re_earned_by_a_status_poll(self):
+        """The wiring, not the constant.
+
+        A staleness rule nothing calls is the bug with better paperwork, so
+        this drives the real endpoint: a verdict older than the interval has
+        to cost one verification, and a poll arriving while that one is
+        still in flight has to cost none.
+        """
+        from aiohttp.test_utils import TestClient, TestServer
+        server = importlib.import_module("server")
+        old_dir = server.INSIGHTS_DIR
+        server.INSIGHTS_DIR = Path(self.tmp.name) / "insights"
+        server.QUEUE = asyncio.Queue()
+        old_validate = engine.validate_auth
+        old_check = dict(server.AUTH_CHECK)
+
+        calls = []
+        block = threading.Event()
+        release = threading.Event()
+
+        def validate(timeout=120):
+            calls.append(timeout)
+            if block.is_set():
+                release.wait(5)
+            return {"ok": True, "error": ""}
+
+        engine.validate_auth = validate
+        self._write_shared({"type": "oauth_token",
+                            "value": "sk-ant-oat01-" + "s" * 30,
+                            "saved_at": 1752000000})
+
+        async def run():
+            client = TestClient(TestServer(server.make_app()))
+            await client.start_server()
+            try:
+                await self._settle_startup_check(server)
+                calls.clear()
+                block.set()
+
+                # A verdict older than the interval: one poll, one check.
+                server.AUTH_CHECK.update(
+                    state="ok", error="",
+                    checked_at=time.time() - server.AUTH_RECHECK_S - 1)
+                resp = await client.get("/api/status")
+                # `running` is the synchronous half of the guard, so it is
+                # true the moment the request returns; the call itself is on
+                # a worker thread, so give it a beat to actually land.
+                self.assertTrue(server.AUTH_CHECK["running"])
+                # And a re-verification nobody asked for stays quiet: the
+                # standing verdict is served until a new one replaces it,
+                # rather than flashing "Verifying Claude…" into the top bar
+                # every six hours while somebody is reading a card.
+                self.assertEqual((await resp.json())["auth_check"]["state"], "ok")
+                for _ in range(200):
+                    if calls:
+                        break
+                    await asyncio.sleep(0.01)
+                self.assertEqual(len(calls), 1)
+
+                # Two more polls while it is still running: still one check.
+                await client.get("/api/status")
+                await client.get("/api/status")
+                await asyncio.sleep(0.05)
+                self.assertEqual(len(calls), 1)
+            finally:
+                release.set()
+                await client.close()
+
+        try:
+            asyncio.run(run())
+        finally:
+            release.set()
+            server.INSIGHTS_DIR = old_dir
+            engine.validate_auth = old_validate
+            server.AUTH_CHECK.clear()
+            server.AUTH_CHECK.update(old_check)
+
+    def test_a_fresh_verdict_costs_a_status_poll_nothing(self):
+        """The other half — a poll must not spend a turn per request."""
+        from aiohttp.test_utils import TestClient, TestServer
+        server = importlib.import_module("server")
+        old_dir = server.INSIGHTS_DIR
+        server.INSIGHTS_DIR = Path(self.tmp.name) / "insights"
+        server.QUEUE = asyncio.Queue()
+        old_validate = engine.validate_auth
+        old_check = dict(server.AUTH_CHECK)
+
+        calls = []
+
+        def counted(timeout=120):
+            calls.append(timeout)
+            return {"ok": True, "error": ""}
+
+        engine.validate_auth = counted
+        self._write_shared({"type": "oauth_token",
+                            "value": "sk-ant-oat01-" + "s" * 30,
+                            "saved_at": 1752000000})
+
+        async def run():
+            client = TestClient(TestServer(server.make_app()))
+            await client.start_server()
+            try:
+                await self._settle_startup_check(server)
+                calls.clear()
+                server.AUTH_CHECK.update(
+                    state="ok", error="", checked_at=time.time())
+                for _ in range(3):
+                    await client.get("/api/status")
+                self.assertEqual(calls, [])
+            finally:
+                await client.close()
+
+        try:
+            asyncio.run(run())
+        finally:
+            server.INSIGHTS_DIR = old_dir
+            engine.validate_auth = old_validate
+            server.AUTH_CHECK.clear()
+            server.AUTH_CHECK.update(old_check)
 
     def test_status_reports_auth_source(self):
         from aiohttp.test_utils import TestClient, TestServer
@@ -2275,6 +2428,117 @@ class TestWhyTheNumberIsAnEstimate(unittest.TestCase):
         state = usage_store.budget_state({})
         self.assertEqual(state["source"], "estimate")
         self.assertEqual(state["limits"]["code"], "stale")
+
+
+class TestAuthVerdictIsReEarned(unittest.TestCase):
+    """A settled auth verdict has to age out, and one check at a time.
+
+    `_check_auth_bg` used to run at startup, after a credential was saved,
+    and after the guided sign-in — never again. So a credential that died
+    mid-week was reported by nothing: /api/status went on serving the
+    startup verdict, the chip stayed hidden because a working login is not
+    news, and the first real symptom was voice and automations failing off
+    one store while the terminal worked off another. Same shape as the
+    usage tracker's: a reading nothing re-earns is a reading nothing can
+    correct.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.server = importlib.import_module("server")
+
+    def setUp(self):
+        self._old = dict(self.server.AUTH_CHECK)
+        self._old_interval = self.server.AUTH_RECHECK_S
+        self.addCleanup(self._restore)
+
+    def _restore(self):
+        self.server.AUTH_CHECK.clear()
+        self.server.AUTH_CHECK.update(self._old)
+        self.server.AUTH_RECHECK_S = self._old_interval
+
+    def _verdict(self, state, age_s):
+        self.server.AUTH_CHECK.update(
+            state=state, error="", checked_at=time.time() - age_s,
+            running=False)
+
+    def test_a_fresh_verdict_is_left_alone(self):
+        self._verdict("ok", 60)
+        self.assertFalse(self.server._auth_verdict_is_stale())
+
+    def test_an_old_pass_is_re_earned(self):
+        """The whole point: "ok" from days ago is not evidence of anything."""
+        self._verdict("ok", self.server.AUTH_RECHECK_S + 1)
+        self.assertTrue(self.server._auth_verdict_is_stale())
+
+    def test_an_old_failure_is_re_earned_too(self):
+        """Somebody who fixes their login in the terminal must not have to
+        restart the add-on for the panel to notice."""
+        self._verdict("failed", self.server.AUTH_RECHECK_S + 1)
+        self.assertTrue(self.server._auth_verdict_is_stale())
+
+    def test_unchecked_and_in_flight_are_not_stale(self):
+        """Neither has a verdict to age: one has none, one is earning it."""
+        for state in ("unchecked", "checking"):
+            self.server.AUTH_CHECK.update(
+                state=state, checked_at=0, running=False)
+            with self.subTest(state=state):
+                self.assertFalse(self.server._auth_verdict_is_stale())
+
+    def test_a_silent_check_in_flight_is_not_stale_either(self):
+        """The case the state alone cannot see. An unannounced re-check
+        leaves the verdict reading "ok", so without consulting `running`
+        every subsequent poll would find it stale and try to start another
+        one — the guard returning False each time, but only after asking."""
+        self.server.AUTH_CHECK.update(
+            state="ok", error="", checked_at=0, running=True)
+        self.assertFalse(self.server._auth_verdict_is_stale())
+
+    def test_two_callers_in_one_tick_start_one_check(self):
+        """The guard has to flip the state synchronously.
+
+        `asyncio.create_task` only schedules — nothing inside the coroutine
+        runs until the loop yields — so a guard reading a state its own
+        task has not set yet is no guard at all. That was reachable before
+        this: `h_setup_status` is polled, and /api/status is polled harder.
+        Two real `claude -p` calls for one question is the cheap half of
+        what goes wrong; the expensive half is the second one landing on a
+        credential the first is still deciding about.
+        """
+        async def drive():
+            self.server.AUTH_CHECK.update(state="ok", error="", checked_at=0)
+            started = [self.server.start_auth_check() for _ in range(3)]
+            tasks = [t for t in asyncio.all_tasks()
+                     if t is not asyncio.current_task()]
+            for task in tasks:
+                task.cancel()
+            return started
+
+        started = asyncio.run(drive())
+        self.assertEqual(started, [True, False, False])
+        self.assertEqual(self.server.AUTH_CHECK["state"], "checking")
+
+    def test_a_check_nobody_asked_for_does_not_announce_itself(self):
+        """A six-hourly re-verification is not news.
+
+        "Verifying Claude…" answers what a person just did; a chip appearing
+        unbidden in the top bar — and shifting its layout — while somebody
+        reads a card is the "a permanently green chip does not belong there"
+        rule with the timing changed. The standing verdict stays up until
+        there is a new one, which is also the more honest answer.
+        """
+        async def drive():
+            self.server.AUTH_CHECK.update(
+                state="ok", error="", checked_at=0, running=False)
+            started = self.server.start_auth_check(announce=False)
+            for task in asyncio.all_tasks():
+                if task is not asyncio.current_task():
+                    task.cancel()
+            return started
+
+        self.assertTrue(asyncio.run(drive()))
+        self.assertEqual(self.server.AUTH_CHECK["state"], "ok")
+        self.assertTrue(self.server.AUTH_CHECK["running"])
 
 
 if __name__ == "__main__":

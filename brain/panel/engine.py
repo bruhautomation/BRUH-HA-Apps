@@ -244,7 +244,12 @@ def save_auth(value: str, cred_type: str | None = None) -> dict:
     if not cred_type:
         raise ValueError("Credential not recognized — expected sk-ant-oat… token or sk-ant-… API key")
     os.makedirs(SECRETS_DIR, exist_ok=True)
-    data = {"type": cred_type, "value": value.strip(), "saved_at": time.strftime("%Y-%m-%dT%H:%M:%S")}
+    # Epoch seconds, which is the shape contract both credential files share
+    # (see _read_shared_auth) and what `ha-share-login` writes and greps for
+    # as `"saved_at":[ ]*[0-9]+`. This wrote an ISO string, so the two stores
+    # documented as one shape held two — latent only because each reader
+    # happens to read the file it wrote, which is not a property to rely on.
+    data = {"type": cred_type, "value": value.strip(), "saved_at": int(time.time())}
     fd = os.open(AUTH_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         json.dump(data, f)
