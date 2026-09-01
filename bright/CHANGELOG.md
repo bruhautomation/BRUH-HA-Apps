@@ -5,6 +5,18 @@ All notable changes to the **BRight** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.22.1
+
+### Fixed
+
+- **A code-scanning sweep; nothing user-visible changed.** `load_show`'s
+  handler for a version that is not there was a silent `pass` — a pruned
+  version reads exactly like one that never existed, and both fall through
+  to the live show, which is now written down where the handler is. The
+  musical-map brief's "not available for this track" line was an implicit
+  string concatenation inside a list, which is the shape a missing comma
+  makes; it is an explicit concatenation now.
+
 ## 0.22.0
 
 Manual mode has a transport. It is an instrument you can keep time with.

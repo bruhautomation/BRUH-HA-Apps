@@ -432,9 +432,9 @@ def _musical_lines(analysis: dict) -> list[str]:
         # simply not worth mentioning and write a melody effect anyway,
         # which compiles to nothing.
         return ["", "MUSICAL MAP: not available for this track (it was "
-                "analysed by an older version of BRight). Do NOT use the "
-                "`melody` or `harmony` effects — they would render to "
-                "nothing. Design from the sections, drops and accents."]
+                + "analysed by an older version of BRight). Do NOT use the "
+                + "`melody` or `harmony` effects — they would render to "
+                + "nothing. Design from the sections, drops and accents."]
 
     lines = ["", "MUSICAL MAP — what the song is playing:"]
     if musical.get("key"):

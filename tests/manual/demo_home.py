@@ -257,9 +257,9 @@ PENDING_FACTS = [
 
 HYPOTHESES = [
     ("Biscuit sets off the living-room motion sensor during the day, which is why "
-     "the away-lighting automation never engages.", "presence"),
+     + "the away-lighting automation never engages.", "presence"),
     ("The loft sensors only feed the winter frost automation, so their being "
-     "offline in July is not urgent - right?", "device reliability"),
+     + "offline in July is not urgent - right?", "device reliability"),
 ]
 
 
