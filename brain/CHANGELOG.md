@@ -2,6 +2,40 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.28.7
+
+### Fixed
+
+- **The usage sensors sent the wrong one of Claude Code's two User-Agents,
+  so the 429 wall 1.28.x was meant to end never ended.** The usage endpoint
+  sorts callers into rate-limit buckets by User-Agent, and only Claude
+  Code's own gets a bucket that answers a poll. The previous fix read that
+  right and then read the bundle wrong: it found `getUserAgent()` —
+  `claude-cli/<version> (external, cli)` — which is what the CLI's
+  *Messages-API* client sends, while the helper that actually fetches
+  utilization sends `claude-code/<version>`. A genuine Claude Code UA sent
+  to an endpoint that never sees it is still a stranger, so every poll went
+  on landing in the hostile bucket: 429s within hours, an hours-long
+  backoff, and four sensors ageing out into unavailable over and over with
+  the fix already installed. brAIn now sends `claude-code/<installed
+  version>`, and the tests assert it is neither of the two UAs that have
+  shipped and failed.
+- **A failing tracker looked like a working one showing 0%.** With no
+  account numbers the panel falls back to estimating from brAIn's own
+  insight runs — which on a home that mostly uses the terminal and the chat
+  is 0% that never moves, with the weekly figure simply absent. Nothing on
+  screen said the number had changed meaning, and the only note about it
+  told you to sign in with your Claude subscription, which is useless
+  advice for somebody already signed in. The estimate now reads `~0%` with
+  a warning dot, and the popover names the tracker's own reason — a rate
+  limit on the endpoint (not your account's usage), an API key that has no
+  usage window, an expired credential, a tracker that has not reported yet
+  — along with when brAIn will try again.
+- **A usage reading with no timestamp could never go stale.** The freshness
+  check was skipped whenever `updated_at` was missing rather than treating
+  its absence as "this is not a reading", so such a file would have been
+  served as current indefinitely.
+
 ## 1.28.6
 
 ### Fixed

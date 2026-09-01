@@ -11,6 +11,7 @@ Covers:
 """
 
 import asyncio
+import datetime
 import importlib
 import json
 import os
@@ -2180,6 +2181,100 @@ class TestMemoryContext(unittest.TestCase):
         out = self.ha_data._shrink_to_budget(bundle)
         self.assertNotIn("context", out)
         self.assertEqual(len(out["entities"]), 20)
+
+
+class TestWhyTheNumberIsAnEstimate(unittest.TestCase):
+    """When the tracker fails, the pill must say so rather than freeze.
+
+    The fallback estimate counts brAIn's own insight runs against a rough
+    plan allowance. On a home that mostly uses the terminal and the chat
+    that is 0%, forever, with the weekly window simply gone — which is
+    exactly what "the usage sensor is unresponsive" looks like from the
+    panel. Worse, the only thing the popover had to say about it was "sign
+    in with your Claude subscription", i.e. telling somebody who is signed
+    in to redo the one thing that was working.
+
+    So `budget_state` carries the tracker's own reason whenever it is not
+    reporting the account's numbers, and carries nothing extra when it is.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self._old_usage = usage_store.USAGE_FILE
+        self._old_limits = usage_store.LIMITS_FILE
+        usage_store.USAGE_FILE = os.path.join(self.tmp.name, "usage.json")
+        usage_store.LIMITS_FILE = os.path.join(self.tmp.name, "limits.json")
+
+        def restore():
+            usage_store.USAGE_FILE = self._old_usage
+            usage_store.LIMITS_FILE = self._old_limits
+
+        self.addCleanup(restore)
+
+    def _limits(self, payload):
+        with open(usage_store.LIMITS_FILE, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh)
+
+    def _stamp(self, minutes_ago=0):
+        when = (datetime.datetime.now(datetime.timezone.utc)
+                - datetime.timedelta(minutes=minutes_ago))
+        return when.isoformat()
+
+    def test_a_working_tracker_carries_no_excuse(self):
+        self._limits({
+            "updated_at": self._stamp(),
+            "five_hour": {"utilization": 41, "resets_at": self._stamp()},
+            "seven_day": {"utilization": 12, "resets_at": self._stamp()},
+        })
+        state = usage_store.budget_state({})
+        self.assertEqual(state["source"], "account")
+        self.assertEqual(state["used_percent"], 41.0)
+        self.assertNotIn("limits", state)
+
+    def test_no_file_at_all_says_the_tracker_never_reported(self):
+        state = usage_store.budget_state({})
+        self.assertEqual(state["source"], "estimate")
+        self.assertEqual(state["limits"]["code"], "not_running")
+
+    def test_a_rate_limit_travels_with_the_estimate(self):
+        """The case that produced the complaint: a 429 backoff runs longer
+        than the two-hour staleness window on purpose, so the reading always
+        ages out — and the reason the tracker recorded beside it is the one
+        thing that makes that survivable."""
+        self._limits({
+            "updated_at": self._stamp(minutes_ago=200),
+            "five_hour": {"utilization": 41},
+            "last_error": "http_429",
+            "last_error_detail": "Anthropic rate-limited the usage endpoint",
+            "next_attempt_at": self._stamp(minutes_ago=-90),
+        })
+        state = usage_store.budget_state({})
+        self.assertEqual(state["source"], "estimate")
+        self.assertEqual(state["limits"]["code"], "http_429")
+        self.assertIn("rate-limited", state["limits"]["detail"])
+        self.assertGreater(state["limits"]["next_attempt"], time.time())
+
+    def test_a_settled_auth_fact_is_reported_as_itself(self):
+        self._limits({"updated_at": self._stamp(),
+                      "error": "api_key_has_no_usage_limits"})
+        state = usage_store.budget_state({})
+        self.assertEqual(state["limits"]["code"], "api_key_has_no_usage_limits")
+
+    def test_stale_with_no_recorded_reason_is_stale(self):
+        self._limits({"updated_at": self._stamp(minutes_ago=200),
+                      "five_hour": {"utilization": 41}})
+        self.assertEqual(usage_store.budget_state({})["limits"]["code"], "stale")
+
+    def test_a_reading_with_no_timestamp_is_never_fresh(self):
+        """The staleness test used to be skipped whenever `updated_at` was
+        missing, so a file holding numbers and no stamp read as current
+        forever — a reading that can never go stale is a reading nothing
+        can correct."""
+        self._limits({"five_hour": {"utilization": 41}})
+        state = usage_store.budget_state({})
+        self.assertEqual(state["source"], "estimate")
+        self.assertEqual(state["limits"]["code"], "stale")
 
 
 if __name__ == "__main__":

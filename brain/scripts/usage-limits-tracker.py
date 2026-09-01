@@ -22,18 +22,27 @@ introduce itself as `brain/1.0`, which put every poll in the bucket the
 endpoint reserves for strangers: a wall of 429s after a few hours, with
 quota to spare, persisting long after whatever window supposedly caused it
 (anthropics/claude-code#30930, #31021, #31637 — every reporter was calling
-it without the CLI's UA). Requests that carry the same `claude-cli/<ver>
-(external, cli)` UA the installed CLI itself sends — verified against the
-CLI bundle, whose api helper attaches `getUserAgent()` to every request
-including `fetchUtilization`'s — are the ones the whole statusline-tool
-ecosystem polls with, sustainably, at minute-scale intervals. The earlier
-"it meters per day" reading of this endpoint was that hostile bucket being
-measured from inside; the CLI bucket does not behave that way.
+it without the CLI's UA). The tools that poll this endpoint sustainably at
+minute-scale intervals are the ones sending the UA the CLI sends. The
+earlier "it meters per day" reading of this endpoint was that hostile
+bucket being measured from inside; the right bucket does not behave that
+way.
 
-Identifying as the CLI is not spoofing here: the tracker reports on the
+**Claude Code sends two different User-Agents, and sending the wrong one
+of them is the same bug wearing an official-looking name.** Its
+Messages-API client sends `claude-cli/<version> (external, cli)`; the
+helper that fetches utilization sends `claude-code/<version>`. The usage
+endpoint only ever sees the second. The first attempt at this fix read the
+bundle, found the SDK's `getUserAgent()`, and sent *that* — so every poll
+went on landing in the stranger bucket, the wall never lifted, and the
+sensors went on ageing out into unavailable every couple of hours with the
+fix already shipped. In the bundle the caller is `Hqq()` and the header it
+sets is `jH()`, which is `claude-code/${VERSION}` and nothing else.
+
+Identifying as Claude Code is not spoofing here: the tracker reports on the
 account the *installed* Claude Code is signed into, using that install's
-own credential, on that credential's behalf — it is that install's UA it
-sends, discovered from `claude --version` at runtime.
+own credential, on that credential's behalf — it is that install's version
+it names, discovered from `claude --version` at runtime.
 
 Four rules still hold, each a bug that happened — a credential is offered
 **once** however many paths lead to it; the poll is measured in minutes,
@@ -120,14 +129,17 @@ ANTHROPIC_USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 # and everything else gets the one that answers 429 after a handful of
 # requests and stays that way. `brain/1.0` — this tracker's old UA — is what
 # put every install in the second bucket, which surfaced as sensors that
-# went dark by mid-morning whatever the poll interval was. This is the one
-# place brAIn deliberately does NOT introduce itself by its own name: the
-# request is made with the installed CLI's credential on that install's
-# behalf, so it carries that install's UA, discovered from the binary at
-# runtime. The fallback is a real shipped CLI version for the case where
-# the binary cannot be asked — a stale-but-real version stays in the right
-# bucket, where an invented one might not.
-UA_FALLBACK_CLI_VERSION = "2.1.234"
+# went dark by mid-morning whatever the poll interval was; `claude-cli/…
+# (external, cli)`, its replacement, is the CLI's *Messages-API* UA and
+# lands in exactly the same bucket, which is why nothing changed. The one
+# the usage endpoint wants is `claude-code/<version>` (see user_agent()).
+# This is the one place brAIn deliberately does NOT introduce itself by its
+# own name: the request is made with the installed CLI's credential on that
+# install's behalf, so it carries that install's version, discovered from
+# the binary at runtime. The fallback is a real shipped CLI version for the
+# case where the binary cannot be asked — a stale-but-real version stays in
+# the right bucket, where an invented one might not.
+UA_FALLBACK_CLI_VERSION = "2.1.252"
 # Where the add-on keeps the CLI it updates at boot (run.sh), then PATH.
 CLI_PROBE_COMMANDS = ("/root/.local/bin/claude", "claude")
 # Read at import like every other env constant here (the tests' loader
@@ -163,12 +175,28 @@ def _cli_version():
 def user_agent():
     """The UA every poll sends, computed once per process.
 
+    `claude-code/<version>` — the product name, not the SDK's. Claude Code
+    sends **two different** User-Agents and the difference is the whole bug:
+    its Messages-API client sends `claude-cli/<version> (external, cli)`,
+    and the helper that fetches utilization sends `claude-code/<version>`.
+    This tracker sent the first one to the second one's endpoint, which is
+    the stranger bucket again under a name that merely looks official — so
+    the 429 wall the previous fix was written to end never ended, and the
+    sensors went on ageing out into unavailable every couple of hours.
+
+    The version is the installed CLI's, probed from `claude --version`.
+    Note it is an approximation on purpose: the CLI stamps a build-time
+    constant into its own UA, which lags the released version (2.1.42 in a
+    2.1.252 bundle), and there is no way to read that constant without
+    parsing the bundle. The product prefix is what the bucket is keyed on;
+    a real, current version behind it is the honest way to fill the rest.
+
     Cached because the probe spawns the CLI binary, and once per process is
     all the answer can change: run.sh updates the CLI before starting this
     tracker, never while it runs.
     """
     if "ua" not in _ua_cache:
-        _ua_cache["ua"] = f"claude-cli/{_cli_version()} (external, cli)"
+        _ua_cache["ua"] = f"claude-code/{_cli_version()}"
     return _ua_cache["ua"]
 
 # Possible locations for Claude Code's OAuth credentials.

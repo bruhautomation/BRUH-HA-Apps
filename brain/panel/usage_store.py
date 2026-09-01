@@ -206,21 +206,70 @@ def _parse_iso_epoch(value) -> int | None:
         return None
 
 
-def _fresh_payload() -> dict | None:
-    """The whole tracker file, only when the data is fresh."""
+def _tracker_file() -> dict | None:
+    """The tracker's file as written, fresh or not — or None if unreadable."""
     try:
         with open(LIMITS_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
     except (OSError, ValueError):
         return None
-    if not isinstance(data, dict) or data.get("error"):
+    return data if isinstance(data, dict) else None
+
+
+def _fresh_payload() -> dict | None:
+    """The whole tracker file, only when the data is fresh.
+
+    A file with no ``updated_at`` at all is **not** fresh. It used to be:
+    the staleness test was skipped whenever the stamp was missing or not a
+    string, so a file holding numbers and no timestamp read as current
+    forever. The tracker always writes one on a real reading, so an absent
+    stamp means the file is something other than a reading — and treating
+    that as live is the failure this whole module exists to avoid.
+    """
+    data = _tracker_file()
+    if data is None or data.get("error"):
         return None
-    updated = data.get("updated_at")
-    if isinstance(updated, str):
-        stamp = _parse_iso_epoch(updated)
-        if stamp is None or time.time() - stamp > LIMITS_MAX_AGE_S:
-            return None
+    stamp = _parse_iso_epoch(data.get("updated_at"))
+    if stamp is None or time.time() - stamp > LIMITS_MAX_AGE_S:
+        return None
     return data
+
+
+def limits_problem() -> dict:
+    """Why the account's real numbers are missing, in the tracker's words.
+
+    The panel used to have no way to ask. When the tracker fails, its file
+    goes stale, ``budget_state`` slides to the local estimate, and the pill
+    keeps showing a percentage — one built from brAIn's own insight runs,
+    so on a home that mostly uses the terminal and the chat it sits at 0%
+    and never moves, with the weekly figure simply gone. That reads exactly
+    like a broken sensor, and the only thing the popover had to say about
+    it was "sign in with your Claude subscription" — telling somebody who
+    is signed in to redo the thing that worked, which is the one piece of
+    advice guaranteed to waste their evening.
+
+    So the reason travels with the fallback. ``code`` is the tracker's own
+    status vocabulary (the same strings the diagnostic sensor reports),
+    ``detail`` its gloss where it has one, and ``next_attempt`` when it
+    will ask again — because during a 429 backoff the honest answer is
+    "not broken, waiting, back at 9:40".
+    """
+    data = _tracker_file()
+    if data is None:
+        return {"code": "not_running"}
+    # `error` is a settled fact the tracker wrote in place of a reading;
+    # `last_error` rides beside numbers it deliberately did not overwrite.
+    code = data.get("error") or data.get("last_error")
+    if not isinstance(code, str) or not code:
+        return {"code": "stale"}
+    detail = data.get("detail") or data.get("last_error_detail")
+    out = {"code": code}
+    if isinstance(detail, str) and detail:
+        out["detail"] = detail
+    nxt = _parse_iso_epoch(data.get("next_attempt_at"))
+    if nxt:
+        out["next_attempt"] = nxt
+    return out
 
 
 def _fresh_block(name: str) -> dict | None:
@@ -299,4 +348,9 @@ def budget_state(settings: dict, now: float | None = None) -> dict:
         # free.
         "runs": len(runs),
         "breakdown": _breakdown(runs),
+        # Why the account's own numbers are not the ones above. Present
+        # only when they are missing, so the panel can say what is wrong
+        # instead of showing a frozen estimate as if it were live — and so
+        # it stops telling a signed-in person to sign in.
+        **({} if source == "account" else {"limits": limits_problem()}),
     }

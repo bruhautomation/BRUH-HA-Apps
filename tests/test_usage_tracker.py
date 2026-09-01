@@ -540,18 +540,26 @@ class TestRateLimitBackoff(unittest.TestCase):
 
 
 class TestUserAgent(unittest.TestCase):
-    """The endpoint buckets rate limits by User-Agent, and only the CLI's
-    own UA gets the bucket that answers a poll. `brain/1.0` — the tracker's
-    old UA, straight from the repo's own naming rule — is what put every
-    install in the hostile bucket: a 429 wall after a few hours that read,
-    from the sensors, as a daily meter nobody could name."""
+    """The endpoint buckets rate limits by User-Agent, and only the UA the
+    usage endpoint's own caller sends gets the bucket that answers a poll.
+
+    Two wrong answers have shipped. `brain/1.0` — straight from the repo's
+    naming rule — put every install in the stranger bucket: a 429 wall after
+    a few hours that read, from the sensors, as a daily meter nobody could
+    name. Its replacement, `claude-cli/<ver> (external, cli)`, is a real
+    Claude Code UA and still the wrong one: that is what its *Messages-API*
+    client sends, while the helper that fetches utilization sends
+    `claude-code/<version>`. Same bucket, same wall, with the fix already
+    shipped and the docstring claiming otherwise — which is why the shape
+    is asserted against both mistakes below and not just described.
+    """
 
     def _load(self, env=None):
         return load_tracker({"BRAIN_CLI_VERSION": None, **(env or {})})
 
     def test_a_pinned_version_is_used_verbatim(self):
         mod = self._load({"BRAIN_CLI_VERSION": "9.9.9"})
-        self.assertEqual(mod.user_agent(), "claude-cli/9.9.9 (external, cli)")
+        self.assertEqual(mod.user_agent(), "claude-code/9.9.9")
 
     def test_an_unprobeable_cli_falls_back_to_a_real_version(self):
         """The fallback must be a version Claude Code actually shipped —
@@ -562,17 +570,30 @@ class TestUserAgent(unittest.TestCase):
                                                 "no-such-claude-binary"),)
         self.assertEqual(
             mod.user_agent(),
-            f"claude-cli/{mod.UA_FALLBACK_CLI_VERSION} (external, cli)",
+            f"claude-code/{mod.UA_FALLBACK_CLI_VERSION}",
         )
 
-    def test_the_ua_is_shaped_exactly_like_the_clis(self):
-        """Verified against the CLI bundle's getUserAgent():
-        `claude-cli/<version> (external, <entrypoint>)`. Anything else —
-        including anything brain-named — risks the stranger bucket."""
+    def test_the_ua_is_the_one_the_usage_call_itself_sends(self):
+        """Read off the CLI bundle at the usage call rather than at the
+        first user-agent helper that turns up: the request is built as
+        `{"Content-Type", "User-Agent": jH(), ...auth}` and `jH()` returns
+        `claude-code/${VERSION}` — no suffix, no parenthetical."""
         mod = self._load({"BRAIN_CLI_VERSION": "1.2.3"})
         ua = mod.user_agent()
-        self.assertRegex(ua, r"^claude-cli/\d+\.\d+\.\d+ \(external, cli\)$")
+        self.assertRegex(ua, r"^claude-code/\d+\.\d+\.\d+$")
         self.assertNotIn("brain", ua.lower())
+
+    def test_it_is_not_the_sdks_messages_api_ua(self):
+        """The specific wrong answer that shipped and looked right.
+
+        `claude-cli/<ver> (external, cli)` is what Claude Code's
+        Messages-API client sends. It is a genuine Claude Code UA, which is
+        exactly why sending it to the usage endpoint was not obviously a
+        bug — and it lands in the same stranger bucket `brain/1.0` did."""
+        mod = self._load({"BRAIN_CLI_VERSION": "1.2.3"})
+        ua = mod.user_agent()
+        self.assertNotIn("claude-cli", ua)
+        self.assertNotIn("external", ua)
 
     def test_the_request_actually_carries_it(self):
         """The header on the wire is the fix; a correct constant nothing
@@ -597,8 +618,13 @@ class TestUserAgent(unittest.TestCase):
         self.assertIsNone(error)
         self.assertEqual(data, {"five_hour": {"utilization": 12}})
         request = opened.call_args[0][0]
-        self.assertEqual(request.get_header("User-agent"),
-                         "claude-cli/9.9.9 (external, cli)")
+        self.assertEqual(request.get_header("User-agent"), "claude-code/9.9.9")
+        # The other two headers the CLI's own call sends, so a future edit
+        # cannot quietly drop the beta flag the endpoint gates on.
+        self.assertEqual(request.get_header("Anthropic-beta"),
+                         "oauth-2025-04-20")
+        self.assertTrue(
+            request.get_header("Authorization").startswith("Bearer "))
 
     def test_the_probe_is_asked_once_per_process(self):
         """The probe spawns the CLI binary, and once is all the answer can

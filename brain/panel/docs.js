@@ -898,11 +898,20 @@ blocked** — pressing Generate always works.
 
 The pill in the top bar reads \`Session 19% · Week 64%\`: the 5-hour window the budget
 is set against, and the seven-day window that is usually what actually ends your week.
-Hover it and it tells you when each one resets — that and nothing else. Nothing is budgeted against the weekly number — it is
+**Press it** for when each one resets and what the session went on — there is no hover
+version, because a phone is where that pill is most often the only thing worth reading.
+Nothing is budgeted against the weekly number — it is
 there because a session that looks fine tells you nothing about a week that doesn't.
-Both come from your Anthropic account when you signed in with a subscription; with an
-API key there is no account usage to read, so the session figure falls back to an
-estimate of brAIn's own spending and the weekly one isn't shown.
+
+Both figures come from your Anthropic account when you signed in with a subscription.
+When brAIn can't read them, the pill shows **\`~19%\`** with a warning dot instead: a
+tilde means the number is an *estimate* of brAIn's own spending against a rough plan
+allowance, not your account's real usage, and the weekly window isn't shown at all.
+Press the pill and it names the reason — most often an API key (which bills per token
+and has no usage window), a sign-in that has expired, or Anthropic rate-limiting the
+usage endpoint itself, which is nothing to do with your account's quota and clears on
+its own. The \`sensor.brain_usage_tracker\` diagnostic entity carries the same status
+for automations.
 
 ## What a card costs, and where to see it
 
