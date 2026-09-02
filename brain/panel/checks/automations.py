@@ -26,6 +26,9 @@ FORGOTTEN_OFF_DAYS = 30
 # thresholds are about the *shape* of the recent history, not a census.
 CONDITION_MIN_RUNS = 3
 ALREADY_RUNNING_MIN = 3
+# How long a trigger entity has to have been unavailable before the
+# automation it belongs to counts as broken rather than restarting.
+TRIGGER_DEAD_DAYS = 2
 # Trigger kinds that legitimately go months without firing.
 RARE_TRIGGERS = frozenset({"event", "webhook", "tag", "homeassistant", "mqtt",
                            "persistent_notification", "conversation"})
@@ -413,9 +416,86 @@ def blueprint_missing(snap: dict, now: float) -> list[dict]:
     return out
 
 
+# ---------------------------------------------------------------------------
+# auto.trigger_unavailable — the automation is fine, its trigger is dead
+# ---------------------------------------------------------------------------
+
+# Trigger kinds that watch an entity's state. A `time` or `event` trigger
+# names no entity, and a `device` trigger names one that HA resolves for
+# itself.
+_STATE_TRIGGERS = frozenset({"state", "numeric_state", "device"})
+
+
+def _triggers(config: dict) -> list[dict]:
+    """The trigger blocks, under either of the two keys HA accepts."""
+    raw = config.get("triggers")
+    if raw is None:
+        raw = config.get("trigger")
+    return [t for t in listify(raw) if isinstance(t, dict)]
+
+
+def _trigger_kind(trig: dict) -> str:
+    # 2024.10 renamed `platform:` to `trigger:` and kept both working.
+    return str(trig.get("platform") or trig.get("trigger") or "").lower()
+
+
+def trigger_unavailable(snap: dict, now: float) -> list[dict]:
+    """An automation whose trigger watches an entity that is not reporting.
+
+    This is the failure with no symptom: nothing errors, no trace is
+    written, the automation simply never fires again — and the automation
+    is switched on, so every list says it is fine. It is deliberately
+    separate from `dev.unavailable`, which reports the *device*: that row
+    says a sensor is down, this one says which automation stopped working
+    because of it, and only the second answers "why did the hallway light
+    stop coming on".
+    """
+    house = House(snap)
+    out = []
+    for item in _automations(house):
+        state = (house.states.get(item["entity_id"]) or {}).get("state")
+        if state == "off":
+            continue  # a switched-off automation is auto.forgotten_off's
+        broken: list[str] = []
+        for trig in _triggers(item["config"]):
+            if _trigger_kind(trig) not in _STATE_TRIGGERS:
+                continue
+            for eid in listify(trig.get("entity_id")):
+                if not isinstance(eid, str) or "." not in eid:
+                    continue
+                st = house.states.get(eid)
+                if st is None:
+                    continue  # a missing entity is auto.dead_ref's
+                if st.get("state") != "unavailable":
+                    continue
+                age = age_days(st.get("last_changed"), now)
+                if age is not None and age >= TRIGGER_DEAD_DAYS:
+                    broken.append(eid)
+        if not broken:
+            continue
+        broken = sorted(set(broken))
+        out.append({
+            "text": f"{_label('Automation', item)} is triggered by an "
+                    "entity that is not reporting",
+            "detail": join_names([f"{house.name(e)} ({e})" for e in broken])
+                      + " has been unavailable for days, so this automation "
+                        "cannot fire. It is switched on, so nothing else "
+                        "will tell you.",
+            "fix": "Fix or replace the device behind that entity, or point "
+                   "the trigger at one that works.",
+            "severity": "serious",
+            "fixable": True,
+            "entity_id": item["entity_id"] or broken[0],
+        })
+    return out
+
+
 CHECKS = [
     {"id": "auto.dead_ref", "title": "Automations naming missing entities",
      "needs": ("states", "registry", "automations"), "run": dead_ref},
+    {"id": "auto.trigger_unavailable",
+     "title": "Automations whose trigger is not reporting",
+     "needs": ("states", "registry", "automations"), "run": trigger_unavailable},
     {"id": "auto.dead_service", "title": "Automations calling missing services",
      "needs": ("services", "automations"), "run": dead_service},
     {"id": "auto.trace_error", "title": "Automations whose last run failed",

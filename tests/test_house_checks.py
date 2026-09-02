@@ -34,6 +34,8 @@ import findings_store  # noqa: E402
 automations = checks.automations
 devices = checks.devices
 forecasts = checks.forecasts
+registry = checks.registry
+system = checks.system
 snapshot = checks.snapshot
 _util = checks._util
 
@@ -52,7 +54,8 @@ def house(**over) -> dict:
         "now": NOW,
         "available": {k: True for k in (
             "states", "registry", "services", "automations", "traces",
-            "stats", "battery_stats", "dashboards")},
+            "stats", "battery_stats", "dashboards", "supervisor",
+            "recorder", "zha_devices")},
         "errors": {},
         "blueprints_dir": "",
         "states": {
@@ -95,7 +98,8 @@ def house(**over) -> dict:
             {"id": "dev-temp-1", "name": "Hall climate"},
         ],
         "areas": [{"area_id": "kitchen", "name": "Kitchen"},
-                  {"area_id": "hall", "name": "Hall"}],
+                  {"area_id": "hall", "name": "Hall"},
+                  {"area_id": "lounge", "name": "Lounge"}],
         "services": {"light.turn_on", "light.turn_off", "notify.mobile_app_phone"},
         "automations": [{
             "id": "morning-1", "alias": "Morning lights",
@@ -119,6 +123,20 @@ def house(**over) -> dict:
             "views": [{"cards": [{"type": "entities",
                                   "entities": ["light.kitchen",
                                                {"entity": "sensor.hall_temp"}]}]}]}}],
+        "supervisor": {
+            "backups": [{"slug": "abc", "name": "Nightly", "date": iso(DAY)}],
+            "addons": [{"slug": "brain", "name": "brAIn", "installed": True,
+                        "state": "started", "boot": "auto"},
+                       {"slug": "old", "name": "Something I stopped",
+                        "installed": True, "state": "stopped",
+                        "boot": "manual"}],
+            "host": {"disk_free": 40.0, "disk_total": 64.0, "disk_used": 24.0},
+            "core": {"version": "2026.8.1"},
+        },
+        "recorder": {"db_bytes": 220 * 1024 * 1024, "purge_keep_days": 10,
+                     "db_path": "/config/home-assistant_v2.db"},
+        "zha_devices": [{"name": "Back Door sensor", "ieee": "00:11",
+                         "available": True, "last_seen": iso(1800)}],
     }
     snap.update(over)
     return snap
@@ -417,6 +435,317 @@ class TestForecasts(unittest.TestCase):
         self.assertNotEqual(a["detail"], b["detail"])
 
 
+class TestTriggerUnavailable(unittest.TestCase):
+    """The failure with no symptom: the automation is on, nothing errors,
+    and it can never fire again."""
+
+    def _dead_trigger(self):
+        snap = house()
+        snap["automations"][0]["triggers"] = [
+            {"trigger": "state", "entity_id": "sensor.hall_temp", "to": "on"}]
+        snap["states"]["sensor.hall_temp"]["state"] = "unavailable"
+        snap["states"]["sensor.hall_temp"]["last_changed"] = iso(5 * DAY)
+        return snap
+
+    def test_a_trigger_on_a_dead_entity_is_found(self):
+        found = automations.trigger_unavailable(self._dead_trigger(), NOW)
+        self.assertEqual(len(found), 1)
+        self.assertIn("sensor.hall_temp", found[0]["detail"])
+        self.assertEqual(found[0]["entity_id"], "automation.morning")
+        self.assertEqual(found[0]["severity"], "serious")
+
+    def test_a_reboot_is_not_a_dead_trigger(self):
+        snap = self._dead_trigger()
+        snap["states"]["sensor.hall_temp"]["last_changed"] = iso(600)
+        self.assertEqual(automations.trigger_unavailable(snap, NOW), [])
+
+    def test_a_switched_off_automation_is_the_other_check_s(self):
+        snap = self._dead_trigger()
+        snap["states"]["automation.morning"]["state"] = "off"
+        self.assertEqual(automations.trigger_unavailable(snap, NOW), [])
+
+    def test_a_missing_entity_is_dead_ref_s_not_this_one(self):
+        snap = house()
+        snap["automations"][0]["triggers"] = [
+            {"trigger": "state", "entity_id": "sensor.never_existed"}]
+        self.assertEqual(automations.trigger_unavailable(snap, NOW), [])
+        self.assertEqual(len(automations.dead_ref(snap, NOW)), 1)
+
+    def test_a_time_trigger_names_no_entity_and_is_left_alone(self):
+        snap = house()
+        snap["states"]["sensor.hall_temp"]["state"] = "unavailable"
+        snap["states"]["sensor.hall_temp"]["last_changed"] = iso(9 * DAY)
+        # the fixture's automation triggers on time and only *acts* on a light
+        self.assertEqual(automations.trigger_unavailable(snap, NOW), [])
+
+    def test_the_legacy_trigger_key_and_platform_spelling_both_work(self):
+        snap = house()
+        del snap["automations"][0]["triggers"]
+        snap["automations"][0]["trigger"] = [
+            {"platform": "numeric_state", "entity_id": ["sensor.hall_temp"],
+             "above": 5}]
+        snap["states"]["sensor.hall_temp"]["state"] = "unavailable"
+        snap["states"]["sensor.hall_temp"]["last_changed"] = iso(5 * DAY)
+        self.assertEqual(len(automations.trigger_unavailable(snap, NOW)), 1)
+
+
+class TestNodeChecks(unittest.TestCase):
+    def _zwave(self, status="alive"):
+        snap = house()
+        snap["states"]["sensor.porch_lamp_node_status"] = {
+            "state": status,
+            "attributes": {"friendly_name": "Porch lamp Node status"},
+            "last_changed": iso(20 * DAY)}
+        snap["entities"].append(
+            {"entity_id": "sensor.porch_lamp_node_status", "platform": "zwave_js",
+             "device_id": "dev-zwave-1", "entity_category": "diagnostic"})
+        snap["devices"].append(
+            {"id": "dev-zwave-1", "name": "Porch lamp", "area_id": "hall"})
+        return snap
+
+    def test_a_dead_node_is_found_and_a_live_one_is_not(self):
+        self.assertEqual(devices.zwave_dead(self._zwave("alive"), NOW), [])
+        self.assertEqual(devices.zwave_dead(self._zwave("asleep"), NOW), [])
+        found = devices.zwave_dead(self._zwave("dead"), NOW)
+        self.assertEqual(len(found), 1)
+        self.assertIn("Porch lamp", found[0]["detail"])
+        self.assertIn("Remove failed node", found[0]["fix"])
+
+    def test_a_dead_node_is_reported_once_not_twice(self):
+        """dev.unavailable and dev.zwave_dead both see the same box; only
+        the one with the mesh fix on it may report."""
+        snap = self._zwave("dead")
+        snap["states"]["switch.porch_lamp"] = {
+            "state": "unavailable", "attributes": {"friendly_name": "Porch lamp"},
+            "last_changed": iso(4 * DAY)}
+        snap["entities"].append({"entity_id": "switch.porch_lamp",
+                                 "platform": "zwave_js",
+                                 "device_id": "dev-zwave-1"})
+        self.assertEqual(devices.unavailable(snap, NOW), [])
+        self.assertEqual(len(devices.zwave_dead(snap, NOW)), 1)
+        # ... and with the node alive, dev.unavailable is the one that speaks
+        alive = self._zwave("alive")
+        alive["states"]["switch.porch_lamp"] = snap["states"]["switch.porch_lamp"]
+        alive["entities"].append({"entity_id": "switch.porch_lamp",
+                                  "platform": "zwave_js",
+                                  "device_id": "dev-zwave-1"})
+        self.assertEqual(len(devices.unavailable(alive, NOW)), 1)
+        self.assertEqual(devices.zwave_dead(alive, NOW), [])
+
+    def test_a_status_sensor_from_another_integration_is_not_a_zwave_node(self):
+        snap = self._zwave("dead")
+        self.assertEqual(snap["entities"][-1]["entity_id"],
+                         "sensor.porch_lamp_node_status")
+        snap["entities"][-1]["platform"] = "mqtt"
+        self.assertEqual(devices.zwave_dead(snap, NOW), [])
+
+    def test_a_zigbee_device_gone_quiet_is_found_by_last_seen(self):
+        snap = house()
+        snap["zha_devices"] = [
+            {"name": "Back Door sensor", "last_seen": iso(1800)},
+            {"user_given_name": "Shed button", "name": "0x00158d00",
+             "last_seen": iso(30 * DAY), "available": True},
+        ]
+        found = devices.zha_unseen(snap, NOW)
+        self.assertEqual(len(found), 1)
+        self.assertIn("Shed button", found[0]["detail"])
+        self.assertNotIn("Back Door sensor", found[0]["detail"])
+
+    def test_an_available_flag_is_not_the_question(self):
+        """A sleepy sensor is `available` between check-ins, so a device
+        that is available and has not been heard from in a month is still
+        gone."""
+        snap = house(zha_devices=[{"name": "Shed button", "available": True,
+                                   "last_seen": iso(30 * DAY)}])
+        self.assertEqual(len(devices.zha_unseen(snap, NOW)), 1)
+
+    def test_no_last_seen_is_not_a_silence(self):
+        snap = house(zha_devices=[{"name": "Odd one", "available": True}])
+        self.assertEqual(devices.zha_unseen(snap, NOW), [])
+
+
+class TestRegistryChecks(unittest.TestCase):
+    def test_hardware_names_are_found_in_all_three_shapes(self):
+        for name in ("0x00158d0001abcdef Temperature",
+                     "sensor 00:11:22:33:44:55",
+                     "Light 8d5f3a71-1c2b-4d3e-9f01-abcdef012345"):
+            self.assertTrue(registry.hardware_token(name), name)
+
+    def test_an_ordinary_name_is_not_hardware(self):
+        for name in ("Kitchen Ceiling", "Bedroom 123456789012", "Sensor 2",
+                     "Back Door Battery", "deadbeefface", "Zone 1 Valve"):
+            self.assertEqual(registry.hardware_token(name), "", name)
+
+    def test_the_check_reports_them_and_skips_diagnostics(self):
+        snap = house()
+        snap["states"]["sensor.0x00158d0001abcdef_temp"] = {
+            "state": "20", "attributes": {}, "last_changed": iso(60)}
+        snap["entities"].append({"entity_id": "sensor.0x00158d0001abcdef_temp",
+                                 "platform": "zha", "device_id": "dev-temp-1"})
+        found = registry.hardware_name(snap, NOW)
+        self.assertEqual(len(found), 1)
+        self.assertIn("0x00158d0001abcdef", found[0]["detail"])
+        snap["entities"][-1]["entity_category"] = "diagnostic"
+        self.assertEqual(registry.hardware_name(snap, NOW), [])
+
+    def test_no_area_needs_the_house_to_be_using_areas(self):
+        snap = house()
+        # dev-temp-1 has no area; its entity's own area_id is what saves it
+        del snap["entities"][3]["area_id"]
+        found = registry.no_area(snap, NOW)
+        self.assertEqual(len(found), 1)
+        self.assertIn("Hall climate", found[0]["detail"])
+        # ... but on a house with no areas set up, this is not a finding
+        snap["areas"] = [{"area_id": "kitchen", "name": "Kitchen"}]
+        self.assertEqual(registry.no_area(snap, NOW), [])
+
+    def _helper(self, age_days_old=90, **extra):
+        snap = house()
+        snap["states"]["input_boolean.guest_mode"] = {
+            "state": "off", "attributes": {"friendly_name": "Guest mode"},
+            "last_changed": iso(age_days_old * DAY)}
+        snap["entities"].append({"entity_id": "input_boolean.guest_mode",
+                                 "platform": "input_boolean",
+                                 "created_at": NOW - age_days_old * DAY,
+                                 **extra})
+        return snap
+
+    def test_an_unused_helper_is_found(self):
+        found = registry.unused_helper(self._helper(), NOW)
+        self.assertEqual(len(found), 1)
+        self.assertIn("input_boolean.guest_mode", found[0]["detail"])
+
+    def test_a_helper_used_anywhere_is_not_reported(self):
+        for wire in ("automation", "dashboard", "attribute"):
+            snap = self._helper()
+            if wire == "automation":
+                snap["automations"][0]["conditions"] = [
+                    {"condition": "state", "entity_id": "input_boolean.guest_mode",
+                     "state": "on"}]
+            elif wire == "dashboard":
+                snap["dashboards"][0]["config"]["views"][0]["cards"][0][
+                    "entities"].append("input_boolean.guest_mode")
+            else:
+                snap["states"]["light.kitchen"]["attributes"]["entity_id"] = [
+                    "input_boolean.guest_mode"]
+            self.assertEqual(registry.unused_helper(snap, NOW), [], wire)
+
+    def test_a_helper_made_this_week_is_still_being_wired_up(self):
+        self.assertEqual(registry.unused_helper(self._helper(3), NOW), [])
+
+    def test_an_orphan_device_is_found_and_a_hub_is_not(self):
+        snap = house()
+        snap["devices"].append({"id": "dev-ghost", "name": "Old thermostat"})
+        found = registry.orphan_device(snap, NOW)
+        self.assertEqual(len(found), 1)
+        self.assertIn("Old thermostat", found[0]["detail"])
+        # a hub with no entities of its own is doing a job
+        snap["devices"][1]["via_device_id"] = "dev-ghost"
+        self.assertEqual(registry.orphan_device(snap, NOW), [])
+
+    def test_a_disabled_device_is_not_an_orphan(self):
+        snap = house()
+        snap["devices"].append({"id": "dev-ghost", "name": "Old thermostat",
+                                "disabled_by": "user"})
+        self.assertEqual(registry.orphan_device(snap, NOW), [])
+
+
+class TestSystemChecks(unittest.TestCase):
+    def test_a_stale_backup_is_found_and_a_fresh_one_is_not(self):
+        snap = house()
+        self.assertEqual(system.backup_stale(snap, NOW), [])
+        snap["supervisor"]["backups"] = [
+            {"slug": "abc", "name": "Nightly", "date": iso(20 * DAY)}]
+        found = system.backup_stale(snap, NOW)
+        self.assertEqual(len(found), 1)
+        self.assertIn("Nightly", found[0]["detail"])
+        self.assertEqual(found[0]["severity"], "warning")
+
+    def test_the_newest_backup_is_the_one_that_counts(self):
+        snap = house()
+        snap["supervisor"]["backups"] = [
+            {"slug": "old", "name": "Ancient", "date": iso(200 * DAY)},
+            {"slug": "new", "name": "Yesterday", "date": iso(DAY)}]
+        self.assertEqual(system.backup_stale(snap, NOW), [])
+
+    def test_no_backups_at_all_is_its_own_sentence(self):
+        snap = house()
+        snap["supervisor"]["backups"] = []
+        found = system.backup_stale(snap, NOW)
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]["severity"], "serious")
+        self.assertIn("never", found[0]["text"])
+
+    def test_boot_is_what_separates_stopped_from_switched_off(self):
+        snap = house()
+        # the fixture's stopped add-on is boot: manual — somebody's choice
+        self.assertEqual(system.addon_down(snap, NOW), [])
+        snap["supervisor"]["addons"][1]["boot"] = "auto"
+        found = system.addon_down(snap, NOW)
+        self.assertEqual(len(found), 1)
+        self.assertIn("Something I stopped", found[0]["detail"])
+
+    def test_an_addon_whose_info_did_not_answer_is_not_reported(self):
+        """No `boot` means 'I could not look', which is not 'it is down'."""
+        snap = house()
+        del snap["supervisor"]["addons"][1]["boot"]
+        self.assertEqual(system.addon_down(snap, NOW), [])
+
+    def test_an_error_state_is_its_own_row_whatever_boot_says(self):
+        snap = house()
+        snap["supervisor"]["addons"][1]["state"] = "error"
+        found = system.addon_down(snap, NOW)
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]["severity"], "serious")
+        self.assertIn("error", found[0]["text"])
+
+    def test_disk_space_takes_the_worse_of_the_two_floors(self):
+        snap = house()
+        self.assertEqual(system.disk_space(snap, NOW), [])
+        # a big disk, 5% left: the percentage catches it
+        snap["supervisor"]["host"] = {"disk_free": 90.0, "disk_total": 2000.0}
+        self.assertEqual(len(system.disk_space(snap, NOW)), 1)
+        # a small disk, 20% left but under 2GB: the absolute catches it
+        snap["supervisor"]["host"] = {"disk_free": 1.5, "disk_total": 8.0}
+        self.assertEqual(len(system.disk_space(snap, NOW)), 1)
+
+    def test_a_host_that_did_not_answer_reports_nothing(self):
+        snap = house()
+        snap["supervisor"]["host"] = {}
+        self.assertEqual(system.disk_space(snap, NOW), [])
+
+    def test_a_large_recorder_database_is_reported_with_its_purge_setting(self):
+        snap = house()
+        self.assertEqual(system.recorder_size(snap, NOW), [])
+        snap["recorder"]["db_bytes"] = 4 * 1024 ** 3
+        found = system.recorder_size(snap, NOW)
+        self.assertEqual(len(found), 1)
+        self.assertIn("4.0 GB", found[0]["detail"])
+        self.assertIn("purge_keep_days is 10", found[0]["detail"])
+        self.assertEqual(found[0]["severity"], "info")
+
+    def test_an_unset_purge_names_home_assistant_s_default(self):
+        snap = house()
+        snap["recorder"] = {"db_bytes": 4 * 1024 ** 3, "purge_keep_days": None,
+                            "db_path": "/config/home-assistant_v2.db"}
+        found = system.recorder_size(snap, NOW)
+        self.assertIn("default of 10 days", found[0]["detail"])
+
+    def test_a_database_bigger_than_the_free_disk_is_the_sharper_case(self):
+        snap = house()
+        snap["recorder"]["db_bytes"] = 2 * 1024 ** 3
+        snap["supervisor"]["host"] = {"disk_free": 1.0, "disk_total": 64.0}
+        found = system.recorder_size(snap, NOW)
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]["severity"], "warning")
+        self.assertIn("cannot be written", found[0]["detail"])
+
+    def test_the_recorder_check_survives_a_supervisor_outage(self):
+        """It needs the recorder key and nothing else; the disk is a bonus."""
+        snap = house(supervisor={})
+        snap["recorder"]["db_bytes"] = 4 * 1024 ** 3
+        self.assertEqual(len(system.recorder_size(snap, NOW)), 1)
+
 class TestRunAllBookkeeping(unittest.TestCase):
     def test_a_check_whose_data_is_missing_is_skipped_not_run(self):
         snap = house()
@@ -585,6 +914,90 @@ class TestSnapshotLoaders(unittest.TestCase):
             rows = snapshot.load_traces(str(nested))["automation.b"]
             self.assertEqual({r["run_id"] for r in rows}, {"r1", "r2"})
             self.assertIsNone(snapshot.load_traces(str(Path(tmp, "nope.json"))))
+
+    def test_the_recorder_database_is_stat_ed_and_its_purge_read(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp, "home-assistant_v2.db")
+            db.write_bytes(b"x" * 4096)
+            Path(tmp, "configuration.yaml").write_text(
+                "recorder:\n  purge_keep_days: 3\n  db_url: !secret db\n")
+            old = snapshot.RECORDER_DB
+            snapshot.RECORDER_DB = str(db)
+            try:
+                rec = snapshot.load_recorder(tmp)
+                self.assertEqual(rec["db_bytes"], 4096)
+                self.assertEqual(rec["purge_keep_days"], 3)
+                # An included or absent recorder block reads as unset, not as
+                # a number this loader made up.
+                Path(tmp, "configuration.yaml").write_text("recorder: !include r.yaml\n")
+                self.assertIsNone(snapshot.load_recorder(tmp)["purge_keep_days"])
+                # A database that is not a file here is a question this
+                # cannot answer, and the whole key goes unavailable.
+                snapshot.RECORDER_DB = str(Path(tmp, "not-there.db"))
+                self.assertIsNone(snapshot.load_recorder(tmp))
+            finally:
+                snapshot.RECORDER_DB = old
+
+    def test_each_addon_row_carries_the_boot_from_its_own_info(self):
+        """The /addons list does not say whether an add-on was meant to run,
+        and a row with no `boot` must read as 'I could not look'."""
+        import asyncio
+
+        async def fake_get(session, path, timeout=20):
+            if path.endswith("/brain/info"):
+                return {"boot": "auto", "state": "started", "watchdog": True}
+            raise RuntimeError("no such add-on")
+
+        old = snapshot._supervisor_get
+        snapshot._supervisor_get = fake_get
+        try:
+            rows = asyncio.run(snapshot._addon_details(None, [
+                {"slug": "brain", "name": "brAIn", "state": "started"},
+                {"slug": "gone", "name": "Gone", "state": "stopped"},
+                "not a dict",
+            ]))
+        finally:
+            snapshot._supervisor_get = old
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["boot"], "auto")
+        self.assertNotIn("boot", rows[1])
+
+    def test_a_supervisor_that_answers_nonsense_is_not_an_empty_house(self):
+        """'No backups' and 'I could not read the answer' are different
+        claims, and only the first may file a finding."""
+        import asyncio
+
+        async def fake_get(session, path, timeout=20):
+            if path == "/backups":
+                return "not the envelope this knows"
+            if path == "/addons":
+                return {"addons": [{"slug": "brain", "name": "brAIn",
+                                    "state": "started"}]}
+            return {"disk_free": 10.0, "disk_total": 64.0}
+
+        old_get, old_details = snapshot._supervisor_get, snapshot._addon_details
+
+        async def no_details(session, addons):
+            return addons
+
+        snapshot._supervisor_get = fake_get
+        snapshot._addon_details = no_details
+        try:
+            sup = asyncio.run(snapshot._supervisor(None))
+        finally:
+            snapshot._supervisor_get = old_get
+            snapshot._addon_details = old_details
+        self.assertIsNone(sup["backups"])
+        self.assertIn("/backups", sup["error"])
+        # ... and with the key unavailable, the system checks do not run,
+        # so they cannot clear a row they never looked at.
+        snap = house(supervisor=sup)
+        snap["available"]["supervisor"] = (
+            sup.get("backups") is not None and sup.get("addons") is not None)
+        result = checks.run_all(snap, NOW)
+        self.assertIn("sys.backup_stale", result["skipped"])
+        self.assertNotIn("sys.backup_stale", result["ran"])
+        self.assertEqual(result["findings"], [])
 
     def test_statistics_candidates_split_batteries_from_the_rest(self):
         numeric, batteries = snapshot._stat_candidates(house()["states"])

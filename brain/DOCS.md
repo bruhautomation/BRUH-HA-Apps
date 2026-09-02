@@ -134,8 +134,9 @@ Not every problem needs a model to find. brAIn runs a set of **house
 checks** on a schedule (every `checks_interval_hours`, six by default) and on
 **Run checks now** on the Findings tab: they read Home Assistant directly —
 the registries, the states, your `automations.yaml`, the traces Home
-Assistant keeps, a week of statistics, the dashboards — and file what they
-find as ordinary findings under a "check" label, with no Claude run at all.
+Assistant keeps, a week of statistics, the dashboards, and the Supervisor's
+own view of backups, add-ons and the disk — and file what they find as
+ordinary findings under a "check" label, with no Claude run at all.
 
 - **Automations** naming an entity that no longer exists, or calling a service
   that is not registered (the old phone's `notify.mobile_app_*`, with the
@@ -148,6 +149,23 @@ find as ordinary findings under a "check" label, with no Claude run at all.
   own battery, which a threshold never notices; impossible readings; sensors
   frozen on one value for a week; entities left behind by a removed
   integration.
+- **An automation whose trigger has died** — the failure with no symptom at
+  all: the automation is switched on, nothing errors, no trace is written,
+  and it can never fire again, because the entity in its trigger has been
+  unavailable for days.
+- **Radios**: Z-Wave nodes the controller has marked dead (a mesh problem
+  with a mesh fix, so it is reported instead of the plain "unavailable" row,
+  not beside it), and Zigbee devices that have stopped checking in — ZHA's
+  own `last_seen`, because a sleepy sensor is "available" between check-ins
+  and availability alone says nothing about it.
+- **The registry**: entities still named after their hardware (a name like
+  `0x00158d0001abcdef Temperature` is unfindable in a picker and unsayable
+  to Assist); devices in no area, which "turn off the kitchen" and every
+  area card cannot see; helpers nothing refers to; device rows with no
+  entities behind them.
+- **The machine underneath**: nothing backed up, or nothing in a week; an
+  add-on in an error state, or set to start on boot and stopped; a disk
+  nearly full; a recorder database that has outgrown its headroom.
 - **Dashboards** showing entities that no longer exist.
 - **Forecasts**: a battery running down, from the slope of its last sixty
   days, three weeks before it is flat.
@@ -390,6 +408,16 @@ One ingress panel, five tabs.
 `enable_terminal` and `enable_insights` switch either face off; the panel itself
 always runs, because it is the ingress target.
 
+**⚙ > Diagnostics** is the read-only half of the settings dialog: versions, whether
+the Claude sign-in is holding, the last 24 hours of Claude runs counted by how they
+ended with the failures behind those counts, and the last house-checks pass —
+including **which checks could not run, and why**. That last line is the one worth
+reading: a skipped check did not find nothing, it could not look, and it is also the
+check that is not allowed to clear a row. **Copy for a bug report** puts the payload
+on the clipboard (it falls back to putting the text on screen, selected, when an
+ingress iframe is refused the clipboard). It is the same payload behind **Download
+diagnostics** on the brAIn integration page, and the one `brain report` bundles.
+
 ## The CLI
 
 Two dispatchers, split by what they act on. brAIn's own faculties are under `brain`;
@@ -500,7 +528,7 @@ the Terminal tab itself), because it changes nothing about how the add-on runs.
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| `checks_interval_hours` | 0–168 | `6` | How often the deterministic house checks run. They read Home Assistant directly and never call Claude, so they cost nothing. `0` means never on a timer; `brain check` and the tab's button still run them. |
+| `checks_interval_hours` | 0–168 | `6` | How often the deterministic house checks run. They read Home Assistant and the Supervisor directly and never call Claude, so they cost nothing. `0` means never on a timer; `brain check` and the tab's button still run them. |
 | `protected_entities` | list | `[]` | Entity ids (`lock.front_door`) or whole domains (`alarm_control_panel.*`) that brAIn may never act on, from any face. Enforced where every action passes through, so it covers the terminal, the chat, Fix it, voice and automations; a call aimed at an area or device containing one is refused too. They can still be looked at. |
 
 ### Undo and access

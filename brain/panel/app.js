@@ -1835,6 +1835,7 @@ function renderSettingsForm(data) {
 
 async function openSettings() {
   openBox("#setModal");
+  loadDiagnostics();
   try {
     renderSettingsForm(await api("api/settings"));
   } catch (e) {
@@ -1896,6 +1897,116 @@ $("#pausedChip").addEventListener("click", async () => {
   await saveSettings({ auto_enabled: true },
     "Automatic insights on — recurring cards will refresh again");
 });
+// --------------------------------------------------------------- diagnostics
+// The ⚙ dialog's read-only half. It renders /api/diagnostics — the same
+// payload the integration's Download-diagnostics button serves and `brain
+// report` bundles — because a run journal nothing reads back is a run
+// journal that only exists in a bug report somebody else has to ask for.
+//
+// It is fetched when the dialog opens and on ⟳, never on a timer: this is
+// something you look at, and a poll behind a dialog nobody has open is a
+// request per viewer per interval for an answer that changes hourly.
+let diagPayload = null;
+
+function diagRow(key, value, bad) {
+  return `<div class="drow"><div class="dk">${esc(key)}</div>`
+       + `<div class="dv${bad ? " dbad" : ""}">${value}</div></div>`;
+}
+
+function diagCounts(byOutcome) {
+  const entries = Object.entries(byOutcome || {})
+    .sort((a, b) => b[1] - a[1]);
+  if (!entries.length) return "nothing yet";
+  return entries.map(([word, n]) => `${n} ${esc(word)}`).join(" · ");
+}
+
+function renderDiagnostics(d) {
+  diagPayload = d;
+  const j = d.journal || {};
+  const c = d.checks || {};
+  const ok = (j.by_outcome || {}).ok || 0;
+  const failures = j.failures || [];
+  const rows = [];
+  rows.push(diagRow("Add-on version",
+    esc((d.versions || {}).addon || "unknown")));
+  rows.push(diagRow("Claude Code",
+    esc((d.versions || {}).claude_cli || "not found"),
+    !(d.versions || {}).claude_cli));
+  rows.push(diagRow("Claude sign-in",
+    esc((d.auth || {}).state || "unknown"),
+    (d.auth || {}).state !== "ok"));
+  rows.push(diagRow("Claude runs, last 24h",
+    `${j.runs || 0} — ${diagCounts(j.by_outcome)}`,
+    (j.runs || 0) > 0 && ok < (j.runs || 0)));
+  if (c && c.finished_at) {
+    const errs = Object.keys(c.errors || {}).length;
+    const skipped = Object.keys(c.skipped || {});
+    rows.push(diagRow("House checks, last pass",
+      `${timeAgo(new Date(c.finished_at * 1000).toISOString())} — `
+      + `${(c.ran || []).length} ran, ${skipped.length} skipped, `
+      + `${errs} errored`, errs > 0 || !!c.error));
+    rows.push(diagRow("Filed by that pass",
+      `${(c.created || []).length} new, ${c.refreshed || 0} updated, `
+      + `${(c.cleared || []).length} cleared`));
+    // A skipped check is not a quiet check: it could not look, and it is
+    // also the one that may not clear a row. Saying which, and why, is the
+    // difference between "all clear" and "I did not ask".
+    if (skipped.length) {
+      const why = skipped.slice(0, 5).map((id) =>
+        `<li><b>${esc(id)}</b> — ${esc(c.skipped[id])}</li>`);
+      rows.push(diagRow("Could not run", `<ul>${why.join("")}</ul>`));
+    }
+  } else {
+    rows.push(diagRow("House checks", "no pass has finished yet"));
+  }
+  rows.push(diagRow("Findings open", String((d.findings || {}).open ?? 0)));
+  if (failures.length) {
+    const items = failures.slice(0, 5).map((f) =>
+      `<li><b>${esc(f.source || "?")}</b> · ${esc(f.outcome || "?")}`
+      + (f.error ? ` — ${esc(String(f.error).slice(0, 160))}` : "") + "</li>");
+    rows.push(diagRow("Recent failures", `<ul>${items.join("")}</ul>`, true));
+  }
+  $("#diagBody").innerHTML = rows.join("");
+}
+
+async function loadDiagnostics() {
+  $("#diagBody").textContent = "Loading…";
+  try {
+    renderDiagnostics(await api("api/diagnostics"));
+  } catch (e) {
+    diagPayload = null;
+    $("#diagBody").textContent = "Could not read diagnostics: " + e.message;
+  }
+}
+
+// An ingress iframe may be refused the clipboard outright, and there is no
+// way to ask in advance — so the failure has to leave the text somewhere a
+// person can still get at it rather than just saying it did not work.
+$("#diagCopy").addEventListener("click", async () => {
+  if (!diagPayload) { toast("Nothing to copy yet"); return; }
+  const text = JSON.stringify(diagPayload, null, 2);
+  try {
+    await navigator.clipboard.writeText(text);
+    toast("Diagnostics copied — paste it into the issue");
+  } catch (e) {
+    const box = document.createElement("textarea");
+    box.value = text;
+    box.style.cssText = "position:fixed;left:0;top:0;width:100%;height:60vh;z-index:99";
+    document.body.appendChild(box);
+    box.select();
+    let copied = false;
+    try { copied = document.execCommand("copy"); } catch (e2) { copied = false; }
+    if (copied) { box.remove(); toast("Diagnostics copied"); return; }
+    toast("This browser will not let the panel copy — the text is selected, "
+          + "press Ctrl/Cmd+C, then Esc");
+    box.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape") box.remove();
+    });
+    box.addEventListener("blur", () => box.remove());
+  }
+});
+$("#diagRefresh").addEventListener("click", loadDiagnostics);
+
 $("#setEnabled").addEventListener("change", () =>
   saveSettings({ auto_enabled: $("#setEnabled").checked }));
 $("#setPlan").addEventListener("change", () =>

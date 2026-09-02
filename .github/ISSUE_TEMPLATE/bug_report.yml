@@ -51,6 +51,19 @@ body:
       required: true
 
   - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics (brAIn only)
+      description: >
+        Run `brain report` in the Terminal tab. It writes a redacted bundle to
+        `/share/brain/reports/` — versions, the run journal, the last house-checks
+        pass, `brain doctor --json` and the tail of the add-on log, with every
+        credential scrubbed out of all of it. Attach that file, or paste the
+        JSON from Settings (⚙) > Diagnostics > "Copy for a bug report".
+        It carries no prompts, no replies and no entity states.
+      render: json
+
+  - type: textarea
     id: logs
     attributes:
       label: Add-on logs

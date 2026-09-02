@@ -22,6 +22,14 @@ and so cannot clear anything):
     battery_stats  {entity_id: [{start, mean}]} — 60 daily rows for every
                     battery sensor
     dashboards     [{url_path, title, config}]
+    supervisor     {backups, addons, host, core} — the Supervisor's own
+                    view: what has been backed up, which add-ons are
+                    running, how full the disk is. Each add-on row carries
+                    the `boot` and `state` from its own /info, because the
+                    list endpoint does not say whether it was meant to run
+    zha_devices    [{name, ieee, available, last_seen}] — absent unless ZHA
+                    is installed, which is what makes the key unavailable
+    recorder       {db_bytes, db_path, purge_keep_days}
     blueprints_dir /config/blueprints
     available      {key: bool} — which of the above were actually fetched
     errors         {key: "why not"}
@@ -46,11 +54,18 @@ log = logging.getLogger("brain.checks")
 CONFIG_DIR = os.environ.get("BRAIN_HA_CONFIG_DIR", "/config")
 TRACES_FILE = os.environ.get("BRAIN_TRACES_FILE",
                              os.path.join(CONFIG_DIR, ".storage", "trace.saved_traces"))
+SUPERVISOR_API = os.environ.get("BRAIN_SUPERVISOR_API", "http://supervisor")
+RECORDER_DB = os.environ.get(
+    "BRAIN_RECORDER_DB", os.path.join(CONFIG_DIR, "home-assistant_v2.db"))
 STATS_DAYS = 7
 BATTERY_DAYS = 60
 # Statistics are one WebSocket call per batch; keep a batch to what the
 # recorder answers comfortably on a Pi.
 STATS_BATCH = 150
+# One /info request per installed add-on. They are local and cheap, and
+# the cap is only there so a pathological install cannot make a checks
+# pass unbounded.
+MAX_ADDON_INFO = 40
 
 
 # ---------------------------------------------------------------------------
@@ -122,6 +137,32 @@ def load_traces(path: str = TRACES_FILE) -> dict | None:
             continue
         out[key] = _trace_rows(rows)
     return out
+
+
+def load_recorder(config_dir: str = CONFIG_DIR) -> dict | None:
+    """How big the recorder database is, and how long it is told to keep.
+
+    ``purge_keep_days`` is None when ``configuration.yaml`` does not set
+    it *here* — an ``!include``d recorder block reads as None, which is
+    the honest answer: the check falls back to Home Assistant's own
+    default rather than claiming the file said something it did not.
+    A database that cannot be stat-ed (a custom ``db_url``, Postgres,
+    MariaDB) is not a smaller database — it is a question this check
+    cannot answer, so the whole key goes unavailable.
+    """
+    db_path = RECORDER_DB
+    try:
+        db_bytes = os.stat(db_path).st_size
+    except OSError:
+        return None
+    keep = None
+    cfg = load_yaml_file(os.path.join(config_dir, "configuration.yaml"))
+    if isinstance(cfg, dict) and isinstance(cfg.get("recorder"), dict):
+        value = cfg["recorder"].get("purge_keep_days")
+        if isinstance(value, int):
+            keep = value
+    return {"db_bytes": db_bytes, "db_path": db_path,
+            "purge_keep_days": keep}
 
 
 def _trace_rows(rows: Any) -> list:
@@ -226,7 +267,124 @@ async def collect(now: float | None = None) -> dict:
             snap["dashboards"] = []
             _mark("dashboards", False, str(exc))
 
+        try:
+            zha = (await ha_data._ws_commands(session, [{"type": "zha/devices"}]))[0]
+            snap["zha_devices"] = zha if isinstance(zha, list) else []
+            # ZHA not installed answers with an error, which _ws_commands
+            # hands back as None — no ZHA is not an unhealthy ZHA.
+            _mark("zha_devices", isinstance(zha, list),
+                  "" if isinstance(zha, list) else "ZHA is not installed")
+        except Exception as exc:  # noqa: BLE001
+            snap["zha_devices"] = []
+            _mark("zha_devices", False, str(exc))
+
+        sup = await _supervisor(session)
+        snap["supervisor"] = sup
+        # The Supervisor is four independent questions and one key. It is
+        # available when it answered the two that carry every check —
+        # backups and add-ons; `host` alone failing costs sys.disk_space
+        # its floor, which it tests for itself.
+        _mark("supervisor", sup.get("backups") is not None
+              and sup.get("addons") is not None,
+              sup.get("error") or "")
+
+    recorder = load_recorder()
+    snap["recorder"] = recorder or {}
+    _mark("recorder", recorder is not None,
+          "" if recorder is not None else
+          "the recorder database is not a file under /config "
+          "(a remote database answers this question itself)")
+
     return snap
+
+
+# ---------------------------------------------------------------------------
+# The Supervisor's own view
+# ---------------------------------------------------------------------------
+
+async def _supervisor_get(session, path: str, timeout: int = 20) -> Any:
+    """One Supervisor endpoint, unwrapped from its {result, data} envelope."""
+    import aiohttp
+
+    import ha_data
+
+    async with session.get(
+        f"{SUPERVISOR_API}{path}",
+        headers={"Authorization": f"Bearer {ha_data.SUPERVISOR_TOKEN}"},
+        timeout=aiohttp.ClientTimeout(total=timeout),
+    ) as resp:
+        resp.raise_for_status()
+        body = await resp.json()
+    return body.get("data") if isinstance(body, dict) else None
+
+
+async def _supervisor(session) -> dict:
+    """Backups, add-ons, the host and Core — each one best effort.
+
+    Four endpoints, gathered rather than awaited in turn: they are
+    independent, and a Supervisor that is busy restoring a backup should
+    cost the pass one wait, not four.
+    """
+    paths = (("backups", "/backups"), ("addons", "/addons"),
+             ("host", "/host/info"), ("core", "/core/info"))
+    results = await asyncio.gather(
+        *(_supervisor_get(session, path) for _, path in paths),
+        return_exceptions=True)
+    out: dict[str, Any] = {}
+    errors: list[str] = []
+    for (key, path), result in zip(paths, results):
+        if isinstance(result, BaseException):
+            out[key] = None
+            errors.append(f"{path}: {str(result)[:80]}")
+            continue
+        if not isinstance(result, dict):
+            # It answered, but not with the envelope this knows. That is
+            # not "you have no backups" — it is another way of not having
+            # been able to look, so the key stays None and the checks that
+            # need it do not run.
+            out[key] = None
+            errors.append(f"{path}: unexpected response")
+            continue
+        if key == "backups":
+            out[key] = result.get("backups") or []
+        elif key == "addons":
+            out[key] = result.get("addons") or []
+        else:
+            out[key] = result
+    if out.get("addons"):
+        out["addons"] = await _addon_details(session, out["addons"])
+    if errors:
+        out["error"] = "; ".join(errors)
+    return out
+
+
+async def _addon_details(session, addons: list) -> list:
+    """Fold each add-on's own /info into its row.
+
+    `boot` is the field that separates "somebody stopped this on purpose"
+    from "this was meant to be running", and the list endpoint does not
+    carry it. An add-on whose /info did not answer keeps its list row and
+    no `boot`, which reads as "I could not look" rather than as a fault.
+    """
+    slugs = [str(a.get("slug")) for a in addons
+             if isinstance(a, dict) and a.get("slug")][:MAX_ADDON_INFO]
+    results = await asyncio.gather(
+        *(_supervisor_get(session, f"/addons/{slug}/info", timeout=10)
+          for slug in slugs),
+        return_exceptions=True)
+    info = {slug: r for slug, r in zip(slugs, results)
+            if isinstance(r, dict)}
+    out = []
+    for row in addons:
+        if not isinstance(row, dict):
+            continue
+        extra = info.get(str(row.get("slug") or ""))
+        if extra:
+            row = {**row, **{k: extra[k] for k in
+                             ("boot", "state", "watchdog", "startup")
+                             if k in extra}}
+        out.append(row)
+    return out
 
 
 def _stat_candidates(states: dict) -> tuple[list[str], list[str]]:

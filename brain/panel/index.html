@@ -740,6 +740,22 @@
       </div>
       <p class="hint">Only <code>log_level</code> stays Configuration-tab-only (it takes
         effect at startup, so there is nothing to sync).</p>
+
+      <h4 class="sethead">Diagnostics</h4>
+      <p class="hint">What brAIn has actually been doing — every Claude run of any kind,
+        and the last pass of the house checks. This is the same payload behind Home
+        Assistant's own <b>Download diagnostics</b> button on the brAIn integration, and
+        the same one <code>brain report</code> bundles. It carries no prompts, no replies
+        and no entity states.</p>
+      <div id="diagBody" class="diag">Loading…</div>
+      <div class="row">
+        <button id="diagCopy" class="btn">Copy for a bug report</button>
+        <button id="diagRefresh" class="btn">Refresh</button>
+      </div>
+      <p class="hint tight">Reporting a bug? Run <code>brain report</code> in the Terminal
+        tab. It writes a redacted bundle — this payload, <code>brain doctor --json</code>
+        and the tail of the add-on log — to <code>/share/brain/reports/</code>, and every
+        file in it goes through the same credential scrub.</p>
     </div>
   </div>
 </div>
