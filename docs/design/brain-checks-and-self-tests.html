@@ -1,0 +1,491 @@
+<title>brAIn Checks &amp; Self-Tests</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --bg: #f5f7fa;
+    --bg-2: #ffffff;
+    --bg-3: #eaeef4;
+    --ink: #141820;
+    --ink-2: #4a5362;
+    --ink-3: #7a8494;
+    --line: #d5dbe4;
+    --line-2: #e6eaf0;
+    --accent: #1e66c9;
+    --accent-ink: #144a93;
+    --accent-soft: #e3edfa;
+    --good: #1d7a3e;
+    --warn: #a8690f;
+    --serious: #b7441a;
+    --critical: #b3261e;
+    --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #121519;
+      --bg-2: #1a1e24;
+      --bg-3: #232931;
+      --ink: #e7eaef;
+      --ink-2: #b3bac5;
+      --ink-3: #7f8896;
+      --line: #313843;
+      --line-2: #272d36;
+      --accent: #5b96e6;
+      --accent-ink: #8fb8f0;
+      --accent-soft: #1b2a40;
+      --good: #4cba74;
+      --warn: #d9a14a;
+      --serious: #e0764d;
+      --critical: #e5645c;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #121519;
+    --bg-2: #1a1e24;
+    --bg-3: #232931;
+    --ink: #e7eaef;
+    --ink-2: #b3bac5;
+    --ink-3: #7f8896;
+    --line: #313843;
+    --line-2: #272d36;
+    --accent: #5b96e6;
+    --accent-ink: #8fb8f0;
+    --accent-soft: #1b2a40;
+    --good: #4cba74;
+    --warn: #d9a14a;
+    --serious: #e0764d;
+    --critical: #e5645c;
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.6 var(--sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent-ink); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .page {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0 48px;
+    max-width: 1120px;
+    margin: 0 auto;
+    padding: 40px 20px 96px;
+  }
+  @media (min-width: 980px) {
+    .page { grid-template-columns: 220px minmax(0, 1fr); padding-top: 56px; }
+    .toc { position: sticky; top: 24px; align-self: start; }
+  }
+
+  .toc {
+    font-size: 13.5px;
+    line-height: 1.5;
+    color: var(--ink-2);
+    margin-bottom: 40px;
+  }
+  .toc .eyebrow { margin-bottom: 10px; }
+  .toc ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+  .toc a { color: inherit; text-decoration: none; display: block; padding: 2px 0 2px 12px; border-left: 2px solid var(--line-2); }
+  .toc a:hover { color: var(--ink); border-left-color: var(--accent); }
+  .toc .sub { padding-left: 24px; font-size: 12.5px; color: var(--ink-3); }
+
+  main { max-width: 68ch; }
+  .eyebrow {
+    font-size: 12px;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-weight: 500;
+  }
+  h1 {
+    font-size: clamp(30px, 4.2vw, 40px);
+    line-height: 1.12;
+    letter-spacing: -.015em;
+    font-weight: 600;
+    margin: 8px 0 18px;
+    text-wrap: balance;
+  }
+  .lede { font-size: 18.5px; line-height: 1.5; color: var(--ink-2); margin: 0 0 12px; }
+  .meta { font-size: 13px; color: var(--ink-3); margin: 0 0 44px; font-family: var(--mono); }
+
+  h2 {
+    font-size: 24px;
+    line-height: 1.2;
+    letter-spacing: -.01em;
+    font-weight: 600;
+    margin: 56px 0 14px;
+    padding-top: 18px;
+    border-top: 1px solid var(--line);
+    text-wrap: balance;
+  }
+  h2 .n { color: var(--accent); font-family: var(--mono); font-weight: 500; font-size: 15px; margin-right: 10px; vertical-align: 3px; }
+  h3 { font-size: 17.5px; font-weight: 600; margin: 32px 0 8px; letter-spacing: -.005em; text-wrap: balance; }
+  h4 { font-size: 15px; font-weight: 600; margin: 22px 0 6px; }
+  p { margin: 0 0 14px; }
+  ul, ol { margin: 0 0 14px; padding-left: 22px; }
+  li { margin: 0 0 6px; }
+  li > ul { margin-top: 6px; }
+  strong { font-weight: 600; }
+  code {
+    font-family: var(--mono);
+    font-size: .86em;
+    background: var(--bg-3);
+    padding: 1px 5px;
+    border-radius: 3px;
+    color: var(--ink);
+  }
+  pre {
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.55;
+    background: var(--bg-2);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    margin: 0 0 18px;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+
+  .thesis {
+    border-left: 3px solid var(--accent);
+    padding: 4px 0 4px 18px;
+    margin: 28px 0 8px;
+  }
+  .thesis p { margin-bottom: 10px; }
+  .thesis p:last-child { margin-bottom: 0; }
+
+  .callout {
+    background: var(--bg-2);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 14px 18px;
+    margin: 18px 0 22px;
+    font-size: 15px;
+  }
+  .callout .eyebrow { margin-bottom: 6px; }
+  .callout p:last-child { margin-bottom: 0; }
+
+  .tablewrap { overflow-x: auto; margin: 14px 0 22px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg-2); }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; line-height: 1.45; }
+  th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--line-2); }
+  th { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); font-weight: 500; background: var(--bg-3); white-space: nowrap; }
+  tr:last-child td { border-bottom: 0; }
+  td.id { font-family: var(--mono); font-size: 12.5px; white-space: nowrap; color: var(--accent-ink); }
+  td.mono { font-family: var(--mono); font-size: 12.5px; }
+  .sev { font-family: var(--mono); font-size: 12px; white-space: nowrap; }
+  .sev::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 0; background: var(--ink-3); }
+  .sev.info::before { background: var(--ink-3); }
+  .sev.warning::before { background: var(--warn); }
+  .sev.serious::before { background: var(--serious); }
+  .sev.critical::before { background: var(--critical); }
+  .yes { color: var(--good); font-family: var(--mono); font-size: 12.5px; }
+  .no { color: var(--ink-3); font-family: var(--mono); font-size: 12.5px; }
+
+  .flow {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: stretch;
+    gap: 8px;
+    margin: 16px 0 22px;
+    font-size: 13px;
+    line-height: 1.35;
+  }
+  .flow .box {
+    flex: 1 1 130px;
+    background: var(--bg-2);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 10px 12px;
+    min-width: 130px;
+  }
+  .flow .box b { display: block; font-weight: 600; margin-bottom: 3px; }
+  .flow .box.new { border-color: var(--accent); background: var(--accent-soft); }
+  .flow .box .tag { font-family: var(--mono); font-size: 11px; color: var(--accent-ink); letter-spacing: .04em; }
+  .flow .box .muted { color: var(--ink-3); }
+
+  .tiers { display: grid; gap: 12px; margin: 16px 0 24px; }
+  .tier {
+    display: grid;
+    grid-template-columns: 56px minmax(0, 1fr);
+    gap: 0 14px;
+    background: var(--bg-2);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 14px 16px;
+  }
+  .tier .k { font-family: var(--mono); font-size: 13px; color: var(--accent-ink); font-weight: 500; padding-top: 2px; }
+  .tier .k small { display: block; color: var(--ink-3); font-weight: 400; font-size: 11px; margin-top: 2px; }
+  .tier b { font-weight: 600; }
+  .tier p { margin: 4px 0 0; font-size: 14.5px; }
+  .tier ul { margin: 6px 0 0; font-size: 14.5px; }
+
+  .kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 16px; font-size: 14.5px; margin: 12px 0 20px; }
+  .kv dt { font-family: var(--mono); font-size: 12.5px; color: var(--ink-3); padding-top: 3px; }
+  .kv dd { margin: 0; }
+
+  .foot { margin-top: 64px; padding-top: 16px; border-top: 1px solid var(--line); font-size: 13px; color: var(--ink-3); }
+  @media (prefers-reduced-motion: no-preference) {
+    .toc a { transition: color .15s, border-color .15s; }
+  }
+</style>
+
+<div class="page">
+  <nav class="toc" aria-label="Contents">
+    <div class="eyebrow">Contents</div>
+    <ol>
+      <li><a href="#stands">Where it stands</a></li>
+      <li><a href="#checks">1 · House checks</a></li>
+      <li><a class="sub" href="#catalog">Catalog</a></li>
+      <li><a class="sub" href="#plumb">How they plug in</a></li>
+      <li><a href="#ask">2 · Questions people ask</a></li>
+      <li><a href="#selftest">3 · brAIn testing itself</a></li>
+      <li><a href="#loop">4 · The feedback loop</a></li>
+      <li><a class="sub" href="#journal">Run journal</a></li>
+      <li><a class="sub" href="#report">Diagnostics bundle</a></li>
+      <li><a class="sub" href="#score">Producer scorecard</a></li>
+      <li><a class="sub" href="#corpus">Corpus &amp; replay</a></li>
+      <li><a href="#order">Build order</a></li>
+      <li><a href="#not">Not building</a></li>
+      <li><a href="#open">Open decisions</a></li>
+    </ol>
+  </nav>
+
+  <main>
+    <div class="eyebrow">Design proposal · brAIn add-on</div>
+    <h1>What brAIn should check, how it should test itself, and how its bugs should reach you</h1>
+    <p class="lede">A catalog of Home Assistant problems brAIn can find without spending a token, a self-test that walks every face of the add-on with a real round trip, and the instrumentation that turns a field report into a reproducible bug.</p>
+    <p class="meta">brAIn 1.28.10 · surveyed panel/, scripts/, ha-mcp-server/, custom_components/brain/, tests/ · 2026-09-02</p>
+
+    <div class="thesis">
+      <p><strong>Today every finding costs a Claude run, and the model is doing the discovery.</strong> The analyst sweeps a category on a schedule and is told that an empty findings list is the honest answer, so most runs spend 25–45k tokens to report nothing. Study sessions are the same shape with more turns. Meanwhile the deterministic checks that already exist (orphan references, orphaned devices, restored entities in the power tools) are services nobody schedules and whose output reaches no list.</p>
+      <p><strong>The biggest lever is to invert that.</strong> A checker layer reads the registry, states, statistics, traces and the error log, files findings for zero tokens on an hourly cadence, and hands its ledger to the analyst so Claude spends its run on judgement (is this cupboard contact really stuck?) rather than on search. The second lever is already in the product: every ending on the Findings tab is a labelled outcome, and nothing aggregates them. The third is that field bugs currently arrive as prose, because the add-on has no diagnostics bundle and no run journal to attach.</p>
+    </div>
+
+    <h2 id="stands"><span class="n">0</span>Where it stands</h2>
+    <p>What exists, so the proposals below extend rather than duplicate.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Area</th><th>Today</th><th>Gap</th></tr></thead>
+      <tbody>
+        <tr><td>Finding producers</td><td>Insight cards (<code>findings</code> in the card contract, max 3 per run) and <code>brain learn</code> study sessions, via the findings inbox.</td><td>Both are Claude runs. No deterministic producer. <code>source</code> is recorded on the row but not on the settled ledger entry, so an ending cannot be attributed to the producer that earned it.</td></tr>
+        <tr><td><code>brain doctor</code></td><td><code>ha-selftest.sh</code>: token, REST, disk, MCP handshake over stdio, CLI smoke, panel and chat state, ttyd gate, integration deployed, daemon pgrep, flock probe, three credential stores, usage file.</td><td>Tests the add-on's plumbing, never the house. Text only, no <code>--json</code>, so nothing else can read it. No real Claude round trip. Automation task, assist and fixer paths are not exercised.</td></tr>
+        <tr><td>Power tools</td><td><code>find_orphaned_references</code>, <code>delete_orphaned_entities</code> (dry-run), <code>delete_orphaned_devices</code> (dry-run), <code>create_repair_issue</code>.</td><td>Deterministic checks exist as HA services with response data. Nothing calls them on a schedule and nothing turns their output into findings.</td></tr>
+        <tr><td>Integration</td><td>Six sensors, a binary sensor, <code>brain_finding</code> events, <code>Restart required</code> repair flow.</td><td>No <code>diagnostics.py</code>, so the standard HA “Download diagnostics” button does nothing. No health sensor with a reason attribute (the usage tracker sensor is the model for one).</td></tr>
+        <tr><td>Failure evidence</td><td>14 <code>log.warning</code>/<code>log.error</code> sites in server.py; <code>_set_job(state="error")</code> per insight; the fixer keeps the raw tail of an unparseable reply.</td><td>No aggregation. A field report is “the card didn't generate” with no run id, no exit code, no fallback flag, no token count attached.</td></tr>
+        <tr><td>Test harness</td><td>2,604 tests; <code>fake_claude.py</code> / <code>fake_claude_chat.py</code> with failure modes; <code>demo_panel.py</code> seeds a house and boots the real panel; four Playwright measure scripts in CI.</td><td>Nothing runs against a real HA or a real model. Every bug in the CLAUDE.md history is one the suite was green for, because the fixtures could not produce the real data shape.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="checks"><span class="n">1</span>House checks: findings that cost nothing</h2>
+    <p>A check is a pure function from a house snapshot to a list of findings in the shape the inbox already takes (<code>text</code>, <code>detail</code>, <code>fix</code>, <code>severity</code>, <code>fixable</code>, <code>entity_id</code>, <code>source: "check:&lt;id&gt;"</code>). It reads what the panel already fetches for the analyst (<code>ha_data.get_registries</code>, states, <code>get_history</code>, <code>get_statistics</code>) plus three sources the analyst does not yet see: automation traces, the WebSocket <code>system_log/list</code>, and dashboard configs. It never calls Claude.</p>
+    <p>The bar for a check is the same bar the card contract sets for the model: something is actually wrong, it is specific and checkable, and the fix is concrete. A check that fires on a healthy house is worse than no check, because it is the one the person learns to ignore first. Every rule below has a floor or a window for that reason, and the scorecard in section 4 is what proves each one earns its place.</p>
+
+    <h3 id="catalog">Catalog</h3>
+    <h4>Automations, scripts, scenes</h4>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Check</th><th>Reads</th><th>Fires when</th><th>Severity</th><th>Fixable</th></tr></thead>
+      <tbody>
+        <tr><td class="id">auto.dead_ref</td><td>automation/script/scene config, entity registry</td><td>A trigger, condition or action names an entity id that does not exist. Already computed by <code>find_orphaned_references</code>; this is the scheduled, findings-shaped consumer of it.</td><td><span class="sev serious">serious</span></td><td><span class="yes">yes</span></td></tr>
+        <tr><td class="id">auto.dead_service</td><td>action <code>service</code>/<code>action</code> fields, <code>get_services</code></td><td>An action calls a service that is not registered. The commonest case by far is <code>notify.mobile_app_&lt;old phone&gt;</code> after a phone change, so the fix text names the closest registered <code>notify.*</code>.</td><td><span class="sev serious">serious</span></td><td><span class="yes">yes</span></td></tr>
+        <tr><td class="id">auto.trace_error</td><td>stored traces (<code>get_automation_trace</code> already reads <code>.storage</code>)</td><td>The last N runs ended with <code>script_execution</code> other than <code>finished</code>, or a step carries an <code>error</code>. Reports the step and the error text verbatim.</td><td><span class="sev serious">serious</span></td><td><span class="no">depends</span></td></tr>
+        <tr><td class="id">auto.condition_never_passes</td><td>traces</td><td>Enabled, triggered ≥ 10 times in the window, and every run stopped at the same condition. The automation is alive and cannot act; the condition is the finding.</td><td><span class="sev warning">warning</span></td><td><span class="yes">yes</span></td></tr>
+        <tr><td class="id">auto.trigger_on_dead_entity</td><td>triggers, states, history</td><td>A state or numeric trigger watches an entity that has been <code>unavailable</code>/<code>unknown</code> for &gt; 24h, or whose value has not changed in 14 days. The automation is not broken; its eyes are.</td><td><span class="sev warning">warning</span></td><td><span class="no">no</span></td></tr>
+        <tr><td class="id">auto.never_fired</td><td><code>last_triggered</code>, config entry created time</td><td>Enabled, older than 30 days, <code>last_triggered</code> null. Excludes automations whose only triggers are event/webhook/tag (those are legitimately rare).</td><td><span class="sev info">info</span></td><td><span class="no">no</span></td></tr>
+        <tr><td class="id">auto.forgotten_off</td><td>state, <code>last_changed</code></td><td>Disabled for &gt; 30 days. People switch an automation off to debug and forget it.</td><td><span class="sev info">info</span></td><td><span class="yes">yes</span></td></tr>
+        <tr><td class="id">auto.fighting</td><td>logbook with context ids</td><td>Two automations set the same entity to opposite states within 60s, on ≥ 3 occasions in 7 days. The <code>context_parent_id</code> chain attributes each change to its automation, so this is a deterministic read, not a guess.</td><td><span class="sev warning">warning</span></td><td><span class="no">no</span></td></tr>
+        <tr><td class="id">auto.already_running</td><td><code>system_log/list</code></td><td>HA logged “Already running” for a <code>mode: single</code> automation ≥ 3 times in 24h. The fix names the mode that would do what the person probably wants.</td><td><span class="sev warning">warning</span></td><td><span class="yes">yes</span></td></tr>
+        <tr><td class="id">auto.duplicate</td><td>config</td><td>Two enabled automations with identical trigger and action sets. Copy-paste leftovers.</td><td><span class="sev info">info</span></td><td><span class="yes">yes</span></td></tr>
+        <tr><td class="id">auto.blueprint_missing</td><td>config <code>use_blueprint</code>, <code>/config/blueprints</code></td><td>Blueprint path does not resolve. HA reports this once at startup and then goes quiet.</td><td><span class="sev serious">serious</span></td><td><span class="no">no</span></td></tr>
+      </tbody>
+    </table></div>
+
+    <h4>Devices and sensors</h4>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Check</th><th>Reads</th><th>Fires when</th><th>Severity</th><th>Fixable</th></tr></thead>
+      <tbody>
+        <tr><td class="id">dev.unavailable</td><td>states, <code>last_changed</code></td><td><code>unavailable</code> for &gt; 24h and the entity is enabled and not already a settled key. Grouped by device: one finding per device, not one per entity, or a dead hub files forty rows.</td><td><span class="sev serious">serious</span></td><td><span class="no">no</span></td></tr>
+        <tr><td class="id">dev.frozen</td><td>long-term statistics (<code>get_statistics</code>, hourly)</td><td>A numeric sensor whose 7-day <code>min == max</code> while sibling entities on the same device kept updating. Uses statistics rather than history because it is one small query per entity and already hourly-bucketed.</td><td><span class="sev warning">warning</span></td><td><span class="no">no</span></td></tr>
+        <tr><td class="id">dev.battery_low</td><td><code>device_class: battery</code></td><td>Level ≤ 15%, or the battery entity itself has not reported in 7 days (a dead device stops reporting its own battery, which is the case a threshold misses).</td><td><span class="sev warning">warning</span></td><td><span class="no">no</span></td></tr>
+        <tr><td class="id">dev.implausible</td><td>states with unit and device class</td><td>Temperature outside −40…60 °C, humidity outside 0…100 %, illuminance negative, a <code>total_increasing</code> energy sensor that went backwards without a reset marker.</td><td><span class="sev warning">warning</span></td><td><span class="no">no</span></td></tr>
+        <tr><td class="id">dev.energy_stalled</td><td>statistics <code>sum</code>, sibling power sensor</td><td>An energy sensor whose <code>sum</code> has not risen in 3 days while a power sensor on the same device shows draw. Distinct from frozen: this one breaks the Energy dashboard.</td><td><span class="sev serious">serious</span></td><td><span class="no">no</span></td></tr>
+        <tr><td class="id">dev.restored</td><td>entity registry, states</td><td>Registry entry whose state is <code>restored</code> (the integration that provided it is gone). The existing <code>delete_orphaned_entities</code> dry run is the source.</td><td><span class="sev info">info</span></td><td><span class="yes">yes</span></td></tr>
+        <tr><td class="id">dev.orphan_device</td><td>device registry, config entries</td><td><code>_orphaned_devices</code> output, findings-shaped.</td><td><span class="sev info">info</span></td><td><span class="yes">yes</span></td></tr>
+        <tr><td class="id">dev.mesh_dead</td><td><code>zwave_js</code> node status attributes, ZHA <code>available</code></td><td>A Z-Wave node reporting <code>dead</code>/<code>asleep</code> past 24h, a ZHA device unavailable while the coordinator is up. Attribute names differ per integration, so this is a small table of known shapes, not a heuristic.</td><td><span class="sev serious">serious</span></td><td><span class="no">no</span></td></tr>
+      </tbody>
+    </table></div>
+
+    <h4>Organisation and dashboards</h4>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Check</th><th>Reads</th><th>Fires when</th><th>Severity</th><th>Fixable</th></tr></thead>
+      <tbody>
+        <tr><td class="id">org.dashboard_dead_ref</td><td><code>list_dashboards</code> + <code>get_dashboard</code></td><td>A card references an entity that does not exist. Renders as a red tile the person has probably stopped seeing.</td><td><span class="sev warning">warning</span></td><td><span class="yes">yes</span></td></tr>
+        <tr><td class="id">org.unused_helper</td><td>helpers, automation/script/dashboard configs</td><td>An <code>input_*</code>, <code>timer</code>, <code>counter</code> or <code>schedule</code> referenced by nothing. Info only; the fix is a delete and the person may have plans for it.</td><td><span class="sev info">info</span></td><td><span class="yes">yes</span></td></tr>
+        <tr><td class="id">org.default_name</td><td>entity registry</td><td>An entity in an area still named after its hardware id (<code>sensor.0x00158d000…_temperature</code>). Only inside areas: an unassigned entity is a different, lower-value finding.</td><td><span class="sev info">info</span></td><td><span class="yes">yes</span></td></tr>
+        <tr><td class="id">org.no_area</td><td>device registry</td><td>Devices with entities in controllable domains and no area. Batched into one finding listing the top few, because a hundred rows of “no area” is a chore, not a work list.</td><td><span class="sev info">info</span></td><td><span class="yes">yes</span></td></tr>
+      </tbody>
+    </table></div>
+
+    <h4>System</h4>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Check</th><th>Reads</th><th>Fires when</th><th>Severity</th><th>Fixable</th></tr></thead>
+      <tbody>
+        <tr><td class="id">sys.log_storm</td><td><code>system_log/list</code></td><td>One logger name accounts for ≥ 20 error/warning entries in 24h. The finding carries the top message verbatim so “Explain this” (section 2) has something to explain.</td><td><span class="sev warning">warning</span></td><td><span class="no">depends</span></td></tr>
+        <tr><td class="id">sys.backup_stale</td><td>Supervisor <code>/backups</code></td><td>Newest backup &gt; 7 days old, or the last scheduled backup failed.</td><td><span class="sev serious">serious</span></td><td><span class="no">no</span></td></tr>
+        <tr><td class="id">sys.addon_down</td><td>Supervisor <code>/addons</code></td><td>An add-on with <code>watchdog: true</code> or <code>boot: auto</code> that is stopped, or has restarted &gt; 3 times in 24h.</td><td><span class="sev serious">serious</span></td><td><span class="no">no</span></td></tr>
+        <tr><td class="id">sys.disk</td><td>Supervisor host info, <code>/config</code> db size</td><td>Host disk &gt; 85 %, or <code>home-assistant_v2.db</code> &gt; 2 GB with no recorder <code>exclude</code> configured.</td><td><span class="sev warning">warning</span></td><td><span class="no">depends</span></td></tr>
+        <tr><td class="id">sys.after_update</td><td><code>update.*</code> entities, previous check snapshot</td><td>Within 24h of a core/OS/add-on/integration update, anything new in <code>dev.unavailable</code> or <code>auto.trace_error</code> is filed as one finding: “since the 2026.9 update, these 4 things broke”. Deterministic diff of two check runs, and the single most-asked maintenance question.</td><td><span class="sev serious">serious</span></td><td><span class="no">depends</span></td></tr>
+      </tbody>
+    </table></div>
+
+    <div class="callout">
+      <div class="eyebrow">Deliberately excluded</div>
+      <p>Pending updates (HA already shows them, on the page where they are installed). Certificate expiry and remote-access checks (the add-on cannot see them reliably). A composite “health score”, which is a number nobody can act on and which flatters a house with one critical problem and ninety-nine tidy sensors.</p>
+    </div>
+
+    <h3 id="plumb">How they plug in</h3>
+    <div class="flow">
+      <div class="box new"><span class="tag">NEW</span><b>panel/checks/</b>one module per group, <code>run(house) → [finding]</code></div>
+      <div class="box"><b>findings inbox</b><span class="muted">same JSONL <code>brain learn</code> writes</span></div>
+      <div class="box"><b>findings_store</b><span class="muted">dedupe across statuses + settled ledger, as today</span></div>
+      <div class="box"><b>Findings tab</b><span class="muted">Fix it · Wrong · I did it</span></div>
+      <div class="box new"><span class="tag">NEW</span><b>scorecard</b>endings attributed to <code>check:&lt;id&gt;</code></div>
+    </div>
+    <ul>
+      <li><strong>One snapshot, many checks.</strong> <code>checks.snapshot()</code> fetches registries, states, statistics for the numeric sensors, traces and the system log once, and every check reads from it. It is the same fetch the analyst's snapshot path makes, so the cost is one set of HA calls an hour.</li>
+      <li><strong>Hourly, cheap, and the analyst reads the result.</strong> The scheduler runs the checks before any insight run. <code>prompt_block</code> already renders open and dismissed findings into the analyst's prompt; the checker's rows ride the same block. The automations card's focus becomes “the ledger says these three things; what do they miss, and which of them matter here?”, which is the question a model is good at.</li>
+      <li><strong>Every check is a fixture test.</strong> <code>tests/fixtures/houses/</code> holds registry and state dumps with planted defects, and each check has a test that asserts it finds exactly the planted rows and nothing else on the clean house. The checks are pure functions, so this is the ordinary suite, not the manual one.</li>
+      <li><strong>Surfaces.</strong> <code>brain check [group]</code> on the CLI (through the panel API, like <code>brain findings</code>, so there is one writer); <code>brain.check</code> as an HA service with response data; a <code>button.brain_run_checks</code> entity; <code>POST /api/checks/run</code> for the tab. All four end in the same inbox.</li>
+      <li><strong>Optionally, HA Repairs.</strong> A <code>findings_to_repairs</code> option (default off) mirrors <code>serious</code>+ findings into <code>create_repair_issue</code>, and ending the finding removes the issue. It meets people where HA already tells them things, and it is off by default because a Repairs page with twelve brAIn issues on it is the tab moved somewhere with worse buttons.</li>
+    </ul>
+
+    <h2 id="ask"><span class="n">2</span>Questions people actually ask</h2>
+    <p>Four services where the answer is a deterministic walk that Claude narrates, rather than a sweep Claude performs. Each is an HA service with response data, a <code>brain</code> CLI verb, and a chat command, because the same question is asked from an automation trace, a terminal and a phone.</p>
+
+    <h3>Why did that happen?</h3>
+    <p>“Why did the hallway light come on at 3am” is the most common question in any HA forum, and the answer is already in the recorder: a state change carries a <code>context_id</code>, and its <code>context_parent_id</code> points at the automation, script, service call or user that caused it. <code>get_logbook</code> does not surface context today. Add it, walk the chain server-side to a root cause, and hand Claude the chain to narrate: “Hallway light turned on at 03:12 because <em>Night motion</em> fired on <em>binary_sensor.hallway_motion</em>, which reported motion for 2s. That sensor has tripped at night 6 times this week.” <code>brain.why</code> takes an entity id and an optional time; the chat answers <code>why did …</code> the same way.</p>
+
+    <h3>What changed since…</h3>
+    <p>A diff of two check snapshots: entities that went unavailable, automations that errored for the first time, new entities, renamed entities, integrations that failed setup. The <code>sys.after_update</code> check is this service with the update as the “since”. <code>brain.changes</code> with <code>since: 24h | last update | last backup</code>.</p>
+
+    <h3>Explain this error</h3>
+    <p><code>sys.log_storm</code> finds the noisiest logger; this takes one entry from the system log (or an error the person pastes) and answers in three parts: which integration and device it belongs to, what it usually means, and what to try. Claude is doing the reading here and that is the right use of it. The value over pasting into the chat is that the service pre-fetches the integration's config entry, the device and the last trace, so the answer is about <em>this</em> house.</p>
+
+    <h3>Rehearse an automation</h3>
+    <p>Given an automation id and an optional “as if” (a time, an entity state), evaluate its conditions against the live house and report which would pass and which would not, from the same condition code HA runs. No actions are executed; this is a read. It answers “will my morning routine fire tomorrow” before tomorrow. It needs one new read-only MCP tool (<code>evaluate_condition</code>, a WebSocket <code>test_condition</code> call) which must land on <code>ANALYST_TOOLS</code> and be asserted in <code>test_security.py</code> as a read.</p>
+
+    <h2 id="selftest"><span class="n">3</span>brAIn testing itself in situ</h2>
+    <p><code>brain doctor</code> answers “is the plumbing connected”. The gap is “does each face work end to end, right now, on this install”, which is what every field report is really about. BRight's <code>director_check</code> is the shape to copy: walk the chain, do a real trivial round trip, stop at the first break, and make the sentence at that break name the switch or the log to look at.</p>
+
+    <h3><code>brain doctor --deep</code></h3>
+    <p>Opt-in and costed (it spends a handful of Claude turns), never on a timer. Each stage is a real round trip with a timeout, and each has its own failure sentence.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Stage</th><th>Round trip</th><th>Proves</th></tr></thead>
+      <tbody>
+        <tr><td>Snapshot Claude</td><td><code>run_claude</code> with a fixed prompt expecting a fixed JSON reply</td><td>Credential works for a no-tool run; the JSON extractor parses a real reply.</td></tr>
+        <tr><td>Analyst tools</td><td><code>run_analyst</code> asked to call <code>get_areas</code> and return the count</td><td>MCP reaches the model, the allow list lets a read through, the deny list blocks a planted <code>call_service</code> request (the reply must say it was refused).</td></tr>
+        <tr><td>Chat</td><td>Send one message on the live session, await <code>result</code></td><td>The stream-json session spawns, speaks, and ends a turn.</td></tr>
+        <tr><td>Automation task</td><td>Write a task file, watch for the claim rename within 30s, then the result</td><td>Listener alive, claim contract intact, result written inside the bridge window.</td></tr>
+        <tr><td>Assist</td><td><code>conversation/process</code> over WebSocket with <code>agent_id</code> set to brAIn's entity</td><td>The worker pool answers through HA's own front door, not just its health endpoint.</td></tr>
+        <tr><td>Memory</td><td>Queue one synthetic fact, run the consolidator <code>--once</code>, read the queue either side</td><td>The fact moved, memory.md grew by one line, and it is removed again after.</td></tr>
+        <tr><td>Findings and undo</td><td>Add a synthetic finding through the API, settle it, undo it</td><td>Store, settled ledger, memory line and undo token all round-trip.</td></tr>
+        <tr><td>Fixer (dry)</td><td><code>run_agent</code> on a synthetic finding whose fix is “rename a <code>brain_test_*</code> helper”</td><td>The one path that can change the house can, and the edit snapshot hook fired.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h3>Planted defects: a rehearsal on the real house</h3>
+    <p>The checks in section 1 are testable in the suite on fixture houses. What the suite cannot see is this install's HA version, its integrations and its data shapes, which is where every late bug has lived. So <code>brain doctor --rehearse</code> (opt-in, with a consent prompt naming exactly what it creates) installs a small set of helpers and automations under a <code>brain_test_</code> prefix: an automation referencing a non-existent entity, one disabled, one whose condition can never pass, an <code>input_number</code> it freezes. It runs the checks and asserts each planted defect is found and nothing else under the prefix is, then runs the analyst's automations card and reports whether the model found the same planted rows. Then it removes everything it created and verifies the removal.</p>
+    <p>That last step is the interesting number: it is a live precision/recall reading of the prompt and model on <em>this</em> house, per version, and it is what makes a prompt change measurable somewhere other than the developer's own home.</p>
+
+    <h3>Health as an entity</h3>
+    <ul>
+      <li><strong><code>--json</code> on <code>brain doctor</code></strong>, so the panel, the sensor and the diagnostics bundle read one structured verdict rather than scraping text.</li>
+      <li><strong><code>sensor.brain_health</code></strong> that never goes unavailable, on the usage tracker sensor's pattern: its state is the worst stage (<code>ok</code>, <code>degraded</code>, <code>failed</code>) and its attributes carry the failing stage's sentence. HA hides attributes of an unavailable entity, which is why the tracker sensor exists, and the same rule applies here.</li>
+      <li><strong>A canary automation</strong> (opt-in): once a day, <code>brain.run_task</code> with “reply OK” and a sensor recording the round-trip seconds. A missed canary is the earliest external signal that a listener died, and it costs one tiny turn.</li>
+    </ul>
+
+    <h2 id="loop"><span class="n">4</span>The feedback loop: catching bugs and measuring the model</h2>
+    <p>Read the CLAUDE.md history and one pattern repeats: a silent fallback read as the real thing, a stale value reported as fresh, a swallowed stderr, a guard that refused without changing the next attempt. None were visible from the suite; all were visible from inside the add-on if anything had been counting. This section is about making the add-on count, and making what it counts leave the house in a form that can be attached to an issue.</p>
+
+    <h3 id="journal">Run journal</h3>
+    <p><code>/data/journal.jsonl</code>, capped and rotated, one line per Claude run of any kind: insight, ask, fix, study, consolidation, chat turn, voice turn, automation task, auth check, doctor stage. <code>usage_store.record_run</code> already records tokens per insight id; the journal is that ledger widened to every path and to the fields that explain a failure.</p>
+    <dl class="kv">
+      <dt>source</dt><dd>the same vocabulary <code>run_sources.SOURCES</code> uses, so a journal row and a Chats rail row agree on who ran what</dd>
+      <dt>model · duration · tokens</dt><dd>from the result envelope via <code>split_from_meta</code>, one derivation</dd>
+      <dt>outcome</dt><dd><code>ok</code>, <code>timeout</code> (124 by name), <code>max_turns</code>, <code>unparseable</code> (with the capped raw tail, as the fixer already keeps), <code>auth</code>, <code>denied</code>, <code>crash</code> (exit code plus the stderr tail)</dd>
+      <dt>fallbacks</dt><dd>flags for every silent slide: search→snapshot, pool→one-shot, resume→fresh, <code>--session-id</code> rejected, account usage→local estimate</dd>
+      <dt>silent excepts</dt><dd>a counter keyed by site name for every <code>except</code> that deliberately does nothing, so a failure that is swallowed by design is at least counted by design</dd>
+    </dl>
+    <p>The panel gets a <strong>Diagnostics</strong> section under ⚙ (not a sixth tab) that reads the journal: runs in the last 24h by source and outcome, fallbacks taken, the last ten failures with their tails. The usage popover's breakdown is already one view of this ledger; this is the other.</p>
+
+    <h3 id="report">Diagnostics bundle</h3>
+    <p><code>brain report</code> writes one redacted archive to <code>/share/brain/reports/</code> and the docs' Troubleshooting page grows a “Copy a report” button that produces the same thing. The custom integration also implements <code>diagnostics.py</code>, so the standard <em>Download diagnostics</em> button on the integration page yields the same bundle, because that is the button HA users already know how to find and the one issue templates already ask for.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Section</th><th>Contents</th><th>Redaction</th></tr></thead>
+      <tbody>
+        <tr><td>Versions</td><td>add-on, integration, HA core, Supervisor, OS, Claude CLI, model in use, architecture</td><td>none needed</td></tr>
+        <tr><td>Options</td><td>every add-on option and panel setting</td><td><code>findings_notify_service</code> kept; anything credential-shaped never read</td></tr>
+        <tr><td>Doctor</td><td><code>brain doctor --json</code></td><td>paths kept, token lengths only</td></tr>
+        <tr><td>Journal</td><td>last 200 rows</td><td>prompts and replies never included; raw tails capped at 300 chars and entity ids hashed unless the person ticks “include entity names”</td></tr>
+        <tr><td>Add-on log</td><td>last 500 lines</td><td>the same regexes the panel's <code>QuietAccessLogger</code> would apply to a token if it saw one</td></tr>
+        <tr><td>House shape</td><td>counts per domain, integration list, automation count, entity count, HA config <code>unit_system</code>/<code>time_zone</code></td><td>counts and integration names only</td></tr>
+        <tr><td>Store stats</td><td>findings by status and source, settled ledger size, inbox depth, memory.md size, last consolidation, hypothesis counts</td><td>numbers only</td></tr>
+        <tr><td>Scorecard</td><td>section below, aggregated</td><td>numbers only</td></tr>
+      </tbody>
+    </table></div>
+    <p>The GitHub issue template asks for the bundle by name. A report that arrives with one is a bug with a run id, a model, an exit code and a fallback flag; a report that arrives without one is the prose the project gets today.</p>
+
+    <h3 id="score">Producer scorecard</h3>
+    <p>Every ending on the Findings tab is a label: <em>I did it</em> and <em>Fix it → Got it</em> are true positives, <em>Wrong</em> is a false positive with a free-text reason, a snooze that expires unended is a shrug. The settled ledger records the kind and the note but not the producer, so the one field to add is <code>source</code> on <code>_remember_settled</code>. With it, the panel can compute precision per producer: per check id, per insight category, per study topic, per model.</p>
+    <p>Two readers. The person sees a line under the Findings filter: “Battery checks: 11 of 12 confirmed. Automations card: 6 of 9 wrong.” That is the number that makes the tab trusted or ignored, and it lets them switch off a check that is wrong in their house. The developer sees the same numbers in the bundle, aggregated, and that is the number that says which producer to fix next. A check under 70 % precision across reports is a check with a bad floor, and the <code>Wrong</code> notes say why in the person's own words.</p>
+
+    <h3 id="corpus">Corpus and replay</h3>
+    <p>The BRight <code>detect_hits</code> bug is the lesson: the suite's only fixture was a synthetic stab loud enough to clear a threshold no real mix reaches, and the feature returned zero results for its entire life while the suite stayed green. brAIn's analyst prompts have the same exposure, since no test runs them against a real house or a real model.</p>
+    <ul>
+      <li><strong>Capture</strong> (opt-in, off by default, one switch in ⚙): the bundle the analyst was sent, the card it produced, and later the ending the person gave each finding. Redacted the same way the diagnostics bundle is, and reviewable in the panel before it is exported.</li>
+      <li><strong>Corpus</strong>: <code>tests/corpus/</code> holds contributed bundles with their labelled outcomes. The maintainer's own house is the first entry; the rehearsal fixtures from section 3 are the second, because their ground truth is known by construction.</li>
+      <li><strong>Replay</strong>: a nightly CI job, capped in spend, runs the current prompts against the corpus with the real model and scores against the labels. A prompt edit then has a number attached to it before it ships. The <code>_CARD_CONTRACT</code> is shared by both prompt builders precisely so that one copy drifts; replay is what tells you when it drifted somewhere that matters.</li>
+      <li><strong>Shadow mode</strong> for a new producer: it runs, files to a <code>shadow</code> status the tab does not render, and for two weeks its rows are compared with what the analyst filed over the same window. It ships to the visible list when its precision on the corpus and in shadow both clear the bar. This is how a check can be added without a week of “Wrong” presses on every install.</li>
+    </ul>
+
+    <h2 id="order"><span class="n">5</span>Build order</h2>
+    <p>Ordered by what each unlocks, not by size. The first tier is the substrate the rest reads.</p>
+    <div class="tiers">
+      <div class="tier"><div class="k">T1<small>substrate</small></div><div><b>Journal, <code>brain doctor --json</code>, <code>diagnostics.py</code>, <code>brain report</code>, <code>source</code> on settled entries</b>
+        <p>Small, stdlib-only, no new Claude paths. From this point every field report can carry evidence and every ending is attributable. Nothing user-facing changes except a Diagnostics section under ⚙ and a working Download diagnostics button.</p></div></div>
+      <div class="tier"><div class="k">T2<small>value</small></div><div><b>House checks, first eight</b>
+        <p><code>auto.dead_ref</code>, <code>auto.dead_service</code>, <code>auto.trace_error</code>, <code>auto.condition_never_passes</code>, <code>dev.unavailable</code>, <code>dev.frozen</code>, <code>dev.battery_low</code>, <code>org.dashboard_dead_ref</code>. Each with a fixture-house test. Hourly schedule, results into the analyst's prompt block. This is the first release where the Findings tab fills for zero tokens.</p></div></div>
+      <div class="tier"><div class="k">T3<small>trust</small></div><div><b>Scorecard on the tab, <code>sys.after_update</code>, <code>brain.why</code></b>
+        <p>Precision per producer visible to the person and in the bundle. The after-update diff and the context-chain walk are the two questions with the highest ask-to-effort ratio.</p></div></div>
+      <div class="tier"><div class="k">T4<small>in situ</small></div><div><b><code>brain doctor --deep</code>, <code>sensor.brain_health</code>, rehearsal with planted defects</b>
+        <p>Real round trips per face, one never-unavailable health entity, and the live precision reading that makes a prompt change measurable on a stranger's house.</p></div></div>
+      <div class="tier"><div class="k">T5<small>flywheel</small></div><div><b>Capture, corpus, nightly replay, shadow mode, remaining checks</b>
+        <p>The loop closes: contributed houses score the prompts, and new producers earn their place before anyone sees them.</p></div></div>
+    </div>
+
+    <h2 id="not"><span class="n">6</span>Not building</h2>
+    <ul>
+      <li><strong>A health score.</strong> One number over a house is a number with one critical problem hidden in it. The Findings badge already answers “how much is waiting on me”, and the health sensor answers “is brAIn working”; nothing in between is actionable.</li>
+      <li><strong>A second list.</strong> Check results are findings, in the findings store, on the Findings tab. A “Checks” tab beside it is the three-places problem the hypotheses fix already solved once.</li>
+      <li><strong>Per-check notifications.</strong> <code>findings_notify_service</code> with its severity floor already covers it, and the dedupe on the created list is what keeps a hourly checker from ringing a phone hourly.</li>
+      <li><strong>An unattended deep doctor.</strong> It spends real turns. Lazily on request, like the auth re-check, never on a timer.</li>
+      <li><strong>Any capture that is on by default.</strong> A house's entity names are a floor plan. The corpus is opt-in, reviewed before export, and useful even if the only contributor is the maintainer.</li>
+    </ul>
+
+    <h2 id="open"><span class="n">7</span>Open decisions</h2>
+    <ol>
+      <li><strong>Rehearsal fixtures on a real house.</strong> Creating <code>brain_test_*</code> automations in someone's config, even with consent and cleanup, is a step some people will not want. The alternative is rehearsal only in the demo house, which loses the per-install reading. Recommendation: ship it opt-in behind a named consent step, and make cleanup the first thing the doctor verifies on its next run.</li>
+      <li><strong>Repairs mirroring default.</strong> Off, per above, but worth a poll in the release notes: some people live in the Repairs page and never open an add-on panel.</li>
+      <li><strong>Check cadence.</strong> Hourly is cheap on HA but the traces and system-log reads are the heaviest; every 6 hours for those and hourly for state-based checks is the likely shape. Decide from the journal after a release, not before.</li>
+      <li><strong>Where the scorecard's precision floor sits.</strong> 70 % is a starting guess. Below it a check should default off for new installs; the first release of data decides the number.</li>
+    </ol>
+
+    <div class="foot">Grounded in brAIn 1.28.10: <code>panel/findings_store.py</code>, <code>panel/categories.py</code>, <code>panel/engine.py</code>, <code>scripts/ha-selftest.sh</code>, <code>scripts/brain-learn.sh</code>, <code>custom_components/brain/power_tools.py</code>, <code>tests/manual/</code>. Check ids, thresholds and tier contents are proposals to be edited, not contracts.</div>
+  </main>
+</div>

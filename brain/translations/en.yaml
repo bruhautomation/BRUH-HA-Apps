@@ -113,6 +113,24 @@ configuration:
       service. "serious" (the default) means batteries about to die and
       sensors gone silent ring your phone, while naming nitpicks wait on
       the Findings tab.
+  checks_interval_hours:
+    name: House checks every (hours)
+    description: >-
+      How often brAIn runs its deterministic house checks — automations
+      naming entities that no longer exist, devices unavailable for a day,
+      batteries running down, sensors frozen on one value, dashboards
+      showing missing entities. They read Home Assistant directly and never
+      call Claude, so they cost nothing; what they find lands on the
+      Findings tab. 0 turns the schedule off (`brain check` still runs them
+      by hand).
+  protected_entities:
+    name: Protected entities
+    description: >-
+      Entities brAIn may never act on, from any face — the terminal, the
+      chat, Fix it, voice and automations. One entity id per line
+      (lock.front_door), or a whole domain (alarm_control_panel.*). They can
+      still be looked at; a service call that targets one, or an area or
+      device that contains one, is refused.
   edit_journal_days:
     name: Keep undo history for
     description: >-

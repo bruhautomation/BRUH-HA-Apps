@@ -1,0 +1,433 @@
+<title>brAIn Capability Map</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --bg: #f5f7fa; --bg-2: #ffffff; --bg-3: #eaeef4;
+    --ink: #141820; --ink-2: #4a5362; --ink-3: #7a8494;
+    --line: #d5dbe4; --line-2: #e6eaf0;
+    --accent: #1e66c9; --accent-ink: #144a93; --accent-soft: #e3edfa;
+    --good: #1d7a3e; --warn: #a8690f; --serious: #b7441a;
+    --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #121519; --bg-2: #1a1e24; --bg-3: #232931;
+      --ink: #e7eaef; --ink-2: #b3bac5; --ink-3: #7f8896;
+      --line: #313843; --line-2: #272d36;
+      --accent: #5b96e6; --accent-ink: #8fb8f0; --accent-soft: #1b2a40;
+      --good: #4cba74; --warn: #d9a14a; --serious: #e0764d;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #121519; --bg-2: #1a1e24; --bg-3: #232931;
+    --ink: #e7eaef; --ink-2: #b3bac5; --ink-3: #7f8896;
+    --line: #313843; --line-2: #272d36;
+    --accent: #5b96e6; --accent-ink: #8fb8f0; --accent-soft: #1b2a40;
+    --good: #4cba74; --warn: #d9a14a; --serious: #e0764d;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.6 var(--sans); -webkit-font-smoothing: antialiased; }
+  a { color: var(--accent-ink); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .page { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0 48px; max-width: 1180px; margin: 0 auto; padding: 40px 20px 96px; }
+  @media (min-width: 980px) {
+    .page { grid-template-columns: 220px minmax(0, 1fr); padding-top: 56px; }
+    .toc { position: sticky; top: 24px; align-self: start; }
+  }
+  .toc { font-size: 13.5px; line-height: 1.5; color: var(--ink-2); margin-bottom: 40px; }
+  .toc .eyebrow { margin-bottom: 10px; }
+  .toc ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+  .toc a { color: inherit; text-decoration: none; display: block; padding: 2px 0 2px 12px; border-left: 2px solid var(--line-2); }
+  .toc a:hover { color: var(--ink); border-left-color: var(--accent); }
+  main { max-width: 76ch; }
+  .eyebrow { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); font-weight: 500; }
+  h1 { font-size: clamp(30px, 4.2vw, 40px); line-height: 1.12; letter-spacing: -.015em; font-weight: 600; margin: 8px 0 18px; text-wrap: balance; }
+  .lede { font-size: 18.5px; line-height: 1.5; color: var(--ink-2); margin: 0 0 12px; max-width: 68ch; }
+  .meta { font-size: 13px; color: var(--ink-3); margin: 0 0 40px; font-family: var(--mono); }
+  h2 { font-size: 24px; line-height: 1.2; letter-spacing: -.01em; font-weight: 600; margin: 56px 0 6px; padding-top: 18px; border-top: 1px solid var(--line); text-wrap: balance; }
+  h2 .n { color: var(--accent); font-family: var(--mono); font-weight: 500; font-size: 15px; margin-right: 10px; vertical-align: 3px; }
+  h2 + p.why { color: var(--ink-2); margin-bottom: 14px; max-width: 68ch; }
+  h3 { font-size: 17.5px; font-weight: 600; margin: 30px 0 8px; }
+  p { margin: 0 0 14px; max-width: 68ch; }
+  ul, ol { margin: 0 0 14px; padding-left: 22px; max-width: 68ch; }
+  li { margin: 0 0 6px; }
+  strong { font-weight: 600; }
+  code { font-family: var(--mono); font-size: .86em; background: var(--bg-3); padding: 1px 5px; border-radius: 3px; color: var(--ink); }
+  .thesis { border-left: 3px solid var(--accent); padding: 4px 0 4px 18px; margin: 28px 0 8px; max-width: 68ch; }
+  .thesis p { margin-bottom: 10px; }
+  .thesis p:last-child { margin-bottom: 0; }
+  .kinds { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin: 18px 0 26px; font-size: 13.5px; line-height: 1.4; }
+  .kind { background: var(--bg-2); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; }
+  .kind b { display: block; font-weight: 600; margin-bottom: 2px; }
+  .kind .q { color: var(--ink-3); font-style: italic; }
+  .kind.new { border-color: var(--accent); background: var(--accent-soft); }
+  .kind .tag { font-family: var(--mono); font-size: 11px; color: var(--accent-ink); letter-spacing: .04em; }
+  .tablewrap { overflow-x: auto; margin: 14px 0 22px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg-2); }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; line-height: 1.45; }
+  th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--line-2); }
+  th { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); font-weight: 500; background: var(--bg-3); white-space: nowrap; }
+  tr:last-child td { border-bottom: 0; }
+  td.name { font-weight: 600; min-width: 160px; }
+  td.name small { display: block; font-weight: 400; font-family: var(--mono); font-size: 11.5px; color: var(--accent-ink); margin-top: 2px; }
+  td.how { min-width: 260px; }
+  .m { font-family: var(--mono); font-size: 11.5px; white-space: nowrap; padding: 1px 6px; border-radius: 3px; border: 1px solid var(--line); color: var(--ink-2); display: inline-block; }
+  .m.det { border-color: var(--good); color: var(--good); }
+  .m.ai { border-color: var(--accent); color: var(--accent-ink); }
+  .m.both { border-color: var(--warn); color: var(--warn); }
+  .callout { background: var(--bg-2); border: 1px solid var(--line); border-radius: 6px; padding: 14px 18px; margin: 18px 0 22px; font-size: 15px; max-width: 68ch; }
+  .callout .eyebrow { margin-bottom: 6px; }
+  .callout p:last-child { margin-bottom: 0; }
+  .top { display: grid; gap: 10px; margin: 16px 0 24px; max-width: 76ch; }
+  .top .row { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 0 12px; background: var(--bg-2); border: 1px solid var(--line); border-radius: 6px; padding: 12px 14px; }
+  .top .row .k { font-family: var(--mono); color: var(--accent-ink); font-weight: 500; padding-top: 2px; }
+  .top .row b { font-weight: 600; }
+  .top .row p { margin: 3px 0 0; font-size: 14.5px; max-width: none; }
+  .legend { font-size: 13px; color: var(--ink-3); margin: -6px 0 18px; display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+  .foot { margin-top: 64px; padding-top: 16px; border-top: 1px solid var(--line); font-size: 13px; color: var(--ink-3); max-width: 68ch; }
+</style>
+
+<div class="page">
+  <nav class="toc" aria-label="Contents">
+    <div class="eyebrow">Contents</div>
+    <ol>
+      <li><a href="#frame">The frame</a></li>
+      <li><a href="#enablers">Platform enablers</a></li>
+      <li><a href="#foresee">1 · Foresee</a></li>
+      <li><a href="#propose">2 · Propose automations</a></li>
+      <li><a href="#surfaces">3 · Live inside HA</a></li>
+      <li><a href="#understand">4 · Understand the house</a></li>
+      <li><a href="#rhythm">5 · Daily rhythm</a></li>
+      <li><a href="#energy">6 · Energy &amp; climate</a></li>
+      <li><a href="#perceive">7 · Perceive</a></li>
+      <li><a href="#safety">8 · Safety &amp; care</a></li>
+      <li><a href="#simulate">9 · Simulate &amp; experiment</a></li>
+      <li><a href="#builder">10 · The builder's assistant</a></li>
+      <li><a href="#trust">11 · Trust &amp; control</a></li>
+      <li><a href="#compels">What compels</a></li>
+      <li><a href="#intents">12 · Intents, not automations</a></li>
+      <li><a href="#runs">13 · The house runs itself</a></li>
+      <li><a href="#life">14 · Household and life</a></li>
+      <li><a href="#see">15 · See the house</a></li>
+      <li><a href="#decisions">16 · Bigger decisions</a></li>
+      <li><a href="#ten">If only twelve</a></li>
+    </ol>
+  </nav>
+
+  <main>
+    <div class="eyebrow">Capability proposal · brAIn add-on</div>
+    <h1>What a next-generation brAIn would do that today's cannot</h1>
+    <p class="lede">About a hundred capabilities in sixteen themes, each with what it does, what it reads, whether it needs the model or just arithmetic, and which platform piece it stands on. Nothing on this list is something brAIn already does.</p>
+    <p class="meta">companion to “brAIn Checks &amp; Self-Tests” · grounded in brAIn 1.28.10 · 2026-09-02</p>
+
+    <div class="thesis">
+      <p><strong>brAIn today is a very good reporter.</strong> It describes the house on a schedule, files what is broken, remembers what is true, and answers when spoken to. Every one of those is a look <em>backwards</em>, and every one waits to be asked or waits for its timer.</p>
+      <p><strong>The next generation acts on three things brAIn does not yet hold:</strong> a baseline for every number in the house (so it can say <em>unusual</em> before it says <em>broken</em>), a record of what people do by hand (so it can propose what they would have automated), and a way to try a change without committing the house to it. With those three, most of what follows is a consumer, not a project.</p>
+    </div>
+
+    <h2 id="frame">The frame: two new kinds of knowledge</h2>
+    <p class="why">brAIn keeps three kinds of knowledge apart on purpose. The capabilities below need two more, each with its own store, lifecycle and one surface.</p>
+    <div class="kinds">
+      <div class="kind"><b>Memory</b><span class="q">what is true</span></div>
+      <div class="kind"><b>Hypothesis</b><span class="q">what brAIn might have wrong</span></div>
+      <div class="kind"><b>Finding</b><span class="q">what is broken</span></div>
+      <div class="kind new"><span class="tag">NEW</span><b>Forecast</b><span class="q">what is about to go wrong, and when</span></div>
+      <div class="kind new"><span class="tag">NEW</span><b>Proposal</b><span class="q">what could be better, and the change that makes it so</span></div>
+    </div>
+    <p>A <strong>forecast</strong> is a finding with a date on it and a confidence: “the back-door battery will be flat in about 9 days”. It lives on the Findings tab under its own filter, because the job is the same (a decision only the person can make), and it is scored the way findings are: did it come true?</p>
+    <p>A <strong>proposal</strong> is a change with a lifecycle: <code>proposed → trialling → accepted | declined</code>. An automation proposal runs in shadow for a week before anyone enables it; a dashboard proposal is a preview; a device proposal is a sentence with a reason. Declined ones carry a note, exactly as “Wrong” does, and the note teaches. Proposals get a tab of their own, because a list of things you might want beside a list of things that are broken makes both worse.</p>
+
+    <h2 id="enablers">Platform enablers</h2>
+    <p class="why">Eight pieces most of the capabilities stand on. Build these and the list mostly falls out; skip them and each capability re-implements a piece of one badly.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Enabler</th><th>What it is</th><th>Who depends on it</th></tr></thead>
+      <tbody>
+        <tr><td class="name">Baseline engine<small>panel/baselines.py</small></td><td>For every numeric and binary entity, a per-hour-of-week baseline (median, spread, typical on-duration) computed nightly from long-term statistics and history. Pure arithmetic, cached to <code>/data</code>, exposed as <code>get_baseline</code> to the analyst. The word “unusual” becomes a number.</td><td>Foresee, Safety, Energy, most alerts</td></tr>
+        <tr><td class="name">Action miner<small>panel/actions.py</small></td><td>Walks the logbook's <code>context</code> chain and files every state change under who or what caused it: a person (which user, which device), an automation, a script, a voice command, brAIn itself. Distinguishes manual actions from automated ones, and detects <em>overrides</em> (a person reverting an automation within minutes).</td><td>Propose, Understand, Trust</td></tr>
+        <tr><td class="name">House model<small>/config/.brain/house.json</small></td><td>A structured twin beside <code>memory.md</code>: rooms with their sensors and roles, people with their devices and routines, schedules, comfort ranges, protected entities. Memory stays prose for the model; the house model is what code reads. The consolidator maintains both from the same inbox.</td><td>Everything that needs to know who, where, and when</td></tr>
+        <tr><td class="name">Shadow runner</td><td>Registers a proposed automation as a listener that evaluates its triggers and conditions against live events and <em>logs what it would have done</em>, without calling any service. The same code replays it against the last 30 days of history for a “what would this have done” answer in seconds.</td><td>Propose, Simulate</td></tr>
+        <tr><td class="name">Policy engine</td><td>Per-entity and per-domain rules that every acting path honours, enforced in the MCP server rather than in prompts: protected entities (never unlock, never disarm, never above 24 °C), quiet hours, who may be woken, what may run unattended. The current <code>BRAIN_DENIED_SERVICES</code> and <code>assist_tool_access</code> become two rows in it.</td><td>Every capability that acts</td></tr>
+        <tr><td class="name">Notification router</td><td>One place that decides whether a message is sent, to whom, on which channel, and whether it is grouped with what was just sent. Per-person routing from the house model, severity floors, a daily budget, escalation. Turns twelve notifications about one event into one narrative.</td><td>Foresee, Rhythm, Safety, Perceive</td></tr>
+        <tr><td class="name">HA-native surfaces</td><td>A <code>todo.brain</code> list, a custom Lovelace card, actionable notifications with reply buttons, TTS announcements through the speakers, calendar entities for forecasts. brAIn stops living only behind its own ingress panel.</td><td>Live inside HA, Rhythm</td></tr>
+        <tr><td class="name">Vision pipeline</td><td>Event-triggered snapshot analysis with a strict budget: a trigger names a camera and a question, the model answers it once, the answer is a state. Never on a timer.</td><td>Perceive, Safety</td></tr>
+      </tbody>
+    </table></div>
+
+    <div class="legend">
+      <span>Mechanism:</span>
+      <span class="m det">math</span><span>deterministic, zero tokens</span>
+      <span class="m ai">model</span><span>a Claude run</span>
+      <span class="m both">math + model</span><span>arithmetic finds it, the model judges or narrates</span>
+    </div>
+
+    <h2 id="foresee"><span class="n">1</span>Foresee: problems before they happen</h2>
+    <p class="why">The Findings tab reports what has already failed. Almost every failure in a house is preceded by a trend, and the trends are already in long-term statistics. This theme is the baseline engine plus a small set of physics.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Capability</th><th>What it does and reads</th><th>Mech.</th></tr></thead>
+      <tbody>
+        <tr><td class="name">Battery runway<small>forecast.battery</small></td><td class="how">Fits the discharge slope of every battery entity over 60 days and files a forecast with a date: “Back door sensor: ~9 days left”. Batches by week so one Sunday message lists everything due before next Sunday. Adds the replacement to <code>todo.brain</code> with the cell type read from the device model.</td><td><span class="m det">math</span></td></tr>
+        <tr><td class="name">Device decline<small>forecast.device</small></td><td class="how">Rising frequency of short unavailabilities, Z-Wave retransmits or ZHA LQI falling week on week, a sensor's reporting interval stretching. Each is a precursor to the “unavailable for 24h” finding, filed days earlier with the trend as the evidence.</td><td><span class="m det">math</span></td></tr>
+        <tr><td class="name">HVAC degradation<small>forecast.hvac</small></td><td class="how">Runtime per degree-hour of heating or cooling demand, tracked per month. A filter clogging or refrigerant loss shows up as the ratio drifting 15 % above its seasonal baseline before comfort suffers. The model turns the ratio into a sentence and a likely cause.</td><td><span class="m both">math + model</span></td></tr>
+        <tr><td class="name">Appliance wear<small>forecast.appliance</small></td><td class="how">Fridge and freezer compressor duty cycle rising, sump pump cycles per day climbing, water heater recovery time lengthening, washer cycle draw changing shape. Uses power sensors where they exist and door/temperature sensors where they do not.</td><td><span class="m det">math</span></td></tr>
+        <tr><td class="name">Sensor drift<small>forecast.drift</small></td><td class="how">Two sensors in one room diverging slowly, or one sensor whose daily range collapses over weeks. Catches the humidity sensor that reads 30 % forever and the thermostat that is 2 °C off from the room, before an automation makes a bad decision on it.</td><td><span class="m det">math</span></td></tr>
+        <tr><td class="name">Storage runway<small>forecast.disk</small></td><td class="how">Growth curve of the recorder database and host disk, extrapolated to full. Names the recorder's noisiest entities as the fix.</td><td><span class="m det">math</span></td></tr>
+        <tr><td class="name">Anomaly alerts<small>alert.anomaly</small></td><td class="how">Any entity outside its hour-of-week baseline by a wide margin: power draw with nobody home, water flow at 3 am, a door open four times longer than usual, a room cooling faster than it ever has (window open, or heating failed). Math finds it, the router decides whether it is worth a phone, the model writes the one sentence.</td><td><span class="m both">math + model</span></td></tr>
+        <tr><td class="name">Weather-ahead alerts<small>alert.weather</small></td><td class="how">Forecast plus house model: freeze warning for rooms with exposed pipes and no heating call, wind warning with awnings out or covers open, heavy rain with windows open, heat wave with no cooling schedule. The action is a proposal, not an automatic close, unless the person has accepted that proposal before.</td><td><span class="m both">math + model</span></td></tr>
+        <tr><td class="name">Leaving and arriving checks<small>alert.departure</small></td><td class="how">On the last person leaving: garage open, door unlocked, oven on, windows open, lights on, water running. On the first arriving: what happened while you were out, in one line. Both learned from the action miner rather than configured.</td><td><span class="m both">math + model</span></td></tr>
+        <tr><td class="name">Consumables<small>forecast.consumable</small></td><td class="how">Filters (from HVAC runtime), water softener salt (from regeneration cycles), printer ink, vacuum bags, pool chemicals where sensors exist: a reorder date on the to-do list, with the part name from the device manual where the model can find it.</td><td><span class="m both">math + model</span></td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="propose"><span class="n">2</span>Propose: automations, scenes and dashboards the house is asking for</h2>
+    <p class="why">The single largest gap. People automate less than a tenth of what they do by hand, and the logbook already records every manual press with who made it and when. brAIn should read that and offer the automation, then prove it before turning it on.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Capability</th><th>What it does and reads</th><th>Mech.</th></tr></thead>
+      <tbody>
+        <tr><td class="name">Routine mining<small>propose.routine</small></td><td class="how">From manual actions: “You turn the kitchen lights off by hand at 23:05 ± 12 min on 26 of the last 30 nights, always after the living-room TV goes off.” The miner finds the pattern and its best trigger (time, or the TV event, whichever predicts it better); the model writes the automation and the sentence. One press starts a trial.</td><td><span class="m both">math + model</span></td></tr>
+        <tr><td class="name">Trial before enable<small>propose.trial</small></td><td class="how">Every proposed automation runs in shadow for seven days. The report says “it would have fired 6 times; on 5 of them you did the same thing by hand within 3 minutes; on 1 you did not.” Accepting enables it; declining files the note. No automation brAIn wrote is ever enabled without a trial unless the person says so.</td><td><span class="m det">math</span></td></tr>
+        <tr><td class="name">Override learning<small>propose.override</small></td><td class="how">When a person reverts an automation's action within minutes, repeatedly, the automation is wrong about something. “<em>Evening lights</em> is overridden 40 % of weekday evenings, always when the office is occupied.” Proposes the missing condition, with a trial.</td><td><span class="m both">math + model</span></td></tr>
+        <tr><td class="name">Scene mining<small>propose.scene</small></td><td class="how">Sets of states people put the house into together (four lights at 30 %, TV on, blinds down) that recur. Proposes the scene with a name and the trigger that usually precedes it.</td><td><span class="m both">math + model</span></td></tr>
+        <tr><td class="name">Automation from a sentence<small>propose.nl</small></td><td class="how">“When the dryer finishes, tell whoever is home.” The model writes it, explains it back in plain words, shows what it would have done last week from history, and starts the trial. The existing chat can do the first half; this is the lifecycle around it.</td><td><span class="m ai">model</span></td></tr>
+        <tr><td class="name">Dashboard proposals<small>propose.dashboard</small></td><td class="how">Entities people touch most that are on no dashboard; a room with no view; a generated per-room or per-person dashboard from the house model, previewed before it is created. The card generator the insights already have becomes a dashboard generator.</td><td><span class="m both">math + model</span></td></tr>
+        <tr><td class="name">Device gaps<small>propose.device</small></td><td class="how">Rooms with lights but no presence sensing, a thermostat with no room sensor, an exterior door with no contact, a washer with no power monitoring: each named with the automations it would unlock. Not a shop, and never brand-specific; a sentence with a reason.</td><td><span class="m both">math + model</span></td></tr>
+        <tr><td class="name">Helper proposals<small>propose.helper</small></td><td class="how">A question asked twice in the chat that a template sensor would answer permanently (“how long has the garage been open”) becomes a proposed helper with its template.</td><td><span class="m ai">model</span></td></tr>
+        <tr><td class="name">Standby hunters<small>propose.standby</small></td><td class="how">Devices with a steady phantom draw and a switch in front of them, with the yearly cost and a proposed schedule. The proposal carries the number, because a number is what makes a person act.</td><td><span class="m det">math</span></td></tr>
+        <tr><td class="name">Blueprint extraction<small>propose.blueprint</small></td><td class="how">Four automations with the same shape and different entities become one blueprint and four instances. Offered, never applied.</td><td><span class="m ai">model</span></td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="surfaces"><span class="n">3</span>Live inside Home Assistant, not beside it</h2>
+    <p class="why">Everything brAIn produces is behind its own panel. A next-generation assistant is on the dashboard you already look at, in the to-do app on your phone, and on the speaker in the kitchen.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Capability</th><th>What it does and reads</th><th>Mech.</th></tr></thead>
+      <tbody>
+        <tr><td class="name">The brAIn card<small>surface.card</small></td><td class="how">A custom Lovelace card: today's brief, open findings with their buttons, active proposals, and an ask box. Same API the panel uses. This is how brAIn reaches a wall tablet.</td><td><span class="m det">math</span></td></tr>
+        <tr><td class="name">A to-do list<small>surface.todo</small></td><td class="how"><code>todo.brain</code>: every finding that needs hands, every consumable, every forecast due date, as items with due dates in HA's own To-do panel and mobile app. Completing one there ends the finding here. One list, two views.</td><td><span class="m det">math</span></td></tr>
+        <tr><td class="name">Actionable notifications<small>surface.actions</small></td><td class="how">Findings and proposals arrive on the phone with buttons: Fix it, Not a problem, Try it for a week. The answer lands in the same store the panel writes.</td><td><span class="m det">math</span></td></tr>
+        <tr><td class="name">Spoken announcements<small>surface.tts</small></td><td class="how">Through the notification router: a brief on the kitchen speaker when the first person is up, a departure check at the door speaker, never during quiet hours, never to an empty room (the house model knows which rooms are occupied).</td><td><span class="m both">math + model</span></td></tr>
+        <tr><td class="name">Calendar of the house<small>surface.calendar</small></td><td class="how">A <code>calendar.brain</code> entity: forecast due dates, maintenance reminders, trials ending, the annual list (smoke detector test, boiler service, gutter clean) generated from what the house contains.</td><td><span class="m both">math + model</span></td></tr>
+        <tr><td class="name">Ask from anywhere<small>surface.ask</small></td><td class="how">A conversation entity that answers about the house with history, not only controls it: “how much did the heat pump cost last week”, “when did the garage last open”. The analyst path, exposed to Assist.</td><td><span class="m ai">model</span></td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="understand"><span class="n">4</span>Understand the house as a place people live in</h2>
+    <p class="why">Memory is a document the model reads. A house model is a structure code can read, and it is what turns “the house” into rooms, people, routines and roles that every other capability can ask about.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Capability</th><th>What it does and reads</th><th>Mech.</th></tr></thead>
+      <tbody>
+        <tr><td class="name">Occupancy model<small>house.occupancy</small></td><td class="how">Per-room occupancy inferred from motion, doors, media, power and device trackers, with confidence, as a set of sensors. Rooms with no presence hardware get an inference from their neighbours. This is what “never announce to an empty room” and “lights on in an empty room for 3 hours” both read.</td><td><span class="m det">math</span></td></tr>
+        <tr><td class="name">Routines per person<small>house.routines</small></td><td class="how">Wake, leave, return, sleep, weekday and weekend, per person from their tracker and the rooms they touch. Kept in the house model, injected into prompts as a paragraph, and the reference every anomaly is measured against.</td><td><span class="m both">math + model</span></td></tr>
+        <tr><td class="name">Device roles<small>house.roles</small></td><td class="how">What each device is <em>for</em>: the freezer in the garage, the lamp that is a nightlight, the plug behind the TV. Learned from names, areas and behaviour; confirmed through hypotheses. Roles are what let the standby hunter skip the freezer.</td><td><span class="m both">math + model</span></td></tr>
+        <tr><td class="name">The house book<small>house.book</small></td><td class="how">A generated, living document that explains the house to a person: how the heating works, what the automations do, where the shut-off valves are (if told), what to do when the alarm goes off. For a house-sitter, a partner, a new owner. Regenerated from the house model and memory; editable.</td><td><span class="m ai">model</span></td></tr>
+        <tr><td class="name">Thermal model<small>house.thermal</small></td><td class="how">Per room: heating rate, cooling rate, solar gain by hour, response to outside temperature. Fitted from history. This is the foundation for pre-heat timing, open-window detection and the cost of a setpoint.</td><td><span class="m det">math</span></td></tr>
+        <tr><td class="name">Guest mode<small>house.guest</small></td><td class="how">When a guest is present (calendar, or told), relax the routines that would confuse them, pause anomaly alerts that are their doing, and generate a one-page guide for them.</td><td><span class="m both">math + model</span></td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="rhythm"><span class="n">5</span>A daily rhythm instead of a timer</h2>
+    <p class="why">Cards refresh on a schedule nobody reads at. A brief arrives at the moment it is useful, says what changed, and is short enough to be spoken.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Capability</th><th>What it does and reads</th><th>Mech.</th></tr></thead>
+      <tbody>
+        <tr><td class="name">Morning brief<small>rhythm.morning</small></td><td class="how">Overnight events worth knowing, weather and what it means for the house, today's calendar, anything due, energy yesterday against the week. Delivered when the first person is up, on their channel, in under 80 words.</td><td><span class="m ai">model</span></td></tr>
+        <tr><td class="name">Evening check<small>rhythm.evening</small></td><td class="how">Before the usual bedtime: what is open, unlocked, or on that usually is not; what tomorrow needs; one line.</td><td><span class="m both">math + model</span></td></tr>
+        <tr><td class="name">Weekly report<small>rhythm.weekly</small></td><td class="how">Energy and cost, findings raised and settled, proposals in trial and their scores, what brAIn learned, one thing to do this week. The one report that goes to everyone in the house.</td><td><span class="m ai">model</span></td></tr>
+        <tr><td class="name">Away digest<small>rhythm.away</small></td><td class="how">After a trip: the story of the house while you were gone, in order, with anything unusual first. Replaces the 40 notifications you muted.</td><td><span class="m ai">model</span></td></tr>
+        <tr><td class="name">Event narratives<small>rhythm.narrative</small></td><td class="how">A security or safety event becomes one message telling the sequence (motion, door, camera snapshot, who was home) rather than five alerts from five integrations.</td><td><span class="m both">math + model</span></td></tr>
+        <tr><td class="name">Notification budget<small>rhythm.budget</small></td><td class="how">Each person has a daily allowance; below it messages are grouped into the next brief. Critical always breaks through. The router reports what it held back, so silence is visibly a choice.</td><td><span class="m det">math</span></td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="energy"><span class="n">6</span>Energy and climate intelligence</h2>
+    <p class="why">The Energy card describes consumption. These change it, with the cost attached to every suggestion.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Capability</th><th>What it does and reads</th><th>Mech.</th></tr></thead>
+      <tbody>
+        <tr><td class="name">Tariff-aware scheduling<small>energy.tariff</small></td><td class="how">With a tariff or price sensor: propose windows for the EV, dishwasher, washer, water heater, and the automation that moves them. Reports what last month would have saved.</td><td><span class="m both">math + model</span></td></tr>
+        <tr><td class="name">Disaggregation<small>energy.signatures</small></td><td class="how">From whole-home power, name the big appliances by their signature (start surge, steady draw, cycle shape) where no per-device meter exists. Coarse, honest about confidence, good enough for “the dryer ran twice today”.</td><td><span class="m det">math</span></td></tr>
+        <tr><td class="name">Pre-heat and pre-cool<small>climate.preheat</small></td><td class="how">From the thermal model: start the heating so the room reaches the target at wake time, not at the schedule's fixed hour. Proposed as an automation with the measured saving.</td><td><span class="m det">math</span></td></tr>
+        <tr><td class="name">Open-window detection<small>climate.window</small></td><td class="how">A room cooling faster than the thermal model allows with the heating on is a window. Alert, and propose pausing the radiator valve.</td><td><span class="m det">math</span></td></tr>
+        <tr><td class="name">Cost of a setting<small>energy.whatif</small></td><td class="how">“Setback to 17 °C overnight” or “pool pump 4 hours instead of 6” answered with a number from the thermal model and history, before it is tried.</td><td><span class="m both">math + model</span></td></tr>
+        <tr><td class="name">Solar and battery strategy<small>energy.solar</small></td><td class="how">With a solar forecast integration: what to run when the sun is up, when to hold the battery, what the export earned. Proposals, with numbers.</td><td><span class="m both">math + model</span></td></tr>
+        <tr><td class="name">Comfort map<small>climate.comfort</small></td><td class="how">Which rooms are outside their comfort range, when, and why (sun, draught, radiator undersized). Per-room, per-hour, from the thermal model and the house model's ranges.</td><td><span class="m det">math</span></td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="perceive"><span class="n">7</span>Perceive: cameras, documents, sound</h2>
+    <p class="why">The MCP server can already fetch a camera snapshot. Nothing asks it a question. Every capability here is triggered by an event and answers one question once, because a camera on a timer is a bill.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Capability</th><th>What it does and reads</th><th>Mech.</th></tr></thead>
+      <tbody>
+        <tr><td class="name">Visual verification<small>see.verify</small></td><td class="how">A contact sensor says the garage is open at 2 am; the camera says whether it is. A finding about a sensor gets a photograph beside it. Cross-checking a sensor against a lens is the highest-value use of vision in a house.</td><td><span class="m ai">model</span></td></tr>
+        <tr><td class="name">Event questions<small>see.event</small></td><td class="how">Doorbell: is there a package? Driveway motion: is that our car? Pet camera: is the dog on the sofa? Each is a trigger, a camera and a question, and the answer becomes a binary sensor an automation can use.</td><td><span class="m ai">model</span></td></tr>
+        <tr><td class="name">Manuals and documents<small>read.docs</small></td><td class="how">Drop a device manual, a warranty or a utility bill into a folder; brAIn reads it once, files the durable facts (filter part number, service interval, tariff rates, warranty end) into memory and the calendar, and answers questions from it later.</td><td><span class="m ai">model</span></td></tr>
+        <tr><td class="name">Device dossier<small>read.device</small></td><td class="how">For a device the registry names: what it can do that is not exposed, known firmware issues, the right battery, from the manufacturer's public documentation. Runs on request, cached per model.</td><td><span class="m ai">model</span></td></tr>
+        <tr><td class="name">Sound events<small>hear.events</small></td><td class="how">Where a microphone integration exists: smoke alarm, glass break, dog barking for ten minutes, a baby. Classified locally by the integration; brAIn decides who to tell and writes the narrative.</td><td><span class="m both">math + model</span></td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="safety"><span class="n">8</span>Safety and care</h2>
+    <p class="why">The capabilities where a missed alert costs more than a false one, so the router's floors are lower and the confirmation is two channels.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Capability</th><th>What it does and reads</th><th>Mech.</th></tr></thead>
+      <tbody>
+        <tr><td class="name">Leak response<small>safe.leak</small></td><td class="how">Water sensor plus a shut-off valve: propose the automation that closes it, with the narrative that names which sensor and where. Continuous flow on the meter at 3 am with nobody up is a leak nobody has a sensor for.</td><td><span class="m both">math + model</span></td></tr>
+        <tr><td class="name">Detector hygiene<small>safe.detectors</small></td><td class="how">Smoke and CO detectors: age from the device model, last test date, low battery, one that has gone silent. A calendar entry for the test.</td><td><span class="m det">math</span></td></tr>
+        <tr><td class="name">Wellbeing patterns<small>safe.wellbeing</small></td><td class="how">Opt-in, for a person living alone or an elderly relative's house: no movement by their usual hour, the kettle not used, a door not opened. Alerts a named person, with what was and was not seen. The most careful capability on the list, with the most careful defaults.</td><td><span class="m both">math + model</span></td></tr>
+        <tr><td class="name">Freeze and heat protection<small>safe.temps</small></td><td class="how">Rooms with pipes below 5 °C or a nursery above 26 °C, from the thermal model and forecast, before it happens.</td><td><span class="m det">math</span></td></tr>
+        <tr><td class="name">Air quality response<small>safe.air</small></td><td class="how">CO₂ rising in an occupied bedroom, PM2.5 outside worse than inside: propose ventilation or its opposite, with the reason.</td><td><span class="m both">math + model</span></td></tr>
+        <tr><td class="name">Nobody-home security posture<small>safe.posture</small></td><td class="how">When away: which doors are unlocked, which cameras are off, whether the alarm is armed, whether any automation would open something. One line, then a proposal to fix the gaps.</td><td><span class="m both">math + model</span></td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="simulate"><span class="n">9</span>Simulate and experiment</h2>
+    <p class="why">The difference between a suggestion and a decision is a number from history. The shadow runner gives that number for automations; the thermal model gives it for climate; a consented experiment gives it for everything else.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Capability</th><th>What it does and reads</th><th>Mech.</th></tr></thead>
+      <tbody>
+        <tr><td class="name">History replay<small>sim.replay</small></td><td class="how">Any automation, existing or proposed, run against the last 30 days of recorded events: how often it would have fired, at what times, and what it would have done to which entities. Answered in seconds, before anything is enabled.</td><td><span class="m det">math</span></td></tr>
+        <tr><td class="name">Conflict detection<small>sim.conflict</small></td><td class="how">Two automations that would act on one entity in the same minute in opposite directions, found by replaying both. The existing “fighting” check finds it after the fact; this finds it before.</td><td><span class="m det">math</span></td></tr>
+        <tr><td class="name">Consented experiments<small>sim.experiment</small></td><td class="how">“Try a 17 °C overnight setback for a week, then compare.” brAIn runs the change, measures cost and comfort against the baseline week, reports, and reverts unless told to keep it. Every experiment is bounded, reversible and announced.</td><td><span class="m both">math + model</span></td></tr>
+        <tr><td class="name">Change preview<small>sim.preview</small></td><td class="how">Before the fixer or an accepted proposal edits anything: the diff of the file, the entities it touches, and the replay of what it changes. Undo already exists; this is the look before.</td><td><span class="m det">math</span></td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="builder"><span class="n">10</span>The builder's assistant</h2>
+    <p class="why">For the person who maintains the house. The terminal already gives them Claude with tools; these are the jobs worth a button.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Capability</th><th>What it does and reads</th><th>Mech.</th></tr></thead>
+      <tbody>
+        <tr><td class="name">Release migration<small>build.migrate</small></td><td class="how">Before a core update: read the release notes and breaking changes, scan the config for what they touch (three automations use the deprecated service, one integration is removed), and propose the edits. After the update: the after-update diff from the checks. The most-asked question in every HA release thread, answered for this house.</td><td><span class="m ai">model</span></td></tr>
+        <tr><td class="name">New-device onboarding<small>build.onboard</small></td><td class="how">A device appears in the registry: brAIn proposes a name, an area, a role, the automations it would join and the dashboard it belongs on, in one card with one Accept.</td><td><span class="m both">math + model</span></td></tr>
+        <tr><td class="name">Template workbench<small>build.template</small></td><td class="how">Write a template from a sentence, evaluate it live against the house, and show the value over the last week. Templates are the most powerful and least discoverable thing in HA.</td><td><span class="m ai">model</span></td></tr>
+        <tr><td class="name">Config narrative<small>build.changelog</small></td><td class="how">Every edit brAIn makes, and every edit a person makes, as a plain-English changelog: what changed, why, what it affected. Generated from the edit snapshots the undo hook already takes.</td><td><span class="m ai">model</span></td></tr>
+        <tr><td class="name">Refactoring<small>build.refactor</small></td><td class="how">Split a 60-action automation, extract a script from repeated actions, rename an entity across every file that names it, with the replay proving nothing changed.</td><td><span class="m both">math + model</span></td></tr>
+        <tr><td class="name">Integration doctor<small>build.integration</small></td><td class="how">One integration's errors, its config entry, its devices, its known issues on GitHub, and the fix that usually works, in one answer. The “explain this error” service grown up.</td><td><span class="m ai">model</span></td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="trust"><span class="n">11</span>Trust and control</h2>
+    <p class="why">An assistant that acts needs to be inspectable and boundable, or it gets switched off the first time it surprises someone. These are what make the rest acceptable.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Capability</th><th>What it does and reads</th><th>Mech.</th></tr></thead>
+      <tbody>
+        <tr><td class="name">Protected entities<small>trust.policy</small></td><td class="how">A page listing what brAIn may never touch and the ranges it may never leave, enforced in the MCP server for every path including the terminal's headless runs. Locks, alarms and garage doors protected by default.</td><td><span class="m det">math</span></td></tr>
+        <tr><td class="name">Activity ledger<small>trust.ledger</small></td><td class="how">Everything brAIn did to the house, when, why, and how to undo it, as a sensor and a card. The action miner records it alongside human actions, so “why did that happen” can answer “brAIn did, because you accepted proposal 14”.</td><td><span class="m det">math</span></td></tr>
+        <tr><td class="name">Confidence everywhere<small>trust.confidence</small></td><td class="how">Forecasts carry a probability, proposals carry their trial score, anomalies carry how far outside the baseline. Numbers a person can calibrate against, and the scorecard checks them.</td><td><span class="m det">math</span></td></tr>
+        <tr><td class="name">Cost per capability<small>trust.cost</small></td><td class="how">The usage popover itemises by capability, not only by run: what the morning brief costs a month, what vision costs, what a trial costs (nothing). Each capability has a switch beside its number.</td><td><span class="m det">math</span></td></tr>
+        <tr><td class="name">Per-person consent<small>trust.people</small></td><td class="how">Routines and wellbeing patterns are about people. Each person in the house model can see what is inferred about them, and switch inference off for themselves.</td><td><span class="m det">math</span></td></tr>
+        <tr><td class="name">Quiet mode<small>trust.quiet</small></td><td class="how">One switch that keeps every acting and alerting capability silent except critical safety, for the week the in-laws visit. Reported in the brief when it ends.</td><td><span class="m det">math</span></td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="compels">What actually makes a smart home compelling</h2>
+    <p class="why">Before the second half of the list, the test each item was held to. A feature is compelling when it does one of five things; a feature that does none of them is a demo.</p>
+    <div class="kinds">
+      <div class="kind"><b>It disappears</b><span class="q">the house does the right thing and nobody touched anything</span></div>
+      <div class="kind"><b>It keeps you safe</b><span class="q">and tells you the one thing that matters, once</span></div>
+      <div class="kind"><b>It saves money you can see</b><span class="q">a number, with what you did to earn it</span></div>
+      <div class="kind"><b>It lifts the mental load</b><span class="q">the laundry, the bins, the filter, the cleaner's code</span></div>
+      <div class="kind"><b>It delights</b><span class="q">a room that looks right at 9 pm, a year in review worth sharing</span></div>
+    </div>
+    <p>The first half of this list is mostly the second and third. What follows leans on the first, fourth and fifth, which are the ones the market has not delivered and which a model in the house makes reachable.</p>
+
+    <h2 id="intents"><span class="n">12</span>Intents, not automations</h2>
+    <p class="why">An automation is a mechanism: if this, then that. What people actually want is an outcome: keep the office comfortable and cheap, make the house calm after nine, never let the basement get damp. brAIn can take the outcome and own the mechanism, and explain every act by the intent it serves. This is the single biggest conceptual shift on either page.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Capability</th><th>What it does and reads</th><th>Mech.</th></tr></thead>
+      <tbody>
+        <tr><td class="name">Standing intents<small>intent.standing</small></td><td class="how">“Keep the nursery between 19 and 21 °C, quietly.” “The porch is lit whenever someone is expected after dark.” brAIn compiles an intent into ordinary automations (so they are inspectable and editable), keeps them tuned as the house and seasons change, and files every retune as a proposal with a trial. An intent has a plain-language owner and a budget; an automation has neither.</td><td><span class="m ai">model</span></td></tr>
+        <tr><td class="name">One-off intents<small>intent.once</small></td><td class="how">“Turn the porch light off when the guests leave.” “Tell me when the laundry is done.” “Warm the office when I get home.” A voice or chat sentence becomes a listener that fires once and then is gone: no automation to clean up, no helper left behind. The most-wanted voice feature in any smart home, and the one that no automation model fits.</td><td><span class="m both">math + model</span></td></tr>
+        <tr><td class="name">Preference conflicts<small>intent.conflict</small></td><td class="how">Two people in one room want different things. The house model holds each person's ranges; brAIn resolves to the overlap, or to a stated rule (“the person who was there first”, “whoever is sleeping wins”), and says which rule it used.</td><td><span class="m both">math + model</span></td></tr>
+        <tr><td class="name">Scene designer<small>intent.scenes</small></td><td class="how">“Design my evening for the living room.” From the fixtures it has (colour, white, dimmable, the lamp that is a nightlight), brAIn composes scenes for morning, day, evening and night with a preview, and a schedule that moves through them. BRight already does this for a party; this is the everyday version, and it is the feature people show their friends.</td><td><span class="m ai">model</span></td></tr>
+        <tr><td class="name">Adaptive lighting, per person<small>intent.light</small></td><td class="how">Colour temperature and brightness following the day is a solved problem; following the <em>person</em> in the room is not. The occupancy model and each person's preferences pick the curve; a manual adjustment teaches it for next time.</td><td><span class="m det">math</span></td></tr>
+        <tr><td class="name">Follow-me<small>intent.follow</small></td><td class="how">Music, a podcast, or a lighting scene moves with the person from room to room, from the occupancy model, with a hand-off delay tuned by how often it is wrong.</td><td><span class="m det">math</span></td></tr>
+        <tr><td class="name">In-the-moment feedback<small>intent.feedback</small></td><td class="how">Any act brAIn performs can be answered on the phone or by voice with “good” or “not that”, and the answer reaches the intent that caused it. The correction note that “Wrong” gives a finding, given to an action.</td><td><span class="m both">math + model</span></td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="runs"><span class="n">13</span>The house runs itself</h2>
+    <p class="why">The things a good building manager does at night and in an emergency, done by the add-on that already has the tools and the policy engine to be trusted with them.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Capability</th><th>What it does and reads</th><th>Mech.</th></tr></thead>
+      <tbody>
+        <tr><td class="name">Overnight self-healing<small>run.heal</small></td><td class="how">A playbook of safe remediations for known failure classes: reload an integration whose setup failed, ping and heal a dead Z-Wave node, power-cycle an unresponsive device that sits behind a smart plug, restart an add-on that stopped, clear a stuck automation. Each runs once, in a window, under the policy engine, with a rollback, and the morning brief says what was healed and what still needs a person. The house that fixes itself while you sleep.</td><td><span class="m both">math + model</span></td></tr>
+        <tr><td class="name">Emergency playbooks<small>run.emergency</small></td><td class="how">Pre-agreed responses to the events that matter: smoke or CO (lights full, doors unlocked, blinds up, HVAC off, everyone notified with the room), water leak (valve closed, water heater off), power outage on the UPS (non-essentials shed, router kept alive, a countdown), internet outage (local fallbacks, a note on the wall tablet), a freeze warning with the heating failed. Written by brAIn from what the house has, reviewed and accepted by the person, rehearsed on request. The one place where acting without asking is the right default.</td><td><span class="m both">math + model</span></td></tr>
+        <tr><td class="name">Vacation mode that learns<small>run.vacation</small></td><td class="how">Presence simulation that replays the household's real routines from the house model rather than random timers, setbacks with freeze protection, deliveries watched, a daily one-line digest, and a warm house for the hour you land. Started by a calendar entry or a sentence.</td><td><span class="m both">math + model</span></td></tr>
+        <tr><td class="name">Temporary access<small>run.access</small></td><td class="how">The cleaner comes Tuesdays 10 to 12, the dog walker at 1. A lock code that exists only in that window, created from the calendar, revoked after, with an alert for use outside it and a brief line when they came and went. Contractor mode does the same for a week, with cameras set the way you chose.</td><td><span class="m det">math</span></td></tr>
+        <tr><td class="name">Deliveries<small>run.deliveries</small></td><td class="how">Doorbell vision plus a parcel-tracking integration where one exists: “your parcel arrived at 14:02, it is on the porch”, and a nudge if it is still there after dark or rain is due.</td><td><span class="m both">math + model</span></td></tr>
+        <tr><td class="name">Sleep and wake<small>run.sleep</small></td><td class="how">A bed sensor or the phone's charger tells the house someone is down: the night path lights dimly on motion, the bedroom holds its CO₂ and temperature, the wake is a slow sunrise timed from the calendar's first event. Nobody configures a bedtime; the routine model already knows it.</td><td><span class="m det">math</span></td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="life"><span class="n">14</span>Household and life</h2>
+    <p class="why">The mental load. Not one of these is technically hard; every one of them is something a person currently carries in their head, and the house has the data to carry it instead.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Capability</th><th>What it does and reads</th><th>Mech.</th></tr></thead>
+      <tbody>
+        <tr><td class="name">Chore engine<small>life.chores</small></td><td class="how">Chores that are triggered by the house rather than a calendar: the dishwasher finished (power signature) and has not been opened in an hour; the washer finished forty minutes ago and the dryer has not started; the bins go out tonight (council calendar) and the bin sensor has not moved; the plants' soil is dry. Each goes to the to-do list and to whoever is home and nearest, and is closed by the house noticing it was done.</td><td><span class="m both">math + model</span></td></tr>
+        <tr><td class="name">Appliance state tracking<small>life.appliances</small></td><td class="how">Washer, dryer, dishwasher, oven and kettle as state machines from their power draw: idle, running, done, unloaded. Sensors an automation can use, and the foundation of the chore engine.</td><td><span class="m det">math</span></td></tr>
+        <tr><td class="name">Pets<small>life.pets</small></td><td class="how">Feeder, litter box, pet door and tracker: “the dog has not been out since 7 am”, “the cat has not eaten today”, the feeder is low, the door was used at 3 am. Care patterns, with the same restraint as the wellbeing capability.</td><td><span class="m both">math + model</span></td></tr>
+        <tr><td class="name">Garden and irrigation<small>life.garden</small></td><td class="how">Evapotranspiration from the weather integration, soil moisture where sensors exist, plant needs from what is planted (told once, or read from a garden app), frost protection for the tender beds, and a watering schedule that skips before rain and lengthens in a heat wave. Reports water used against what a timer would have used.</td><td><span class="m both">math + model</span></td></tr>
+        <tr><td class="name">Vehicles and charging<small>life.vehicle</small></td><td class="how">Charge to what tomorrow's calendar needs at the cheapest hours, warn when the range will not cover the trip, notice the car left unlocked in the drive, open the garage on arrival only for a known car (vision or tracker), and plug-in reminders when the routine model expects a long day.</td><td><span class="m both">math + model</span></td></tr>
+        <tr><td class="name">Water intelligence<small>life.water</small></td><td class="how">With a meter: usage split into irrigation, showers, laundry and unexplained, by flow signature; a shower that ran twice as long as usual; a toilet that runs; the dripping tap nobody hears.</td><td><span class="m det">math</span></td></tr>
+        <tr><td class="name">Asset register<small>life.assets</small></td><td class="how">Every device with its model, install date (from the registry), purchase date and warranty end (from documents brAIn has read), firmware, and an age-based replacement window. The list an insurer asks for after a flood, and the source of “this is eight years old and failing”.</td><td><span class="m both">math + model</span></td></tr>
+        <tr><td class="name">Visitors and hosting<small>life.hosting</small></td><td class="how">A calendar entry with guests: the spare room warmed, the guest wifi shown on the tablet, the alarm's bedtime routine relaxed, the coffee scene at their usual hour, and the wellbeing and anomaly alerts told to expect a stranger.</td><td><span class="m both">math + model</span></td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="see"><span class="n">15</span>See the house</h2>
+    <p class="why">Ways of looking at the house that make its behaviour legible, which is what turns a black box into something a family trusts and enjoys.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Capability</th><th>What it does and reads</th><th>Mech.</th></tr></thead>
+      <tbody>
+        <tr><td class="name">The day timeline<small>see.timeline</small></td><td class="how">One scrollable strip of any day: who came and went, what turned on and why, when the heating ran, what brAIn did, what was unusual. The action miner drawn. Tap anything to ask why. The answer to “what happened last night” as a picture.</td><td><span class="m det">math</span></td></tr>
+        <tr><td class="name">Live floor plan<small>see.plan</small></td><td class="how">BRight has a light map; brAIn gets a floor plan with occupancy, temperature, open doors and windows, and anything alerting, live. Tap a room to ask about it. A wall-tablet view that reads at a glance from across the kitchen.</td><td><span class="m det">math</span></td></tr>
+        <tr><td class="name">Year in review<small>see.year</small></td><td class="how">Your home in 2026: energy and what it cost, the coldest night and how the house held, how many times the front door opened, the automation that fired most, the longest streak with nothing broken, what brAIn learned. Shareable. Delight is a feature.</td><td><span class="m ai">model</span></td></tr>
+        <tr><td class="name">Automation report cards<small>see.reportcard</small></td><td class="how">Per automation: how often it fired against how often it was expected to, how often it was overridden, what it cost, whether it has ever errored. A health grade a person can act on, and the input to the override learner.</td><td><span class="m det">math</span></td></tr>
+        <tr><td class="name">Network intelligence<small>see.network</small></td><td class="how">With a router integration: a new device on the wifi, a device that has never been seen, an IoT device talking to somewhere new, a bandwidth hog at 2 am. Security posture that starts at the network, and a name for every unnamed MAC address from the registry.</td><td><span class="m both">math + model</span></td></tr>
+        <tr><td class="name">Ambient status<small>see.ambient</small></td><td class="how">A page for an e-ink or wall display: nothing to do, or the one thing to do, and the brief. Designed to be glanced at, with the house's colour scheme, not a dashboard.</td><td><span class="m det">math</span></td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="decisions"><span class="n">16</span>Bigger decisions</h2>
+    <p class="why">Once the house has a thermal model, a baseline for every number and a year of history, it can answer questions that used to need a consultant.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Capability</th><th>What it does and reads</th><th>Mech.</th></tr></thead>
+      <tbody>
+        <tr><td class="name">Capital what-ifs<small>decide.capital</small></td><td class="how">“A 6 kW array would have covered 58 % of last year's use; with a 10 kWh battery, 79 %.” “A heat pump at this house's measured heat loss would have cost X against the boiler's Y.” From the house's own history, not a brochure's assumptions.</td><td><span class="m both">math + model</span></td></tr>
+        <tr><td class="name">Replacement advisor<small>decide.replace</small></td><td class="how">A device that is old, failing (from the forecasts) and expensive to run (from its baseline): what replacing it saves, when the payback lands, and the capabilities a modern equivalent would add to the automations that use it.</td><td><span class="m both">math + model</span></td></tr>
+        <tr><td class="name">Firmware advisor<small>decide.firmware</small></td><td class="how">Read the release notes for a pending device or integration update, judge the risk against how this house uses it, and say “safe, do it tonight” or “wait: this drops the feature your bathroom automation depends on”.</td><td><span class="m ai">model</span></td></tr>
+        <tr><td class="name">Anonymous benchmarks<small>decide.benchmark</small></td><td class="how">Opt-in, if a backend ever exists: standby draw, heating per degree-day, water per person, against similar homes. “Top 20 %” is the sentence that makes people act. Listed for completeness; it is the one item here that needs a service outside the house.</td><td><span class="m det">math</span></td></tr>
+        <tr><td class="name">Several homes<small>decide.fleet</small></td><td class="how">The cabin, a parent's house, a rental: one brief across them, one findings list with the house named, one place to ask. Each install keeps its own brAIn; this is a view.</td><td><span class="m both">math + model</span></td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="ten">If only twelve</h2>
+    <p class="why">Ordered by how much of the house each one changes for the effort, with the enabler it forces into existence.</p>
+    <div class="top">
+      <div class="row"><div class="k">1</div><div><b>One-off intents</b><p>“Turn the porch light off when the guests leave.” The sentence people already try to say to their house, and no automation model fits it. Small to build on the shadow runner; enormous in how the product feels.</p></div></div>
+      <div class="row"><div class="k">2</div><div><b>Routine mining with a trial before enable</b><p>The action miner and the shadow runner, and the first time brAIn offers something rather than reports something.</p></div></div>
+      <div class="row"><div class="k">3</div><div><b>Emergency playbooks</b><p>Smoke, leak, outage, freeze: written by brAIn from what the house has, accepted once, rehearsed on request. The capability that earns the right to act without asking.</p></div></div>
+      <div class="row"><div class="k">4</div><div><b>Battery runway and device decline forecasts</b><p>The baseline engine, and the first findings with a date on them. Cheap, deterministic, and the thing every smart-home owner has wished for.</p></div></div>
+      <div class="row"><div class="k">5</div><div><b>Anomaly alerts through a notification router</b><p>“Unusual” as a number, and a router that keeps it from becoming noise. Pays for itself the first time it catches water running at night.</p></div></div>
+      <div class="row"><div class="k">6</div><div><b>Overnight self-healing</b><p>A playbook of safe remediations with rollback, and a morning line saying what was healed. The house that fixes itself while you sleep.</p></div></div>
+      <div class="row"><div class="k">7</div><div><b>The to-do list, actionable notifications and the chore engine</b><p>brAIn in the To-do app and on the phone, with the laundry and the bins on it because the house noticed. Small to build, large in reach.</p></div></div>
+      <div class="row"><div class="k">8</div><div><b>History replay for any automation</b><p>“What would this have done last month” in seconds. It makes proposals credible, migrations safe and conflicts visible before they happen.</p></div></div>
+      <div class="row"><div class="k">9</div><div><b>Override learning and automation report cards</b><p>The automation you keep fighting, fixed by the evidence of you fighting it.</p></div></div>
+      <div class="row"><div class="k">10</div><div><b>Morning brief, weekly report and the day timeline</b><p>Two scheduled runs and one picture that replace a dozen unread cards, delivered where people are.</p></div></div>
+      <div class="row"><div class="k">11</div><div><b>Scene designer and the thermal model</b><p>The everyday version of BRight's director, and the physics that makes pre-heat and open-window detection possible. Delight and savings in one release.</p></div></div>
+      <div class="row"><div class="k">12</div><div><b>Protected entities in the MCP server</b><p>The policy that lets everything above be switched on without a leap of faith. Not last because it matters least; last because it is the precondition for shipping the rest.</p></div></div>
+    </div>
+
+    <div class="callout">
+      <div class="eyebrow">What this list is not</div>
+      <p>It is not a claim that every item belongs in one add-on. Vision, sound and wellbeing each deserve a switch that ships off. The order above is what would make brAIn feel like a different product within a few releases; the rest is the map of where it goes after that.</p>
+    </div>
+
+    <div class="foot">Companion to “brAIn Checks &amp; Self-Tests”, which covers deterministic house checks, the in-situ self-test and the diagnostics loop; nothing there is repeated here. Identifiers such as <code>propose.routine</code> are proposals for names, not code.</div>
+  </main>
+</div>

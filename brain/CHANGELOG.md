@@ -2,6 +2,89 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.29.0
+
+### Added
+
+- **House checks: findings that cost nothing.** Every finding used to come
+  out of a Claude run — the analyst sweeping a category on a schedule, or a
+  study session — and both are told an empty list is the honest answer, so
+  most of those runs spent tens of thousands of tokens to report nothing,
+  while the problems that are *deterministically* visible were found only
+  when a model happened to look in the right place. `panel/checks/` is a
+  set of pure functions over one snapshot of the house (states, registries,
+  services, `automations.yaml` and friends, the traces Home Assistant keeps
+  in `.storage`, a week of long-term statistics, the dashboards) that file
+  findings without calling Claude: automations naming entities that do not
+  exist, or calling services that are not registered (the old phone's
+  `notify.mobile_app_*`, with the replacement named); automations whose
+  last run errored, whose condition never passes, or that keep dropping
+  triggers on `mode: single`; automations that have never fired or were
+  switched off and forgotten; duplicates; a missing blueprint; devices
+  unavailable for more than a day, grouped per device so a dead hub is one
+  row; batteries low, or *silent* — a dead device stops reporting its own
+  battery, which a threshold never sees; impossible readings; sensors
+  frozen on one value for a week; entities left behind by a removed
+  integration; dashboards showing entities that no longer exist. They run
+  two minutes after startup and every `checks_interval_hours` (default 6;
+  0 for never on a timer), on **Run checks now** on the Findings tab, and
+  as `brain check`. What they find lands under a "check" label and rides
+  into the analyst's prompt block with everything else, so Claude's job on
+  the automations card becomes judgement rather than discovery.
+- **The first forecast.** `forecast.battery` fits a line through sixty days
+  of a battery's statistics and files "… battery is running down" with the
+  days left in the detail, three weeks out — a finding with a date on it,
+  rather than a threshold that fires the day before it dies.
+- **A finding a check no longer reports leaves the list on its own.** A
+  device that came back, a battery that was changed, an automation fixed
+  by hand: the row is removed, not settled — no memory line, no ledger
+  entry — so it can come back if the problem does. Only checks that
+  actually *ran* may clear anything: a check whose data could not be
+  fetched said nothing, and nothing is not "the problem went away". And
+  because a check's finding text is stable on purpose (the store dedupes
+  by it), the number that changes lives in the detail and is refreshed in
+  place, so a forecast filed a week ago says "about 2 days" today.
+- **A producer scorecard.** Every ending on the Findings tab is a label —
+  "I did it" and "Got it" say the report was right, "Wrong" says it was
+  not — and nothing added them up, because the settled ledger recorded the
+  ending and not who raised it. It records the producer now, and a line
+  under the filters says how right each one has been ("Device check 11 of
+  12 confirmed"), once it has enough endings to mean something. The same
+  numbers ride the diagnostics bundle, which is how a check with a bad
+  floor gets found across installs rather than argued about.
+- **A run journal.** One line per Claude run of any kind — insight, asked
+  question, fix, auth check, chat turn — and per checks pass, with who ran
+  it, how long it took, what it cost, and how it ended in a fixed
+  vocabulary (`ok`, `timeout`, `max_turns`, `unparseable`, `auth`,
+  `denied`, `no_cli`, `crash`, `fallback`, `error`). Fallbacks are
+  outcomes too, because a fallback nobody counts is a fallback read as the
+  real thing. Prompts and replies are never written; error text is
+  scrubbed of anything credential-shaped before it lands.
+- **Diagnostics, three ways.** `GET /api/diagnostics` is versions, options,
+  the journal's last day, the stores' shapes, the last checks pass, the
+  daemon roll-call and the auth verdict — no prompts, no entity states.
+  The panel mirrors it to `/config/.brain/diagnostics.json` hourly and
+  after every checks pass, and the integration now ships a
+  `diagnostics.py`, so the standard **Download diagnostics** button on the
+  brAIn integration page produces something. `brain report` writes the
+  same payload beside `brain doctor --json`, the add-on log tail and the
+  versions as one redacted archive under `/share/brain/reports/`, for a
+  bug report that arrives with evidence rather than prose.
+- **`brain doctor --json`.** The same self-test as one JSON object, so
+  `brain report`, the panel and anything else can read a verdict rather
+  than scrape a transcript.
+- **`protected_entities`.** A list of entity ids or `domain.*` patterns
+  brAIn may never act on, from any face — the terminal, the chat, Fix it,
+  voice and automations. Enforced in the MCP server's one chokepoint, so
+  it covers every `control_*` tool and every direct service call; a
+  protected entity can still be looked at. An area or device target is
+  resolved through the registry, and a call aimed at an area or device
+  that *contains* a protected entity is refused; labels and floors cannot
+  be resolved and are refused outright while the list is non-empty.
+- **Two design pages** under `docs/design/`: the checks-and-self-tests
+  plan this release is the first tier of, and a capability map for what
+  comes after.
+
 ## 1.28.10
 
 ### Fixed

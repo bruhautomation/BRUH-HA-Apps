@@ -48,6 +48,7 @@ from pathlib import Path
 import engine
 
 import atomic_write
+import journal
 
 # Where the chat runs. /config so the project's settings.local.json (the
 # permission set) and CLAUDE.md (the description of this house) both apply —
@@ -1284,14 +1285,23 @@ def _normalise(event: dict) -> list[dict]:
         return out
 
     if etype == "result":
+        duration = event.get("duration_ms")
+        turns = event.get("num_turns")
+        secs = duration / 1000 if isinstance(duration, (int, float)) else None
         if event.get("is_error"):
-            return [{"type": "notice", "level": "error",
-                     "text": _error_text(event)}]
+            text = _error_text(event)
+            journal.record(
+                "chat", journal.classify({"ok": False, "error": text}),
+                error=text, duration_s=secs,
+                turns=turns if isinstance(turns, int) else None)
+            return [{"type": "notice", "level": "error", "text": text}]
+        journal.record("chat", "ok", duration_s=secs,
+                       turns=turns if isinstance(turns, int) else None)
         return [{
             "type": "result",
-            "duration_ms": event.get("duration_ms"),
+            "duration_ms": duration,
             "cost_usd": event.get("total_cost_usd"),
-            "turns": event.get("num_turns"),
+            "turns": turns,
             "_keep": False,
         }]
 

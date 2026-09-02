@@ -28,19 +28,58 @@ SETTINGS="/config/.claude/settings.local.json"
 USAGE_FILE="/config/.brain/usage_limits.json"
 
 # --- pretty output ----------------------------------------------------------
-if [ -t 1 ]; then
+# `--json` turns the report into one JSON object on stdout (the same
+# checks, the same order) so the panel, the health sensor and `brain report`
+# read a verdict rather than scrape a transcript. Every line is recorded
+# either way; only the printing changes.
+JSON_MODE=0
+for arg in "$@"; do
+    [ "$arg" = "--json" ] && JSON_MODE=1
+done
+if [ -t 1 ] && [ "$JSON_MODE" = "0" ]; then
     C_OK=$'\033[32m'; C_BAD=$'\033[31m'; C_WARN=$'\033[33m'; C_DIM=$'\033[2m'; C_RST=$'\033[0m'
 else
     C_OK=""; C_BAD=""; C_WARN=""; C_DIM=""; C_RST=""
 fi
 PASS=0; FAIL=0; WARN=0
-pass() { PASS=$((PASS + 1)); printf '  %s✓%s %s\n' "$C_OK" "$C_RST" "$1"; }
-fail() { FAIL=$((FAIL + 1)); printf '  %s✗%s %s\n' "$C_BAD" "$C_RST" "$1"; }
-warn() { WARN=$((WARN + 1)); printf '  %s!%s %s\n' "$C_WARN" "$C_RST" "$1"; }
-info() { printf '    %s%s%s\n' "$C_DIM" "$1" "$C_RST"; }
-hdr()  { printf '\n%s%s%s\n' "$C_DIM" "$1" "$C_RST"; }
+CUR_SECTION=""
+RECORDS=$(mktemp 2>/dev/null || echo "/tmp/brain-doctor-$$")
+: > "$RECORDS"
+# One record per line: kind, text, section — separated by a unit separator,
+# a byte no check message contains, so a message may carry any punctuation.
+record() { printf '%s\x1f%s\x1f%s\n' "$1" "$2" "$CUR_SECTION" >> "$RECORDS"; }
+pass() { PASS=$((PASS + 1)); record pass "$1"; [ "$JSON_MODE" = "1" ] || printf '  %s✓%s %s\n' "$C_OK" "$C_RST" "$1"; }
+fail() { FAIL=$((FAIL + 1)); record fail "$1"; [ "$JSON_MODE" = "1" ] || printf '  %s✗%s %s\n' "$C_BAD" "$C_RST" "$1"; }
+warn() { WARN=$((WARN + 1)); record warn "$1"; [ "$JSON_MODE" = "1" ] || printf '  %s!%s %s\n' "$C_WARN" "$C_RST" "$1"; }
+info() { record info "$1"; [ "$JSON_MODE" = "1" ] || printf '    %s%s%s\n' "$C_DIM" "$1" "$C_RST"; }
+hdr()  { CUR_SECTION="$1"; [ "$JSON_MODE" = "1" ] || printf '\n%s%s%s\n' "$C_DIM" "$1" "$C_RST"; }
 
-printf '%s\n' "brAIn — self-test"
+# The verdict as one JSON object. python3 is in the image and is what
+# every other script here reaches for to emit JSON safely.
+emit_json() {
+    python3 - "$RECORDS" "$PASS" "$FAIL" "$WARN" <<'PYEMIT'
+import json, sys, time
+path, passed, failed, warned = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4])
+checks = []
+try:
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            parts = line.rstrip("\n").split("\x1f")
+            if len(parts) >= 2:
+                checks.append({"kind": parts[0], "text": parts[1],
+                               "section": parts[2] if len(parts) > 2 else ""})
+except OSError:
+    pass
+print(json.dumps({
+    "ok": failed == 0,
+    "passed": passed, "failed": failed, "warnings": warned,
+    "generated_at": int(time.time()),
+    "checks": checks,
+}, indent=1))
+PYEMIT
+}
+
+[ "$JSON_MODE" = "1" ] || printf '%s\n' "brAIn — self-test"
 
 # --- 1. environment & auth --------------------------------------------------
 hdr "Environment & Home Assistant API"
@@ -596,6 +635,13 @@ else
 fi
 
 # --- summary ----------------------------------------------------------------
+if [ "$JSON_MODE" = "1" ]; then
+    emit_json
+    rm -f "$RECORDS"
+    [ "$FAIL" -gt 0 ] && exit 1
+    exit 0
+fi
+rm -f "$RECORDS"
 hdr "Summary"
 printf '  %s%d passed%s, %s%d failed%s, %s%d warnings%s\n' \
     "$C_OK" "$PASS" "$C_RST" "$C_BAD" "$FAIL" "$C_RST" "$C_WARN" "$WARN" "$C_RST"
