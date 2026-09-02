@@ -263,8 +263,19 @@
           guesses it wants confirmed. Send it to fix something, or tell it what it's
           got wrong and why; the reason is what it learns from.</p>
       </div>
-      <div class="findfilters" id="findFilters"></div>
+      <!-- The house checks read Home Assistant directly and never call
+           Claude, so the button is cheap to press and says so. It sits
+           beside the filters rather than in them because the filters are
+           rebuilt on every render. -->
+      <div class="findside">
+        <div class="findfilters" id="findFilters"></div>
+        <button id="findRunChecks" class="btn small ghost"
+                data-tip="Read the house now — automations, devices, batteries, dashboards. No Claude run, nothing spent.">Run checks now</button>
+      </div>
     </div>
+    <!-- How right each producer has been, from the endings people gave.
+         Hidden until a producer has enough endings to mean something. -->
+    <div id="findScore" class="findscore" hidden></div>
     <div id="findList" class="findlist"></div>
   </section>
 </div>

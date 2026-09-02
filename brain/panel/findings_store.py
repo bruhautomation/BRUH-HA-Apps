@@ -609,6 +609,13 @@ def _remember_settled(shaped: dict, kind: str, when: int = 0,
         "kind": kind,
         "ts": when or int(time.time()),
         "note": str(note or "").strip()[:MAX_NOTE],
+        # Who raised it. An ending is a label — "I did it" says the report
+        # was right, "Wrong" says it was not — and without the producer on
+        # the entry nothing can add those labels up per producer. That sum
+        # is the scorecard, and the scorecard is what says which check or
+        # which card is worth trusting in this house.
+        "source": str(shaped.get("source") or "")[:64],
+        "source_title": str(shaped.get("source_title") or "")[:120],
     })
     _write_settled(ledger[-MAX_SETTLED:])
 
@@ -624,6 +631,35 @@ def _load_settled() -> list[dict]:
 
 def _write_settled(items: list[dict]) -> None:
     atomic_write.write_json(SETTLED_FILE, {"settled": items})
+
+
+def scorecard() -> list[dict]:
+    """How right each producer has been, from the endings people gave.
+
+    ``[{source, title, confirmed, wrong, total}, ...]``, most-settled first.
+    "I did it" and "Got it" after a fix count as confirmed; "Wrong" counts
+    as wrong. Snoozes and open rows count as nothing — a decision not yet
+    made is not a label. Only settled entries that recorded a producer
+    take part, so a ledger from before that field existed simply scores
+    nothing rather than scoring everything as one anonymous producer.
+    """
+    by: dict[str, dict] = {}
+    for e in _load_settled():
+        src = str(e.get("source") or "")
+        if not src:
+            continue
+        row = by.setdefault(src, {
+            "source": src, "title": str(e.get("source_title") or src),
+            "confirmed": 0, "wrong": 0})
+        if e.get("kind") == "fixed":
+            row["confirmed"] += 1
+        elif e.get("kind") == "ignored":
+            row["wrong"] += 1
+    rows = list(by.values())
+    for r in rows:
+        r["total"] = r["confirmed"] + r["wrong"]
+    rows.sort(key=lambda r: (-r["total"], r["source"]))
+    return rows
 
 
 def settled_listing() -> list[dict]:
@@ -762,6 +798,75 @@ def reconcile_running(reason: str) -> int:
     if stuck:
         _write(items)
     return len(stuck)
+
+
+# What the house checks may take back. A row somebody has sent Claude at,
+# or that Claude has changed, is theirs to end — a check clears only what
+# is still simply *open*.
+CLEARABLE = ("open", "needs_you", "failed")
+
+
+@_mutates
+def refresh_details(objs: list[dict]) -> int:
+    """Update the detail and severity of rows a producer has re-reported.
+
+    A check's finding text is stable on purpose (the store dedupes by it),
+    which leaves the number that changes — days left, since when — in
+    ``detail``. Re-reporting through :func:`add_many` drops the row as
+    known; this is the other half, so a battery forecast filed a week ago
+    says "about 2 days" today rather than "about 9". Returns how many rows
+    changed.
+    """
+    items = _load()
+    by_key = {normalize(f.get("text", "")): f for f in items}
+    changed = 0
+    for obj in objs:
+        entry = coerce(obj)
+        if entry is None:
+            continue
+        cur = by_key.get(normalize(entry["text"]))
+        if cur is None or cur.get("status") not in CLEARABLE:
+            continue
+        if (cur.get("detail") != entry["detail"]
+                or cur.get("severity") != entry["severity"]):
+            cur["detail"] = entry["detail"]
+            cur["severity"] = entry["severity"]
+            changed += 1
+    if changed:
+        _write(items)
+    return changed
+
+
+@_mutates
+def clear_resolved(sources: set[str], keep_keys: set[str]) -> list[dict]:
+    """Drop open rows a producer no longer reports.
+
+    A device that came back, a battery that was changed, an automation
+    that was fixed by hand without anyone pressing the button: the check
+    that filed it stops finding it, and the row should go rather than sit
+    on the list until somebody presses "I did it" about a thing that is
+    fine. Only rows from ``sources`` (the checks that actually RAN this
+    pass — a check whose data was missing must not clear anything) and
+    only rows still in a clearable status.
+
+    Nothing is written to the settled ledger and no memory line is
+    queued: a problem that went away on its own is not a fact about the
+    house, and if it comes back the check files it again. Returns the
+    rows that were removed.
+    """
+    items = _load()
+    kept: list[dict] = []
+    gone: list[dict] = []
+    for f in items:
+        if (f.get("source") in sources
+                and f.get("status") in CLEARABLE
+                and normalize(f.get("text", "")) not in keep_keys):
+            gone.append(_shape(f))
+            continue
+        kept.append(f)
+    if gone:
+        _write(kept)
+    return gone
 
 
 @_mutates

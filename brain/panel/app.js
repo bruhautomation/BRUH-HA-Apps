@@ -2087,6 +2087,7 @@ async function refreshFindings() {
 function takeFindings(data) {
   state.findings = data.findings || [];
   state.hypotheses = data.hypotheses || [];
+  state.scorecard = data.scorecard || [];
   updateFindBadge(data.open);
 }
 
@@ -2476,6 +2477,8 @@ function renderFindings() {
     chips.appendChild(chip);
   });
 
+  renderScorecard();
+
   const list = $("#findList");
   list.textContent = "";
   const active = FIND_FILTERS.find((f) => f.id === state.findFilter) || FIND_FILTERS[0];
@@ -2496,6 +2499,67 @@ function renderFindings() {
   claims.forEach((h) => list.appendChild(makeHypothesis(h)));
   shown.forEach((f) => list.appendChild(makeFinding(f)));
 }
+
+// How right each producer has been, from the endings people gave: "I did
+// it" and "Got it" say the report was right, "Wrong" says it was not. Shown
+// only once a producer has enough endings to mean something — "1 of 1" is
+// not a track record, it is an anecdote — and capped, because this is a
+// line under the filters and not a table.
+const SCORE_MIN_ENDINGS = 3;
+function renderScorecard() {
+  const box = $("#findScore");
+  if (!box) return;
+  const rows = (state.scorecard || []).filter((r) => r.total >= SCORE_MIN_ENDINGS);
+  box.textContent = "";
+  box.hidden = !rows.length;
+  if (!rows.length) return;
+  box.appendChild(el("span", null, "How right it's been: "));
+  rows.slice(0, 4).forEach((r, i) => {
+    if (i) box.appendChild(el("span", null, " · "));
+    box.appendChild(el("b", null, r.title));
+    box.appendChild(el("span", null, ` ${r.confirmed} of ${r.total} confirmed`));
+  });
+}
+
+// "Run checks now": one pass of the deterministic house checks, through
+// the same route the scheduler uses. The reply is a summary, not the list,
+// so the list is refetched afterwards — the store is the one source of
+// what is on it.
+async function runChecksNow(btn) {
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Checking…";
+  try {
+    const res = await api("api/checks/run", { method: "POST" });
+    if (res.error) {
+      toast(res.error);
+    } else {
+      const fresh = (res.created || []).length;
+      const gone = (res.cleared || []).length;
+      const partial = Object.keys(res.snapshot_errors || {}).length
+        ? " · some data could not be read" : "";
+      toast(`${(res.ran || []).length} checks ran: ${fresh} new, ${gone} cleared${partial}`);
+    }
+    await refreshFindings();
+    renderFindings();
+  } catch (e) {
+    toast(e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+}
+(function bindRunChecks() {
+  const bind = () => {
+    const btn = $("#findRunChecks");
+    if (btn) btn.addEventListener("click", () => runChecksNow(btn));
+  };
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", bind);
+  } else {
+    bind();
+  }
+})();
 
 // ------------------------------------------------------- knowledge modal
 // The viewer for everything the analyst has learned: open questions (answer

@@ -50,6 +50,19 @@ DENIED_SERVICES = [
 # consolidator daemon. Env-overridable so tests can point it at a temp dir.
 MEMORY_DIR = os.environ.get("BRAIN_MEMORY_DIR", "/config/.brain/memory")
 
+# Protected entities: the add-on's `protected_entities` option, exported by
+# run.sh as a comma-separated list of entity ids or `domain.*` patterns.
+# Where DENIED_SERVICES restricts a *channel* (voice may not unlock), this
+# restricts an *entity* for every channel at once — the terminal, the chat,
+# the fixer, voice and automations all reach the house through this one
+# process, so "brAIn never touches the front door lock" is enforced here
+# and nowhere else. Read-only tools are unaffected: a protected entity can
+# still be looked at, it cannot be acted on.
+PROTECTED_ENTITIES = [
+    p.strip().lower() for p in os.environ.get("BRAIN_PROTECTED_ENTITIES", "").split(",")
+    if p.strip()
+]
+
 
 def _service_denied(domain, service):
     """True if calling domain.service is forbidden for this channel."""
@@ -108,6 +121,104 @@ def _meta_call_denied(payload):
         if edomain in denied_domains:
             return (f"it targets {eid}, and {edomain} services are "
                     "restricted for this assistant")
+    return None
+
+
+def _entity_protected(entity_id):
+    """True if this entity id matches the protected list."""
+    target = str(entity_id or "").strip().lower()
+    if not target:
+        return False
+    domain = target.split(".", 1)[0]
+    for pattern in PROTECTED_ENTITIES:
+        if pattern == target or pattern == f"{domain}.*" or pattern == "*":
+            return True
+    return False
+
+
+_PROTECTED_SCOPES = {"at": 0.0, "areas": set(), "devices": set()}
+_PROTECTED_SCOPES_TTL = 60.0
+
+
+def _protected_scopes():
+    """The area and device ids that hold a protected entity.
+
+    An area or device target resolves to entities inside Home Assistant,
+    where this check cannot see it — so the registry is asked which areas
+    and devices a protected entity lives in, and a call aimed at one of
+    those is refused. Cached briefly; the registry does not move fast.
+    Unreadable registry → empty sets, and the caller fails closed on any
+    area/device target while a protected list exists.
+    """
+    import time as _time
+    now = _time.time()
+    if now - _PROTECTED_SCOPES["at"] < _PROTECTED_SCOPES_TTL:
+        return _PROTECTED_SCOPES["areas"], _PROTECTED_SCOPES["devices"], True
+    areas, devices, ok = set(), set(), False
+    try:
+        entities = _ws_command({"type": "config/entity_registry/list"})
+        device_rows = _ws_command({"type": "config/device_registry/list"})
+        if isinstance(entities, list) and isinstance(device_rows, list):
+            device_area = {d.get("id"): d.get("area_id") for d in device_rows
+                           if isinstance(d, dict)}
+            for e in entities:
+                if not isinstance(e, dict) or not _entity_protected(e.get("entity_id")):
+                    continue
+                if e.get("device_id"):
+                    devices.add(e["device_id"])
+                area = e.get("area_id") or device_area.get(e.get("device_id"))
+                if area:
+                    areas.add(area)
+            ok = True
+    except Exception:  # noqa: BLE001 — an unreadable registry fails closed below
+        ok = False
+    if ok:
+        _PROTECTED_SCOPES.update(at=now, areas=areas, devices=devices)
+    return areas, devices, ok
+
+
+def _protected_target(payload):
+    """Why a service call's targets touch a protected entity, or None."""
+    if not PROTECTED_ENTITIES:
+        return None
+    payload = payload if isinstance(payload, dict) else {}
+    target = payload.get("target")
+    scopes = [payload] + ([target] if isinstance(target, dict) else [])
+    entity_ids = []
+    area_ids = []
+    device_ids = []
+    for scope in scopes:
+        raw = scope.get("entity_id")
+        if isinstance(raw, str):
+            entity_ids.extend(x.strip() for x in raw.split(",") if x.strip())
+        elif isinstance(raw, list):
+            entity_ids.extend(str(x) for x in raw)
+        for key, bucket in (("area_id", area_ids), ("device_id", device_ids)):
+            val = scope.get(key)
+            if isinstance(val, str):
+                bucket.append(val)
+            elif isinstance(val, list):
+                bucket.extend(str(x) for x in val)
+        for key in ("label_id", "floor_id"):
+            if scope.get(key):
+                return ("it targets a label or floor, whose member entities "
+                        "cannot be checked against the protected list")
+    for eid in entity_ids:
+        if eid.lower() == "all":
+            return "it addresses all entities, including protected ones"
+        if _entity_protected(eid):
+            return f"{eid} is a protected entity"
+    if area_ids or device_ids:
+        areas, devices, ok = _protected_scopes()
+        if not ok:
+            return ("it targets an area or device and the registry could "
+                    "not be read to check whether a protected entity is in it")
+        for a in area_ids:
+            if a in areas:
+                return f"area {a} contains a protected entity"
+        for d in device_ids:
+            if d in devices:
+                return f"device {d} is a protected entity's device"
     return None
 
 
@@ -271,6 +382,14 @@ def call_service(domain, service, data=None, return_response=False):
                 "if that is also refused, tell the user the action is "
                 "restricted and do not retry."
             )}
+    protected = _protected_target(data)
+    if protected:
+        return {"error": (
+            f"{domain}.{service} is refused because {protected}. The "
+            "homeowner has put it on brAIn's protected list, and nothing "
+            "brAIn does may act on it. Tell the user; do not retry or "
+            "look for another route."
+        )}
     payload = data or {}
     if return_response:
         try:

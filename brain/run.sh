@@ -355,6 +355,20 @@ MEMORYMD
     export BRAIN_LEARN_MAX_TURNS="$study_max_turns"
     export BRAIN_LEARN_TIMEOUT="$study_timeout_s"
 
+    # House checks and the protected-entity policy. The checks interval
+    # is the panel's; the protected list is the MCP server's, and the MCP
+    # server is launched by whichever Claude process is asking — the panel's
+    # fixer, the worker pool, the listeners, the terminal — so it has to be
+    # in the environment ALL of them inherit, which is this export plus the
+    # env file. bashio prints a list option one item per line; joined on
+    # commas because an entity id cannot contain one.
+    local checks_interval_hours protected_entities
+    checks_interval_hours=$(bashio::config 'checks_interval_hours' '6')
+    protected_entities=$(bashio::config 'protected_entities' 2>/dev/null \
+        | grep -v '^null$' | paste -sd, - || true)
+    export BRAIN_CHECKS_INTERVAL_HOURS="$checks_interval_hours"
+    export BRAIN_PROTECTED_ENTITIES="$protected_entities"
+
     local env_file="/data/.brain_env"
     cat > "$env_file" << ENVEOF
 export HOME="${data_home}"
@@ -380,6 +394,8 @@ export BRAIN_MEMORY_MAX_KB="${memory_max_kb}"
 export BRAIN_EDIT_JOURNAL_DAYS="${edit_journal_days}"
 export BRAIN_LEARN_MAX_TURNS="${study_max_turns}"
 export BRAIN_LEARN_TIMEOUT="${study_timeout_s}"
+export BRAIN_CHECKS_INTERVAL_HOURS="${checks_interval_hours}"
+export BRAIN_PROTECTED_ENTITIES="${protected_entities}"
 export TZ="${TZ:-}"
 export CLAUDE_CODE_DISABLE_MCP_DISCOVERY=1
 export CLAUDE_MCP_SERVERS_OVERRIDE="/config/.mcp.json"

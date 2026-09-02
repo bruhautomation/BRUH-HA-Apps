@@ -90,7 +90,9 @@ brain memory add "The garage fridge is meant to run 24/7"
 brain memory list             # what it knows
 brain learn energy            # study a topic and write down what it finds
 brain undo                    # review and revert Claude's file edits
-brain doctor                  # end-to-end diagnostic
+brain check                   # run the house checks now — no Claude run
+brain doctor                  # end-to-end diagnostic (--json for a verdict)
+brain report                  # redacted diagnostics bundle for a bug report
 
 ha log                        # tail the Home Assistant log
 ha reload automations

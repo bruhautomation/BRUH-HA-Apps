@@ -44,7 +44,9 @@ import threading
 import time
 import uuid
 
+import journal
 import run_sources
+import usage_store
 
 log = logging.getLogger("brain.auth")
 
@@ -494,14 +496,39 @@ def _run_cli(prompt: str, flags: list[str], model: str, timeout: int,
     ] + flags
     if model:
         argv += ["--model", model]
+    started = time.monotonic()
+    result = None
     if source:
         session_id = str(uuid.uuid4())
         if run_sources.record(session_id, source):
             result = _spawn_cli(argv + ["--session-id", session_id],
                                 prompt, timeout, timeout_message)
-            if result["ok"] or "session-id" not in (result.get("error") or ""):
-                return result
-    return _spawn_cli(argv, prompt, timeout, timeout_message)
+            if not (result["ok"] or "session-id" not in (result.get("error") or "")):
+                result = None
+    if result is None:
+        result = _spawn_cli(argv, prompt, timeout, timeout_message)
+    _journal(source or "engine", result, model, timeout_message,
+             time.monotonic() - started)
+    return result
+
+
+def _journal(source: str, result: dict, model: str, timeout_message: str,
+             duration_s: float) -> None:
+    """One journal line per invocation, whatever happened to it.
+
+    Best effort by construction (journal.record never raises), and kept
+    out of the spawn path so a journal problem cannot be mistaken for a
+    CLI problem.
+    """
+    meta = result.get("meta") or {}
+    journal.record(
+        source, journal.classify(result, timeout_message),
+        error=result.get("error") or "",
+        duration_s=duration_s,
+        model=model or "",
+        tokens=usage_store.tokens_from_meta(meta),
+        turns=meta.get("num_turns") if isinstance(meta.get("num_turns"), int) else None,
+    )
 
 
 def _spawn_cli(argv: list[str], prompt: str, timeout: int,

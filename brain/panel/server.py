@@ -93,6 +93,7 @@ import hashlib
 import json
 import logging
 import os
+import platform
 import re
 import secrets
 import shutil
@@ -108,6 +109,7 @@ import addon_options
 import atomic_write
 import card_tags
 import chat_session
+import checks
 import cli_commands
 import conversations
 import engine
@@ -115,6 +117,7 @@ import feedback_store
 import findings_store
 import fixer
 import hypotheses
+import journal
 import knowledge_store
 import onboarding
 import prompt_store
@@ -447,6 +450,21 @@ VERBOSE_ACCESS_LOG = os.environ.get("BRAIN_ACCESS_LOG", "").lower() in (
 # JOBS[insight_id] = {state, phase, started_at, error, question}
 JOBS: dict[str, dict] = {}
 QUEUE: asyncio.Queue[str] = asyncio.Queue()
+# The house checks (panel/checks): whether a pass is in flight, and the
+# summary of the last one — which is what /api/checks, `brain check list`
+# and the diagnostics bundle read.
+CHECKS_STATE: dict = {"running": False, "last": None}
+CHECKS_FIRST_DELAY_S = 120
+CHECKS_TICK_S = 300
+# The diagnostics mirror, for the integration's Download-diagnostics button.
+# /data is invisible to Home Assistant, so the panel publishes to the shared
+# volume — same reasoning as the findings mirror, same skip rule for a dev
+# checkout whose /config does not exist.
+DIAGNOSTICS_FILE = Path(os.environ.get(
+    "BRAIN_DIAGNOSTICS_FILE", "/config/.brain/diagnostics.json"))
+DIAGNOSTICS_PUBLISH_S = 3600
+DIAG_STATE: dict = {"published_at": 0.0}
+_CLI_VERSION: dict = {"value": None}
 AUTH_CHECK: dict = {"state": "unchecked", "error": "", "checked_at": 0,
                     "running": False}
 # How old a settled auth verdict may get before it is re-earned.
@@ -907,6 +925,10 @@ async def _generate(insight_id: str) -> None:
                 log.warning("%s: search run failed (%s) — falling back to the "
                             "full snapshot", insight_id,
                             result.get("error") or "no result")
+                journal.record("insight", "fallback",
+                               error=result.get("error") or "no result",
+                               extra={"id": insight_id, "from": "search",
+                                      "to": "snapshot"})
             result, cost = await _snapshot_run(insight_id, cat, framing)
         if not result["ok"]:
             raise RuntimeError(result["error"] or "generation failed")
@@ -986,6 +1008,8 @@ async def _generate(insight_id: str) -> None:
                  f", {accepted} hypothesis(es) queued" if accepted else "")
     except Exception as exc:  # noqa: BLE001 — job errors surface in the UI
         log.warning("insight %s failed: %s", insight_id, exc)
+        journal.record("insight", journal.classify({"ok": False, "error": str(exc)}),
+                       error=str(exc), extra={"id": insight_id})
         _set_job(insight_id, state="error", error=str(exc)[:500])
 
 
@@ -1940,6 +1964,242 @@ def _finding_or_404(request: web.Request) -> dict:
     return finding
 
 
+# ---------------------------------------------------------------------------
+# House checks — findings that cost nothing (panel/checks)
+# ---------------------------------------------------------------------------
+
+def eff_checks_interval_hours() -> float:
+    """The `checks_interval_hours` option: live from the Supervisor when it
+    can be read, the run.sh export otherwise. 0 means "never on a timer"."""
+    snap = addon_options.snapshot() or {}
+    raw = snap.get("checks_interval_hours",
+                   os.environ.get("BRAIN_CHECKS_INTERVAL_HOURS", "6"))
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        return 6.0
+
+
+async def run_checks(reason: str = "schedule") -> dict:
+    """One pass of every house check, applied to the findings store.
+
+    Three moves after the checks run, in this order: file what is new
+    (``add_many`` dedupes against everything ever reported, so a re-report
+    is silent), refresh the details of what is already on the list (the
+    text is stable, the number in the detail is not), then clear open rows
+    that a check which RAN no longer reports. Only checks that ran may
+    clear — a check whose data could not be fetched said nothing, and
+    nothing is not "the problem went away".
+
+    A second caller while a pass is in flight gets the last summary back
+    with an error rather than a second pass: two passes racing would file
+    and clear against each other.
+    """
+    if CHECKS_STATE["running"]:
+        return {"error": "a checks pass is already running",
+                **(CHECKS_STATE["last"] or {})}
+    CHECKS_STATE["running"] = True
+    started = time.time()
+    try:
+        snapshot = await checks.snapshot.collect(started)
+        result = checks.run_all(snapshot, started)
+
+        def apply() -> tuple[list[dict], int, list[dict]]:
+            created = findings_store.add_many(result["findings"])
+            refreshed = findings_store.refresh_details(result["findings"])
+            cleared = findings_store.clear_resolved(
+                {checks.source_for(c) for c in result["ran"]},
+                {findings_store.normalize(f["text"]) for f in result["findings"]})
+            return created, refreshed, cleared
+
+        created, refreshed, cleared = await asyncio.to_thread(apply)
+        await _announce_findings(created)
+        summary = {
+            "reason": reason,
+            "started_at": int(started),
+            "finished_at": int(time.time()),
+            "duration_s": round(time.time() - started, 1),
+            "ran": result["ran"],
+            "skipped": result["skipped"],
+            "errors": result["errors"],
+            "per_check": result["per_check"],
+            "found": len(result["findings"]),
+            "created": created,
+            "refreshed": refreshed,
+            "cleared": cleared,
+            "snapshot_errors": snapshot.get("errors") or {},
+        }
+        journal.record(
+            "checks", "ok" if not result["errors"] else "error",
+            duration_s=summary["duration_s"],
+            error="; ".join(f"{k}: {v}" for k, v in result["errors"].items()),
+            extra={"ran": len(result["ran"]), "found": summary["found"],
+                   "created": len(created), "cleared": len(cleared)})
+        log.info("house checks (%s): %d ran, %d found, %d new, %d refreshed, "
+                 "%d cleared%s", reason, len(result["ran"]), summary["found"],
+                 len(created), refreshed, len(cleared),
+                 (" — skipped " + ", ".join(result["skipped"]))
+                 if result["skipped"] else "")
+    except Exception as exc:  # noqa: BLE001 — a bad pass must not take the loop down
+        log.warning("house checks failed: %s", exc)
+        journal.record("checks", "error", error=str(exc))
+        summary = {"reason": reason, "started_at": int(started),
+                   "finished_at": int(time.time()), "error": str(exc)[:300],
+                   "ran": [], "created": [], "cleared": [], "refreshed": 0,
+                   "skipped": {}, "errors": {}, "per_check": {}, "found": 0,
+                   "snapshot_errors": {}}
+    finally:
+        CHECKS_STATE["running"] = False
+    CHECKS_STATE["last"] = summary
+    await asyncio.to_thread(publish_diagnostics)
+    return summary
+
+
+async def _checks_loop() -> None:
+    """Run the checks on the option's interval, and keep the diagnostics
+    mirror fresh in between.
+
+    The first pass waits for the panel to settle rather than racing the
+    startup sequence for the recorder. After that the loop ticks every
+    few minutes and asks whether a pass is due, so a manual run resets the
+    clock and a Configuration-tab edit to the interval lands without a
+    restart. An interval of 0 is "not on a timer": `brain check` and the
+    tab's button still run one.
+    """
+    await asyncio.sleep(CHECKS_FIRST_DELAY_S)
+    while True:
+        try:
+            hours = eff_checks_interval_hours()
+            last = CHECKS_STATE["last"]
+            due = hours > 0 and (
+                not last or time.time() - last.get("finished_at", 0) >= hours * 3600)
+            if due and not CHECKS_STATE["running"]:
+                await run_checks("schedule")
+            elif time.time() - DIAG_STATE["published_at"] >= DIAGNOSTICS_PUBLISH_S:
+                await asyncio.to_thread(publish_diagnostics)
+        except Exception as exc:  # noqa: BLE001 — never let this kill the loop
+            log.debug("checks loop: %s", exc)
+        await asyncio.sleep(CHECKS_TICK_S)
+
+
+async def h_checks(request: web.Request) -> web.Response:
+    return web.json_response({
+        "catalog": [{"id": c["id"], "title": c["title"],
+                     "group": checks.title_for(c["id"])} for c in checks.CHECKS],
+        "last": CHECKS_STATE["last"],
+        "running": CHECKS_STATE["running"],
+        "interval_hours": eff_checks_interval_hours(),
+    })
+
+
+async def h_checks_run(request: web.Request) -> web.Response:
+    summary = await run_checks("manual")
+    status = 409 if summary.get("error") == "a checks pass is already running" else 200
+    return web.json_response(summary, status=status)
+
+
+# ---------------------------------------------------------------------------
+# Diagnostics — what a bug report needs, in one payload
+# ---------------------------------------------------------------------------
+
+def _cli_version() -> str:
+    """`claude --version`, probed once per process."""
+    if _CLI_VERSION["value"] is None:
+        try:
+            out = subprocess.run(["claude", "--version"], capture_output=True,
+                                 text=True, timeout=15)
+            _CLI_VERSION["value"] = (out.stdout or out.stderr or "").strip().splitlines()[0][:80] \
+                if (out.stdout or out.stderr) else "unknown"
+        except (OSError, subprocess.SubprocessError, IndexError):
+            _CLI_VERSION["value"] = "unknown"
+    return _CLI_VERSION["value"]
+
+
+_OPTION_SECRET_WORDS = ("token", "password", "secret", "api_key", "credential")
+
+
+def _diagnostics_payload() -> dict:
+    """Versions, options, the journal's last day, the stores' shapes, the
+    last checks pass, the daemon roll-call and the auth verdict.
+
+    No prompts, no replies, no entity states — the shape of what happened,
+    never the house itself. Error strings pass through journal.scrub. The
+    same payload is served on /api/diagnostics, written to the shared
+    volume for the integration's Download-diagnostics button, and bundled
+    by `brain report`, so there is one answer to "what state is brAIn in".
+    """
+    settings = settings_store.load()
+    options = addon_options.snapshot() or {}
+    safe_options = {k: v for k, v in options.items()
+                    if not any(w in k for w in _OPTION_SECRET_WORDS)}
+    listing = findings_store.listing()
+    rows = listing.get("findings") or []
+    by_status: dict[str, int] = {}
+    by_severity: dict[str, int] = {}
+    for f in rows:
+        by_status[f.get("status", "?")] = by_status.get(f.get("status", "?"), 0) + 1
+        by_severity[f.get("severity", "?")] = by_severity.get(f.get("severity", "?"), 0) + 1
+    try:
+        memory_bytes = SHARED_MEMORY_FILE.stat().st_size
+    except OSError:
+        memory_bytes = 0
+    try:
+        usage = usage_store.budget_state(settings)
+    except Exception:  # noqa: BLE001 — a diagnostics payload must not fail on one reader
+        usage = {}
+    return {
+        "generated_at": int(time.time()),
+        "versions": {
+            "addon": os.environ.get("ADDON_VERSION", "dev"),
+            "claude_cli": _cli_version(),
+            "python": platform.python_version(),
+            "machine": platform.machine(),
+        },
+        "options": safe_options,
+        "settings": {k: settings.get(k) for k in (
+            "auto_enabled", "plan", "budget_percent", "gather_mode",
+            "terminal_ui", "onboarded", "chat_model")},
+        "auth": {
+            "state": AUTH_CHECK.get("state"),
+            "checked_at": AUTH_CHECK.get("checked_at"),
+            "error": journal.scrub(AUTH_CHECK.get("error") or ""),
+        },
+        "journal": journal.summary(24),
+        "journal_tail": journal.tail(30),
+        "findings": {
+            "open": listing.get("open", 0),
+            "by_status": by_status,
+            "by_severity": by_severity,
+            "settled": len(findings_store.settled_listing()),
+            "scorecard": findings_store.scorecard(),
+        },
+        "memory": {
+            "document_bytes": memory_bytes,
+            "hypotheses_open": len(hypotheses.list_all("open")),
+        },
+        "checks": CHECKS_STATE["last"],
+        "daemons": _daemon_rollcall(),
+        "usage": {k: usage.get(k) for k in ("source", "used_percent", "limits")},
+    }
+
+
+def publish_diagnostics() -> None:
+    """Write the payload to the shared volume. Skipped on a dev checkout
+    (no /config), logged and swallowed otherwise: the mirror is derived."""
+    DIAG_STATE["published_at"] = time.time()
+    if not DIAGNOSTICS_FILE.parent.parent.exists():
+        return
+    try:
+        DIAGNOSTICS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write.write_json(DIAGNOSTICS_FILE, _diagnostics_payload())
+    except Exception as exc:  # noqa: BLE001
+        log.debug("diagnostics mirror write failed: %s", exc)
+
+
+async def h_diagnostics(request: web.Request) -> web.Response:
+    return web.json_response(await asyncio.to_thread(_diagnostics_payload))
+
+
 def _findings_payload() -> dict:
     """What the Findings tab reads — and the ONLY thing it reads.
 
@@ -1958,6 +2218,11 @@ def _findings_payload() -> dict:
     open_claims = hypotheses.list_all("open")
     payload["hypotheses"] = open_claims
     payload["open"] += len(open_claims)
+    # How right each producer has been, from the endings people gave. It
+    # rides this payload rather than its own route because it is read in
+    # exactly one place — a line under the filter chips — and a number
+    # about the list belongs with the list.
+    payload["scorecard"] = findings_store.scorecard()
     return payload
 
 
@@ -3709,6 +3974,9 @@ def make_app() -> web.Application:
     app.router.add_delete("/api/card/{id}", h_delete_card)
     app.router.add_put("/api/card/{id}/tags", h_card_tags_put)
     app.router.add_get("/api/findings", h_findings)
+    app.router.add_get("/api/checks", h_checks)
+    app.router.add_post("/api/checks/run", h_checks_run)
+    app.router.add_get("/api/diagnostics", h_diagnostics)
     app.router.add_post("/api/finding/{ts}/fix", h_finding_fix)
     app.router.add_post("/api/finding/{ts}/snooze", h_finding_snooze)
     app.router.add_post("/api/finding/{ts}/discuss", h_finding_discuss)
@@ -3809,6 +4077,7 @@ def make_app() -> web.Application:
         await _options_sync()
         app["worker"] = asyncio.create_task(_worker())
         app["scheduler"] = asyncio.create_task(_scheduler())
+        app["checks"] = asyncio.create_task(_checks_loop())
         if addon_options.available():
             app["options"] = asyncio.create_task(_options_poller())
         if engine.get_auth():

@@ -385,8 +385,38 @@ days. A device stuck unavailable. An automation whose trigger entity was renamed
 can never fire again. Something is wrong and somebody has to do something about it.
 
 Findings come from insight runs and from study sessions — the same passes that fill
-memory. brAIn only reports a problem **once**: the same finding in different words is
-recognised and dropped.
+memory — and from the **house checks**, which cost nothing. brAIn only reports a problem
+**once**: the same finding in different words is recognised and dropped.
+
+## House checks
+
+Not every problem needs a model to find. On a schedule (every
+\`checks_interval_hours\`, six by default) and on **Run checks now**, brAIn reads Home
+Assistant directly — registries, states, your automations, the traces Home Assistant
+keeps, a week of statistics, the dashboards — and files what it finds under a *check*
+label, with no Claude run:
+
+- an automation naming an entity that no longer exists, or calling a service that is
+  not registered (your old phone's notify service, with the replacement named)
+- an automation whose last run failed, whose condition never passes, that keeps being
+  skipped on \`mode: single\`, that has never fired, or was switched off and forgotten
+- a device unavailable for more than a day; a battery low, or *gone quiet*; an
+  impossible reading; a sensor frozen on one value for a week
+- a dashboard showing entities that no longer exist
+- a battery **running down**, from the slope of its last sixty days — a finding with a
+  date on it
+
+A check's finding clears itself when the check stops finding it — the device came back,
+the battery was changed — and it is simply removed, so it can come back if the problem
+does. What *you* end stays ended.
+
+## How right it's been
+
+Every ending here is a label. **I did it** and **Got it** say the report was right;
+**Wrong** says it was not. Once a producer — a check, a card, a study topic — has a few
+endings, a line under the filters says how right it has been. That is the number that
+decides whether this tab is trusted, and it is the number that gets a check with a bad
+threshold fixed.
 
 ## Guesses are on this list too
 
@@ -672,7 +702,10 @@ brain memory reject "<text>"       # no — record a dead end
 brain learn [topic]                # study the home
 brain ask "why is the garage cold" # one-shot question
 brain undo                         # revert Claude's file edits
+brain check                        # the house checks, now — no Claude run
 brain doctor                       # end-to-end diagnostic
+brain doctor --json                # the same verdict as one JSON object
+brain report                       # redacted diagnostics bundle for a bug report
 \`\`\`
 
 A distinctive fragment is enough for \`confirm\` and \`reject\` — you don't have to retype
@@ -1024,7 +1057,21 @@ brain doctor
 
 It checks the Supervisor token, the HA REST API, the MCP handshake, the custom
 integration, both background listeners, the worker pool API, and your Claude login — then
-smoke-tests the CLI.
+smoke-tests the CLI. \`brain doctor --json\` gives the same verdict as one JSON object.
+
+## Reporting a bug
+
+\`\`\`bash
+brain report
+\`\`\`
+
+That writes one redacted archive under \`/share/brain/reports/\`: the self-test's verdict,
+the panel's diagnostics (versions, options, the last day of the run journal — every
+Claude run and how it ended, the findings and memory stores' shapes, the last house
+checks pass), and the tail of the add-on log. Anything credential-shaped is replaced
+before it is written; prompts and replies are never in it. Read it, then attach it to
+the issue. The same bundle is behind **Download diagnostics** on the brAIn integration
+page in Home Assistant.
 
 ## The terminal tab won't load
 

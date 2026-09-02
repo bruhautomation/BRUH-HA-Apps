@@ -128,6 +128,37 @@ Each one gets a severity, a plain-English explanation, and what to do about it:
   future analysis, so the same non-problem is never raised at you twice. The garage
   fridge that runs 24/7 gets flagged once.
 
+### It checks the house without spending a token
+
+Not every problem needs a model to find. brAIn runs a set of **house
+checks** on a schedule (every `checks_interval_hours`, six by default) and on
+**Run checks now** on the Findings tab: they read Home Assistant directly —
+the registries, the states, your `automations.yaml`, the traces Home
+Assistant keeps, a week of statistics, the dashboards — and file what they
+find as ordinary findings under a "check" label, with no Claude run at all.
+
+- **Automations** naming an entity that no longer exists, or calling a service
+  that is not registered (the old phone's `notify.mobile_app_*`, with the
+  replacement named); whose last run failed; that trigger but never get past
+  their condition; that keep being skipped on `mode: single`; that have never
+  fired, or were switched off and forgotten; that are copies of each other; or
+  that use a blueprint that is missing.
+- **Devices** unavailable for more than a day (one row per device, not per
+  entity); batteries low, or gone quiet — a dead device stops reporting its
+  own battery, which a threshold never notices; impossible readings; sensors
+  frozen on one value for a week; entities left behind by a removed
+  integration.
+- **Dashboards** showing entities that no longer exist.
+- **Forecasts**: a battery running down, from the slope of its last sixty
+  days, three weeks before it is flat.
+
+A check's finding clears itself when the check stops finding it — the device
+came back, the battery was changed — and it is simply removed, so it can be
+raised again if the problem returns. What a person ends stays ended, exactly
+as before. And every ending teaches the **scorecard** under the filters: "I
+did it" and "Got it" say the report was right, "Wrong" says it was not, and
+once a producer has a few endings the tab says how right it has been.
+
 Findings reach you outside the panel too. The integration exposes an
 **Open findings** sensor (the count, with the severity split and the texts as
 attributes) and fires a **`brain_finding` event** for each new one, so an
@@ -378,7 +409,10 @@ brain findings wrong 1786715730 "that sensor is meant to sit closed"
 brain learn energy                 # study a topic
 brain ask "why is the garage cold" # same engine as the Ask card
 brain undo                         # review and revert Claude's edits
+brain check                        # run the house checks now (no Claude run)
 brain doctor                       # end-to-end diagnostic
+brain doctor --json                # the same verdict as one JSON object
+brain report                       # redacted diagnostics bundle for a bug report
 
 ha log                             # tail the Home Assistant log
 ha reload automations
@@ -461,6 +495,13 @@ the Terminal tab itself), because it changes nothing about how the add-on runs.
 | `history_keep_days` | 0–365 | `30` | Age limit on past runs. |
 | `model` | string | `""` | Override the Claude model. Empty uses the default. |
 | `generation_timeout_minutes` | 2–30 | `8` | Per-generation timeout. |
+
+### House checks and policy
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `checks_interval_hours` | 0–168 | `6` | How often the deterministic house checks run. They read Home Assistant directly and never call Claude, so they cost nothing. `0` means never on a timer; `brain check` and the tab's button still run them. |
+| `protected_entities` | list | `[]` | Entity ids (`lock.front_door`) or whole domains (`alarm_control_panel.*`) that brAIn may never act on, from any face. Enforced where every action passes through, so it covers the terminal, the chat, Fix it, voice and automations; a call aimed at an area or device containing one is refused too. They can still be looked at. |
 
 ### Undo and access
 
@@ -565,6 +606,12 @@ That is the point of it, and it is worth knowing where the edges are.
   backups are unencrypted unless you opt in, and they travel. Restoring a
   backup costs you one sign-in.
 - **Claude Code runs as an unprivileged user** (UID 1000), not root.
+- **`protected_entities` is the line brAIn may not cross.** Put the front
+  door lock, the alarm and the garage door on it and no face of the add-on
+  — terminal, chat, Fix it, voice, automations — can act on them, whichever
+  service is called and whether the target is the entity, its device or its
+  area. It is enforced in the one place every action passes through, not in
+  a prompt.
 - **`dangerously_skip_permissions` does what it says.** Off by default. On,
   Claude stops asking before it edits a file or runs a command in the
   interactive terminal.

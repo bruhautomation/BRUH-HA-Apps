@@ -12,7 +12,9 @@
 #   brain learn [topic]            Run a study session on the home
 #   brain ask "<question>"         One-shot question, same engine as the Ask card
 #   brain undo [n]                 Review and revert Claude's file edits
-#   brain doctor                   End-to-end diagnostic
+#   brain check                    Run the house checks now (no Claude run)
+#   brain doctor [--json]          End-to-end diagnostic
+#   brain report                   Redacted diagnostics bundle for a bug report
 #   brain help                     This help
 
 set -uo pipefail
@@ -55,7 +57,11 @@ Usage:
   brain learn [topic]            Study the home and write down what it finds
   brain ask "<question>"         Ask about the home (same engine as the Ask card)
   brain undo [n]                 Review and revert Claude's edits to /config
-  brain doctor                   End-to-end diagnostic
+  brain check [list]             Run the house checks now — no Claude run,
+                                 findings land on the Findings tab
+  brain doctor [--json]          End-to-end diagnostic of brAIn itself
+  brain report [--no-names]      Write a redacted diagnostics bundle to
+                                 /share/brain/reports for a bug report
   brain help                     This help
 
 Home Assistant operations live under `ha` (ha log, ha reload, ha entity, ...).
@@ -91,7 +97,9 @@ case "$action" in
     learn)      delegate brain-learn.sh "$@" ;;
     ask)        delegate brain-ask.sh "$@" ;;
     undo)       delegate brain-undo.sh "$@" ;;
+    check)      delegate brain-check.sh "$@" ;;
     doctor)     delegate ha-selftest.sh "$@" ;;
+    report)     delegate brain-report.sh "$@" ;;
     help|--help|-h) usage ;;
     *)
         echo -e "${RED}Unknown subcommand: ${action}${NC}" >&2
