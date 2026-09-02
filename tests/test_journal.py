@@ -62,7 +62,7 @@ class TestRecord(JournalCase):
         self.assertNotIn("sk-ant-", row["error"])
         self.assertNotIn("eyJ", row["error"])
         self.assertIn("[redacted]", row["error"])
-        self.assertNotIn("sk-ant-", open(journal.JOURNAL_FILE).read())
+        self.assertNotIn("sk-ant-", Path(journal.JOURNAL_FILE).read_text())
 
     def test_a_torn_line_is_skipped_and_the_rest_read(self):
         journal.record("a", "ok")
@@ -142,7 +142,8 @@ class TestEngineHooksIntoTheJournal(unittest.TestCase):
                 self.assertEqual(rows[0]["outcome"], "timeout")
                 self.assertEqual(rows[0]["model"], "sonnet")
                 self.assertEqual(rows[0]["turns"], 2)
-                self.assertEqual(json.loads(open(journal.JOURNAL_FILE).readline())["outcome"], "timeout")
+                first_line = Path(journal.JOURNAL_FILE).read_text().splitlines()[0]
+                self.assertEqual(json.loads(first_line)["outcome"], "timeout")
             finally:
                 journal.JOURNAL_FILE = old
 

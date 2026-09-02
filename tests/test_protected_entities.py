@@ -12,6 +12,7 @@ bypass these tests exist to catch.
 import os
 import sys
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "brain", "ha-mcp-server"))
@@ -169,10 +170,10 @@ class TestMatching(unittest.TestCase):
 
     def test_the_option_reaches_the_server_by_env(self):
         """run.sh exports the option; the server reads the same name."""
-        src = open(os.path.join(os.path.dirname(__file__), "..", "brain", "run.sh")).read()
+        src = Path(__file__).resolve().parent.parent.joinpath("brain", "run.sh").read_text()
         self.assertIn('BRAIN_PROTECTED_ENTITIES="$protected_entities"', src)
         self.assertIn('export BRAIN_PROTECTED_ENTITIES="${protected_entities}"', src)
-        server_src = open(ha_mcp_server.__file__).read()
+        server_src = Path(ha_mcp_server.__file__).read_text()
         self.assertIn('os.environ.get("BRAIN_PROTECTED_ENTITIES"', server_src)
 
 

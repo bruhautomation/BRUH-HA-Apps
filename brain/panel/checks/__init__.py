@@ -43,7 +43,10 @@ every check against a hand-built house without the add-on runtime.
 """
 from __future__ import annotations
 
-from . import automations, dashboards, devices, forecasts
+# ``snapshot`` is imported here too, so ``checks.snapshot.collect`` resolves
+# off the package the way server.py calls it; its aiohttp import is lazy,
+# inside the collector, so this costs the test suite nothing.
+from . import automations, dashboards, devices, forecasts, snapshot  # noqa: F401
 
 # The catalog. Order is the order results are filed in, which is also the
 # order the Findings tab shows a fresh batch: what breaks an automation
@@ -82,7 +85,7 @@ def get_check(check_id: str) -> dict | None:
     return None
 
 
-def run_all(snapshot: dict, now: float | None = None,
+def run_all(snap: dict, now: float | None = None,
             only: list[str] | None = None) -> dict:
     """Run every check the snapshot can feed.
 
@@ -93,7 +96,7 @@ def run_all(snapshot: dict, now: float | None = None,
     """
     import time as _time
     now = _time.time() if now is None else now
-    available = snapshot.get("available") or {}
+    available = snap.get("available") or {}
     out: list[dict] = []
     ran: list[str] = []
     skipped: dict[str, str] = {}
@@ -108,7 +111,7 @@ def run_all(snapshot: dict, now: float | None = None,
             skipped[cid] = "snapshot is missing " + ", ".join(missing)
             continue
         try:
-            found = check["run"](snapshot, now) or []
+            found = check["run"](snap, now) or []
         except Exception as exc:  # noqa: BLE001 — one rule must not sink the batch
             errors[cid] = f"{type(exc).__name__}: {exc}"[:200]
             continue

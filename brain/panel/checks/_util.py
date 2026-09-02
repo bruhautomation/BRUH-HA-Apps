@@ -6,6 +6,7 @@ the individual checks stay readable as rules.
 from __future__ import annotations
 
 import datetime as dt
+import math
 import re
 from typing import Any, Iterable, Iterator
 
@@ -88,7 +89,7 @@ def num(value: Any) -> float | None:
         f = float(value)
     except (TypeError, ValueError):
         return None
-    return f if f == f else None  # NaN reads as no number
+    return None if math.isnan(f) else f  # NaN reads as no number
 
 
 def domain_of(entity_id: str) -> str:

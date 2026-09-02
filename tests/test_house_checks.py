@@ -29,8 +29,13 @@ sys.path.insert(0, str(PANEL_DIR))
 
 import checks  # noqa: E402
 import findings_store  # noqa: E402
-from checks import automations, devices, forecasts, snapshot  # noqa: E402
-from checks import _util  # noqa: E402
+
+# The submodules, off the package rather than a second import of it.
+automations = checks.automations
+devices = checks.devices
+forecasts = checks.forecasts
+snapshot = checks.snapshot
+_util = checks._util
 
 NOW = 1_800_000_000.0
 DAY = 86400.0
