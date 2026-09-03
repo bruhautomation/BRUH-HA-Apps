@@ -2,6 +2,79 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.31.0
+
+### Added
+
+- **The action miner: who or what changed something** (`panel/actions.py`).
+  A state carries no cause — nothing in `light.kitchen` being on says
+  whether a person pressed a switch, an automation fired, a voice command
+  asked, or brAIn did it, and that is the question behind most of what
+  people actually ask their house. The miner reads Home Assistant's own
+  logbook, walks each event's context chain, and files every state change
+  under a cause. **Proximate and root cause are different and both are
+  recorded**: an automation somebody started by hand carries a context
+  entity *and* a context user, and reporting only the user turns every
+  automation into "you did this" while reporting only the automation loses
+  the one fact that explains an unexpected run. **A change with no context
+  is `unattributed` in as many words** — a wall switch and a device's own
+  integration reach Home Assistant identically, so naming either is a
+  guess, and a timeline that guesses is not evidence.
+
+- **brAIn's own actions are recorded rather than inferred.** The MCP server
+  calls Home Assistant with the Supervisor's token exactly like every other
+  add-on, so a change brAIn made is indistinguishable in the logbook from
+  one any integration made. It now appends every service call it makes to a
+  ledger (`/config/.brain/actions.jsonl`, trimmed, never rotated) and the
+  miner joins against it.
+
+- **The Activity tab.** A day of the house with a cause on every row, the
+  hour headings down the side, a filter per cause, and paging back a day at
+  a time. Tap any row for that entity's own recent history. The times
+  somebody put back what an automation had just done are called out above
+  the list rather than left to be spotted in it, because they are evidence
+  rather than history. Read straight from the logbook on every visit: no
+  Claude run, nothing spent, and nothing cached — a timeline showing the
+  house as it was when you last looked is the one thing a timeline may not
+  do.
+
+- **`auto.overridden`** — an automation a person has undone three times in
+  a day. The automation ran, nothing errored, and the light is off, so it
+  is invisible to every other check; it is also the clearest signal a house
+  gives about a rule being wrong for it. Agreement is not a fight (a person
+  pressing "on" after a rule turned it on), an unrelated decision hours
+  later is not an override, and one automation move is undone once however
+  many times somebody nudges the dimmer.
+
+- **`explain_change` and `get_activity` MCP tools**, both read-only and on
+  the analyst's allow-list, so a card or a chat answering "why did the hall
+  light come on" reads the cause instead of guessing from a state. They
+  call the panel's own API over loopback rather than re-implementing
+  attribution — the same reasoning that sends `brain findings` through the
+  API instead of the store files.
+
+- **`sensor.brain_health`** — whether brAIn itself is working, as
+  `ok` / `degraded` / `failed`, with the reason and the thing to do about
+  it in its attributes. It never goes unavailable: Home Assistant hides the
+  attributes of an unavailable entity, and this is the entity somebody
+  looks at precisely when the others have gone. A stale verdict fails
+  rather than being served as a healthy one, because a reading nothing can
+  correct is what took the usage sensors dark. The verdict is derived once,
+  in the panel, so the sensor, the settings dialog's Diagnostics section,
+  `brain doctor` and `brain report` cannot disagree about it. It is a state
+  and a sentence, never a score — one number over a house hides its worst
+  problem inside an average — and a switched-off face is never a fault.
+
+### Changed
+
+- `brain doctor` reports the health verdict alongside its own walk of the
+  plumbing: a doctor run at 9am cannot see the listener that died at 3am,
+  and the verdict can.
+- The top-bar measure counted five tab labels by number, which says nothing
+  about whether a sixth kept its name; it counts the tabs in the markup now.
+  The panel's band test scanned to the end of the stylesheet, so it was
+  really testing where the last `@media` in the file sat.
+
 ## 1.30.0
 
 ### Added

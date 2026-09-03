@@ -234,6 +234,27 @@ reporting. Cards run on their own schedule, and **⋯ → Regenerate** does one 
 Things brAIn thinks are **broken**, and what it did about them. See **Findings** in this
 guide. A number on the tab means something is waiting on your decision.
 
+## Activity
+
+**What changed in your house, and what changed it.** Every state change with the thing
+that caused it beside it: an automation (by name), a script, a scene, a person, a voice
+command, or brAIn. Tap any row for that entity's own recent history.
+
+Read straight from Home Assistant's logbook every time you open the tab — no Claude run,
+nothing spent. It needs the \`logbook\` integration, which is part of the default config;
+if it has been removed from \`configuration.yaml\`, this tab says so rather than showing
+you an empty house.
+
+Some rows say **no cause recorded**, and that is the honest answer rather than a gap. A
+press on a wall switch and a push from a device's own integration arrive in Home
+Assistant identically, so anything that named one of them would be guessing — and a
+timeline that guesses is not something you can use as evidence.
+
+Above the list, when there are any: **the times somebody put back what an automation had
+just done**. That is the clearest signal a house gives about a rule being wrong for it,
+and it is invisible everywhere else — the automation ran, nothing errored, and the light
+is off. Three of those against one automation in a day becomes a finding.
+
 ## Terminal
 
 Full Claude Code in the browser, with native Home Assistant access — read states, call
