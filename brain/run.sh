@@ -349,6 +349,11 @@ MEMORYMD
     quiet_end=$(bashio::config 'notify_quiet_end' '7')
     export BRAIN_NOTIFY_QUIET_START="$quiet_start"
     export BRAIN_NOTIFY_QUIET_END="$quiet_end"
+    local morning_brief morning_brief_hour
+    morning_brief=$(bashio::config 'morning_brief' 'false')
+    morning_brief_hour=$(bashio::config 'morning_brief_hour' '7')
+    export BRAIN_MORNING_BRIEF="$morning_brief"
+    export BRAIN_MORNING_BRIEF_HOUR="$morning_brief_hour"
 
     # Study sessions are where depth actually matters, and --max-turns
     # truncates rather than degrading — a session that hits the cap files

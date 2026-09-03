@@ -2,6 +2,67 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.35.0
+
+### Added
+
+- **The house's own clock** (`panel/rhythm.py`). Everything brAIn does on a
+  schedule happens at a time somebody typed into a box, which is the
+  definition of a timer rather than a rhythm: 07:00 is early on a Sunday and
+  late on a Tuesday in the same house, and somebody who keeps correcting when
+  a message arrives stops reading it.
+
+  The house already answered this and nothing was asking. The action miner
+  files every change under a cause, and the first one caused by a **person**
+  is the house waking up — not a motion sensor (which fires for a cat and for
+  the heating), not a light (an automation does that at dawn), but somebody
+  actually doing something. Two numbers a day, kept; not a timeline.
+
+  Four floors, and they are the ones the baselines and the override ledger
+  already carry. A fortnight of days before it says anything. **Weekdays and
+  weekends measured apart**, because one number over both is wrong on all
+  seven days rather than on none — the cost being that a weekend answer takes
+  about five weeks to exist, which looks like a bug from outside and is the
+  floor doing its job. A spread wider than an hour and a half means there is
+  no usual time, and saying so beats a confident number over data that holds
+  none.
+
+  **And the median is circular.** Settle times sit either side of midnight,
+  and four of them inside forty minutes of it have a straight median of
+  **12:00** — not a small error, the opposite side of the day. Everything
+  here is measured around the clock, and the test asserts that failure
+  against the arithmetic that produces it rather than describing it.
+
+- **A morning brief** (`panel/brief.py`, `morning_brief`, off by default).
+  One short message a day, at the hour this house actually starts moving.
+
+  **The decision to send is made before any model is asked.** "All quiet"
+  every morning is the message people mute, and it costs a Claude turn — the
+  most expensive thing the add-on does — to produce. `worth_saying` is
+  deterministic and reads what is already counted: findings filed since the
+  last brief, a health verdict that is not `ok`, a night with an unusual
+  share of changes nothing can attribute. An empty answer costs nothing at
+  all and sends nothing.
+
+  What the model is for is the sentence: under eighty words, one paragraph,
+  no greeting and no markdown, because this is read on a lock screen. It gets
+  the reasons and read-only tools to make them specific, and it is not handed
+  the house. A reply too short to be a brief is not sent, because sending
+  that is worse than the silence it replaced.
+
+  The window opens at the measured wake (or the fallback hour until there is
+  a measurement) and closes 45 minutes later, so a panel restarted at 09:00
+  does not deliver breakfast at lunchtime; the send is stamped *before* the
+  run, because a pass that takes three minutes must not let the next tick
+  start a second one.
+
+### Changed
+
+- ⚙ Diagnostics reports what the rhythm has measured and what the brief last
+  did with it. A rhythm that never gathered enough days looks exactly like
+  one that did and chose 07:00, and the difference has to be readable from
+  outside.
+
 ## 1.34.0
 
 ### Fixed

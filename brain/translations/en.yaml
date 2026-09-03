@@ -129,6 +129,22 @@ configuration:
       window that crosses midnight (22 to 7) is the normal case. Anything
       you have already fixed or dismissed overnight is dropped rather
       than announced.
+  morning_brief:
+    name: Send a morning brief
+    description: >-
+      One short message a day to your notify service, at the hour this
+      home actually starts moving — brAIn measures that from what people
+      here do, weekdays and weekends apart, rather than firing on a
+      timer. It is sent only when there is something to say: new
+      findings, brAIn itself not working, or an odd night. A quiet
+      morning costs nothing and sends nothing. Off by default because
+      each one that IS sent costs a Claude turn.
+  morning_brief_hour:
+    name: Morning brief fallback hour (0-23)
+    description: >-
+      When to send it until brAIn has watched this home for a couple of
+      weeks and knows your own hour. Also used if your days are too
+      irregular for there to be a usual one.
   checks_interval_hours:
     name: House checks every (hours)
     description: >-
