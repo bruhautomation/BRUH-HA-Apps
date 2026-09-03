@@ -101,8 +101,23 @@ if not panel.history.all():
 # type-checks — was the one argument nothing in CI ever passed. v0.1.0
 # started, logged "listening on 0.0.0.0:8097" and died on the next line,
 # with every route test and every layout measure green.
-print(f"[demo] BRUH Print panel on http://127.0.0.1:{PORT}", flush=True)
-web.run_app(server.build_app(panel), host="127.0.0.1", port=PORT,
+#
+# And it is served UNDER A PREFIX, because that is how anybody ever actually
+# reaches it. Home Assistant's ingress mounts an add-on panel at
+# /api/hassio_ingress/<token>/, so a page that asks for "/style.css" asks
+# Home Assistant's own root and gets a 404 — which is exactly what 0.1.1
+# did, and it rendered as unstyled HTML with all five views stacked down the
+# page. Serving at "/" is the one arrangement in which that bug is
+# invisible, and it is the arrangement this demo had.
+INGRESS_PREFIX = os.environ.get(
+    "DEMO_PREFIX", "/api/hassio_ingress/01JJRqzH5o3TtVgngV7GNA3w")
+
+root = web.Application()
+root.add_subapp(INGRESS_PREFIX + "/", server.build_app(panel))
+
+print(f"[demo] BRUH Print panel on "
+      f"http://127.0.0.1:{PORT}{INGRESS_PREFIX}/", flush=True)
+web.run_app(root, host="127.0.0.1", port=PORT,
             access_log_class=server.QuietAccessLogger,
             access_log=logging.getLogger("bruh_print.access"),
             print=None)

@@ -1085,6 +1085,20 @@ class QuietAccessLogger(AbstractAccessLogger):
                       status, time_taken * 1000)
 
 
+def _asset(name: str, content_type: str):
+    """One of the panel's own files, by name.
+
+    The name is a literal at every call site — never anything off the wire —
+    which is what makes this safe where serving a directory was not.
+    """
+    path = PANEL_DIR / name
+
+    async def handler(_request: web.Request) -> web.FileResponse:
+        return web.FileResponse(path, headers={"Content-Type": content_type})
+
+    return handler
+
+
 @web.middleware
 async def json_errors(request: web.Request, handler):
     """Every failure leaves as JSON with a sentence in it.
@@ -1162,11 +1176,18 @@ def build_app(state: Panel | None = None) -> web.Application:
     app.router.add_post("/api/settings", h_settings_put)
 
     # The UI last, so a static file can never shadow an API route.
-    async def h_index(_request: web.Request) -> web.FileResponse:
-        return web.FileResponse(PANEL_DIR / "index.html")
-
-    app.router.add_get("/", h_index)
-    app.router.add_static("/static/", PANEL_DIR, show_index=False)
+    #
+    # Four named routes rather than `add_static(PANEL_DIR)`, which served the
+    # whole panel directory: `GET /static/server.py` answered 200 with this
+    # file, and so did every module under `stores/` and `dymo/`. Nothing in
+    # there is a secret — this add-on holds no credential — but an add-on
+    # serving its own source tree is a mistake waiting to become one, and
+    # naming the four files that ARE assets costs three lines.
+    app.router.add_get("/", _asset("index.html", "text/html"))
+    app.router.add_get("/index.html", _asset("index.html", "text/html"))
+    app.router.add_get("/style.css", _asset("style.css", "text/css"))
+    app.router.add_get("/app.js", _asset("app.js", "application/javascript"))
+    app.router.add_get("/favicon.svg", _asset("favicon.svg", "image/svg+xml"))
     return app
 
 

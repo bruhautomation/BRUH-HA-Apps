@@ -511,6 +511,85 @@ class TestItCanActuallyStart(unittest.IsolatedAsyncioTestCase):
         self.assertIs(logging.getLogger("t"), logger.logger)
 
 
+class TestItWorksUnderIngress(PanelCase):
+    """Ingress mounts the panel under /api/hassio_ingress/<token>/.
+
+    Serving at "/" is the one arrangement in which an absolute asset URL
+    works, and it is the arrangement every test and the demo panel used —
+    so 0.1.1 shipped a panel that rendered as unstyled HTML with all five
+    views stacked, and CI was green at three widths.
+    """
+
+    PREFIX = "/api/hassio_ingress/01JJRqzH5o3TtVgngV7GNA3w"
+
+    async def _under_prefix(self):
+        from aiohttp import web as aiohttp_web  # noqa: PLC0415
+
+        root = aiohttp_web.Application()
+        root.add_subapp(self.PREFIX + "/", server.build_app(self.panel))
+        client = TestClient(TestServer(root))
+        await client.start_server()
+        self.addAsyncCleanup(client.close)
+        return client
+
+    async def test_the_pages_own_assets_resolve_where_ingress_serves_them(self):
+        """Fetched by the URL a browser would build from the page's markup,
+        rather than by one this test composed — that is the whole failure."""
+        import re  # noqa: PLC0415
+
+        client = await self._under_prefix()
+        page = await (await client.get(self.PREFIX + "/")).text()
+
+        refs = re.findall(r'(?:href|src)="([^"]+)"', page)
+        assets = [r for r in refs
+                  if r.endswith((".css", ".js", ".svg"))]
+        self.assertTrue(assets, "the page references no assets at all")
+        for ref in assets:
+            with self.subTest(asset=ref):
+                self.assertFalse(
+                    ref.startswith("/"),
+                    f"{ref} is absolute; under ingress it asks Home "
+                    f"Assistant's root, not this panel")
+                response = await client.get(f"{self.PREFIX}/{ref}")
+                self.assertEqual(200, response.status)
+
+    async def test_the_api_answers_under_the_prefix(self):
+        client = await self._under_prefix()
+        self.assertEqual(200, (await client.get(self.PREFIX + "/api/state")).status)
+        self.assertEqual(200, (await client.get(self.PREFIX + "/api/health")).status)
+
+    async def test_the_javascript_never_fetches_an_absolute_path(self):
+        """Twenty-odd call sites, so the rule is checked rather than each
+        one: `api()` strips the leading slash, and nothing bypasses it."""
+        import re  # noqa: PLC0415
+
+        panel_dir = Path(__file__).resolve().parent.parent / "bruh-print" / "panel"
+        source = (panel_dir / "app.js").read_text()
+        absolute = re.findall(r"""fetch\(\s*['"`]/[^'"`]*""", source)
+        self.assertEqual([], absolute)
+
+
+class TestItDoesNotServeItsOwnSource(PanelCase):
+    """`add_static("/static/", PANEL_DIR)` served the whole panel directory.
+
+    Nothing in it is a secret — this add-on holds no credential — and the
+    panel is admin-only behind ingress. It is still not something to serve,
+    and the fix (four named routes) is the same edit that fixed the ingress
+    paths, so the guard belongs beside it.
+    """
+
+    async def test_the_panels_modules_are_not_reachable(self):
+        for path in ("/static/server.py", "/server.py",
+                     "/static/stores/stock.py", "/static/dymo/protocol.py"):
+            with self.subTest(path=path):
+                self.assertEqual(404, (await self.client.get(path)).status)
+
+    async def test_the_four_assets_are(self):
+        for path in ("/", "/style.css", "/app.js", "/favicon.svg"):
+            with self.subTest(path=path):
+                self.assertEqual(200, (await self.client.get(path)).status)
+
+
 class TestMirror(unittest.TestCase):
     """The file Home Assistant actually reads."""
 

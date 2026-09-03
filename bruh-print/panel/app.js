@@ -20,6 +20,12 @@
  */
 'use strict';
 
+/* A flag the layout measure looks for. app.js failing to load leaves a page
+ * that still renders — unstyled, with every view stacked — and every
+ * subsequent click timing out on a control that was never built, which
+ * reads as a flaky selector rather than as "the panel did not load". */
+window.__bruhPrintReady = true;
+
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls, text) => {
   const node = document.createElement(tag);
@@ -40,8 +46,16 @@ const S = {
 };
 
 /* ── Fetch ──────────────────────────────────────────────────────────── */
+/* The leading slash is stripped so every request resolves against the page's
+ * own base. Ingress serves this panel under /api/hassio_ingress/<token>/, so
+ * an absolute "/api/state" is a request to Home Assistant's own root — which
+ * is what shipped, and why the panel loaded as unstyled HTML with every view
+ * stacked: style.css and app.js 404'd the same way. Same helper brAIn's
+ * `api()` has, for the same reason. */
+const relative = (path) => String(path).replace(/^\//, "");
+
 async function api(path, options = {}) {
-  const response = await fetch(path, {
+  const response = await fetch(relative(path), {
     headers: options.body ? { 'Content-Type': 'application/json' } : {},
     ...options,
   });
@@ -346,7 +360,7 @@ function renderDesign() {
 
 async function refreshPreview() {
   try {
-    const response = await fetch('/api/preview', {
+    const response = await fetch(relative('/api/preview'), {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ label: S.label, scale: 2 }),
     });

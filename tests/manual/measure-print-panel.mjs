@@ -20,7 +20,13 @@
  *
  * Set SHOTS=1 to keep a screenshot per state. */
 import { chromium } from 'playwright';
-const URL = process.env.PANEL_URL || 'http://127.0.0.1:8097/';
+/* The prefix is the point: the panel is measured where ingress actually
+ * mounts it, not at the root. Served at "/" every absolute asset URL works
+ * by accident, which is how a panel that rendered as unstyled HTML under
+ * ingress passed this measure at three widths. */
+const PREFIX = process.env.DEMO_PREFIX
+  || '/api/hassio_ingress/01JJRqzH5o3TtVgngV7GNA3w';
+const URL = process.env.PANEL_URL || `http://127.0.0.1:8097${PREFIX}/`;
 /* Same launch as every other measure in this folder: Playwright's own
  * browser by default, and CHROMIUM_PATH when it is somewhere else. An
  * absolute path baked in here is a script that runs on exactly one
@@ -51,6 +57,16 @@ const audit = (width) => {
   }
   if (getComputedStyle(document.getElementById('toast')).display !== 'none')
     out.push('the toast is visible with nothing to say');
+  /* A stylesheet that 404s leaves a page that still lays out, so the audit
+   * has to ask whether the CSS and the JS actually arrived. Both have a
+   * visible consequence: `.view` is display:none until a tab is chosen, and
+   * app.js is what fills the stock picker. */
+  const onScreen = [...document.querySelectorAll('.view')]
+    .filter((v) => v.offsetParent !== null).length;
+  if (onScreen !== 1)
+    out.push(`${onScreen} views are on screen at once — style.css did not load`);
+  if (!document.querySelector('#quickStock option'))
+    out.push('the stock picker is empty — app.js did not load or /api/state failed');
   const canvas = document.getElementById('canvas');
   const pane = document.querySelector('.canvas-scroll');
   if (canvas && pane && canvas.getBoundingClientRect().width > pane.clientWidth)
@@ -66,6 +82,25 @@ const run = async (w, h, name, touch, steps) => {
   p.on('pageerror', (e) => problems.push(`${name}: ${e.message}`));
   p.on('console', (m) => { if (m.type() === 'error') problems.push(`${name} console: ${m.text()}`); });
   await p.goto(URL, { waitUntil: 'networkidle' });
+  /* Before driving anything: did the page's own assets arrive? A stylesheet
+   * that 404s leaves a page that still lays out, and a script that 404s
+   * leaves controls that never appear — so every `click` times out and the
+   * failure reads as a flaky selector rather than as "the panel did not
+   * load". Ask first, and say which. */
+  const arrived = await p.evaluate(() => {
+    const bad = [];
+    if (!getComputedStyle(document.body).backgroundColor
+        || getComputedStyle(document.querySelector('.topbar')).position !== 'sticky')
+      bad.push('style.css did not load (the page is unstyled)');
+    if (typeof window.__bruhPrintReady === 'undefined')
+      bad.push('app.js did not load');
+    return bad;
+  });
+  if (arrived.length) {
+    problems.push(`${name}: ${arrived.join('; ')}`);
+    await ctx.close();
+    return;
+  }
   if (steps) await steps(p);
   await p.waitForTimeout(900);
   const found = await p.evaluate(audit, w);

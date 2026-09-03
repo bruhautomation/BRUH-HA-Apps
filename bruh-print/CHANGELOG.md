@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.1.2
+
+**The panel rendered as unstyled HTML.** Every view stacked down the page,
+the previews broken images, the tabs plain buttons — because `style.css` and
+`app.js` 404'd, and so did every API call.
+
+Ingress mounts an add-on panel under `/api/hassio_ingress/<token>/`, so an
+absolute `/static/style.css` is a request to Home Assistant's own root. The
+page's three asset references and all twenty-odd `fetch` calls were absolute.
+They are relative now, and `api()` strips a leading slash the way brAIn's
+does — which is where the convention already was, and where this should have
+been read from in the first place.
+
+**Serving at `/` is the one arrangement in which that bug is invisible**, and
+it is the arrangement the demo panel and the layout measure used. Both now
+serve and drive the panel under a prefix, so CI exercises it where ingress
+actually puts it. The measure also checks that the CSS and the JS *arrived*
+before it drives anything: a page whose stylesheet 404s still lays out, and
+every click then times out on a control that was never built — which reads as
+a flaky selector rather than as "the panel did not load". Against 0.1.1 it
+now says exactly that.
+
+**And the panel was serving its own source tree.** `add_static("/static/",
+PANEL_DIR)` meant `GET /static/server.py` answered 200 with the file, as did
+every module under `stores/` and `dymo/`. There is no credential in this
+add-on and the panel is admin-only behind ingress, so nothing leaked that
+matters — but an add-on serving its own source is a mistake waiting to become
+one. Four named routes now serve the four files that are actually assets.
+
 ## 0.1.1
 
 **0.1.0 could not start.** The panel bound its port, logged "listening on
