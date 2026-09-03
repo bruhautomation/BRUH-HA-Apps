@@ -255,6 +255,27 @@ class Panel:
                 "this label against the roll. Set it on the Printer tab.")
         return loaded.SIDES[0], notes
 
+    def consume(self, side: str, count: int) -> None:
+        """Take printed labels off the roll's estimate, if it is kept.
+
+        One place to ask, because five call sites asking is five chances for
+        a new print path to keep counting a number the panel has stopped
+        showing — and a hidden count that goes on moving is worse than no
+        count, since turning tracking back on reveals a number that has been
+        quietly wrong for a month.
+        """
+        if not self.settings.get("track_remaining", True):
+            return
+        self.rolls.consume(side, count)
+
+    def _stock_row(self, entry) -> dict:
+        """A stock, plus which bay holds it."""
+        row = entry.as_dict()
+        side = self.rolls.side_for(entry.id)
+        row["loaded"] = side is not None
+        row["loaded_side"] = side or ""
+        return row
+
     # -- mirror ------------------------------------------------------------
     def state_payload(self) -> dict:
         printer = self.chosen()
@@ -269,7 +290,12 @@ class Panel:
             "printer_error": self._printers_error,
             "ambiguous": bool(len(found) > 1 and not self.settings.get("printer")),
             "rolls": [r.as_dict() for r in self.rolls.all()],
-            "stocks": [s.as_dict() for s in self.stocks.all()],
+            # `loaded` rides on the stock rather than being worked out in the
+            # panel from the roll list, because every picker outside the
+            # Printer tab offers exactly the loaded ones and three copies of
+            # that join is three chances to disagree about what is in the
+            # printer.
+            "stocks": [self._stock_row(s) for s in self.stocks.all()],
             "templates": [t.as_dict() for t in self.templates.all()],
             "settings": self.settings.all(),
             "fonts": list(fonts.catalog().values()),
@@ -556,7 +582,7 @@ async def h_printer_test(request: web.Request) -> web.Response:
     document = _ruler_label(stock)
     parsed, stock, rendered = _render(state, document)
     result = await _send(state, rendered, side=side, copies=1)
-    state.rolls.consume(side, 1)
+    state.consume(side, 1)
     state.mirror_state()
     return ok(printed=1, side=side, notes=notes + rendered.notes, **result)
 
@@ -633,7 +659,7 @@ async def h_stock_put(request: web.Request) -> web.Response:
     state.stocks.put(entry)
     state.mirror_state()
     return ok(stock=entry.as_dict(),
-              stocks=[s.as_dict() for s in state.stocks.all()])
+              stocks=[state._stock_row(s) for s in state.stocks.all()])
 
 
 async def h_stock_swap(request: web.Request) -> web.Response:
@@ -645,7 +671,39 @@ async def h_stock_swap(request: web.Request) -> web.Response:
     swapped = state.stocks.put(entry.swapped())
     state.mirror_state()
     return ok(stock=swapped.as_dict(),
-              stocks=[s.as_dict() for s in state.stocks.all()])
+              stocks=[state._stock_row(s) for s in state.stocks.all()])
+
+
+async def h_stock_turn(request: web.Request) -> web.Response:
+    """Set (or clear) which way artwork sits on this stock.
+
+    `turn: null` puts it back to being derived from the shape, which is a
+    different state from `turn: 0` — one is "nobody has said", the other is
+    "somebody said across", and they diverge the moment the stock is
+    swapped or its measurements corrected.
+    """
+    state = panel(request)
+    try:
+        entry = state.stocks.require(request.match_info["stock_id"])
+    except stock_store.UnknownStock as exc:
+        return bad(exc.detail, 404)
+    payload = await body(request)
+    raw = payload.get("turn", None)
+    if raw in (None, "", "auto"):
+        turn = None
+    else:
+        try:
+            turn = int(raw)
+        except (TypeError, ValueError):
+            return bad("A turn is a number of degrees.")
+        if turn not in label_doc.ROTATIONS:
+            allowed = ", ".join(f"{r}°" for r in label_doc.ROTATIONS)
+            return bad(f"A label can be turned {allowed} — not {turn}°.")
+    updated = state.stocks.put(
+        stock_store.replace(entry, turn=turn, builtin=False))
+    state.mirror_state()
+    return ok(stock=state._stock_row(updated),
+              stocks=[state._stock_row(s) for s in state.stocks.all()])
 
 
 async def h_stock_delete(request: web.Request) -> web.Response:
@@ -659,14 +717,14 @@ async def h_stock_delete(request: web.Request) -> web.Response:
             f"a stock it no longer has.", 409)
     state.stocks.remove(stock_id)
     state.mirror_state()
-    return ok(stocks=[s.as_dict() for s in state.stocks.all()])
+    return ok(stocks=[state._stock_row(s) for s in state.stocks.all()])
 
 
 async def h_stock_restore(request: web.Request) -> web.Response:
     state = panel(request)
     state.stocks.restore(request.match_info["stock_id"])
     state.mirror_state()
-    return ok(stocks=[s.as_dict() for s in state.stocks.all()])
+    return ok(stocks=[state._stock_row(s) for s in state.stocks.all()])
 
 
 # -- rolls ------------------------------------------------------------------
@@ -739,7 +797,7 @@ async def h_print(request: web.Request) -> web.Response:
     side, notes = state.resolve_side(entry.id, side_wanted)
     result = await _send(state, rendered, side=side, copies=copies)
 
-    state.rolls.consume(side, copies)
+    state.consume(side, copies)
     record = state.history.add(
         stock=entry.id, side=side, copies=copies, title=_title(document),
         label=parsed.as_dict(), source=str(payload.get("source", "panel")),
@@ -771,13 +829,13 @@ async def h_quick(request: web.Request) -> web.Response:
 
     rotate = payload.get("rotate")
     if rotate is None:
-        # A tall-and-narrow stock is a wrap-around label and its text runs
-        # along the roll, not across it. Guessing from the shape is right
-        # far more often than not, and it is one press to override — where
-        # NOT guessing means the cryo wrap's first quick print is always
-        # wrong.
-        rotate = (90 if (state.settings.get("quick_rotate_narrow", True)
-                         and entry.feed_in > entry.across_in * 1.6) else 0)
+        # The stock's own answer, not a global switch. Which way text sits
+        # on a label is a property of the label — a cryo wrap reads along
+        # the roll and an address label reads across it, always — so it is
+        # remembered per stock and corrected once, rather than being a
+        # question on every print or one setting covering stocks that
+        # disagree with each other.
+        rotate = entry.natural_turn
 
     try:
         fitted = await asyncio.to_thread(
@@ -808,7 +866,7 @@ async def h_quick(request: web.Request) -> web.Response:
     copies = max(1, min(500, int(payload.get("copies", 1) or 1)))
     side, notes = state.resolve_side(entry.id, str(payload.get("side", "") or ""))
     result = await _send(state, rendered, side=side, copies=copies)
-    state.rolls.consume(side, copies)
+    state.consume(side, copies)
     record = state.history.add(
         stock=entry.id, side=side, copies=copies, title=" ".join(fitted.lines),
         label=document, source=str(payload.get("source", "quick")),
@@ -927,7 +985,7 @@ async def h_template_print(request: web.Request) -> web.Response:
     side, notes = state.resolve_side(entry.id, str(payload.get("side", "") or ""))
     result = await _send(state, rendered, side=side, copies=copies)
 
-    state.rolls.consume(side, copies)
+    state.consume(side, copies)
     state.templates.used(template.id)
     record = state.history.add(
         stock=entry.id, side=side, copies=copies,
@@ -960,7 +1018,7 @@ async def h_reprint(request: web.Request) -> web.Response:
         stock_entry.id, str(payload.get("side", "") or entry.side))
     result = await _send(state, rendered, side=side, copies=copies)
 
-    state.rolls.consume(side, copies)
+    state.consume(side, copies)
     record = state.history.add(
         stock=stock_entry.id, side=side, copies=copies, title=entry.title,
         label=entry.label, source="reprint", template=entry.template,
@@ -1147,6 +1205,7 @@ def build_app(state: Panel | None = None) -> web.Application:
     app.router.add_get("/api/stocks", h_stocks)
     app.router.add_post("/api/stock", h_stock_put)
     app.router.add_post("/api/stock/{stock_id}/swap", h_stock_swap)
+    app.router.add_post("/api/stock/{stock_id}/turn", h_stock_turn)
     app.router.add_post("/api/stock/{stock_id}/restore", h_stock_restore)
     add("DELETE", "/api/stock/{stock_id}", h_stock_delete)
 

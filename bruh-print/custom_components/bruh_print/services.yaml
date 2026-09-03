@@ -20,20 +20,6 @@ print_text:
       example: edcc-082wh
       selector:
         text:
-    side:
-      name: Roll
-      description: >-
-        Which roll of a Twin Turbo to print on. Leave empty and BRUH Print
-        uses whichever roll holds this stock.
-      selector:
-        select:
-          options:
-            - label: Wherever this stock is loaded
-              value: ""
-            - label: Left
-              value: left
-            - label: Right
-              value: right
     copies:
       name: Copies
       selector:
@@ -82,17 +68,6 @@ print_template:
       example: '{"sample": "9912", "owner": "MS"}'
       selector:
         object:
-    side:
-      name: Roll
-      selector:
-        select:
-          options:
-            - label: Wherever this stock is loaded
-              value: ""
-            - label: Left
-              value: left
-            - label: Right
-              value: right
     copies:
       name: Copies
       selector:
@@ -113,17 +88,6 @@ print_label:
       required: true
       selector:
         object:
-    side:
-      name: Roll
-      selector:
-        select:
-          options:
-            - label: Wherever this stock is loaded
-              value: ""
-            - label: Left
-              value: left
-            - label: Right
-              value: right
     copies:
       name: Copies
       selector:
@@ -151,18 +115,6 @@ reprint:
           min: 1
           max: 500
           mode: box
-    side:
-      name: Roll
-      selector:
-        select:
-          options:
-            - label: Same roll as before
-              value: ""
-            - label: Left
-              value: left
-            - label: Right
-              value: right
-
 set_roll:
   name: Say what is loaded
   description: >-
@@ -207,14 +159,3 @@ print_test:
       name: Label stock
       selector:
         text:
-    side:
-      name: Roll
-      selector:
-        select:
-          options:
-            - label: Wherever this stock is loaded
-              value: ""
-            - label: Left
-              value: left
-            - label: Right
-              value: right

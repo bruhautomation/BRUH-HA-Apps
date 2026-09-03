@@ -38,6 +38,17 @@ PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR]
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
+# `side` is no longer offered anywhere — not in services.yaml, not on the
+# panel, not on the card. Which bay a label prints on is not a decision
+# worth asking anybody to make: the add-on knows which roll holds which
+# stock, so naming the stock has already named the bay, and two ways to say
+# it is one way to contradict the other.
+#
+# The schemas below still ACCEPT it, deliberately and quietly. An automation
+# written against 0.1.2 has `side: left` in it, and a field vanishing from a
+# schema turns that into a validation error on a working automation — a
+# worse outcome than an argument nobody is offered. It is honoured exactly
+# as before; nothing suggests it.
 SIDES = vol.In(["", "left", "right"])
 COPIES = vol.All(vol.Coerce(int), vol.Range(min=1, max=500))
 

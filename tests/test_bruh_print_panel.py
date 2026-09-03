@@ -19,6 +19,9 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(__file__))
 
+PANEL_DIR = (Path(__file__).resolve().parent.parent
+             / "bruh-print" / "panel")
+
 from aiohttp.test_utils import (  # noqa: E402
     TestClient, TestServer, make_mocked_request,
 )
@@ -588,6 +591,149 @@ class TestItDoesNotServeItsOwnSource(PanelCase):
         for path in ("/", "/style.css", "/app.js", "/favicon.svg"):
             with self.subTest(path=path):
                 self.assertEqual(200, (await self.client.get(path)).status)
+
+
+class TestYouPickTheLabelNotTheRoll(PanelCase):
+    """Which bay a label prints on is not a question anybody wants asked.
+
+    The add-on knows which roll holds which stock. Two ways to say where a
+    label goes is one way to contradict the other, so the roll picker is
+    gone from the Quick tab, the designer, the templates, the card and the
+    print services — naming the stock has already named the bay.
+    """
+
+    async def test_a_print_that_names_no_side_lands_on_the_right_roll(self):
+        state = self.panel
+        state.rolls.load_roll("left", "edcc-082wh", count=100)
+        state.rolls.load_roll("right", "ed1f-060wh", count=100)
+
+        for stock, expect in (("edcc-082wh", "left"), ("ed1f-060wh", "right")):
+            with self.subTest(stock=stock):
+                response = await self.client.post("/api/quick", json={
+                    "text": "x", "stock": stock, "print": True})
+                body = await response.json()
+                self.assertEqual(200, response.status, body)
+                self.assertEqual(expect, body["side"])
+
+    async def test_the_panel_never_sends_a_side(self):
+        """Twenty call sites; the rule is checked rather than each one."""
+        source = (PANEL_DIR / "app.js").read_text()
+        self.assertNotIn("quickSide", source)
+        self.assertNotIn("designSide", source)
+        self.assertNotIn("side: side.value", source)
+
+    async def test_the_card_sends_a_stock_and_never_a_side(self):
+        card = (PANEL_DIR.parent / "lovelace" / "bruh-print-card.js").read_text()
+        self.assertNotIn("data.side", card)
+        self.assertIn("_selectedStock", card)
+
+
+class TestOnlyWhatIsLoadedCanBePicked(PanelCase):
+    """The Printer tab is where the catalog lives; nowhere else offers it.
+
+    Offering fourteen stocks on the Quick tab when two are in the printer
+    makes the commonest first action a choice between twelve wrong answers
+    and then a refusal for picking one.
+    """
+
+    async def test_a_stock_says_whether_it_is_loaded_and_where(self):
+        self.panel.rolls.load_roll("left", "edcc-082wh", count=100)
+        body = await (await self.client.get("/api/state")).json()
+        rows = {s["id"]: s for s in body["stocks"]}
+        self.assertTrue(rows["edcc-082wh"]["loaded"])
+        self.assertEqual("left", rows["edcc-082wh"]["loaded_side"])
+        self.assertFalse(rows["dymo-30252"]["loaded"])
+        self.assertEqual("", rows["dymo-30252"]["loaded_side"])
+
+    async def test_an_empty_printer_falls_back_to_the_whole_catalog(self):
+        """An empty picker is a panel that looks broken, and somebody who
+        has not filled the Printer tab in yet still wants to print."""
+        source = (PANEL_DIR / "app.js").read_text()
+        self.assertIn("return on.length ? on : S.stocks;", source)
+
+
+class TestEachStockRemembersItsOwnTurn(PanelCase):
+    """Which way text sits on a label is the label's property, not the job's.
+
+    A wrap-around cryo label reads along the roll and an address label reads
+    across it — always, for that stock. Asking on every print is asking a
+    question whose answer never changes.
+    """
+
+    async def test_the_shape_decides_when_nobody_has_said(self):
+        body = await (await self.client.get("/api/state")).json()
+        rows = {s["id"]: s for s in body["stocks"]}
+        self.assertEqual(0, rows["edcc-082wh"]["turn"], "2.25 × 1.25 reads across")
+        self.assertEqual(90, rows["ed1f-060wh"]["turn"], "0.56 × 3.44 reads along")
+        for row in rows.values():
+            self.assertFalse(row["turn_set"], "nothing is overridden out of the box")
+
+    async def test_a_quick_print_takes_the_stock_s_turn(self):
+        self.panel.rolls.load_roll("right", "ed1f-060wh", count=100)
+        body = await (await self.client.post("/api/quick", json={
+            "text": "Vial 12", "stock": "ed1f-060wh"})).json()
+        self.assertEqual(90, body["label"]["rotate"])
+
+    async def test_an_override_sticks_and_can_be_taken_back(self):
+        response = await self.client.post(
+            "/api/stock/edcc-082wh/turn", json={"turn": 90})
+        body = await response.json()
+        self.assertEqual(90, body["stock"]["turn"])
+        self.assertTrue(body["stock"]["turn_set"])
+
+        body = await (await self.client.post(
+            "/api/stock/edcc-082wh/turn", json={"turn": None})).json()
+        self.assertEqual(0, body["stock"]["turn"])
+        self.assertFalse(body["stock"]["turn_set"],
+                         "back to being derived, not frozen at 0")
+
+    async def test_a_turn_that_is_not_a_quarter_is_refused(self):
+        response = await self.client.post(
+            "/api/stock/edcc-082wh/turn", json={"turn": 45})
+        self.assertEqual(400, response.status)
+        self.assertIn("45", (await response.json())["error"])
+
+    async def test_swapping_re_derives_the_turn(self):
+        """The shape is what `natural_turn` reads, so a derived turn has to
+        be re-derived — keeping the old answer is a swap that fixes the
+        width and leaves the text lying the way it was wrong before."""
+        before = await (await self.client.get("/api/state")).json()
+        row = next(s for s in before["stocks"] if s["id"] == "ed1f-060wh")
+        self.assertEqual(90, row["turn"])
+        after = await (await self.client.post(
+            "/api/stock/ed1f-060wh/swap", json={})).json()
+        self.assertEqual(0, after["stock"]["turn"],
+                         "3.44 × 0.56 is a wide stock and reads across")
+
+
+class TestTheRemainingCountIsOptional(PanelCase):
+    """A number you can see and cannot correct is a number you stop reading,
+    and a number kept while hidden is one that goes quietly wrong."""
+
+    async def test_the_count_can_be_set_by_hand(self):
+        self.panel.rolls.load_roll("left", "edcc-082wh", count=1000)
+        body = await (await self.client.post(
+            "/api/roll/left", json={"stock": "edcc-082wh", "remaining": 42})).json()
+        self.assertEqual(42, body["roll"]["remaining"])
+
+    async def test_printing_stops_counting_when_tracking_is_off(self):
+        self.panel.rolls.load_roll("left", "edcc-082wh", count=100)
+        await self.client.post("/api/settings", json={"track_remaining": False})
+        await self.client.post("/api/quick", json={
+            "text": "x", "stock": "edcc-082wh", "copies": 5, "print": True})
+        self.assertEqual(100, self.panel.rolls.get("left").remaining)
+
+        await self.client.post("/api/settings", json={"track_remaining": True})
+        await self.client.post("/api/quick", json={
+            "text": "x", "stock": "edcc-082wh", "copies": 5, "print": True})
+        self.assertEqual(95, self.panel.rolls.get("left").remaining)
+
+    async def test_every_print_path_asks_the_same_gate(self):
+        """Five call sites asking separately is five chances for a new print
+        path to keep counting a number the panel has stopped showing."""
+        source = (PANEL_DIR / "server.py").read_text()
+        self.assertNotIn("state.rolls.consume(", source)
+        self.assertIn("def consume(self, side: str, count: int)", source)
 
 
 class TestMirror(unittest.TestCase):

@@ -77,15 +77,27 @@ does not match. That refusal is the point of the feature. Without it, sending
 a 2.25″-wide raster to the 0.56″ roll prints across the liner — once per copy,
 so a run of fifty ruins fifty labels and there is no error anywhere.
 
-Roll selection:
+**Nothing asks you which roll.** You pick the label; BRUH Print knows which
+bay it is in, because you told it on the Printer tab. There is no roll picker
+on the Quick tab, in the designer, on a template, on the card, or in the print
+services — a roll is where a label happens to be, not a decision. The bay
+holding that stock wins; a printer with nothing recorded prints on the left,
+which on a single-roll model is the only bay.
 
-- An explicit `side` is honoured, and checked. If the roll holds something
-  else you get a refusal naming both stocks.
-- Otherwise the bay holding that stock wins.
-- Otherwise the left bay, which on a single-roll printer is the only bay.
+(The services still accept a `side` if one is passed, so an automation
+written before 0.2.0 keeps working. Nothing offers it. `set_roll` keeps it,
+because saying what is loaded is a statement about a bay.)
 
-The remaining count is an **estimate**, counted down from prints. Nothing on
-a LabelWriter reports a real level. It says so everywhere it appears.
+**Only what is loaded can be picked.** Every stock picker outside the Printer
+tab lists the rolls that are actually in the printer. The Printer tab is
+where the whole catalog lives, because that is where the question is "what
+did I just load".
+
+The remaining count is an **estimate**, counted down from prints — nothing on
+a LabelWriter reports a real level, so it is only as good as the last time
+you set it. Press the bar on the Printer tab to correct it, or turn
+**Keep an estimate of how many labels are left** off under Settings and BRUH
+Print stops counting entirely.
 
 ## The label document
 
@@ -117,6 +129,12 @@ All measurements are in millimetres from the top-left of the *drawable* area
 `rotate` turns the *design canvas*: at 90 or 270 you lay the label out on its
 side, which is how a 0.56″ × 3.44″ tube wrap is designed as a long strip and
 printed as a narrow one.
+
+Each **stock** carries the turn its labels take, so you do not set this per
+print — switching from an address label to a tube wrap switches the turn with
+it. BRUH Print derives it from the shape (a stock much longer than it is wide
+is a wrap-around label and reads along the roll) and the Printer tab is where
+you correct it for good; the closed picker says what "automatic" decided.
 
 `size_mm: 0` on a text element means "as large as fits its box". A non-zero
 size that does not fit is reported as a note and clipped — never silently
@@ -169,12 +187,12 @@ data:
   text: Buffer A pH 7.4
   copies: 2
 
-# Fill in a template
+# Fill in a template. No roll to name — the template's label says which
+# stock it is for, and BRUH Print knows which bay holds it.
 action: bruh_print.print_template
 data:
   template: Cryo vial
   fields: {sample: "9912", owner: MS}
-  side: right
 
 # Tell it a new roll went in
 action: bruh_print.set_roll

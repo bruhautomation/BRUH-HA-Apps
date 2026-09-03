@@ -34,7 +34,14 @@ DEFAULTS: dict[str, Any] = {
     # faster than they update the panel and would rather we not ask.
     "enforce_stock": True,
     "quick_uppercase": False,
-    "quick_rotate_narrow": True,
+    # Counting down from a number somebody typed is an estimate dressed as
+    # a gauge: nothing on a LabelWriter reports a roll's real level, so the
+    # count is only ever as good as the last time it was set. Some people
+    # want it and keep it honest; some want the printer to just print. Off
+    # hides every bar and estimate and stops the decrement — a number that
+    # is not shown must not go on being kept, or turning tracking back on
+    # reveals a count that has been quietly wrong for a month.
+    "track_remaining": True,
     "preview_scale": 2,
     "confirm_over_copies": 10,
     "notify_service": "",
