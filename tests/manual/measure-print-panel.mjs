@@ -19,11 +19,16 @@
  *     fitted, so a 2.25" label was 1344px wide inside a 600px pane.
  *
  * Set SHOTS=1 to keep a screenshot per state. */
-import pkg from '/opt/node22/lib/node_modules/playwright/index.js';
-const { chromium } = pkg;
+import { chromium } from 'playwright';
 const URL = process.env.PANEL_URL || 'http://127.0.0.1:8097/';
-const b = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH
-  || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox'] });
+/* Same launch as every other measure in this folder: Playwright's own
+ * browser by default, and CHROMIUM_PATH when it is somewhere else. An
+ * absolute path baked in here is a script that runs on exactly one
+ * machine — which is what shipped, and what CI caught on the first run. */
+const b = await chromium.launch(
+  process.env.CHROMIUM_PATH
+    ? { executablePath: process.env.CHROMIUM_PATH, args: ['--no-sandbox'] }
+    : { args: ['--no-sandbox'] });
 const problems = [];
 
 /* `width` is passed in rather than read from innerWidth: under Chromium's
