@@ -57,6 +57,10 @@ FAILURE_RATE_DEGRADED = 0.5
 # The mirror is rewritten after every checks pass and hourly in between.
 # Twice that is a panel that has stopped writing.
 MIRROR_STALE_H = 2.5
+# A quiet window is hours, not days. Past this the flush is not running:
+# generous enough that a 22->7 hold plus a long weekend of nobody looking
+# is not accused, tight enough that a dead loop is caught the same day.
+HELD_TOO_LONG_H = 30.0
 
 # Which daemons matter, and what turns each one on. A daemon whose option
 # is off is not missing; it was not asked for.
@@ -166,6 +170,25 @@ def problems(diag: dict, options: dict | None = None,
             "consolidator is running, so it is finding nothing to file or "
             "failing every pass — the add-on log says which.",
             "consolidation"))
+
+    # A hold queue is meant to empty every morning. One that has not is a
+    # flush loop that died holding somebody's findings, and the whole point
+    # of holding rather than dropping was that nothing is lost — so a hold
+    # that never ends is the one failure that makes the feature a lie.
+    notify = diag.get("notify") or {}
+    since = notify.get("held_since") or 0
+    if notify.get("held") and since:
+        waited = (now - since) / 3600.0
+        if waited > HELD_TOO_LONG_H:
+            found.append(_problem(
+                "degraded",
+                f"{notify['held']} finding(s) have been held for "
+                f"{int(waited)} hours",
+                "Quiet hours hold notifications until morning and then send "
+                "them. These have been waiting far longer than that, so the "
+                "flush is not running — the findings are safe on the tab, "
+                "but nothing is reaching your phone. Restart the add-on.",
+                "notify-hold"))
 
     last = diag.get("checks") or {}
     if last.get("error"):

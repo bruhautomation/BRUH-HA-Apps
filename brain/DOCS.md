@@ -194,6 +194,18 @@ automation can react the moment brAIn files something. And if you set
 phone; a naming nitpick waits on the tab. The whole tab is also scriptable as
 `brain findings` (list / fix / done / wrong / ack / snooze) from the terminal.
 
+Between `notify_quiet_start` and `notify_quiet_end` (22 to 7 by default, in
+your home's own timezone) only the **urgent** ones get through: a device that
+has gone offline, an add-on that has stopped, a disk about to fill, a reading
+that is impossible. Everything else is **held**, not dropped, and arrives as a
+single message when the quiet ends. Urgency is not severity — a `critical`
+battery forecast is three weeks away and a `warning` about a boiler that has
+stopped answering is now — so it is a property of the check that raised the
+row, not of the row's wording. Anything you fixed or dismissed overnight is
+dropped from the queue rather than announced: being told at seven about a
+problem that went away at four is how these messages stop meaning anything.
+Set both to the same value (or leave both empty) to notify at any hour.
+
 ### It explains your house to you
 
 The **Insights** dashboard is a set of cards, each one a small piece of analysis with
@@ -398,6 +410,27 @@ A few things it deliberately will not do:
   a meter replaced — and reporting them all would be reporting the
   measurement rather than the home.
 
+- **It won't report a meter for going up.** A `total_increasing` energy
+  total is higher than it has ever been every hour of its life; that is
+  what the class means, so "far above its usual" would be a statement
+  about arithmetic rather than about your house.
+
+**And it watches the slow ones**, which is the failure with no bad reading
+in it. A freezer 6°C warmer than it was a month ago has never once been
+outside its usual range — because the range is built from the same weeks
+the drift happened in and moved along with it. Measured on a real-shaped
+month, that freezer reads 2.3 spreads to the "unusual" check, which needs
+six, and 16 to the trend. Nobody notices until something spoils.
+
+So brAIn also fits a line through the month, to what is left once the
+week's own pattern is taken out, and tells you when a reading has been
+walking one way for weeks — with the same discipline. Something that
+turned around in the middle of the window is not a drift. A step change
+is not weeks of drifting. A move smaller than the noise it sits in is not
+a move. And when five thermometers drift together that is the weather
+rather than a device, so the whole class stands down: what you get is the
+one room that is doing something the others are not.
+
 Claude can read it too: ask *"is the utility room damp?"* and it looks up
 what damp normally is in your utility room rather than picking a number.
 
@@ -586,6 +619,8 @@ the Terminal tab itself), because it changes nothing about how the add-on runs.
 | `study_timeout_minutes` | 2–120 | `30` | Wall-clock limit for a study session. |
 | `findings_notify_service` | string | *(empty)* | A `notify.*` service (with or without the prefix) that gets a push when brAIn files a new finding. Empty means no notifications — the Findings tab, the sensor and the `brain_finding` event work either way. |
 | `findings_notify_min_severity` | `info` \| `warning` \| `serious` \| `critical` | `serious` | Only findings at or above this severity are pushed. The default means dying batteries and silent sensors ring your phone while naming nitpicks wait on the tab. |
+| `notify_quiet_start` | string | `22` | The hour (0–23, your home's timezone) from which only urgent findings ring your phone. Everything else is held and delivered as one message when the quiet ends. |
+| `notify_quiet_end` | string | `7` | The hour held findings are delivered. A window that crosses midnight (22 to 7) is the normal case. Set both the same, or both empty, for no quiet hours. |
 
 > **Why the study limits are generous.** A turn cap is not a safety valve — it
 > *truncates*. A study session that hits it stops mid-thought and produces no

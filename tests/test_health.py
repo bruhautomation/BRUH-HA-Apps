@@ -247,5 +247,49 @@ class TestReadingItFromOutside(unittest.TestCase):
             self.assertIn(f'"{state}"', block, state)
 
 
+class TestAHoldThatNeverEnds(unittest.TestCase):
+    """The failure that would make quiet hours a lie.
+
+    Holding rather than dropping is only honest if the hold ends. A flush
+    loop that died is invisible from every surface — the findings are on
+    the tab, nothing errors, and the phone is simply quiet — which is the
+    exact shape of every quiet failure this module exists to catch.
+    """
+
+    NOW = 1_700_000_000.0
+
+    def diag(self, **notify):
+        return diag(notify={"service": True, "held": 0, "held_since": 0,
+                            "quiet_start": 22, "quiet_end": 7, **notify})
+
+    def keys(self, diag):
+        return {p["id"] for p in health.problems(diag, now=self.NOW)}
+
+    def test_an_empty_queue_is_silent(self):
+        self.assertNotIn("notify-hold", self.keys(self.diag()))
+
+    def test_an_ordinary_overnight_hold_is_silent(self):
+        self.assertNotIn("notify-hold", self.keys(self.diag(
+            held=3, held_since=int(self.NOW - 5 * 3600))))
+
+    def test_a_hold_no_morning_ever_ended_is_reported(self):
+        problems = health.problems(
+            self.diag(held=3, held_since=int(self.NOW - 40 * 3600)),
+            now=self.NOW)
+        row = next(p for p in problems if p["id"] == "notify-hold")
+        self.assertEqual(row["state"], "degraded")
+        self.assertIn("3", row["what"])
+        self.assertIn("Restart", row["fix"])
+
+    def test_a_count_with_no_stamp_accuses_nobody(self):
+        # An older queue file, or one written before the stamp existed.
+        # "I cannot tell how long" is not "it has been days".
+        self.assertNotIn("notify-hold",
+                         self.keys(self.diag(held=3, held_since=0)))
+
+    def test_a_payload_with_no_notify_block_at_all_is_silent(self):
+        self.assertNotIn("notify-hold", self.keys(diag()))
+
+
 if __name__ == "__main__":
     unittest.main()

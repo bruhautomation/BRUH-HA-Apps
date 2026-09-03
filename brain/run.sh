@@ -344,6 +344,11 @@ MEMORYMD
     findings_notify_sev=$(bashio::config 'findings_notify_min_severity' 'serious')
     export BRAIN_FINDINGS_NOTIFY="$findings_notify"
     export BRAIN_FINDINGS_NOTIFY_MIN_SEVERITY="$findings_notify_sev"
+    local quiet_start quiet_end
+    quiet_start=$(bashio::config 'notify_quiet_start' '22')
+    quiet_end=$(bashio::config 'notify_quiet_end' '7')
+    export BRAIN_NOTIFY_QUIET_START="$quiet_start"
+    export BRAIN_NOTIFY_QUIET_END="$quiet_end"
 
     # Study sessions are where depth actually matters, and --max-turns
     # truncates rather than degrading — a session that hits the cap files

@@ -46,9 +46,22 @@ COVERED_BY_ANOTHER_CHECK = frozenset({"battery"})
 # Entities that live in the settings pages. Their readings are real and
 # nobody wants a finding about a signal strength that dipped.
 BACKGROUND_CATEGORIES = frozenset({"diagnostic", "config"})
+# The only state class for which "outside its usual range" means
+# anything. See `eligible`.
+MEASURED_CLASSES = frozenset({"measurement"})
+# A reading this far into a drift is explained by the drift, and
+# `forecast.decline` has the fix that matters on it.
+DRIFT_SPREADS = 4.0
 
 
-def _eligible(house: House, eid: str, st: dict) -> bool:
+def eligible(house: House, eid: str, st: dict) -> bool:
+    """Whether a reading from this entity is worth reporting on at all.
+
+    Shared with `forecast.decline`, which reports the same kind of thing
+    about the same kind of entity — the rule this package keeps returning
+    to, and the reason `dev.unavailable` and `dev.zwave_dead` share a
+    helper rather than each keeping a list of dead nodes.
+    """
     if st.get("state") in ("unavailable", "unknown", None):
         return False
     if not house.enabled(eid):
@@ -60,6 +73,14 @@ def _eligible(house: House, eid: str, st: dict) -> bool:
         return False
     attrs = st.get("attributes") or {}
     if str(attrs.get("device_class") or "") in COVERED_BY_ANOTHER_CHECK:
+        return False
+    # A `total_increasing` meter is higher than it has ever been every
+    # hour of its life; that is what the class means, so "far above its
+    # usual" is a statement about arithmetic rather than about the house.
+    # The band's own spread widens with the ramp and mostly hides this,
+    # which is worse than it sounds: it means the check is quiet by
+    # accident rather than on purpose, and a meter that resets is not.
+    if str(attrs.get("state_class") or "") not in MEASURED_CLASSES:
         return False
     # A thermometer reading 99°C is IMPOSSIBLE before it is unusual, and
     # `dev.implausible` says so with the better fix on it. Two checks on
@@ -86,7 +107,17 @@ def unusual(snap: dict, now: float) -> list[dict]:
     hits = []
     for eid, baseline in entities.items():
         st = house.states.get(eid)
-        if not st or not _eligible(house, eid, st):
+        if not st or not eligible(house, eid, st):
+            continue
+        # A reading far from normal on a sensor that has been walking one
+        # way for a month is the walk, and `forecast.decline` says so with
+        # the fix that matters ("before it reaches a number that does").
+        # Reporting both is the same sensor under two fixes, which is how
+        # a list stops being read — and they share `baselines.trend`, so
+        # they cannot disagree about whether it is drifting.
+        drift = baseline.get("trend") or {}
+        if drift.get("consistent") and abs(
+                drift.get("spreads") or 0.0) >= DRIFT_SPREADS:
             continue
         try:
             value = float(st.get("state"))

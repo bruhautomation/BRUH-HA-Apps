@@ -244,12 +244,46 @@ That is what lets a finding say *"4.2 times its normal variation for a Tuesday
 morning"* instead of *"that looks high"*. Claude reads the same numbers when you
 ask it something like "is the utility room damp?".
 
-It is deliberately quiet in four cases: a sensor that never moves gets no
+It is deliberately quiet in five cases: a sensor that never moves gets no
 baseline (there is nothing to measure oddness against), an hour of the week it
 has only seen twice is an anecdote rather than a normal, an *impossible* reading
-is the device check's to report, and more than a handful of odd readings at once
-means the baseline has stopped describing your house rather than that your house
+is the device check's to report, an energy total is *supposed* to be higher than
+it has ever been, and more than a handful of odd readings at once means the
+baseline has stopped describing your house rather than that your house
 has changed.
+
+### The slow ones
+
+A freezer 6°C warmer than it was a month ago has never once been outside its
+usual range — the range is built from the same weeks the drift happened in, and
+moved along with it. It reads about 2 times its normal variation, against a bar
+of 6. Nothing above can see it, however far it goes.
+
+So brAIn also fits a line through the month and tells you when a reading has
+been **walking one way for weeks**, with the same discipline: something that
+turned around mid-month is not a drift, a step change is not weeks of drifting,
+and a move smaller than the noise it sits in is not a move. When five
+thermometers drift together that is the weather rather than a device, so the
+whole class stands down — what you get is the one room doing something the
+others are not.
+
+## When it rings your phone
+
+\`findings_notify_service\` pushes new findings straight to a \`notify.*\` service.
+Between **quiet hours** (\`notify_quiet_start\` to \`notify_quiet_end\`, 22 to 7 by
+default, in your home's own timezone) only the urgent ones get through — a
+device gone offline, an add-on that has stopped, a disk about to fill, an
+impossible reading.
+
+Urgency is not severity. A \`critical\` battery forecast is three weeks away; a
+\`warning\` about a boiler that has stopped answering is now. So it is a property
+of the check that raised the row, not of how the row is worded.
+
+Everything else is **held rather than dropped**, and arrives as one message when
+the quiet ends. Anything you fixed or dismissed overnight is dropped from that
+queue rather than announced — being told at seven about a problem that went away
+at four is how these messages stop meaning anything. Set both hours the same, or
+both empty, to notify at any hour.
 
 ## Activity
 
