@@ -58,11 +58,19 @@ class TestTheClockIsTheHouses(unittest.TestCase):
         """The test that would fail if the tz argument were ignored — which
         is the shape of this bug, since a wrongly bucketed baseline looks
         exactly like a right one."""
+        tokyo = None
         try:
-            from zoneinfo import ZoneInfo
+            from zoneinfo import ZoneInfo  # noqa: PLC0415
             tokyo = ZoneInfo("Asia/Tokyo")
-        except Exception:  # pragma: no cover - no tz database
-            self.skipTest("no zoneinfo database")
+        except Exception:  # noqa: BLE001 — a system with no timezone database
+            # Bound before the try and tested after it, rather than
+            # skipping from inside the handler: `skipTest` raises, so the
+            # code below IS unreachable without it — but nothing at the
+            # point of use says so, which is exactly what a reader (and a
+            # scanner) has to take on faith.
+            pass
+        if tokyo is None:  # pragma: no cover — depends on the host's tz data
+            self.skipTest("this system has no timezone database")
         self.assertEqual(baselines.hour_of_week(MONDAY, tokyo), 9)
 
     def test_an_unreadable_cache_is_utc_and_says_so(self):
