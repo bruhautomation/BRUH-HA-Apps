@@ -78,6 +78,11 @@ QUESTIONS_FILE = "questions.jsonl"
 # Findings mirror the add-on republishes on every change (see the add-on's
 # findings_store._publish_state): {ts, open, by_severity, findings[]}.
 FINDINGS_STATE_FILENAME = "findings_state.json"
+# The panel's own published state: versions, the run journal's last day,
+# the last checks pass, the daemon roll-call and the health verdict. Two
+# platforms read it now (diagnostics and the health sensor), so the name
+# lives here rather than in whichever one was written first.
+DIAGNOSTICS_FILENAME = "diagnostics.json"
 
 # Internal HTTP API published by the add-on's worker pool (fast mode).
 # Endpoint + token are exchanged over the shared /config volume; the

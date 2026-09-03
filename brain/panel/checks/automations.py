@@ -490,6 +490,62 @@ def trigger_unavailable(snap: dict, now: float) -> list[dict]:
     return out
 
 
+# ---------------------------------------------------------------------------
+# auto.overridden — an automation a person keeps undoing
+# ---------------------------------------------------------------------------
+
+# Three in a day. Once is a one-off, twice is a coincidence; three times
+# in one day is somebody fighting their house, and it is the one finding
+# on this list that nothing else in Home Assistant can see — the
+# automation ran, nothing errored, and the light is off.
+OVERRIDE_MIN = 3
+
+
+def overridden(snap: dict, now: float) -> list[dict]:
+    """Automations whose work a person has undone repeatedly today.
+
+    Read off the action miner's overrides rather than recomputed here: the
+    window, the "the state has to actually differ" rule and the one-undo-
+    per-move rule all live in ``actions.find_overrides`` and there must
+    not be a second copy of them.
+    """
+    mined = snap.get("actions") or {}
+    groups = {}
+    for o in mined.get("overrides") or []:
+        if o.get("by_cause") != "automation":
+            continue
+        key = o.get("by") or o.get("by_name") or ""
+        if not key:
+            continue
+        g = groups.setdefault(key, {"name": o.get("by_name") or key,
+                                    "count": 0, "entities": [], "last": 0.0})
+        g["count"] += 1
+        if o["entity_id"] not in g["entities"]:
+            g["entities"].append(o["entity_id"])
+        g["last"] = max(g["last"], o.get("ts") or 0.0)
+
+    out = []
+    for key, g in sorted(groups.items()):
+        if g["count"] < OVERRIDE_MIN:
+            continue
+        out.append({
+            "text": f"You keep undoing what '{g['name']}' does",
+            "detail": (f"{g['count']} times in the last day, on "
+                       + join_names(sorted(g["entities"]))
+                       + f". The last was {when(g['last'])}. The automation "
+                         "is working; it is doing the wrong thing for this "
+                         "house."),
+            "fix": ("Change the automation's condition so it does not run "
+                    "when you do not want it to — the times you overrode it "
+                    "are the condition. Ask brAIn to read the automation "
+                    "and the overrides together if it is not obvious."),
+            "severity": "info",
+            "fixable": False,
+            "entity_id": key if key.startswith("automation.") else "",
+        })
+    return out
+
+
 CHECKS = [
     {"id": "auto.dead_ref", "title": "Automations naming missing entities",
      "needs": ("states", "registry", "automations"), "run": dead_ref},
@@ -515,6 +571,8 @@ CHECKS = [
      "needs": ("registry", "automations"), "run": duplicate},
     {"id": "auto.blueprint_missing", "title": "Automations on a missing blueprint",
      "needs": ("registry", "automations"), "run": blueprint_missing},
+    {"id": "auto.overridden", "title": "Automations a person keeps undoing",
+     "needs": ("actions",), "run": overridden},
 ]
 
 __all__ = ["CHECKS", "DAY"]

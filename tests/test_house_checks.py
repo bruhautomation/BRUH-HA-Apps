@@ -55,7 +55,7 @@ def house(**over) -> dict:
         "available": {k: True for k in (
             "states", "registry", "services", "automations", "traces",
             "stats", "battery_stats", "dashboards", "supervisor",
-            "recorder", "zha_devices")},
+            "recorder", "zha_devices", "actions")},
         "errors": {},
         "blueprints_dir": "",
         "states": {
@@ -137,6 +137,23 @@ def house(**over) -> dict:
                      "db_path": "/config/home-assistant_v2.db"},
         "zha_devices": [{"name": "Back Door sensor", "ieee": "00:11",
                          "available": True, "last_seen": iso(1800)}],
+        # A day of the house behaving: an automation acted, a person acted,
+        # and nobody undid anybody.
+        "actions": {
+            "available": True, "capped": False,
+            "actions": [
+                {"ts": NOW - 3600, "entity_id": "light.kitchen",
+                 "name": "Kitchen", "state": "on", "cause": "automation",
+                 "by": "automation.morning", "by_name": "Morning",
+                 "root_user": "", "root_user_name": ""},
+                {"ts": NOW - 1800, "entity_id": "light.kitchen",
+                 "name": "Kitchen", "state": "off", "cause": "person",
+                 "by": "u1", "by_name": "Ben",
+                 "root_user": "u1", "root_user_name": "Ben"},
+            ],
+            "overrides": [],
+            "counts": {"automation": 1, "person": 1},
+        },
     }
     snap.update(over)
     return snap

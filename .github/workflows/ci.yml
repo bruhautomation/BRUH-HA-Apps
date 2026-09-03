@@ -94,6 +94,9 @@ jobs:
       - name: Measure the tooltips
         run: node tests/manual/measure-tooltips.mjs
 
+      - name: Measure the activity tab
+        run: node tests/manual/measure-activity.mjs
+
       - name: Measure BRight's light map
         run: node tests/manual/measure-lightmap.mjs
 

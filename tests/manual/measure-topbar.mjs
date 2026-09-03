@@ -118,7 +118,11 @@ function probe(floors) {
     .filter((t) => t.w > 0);
 
   // Tab labels are the point of the phone strip — check they actually render
-  // rather than merely being un-hidden.
+  // rather than merely being un-hidden. The expected number is counted from
+  // the markup rather than written down: a hard-coded 5 fails on the day a
+  // sixth tab is added and says nothing about whether it kept its name,
+  // which is the thing being measured.
+  const tabs = bar.querySelectorAll('.viewtab').length;
   const labelled = [...bar.querySelectorAll('.viewtab span:not(.badge)')]
     .filter((el) => getComputedStyle(el).display !== 'none').length;
 
@@ -129,6 +133,7 @@ function probe(floors) {
     barScrollW: bar.scrollWidth,
     barClientW: bar.clientWidth,
     docScrollW: document.documentElement.scrollWidth,
+    tabs,
     labelled,
     // "Smallest" means furthest below its own floor, not fewest pixels — a
     // 40px chip is fine and a 40px tab is not.
@@ -168,8 +173,9 @@ function probe(floors) {
       // Below it: the tabs on a row of their own with their names showing,
       // and a third row only when a trouble chip joins the usage pill.
       const shape = phone
-        ? m.rows >= 2 && m.rows <= (mode === 'running' ? 2 : 3) && m.labelled === 5
-        : m.rows === 1 && m.height === 56 && m.labelled === 5;
+        ? m.rows >= 2 && m.rows <= (mode === 'running' ? 2 : 3)
+          && m.labelled === m.tabs
+        : m.rows === 1 && m.height === 56 && m.labelled === m.tabs;
       const touch = !!m.smallest && m.undersized.length === 0;
       rows.push({ width, mode, ...m, phone, shape, touch, overflow });
 
@@ -189,7 +195,7 @@ function probe(floors) {
       `${String(r.width).padStart(5)}  ${r.mode.padEnd(8)} ${String(r.height).padStart(6)} `
       + `${String(r.rows).padStart(5)}  ${String(r.barScrollW).padStart(6)}/`
       + `${String(r.barClientW).padEnd(6)}   ${t.padEnd(18)} `
-      + (ok ? 'ok' : [!r.shape && `SHAPE rows=${r.rows} h=${r.height} labels=${r.labelled}`,
+      + (ok ? 'ok' : [!r.shape && `SHAPE rows=${r.rows} h=${r.height} labels=${r.labelled}/${r.tabs}`,
                       !r.touch && `TOUCH ${r.undersized.join(', ') || 'no targets'}`,
                       r.overflow && `OVERFLOW +${r.barScrollW - r.barClientW}px`]
         .filter(Boolean).join(' ')));

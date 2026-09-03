@@ -105,6 +105,7 @@ from pathlib import Path
 from aiohttp import web
 from aiohttp.abc import AbstractAccessLogger
 
+import actions
 import addon_options
 import atomic_write
 import card_tags
@@ -116,6 +117,7 @@ import engine
 import feedback_store
 import findings_store
 import fixer
+import health
 import hypotheses
 import journal
 import knowledge_store
@@ -2099,6 +2101,126 @@ async def h_checks_run(request: web.Request) -> web.Response:
 
 
 # ---------------------------------------------------------------------------
+# Activity — what changed, and what changed it
+# ---------------------------------------------------------------------------
+
+# How LONG a window may be, which is not how far back it may reach. A
+# logbook fetch is unfiltered — a week of a busy house is tens of
+# megabytes of JSON through a Pi — so the window stays short and `end` is
+# what reaches back, which is also how the tab pages a day at a time.
+ACTIVITY_MAX_HOURS = 48
+ACTIVITY_DEFAULT_HOURS = 24
+
+
+def _activity_window(request: web.Request) -> tuple[float, float]:
+    """The window a request asked for, as (start, end) epoch seconds.
+
+    ``end`` lets the tab page backwards through days without the client
+    and the server disagreeing about where a day begins — the browser
+    knows the viewer's timezone and the panel does not.
+    """
+    now = time.time()
+    try:
+        hours = float(request.query.get("hours") or ACTIVITY_DEFAULT_HOURS)
+    except ValueError:
+        hours = ACTIVITY_DEFAULT_HOURS
+    hours = max(1.0, min(ACTIVITY_MAX_HOURS, hours))
+    try:
+        end = float(request.query.get("end") or now)
+    except ValueError:
+        end = now
+    end = min(end, now)
+    return end - hours * 3600, end
+
+
+async def _activity(start: float, end: float, entity_id: str = "") -> dict:
+    import aiohttp
+    async with aiohttp.ClientSession() as session:
+        users = await checks.snapshot._users(session)
+        return await actions.collect(session, start, end, users, entity_id)
+
+
+async def h_activity(request: web.Request) -> web.Response:
+    """A window of the house's own history, with a cause on every row.
+
+    Fetched per request and never cached: this is a question somebody is
+    asking now, the answer changes every few seconds, and a cache would be
+    a second copy of the logbook to keep true.
+    """
+    start, end = _activity_window(request)
+    try:
+        mined = await _activity(start, end)
+    except Exception as exc:  # noqa: BLE001 — a failed look is an answer
+        log.warning("activity fetch failed: %s", exc)
+        return web.json_response({"available": False, "error": str(exc)[:200],
+                                  "actions": [], "overrides": [],
+                                  "counts": {}, "start": start, "end": end})
+    cause = (request.query.get("cause") or "").strip()
+    if cause and cause in actions.CAUSES:
+        mined = dict(mined)
+        mined["actions"] = [a for a in mined["actions"] if a["cause"] == cause]
+    limit = 400
+    try:
+        limit = max(1, min(2000, int(request.query.get("limit") or limit)))
+    except ValueError:
+        # A typed limit is a preference, not a request. Refusing the whole
+        # window over an unparseable one would be a blank tab.
+        pass
+    rows = sorted(mined["actions"], key=lambda a: a["ts"], reverse=True)
+    mined = dict(mined)
+    # The count is of everything in the window; the list is capped. Two
+    # numbers that disagree quietly is what the memory queue's list and
+    # count were, so the cap is reported rather than applied silently.
+    mined["total"] = len(rows)
+    mined["actions"] = rows[:limit]
+    mined["causes"] = list(actions.CAUSES)
+    # The window that was actually used, not the one that was asked for: a
+    # request for a week gets two days, and a caller echoing its own
+    # argument would report a window it never had.
+    mined["hours"] = _window_hours(mined["start"], mined["end"])
+    return web.json_response(mined)
+
+
+async def h_activity_entity(request: web.Request) -> web.Response:
+    """Why one entity is the way it is: its recent changes and their causes.
+
+    The deterministic half of "why did that happen". What is left — whether
+    the automation that did it was right to — is a question for the model,
+    and it answers it from this rather than from a state with no cause on
+    it.
+    """
+    entity_id = request.match_info["entity_id"]
+    # Validated at the edge, before it can reach a URL this process asks
+    # Core for. An id that is not an entity id is not a house this cannot
+    # read — it is a request that was never answerable.
+    if not actions.is_entity_id(entity_id):
+        return web.json_response(
+            {"error": "not an entity id", "entity_id": entity_id[:64],
+             "changes": [], "available": False}, status=400)
+    start, end = _activity_window(request)
+    try:
+        # Filtered at the logbook rather than after it: this is a per-row
+        # press on a list that may be hundreds of rows long, and re-reading
+        # the whole window for one entity is the difference between a tap
+        # and a wait on the hardware most of these run on.
+        mined = await _activity(start, end, entity_id)
+    except Exception as exc:  # noqa: BLE001
+        return web.json_response({"available": False, "error": str(exc)[:200],
+                                  "entity_id": entity_id, "changes": []})
+    return web.json_response({
+        "available": mined["available"],
+        "error": mined.get("error") or "",
+        "entity_id": entity_id,
+        "start": start, "end": end,
+        "changes": actions.explain(mined["actions"], entity_id),
+    })
+
+
+def _window_hours(start: float, end: float) -> float:
+    return round((end - start) / 3600.0, 2)
+
+
+# ---------------------------------------------------------------------------
 # Diagnostics — what a bug report needs, in one payload
 # ---------------------------------------------------------------------------
 
@@ -2147,7 +2269,7 @@ def _diagnostics_payload() -> dict:
         usage = usage_store.budget_state(settings)
     except Exception:  # noqa: BLE001 — a diagnostics payload must not fail on one reader
         usage = {}
-    return {
+    payload = {
         "generated_at": int(time.time()),
         "versions": {
             "addon": os.environ.get("ADDON_VERSION", "dev"),
@@ -2181,6 +2303,13 @@ def _diagnostics_payload() -> dict:
         "daemons": _daemon_rollcall(),
         "usage": {k: usage.get(k) for k in ("source", "used_percent", "limits")},
     }
+    # Derived last, from everything above it. The verdict is part of the
+    # payload rather than a route of its own so that the panel, the mirror,
+    # the integration's sensor and `brain report` cannot disagree about
+    # whether brAIn is working — which is exactly the kind of drift a second
+    # copy of a rule produces.
+    payload["health"] = health.verdict(payload, safe_options)
+    return payload
 
 
 def publish_diagnostics() -> None:
@@ -3977,6 +4106,8 @@ def make_app() -> web.Application:
     app.router.add_get("/api/checks", h_checks)
     app.router.add_post("/api/checks/run", h_checks_run)
     app.router.add_get("/api/diagnostics", h_diagnostics)
+    app.router.add_get("/api/activity", h_activity)
+    app.router.add_get("/api/activity/entity/{entity_id}", h_activity_entity)
     app.router.add_post("/api/finding/{ts}/fix", h_finding_fix)
     app.router.add_post("/api/finding/{ts}/snooze", h_finding_snooze)
     app.router.add_post("/api/finding/{ts}/discuss", h_finding_discuss)

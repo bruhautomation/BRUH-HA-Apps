@@ -30,6 +30,10 @@ and so cannot clear anything):
     zha_devices    [{name, ieee, available, last_seen}] — absent unless ZHA
                     is installed, which is what makes the key unavailable
     recorder       {db_bytes, db_path, purge_keep_days}
+    actions        {actions, overrides, counts} — the last LOGBOOK_HOURS of
+                    the logbook, with every state change filed under what
+                    caused it. Unavailable when the logbook integration is
+                    not installed, which is not the same as a quiet house
     blueprints_dir /config/blueprints
     available      {key: bool} — which of the above were actually fetched
     errors         {key: "why not"}
@@ -62,6 +66,10 @@ BATTERY_DAYS = 60
 # Statistics are one WebSocket call per batch; keep a batch to what the
 # recorder answers comfortably on a Pi.
 STATS_BATCH = 150
+# How far back the action miner looks. A day plus a margin: the window
+# has to cover the gap between two checks passes on the default interval
+# without ever becoming "fetch a month of logbook every time".
+LOGBOOK_HOURS = 26
 # One /info request per installed add-on. They are local and cheap, and
 # the cap is only there so a pathological install cannot make a checks
 # pass unbounded.
@@ -179,6 +187,7 @@ async def collect(now: float | None = None) -> dict:
     """Fetch everything the checks read. Never raises."""
     import aiohttp
 
+    import actions
     import ha_data
 
     now = time.time() if now is None else now
@@ -288,6 +297,17 @@ async def collect(now: float | None = None) -> dict:
               and sup.get("addons") is not None,
               sup.get("error") or "")
 
+        try:
+            mined = await actions.collect(
+                session, now - LOGBOOK_HOURS * 3600, now,
+                await _users(session))
+            snap["actions"] = mined
+            _mark("actions", mined["available"], mined.get("error") or "")
+        except Exception as exc:  # noqa: BLE001
+            snap["actions"] = {"available": False, "actions": [],
+                               "overrides": [], "counts": {}}
+            _mark("actions", False, str(exc))
+
     recorder = load_recorder()
     snap["recorder"] = recorder or {}
     _mark("recorder", recorder is not None,
@@ -296,6 +316,24 @@ async def collect(now: float | None = None) -> dict:
           "(a remote database answers this question itself)")
 
     return snap
+
+
+async def _users(session) -> dict[str, str]:
+    """{user_id: name}, so an action can say who rather than a uuid.
+
+    Best effort on purpose: `config/auth/list` is an admin command and a
+    token that cannot run it should cost the timeline the *names*, not the
+    attribution. An unnamed person is still a person.
+    """
+    import ha_data
+    try:
+        rows = (await ha_data._ws_commands(session, [{"type": "config/auth/list"}]))[0]
+    except Exception:  # noqa: BLE001
+        return {}
+    if not isinstance(rows, list):
+        return {}
+    return {str(r.get("id")): str(r.get("name") or "")
+            for r in rows if isinstance(r, dict) and r.get("id")}
 
 
 # ---------------------------------------------------------------------------

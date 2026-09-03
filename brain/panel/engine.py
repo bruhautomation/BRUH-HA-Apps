@@ -384,6 +384,8 @@ ANALYST_TOOLS = [
     f"{MCP}get_history",
     f"{MCP}get_statistics",
     f"{MCP}get_logbook",
+    f"{MCP}explain_change",       # what CAUSED a change, not just that it happened
+    f"{MCP}get_activity",
     f"{MCP}get_areas",
     f"{MCP}get_registry",
     f"{MCP}get_automations",

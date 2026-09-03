@@ -483,8 +483,19 @@ class TestTopbarLayout(unittest.TestCase):
     # listed here: the widths move whenever anything joins the bar, and a
     # test that hardcodes them only ever says "someone changed the numbers".
     def _bands(self):
+        """The top bar's own media queries, widest first.
+
+        Bounded at the next section banner rather than run to the end of
+        the file: every view below the bar may have responsive rules of
+        its own, and sweeping those in made this a test of where the last
+        `@media` in the stylesheet happened to sit. The Activity tab's
+        640px block is what found it.
+        """
         import re
         tail = self.css[self.css.index("The bar never wraps text away to fit"):]
+        end = tail.find("\n/* ---", 1)
+        if end > 0:
+            tail = tail[:end]
         parts = re.split(r"@media \(max-width: (\d+)px\) \{", tail)
         return [(int(parts[i]), parts[i + 1]) for i in range(1, len(parts) - 1, 2)]
 

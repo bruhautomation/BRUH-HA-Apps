@@ -2943,3 +2943,142 @@ body.term-classic #termMode .ico-out { display: block; }
   font-size: 0.82rem;
   line-height: 1.5;
 }
+
+/* ------------------------------------------------------------------ activity
+   What changed, and what changed it. The list is long by nature — a busy
+   house makes hundreds of rows a day — so the row is one line at every
+   width and the cause is a colour before it is a word: you scan for the
+   green of an automation or the blue of brAIn, and read only the row you
+   stopped on. */
+.actwrap { max-width: 900px; }
+
+.acthead {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+.acthead > div:first-child { flex: 1 1 420px; min-width: 0; }
+.acthead h2 { margin: 0 0 4px; font-size: 21px; }
+.acthead .sub { color: var(--ink-2); margin: 0; font-size: 14px; max-width: 68ch; }
+.actside { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.actfilters { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.actnav { display: flex; align-items: center; gap: 10px; }
+.actrange { color: var(--ink-2); font-size: 13px; white-space: nowrap; }
+
+.actoverrides {
+  border: 1px solid var(--hairline);
+  border-left: 3px solid var(--warning);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 16px;
+  font-size: 13.5px;
+  color: var(--ink-2);
+  line-height: 1.6;
+}
+.actoverrides h3 { margin: 0 0 6px; font-size: 14px; color: var(--ink-1); }
+.actoverrides b { color: var(--ink-1); font-weight: 600; }
+
+.actlist { display: grid; gap: 2px; }
+
+.acthour {
+  color: var(--ink-3);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  padding: 16px 4px 6px;
+}
+
+/* A row is a button because tapping it does something. 44px is the touch
+   floor, and it is set here rather than on a media query because a row
+   people miss is a row they stop tapping on any pointer. */
+.actrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.actrow:hover { background: var(--surface-2); }
+.actrow .t {
+  color: var(--ink-3);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  flex: none;
+  width: 52px;
+}
+.actrow .who {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--ink-3);
+}
+.actrow .what {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.actrow .what b { font-weight: 600; }
+.actrow .st { color: var(--ink-2); }
+.actrow .cause {
+  flex: none;
+  color: var(--ink-3);
+  font-size: 12.5px;
+  max-width: 34%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* The cause's own colour, on the dot and nowhere else. Six causes is more
+   than a palette can carry as text colour without the list turning into
+   confetti. */
+.actrow[data-cause="brain"] .who { background: var(--accent); }
+.actrow[data-cause="automation"] .who { background: #46b06a; }
+.actrow[data-cause="script"] .who { background: #46b06a; }
+.actrow[data-cause="scene"] .who { background: #46b06a; }
+.actrow[data-cause="voice"] .who { background: #a071e0; }
+.actrow[data-cause="person"] .who { background: var(--warning); }
+
+.actwhy {
+  margin: 2px 0 10px 62px;
+  padding: 10px 12px;
+  border-left: 2px solid var(--hairline);
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 1.7;
+}
+.actwhy .t { color: var(--ink-3); font-variant-numeric: tabular-nums; }
+
+.actempty {
+  color: var(--ink-3);
+  font-size: 14px;
+  padding: 28px 4px;
+  max-width: 60ch;
+}
+
+@media (max-width: 640px) {
+  .actside { align-items: stretch; width: 100%; }
+  .actfilters { justify-content: flex-start; }
+  .actnav { justify-content: space-between; }
+  /* The cause moves to its own line rather than being deleted: the name of
+     the automation that did something is the whole point of the row, and a
+     row that hides its own words to fit is a row that answers nothing. */
+  .actrow { flex-wrap: wrap; padding-bottom: 8px; }
+  .actrow .cause { width: 100%; max-width: none; padding-left: 62px; }
+  .actwhy { margin-left: 12px; }
+}

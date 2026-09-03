@@ -72,9 +72,20 @@ def _headers() -> dict[str, str]:
 # Raw fetchers
 # ---------------------------------------------------------------------------
 
-async def _rest_get(session: aiohttp.ClientSession, path: str, timeout: int = 30) -> Any:
+async def _rest_get(session: aiohttp.ClientSession, path: str,
+                    timeout: int = 30, params: dict | None = None) -> Any:
+    """GET one of Core's REST endpoints.
+
+    ``params`` rather than a hand-built query string, for anything whose
+    value did not come from this file: aiohttp encodes it, so a value
+    holding an `&` becomes a value rather than a second parameter, and
+    nothing a caller passes can steer the request into being a different
+    request. Building a query with `+` is how that happens, and it is
+    equally how an ordinary entity id with an odd character in it would
+    silently corrupt the call.
+    """
     async with session.get(
-        f"{CORE_API}{path}", headers=_headers(),
+        f"{CORE_API}{path}", headers=_headers(), params=params or None,
         timeout=aiohttp.ClientTimeout(total=timeout),
     ) as resp:
         resp.raise_for_status()

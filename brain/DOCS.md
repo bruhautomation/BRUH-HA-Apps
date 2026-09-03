@@ -60,7 +60,7 @@ subscription — or your own API key.
 
 Most AI integrations can turn on a light. brAIn administers the installation.
 
-It reaches Home Assistant three ways at once — a **native MCP server** (36 tools) for
+It reaches Home Assistant three ways at once — a **native MCP server** (38 tools) for
 reading and controlling, **65 registry-management services** for the parts of Home
 Assistant that normally only exist behind the Settings UI, and a **real shell** in
 `/config` for everything that is still a YAML file.
@@ -169,6 +169,11 @@ ordinary findings under a "check" label, with no Claude run at all.
 - **Dashboards** showing entities that no longer exist.
 - **Forecasts**: a battery running down, from the slope of its last sixty
   days, three weeks before it is flat.
+
+- **An automation you keep undoing.** Three times in a day that a rule did
+  something and somebody put it straight back. Nothing else can see it — the
+  automation ran, nothing errored, and the light is off — and it is the
+  clearest signal a house gives about a rule being wrong for it.
 
 A check's finding clears itself when the check stops finding it — the device
 came back, the battery was changed — and it is simply removed, so it can be
@@ -360,6 +365,49 @@ simply because you prefer it.
 - Findings surface as `sensor.brain_open_findings` and a `brain_finding` event per
   new one — and `findings_notify_service` pushes them to a phone with no automation
   at all.
+- `sensor.brain_health` says whether brAIn itself is working, so an automation can
+  tell you the add-on is in trouble rather than you noticing the insights stopped.
+
+### It knows what changed, and what changed it
+
+A state does not carry a cause. Nothing in `light.kitchen` being on says
+whether somebody pressed a switch, an automation fired, a voice command
+asked, or brAIn did it — and that is the question behind most of what people
+ask their house.
+
+The **Activity** tab reads Home Assistant's own logbook and puts a cause on
+every row: the automation by name, the script, the scene, the person, the
+voice assistant, or brAIn. Tap a row for that entity's own recent history.
+Page back a day at a time; filter by cause. It costs nothing — no Claude run,
+no stored copy — and it needs the `logbook` integration, which is part of
+Home Assistant's default config.
+
+Some rows say **no cause recorded**. That is deliberate: a press on a wall
+switch and a push from a device's own integration arrive identically, so
+naming either would be a guess, and a timeline that guesses is not evidence.
+
+brAIn's own actions are the one thing it does not have to read out of the
+logbook. It calls Home Assistant with the Supervisor's token like every other
+add-on, so its changes are indistinguishable there from any integration's —
+it writes down what it did instead, in `/config/.brain/actions.jsonl`, and
+matches that against the logbook.
+
+Claude can read all of this too: ask *"why did the hall light come on"* in
+the chat or the ask bar and it looks up the cause rather than reasoning from
+a state.
+
+### It says when it is not working
+
+`sensor.brain_health` is `ok`, `degraded` or `failed`, with the reason and
+what to do about it in its attributes. It never goes unavailable — Home
+Assistant hides the attributes of an unavailable entity, and this is the
+entity you look at when the others have gone — and a verdict that has gone
+stale reports *that* rather than serving you its last good answer.
+
+It is a state and a sentence, never a score: one number over a house hides
+its worst problem inside an average. A face you have switched off is never
+counted as a fault. The same verdict appears at the top of **Diagnostics**
+under ⚙ and in `brain doctor`.
 
 ### Everything it does can be undone
 

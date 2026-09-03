@@ -14,8 +14,10 @@ import base64
 import io
 import json
 import os
+import re
 import sys
 import time
+import urllib.parse
 import urllib.request
 import urllib.error
 
@@ -62,6 +64,87 @@ PROTECTED_ENTITIES = [
     p.strip().lower() for p in os.environ.get("BRAIN_PROTECTED_ENTITIES", "").split(",")
     if p.strip()
 ]
+
+# The action ledger: every service call brAIn makes, appended here so the
+# panel's action miner can tell brAIn's own changes from everybody else's.
+# Nothing in Home Assistant's context chain can do that — this process
+# calls Core over the REST API with the Supervisor's token, exactly like
+# every other add-on, so a light brAIn turned on looks in the logbook like
+# a light any integration turned on. The only honest answer is to write
+# down what we did, which is what this is. The reader is
+# `panel/actions.py:read_ledger`; it is a different process running as a
+# different user and cannot import this file, so the two halves agree by
+# contract and `tests/test_actions.py` drives this writer into that reader
+# rather than describing the shape twice.
+ACTION_LEDGER = os.environ.get("BRAIN_ACTION_LEDGER",
+                               "/config/.brain/actions.jsonl")
+# Roughly a fortnight of a busy house. The file is trimmed rather than
+# rotated: a second file would need a second reader.
+ACTION_LEDGER_MAX_BYTES = 2 * 1024 * 1024
+
+
+def _call_entities(data):
+    """The entity ids a service call names, at either of the two places.
+
+    A call may put `entity_id` at the top level or inside `target`, and
+    either may be a string or a list. Area, device, label and floor
+    targets are recorded under `target` and deliberately not resolved:
+    resolving one needs the registries as they were at the time of the
+    call, and a wrong expansion would attribute somebody else's change to
+    brAIn — which is the one mistake this ledger exists to prevent.
+    """
+    out = []
+    for source in (data or {}, (data or {}).get("target") or {}):
+        if not isinstance(source, dict):
+            continue
+        value = source.get("entity_id")
+        if isinstance(value, str):
+            value = [value]
+        if isinstance(value, list):
+            out.extend(str(v) for v in value if isinstance(v, str) and "." in v)
+    seen = set()
+    return [e for e in out if not (e in seen or seen.add(e))]
+
+
+def record_action(domain, service, data):
+    """Append one service call to the ledger. Never raises.
+
+    Accounting must not fail the call it is accounting for — the same rule
+    the panel's run journal follows. A ledger this cannot write costs the
+    timeline an attribution; a ledger that raises costs somebody their
+    lights.
+    """
+    try:
+        target = {}
+        for key in ("area_id", "device_id", "label_id", "floor_id"):
+            for source in (data or {}, (data or {}).get("target") or {}):
+                if isinstance(source, dict) and source.get(key):
+                    target[key] = source[key]
+        row = {
+            "ts": time.time(),
+            "domain": domain,
+            "service": service,
+            "entities": _call_entities(data),
+        }
+        if target:
+            row["target"] = target
+        path = ACTION_LEDGER
+        try:
+            if os.path.getsize(path) > ACTION_LEDGER_MAX_BYTES:
+                with open(path, "r", encoding="utf-8") as fh:
+                    lines = fh.readlines()
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.writelines(lines[len(lines) // 2:])
+        except OSError:
+            # A ledger that cannot be trimmed is still a ledger that can be
+            # appended to. Losing the trim costs disk; refusing the append
+            # would cost the timeline every action from here on.
+            pass
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(row) + "\n")
+    except Exception:  # noqa: BLE001 - see docstring
+        pass
 
 
 def _service_denied(domain, service):
@@ -391,6 +474,7 @@ def call_service(domain, service, data=None, return_response=False):
             "look for another route."
         )}
     payload = data or {}
+    record_action(domain, service, payload)
     if return_response:
         try:
             result = _ws_command({
@@ -409,6 +493,107 @@ def call_service(domain, service, data=None, return_response=False):
         return {"response": (result or {}).get("response")}
     result = ha_api_request(f"/api/services/{domain}/{service}", method="POST", data=payload)
     return result
+
+
+PANEL_URL = os.environ.get("BRAIN_PANEL_URL", "http://127.0.0.1:8099")
+
+
+def _panel_get(path, timeout=60):
+    """GET one of the panel's own API endpoints over loopback.
+
+    The panel is where the action miner lives, and a second copy of "who
+    caused this state change" written here would be a second answer. Same
+    reasoning as `brain findings` going through the API rather than the
+    store files: one implementation, one answer. A panel that is not up is
+    reported as such rather than as an empty house.
+    """
+    req = urllib.request.Request(f"{PANEL_URL}{path}",
+                                 headers={"Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            return json.loads(response.read().decode())
+    except Exception as e:  # noqa: BLE001
+        return {"error": f"the brAIn panel did not answer: {e}"}
+
+
+def _window(result):
+    """How many hours the panel actually read, from the window it returned."""
+    try:
+        return round((float(result["end"]) - float(result["start"])) / 3600.0, 2)
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def explain_change(entity_id, hours=24):
+    """Why an entity is the way it is: its recent changes, and what caused each.
+
+    This is the one question a state cannot answer. `get_history` says a
+    light went on at 18:04; this says the evening automation did it, or
+    that somebody pressed the switch, or that brAIn did.
+    """
+    if not re.match(r"^[a-z0-9_]+\.[a-z0-9_]+$", str(entity_id or "")):
+        return {"error": (
+            f"'{str(entity_id)[:64]}' is not an entity id. They look like "
+            "light.kitchen — use get_all_states to find the one you mean."
+        )}
+    try:
+        hours = max(1, float(hours or 24))
+    except (TypeError, ValueError):
+        hours = 24
+    quoted = urllib.parse.quote(str(entity_id), safe="")
+    result = _panel_get(f"/api/activity/entity/{quoted}?hours={hours}")
+    if isinstance(result, dict) and result.get("error"):
+        return result
+    if isinstance(result, dict) and not result.get("available"):
+        return {"error": (
+            "Home Assistant's logbook could not be read, so nothing can say "
+            "what caused a change. The logbook integration may not be set up."
+        )}
+    # The window the PANEL used, not the one asked for. It caps how long a
+    # window may be (a week of unfiltered logbook is a download, not a
+    # window), and echoing the argument here would report a window that was
+    # never read.
+    window = _window(result)
+    changes = (result or {}).get("changes") or []
+    if not changes:
+        return {"entity_id": entity_id, "hours": window, "changes": [],
+                "note": "nothing changed this entity in that window"}
+    return {"entity_id": entity_id, "hours": window, "changes": changes}
+
+
+def get_activity(hours=24, cause=None, limit=200):
+    """What changed in the house recently, with a cause on every row.
+
+    Answers "what happened last night" and "what has brAIn been doing"
+    without a single guess: every row names what caused it, or says
+    plainly that nothing did.
+    """
+    try:
+        hours = max(1, float(hours or 24))
+    except (TypeError, ValueError):
+        hours = 24
+    try:
+        limit = max(1, min(1000, int(limit or 200)))
+    except (TypeError, ValueError):
+        limit = 200
+    path = f"/api/activity?hours={hours}&limit={limit}"
+    if cause:
+        path += f"&cause={urllib.parse.quote(str(cause), safe='')}"
+    result = _panel_get(path)
+    if isinstance(result, dict) and result.get("error"):
+        return result
+    if isinstance(result, dict) and not result.get("available"):
+        return {"error": (
+            "Home Assistant's logbook could not be read. The logbook "
+            "integration may not be set up."
+        )}
+    return {
+        "hours": _window(result),
+        "counts": (result or {}).get("counts") or {},
+        "total": (result or {}).get("total", 0),
+        "overrides": (result or {}).get("overrides") or [],
+        "actions": (result or {}).get("actions") or [],
+    }
 
 
 def get_service_details(domain, service=None):
@@ -2337,6 +2522,65 @@ TOOLS = [
         }
     },
     {
+        "name": "explain_change",
+        "description": (
+            "Why an entity is the way it is: its recent changes and what caused "
+            "each one — an automation (named), a script, a scene, a person, a "
+            "voice command, or brAIn itself. A state says WHAT; this says WHO. "
+            "Use it for 'why did the hall light come on', 'why is the heating "
+            "running', and before blaming an automation for anything."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "entity_id": {
+                    "type": "string",
+                    "description": "The entity ID to explain"
+                },
+                "hours": {
+                    "type": "number",
+                    "description": ("How many hours back, default 24. The panel caps how "
+                                    "long one window may be; ask about an "
+                                    "earlier day by asking about it, not by "
+                                    "widening the window.")
+                }
+            },
+            "required": ["entity_id"]
+        }
+    },
+    {
+        "name": "get_activity",
+        "description": (
+            "What changed in the house recently, with a cause on every row, plus "
+            "the times a person undid something an automation had just done. Use "
+            "it for 'what happened last night', 'what has brAIn been doing', and "
+            "for finding the automations this house is fighting with."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "hours": {
+                    "type": "number",
+                    "description": ("How many hours back, default 24. The panel caps how "
+                                    "long one window may be; ask about an "
+                                    "earlier day by asking about it, not by "
+                                    "widening the window.")
+                },
+                "cause": {
+                    "type": "string",
+                    "description": (
+                        "Only rows with this cause: brain, automation, script, "
+                        "scene, voice, person, unattributed"
+                    )
+                },
+                "limit": {
+                    "type": "number",
+                    "description": "Most rows to return (1-1000, default 200)"
+                }
+            }
+        }
+    },
+    {
         "name": "get_statistics",
         "description": (
             "Get long-term statistics (hourly/daily mean, min, max) for a numeric "
@@ -2519,6 +2763,8 @@ TOOL_IMPLEMENTATIONS = {
     "get_areas": "get_areas",
     "get_logbook": "get_logbook",
     "get_history": "get_history",
+    "explain_change": "explain_change",
+    "get_activity": "get_activity",
     "get_statistics": "get_statistics",
     "get_weather_forecast": "get_weather_forecast",
     "get_error_log": "get_error_log",
