@@ -1,0 +1,425 @@
+/* BRUH Print panel.
+ *
+ * Two rules from the repo's UI notes carry the whole layout.
+ *
+ * The top bar has two shapes and no third: one row at >=1100px, two rows
+ * below it, and no width gets a strip of bare glyphs — what gives way is the
+ * row, never the label. Nothing in the bar shrinks, so an overflow is
+ * something a measurement can see rather than something that quietly
+ * squeezes.
+ *
+ * And no text control is under 16px on touch. iOS Safari zooms the page in
+ * on focus below that and never zooms back out, which inside an ingress
+ * iframe strands the panel at an arbitrary scale. The floor is set once, in
+ * one pointer:coarse block, so anything added later is covered by having
+ * been added. */
+
+:root {
+  color-scheme: light dark;
+
+  --bg: #f4f5f7;
+  --panel: #ffffff;
+  --panel-2: #fafbfc;
+  --ink: #16181d;
+  --ink-2: #5a6270;
+  --ink-3: #8b93a1;
+  --line: #dfe3e9;
+  --line-2: #eceff3;
+  --accent: #0b6bcb;
+  --accent-ink: #ffffff;
+  --accent-soft: #e7f0fb;
+  --good: #1f9254;
+  --warn: #b26a00;
+  --bad: #c0392b;
+  --shadow: 0 1px 2px rgba(16, 24, 40, .06), 0 4px 14px rgba(16, 24, 40, .06);
+  --radius: 12px;
+  --bar-h: 56px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14161a;
+    --panel: #1c1f25;
+    --panel-2: #22262d;
+    --ink: #eef1f5;
+    --ink-2: #a7b0be;
+    --ink-3: #7b8593;
+    --line: #2e333c;
+    --line-2: #262b33;
+    --accent: #5aa2f0;
+    --accent-ink: #0d1016;
+    --accent-soft: #1d2c3f;
+    --good: #48c98a;
+    --warn: #e0a33a;
+    --bad: #ef6b5c;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 4px 16px rgba(0, 0, 0, .3);
+  }
+}
+
+* { box-sizing: border-box; }
+
+/* `hidden` is a UA rule at the lowest specificity, so ANY class rule with a
+ * `display` beats it — which is how `.toast { display: flex }` left an empty
+ * black bar across the bottom of the panel for the whole of its first build.
+ * Set once, with !important, so nothing added later has to remember. */
+[hidden] { display: none !important; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-text-size-adjust: 100%;
+}
+
+h2 { font-size: 17px; margin: 22px 0 6px; letter-spacing: -.01em; }
+h2:first-child { margin-top: 0; }
+p { margin: 0 0 12px; }
+.lede { color: var(--ink-2); font-size: 14px; max-width: 62ch; }
+.muted { color: var(--ink-3); }
+.spacer { flex: 1 1 auto; }
+
+/* ── Top bar ─────────────────────────────────────────────────────────── */
+.topbar {
+  position: sticky; top: 0; z-index: 30;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+/* Wrapping is how the bar gives way. Nothing in it shrinks and nothing hides
+ * its own words to fit, so on a narrow screen the status chips take a row of
+ * their own — and if even they do not fit on one, they take two. An
+ * unwrapped bar is a page that scrolls sideways, which is the failure this
+ * replaced (713px of bar in a 390px window). */
+.bar-main {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 8px 14px; min-height: var(--bar-h);
+}
+/* Nothing in the bar shrinks — a fit is binary and an overflow is something
+ * a measurement can see, rather than something that quietly squeezes a label
+ * into an unreadable width. What gives way is the row. */
+.chip { flex: none; }
+
+.wordmark { font-weight: 800; letter-spacing: -.02em; font-size: 17px; }
+.wm-ink { color: var(--ink); }
+.wm-accent { color: var(--accent); }
+
+/* `flex: 1 1 auto` with `min-width: 0` is what lets this shrink below its
+ * own content width; without the min-width a flex item's floor is
+ * max-content, so the chips did not wrap — they simply ran 513px wide out
+ * of a 390px window. Wrapping inside is then the row giving way, which is
+ * the rule; the chips themselves never shrink. */
+.bar-status { display: flex; gap: 8px; margin-left: auto; align-items: center;
+  flex: 1 1 auto; min-width: 0; flex-wrap: wrap; justify-content: flex-end; }
+
+.chip {
+  display: inline-flex; align-items: center; gap: 7px;
+  min-height: 40px; padding: 0 12px;
+  background: var(--panel-2); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 999px;
+  font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap;
+}
+.chip:hover { border-color: var(--accent); }
+.chip .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-3); }
+.chip .dot.good { background: var(--good); }
+.chip .dot.bad { background: var(--bad); }
+.chip .dot.warn { background: var(--warn); }
+.roll-chip .side { color: var(--ink-3); font-weight: 700; }
+.chip span:last-child { font-variant-numeric: tabular-nums; }
+.roll-chip.empty { color: var(--ink-3); border-style: dashed; }
+
+/* Tabs wrap onto a second row rather than shrinking, and they keep their
+ * words at every width — no width gets a strip of bare glyphs, because a
+ * row of unlabelled icons is the shape people cannot learn. */
+.tabs { display: flex; gap: 2px; padding: 0 8px 6px; flex-wrap: wrap; }
+.tab {
+  flex: 1 1 auto;
+  display: flex; align-items: center; justify-content: center; gap: 7px;
+  min-height: 44px; padding: 0 10px;
+  background: none; border: none; border-radius: 9px;
+  color: var(--ink-2); font: inherit; font-size: 14px; font-weight: 500;
+  cursor: pointer;
+}
+.tab .ti { font-size: 15px; }
+.tab:hover { background: var(--line-2); color: var(--ink); }
+.tab.is-on { background: var(--accent-soft); color: var(--accent); font-weight: 650; }
+
+/* One row at >=1100px, two below it. There is no third shape: the tabs keep
+ * their words at every width, and what gives way is the row. The 1100px
+ * number is measured, not guessed — see tests/manual/measure-topbar.mjs. */
+@media (min-width: 1100px) {
+  .topbar { display: flex; align-items: center; gap: 16px; padding-right: 14px; }
+  .bar-main { flex: 1 1 auto; padding-right: 0; min-width: 0; }
+  .tabs { padding: 0; flex: none; flex-wrap: nowrap; }
+  /* Capped and centred so a wide strip is not five 240px targets around a
+   * 20px glyph. */
+  .tab { flex: 0 1 auto; max-width: 168px; }
+}
+
+/* ── Layout ──────────────────────────────────────────────────────────── */
+.wrap { max-width: 1280px; margin: 0 auto; padding: 18px 14px 60px; }
+.view { display: none; }
+.view.is-on { display: block; }
+
+.split { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; }
+@media (min-width: 900px) {
+  .split { grid-template-columns: minmax(0, 1fr) minmax(320px, 42%); }
+  .design-split { grid-template-columns: minmax(0, 1fr) minmax(300px, 360px); }
+}
+
+.pane {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 16px; box-shadow: var(--shadow);
+  min-width: 0;
+}
+
+/* ── Fields ──────────────────────────────────────────────────────────── */
+.field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
+.field > span { font-size: 12px; font-weight: 600; color: var(--ink-2);
+  text-transform: uppercase; letter-spacing: .04em; }
+.field.inline { flex-direction: row; align-items: center; gap: 8px;
+  margin-bottom: 0; }
+.field.inline > span { text-transform: none; letter-spacing: 0; font-size: 13px; }
+.field.grow { flex: 1 1 auto; }
+
+input, select, textarea {
+  width: 100%; min-height: 40px; padding: 8px 10px;
+  background: var(--panel-2); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 9px;
+  font: inherit; font-size: 15px;
+}
+textarea { resize: vertical; min-height: 62px; line-height: 1.35; }
+input:focus, select:focus, textarea:focus {
+  outline: 2px solid var(--accent); outline-offset: -1px; border-color: var(--accent);
+}
+input[type="number"] { max-width: 110px; }
+input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
+.row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
+.check { display: flex; align-items: center; gap: 8px; min-height: 40px;
+  font-size: 14px; cursor: pointer; margin-bottom: 10px; }
+.check input { width: 20px; }
+
+/* ── Buttons ─────────────────────────────────────────────────────────── */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  min-height: 40px; padding: 0 14px;
+  background: var(--panel-2); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 9px;
+  font: inherit; font-size: 14px; font-weight: 550; cursor: pointer;
+  white-space: nowrap;
+}
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+.btn.primary { background: var(--accent); border-color: var(--accent);
+  color: var(--accent-ink); }
+.btn.primary:hover { filter: brightness(1.08); color: var(--accent-ink); }
+.btn.big { min-height: 46px; padding: 0 26px; font-size: 15px; }
+.btn.tiny { min-height: 32px; padding: 0 10px; font-size: 13px; }
+.btn.danger { color: var(--bad); border-color: var(--line); }
+.btn.danger:hover { border-color: var(--bad); }
+.btn[disabled] { opacity: .45; cursor: not-allowed; }
+.btn.ghost { background: none; border-color: transparent; }
+
+.actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
+  margin-top: 6px; }
+.actions.sticky {
+  position: sticky; bottom: 0; margin-top: 14px; padding: 12px 14px;
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius); box-shadow: var(--shadow); z-index: 5;
+}
+
+/* ── Preview ─────────────────────────────────────────────────────────── */
+.preview-pane { display: flex; flex-direction: column; gap: 10px; }
+.preview-frame {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 180px; padding: 16px; border-radius: 10px;
+  background:
+    repeating-conic-gradient(var(--line-2) 0% 25%, transparent 0% 50%)
+    50% / 16px 16px;
+  border: 1px solid var(--line);
+}
+.preview-frame img {
+  max-width: 100%; max-height: 420px; display: none;
+  background: #fff; box-shadow: 0 2px 10px rgba(0,0,0,.22);
+  border-radius: 2px; image-rendering: pixelated;
+}
+.preview-frame img.on { display: block; }
+.placeholder { color: var(--ink-3); font-size: 14px; margin: 0; }
+.fitline { font-size: 13px; color: var(--ink-3); margin: 10px 0 0; }
+
+.notes { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.notes:empty { display: none; }
+.notes li {
+  font-size: 13px; line-height: 1.45; padding: 8px 11px; border-radius: 9px;
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  color: var(--ink); border-left: 3px solid var(--warn);
+}
+
+/* ── Designer ────────────────────────────────────────────────────────── */
+.design-bar {
+  display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+  padding: 12px 14px; margin-bottom: 14px;
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius); box-shadow: var(--shadow);
+}
+/* `width: auto` sizes a <select> to its WIDEST OPTION, and the stock names
+ * are long ("Chemical-Resistant Cryo Labels — 2.25" × 1.25""), so the
+ * picker laid out 431px wide inside a 390px window and took the page with
+ * it. The cap is on the control, and `min-width: 0` on the label is what
+ * lets the cap bite — a flex item's floor is otherwise its max-content. */
+.design-bar > * { min-width: 0; max-width: 100%; }
+.design-bar select, .design-bar input { min-width: 120px; max-width: 100%;
+  width: auto; }
+.addbar { display: flex; gap: 6px; flex-wrap: wrap; }
+.addbar .btn { padding: 0 11px; }
+
+.canvas-pane { display: flex; flex-direction: column; gap: 10px; }
+.canvas-scroll { overflow: auto; display: flex; justify-content: center;
+  padding: 14px; border-radius: 10px; border: 1px solid var(--line);
+  background: repeating-conic-gradient(var(--line-2) 0% 25%, transparent 0% 50%)
+    50% / 16px 16px; }
+.canvas { position: relative; background: #fff; box-shadow: 0 2px 12px rgba(0,0,0,.25);
+  flex: none; }
+.canvas img { display: block; image-rendering: pixelated; }
+.overlay { position: absolute; inset: 0; }
+
+.el {
+  position: absolute; border: 1.5px dashed rgba(11, 107, 203, .75);
+  background: rgba(11, 107, 203, .06); cursor: move;
+  border-radius: 3px; touch-action: none;
+}
+.el.sel { border-style: solid; border-color: var(--accent);
+  background: rgba(11, 107, 203, .12);
+  box-shadow: 0 0 0 1px rgba(255,255,255,.7); }
+.el .tag {
+  position: absolute; top: -19px; left: -1px; font-size: 10px; line-height: 16px;
+  padding: 0 5px; border-radius: 4px; background: var(--accent);
+  color: var(--accent-ink); white-space: nowrap; pointer-events: none;
+}
+.el .grip {
+  position: absolute; right: -8px; bottom: -8px; width: 18px; height: 18px;
+  border-radius: 50%; background: var(--accent); border: 2px solid #fff;
+  cursor: nwse-resize; touch-action: none;
+}
+
+.props-pane { display: flex; flex-direction: column; gap: 12px; }
+.empty { color: var(--ink-3); font-size: 14px; }
+.layers { display: grid; gap: 4px; border-top: 1px solid var(--line-2);
+  padding-top: 10px; }
+.layer {
+  display: flex; align-items: center; gap: 8px; min-height: 40px;
+  padding: 0 8px; border-radius: 8px; cursor: pointer; font-size: 13px;
+  background: none; border: 1px solid transparent; color: var(--ink);
+  text-align: left; width: 100%;
+}
+.layer:hover { background: var(--line-2); }
+.layer.sel { background: var(--accent-soft); border-color: var(--accent);
+  color: var(--accent); }
+.layer .lk { font-size: 11px; color: var(--ink-3); text-transform: uppercase; }
+.layer .lt { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+
+/* ── Cards / tables ──────────────────────────────────────────────────── */
+.cards { display: grid; gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+/* Printer cards carry a model name, a line of geometry and three buttons, so
+ * they get a wider minimum than a template card does — at 240px "LabelWriter
+ * 450 Twin Turbo" wraps to two lines and the buttons stack. */
+#printerCards { grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); }
+.card {
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 13px 14px; box-shadow: var(--shadow); text-align: left;
+  cursor: pointer; color: var(--ink); font: inherit;
+}
+.card:hover { border-color: var(--accent); }
+.card.sel { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.card h3 { margin: 0 0 3px; font-size: 15px; }
+.card .sub { font-size: 12.5px; color: var(--ink-2); }
+.card .foot { margin-top: 9px; display: flex; gap: 6px; flex-wrap: wrap; }
+
+.bays { display: grid; gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+.bay { background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 14px; box-shadow: var(--shadow); }
+.bay h3 { margin: 0 0 8px; font-size: 15px; display: flex; gap: 8px;
+  align-items: center; }
+.bay .est { font-size: 13px; color: var(--ink-2); }
+.bar { height: 6px; border-radius: 999px; background: var(--line-2);
+  overflow: hidden; margin: 8px 0; }
+.bar > i { display: block; height: 100%; background: var(--accent); }
+
+.stocktable { display: grid; gap: 6px; margin-bottom: 12px; }
+.strow {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 12px; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.strow .nm { font-weight: 600; }
+.strow .dim { font-variant-numeric: tabular-nums; color: var(--ink-2);
+  font-size: 13px; }
+.strow .sku { font-size: 12px; color: var(--ink-3); }
+.addstock { background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 12px 14px; }
+.addstock summary { cursor: pointer; font-weight: 600; min-height: 30px; }
+.settings { display: grid; gap: 10px; }
+
+.hlist { display: grid; gap: 8px; margin-bottom: 14px; }
+.hrow {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 11px 13px; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.hrow .when { font-size: 12px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.hrow .what { flex: 1 1 190px; font-weight: 550; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hrow .meta { font-size: 12.5px; color: var(--ink-2); }
+
+.tform { display: grid; gap: 10px; padding-bottom: 4px; }
+
+/* ── Toast, tooltip, modal ───────────────────────────────────────────── */
+/* left/right + margin auto, never left:50% with a translate — a fixed
+ * element's containing block is the viewport, so left:50% leaves the toast
+ * the right-hand half to lay out in, and on a 390px phone it can never
+ * exceed ~195px. */
+.toast {
+  position: fixed; bottom: 16px; left: 12px; right: 12px; margin: 0 auto;
+  max-width: 520px; z-index: 60;
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 15px; border-radius: 11px;
+  background: var(--ink); color: var(--bg);
+  box-shadow: 0 8px 30px rgba(0,0,0,.3); font-size: 14px;
+}
+.toast.bad { background: var(--bad); color: #fff; }
+.toast.good { background: var(--good); color: #fff; }
+.toast .btn { background: rgba(255,255,255,.16); border-color: transparent;
+  color: inherit; }
+
+.tipbox {
+  position: fixed; z-index: 70; max-width: 260px; pointer-events: none;
+  padding: 7px 10px; border-radius: 8px; font-size: 12.5px; line-height: 1.4;
+  background: var(--ink); color: var(--bg); box-shadow: var(--shadow);
+}
+
+.modal { border: none; border-radius: var(--radius); padding: 0;
+  background: var(--panel); color: var(--ink); box-shadow: var(--shadow);
+  max-width: min(560px, 94vw); width: 100%; }
+.modal::backdrop { background: rgba(0,0,0,.45); }
+.modal > div { padding: 18px; }
+
+/* ── The touch floor ─────────────────────────────────────────────────
+ * LAST in the file, and that is load-bearing rather than tidy. These rules
+ * are the same specificity as the ones they raise (`.btn.tiny` is two
+ * classes, so it needs two here), and equal specificity is settled by
+ * order — so anywhere but the end, a control declared further down keeps
+ * its desktop size on a phone. `.btn.tiny` did exactly that: 32px targets
+ * on every card foot and every stock row, which is most of the Printer tab.
+ *
+ * The 16px floor on text controls is not a preference. iOS Safari zooms the
+ * page in when a smaller control takes focus and never zooms back out,
+ * which inside an ingress iframe strands the panel at an arbitrary scale
+ * with no way back. */
+@media (pointer: coarse) {
+  input, select, textarea, .btn, .chip, .tab { font-size: 16px; }
+  .btn, .chip, .tab, input, select, textarea { min-height: 44px; }
+  .btn.tiny { min-height: 44px; padding: 0 13px; font-size: 15px; }
+  /* The box itself stays small; the label around it is the 44px target. */
+  input[type="checkbox"] { min-height: 22px; }
+}

@@ -29,6 +29,7 @@ on:
       - "brain/**"
       - "bruh-minecraft-server/**"
       - "bright/**"
+      - "bruh-print/**"
       - ".github/workflows/build.yml"
   workflow_dispatch:
     inputs:
@@ -50,7 +51,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        addon: [brain, bruh-minecraft-server, bright]
+        addon: [brain, bruh-minecraft-server, bright, bruh-print]
         arch: [aarch64, amd64]
 
     steps:

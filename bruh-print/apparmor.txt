@@ -1,0 +1,119 @@
+#include <tunables/global>
+
+# AppArmor profile for the BRUH Print add-on.
+#
+# What this profile is for
+# ------------------------
+# BRUH Print's one unusual permission is USB: it opens /dev/bus/usb/* and
+# writes raster data to a printer's bulk endpoint. That is a real device-node
+# capability, and it is the reason to be explicit here rather than to rely on
+# the blanket `file,` rule — a reader should be able to see what this add-on
+# reaches for without inferring it.
+#
+# Everything else is the standard shape: deny the host-escape primitives —
+# mounting, kernel modules, kernel tunables, raw device memory, the Docker
+# socket — and allow the add-on's own work. There is no host networking here
+# (a LabelWriter is on USB, not the LAN) and no published port, so the panel
+# is reachable through ingress and nowhere else.
+
+profile bruh-print flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+
+  # ------------------------------------------------------------------
+  # Host-escape primitives — denied outright
+  # ------------------------------------------------------------------
+
+  # Kernel tunables. Nothing in this add-on tunes the host kernel.
+  deny /proc/sys/** wklx,
+  deny /sys/kernel/** wklx,
+  deny @{PROC}/sysrq-trigger rwklx,
+
+  # Kernel module loading and raw device memory.
+  deny /sys/module/** wklx,
+  deny /dev/mem rwklx,
+  deny /dev/kmem rwklx,
+  deny /dev/port rwklx,
+  deny /dev/kmsg rwklx,
+
+  # Firmware and boot.
+  deny /sys/firmware/** rwklx,
+  deny /boot/** rwklx,
+
+  # The Docker socket. This add-on talks to the Supervisor over its HTTP API
+  # with SUPERVISOR_TOKEN; a writable docker.sock is root on the host by
+  # another name.
+  deny /var/run/docker.sock rwklx,
+  deny /run/docker.sock rwklx,
+
+  # ------------------------------------------------------------------
+  # Capabilities
+  # ------------------------------------------------------------------
+  # run.sh creates the `bruhprint` user (UID 1000) and drops to it with
+  # su-exec, so setuid/setgid and chown are genuinely needed. Talking to a
+  # printer is ordinary bulk USB through libusb — net_raw and sys_rawio stay
+  # denied, because neither is how a USB device node is opened.
+  capability chown,
+  capability dac_override,
+  capability fowner,
+  capability fsetid,
+  capability kill,
+  capability setgid,
+  capability setuid,
+  capability setpcap,
+  capability audit_write,
+
+  deny capability sys_admin,
+  deny capability sys_module,
+  deny capability sys_rawio,
+  deny capability sys_ptrace,
+  deny capability sys_boot,
+  deny capability net_admin,
+  deny capability net_raw,
+  deny capability mac_admin,
+  deny capability mac_override,
+  deny capability dac_read_search,
+
+  # No mounting, ever.
+  deny mount,
+  deny umount,
+  deny pivot_root,
+
+  # ------------------------------------------------------------------
+  # What the add-on legitimately does
+  # ------------------------------------------------------------------
+
+  # USB: the printer. Named explicitly even though `file,` below would cover
+  # it, because this is the permission that distinguishes this add-on and a
+  # future edit narrowing `file,` must not silently take it away. The sysfs
+  # read is how libusb enumerates the bus before it opens anything.
+  /dev/bus/usb/** rw,
+  /sys/bus/usb/** r,
+  /sys/devices/** r,
+  /run/udev/** r,
+
+  # Filesystem: /config (integration deploy, shared state, the Lovelace
+  # card), /data (stocks, templates, history, uploaded images), and the
+  # container's own tree.
+  file,
+
+  # Signals: run.sh's cleanup trap tears the bridge and the panel down on
+  # SIGTERM.
+  signal (send,receive) set=(kill,term,int,hup,cont,usr1,usr2,winch),
+
+  ptrace (trace,read) peer=bruh-print,
+
+  # Networking: the ingress panel, and the Supervisor API. No inbound port is
+  # published; `network netlink raw` is interface and device enumeration, not
+  # `network raw` — raw sockets stay denied via the net_raw capability above.
+  network inet stream,
+  network inet6 stream,
+  network inet dgram,
+  network inet6 dgram,
+  network unix stream,
+  network unix dgram,
+  network netlink raw,
+
+  # Anything the add-on execs runs under this same profile rather than
+  # escaping to the unconfined host profile.
+  /** ix,
+}

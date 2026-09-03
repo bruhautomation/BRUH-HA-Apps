@@ -41,13 +41,15 @@ jobs:
               'brAIn':                 ['brain'],
               'BRUH Minecraft':        ['minecraft'],
               'BRight':                 ['bright'],
-              'Multiple add-ons':      ['brain', 'minecraft', 'bright'],
+              'BRUH Print':            ['print'],
+              'Multiple add-ons':      ['brain', 'minecraft', 'bright', 'print'],
               'The repository / docs': ['repo'],
             };
             const COLORS = {
               brain:     { color: '1e9fe0', description: 'The brAIn add-on' },
               minecraft: { color: '3fa34d', description: 'The BRUH Minecraft add-on' },
               bright:     { color: '5ac4f2', description: 'The BRight add-on' },
+              print:     { color: '0b6bcb', description: 'The BRUH Print add-on' },
               repo:      { color: '6e7781', description: 'Repository, CI or docs' },
             };
 

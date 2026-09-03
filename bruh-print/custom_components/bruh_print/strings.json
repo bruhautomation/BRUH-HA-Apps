@@ -1,0 +1,89 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "BRUH Print",
+        "description": "Connect Home Assistant to the BRUH Print add-on. The add-on must be installed and running — it is what talks to the printer."
+      },
+      "hassio_confirm": {
+        "title": "BRUH Print",
+        "description": "Set up the BRUH Print add-on so Home Assistant gets the print services, the printer and roll sensors, and the Lovelace card?"
+      }
+    },
+    "abort": {
+      "already_configured": "BRUH Print is already set up."
+    }
+  },
+  "services": {
+    "print_text": {
+      "name": "Print text",
+      "description": "Type a word or a line and BRUH Print fits it to the label as large as it will go.",
+      "fields": {
+        "text": {"name": "Text", "description": "What the label should say."},
+        "stock": {"name": "Label stock", "description": "Which label to fit it to."},
+        "side": {"name": "Roll", "description": "Which roll of a Twin Turbo to print on."},
+        "copies": {"name": "Copies", "description": "How many to print."},
+        "font": {"name": "Font", "description": "Which font family to set it in."},
+        "rotate": {"name": "Rotation", "description": "Which way the text runs on the label."},
+        "uppercase": {"name": "Uppercase", "description": "Print the text in capitals."}
+      }
+    },
+    "print_template": {
+      "name": "Print a template",
+      "description": "Fill in a saved template and print it.",
+      "fields": {
+        "template": {"name": "Template", "description": "Its name, as shown on the panel's Templates tab."},
+        "fields": {"name": "Fields", "description": "The values to put in, keyed by field name."},
+        "side": {"name": "Roll", "description": "Which roll of a Twin Turbo to print on."},
+        "copies": {"name": "Copies", "description": "How many to print."}
+      }
+    },
+    "print_label": {
+      "name": "Print a label",
+      "description": "Print a complete label document, the same JSON the panel's designer produces.",
+      "fields": {
+        "label": {"name": "Label", "description": "The label document."},
+        "side": {"name": "Roll", "description": "Which roll of a Twin Turbo to print on."},
+        "copies": {"name": "Copies", "description": "How many to print."}
+      }
+    },
+    "reprint": {
+      "name": "Print the last label again",
+      "description": "Reprint something from the history, exactly as it came out.",
+      "fields": {
+        "entry": {"name": "History entry", "description": "Leave empty for the most recent."},
+        "copies": {"name": "Copies", "description": "How many to print."},
+        "side": {"name": "Roll", "description": "Which roll to print it on."}
+      }
+    },
+    "set_roll": {
+      "name": "Say what is loaded",
+      "description": "Tell BRUH Print which labels are in a roll.",
+      "fields": {
+        "side": {"name": "Roll", "description": "Which bay."},
+        "stock": {"name": "Label stock", "description": "The stock id, from the panel's Printer tab."},
+        "remaining": {"name": "Labels remaining", "description": "Defaults to a full roll. Only ever an estimate."}
+      }
+    },
+    "print_test": {
+      "name": "Print the ruler",
+      "description": "Print a label with millimetre ticks along both edges.",
+      "fields": {
+        "stock": {"name": "Label stock", "description": "Which stock to measure."},
+        "side": {"name": "Roll", "description": "Which roll to print it on."}
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "printer": {"name": "Printer"},
+      "left_roll": {"name": "Left roll"},
+      "right_roll": {"name": "Right roll"},
+      "last_label": {"name": "Last label"},
+      "printed_today": {"name": "Printed today"}
+    },
+    "binary_sensor": {
+      "problem": {"name": "Problem"}
+    }
+  }
+}

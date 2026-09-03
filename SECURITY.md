@@ -56,6 +56,19 @@ API to list entities, play media and toggle the switch-driven lights a show
 uses. It holds no credential of its own. Its panel port is assigned by the
 Supervisor rather than fixed.
 
+**BRUH Print** takes `usb: true`, which maps the host's `/dev/bus/usb` into
+the container so it can write raster data to a DYMO LabelWriter's bulk
+endpoint. Its panel runs as **root**, because those device nodes carry the
+host's own root:root ownership — there is no udev in the container to
+re-own them — and a process at UID 1000 cannot open them for writing. That
+is bounded rather than dismissed: no port is published, so the panel is
+reachable only through ingress, and `panel_admin: true` means the caller is
+already a Home Assistant admin who holds the Supervisor API. The file-IPC
+bridge, which reads request files written from outside the container, runs
+at UID 1000 and never touches USB. BRUH Print holds no credential of its
+own, reads and writes its own `/data` and `/config/.bruh_print/`, and writes
+one file under `/config/www/bruh_print/` (the Lovelace card).
+
 Things we consider vulnerabilities:
 
 - Any management endpoint answering a caller who has not authenticated to
@@ -85,17 +98,30 @@ Things that are working as intended, and are documented rather than fixed:
 - BRight sends LIFX packets to bulbs on your LAN without authenticating to
   them. That is the LIFX LAN protocol: it has no authentication, and any
   device on the network can already drive those bulbs.
+- BRUH Print's panel runs as root inside its container, for the reason
+  above. An admin who can reach that panel can already reach the Supervisor
+  API, so it does not widen what an authenticated caller can do — but it
+  does mean a bug in the panel is a root bug in that container, which is
+  why it is worth reporting.
+- BRUH Print writes to whatever DYMO printer is on the USB bus. It has no
+  way to authenticate to one; USB printers do not offer that.
 
 ## Hardening we already apply
 
-- AppArmor profiles on all three add-ons, denying mount, kernel module
-  loading, raw sockets, kernel tunables and the Docker socket.
+- AppArmor profiles on all four add-ons, denying mount, kernel module
+  loading, raw sockets, kernel tunables and the Docker socket. BRUH Print's
+  additionally names `/dev/bus/usb` explicitly rather than leaving it to the
+  blanket `file,` rule, so a future edit narrowing that rule cannot silently
+  take away the one capability the add-on exists for.
 - The brAIn terminal port is unpublished by default and requires HTTP
   Basic auth when published.
 - The Minecraft and BRight panels refuse requests that did not arrive
   through the Supervisor. BRight's has no public prefix at all.
 - Every path BRight is handed from the wire — a folder to scan, a track to
   play — is confined to `/media` before any filesystem call.
+- Every image a BRUH Print label references is resolved and checked against
+  its own uploads folder before it is opened: a label file is data from
+  outside, even when the outside is the person's own laptop.
 - Credentials are excluded from Home Assistant backups via
   `backup_exclude`.
 - Claude Code runs as an unprivileged user (UID 1000), not root.

@@ -10,6 +10,7 @@ body:
         - brAIn
         - BRUH Minecraft
         - BRight
+        - BRUH Print
         - Other / unsure
     validations:
       required: true

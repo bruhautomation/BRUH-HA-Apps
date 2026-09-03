@@ -101,6 +101,25 @@ const APPS = [
 			['brands/custom_integrations/bruh_minecraft/logo@2x.png', 682, 512],
 		],
 	},
+	{
+		name: 'BRUH Print',
+		tile: 'print/bruh-print-tile-dark.svg',
+		logo: 'print/bruh-print-logo-ondark.svg',
+		squares: [
+			['bruh-print/icon.png', 256],
+			['bruh-print/custom_components/bruh_print/brand/icon.png', 256],
+			['bruh-print/custom_components/bruh_print/brand/icon@2x.png', 512],
+			['brands/custom_integrations/bruh_print/icon.png', 256],
+			['brands/custom_integrations/bruh_print/icon@2x.png', 512],
+		],
+		lockups: [
+			['bruh-print/logo.png', 512, 384],
+			['bruh-print/custom_components/bruh_print/brand/logo.png', 341, 256],
+			['bruh-print/custom_components/bruh_print/brand/logo@2x.png', 682, 512],
+			['brands/custom_integrations/bruh_print/logo.png', 341, 256],
+			['brands/custom_integrations/bruh_print/logo@2x.png', 682, 512],
+		],
+	},
 ];
 
 const browser = await chromium.launch(

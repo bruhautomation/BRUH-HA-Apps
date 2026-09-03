@@ -1,0 +1,22 @@
+{
+  "services": {
+    "print_text": "mdi:format-text",
+    "print_template": "mdi:file-document-outline",
+    "print_label": "mdi:label-outline",
+    "reprint": "mdi:printer-refresh",
+    "set_roll": "mdi:roll",
+    "print_test": "mdi:ruler"
+  },
+  "entity": {
+    "sensor": {
+      "printer": {"default": "mdi:printer-pos"},
+      "left_roll": {"default": "mdi:roll"},
+      "right_roll": {"default": "mdi:roll"},
+      "last_label": {"default": "mdi:label"},
+      "printed_today": {"default": "mdi:counter"}
+    },
+    "binary_sensor": {
+      "problem": {"default": "mdi:printer-alert"}
+    }
+  }
+}

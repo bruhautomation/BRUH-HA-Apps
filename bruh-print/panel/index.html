@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>BRUH Print</title>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header class="topbar" id="topbar">
+  <div class="bar-main">
+    <div class="wordmark" aria-label="BRUH Print">
+      <span class="wm-ink">BRUH</span><span class="wm-accent">PRINT</span>
+    </div>
+    <div class="bar-status">
+      <button class="chip" id="printerChip" data-tip="Which printer BRUH Print will use">
+        <span class="dot" id="printerDot"></span><span id="printerName">Looking…</span>
+      </button>
+      <button class="chip roll-chip" id="rollLeft" data-side="left"
+              data-tip="What is in the left roll. Press to change it."></button>
+      <button class="chip roll-chip" id="rollRight" data-side="right"
+              data-tip="What is in the right roll. Press to change it."></button>
+    </div>
+  </div>
+  <nav class="tabs" id="tabs" role="tablist">
+    <button class="tab is-on" data-view="quick" role="tab"><span class="ti">⚡</span><span>Quick</span></button>
+    <button class="tab" data-view="design" role="tab"><span class="ti">✎</span><span>Design</span></button>
+    <button class="tab" data-view="templates" role="tab"><span class="ti">▦</span><span>Templates</span></button>
+    <button class="tab" data-view="printer" role="tab"><span class="ti">🖨</span><span>Printer</span></button>
+    <button class="tab" data-view="history" role="tab"><span class="ti">↻</span><span>History</span></button>
+  </nav>
+</header>
+
+<main class="wrap">
+
+<!-- ── Quick ─────────────────────────────────────────────────────────── -->
+<section class="view is-on" id="viewQuick">
+  <div class="split">
+    <div class="pane">
+      <h2>Type it. Print it.</h2>
+      <p class="lede">BRUH Print picks the biggest arrangement that fits the
+        label, so you only have to say the words.</p>
+
+      <label class="field">
+        <span>What should it say?</span>
+        <textarea id="quickText" rows="2" placeholder="Buffer A pH 7.4"
+                  autocomplete="off" spellcheck="false"></textarea>
+      </label>
+
+      <div class="row">
+        <label class="field grow">
+          <span>Label stock</span>
+          <select id="quickStock"></select>
+        </label>
+        <label class="field">
+          <span>Roll</span>
+          <select id="quickSide">
+            <option value="">Wherever it is</option>
+            <option value="left">Left</option>
+            <option value="right">Right</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="row">
+        <label class="field">
+          <span>Copies</span>
+          <input type="number" id="quickCopies" value="1" min="1" max="500">
+        </label>
+        <label class="field grow">
+          <span>Font</span>
+          <select id="quickFont"></select>
+        </label>
+        <label class="field">
+          <span>Turn</span>
+          <select id="quickRotate">
+            <option value="">Automatic</option>
+            <option value="0">Across</option>
+            <option value="90">Along the roll</option>
+          </select>
+        </label>
+      </div>
+
+      <label class="check">
+        <input type="checkbox" id="quickUpper"><span>UPPERCASE</span>
+      </label>
+
+      <div class="actions">
+        <button class="btn primary big" id="quickPrint">Print</button>
+        <button class="btn" id="quickToDesign"
+                data-tip="Open this exact label in the designer">Open in designer</button>
+        <button class="btn" id="quickToTemplate"
+                data-tip="Save it as a template you can fill in later">Save as template</button>
+      </div>
+      <p class="fitline" id="quickFit"></p>
+    </div>
+
+    <div class="pane preview-pane">
+      <div class="preview-frame" id="quickPreviewFrame">
+        <img id="quickPreview" alt="Label preview">
+        <p class="placeholder" id="quickPlaceholder">Your label appears here.</p>
+      </div>
+      <ul class="notes" id="quickNotes"></ul>
+    </div>
+  </div>
+</section>
+
+<!-- ── Design ────────────────────────────────────────────────────────── -->
+<section class="view" id="viewDesign">
+  <div class="design-bar">
+    <label class="field inline">
+      <span>Stock</span><select id="designStock"></select>
+    </label>
+    <label class="field inline">
+      <span>Turn</span>
+      <select id="designRotate">
+        <option value="0">0°</option><option value="90">90°</option>
+        <option value="180">180°</option><option value="270">270°</option>
+      </select>
+    </label>
+    <label class="field inline">
+      <span>Name</span><input id="designName" placeholder="Sample vial">
+    </label>
+    <span class="spacer"></span>
+    <div class="addbar" id="addBar"></div>
+  </div>
+
+  <div class="split design-split">
+    <div class="pane canvas-pane">
+      <div class="canvas-scroll">
+        <div class="canvas" id="canvas">
+          <img id="designPreview" alt="Label preview">
+          <div class="overlay" id="overlay"></div>
+        </div>
+      </div>
+      <ul class="notes" id="designNotes"></ul>
+    </div>
+
+    <div class="pane props-pane">
+      <div id="propsEmpty" class="empty">
+        <p>Nothing selected.</p>
+        <p class="muted">Add something with the buttons above, or tap a box on
+           the label.</p>
+      </div>
+      <div id="props" hidden></div>
+      <div class="layers" id="layers"></div>
+    </div>
+  </div>
+
+  <div class="actions sticky">
+    <label class="field inline"><span>Copies</span>
+      <input type="number" id="designCopies" value="1" min="1" max="500"></label>
+    <label class="field inline"><span>Roll</span>
+      <select id="designSide">
+        <option value="">Wherever it is</option>
+        <option value="left">Left</option><option value="right">Right</option>
+      </select></label>
+    <span class="spacer"></span>
+    <button class="btn" id="designSaveTemplate">Save as template</button>
+    <button class="btn primary big" id="designPrint">Print</button>
+  </div>
+</section>
+
+<!-- ── Templates ─────────────────────────────────────────────────────── -->
+<section class="view" id="viewTemplates">
+  <div class="split">
+    <div class="pane">
+      <h2>Templates</h2>
+      <p class="lede">A saved label with holes in it. Fill the holes, press
+        print. Automations and the Lovelace card use these by name.</p>
+      <div class="cards" id="templateCards"></div>
+    </div>
+    <div class="pane preview-pane">
+      <div id="templateForm" class="tform" hidden></div>
+      <div class="preview-frame">
+        <img id="templatePreview" alt="Label preview">
+        <p class="placeholder" id="templatePlaceholder">Pick a template.</p>
+      </div>
+      <ul class="notes" id="templateNotes"></ul>
+    </div>
+  </div>
+</section>
+
+<!-- ── Printer ───────────────────────────────────────────────────────── -->
+<section class="view" id="viewPrinter">
+  <h2>Printer</h2>
+  <div class="cards" id="printerCards"></div>
+
+  <h2>What is loaded</h2>
+  <p class="lede">A LabelWriter cannot tell what stock is in it. Tell BRUH
+     Print once and it will stop you printing a 2.25" label onto a 0.56"
+     roll.</p>
+  <div class="bays" id="bays"></div>
+
+  <h2>Label stock</h2>
+  <p class="lede">The first measurement is the one that lies <em>across</em>
+     the print head. If a label comes out sideways, press Swap — or print the
+     ruler and hold it against the real thing.</p>
+  <div class="stocktable" id="stockTable"></div>
+  <details class="addstock">
+    <summary>Add a stock</summary>
+    <div class="row">
+      <label class="field grow"><span>Name</span><input id="newStockName" placeholder="Freezer box lids"></label>
+      <label class="field"><span>SKU</span><input id="newStockSku" placeholder="EDCC-082WH"></label>
+    </div>
+    <div class="row">
+      <label class="field"><span>Across the head (in)</span><input type="number" step="0.01" id="newStockAcross" placeholder="2.25"></label>
+      <label class="field"><span>Along the roll (in)</span><input type="number" step="0.01" id="newStockFeed" placeholder="1.25"></label>
+      <label class="field"><span>Labels per roll</span><input type="number" id="newStockCount" placeholder="1000"></label>
+    </div>
+    <button class="btn primary" id="addStock">Add</button>
+  </details>
+
+  <h2>Settings</h2>
+  <div class="settings" id="settings"></div>
+</section>
+
+<!-- ── History ───────────────────────────────────────────────────────── -->
+<section class="view" id="viewHistory">
+  <h2>Printed</h2>
+  <p class="lede">Every label, with the fields already filled in. Reprint puts
+     out exactly the same one.</p>
+  <div class="hlist" id="historyList"></div>
+  <button class="btn danger" id="clearHistory">Clear the history</button>
+</section>
+
+</main>
+
+<div class="toast" id="toast" hidden><span id="toastText"></span>
+  <button class="btn tiny" id="toastAction" hidden></button></div>
+<div class="tipbox" id="tipbox" hidden></div>
+<dialog class="modal" id="modal"><div id="modalBody"></div></dialog>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

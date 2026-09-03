@@ -1,0 +1,14 @@
+{
+  "domain": "bruh_print",
+  "name": "BRUH Print",
+  "codeowners": ["@bruhautomation"],
+  "config_flow": true,
+  "dependencies": ["http"],
+  "documentation": "https://github.com/bruhautomation/BRUH-HA-Apps/tree/main/bruh-print",
+  "integration_type": "service",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/bruhautomation/BRUH-HA-Apps/issues",
+  "requirements": [],
+  "single_config_entry": true,
+  "version": "0.1.0"
+}
