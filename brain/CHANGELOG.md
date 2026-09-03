@@ -2,6 +2,66 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.30.0
+
+### Added
+
+- **Ten more house checks, and the three questions the first set could not
+  ask.** 1.29's checks read Home Assistant; these read the registry, the
+  radios and the machine underneath. **Registry housekeeping** —
+  `reg.hardware_name` finds entities still wearing the serial number their
+  integration gave them (an IEEE address, a UUID, a bare hex run; a name
+  like `0x00158d0001abcdef Temperature` is unfindable in a picker and
+  unsayable to Assist); `reg.no_area` finds devices in no room, which are
+  invisible to "turn off the kitchen" and to every area card;
+  `reg.unused_helper` finds helpers no automation, script, scene or
+  dashboard refers to; `reg.orphan_device` finds device rows with nothing
+  behind them. **The radios** — `dev.zwave_dead` reads the Z-Wave node
+  status sensor the controller publishes, and `dev.zha_unseen` reads ZHA's
+  own `last_seen`, because a sleepy Zigbee sensor is `available` between
+  check-ins and availability alone says nothing about it. **The machine** —
+  `sys.backup_stale` (nothing backed up, or nothing in a week),
+  `sys.addon_down` (an add-on in an error state, or set to start on boot
+  and stopped), `sys.disk_space` and `sys.recorder_size`. And
+  `auto.trigger_unavailable`, which is the failure with no symptom at all:
+  the automation is switched on, nothing errors, no trace is written, and
+  it can never fire again because the entity in its trigger has been
+  unavailable for days.
+
+- **A Diagnostics section under ⚙.** The run journal has counted every
+  Claude run since 1.29 and nothing read it back — it existed only inside a
+  bug report somebody else had to ask for. The settings dialog now renders
+  `/api/diagnostics`: versions, the sign-in verdict, 24 hours of runs by
+  outcome with the recent failures spelled out, and the last house-checks
+  pass — including **which checks could not run and why**, since a skipped
+  check is not a quiet one and is also the one that may not clear a row.
+  "Copy for a bug report" copies the payload, with a fallback that puts the
+  text on screen and selected when an ingress iframe is refused the
+  clipboard.
+
+- **The bug report template asks for `brain report`.** One field, naming
+  where the bundle lands and what is in it — and saying out loud that it
+  carries no prompts, no replies and no entity states.
+
+### Changed
+
+- **The house snapshot carries the Supervisor and the recorder.** Backups,
+  add-ons, `/host/info` and Core's version, gathered rather than awaited in
+  turn; each add-on row is folded together with its own `/info`, because
+  the list endpoint does not say whether an add-on was *meant* to be
+  running and `boot: manual` is somebody's decision rather than a fault. An
+  add-on whose `/info` did not answer keeps no `boot` at all, which reads
+  as "I could not look" and files nothing. Plus one `stat` of the recorder
+  database and the `purge_keep_days` in `configuration.yaml` — an
+  `!include`d recorder block reads as unset, not as a number this made up,
+  and a database that is not a file under `/config` (Postgres, MariaDB)
+  takes the whole key unavailable rather than reporting as small.
+
+- **A dead Z-Wave node is reported once.** `dev.unavailable` skips a device
+  whose node status reads `dead`, because `dev.zwave_dead` has the mesh fix
+  on it — re-interview, or remove the failed node — and the same box under
+  two different fixes is how a list stops being read.
+
 ## 1.29.0
 
 ### Added

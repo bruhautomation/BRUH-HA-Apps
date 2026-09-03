@@ -15,6 +15,9 @@ BATTERY_LOW_PCT = 15
 BATTERY_SILENT_DAYS = 7
 FROZEN_DAYS = 7
 FROZEN_MIN_DAYS = 5
+# A Zigbee device quieter than this has dropped off the mesh. Sleepy
+# sensors check in daily at the very least; a week is not a long sleep.
+ZIGBEE_SILENT_DAYS = 7
 
 # Sane physical ranges by device class and unit. A reading outside these is
 # a broken sensor, not a hot day.
@@ -38,12 +41,32 @@ def _live_hardware(house: House):
         yield eid, st
 
 
+def _zwave_dead_devices(house: House) -> set[str]:
+    """Device ids whose Z-Wave node status sensor reads `dead`."""
+    out: set[str] = set()
+    for eid, st in house.states.items():
+        if not (eid.startswith("sensor.") and eid.endswith("_node_status")):
+            continue
+        if (house.registry.get(eid) or {}).get("platform") != "zwave_js":
+            continue
+        if str(st.get("state") or "").lower() != "dead":
+            continue
+        dev = house.device_of(eid)
+        if dev:
+            out.add(dev["id"])
+    return out
+
+
 # ---------------------------------------------------------------------------
 # dev.unavailable — grouped by device, or a dead hub files forty rows
 # ---------------------------------------------------------------------------
 
 def unavailable(snap: dict, now: float) -> list[dict]:
     house = House(snap)
+    # A node the Z-Wave controller has declared dead is dev.zwave_dead's
+    # row, with a mesh fix on it. Reporting the same box twice under two
+    # different fixes is how a list stops being read.
+    dead_devices = _zwave_dead_devices(house)
     by_device: dict[str, list[tuple[str, float]]] = {}
     loose: list[tuple[str, float]] = []
     for eid, st in _live_hardware(house):
@@ -57,6 +80,8 @@ def unavailable(snap: dict, now: float) -> list[dict]:
             continue
         dev = house.device_of(eid)
         if dev:
+            if dev["id"] in dead_devices:
+                continue
             by_device.setdefault(dev["id"], []).append((eid, age))
         else:
             loose.append((eid, age))
@@ -255,6 +280,80 @@ def restored(snap: dict, now: float) -> list[dict]:
     return out
 
 
+# ---------------------------------------------------------------------------
+# dev.zwave_dead — the controller has given up on a node
+# ---------------------------------------------------------------------------
+
+def zwave_dead(snap: dict, now: float) -> list[dict]:
+    """Z-Wave JS publishes a node status sensor per device, and it says
+    `dead` when the controller has stopped getting answers.
+
+    That is a different finding from ``dev.unavailable`` even when both are
+    true of the same box: unavailable says Home Assistant has no state,
+    dead says the *mesh* has lost the node, and the fix is a mesh fix — move
+    it, re-interview it, or replace a failed node — not a restart.
+    """
+    house = House(snap)
+    dead = [house.device_name(house.devices[d])
+            for d in _zwave_dead_devices(house)]
+    if not dead:
+        return []
+    dead.sort()
+    return [{
+        "text": "Z-Wave nodes are marked dead by the controller",
+        "detail": f"{len(dead)}: " + join_names(dead)
+                  + ". The controller has stopped getting answers from "
+                    "them, so nothing they do reaches Home Assistant.",
+        "fix": "Wake a battery node (its button usually does it). For a "
+               "mains node, check it still has power and is in range of "
+               "another mains node — then re-interview it from its device "
+               "page. A node that is really gone should be removed with "
+               "'Remove failed node' so the mesh stops routing through it.",
+        "severity": "serious",
+        "fixable": False,
+        "entity_id": "",
+    }]
+
+
+# ---------------------------------------------------------------------------
+# dev.zha_unseen — a Zigbee device that has stopped checking in
+# ---------------------------------------------------------------------------
+
+def zha_unseen(snap: dict, now: float) -> list[dict]:
+    """ZHA records `last_seen` per device, which is the honest question for
+    a Zigbee mesh: a sleepy sensor is `available` between check-ins, so
+    availability alone says nothing, and silence is what matters.
+    """
+    rows = []
+    for dev in snap.get("zha_devices") or []:
+        if not isinstance(dev, dict):
+            continue
+        age = age_days(dev.get("last_seen"), now)
+        if age is None or age < ZIGBEE_SILENT_DAYS:
+            continue
+        name = str(dev.get("user_given_name") or dev.get("name")
+                   or dev.get("ieee") or "a Zigbee device")
+        rows.append((age, name))
+    if not rows:
+        return []
+    rows.sort(reverse=True)
+    longest, first = rows[0]
+    return [{
+        "text": "Zigbee devices have stopped checking in",
+        "detail": f"{len(rows)}: " + join_names([n for _, n in rows])
+                  + f". The quietest is {first}, last seen "
+                    f"{when(max(0.0, now - longest * 86400))} "
+                    f"({int(longest)} days ago).",
+        "fix": "A battery device this quiet has usually run its battery "
+               "down or dropped off the mesh — press its button to wake "
+               "it. If it does not come back, re-pair it near the "
+               "coordinator, then move it back.",
+        "severity": "warning",
+        "fixable": False,
+        "entity_id": "",
+    }]
+
+
 CHECKS = [
     {"id": "dev.unavailable", "title": "Devices unavailable for a day",
      "needs": ("states", "registry"), "run": unavailable},
@@ -266,4 +365,8 @@ CHECKS = [
      "needs": ("states", "registry", "stats"), "run": frozen},
     {"id": "dev.restored", "title": "Entities with no integration",
      "needs": ("states", "registry"), "run": restored},
+    {"id": "dev.zwave_dead", "title": "Z-Wave nodes marked dead",
+     "needs": ("states", "registry"), "run": zwave_dead},
+    {"id": "dev.zha_unseen", "title": "Zigbee devices gone quiet",
+     "needs": ("zha_devices",), "run": zha_unseen},
 ]

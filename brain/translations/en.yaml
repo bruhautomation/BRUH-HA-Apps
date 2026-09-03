@@ -117,10 +117,14 @@ configuration:
     name: House checks every (hours)
     description: >-
       How often brAIn runs its deterministic house checks — automations
-      naming entities that no longer exist, devices unavailable for a day,
-      batteries running down, sensors frozen on one value, dashboards
-      showing missing entities. They read Home Assistant directly and never
-      call Claude, so they cost nothing; what they find lands on the
+      naming entities that no longer exist or triggered by one that has
+      stopped reporting, devices unavailable for a day, dead Z-Wave nodes
+      and Zigbee devices gone quiet, batteries running down, sensors frozen
+      on one value, entities named after their hardware, devices in no area,
+      helpers nothing uses, and the machine underneath (no backup in a week,
+      an add-on stopped or erroring, a full disk, a large recorder
+      database). They read Home Assistant and the Supervisor directly and
+      never call Claude, so they cost nothing; what they find lands on the
       Findings tab. 0 turns the schedule off (`brain check` still runs them
       by hand).
   protected_entities:

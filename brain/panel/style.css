@@ -1131,6 +1131,23 @@ body.modal-open {
   .setgrid { grid-template-columns: 1fr; }
 }
 
+/* diagnostics block of the ⚙ dialog: rows of label + value, and a short
+   list of the failures behind the counts. It is a reading, not a form —
+   nothing here is editable, so it is laid out as a definition list. */
+.diag { margin: 10px 0 12px; font-size: 12.5px; }
+.diag .drow {
+  display: flex;
+  gap: 10px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+.diag .drow:last-child { border-bottom: 0; }
+.diag .dk { flex: 0 0 40%; color: var(--ink-2); }
+.diag .dv { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.diag .dbad { color: var(--critical); }
+.diag ul { margin: 4px 0 0; padding-left: 16px; }
+.diag li { margin: 2px 0; }
+
 
 /* ----------------------------------------------------------------- docs
    A two-column guide: sticky section list plus the rendered page. The

@@ -393,8 +393,8 @@ memory — and from the **house checks**, which cost nothing. brAIn only reports
 Not every problem needs a model to find. On a schedule (every
 \`checks_interval_hours\`, six by default) and on **Run checks now**, brAIn reads Home
 Assistant directly — registries, states, your automations, the traces Home Assistant
-keeps, a week of statistics, the dashboards — and files what it finds under a *check*
-label, with no Claude run:
+keeps, a week of statistics, the dashboards, and the Supervisor's own view of backups,
+add-ons and the disk — and files what it finds under a *check* label, with no Claude run:
 
 - an automation naming an entity that no longer exists, or calling a service that is
   not registered (your old phone's notify service, with the replacement named)
@@ -402,6 +402,15 @@ label, with no Claude run:
   skipped on \`mode: single\`, that has never fired, or was switched off and forgotten
 - a device unavailable for more than a day; a battery low, or *gone quiet*; an
   impossible reading; a sensor frozen on one value for a week
+- an automation that is switched on, errors at nothing, and can never fire again,
+  because the entity in its trigger has been unavailable for days
+- a Z-Wave node the controller has marked dead, or a Zigbee device that has stopped
+  checking in — a sleepy sensor reads as \`available\` between check-ins, so silence is
+  the honest question and not availability
+- an entity still named after its hardware, a device in no area, a helper nothing uses,
+  a device row with no entities behind it
+- nothing backed up in a week; an add-on erroring, or set to start on boot and stopped;
+  a disk nearly full; a recorder database that has outgrown its headroom
 - a dashboard showing entities that no longer exist
 - a battery **running down**, from the slope of its last sixty days — a finding with a
   date on it
@@ -1058,6 +1067,20 @@ brain doctor
 It checks the Supervisor token, the HA REST API, the MCP handshake, the custom
 integration, both background listeners, the worker pool API, and your Claude login — then
 smoke-tests the CLI. \`brain doctor --json\` gives the same verdict as one JSON object.
+
+## What brAIn has been doing
+
+**⚙ > Diagnostics** is the read-only half of the settings dialog: versions, whether the
+Claude sign-in is holding, the last 24 hours of Claude runs counted by how they ended,
+the failures behind those counts, and the last pass of the house checks — including
+**which checks could not run, and why**. That last line is the one worth reading. A
+check that was skipped did not find nothing; it could not look, and it is also the check
+that is not allowed to clear a row, so "12 ran, 3 skipped" and "15 ran" are very
+different reports of a quiet house.
+
+**Copy for a bug report** puts the whole payload on the clipboard. If your browser
+refuses the panel the clipboard — an ingress iframe sometimes does, and there is no way
+to ask in advance — the text appears on screen already selected, ready for Ctrl/Cmd+C.
 
 ## Reporting a bug
 
