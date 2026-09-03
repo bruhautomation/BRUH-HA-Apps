@@ -180,6 +180,15 @@ p { margin: 0 0 12px; }
   margin-bottom: 0; }
 .field.inline > span { text-transform: none; letter-spacing: 0; font-size: 13px; }
 .field.grow { flex: 1 1 auto; }
+/* A field's first span is its LABEL and is styled as one — uppercase, bold,
+ * tracked. The hint underneath is a sentence, and it was getting the same
+ * treatment: "0 FOR CONTINUOUS STOCK" under a number box reads as a second
+ * label for a second box that is not there. */
+.field > span.muted { text-transform: none; letter-spacing: 0;
+  font-weight: 400; font-size: 12px; color: var(--ink-3); }
+/* Rows in a dialog align at the TOP: their fields carry hints of different
+ * lengths, and bottom-aligning them staggers the boxes down the dialog. */
+.modal .row { align-items: flex-start; }
 
 input, select, textarea {
   width: 100%; min-height: 40px; padding: 8px 10px;
@@ -269,11 +278,17 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
 .design-bar select, .design-bar input { min-width: 120px; max-width: 100%;
   width: auto; }
 .addbar { display: flex; gap: 6px; flex-wrap: wrap; }
+.bargroup { display: flex; gap: 6px; flex: none; }
 .addbar .btn { padding: 0 11px; }
 
 .canvas-pane { display: flex; flex-direction: column; gap: 10px; }
+/* 24px at the top rather than 14: an element's name tag sits 19px above its
+ * own box, so a box at the very top of the label had its tag cut in half by
+ * this container's own padding — and the tag is how you tell which of six
+ * identical rectangles you have hold of. */
+.canvaslegend { font-size: 12px; color: var(--ink-3); margin: 0; }
 .canvas-scroll { overflow: auto; display: flex; justify-content: center;
-  padding: 14px; border-radius: 10px; border: 1px solid var(--line);
+  padding: 24px 14px 14px; border-radius: 10px; border: 1px solid var(--line);
   background: repeating-conic-gradient(var(--line-2) 0% 25%, transparent 0% 50%)
     50% / 16px 16px; }
 .canvas { position: relative; background: #fff; box-shadow: 0 2px 12px rgba(0,0,0,.25);
@@ -428,6 +443,119 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
 .modal::backdrop { background: rgba(0,0,0,.45); }
 .modal > div { padding: 18px; }
 
+/* ── The design bar on a phone ───────────────────────────────────────── */
+/* Six add buttons, two fields and two toggles wrapped to 389px of controls
+ * above the canvas on a 390px screen — which put the label itself off the
+ * bottom of the window, under the sticky Print bar, before you had touched
+ * anything. The add buttons become one swipeable strip: they keep their
+ * words (a row of bare glyphs is the shape nobody can learn), they keep
+ * their 44px targets, and the strip scrolls inside itself rather than taking
+ * the page sideways with it. */
+@media (max-width: 700px) {
+  .design-bar { gap: 8px; padding: 10px 12px; }
+  .addbar {
+    flex-wrap: nowrap; overflow-x: auto; width: 100%;
+    scrollbar-width: none; -webkit-overflow-scrolling: touch;
+  }
+  .addbar::-webkit-scrollbar { display: none; }
+  .addbar .btn { flex: none; }
+}
+
+/* ── Font picker ─────────────────────────────────────────────────────── */
+/* The samples are 1-bit PNGs of black ink on a transparent ground, drawn by
+ * the label renderer. One image serves both themes because `invert` leaves
+ * alpha alone: black ink becomes white ink and the transparent ground stays
+ * transparent. Rendering a second, light-on-dark sample would be a second
+ * answer to what the font looks like. */
+.fontpick {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; min-height: 40px; padding: 6px 12px;
+  background: var(--panel-2); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 9px;
+  font: inherit; font-size: 15px; cursor: pointer; text-align: left;
+}
+.fontpick:hover { border-color: var(--accent); }
+.fsample { height: 20px; width: auto; flex: none; }
+.fontpick .fname { color: var(--ink-2); font-size: 13px; }
+@media (prefers-color-scheme: dark) { .fsample { filter: invert(1); } }
+
+.fontlist { display: grid; gap: 4px; max-height: 52vh; overflow-y: auto;
+  margin-bottom: 12px; }
+.fontrow {
+  display: flex; align-items: center; gap: 12px;
+  min-height: 44px; padding: 6px 12px; width: 100%;
+  background: none; color: var(--ink); text-align: left;
+  border: 1px solid transparent; border-radius: 9px;
+  font: inherit; cursor: pointer;
+}
+.fontrow:hover { background: var(--line-2); }
+.fontrow.sel { background: var(--accent-soft); border-color: var(--accent); }
+.fontrow .fsample { height: 24px; }
+.fontrow .fname { color: var(--ink-2); font-size: 13px; }
+
+/* ── The drawable area, and what is outside it ───────────────────────── */
+/* The safe area and the margin band take NO pointer, because they cover the
+ * whole label and a person aiming at a box near the edge must not hit the
+ * picture of the margin instead — which also means neither can carry a
+ * tooltip, since the delegated listener finds nothing under a
+ * `pointer-events: none` element. What explains them is the caption under
+ * the canvas, which is always there.
+ *
+ * The clipped strip is the exception and can be hovered: it is five pixels
+ * at the very outer edge, inside the margin band, where no element box can
+ * be dragged — so its tooltip costs nothing and it is the one mark here
+ * whose meaning is not guessable. */
+/* Two elements rather than one with a huge spread shadow: a shadow big
+ * enough to tint the band would also tint the rest of the page, and the
+ * overlay cannot be given `overflow: hidden` because an element's name tag
+ * hangs above its box on purpose. The band IS a border, so a border is what
+ * draws it — its widths are the margin, set from the millimetres. */
+.marginband {
+  position: absolute; inset: 0; pointer-events: none; border-style: solid;
+  border-color: color-mix(in srgb, var(--warn) 16%, transparent);
+}
+.safe {
+  position: absolute; pointer-events: none;
+  border: 1px dashed color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.clipped {
+  position: absolute;
+  background: repeating-linear-gradient(
+    45deg, color-mix(in srgb, var(--bad) 45%, transparent) 0 3px,
+    transparent 3px 6px);
+  border: 1px solid color-mix(in srgb, var(--bad) 50%, transparent);
+}
+.clipped.right { top: 0; bottom: 0; right: 0; width: 5px; }
+.clipped.left { top: 0; bottom: 0; left: 0; width: 5px; }
+.clipped.top { left: 0; right: 0; top: 0; height: 5px; }
+.clipped.bottom { left: 0; right: 0; bottom: 0; height: 5px; }
+
+/* Guides live above the boxes: they are drawn while something is being
+ * dragged and are the one thing on the canvas that must not be hidden by
+ * the thing that caused them. */
+.guides { position: absolute; inset: 0; pointer-events: none; z-index: 3; }
+.guide { position: absolute; background: var(--accent); }
+.guide.x { top: -6px; bottom: -6px; width: 1px; }
+.guide.y { left: -6px; right: -6px; height: 1px; }
+
+/* A box the renderer reported a problem on. Red rather than a note alone,
+ * because a sentence under a canvas with six boxes on it does not say which
+ * one it is about. It still prints — the rule is that a print is refused
+ * only when it cannot be right. */
+.el.bad { border-color: var(--bad); border-style: solid;
+  background: color-mix(in srgb, var(--bad) 12%, transparent); }
+.el.bad .tag { background: var(--bad); }
+
+.tools { display: grid; gap: 6px; }
+.toolrow { display: flex; gap: 5px; flex-wrap: wrap; }
+.toolrow .btn { padding: 0 9px; }
+
+/* The direction line under a stock picker: a sentence, not a control. */
+.turnline { font-size: 13px; margin: -6px 0 12px; }
+.design-bar .turnline { margin: 0; }
+.design-bar .btn.on { border-color: var(--accent); color: var(--accent);
+  background: var(--accent-soft); }
+
 /* ── The touch floor ─────────────────────────────────────────────────
  * LAST in the file, and that is load-bearing rather than tidy. These rules
  * are the same specificity as the ones they raise (`.btn.tiny` is two
@@ -446,4 +574,12 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
   .btn.tiny { min-height: 44px; padding: 0 13px; font-size: 15px; }
   /* The box itself stays small; the label around it is the 44px target. */
   input[type="checkbox"] { min-height: 22px; }
+  /* The resize grip keeps its 18px drawing and grows a 44px hit area, so a
+   * thumb can catch the corner of a box that is itself only a few
+   * millimetres across. A grip drawn at 44px would cover the label. */
+  .el .grip::after {
+    content: ""; position: absolute; left: 50%; top: 50%;
+    width: 44px; height: 44px; transform: translate(-50%, -50%);
+  }
+  .fontpick, .fontrow { min-height: 44px; font-size: 16px; }
 }

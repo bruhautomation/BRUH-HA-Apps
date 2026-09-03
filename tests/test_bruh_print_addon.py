@@ -404,6 +404,51 @@ class TestPanelUI(unittest.TestCase):
                 self.assertIn(f'_asset("{asset}"', server)
         self.assertIn('add_get("/api/health"', server)
 
+    def test_the_font_picker_is_not_a_list_of_names(self):
+        """A <select> of family names shows the one thing a font choice is
+        not about. `#quickFont` keeps its id — the measure and every handler
+        name it — and becomes a button carrying a rendered sample."""
+        page = (PANEL / "index.html").read_text()
+        self.assertNotIn('<select id="quickFont"', page)
+        self.assertIn('class="fontpick" id="quickFont"', page)
+
+    def test_the_designer_can_snap_and_can_turn_a_box(self):
+        """Both are in the bar rather than buried in the props pane: they
+        are about the thing you are holding, and you are holding it with the
+        other hand."""
+        page = (PANEL / "index.html").read_text()
+        for control in ('id="designSnap"', 'id="designRotateEl"'):
+            with self.subTest(control=control):
+                self.assertIn(control, page)
+
+    def test_nothing_is_declared_after_the_touch_floor(self):
+        """The sibling of the `.btn.tiny` check above, asked the other way
+        round. That one pins one selector; this one asks whether ANY rule
+        follows the block — equal specificity is settled by order, so a
+        `.fontrow` or a `.toolrow` added at the end of the file would keep
+        its desktop size on a phone and nothing would say so."""
+        css = (PANEL / "style.css").read_text()
+        coarse = css.index("@media (pointer: coarse)")
+        self.assertEqual(coarse, css.rindex("@media"),
+                         "the touch floor is no longer the last @media block")
+        # Walk to the block's own closing brace rather than to the file's
+        # last one — appending a rule adds a `}` of its own, and a test that
+        # looks at the end of the file would pass on exactly the change it
+        # exists to catch.
+        depth, close = 0, None
+        for index in range(coarse, len(css)):
+            if css[index] == "{":
+                depth += 1
+            elif css[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    close = index
+                    break
+        self.assertIsNotNone(close, "the touch-floor block never closes")
+        tail = css[close + 1:].strip()
+        self.assertEqual("", tail,
+                         f"something follows the touch floor: {tail[:80]}")
+
     def test_the_page_asks_for_its_assets_relatively(self):
         """Ingress mounts the panel under a prefix, so an absolute asset URL
         is a request to Home Assistant's own root — which is what 0.1.1 did,

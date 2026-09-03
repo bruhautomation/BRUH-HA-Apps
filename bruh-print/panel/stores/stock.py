@@ -46,7 +46,17 @@ MM_PER_IN = 25.4
 # appears smeared. It is a default, per-stock overridable, and it is applied
 # to the drawable area rather than to the label size — a person measuring
 # their label with a ruler should get the number on the roll.
-DEFAULT_MARGIN_MM = 1.0
+#
+# Two millimetres rather than one, because one was measured against the wrong
+# thing. A LabelWriter's registration wanders by a fraction of a millimetre
+# each way as the roll unwinds, and on a 2.25" stock the head is already three
+# dot columns narrower than the label — so a margin of 1mm was, in practice,
+# text touching the die cut on one side of every other label. This is a
+# DEFAULT: a stock somebody added or corrected saved its own `margin_mm` and
+# keeps it, which is the point of the override and also means a correction
+# made against the old default survives this change. The Edit dialog on the
+# Printer tab is where a roll that wants more or less says so.
+DEFAULT_MARGIN_MM = 2.0
 
 
 class UnknownStock(KeyError):

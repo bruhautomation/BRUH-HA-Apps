@@ -2,7 +2,67 @@
 
 ## 0.3.0
 
-_(release notes are written at the end of this branch)_
+**The Lovelace card never updated, and the card you were looking at was the
+0.1.0 one.** Home Assistant serves `/local` with a 31-day cache header, and
+the integration registered the card at a fixed URL — so the add-on rewrote
+the file on every start and no browser ever fetched it again. Two releases
+on, dashboards were still running the first card, with its roll dropdown and
+its lab placeholders; and that card's `side` is exactly what the current
+panel refuses when the stock is loaded in the other bay, which is why it
+"could not print". The card is registered under a URL carrying a hash of the
+file's own bytes now, so an update reaches the dashboard on the next page
+load. One refresh is needed the first time, because the *old* URL is the one
+your browser cached — after that, never again. The integration also keeps
+looking for a card that is not there yet rather than giving up until the
+next Core restart, and the card's own version string is tested against the
+add-on's.
+
+**Labels print dark now, and slowly by default.** The driver deliberately
+sent no density or print-quality command, leaving the printer at its fast,
+normal default — which on ordinary thermal stock comes out faint. Standard
+and compact modes send `ESC g` (dark) and `ESC i` (the printer's
+"barcodes and graphics" mode, 300×600) in the order cups-filters has sent
+them for twenty years. The slow mode steps the paper at 600 lines an inch, so
+every raster line goes twice and the label length doubles with it — sent
+as-is the label would come out half its length. **Darkness** and **Print
+speed** are on the Printer tab under Settings; **Bare minimum** still sends
+neither, for a firmware that will not take them.
+
+**One setting for which way the text runs.** It used to be asked in three
+places — a Turn picker per stock, a Turn on the Quick tab, a Turn in the
+designer — plus a `Swap to 1.25" × 2.25"` button nobody could parse. Now each
+stock has one **Text direction** (automatic reads the shape, and the closed
+picker says what it decided), the Quick tab and the designer both follow it
+and say so in a sentence, and nothing asks per print. The measurements moved
+into an **Edit** dialog per stock with the two numbers labelled in words,
+**"These are the wrong way round"** where Swap was, a **Margin** and the
+labels-per-roll count. The designer gained **⟳ Rotate** for turning a text
+or barcode box a quarter at a time.
+
+**Text is fitted and placed by its ink, inside a 2mm margin.** The autofit
+measured advance widths and the font's line box — neither is where the ink
+is — so a word could touch the edge and fill barely half its box at the same
+time. Measured: "Rice" in a 40 × 12mm box filled 0.60 of the height before
+and 0.96 after, centred within half a dot where it was eight off. The margin
+was 1mm, which on a LabelWriter whose registration wanders and whose head is
+three columns short of a 2.25" label meant text at the die cut. It is 2mm by
+default (a stock you corrected keeps its own), the designer draws the
+printable area with the margin tinted and the clipped columns hatched, and
+every text box keeps a little breathing room inside itself.
+
+**The designer is a tool you can aim with.** Boxes snap to the printable
+area's edges and centres, to each other and to a 1mm grid, with a guide line
+drawn at whatever they caught; text re-fits *while* you drag a corner rather
+than after you let go; nothing can be dragged, typed or nudged off the label;
+a box that cannot be drawn — a barcode too narrow for its data — is outlined
+in red; and there are align, fill and nudge tools for a thumb. **The font
+picker shows the fonts**, each row drawn by the label renderer itself. Two
+bugs found by driving it: selecting a box rebuilt the overlay under the
+finger holding it, so a drag never worked from the first press; and a 90°
+label was previewed as the printed sheet under an overlay laid out for the
+design canvas, so on a tube wrap the box you held and the words it described
+were in two different places. The designer previews the canvas now.
+
 
 ## 0.2.2
 

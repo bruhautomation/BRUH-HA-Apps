@@ -59,28 +59,27 @@
           <select id="quickStock"></select>
         </label>
       </div>
+      <!-- Which way the text sits is the STOCK's answer and it is asked in
+           one place, on the Printer tab. This line is not a control: it says
+           what is about to happen, because a direction you cannot check
+           without printing one is a direction people override blindly. -->
+      <p class="turnline muted" id="quickTurnLine"></p>
 
       <div class="row">
         <label class="field">
           <span>Copies</span>
           <input type="number" id="quickCopies" value="1" min="1" max="500">
         </label>
-        <label class="field grow">
+        <div class="field grow">
           <span>Font</span>
-          <select id="quickFont"></select>
-        </label>
-        <!-- Defaults to whatever this label's stock is set to, and follows
-             the stock when you change it. Overriding is for one print;
-             correcting it for good is a press on the Printer tab. -->
-        <label class="field">
-          <span>Turn</span>
-          <select id="quickRotate" data-tip="How the text sits on this label.
-            It follows whatever the stock is set to; the Printer tab is where
-            you change that for good.">
-            <option value="0">Across the label</option>
-            <option value="90">Along the roll</option>
-          </select>
-        </label>
+          <!-- A button rather than a select, because the thing being chosen
+               is what the words will LOOK like and a list of family names
+               does not show that. Its label and its sample are both drawn
+               from the same renderer the printer gets. -->
+          <button type="button" class="fontpick" id="quickFont"
+                  data-tip="Pick a font — each one is shown as the printer
+                    will draw it"></button>
+        </div>
       </div>
 
       <label class="check">
@@ -114,16 +113,25 @@
       <span>Stock</span><select id="designStock"></select>
     </label>
     <label class="field inline">
-      <span>Turn</span>
-      <select id="designRotate">
-        <option value="0">0°</option><option value="90">90°</option>
-        <option value="180">180°</option><option value="270">270°</option>
-      </select>
-    </label>
-    <label class="field inline">
       <span>Name</span><input id="designName" placeholder="Pantry jar">
     </label>
+    <!-- Same sentence as the Quick tab, for the same reason: one setting,
+         said where you are working, changed on the Printer tab. -->
+    <span class="turnline muted" id="designTurnLine"></span>
     <span class="spacer"></span>
+    <!-- One group, so the row wrapping cannot leave Snap at the end of one
+         line and Rotate at the start of the next: they are the two controls
+         that act on what you are holding. -->
+    <div class="bargroup">
+    <button type="button" class="btn" id="designSnap" aria-pressed="true"
+            data-tip="Boxes stick to the label's edges and centre, to each
+              other, and to a 1mm grid. Turn it off to place something by
+              eye.">⌗ Snap</button>
+    <button type="button" class="btn" id="designRotateEl"
+            data-tip="Turn the selected box a quarter at a time. Text and
+              barcodes only — a QR code, a box and a rule look the same
+              whichever way up they are.">⟳ Rotate</button>
+    </div>
     <div class="addbar" id="addBar"></div>
   </div>
 
@@ -135,6 +143,12 @@
           <div class="overlay" id="overlay"></div>
         </div>
       </div>
+      <!-- A caption rather than a tooltip: the dashed rectangle and the
+           tinted band cover the whole label and cannot take a pointer, so
+           there is nothing to hover. -->
+      <p class="canvaslegend">Everything inside the dashed line prints. The
+         tinted band outside it is the printer’s own margin — a LabelWriter
+         cannot reach the edge of the liner.</p>
       <ul class="notes" id="designNotes"></ul>
     </div>
 
@@ -190,9 +204,19 @@
   <div class="bays" id="bays"></div>
 
   <h2>Label stock</h2>
-  <p class="lede">The first measurement is the one that lies <em>across</em>
-     the print head. If a label comes out sideways, press Swap — or print the
-     ruler and hold it against the real thing.</p>
+  <p class="lede">Every label is two measurements, and they are not
+     interchangeable. <strong>Across the print head</strong> is the width the
+     head covers in one pass; <strong>along the roll</strong> is how far the
+     paper travels for one label. Nothing can work out which is which for
+     you — a LabelWriter feeds to the next die-cut gap and has no idea what
+     shape the label was — so if a label comes out sideways, press
+     <strong>Edit</strong> and then "These are the wrong way round".</p>
+  <p class="lede">A label much longer than it is wide is a wrap-around label,
+     so its text runs <em>along the roll</em> automatically. <strong>Text
+     direction</strong> is where you correct that for one stock, once —
+     nothing asks again per print. <strong>Print the ruler</strong> on the
+     card above is how you check any of it: it comes out with millimetre
+     ticks on both edges, and you hold it against a real label.</p>
   <div class="stocktable" id="stockTable"></div>
   <details class="addstock">
     <summary>Add a stock</summary>
@@ -204,6 +228,7 @@
       <label class="field"><span>Across the head (in)</span><input type="number" step="0.01" id="newStockAcross" placeholder="2.25"></label>
       <label class="field"><span>Along the roll (in)</span><input type="number" step="0.01" id="newStockFeed" placeholder="1.25"></label>
       <label class="field"><span>Labels per roll</span><input type="number" id="newStockCount" placeholder="1000"></label>
+      <label class="field"><span>Margin (mm)</span><input type="number" step="0.1" min="0" id="newStockMargin" placeholder="2"></label>
     </div>
     <button class="btn primary" id="addStock">Add</button>
   </details>

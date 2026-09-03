@@ -18,7 +18,14 @@ that is.
 **A real designer.** Text, Code 128 barcodes, QR codes, boxes, rules and
 uploaded images, dragged and resized on the label itself. Everything is in
 millimetres and every preview is the printer's own render — the picture you
-see is the bitmap that goes to the head.
+see is the bitmap that goes to the head. Boxes snap to the label's edges and
+centre lines, to each other and to a 1mm grid, with a line drawn at whatever
+they caught; the printable area and the printer's own margin are drawn on the
+canvas, so you can see what you are aiming at; nothing can be dragged, typed
+or nudged off the label; and text re-fits as you resize its box rather than
+after you let go. The font picker shows each font *drawn by the label
+renderer*, because a list of family names shows the one thing a font choice
+is not about.
 
 **Templates.** Write `{{sample}}` anywhere in a text, a barcode or a QR code
 and it becomes a box to fill in — in the panel, in the Lovelace card, and in
@@ -64,8 +71,12 @@ that does nothing.
 4. Press **Print the ruler** once per roll. It prints a label with
    millimetre ticks along both edges; hold it against a real label to check
    the measurements are the way round BRUH Print thinks they are. If they
-   are not, press **Swap**.
-5. Type something on the Quick tab and print it.
+   are not, press **Edit** on that row and then **"These are the wrong way
+   round"**.
+5. Check **Text direction** on the same row. A label much longer than it is
+   wide reads along the roll automatically and the picker says so; anything
+   else is one press, once, for that stock. Nothing asks again per print.
+6. Type something on the Quick tab and print it.
 
 ## From Home Assistant
 

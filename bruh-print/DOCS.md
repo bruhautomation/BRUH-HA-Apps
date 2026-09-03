@@ -37,14 +37,41 @@ undone by the next restart.
 
 A stock is two measurements and they are not interchangeable:
 
-- **across** — the dimension that lies across the print head
-- **feed** — the dimension that travels past it
+- **across the print head** — the width the head covers in one pass
+- **along the roll** — how far the paper travels for one label
 
 Nothing can work this out for you. A LabelWriter feeds to the next die-cut
 gap and has no idea what shape the label it just printed was, so if a label
 comes out rotated with the text running off the edge, the two numbers are the
-wrong way round. Press **Swap** on the Printer tab, or press **Print the
-ruler** and hold the result against a real label.
+wrong way round. Press **Edit** on the Printer tab and then **"These are the
+wrong way round"** — or press **Print the ruler** and hold the result against
+a real label, which is the only way to be sure and costs one label.
+
+**Text direction** is one setting, on the Printer tab, per stock. A label
+much longer than it is wide is a wrap-around label, so its text runs *along
+the roll* automatically; the picker says which way "automatic" decided, and
+picking **Across the label** or **Along the roll** corrects it for good. The
+Quick tab and the designer both follow it and neither asks again — a
+direction that could be set in three places is three controls that can
+disagree about a property of the roll.
+
+**Edit** opens the rest: the two measurements, the swap, **Margin (mm)** and
+how many labels are on a full roll.
+
+### The margin
+
+BRUH Print keeps **2mm** clear of every edge by default. That is not a style
+choice: the head does not start at the edge of the liner, thermal stock curls
+at the die cut, and a LabelWriter's registration wanders a fraction of a
+millimetre either way as the roll unwinds. The designer draws the band, so
+you can see what you are aiming at, and text is fitted and centred by its own
+**ink** — not by the font's line box, which reserves room for ascenders and
+descenders a given word may not have, and not by the advance width, which is
+where the next letter would start rather than where this one ends.
+
+A stock you have added or corrected keeps whatever margin it was saved with,
+so raising the default does not undo your measurement. Change one roll's
+margin under **Edit**.
 
 The two stocks this add-on ships knowing, read off the roll cores:
 
@@ -58,9 +85,9 @@ multipurpose, 30330 return address, 30323 large shipping, 30346 library,
 30299 jewellery) and a continuous 2.25″ entry whose length comes from the
 artwork.
 
-Adding your own takes a name and the two measurements. Editing a built-in
-saves an override — a future release correcting one cannot undo your
-measurement.
+Adding your own takes a name and the two measurements; the margin and the
+labels-per-roll count are optional. Editing a built-in saves an override — a
+future release correcting one cannot undo your measurement.
 
 ### The 2.25″ note
 
@@ -130,11 +157,16 @@ All measurements are in millimetres from the top-left of the *drawable* area
 side, which is how a 0.56″ × 3.44″ tube wrap is designed as a long strip and
 printed as a narrow one.
 
-Each **stock** carries the turn its labels take, so you do not set this per
-print — switching from an address label to a tube wrap switches the turn with
-it. BRUH Print derives it from the shape (a stock much longer than it is wide
-is a wrap-around label and reads along the roll) and the Printer tab is where
-you correct it for good; the closed picker says what "automatic" decided.
+You do not set it per print. A **new** label takes the stock's own **Text
+direction**, and changing the stock in the designer changes it with them; a
+**saved** label keeps whatever it was drawn at, because that is a layout
+somebody made rather than a property of the roll. The one place the direction
+is decided is the Printer tab.
+
+An element's own `rotate` is a different thing — it turns that box's contents
+within the label, and the designer's **⟳ Rotate** button is what sets it. Text
+and barcodes have one; a QR code, a box and a rule look the same whichever way
+up they are, so the button says so instead of doing nothing.
 
 `size_mm: 0` on a text element means "as large as fits its box". A non-zero
 size that does not fit is reported as a note and clipped — never silently
@@ -156,6 +188,48 @@ printer dots. That is not tidiness — a fractional module width rounds each
 bar independently, so five 1.4-dot bars come out 1, 1, 2, 1, 2 and a scanner
 reads the wrong widths. If a symbol cannot fit at one dot per module you get
 a note saying so rather than a barcode that does not scan.
+
+## The designer
+
+Everything under the canvas is the server's own render — the same renderer
+that packs the printer's bytes — so what is on screen is what comes out.
+
+**The printable area is drawn.** A dashed rectangle with the margin tinted
+outside it, and, on a stock wider than the head (2.25″ on a 672-dot head), a
+hatched strip marking the columns the printer cannot reach. It is drawn wide
+enough to see; it is really about a hundredth of an inch.
+
+**Boxes snap.** While you drag or resize, edges and centres stick to the
+printable area's edges and centre lines, to the other boxes' edges and
+centres, and to a 1mm grid — and a thin line is drawn at whatever it caught,
+because a box that jumps with no line reads as the editor moving things on
+its own. The grid never wins over a real alignment one millimetre away. **⌗
+Snap** in the design bar turns it off; the choice is remembered.
+
+**Text re-fits while you drag.** The size of the glyphs is the thing being
+chosen when you drag a text box's corner, so the preview re-renders during
+the drag rather than after you let go.
+
+**Nothing can be placed off the label.** Dragging, resizing, typing an X, Y,
+W or H, nudging and turning all clamp to the printable area.
+
+**A box that cannot be drawn is outlined in red** — a barcode too narrow for
+its data, a QR code with nowhere to go, a fixed text size that clips. The
+notes under the label say what is wrong and the label still prints: the rule
+here is that a print is refused only when it cannot be right.
+
+**The font picker shows the fonts.** Each row is a sample drawn by the label
+renderer, because a list of family names shows the one thing a font choice is
+not about — and a CSS preview would show your browser's idea of "Monospace"
+beside a label that prints in DejaVu Sans Mono.
+
+**⟳ Rotate** turns the selected box a quarter at a time, and the box turns
+with it so the words still have room. Text and barcodes only.
+
+**Align and nudge.** The buttons under the geometry fields put a box against
+an edge, centre it, or fill the width or the height of the printable area;
+the arrows move it half a millimetre, which is a thumb-sized way to do
+something a number field asks for a keyboard.
 
 ## Templates
 
@@ -338,13 +412,22 @@ on sight.
 **"...is claimed by something else on this machine."** As above: two drivers
 cannot own one LabelWriter.
 
-**The label comes out sideways.** The stock's two measurements are the wrong
-way round. Press **Swap** on the Printer tab.
+**The label comes out sideways.** Two different things wear that sentence.
+If the *whole* label is turned — the text running off the long edge — the
+stock's two measurements are the wrong way round: press **Edit** on the
+Printer tab and then **"These are the wrong way round"**. If the label is the
+right shape and the words are simply lying the wrong way along it, that is
+**Text direction** on the same row, and it is one press.
 
 **The label comes out blank, or half of it does.** Print the ruler. If the
-ruler is right, the artwork is outside the drawable area — the designer
-clamps boxes to the label, so this usually means the stock is wrong rather
-than the label.
+ruler is right, the artwork is outside the drawable area — the designer draws
+that area as a dashed rectangle with the margin tinted, and clamps boxes to
+it, so this usually means the stock is wrong rather than the label.
+
+**The words sit too close to the edge.** They should not: text is fitted and
+placed by its ink, inside a 2mm margin and a little breathing room inside its
+own box. If a particular roll needs more, raise **Margin (mm)** under **Edit**
+on the Printer tab — it is per stock, so nothing else changes.
 
 **Nothing prints and there is no error.** Check the roll is seated and the
 lid is closed, then press **Check it** on the printer's card — a LabelWriter
