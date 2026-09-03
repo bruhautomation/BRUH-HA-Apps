@@ -7,9 +7,11 @@ an option under a name nothing reads, a card that imports something the
 browser cannot fetch.
 """
 import ast
+import importlib.util
 import json
 import re
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -24,6 +26,21 @@ CARD = ADDON / "lovelace" / "bruh-print-card.js"
 
 def config():
     return yaml.safe_load((ADDON / "config.yaml").read_text())
+
+
+def integration_const():
+    """The integration's const.py, imported for real.
+
+    It is the one module in `custom_components/bruh_print` that imports
+    nothing from Home Assistant, which is what makes this possible at all —
+    `homeassistant` is not installed in CI, so everything else here can only
+    be parsed.
+    """
+    path = INTEGRATION / "const.py"
+    spec = importlib.util.spec_from_file_location("bruh_print_const", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 class TestManifest(unittest.TestCase):
@@ -265,6 +282,79 @@ class TestLovelaceCard(unittest.TestCase):
         self.assertIn("CARD_FILE", init)
         self.assertIn("is_file", init)
 
+    def test_the_card_version_is_the_add_on_version(self):
+        """The banner the card prints into the browser console is how
+        anybody tells which card they are actually being served. A version
+        that stopped being bumped is a banner that lies about exactly the
+        thing somebody opened the console to find out."""
+        version = config()["version"]
+        self.assertIn(f"CARD_VERSION = '{version}'", self.card)
+
+    def test_the_registered_url_carries_a_content_hash(self):
+        """Core serves /local with a 31-day cache header, so a card updated
+        in place reaches a browser that already has one exactly never.
+
+        This drives the real helper over two files rather than reading the
+        source, because what matters is that the URL *changes when the bytes
+        change* — a hash of the version string would pass any grep and fail
+        the day somebody forgets to bump it."""
+        const = integration_const()
+        with tempfile.TemporaryDirectory() as tmp:
+            one = Path(tmp) / "one.js"
+            two = Path(tmp) / "two.js"
+            one.write_text("const CARD_VERSION = '0.2.2';")
+            two.write_text("const CARD_VERSION = '0.3.0';")
+            first = const.card_url(one)
+            second = const.card_url(two)
+        prefix = const.CARD_URL + "?v="
+        self.assertTrue(first.startswith(prefix), first)
+        self.assertTrue(second.startswith(prefix), second)
+        self.assertNotEqual(first, second,
+                            "two different cards got the same URL, so an "
+                            "update reaches nobody who has the old one")
+
+    def test_the_same_bytes_get_the_same_url(self):
+        """A restart copies the card in whether or not it changed. If the URL
+        moved every time, every restart would re-download it for everybody —
+        which is the cache working exactly as intended, thrown away."""
+        const = integration_const()
+        with tempfile.TemporaryDirectory() as tmp:
+            one = Path(tmp) / "one.js"
+            two = Path(tmp) / "two.js"
+            one.write_text("same bytes\n")
+            two.write_text("same bytes\n")
+            self.assertEqual(const.card_url(one), const.card_url(two))
+
+    def test_the_integration_registers_the_hashed_url(self):
+        """A source-level check, and only ever *in addition* to driving
+        `card_url` above: `homeassistant` is not installed here, so there is
+        no way to call `_register_card` and watch what it hands the
+        frontend. What this can still see is that the bare CARD_URL is not
+        what goes in — registering that is the whole bug."""
+        init = (INTEGRATION / "__init__.py").read_text()
+        self.assertIn("card_url(CARD_FILE)", init)
+        self.assertNotIn("add_extra_js_url(hass, CARD_URL)", init)
+
+    def test_the_integration_keeps_looking_for_a_card_that_is_not_there_yet(self):
+        """Core can set the entry up before the add-on has copied the card
+        in — a first install, or an add-on update while Core was already
+        running. Giving up there means no card until Core restarts.
+
+        Source-level for the same reason as above; the pure half of this is
+        `card_url`, and the retry is all Home Assistant's own scheduling."""
+        init = (INTEGRATION / "__init__.py").read_text()
+        self.assertIn("async_call_later", init)
+        tree = ast.parse(init)
+        unload = [n for n in tree.body
+                  if isinstance(n, ast.AsyncFunctionDef)
+                  and n.name == "async_unload_entry"]
+        self.assertEqual(1, len(unload), "no async_unload_entry to check")
+        called = {n.func.id for n in ast.walk(unload[0])
+                  if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
+        self.assertIn("_cancel_card_retry", called,
+                      "a retry that outlives the entry fires into a "
+                      "half-unloaded integration")
+
 
 class TestPanelUI(unittest.TestCase):
     def test_the_javascript_parses(self):
@@ -313,6 +403,51 @@ class TestPanelUI(unittest.TestCase):
             with self.subTest(asset=asset):
                 self.assertIn(f'_asset("{asset}"', server)
         self.assertIn('add_get("/api/health"', server)
+
+    def test_the_font_picker_is_not_a_list_of_names(self):
+        """A <select> of family names shows the one thing a font choice is
+        not about. `#quickFont` keeps its id — the measure and every handler
+        name it — and becomes a button carrying a rendered sample."""
+        page = (PANEL / "index.html").read_text()
+        self.assertNotIn('<select id="quickFont"', page)
+        self.assertIn('class="fontpick" id="quickFont"', page)
+
+    def test_the_designer_can_snap_and_can_turn_a_box(self):
+        """Both are in the bar rather than buried in the props pane: they
+        are about the thing you are holding, and you are holding it with the
+        other hand."""
+        page = (PANEL / "index.html").read_text()
+        for control in ('id="designSnap"', 'id="designRotateEl"'):
+            with self.subTest(control=control):
+                self.assertIn(control, page)
+
+    def test_nothing_is_declared_after_the_touch_floor(self):
+        """The sibling of the `.btn.tiny` check above, asked the other way
+        round. That one pins one selector; this one asks whether ANY rule
+        follows the block — equal specificity is settled by order, so a
+        `.fontrow` or a `.toolrow` added at the end of the file would keep
+        its desktop size on a phone and nothing would say so."""
+        css = (PANEL / "style.css").read_text()
+        coarse = css.index("@media (pointer: coarse)")
+        self.assertEqual(coarse, css.rindex("@media"),
+                         "the touch floor is no longer the last @media block")
+        # Walk to the block's own closing brace rather than to the file's
+        # last one — appending a rule adds a `}` of its own, and a test that
+        # looks at the end of the file would pass on exactly the change it
+        # exists to catch.
+        depth, close = 0, None
+        for index in range(coarse, len(css)):
+            if css[index] == "{":
+                depth += 1
+            elif css[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    close = index
+                    break
+        self.assertIsNotNone(close, "the touch-floor block never closes")
+        tail = css[close + 1:].strip()
+        self.assertEqual("", tail,
+                         f"something follows the touch floor: {tail[:80]}")
 
     def test_the_page_asks_for_its_assets_relatively(self):
         """Ingress mounts the panel under a prefix, so an absolute asset URL

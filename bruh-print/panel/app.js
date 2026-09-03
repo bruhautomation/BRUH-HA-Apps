@@ -43,7 +43,14 @@ const S = {
   catalog: { elements: {}, rotations: [0, 90, 180, 270] },
   printer: null, printers: [], assets: [], history: [],
   label: null, selected: -1, template: null, dirty: false,
+  problems: [],
 };
+
+/* Read-only, and only so the layout measure can ask what the label actually
+ * became after it dragged something. Geometry is what a browser can see; the
+ * millimetres behind it are not, and a measure that re-derived them from
+ * pixels would be measuring its own arithmetic. */
+window.__bruhPrintState = S;
 
 /* ── Fetch ──────────────────────────────────────────────────────────── */
 /* The leading slash is stripped so every request resolves against the page's
@@ -234,50 +241,137 @@ function fillPickers() {
   };
   options($('quickStock'), prefGet('bruhprint.stock', null));
   options($('designStock'), S.label ? S.label.stock : null);
-  syncTurnToStock();
 
-  const fontSelect = $('quickFont');
-  const keptFont = fontSelect.value || S.settings.default_font;
-  fontSelect.innerHTML = '';
-  for (const font of S.fonts) {
-    const option = el('option', null, font.name);
-    option.value = font.key;
-    fontSelect.append(option);
-  }
-  if (S.fonts.some((f) => f.key === keptFont)) fontSelect.value = keptFont;
+  const quickFont = $('quickFont');
+  const keptFont = quickFontValue() || S.settings.default_font;
+  setFontButton(quickFont,
+    S.fonts.some((f) => f.key === keptFont) ? keptFont : (S.fonts[0] || {}).key);
+  updateTurnLines();
 
   if (!$('addBar').childElementCount) buildAddBar();
 }
 
-/* The Turn control follows the stock, because which way text sits on a
- * label is the label's property and not the job's. Switching from a 2.25 ×
- * 1.25 address label to a 0.56 × 3.44 cryo wrap has to move it to "along
- * the roll" without being asked — that IS the difference between the two
- * stocks — and an override is remembered only until the stock changes,
- * because the override was about the label you were looking at. */
-let turnFollows = '';
-function syncTurnToStock() {
-  const select = $('quickRotate');
-  if (!select) return;
-  const chosen = $('quickStock').value;
-  if (chosen === turnFollows) return;
-  turnFollows = chosen;
-  const stock = stockById(chosen);
-  if (stock) select.value = String(stock.turn ?? 0);
+/* ── Which way the text sits ────────────────────────────────────────────
+ *
+ * ONE setting, and it belongs to the stock. A 0.56 × 3.44 tube wrap reads
+ * along the roll and a 2.25 × 1.25 address label reads across it — always,
+ * for that stock — so asking per print was asking a question whose answer
+ * never changes, in three places (the Quick tab, the design bar and the
+ * Printer tab) that could disagree with each other. What is left in the two
+ * working views is a SENTENCE saying what will happen; the Printer tab is
+ * the one place it is decided. */
+const turnWords = (turn) => (Number(turn) === 90 || Number(turn) === 270
+  ? 'Text runs along the roll' : 'Text runs across the label');
+
+function updateTurnLines() {
+  const quick = stockById($('quickStock').value);
+  const quickLine = $('quickTurnLine');
+  quickLine.textContent = quick
+    ? `${turnWords(quick.turn)} (change it on the Printer tab)` : '';
+  const designLine = $('designTurnLine');
+  if (S.label) {
+    designLine.textContent =
+      `${turnWords(S.label.rotate)} (change it on the Printer tab)`;
+  } else {
+    designLine.textContent = '';
+  }
 }
+
+/* ── Font picker ────────────────────────────────────────────────────────
+ *
+ * A <select> of family names shows you the one thing a font choice is not
+ * about. Every sample here is drawn by the SERVER, through the same
+ * `_draw_text` the printer's bytes come out of — a CSS font-family preview
+ * would be showing the browser's idea of "Monospace" beside a label that
+ * prints in DejaVu Sans Mono, which is the failure a preview exists to
+ * prevent, moved somewhere new.
+ *
+ * Nothing is fetched until the dialog opens: one image per font, cached for
+ * a day, so the second open costs nothing and the first costs a few
+ * kilobytes of 1-bit PNG. */
+const fontName = (key) =>
+  (S.fonts.find((f) => f.key === key) || {}).name || key || 'Font';
+const fontSample = (key, text) => relative(
+  `/api/font/${encodeURIComponent(key)}/sample.png`
+  + (text ? `?text=${encodeURIComponent(text)}` : ''));
+
+function setFontButton(button, key) {
+  if (!button) return;
+  button.dataset.value = key || '';
+  button.innerHTML = '';
+  const image = el('img', 'fsample');
+  image.alt = '';
+  image.src = fontSample(key, 'Aa Bb 0123');
+  button.append(image, el('span', 'fname', fontName(key)));
+}
+
+const quickFontValue = () => $('quickFont').dataset.value || '';
+
+function openFontPicker(current, onPick) {
+  const body = $('modalBody');
+  body.innerHTML = '';
+  body.append(el('h2', null, 'Font'));
+  body.append(el('p', 'lede',
+    'Each line is drawn by the same renderer that packs the printer\u2019s '
+    + 'bytes, so what you see is what comes out.'));
+
+  const list = el('div', 'fontlist');
+  const rows = [];
+  for (const font of S.fonts) {
+    const row = el('button', 'fontrow' + (font.key === current ? ' sel' : ''));
+    row.type = 'button';
+    row.dataset.value = font.key;
+    const image = el('img', 'fsample');
+    image.alt = '';
+    image.src = fontSample(font.key);
+    row.append(image, el('span', 'fname', font.name));
+    row.onclick = () => { $('modal').close(); onPick(font.key); };
+    list.append(row);
+    rows.push(row);
+  }
+  body.append(list);
+
+  const close = el('button', 'btn', 'Cancel');
+  close.onclick = () => $('modal').close();
+  const actions = el('div', 'actions');
+  actions.append(close);
+  body.append(actions);
+
+  /* Arrow keys and Enter, because this replaced a <select> and a select is
+   * keyboard-navigable. Escape is the <dialog>'s own. */
+  let at = Math.max(0, rows.findIndex((r) => r.dataset.value === current));
+  list.onkeydown = (event) => {
+    const step = event.key === 'ArrowDown' ? 1
+      : event.key === 'ArrowUp' ? -1 : 0;
+    if (!step) return;
+    event.preventDefault();
+    at = (at + step + rows.length) % rows.length;
+    rows[at].focus();
+  };
+  $('modal').showModal();
+  if (rows[at]) rows[at].focus();
+}
+
+$('quickFont').addEventListener('click', () => {
+  openFontPicker(quickFontValue(), (key) => {
+    setFontButton($('quickFont'), key);
+    quickPreview();
+  });
+});
 
 /* ── Quick ──────────────────────────────────────────────────────────── */
 let quickTimer = 0;
 let quickSeq = 0;
 function quickPayload(printIt) {
-  const rotate = $('quickRotate').value;
+  /* No `rotate`. The server takes the stock's own answer when none is sent,
+   * which is the whole point of there being one setting: a quick print
+   * cannot disagree with the Printer tab, because it never says. */
   return {
     text: $('quickText').value,
     stock: $('quickStock').value,
-    font: $('quickFont').value,
+    font: quickFontValue(),
     copies: Number($('quickCopies').value) || 1,
     uppercase: $('quickUpper').checked,
-    ...(rotate === '' ? {} : { rotate: Number(rotate) }),
     ...(printIt ? { print: true } : { scale: 2 }),
   };
 }
@@ -319,11 +413,11 @@ function notes(list, items) {
 }
 
 const debouncedQuick = () => { clearTimeout(quickTimer); quickTimer = setTimeout(quickPreview, 260); };
-['quickText', 'quickStock', 'quickFont', 'quickRotate', 'quickUpper']
+['quickText', 'quickStock', 'quickUpper']
   .forEach((id) => $(id).addEventListener('input', () => {
     if (id === 'quickStock') {
       prefSet('bruhprint.stock', $('quickStock').value);
-      syncTurnToStock();
+      updateTurnLines();
     }
     debouncedQuick();
   }));
@@ -367,18 +461,26 @@ function buildAddBar() {
 }
 
 function blankLabel() {
+  const id = $('designStock').value || S.settings.default_stock;
+  const stock = stockById(id);
   return {
-    stock: $('designStock').value || S.settings.default_stock,
-    rotate: 0, name: '', invert: false, elements: [],
+    stock: id,
+    /* A NEW label takes the stock's own direction; a SAVED one keeps
+     * whatever it was drawn at. Those are different questions — the first is
+     * "which way does this label read", which the stock answers, and the
+     * second is "what did somebody lay out", which only the file knows. */
+    rotate: stock ? Number(stock.turn) || 0 : 0,
+    name: '', invert: false, elements: [],
   };
 }
 
 function loadLabel(label) {
   S.label = label || blankLabel();
   S.selected = -1;
+  S.problems = [];
   $('designStock').value = S.label.stock;
-  $('designRotate').value = String(S.label.rotate || 0);
   $('designName').value = S.label.name || '';
+  updateTurnLines();
   renderDesign();
 }
 
@@ -399,17 +501,31 @@ function renderDesign() {
   drawLayers();
 }
 
+/* Out-of-order replies are the ordinary case once the preview fires while a
+ * box is being dragged: a bigger label renders slower, so the answer to
+ * where the box was two hundred milliseconds ago can arrive after the answer
+ * to where it is. Same guard `quickSeq` has, for the same reason. */
+let previewSeq = 0;
 async function refreshPreview() {
+  const seq = ++previewSeq;
   try {
     const response = await fetch(relative('/api/preview'), {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ label: S.label, scale: 2 }),
+      /* `view: 'canvas'`: the sheet turned back the way this label is DRAWN.
+       * The overlay's coordinates are the canvas's, and on a 90° tube wrap
+       * the printed sheet is a tall strip with the words on their side — so
+       * the box being dragged and the ink it described sat in two different
+       * places, which is what made a wrap-around label undesignable. The
+       * Quick and Templates previews keep the sheet: that is what comes out
+       * of the printer. */
+      body: JSON.stringify({ label: S.label, scale: 2, view: 'canvas' }),
     });
     if (!response.ok) {
       const data = await response.json().catch(() => ({}));
       throw new Error(data.error || `preview answered ${response.status}`);
     }
     const blob = await response.blob();
+    if (seq !== previewSeq) return;
     const image = $('designPreview');
     const previous = image.src;
     image.src = URL.createObjectURL(blob);
@@ -417,9 +533,36 @@ async function refreshPreview() {
     if (previous.startsWith('blob:')) URL.revokeObjectURL(previous);
     image.onload = fitCanvas;
     notes($('designNotes'), JSON.parse(response.headers.get('X-Label-Notes') || '[]'));
+    /* The same messages, keyed to the element each is about, so a barcode
+     * that will not fit is outlined on the canvas rather than described in a
+     * sentence under six identical boxes. */
+    S.problems = JSON.parse(response.headers.get('X-Label-Problems') || '[]');
+    markProblems();
   } catch (error) {
+    if (seq !== previewSeq) return;
     notes($('designNotes'), [error.message]);
   }
+}
+
+/* Applied to the boxes already on screen rather than by rebuilding them:
+ * this lands mid-drag, and rebuilding the overlay would take the element out
+ * from under the finger holding it. */
+function markProblems() {
+  const bad = new Set((S.problems || []).map((p) => p.index));
+  const boxes = $('overlay').querySelectorAll('.el');
+  boxes.forEach((box, index) => box.classList.toggle('bad', bad.has(index)));
+  const print = $('designPrint');
+  const count = bad.size;
+  /* Still enabled: the rule here is that a print is refused only when it
+   * cannot be right, and a barcode that will not fit is a label with one
+   * element missing — usually still the label somebody wanted. */
+  print.setAttribute('data-tip', count
+    ? (count === 1
+        ? 'One box has a problem — it is outlined in red, and the notes under '
+          + 'the label say what. It will still print.'
+        : `${count} boxes have a problem — they are outlined in red, and the `
+          + 'notes under the label say what. It will still print.')
+    : 'Send this label to the printer.');
 }
 
 /* The preview is rendered at 2x the printer's resolution for crispness, which
@@ -442,26 +585,88 @@ function fitCanvas() {
   canvas.style.height = Math.round(image.naturalHeight * zoom) + 'px';
   image.style.width = '100%';
   image.style.height = '100%';
-  drawOverlay();
+  /* Never while a box is being dragged: `drawOverlay` rebuilds every box,
+   * and rebuilding the one under the finger takes its pointer capture with
+   * it — the drag simply stops, halfway, with the box left where the last
+   * frame put it. The live preview fires during a drag, which is what makes
+   * this reachable at all. */
+  if (!dragActive) drawOverlay(); else markProblems();
 }
 
 addEventListener('resize', () => { if (S.label) fitCanvas(); });
 
+/* ── The drawable area, drawn ───────────────────────────────────────────
+ *
+ * The margin is the printer's, not yours: a LabelWriter's head does not
+ * start at the liner's edge and its registration wanders as the roll
+ * unwinds. Nothing on screen said so, so people put boxes flush to the edge
+ * and then found the label had lost a letter. It is one dashed rectangle and
+ * a tinted band, which is a thing you can aim at.
+ *
+ * `headDots` is the second half of the same honesty: a 2.25" stock on a
+ * 672-dot head is three dot columns the printer physically cannot reach. */
+const HEAD_DOTS = 672;
+const HEAD_DPI = 300;
+
+function headReach() {
+  const dots = Number(S.printer?.dots) || HEAD_DOTS;
+  const dpi = Number(S.printer?.dpi) || HEAD_DPI;
+  return { inches: dots / dpi, dots, dpi };
+}
+
+/* Which edge of the DESIGN canvas is the sheet's clipped one. The renderer
+ * turns the canvas by -rotate on its way to the sheet, so the sheet's
+ * trailing across-edge arrives from a different side each quarter — and a
+ * hatch on the wrong edge is worse than none, because it points at a part of
+ * the label that prints perfectly. */
+const CLIP_EDGE = { 0: 'right', 90: 'top', 180: 'left', 270: 'bottom' };
+
 function drawOverlay() {
   const overlay = $('overlay');
   const image = $('designPreview');
-  const box = image.getBoundingClientRect();
+  const frame = image.getBoundingClientRect();
   const mm = canvasMm();
   const stock = stockById(S.label.stock);
-  const margin = stock ? stock.margin_mm : 1;
+  const margin = stock ? stock.margin_mm : 2;
   /* The overlay is positioned over the whole label PNG, but element
    * coordinates are measured from the DRAWABLE area's corner — the margin
    * is the printer's, not the designer's. Forgetting to add it back is a
    * millimetre of drift that only shows on the smallest labels. */
-  const scaleX = box.width ? box.width / (mm.w + 2 * margin) : 4;
-  const scaleY = box.height ? box.height / (mm.h + 2 * margin) : 4;
+  const scaleX = frame.width ? frame.width / (mm.w + 2 * margin) : 4;
+  const scaleY = frame.height ? frame.height / (mm.h + 2 * margin) : 4;
 
   overlay.innerHTML = '';
+
+  const band = el('div', 'marginband');
+  band.style.borderWidth = `${margin * scaleY}px ${margin * scaleX}px`;
+  overlay.append(band);
+
+  const safe = el('div', 'safe');
+  safe.style.left = margin * scaleX + 'px';
+  safe.style.top = margin * scaleY + 'px';
+  safe.style.width = mm.w * scaleX + 'px';
+  safe.style.height = mm.h * scaleY + 'px';
+  /* Deliberately no tooltip: it covers the whole label and takes no pointer,
+   * so there is nothing to hover. The caption under the canvas says what it
+   * is, and it says it without being asked. */
+  overlay.append(safe);
+
+  const reach = headReach();
+  if (stock && stock.across_in > reach.inches + 0.001) {
+    const lost = Math.round((stock.across_in - reach.inches) * reach.dpi);
+    const strip = el('div', 'clipped ' + (CLIP_EDGE[S.label.rotate] || 'right'));
+    strip.setAttribute('data-tip',
+      `This stock is ${stock.across_in}" across and the head reaches `
+      + `${reach.inches.toFixed(2)}" — the outer ${lost} dot columns are the `
+      + 'printer\u2019s, not yours. Drawn wide enough to see; it is really '
+      + 'about a hundredth of an inch.');
+    overlay.append(strip);
+  }
+
+  const guides = el('div', 'guides');
+  guides.id = 'guides';
+  overlay.append(guides);
+
   S.label.elements.forEach((element, index) => {
     const box = el('div', 'el' + (index === S.selected ? ' sel' : ''));
     box.style.left = (margin + element.x_mm) * scaleX + 'px';
@@ -471,9 +676,10 @@ function drawOverlay() {
     box.append(el('span', 'tag', describe(element)));
     const grip = el('span', 'grip');
     box.append(grip);
-    dragging(box, grip, index, scaleX, scaleY, mm);
+    dragging(box, grip, index, scaleX, scaleY, mm, margin);
     overlay.append(box);
   });
+  markProblems();
 }
 
 function describe(element) {
@@ -490,7 +696,73 @@ function describe(element) {
  * moving a pixel. */
 const TAP_SLOP = 4;
 
-function dragging(box, grip, index, scaleX, scaleY, mm) {
+/* ── Snapping ───────────────────────────────────────────────────────────
+ *
+ * Six screen pixels, converted to millimetres per axis so the tolerance is
+ * the same distance under the finger at any zoom. Three kinds of target and
+ * they are not equal: an edge or a centre is something a person is aiming
+ * at, and the 1mm grid is ambient — it must never win over an alignment that
+ * is one millimetre away, which is exactly the case where a grid snap feels
+ * like the editor fighting you. So the grid is ranked last and draws no
+ * guide line, because a line that appears every millimetre is noise. */
+const SNAP_PX = 6;
+const snapOn = () => prefGet('bruhprint.snap', '1') !== '0';
+
+function snapTargets(axis, index, mm) {
+  const size = axis === 'x' ? mm.w : mm.h;
+  const out = [{ at: 0 }, { at: size / 2 }, { at: size }];
+  S.label.elements.forEach((other, at) => {
+    if (at === index) return;
+    const start = axis === 'x' ? other.x_mm : other.y_mm;
+    const extent = axis === 'x' ? other.w_mm : other.h_mm;
+    out.push({ at: start }, { at: start + extent / 2 }, { at: start + extent });
+  });
+  return out;
+}
+
+function snap(edges, targets, tol) {
+  let best = null;
+  for (const edge of edges) {
+    for (const target of targets) {
+      const distance = Math.abs(target.at - edge);
+      if (distance > tol) continue;
+      if (!best || distance < best.distance)
+        best = { distance, delta: target.at - edge, at: target.at };
+    }
+    /* The grid, ranked below every real target: only considered when nothing
+     * above matched, so an edge 0.9mm away always beats the whole millimetre
+     * next to it. */
+    if (!best) {
+      const whole = Math.round(edge);
+      if (Math.abs(whole - edge) <= tol)
+        best = { distance: Math.abs(whole - edge), delta: whole - edge,
+                 at: whole, grid: true };
+    }
+  }
+  return best;
+}
+
+function showGuide(axis, at, margin, scaleX, scaleY) {
+  const guides = $('guides');
+  if (!guides) return;
+  const line = el('div', 'guide ' + axis);
+  if (axis === 'x') line.style.left = (margin + at) * scaleX + 'px';
+  else line.style.top = (margin + at) * scaleY + 'px';
+  guides.append(line);
+}
+const clearGuides = () => { const g = $('guides'); if (g) g.innerHTML = ''; };
+
+/* True from the first travelled pixel to pointerup. Read by `fitCanvas`,
+ * which must not rebuild the overlay while a box is being held. */
+let dragActive = false;
+let liveAt = 0;
+/* Slow enough that a drag is not a request per frame, fast enough that the
+ * glyphs visibly re-fit while the box is still moving — which is the whole
+ * point: a text box's size is the thing being chosen, and seeing it only
+ * after you let go means letting go to find out. */
+const LIVE_MS = 150;
+
+function dragging(box, grip, index, scaleX, scaleY, mm, margin) {
   let mode = null, startX = 0, startY = 0, origin = null, moved = false;
 
   const begin = (event, which) => {
@@ -508,24 +780,66 @@ function dragging(box, grip, index, scaleX, scaleY, mm) {
     const dx = (event.clientX - startX), dy = (event.clientY - startY);
     if (!moved && Math.abs(dx) < TAP_SLOP && Math.abs(dy) < TAP_SLOP) return;
     moved = true;
+    dragActive = true;
     const element = S.label.elements[index];
+    const tolX = SNAP_PX / scaleX, tolY = SNAP_PX / scaleY;
+    clearGuides();
+
     if (mode === 'move') {
-      element.x_mm = clamp(origin.x_mm + dx / scaleX, 0, mm.w - element.w_mm);
-      element.y_mm = clamp(origin.y_mm + dy / scaleY, 0, mm.h - element.h_mm);
+      let x = clamp(origin.x_mm + dx / scaleX, 0, mm.w - element.w_mm);
+      let y = clamp(origin.y_mm + dy / scaleY, 0, mm.h - element.h_mm);
+      if (snapOn()) {
+        const hit = snap([x, x + element.w_mm / 2, x + element.w_mm],
+                         snapTargets('x', index, mm), tolX);
+        if (hit) {
+          x = clamp(x + hit.delta, 0, mm.w - element.w_mm);
+          if (!hit.grid) showGuide('x', hit.at, margin, scaleX, scaleY);
+        }
+        const down = snap([y, y + element.h_mm / 2, y + element.h_mm],
+                          snapTargets('y', index, mm), tolY);
+        if (down) {
+          y = clamp(y + down.delta, 0, mm.h - element.h_mm);
+          if (!down.grid) showGuide('y', down.at, margin, scaleX, scaleY);
+        }
+      }
+      element.x_mm = x;
+      element.y_mm = y;
     } else {
-      element.w_mm = clamp(origin.w_mm + dx / scaleX, 1, mm.w - element.x_mm);
-      element.h_mm = clamp(origin.h_mm + dy / scaleY, 1, mm.h - element.y_mm);
+      let w = clamp(origin.w_mm + dx / scaleX, 1, mm.w - element.x_mm);
+      let h = clamp(origin.h_mm + dy / scaleY, 1, mm.h - element.y_mm);
+      if (snapOn()) {
+        const hit = snap([element.x_mm + w], snapTargets('x', index, mm), tolX);
+        if (hit) {
+          w = clamp(w + hit.delta, 1, mm.w - element.x_mm);
+          if (!hit.grid) showGuide('x', hit.at, margin, scaleX, scaleY);
+        }
+        const down = snap([element.y_mm + h], snapTargets('y', index, mm), tolY);
+        if (down) {
+          h = clamp(h + down.delta, 1, mm.h - element.y_mm);
+          if (!down.grid) showGuide('y', down.at, margin, scaleX, scaleY);
+        }
+      }
+      element.w_mm = w;
+      element.h_mm = h;
     }
-    round(element);
-    box.style.left = ((stockById(S.label.stock)?.margin_mm || 1) + element.x_mm) * scaleX + 'px';
-    box.style.top = ((stockById(S.label.stock)?.margin_mm || 1) + element.y_mm) * scaleY + 'px';
+    clampElement(element, mm);
+    box.style.left = (margin + element.x_mm) * scaleX + 'px';
+    box.style.top = (margin + element.y_mm) * scaleY + 'px';
     box.style.width = Math.max(6, element.w_mm * scaleX) + 'px';
     box.style.height = Math.max(6, element.h_mm * scaleY) + 'px';
+
+    /* Live, throttled. Autofit text is the reason: the size of the glyphs IS
+     * the thing being chosen when you drag a text box's corner, and it only
+     * exists on the server. */
+    const now = Date.now();
+    if (now - liveAt > LIVE_MS) { liveAt = now; refreshPreview(); }
   };
 
   const end = () => {
     if (!mode) return;
     mode = null;
+    dragActive = false;
+    clearGuides();
     if (moved) { markDirty(); drawProps(); }
   };
 
@@ -546,7 +860,24 @@ const round = (element) => {
 };
 
 function markDirty() { S.dirty = true; clearTimeout(designTimer); designTimer = setTimeout(refreshPreview, 220); }
-function select(index) { S.selected = index; drawOverlay(); drawProps(); drawLayers(); }
+
+/* Selecting toggles a class; it does NOT rebuild the overlay.
+ *
+ * It used to, and that is why dragging never worked from the first press:
+ * `begin` selects and then calls `setPointerCapture`, and by then the box it
+ * was called on had been replaced by a fresh one — a detached element throws
+ * `InvalidStateError`, the capture is lost, and every `pointermove` after it
+ * goes to a node whose `mode` was never set. The drag simply did nothing,
+ * which from a finger is indistinguishable from a box that will not move.
+ * Callers that change the LIST of elements still redraw; picking one of them
+ * is not a change to the list. */
+function select(index) {
+  S.selected = index;
+  $('overlay').querySelectorAll('.el').forEach((box, at) =>
+    box.classList.toggle('sel', at === index));
+  drawProps();
+  drawLayers();
+}
 
 function addElement(kind) {
   const spec = S.catalog.elements[kind];
@@ -565,11 +896,136 @@ function addElement(kind) {
   };
   if (kind === 'qr') element.w_mm = element.h_mm = Math.round(Math.min(mm.w, mm.h) * 0.6 * 10) / 10;
   S.label.elements.push(element);
+  // The list changed, so the overlay is rebuilt here rather than by the
+  // selection — `select` only toggles a class now, and a box that appears
+  // 220ms later (when the preview lands) is a box you cannot grab yet.
+  drawOverlay();
   select(S.label.elements.length - 1);
   markDirty();
 }
 
+/* Every box stays on the label, from every route in: dragged, resized,
+ * typed, nudged, aligned or turned. One function, because five call sites
+ * asking separately is five chances for a new one to forget. */
+function clampElement(element, mm) {
+  round(element);
+  /* Floored to a tenth, not clamped to the raw limit. The drawable width of
+   * a 2.25" stock is 53.15mm, and rounding a box's x to a tenth AFTER
+   * clamping it against that rounds it back up to 53.2 — a box a twentieth
+   * of a millimetre off the label, every time, from the one place that was
+   * supposed to stop exactly that. Round first, then floor the ceiling. */
+  const down = (value) => Math.floor(Math.max(0, value) * 10) / 10;
+  element.w_mm = Math.max(0.1, Math.min(element.w_mm, down(mm.w)));
+  element.h_mm = Math.max(0.1, Math.min(element.h_mm, down(mm.h)));
+  element.x_mm = clamp(element.x_mm, 0, down(mm.w - element.w_mm));
+  element.y_mm = clamp(element.y_mm, 0, down(mm.h - element.h_mm));
+}
+
+/* Half a millimetre, which is about the smallest move worth making on a
+ * label and small enough that holding the button is a fine adjustment. The
+ * arrows exist because a thumb cannot place a box to half a millimetre and a
+ * number field is a keyboard away on a phone. */
+const NUDGE_MM = 0.5;
+
+function alignTools(element, mm) {
+  const holder = el('div', 'tools');
+
+  const bar = el('div', 'toolrow');
+  const put = (label, tip, run) => {
+    const button = el('button', 'btn', label);
+    button.type = 'button';
+    button.setAttribute('data-tip', tip);
+    button.onclick = () => {
+      run();
+      clampElement(element, mm);
+      markDirty(); drawOverlay(); drawProps();
+    };
+    bar.append(button);
+  };
+  put('⇤', 'Against the left of the printable area',
+      () => { element.x_mm = 0; });
+  put('⇔', 'Centred across the label',
+      () => { element.x_mm = (mm.w - element.w_mm) / 2; });
+  put('⇥', 'Against the right of the printable area',
+      () => { element.x_mm = mm.w - element.w_mm; });
+  put('⤒', 'Against the top of the printable area',
+      () => { element.y_mm = 0; });
+  put('⇕', 'Centred down the label',
+      () => { element.y_mm = (mm.h - element.h_mm) / 2; });
+  put('⤓', 'Against the bottom of the printable area',
+      () => { element.y_mm = mm.h - element.h_mm; });
+  put('↔ Fill', 'As wide as the printable area',
+      () => { element.x_mm = 0; element.w_mm = mm.w; });
+  put('↕ Fill', 'As tall as the printable area',
+      () => { element.y_mm = 0; element.h_mm = mm.h; });
+  holder.append(bar);
+
+  const nudges = el('div', 'toolrow');
+  for (const [label, tip, dx, dy] of [
+    ['←', 'Half a millimetre left', -NUDGE_MM, 0],
+    ['→', 'Half a millimetre right', NUDGE_MM, 0],
+    ['↑', 'Half a millimetre up', 0, -NUDGE_MM],
+    ['↓', 'Half a millimetre down', 0, NUDGE_MM],
+  ]) {
+    const button = el('button', 'btn', label);
+    button.type = 'button';
+    button.setAttribute('data-tip', tip);
+    button.onclick = () => {
+      element.x_mm += dx;
+      element.y_mm += dy;
+      clampElement(element, mm);
+      markDirty(); drawOverlay(); drawProps();
+    };
+    nudges.append(button);
+  }
+  holder.append(nudges);
+  return holder;
+}
+
+/* Which element types can be turned. It is read off the SERVER's catalog
+ * rather than listed here, so a new type that carries a `rotate` field gets
+ * the button by having one — and a QR code, a box and a rule, which look the
+ * same whichever way up they are, never grow a control that does nothing. */
+const canTurn = (element) => !!(element
+  && S.catalog.elements[element.type]?.fields?.rotate);
+
+function rotateSelected() {
+  const element = S.label.elements[S.selected];
+  if (!canTurn(element)) return;
+  const turns = S.catalog.elements[element.type].fields.rotate.choices;
+  const at = turns.indexOf(Number(element.props.rotate) || 0);
+  const next = turns[(at + 1) % turns.length];
+  /* A quarter turn swaps which dimension the content runs along, so the box
+   * follows it — turning text inside a box that stayed wide is a line that
+   * wraps to nothing. Half turns leave the shape alone. */
+  if ((Number(element.props.rotate) % 180) !== (Number(next) % 180)) {
+    const width = element.w_mm;
+    element.w_mm = element.h_mm;
+    element.h_mm = width;
+  }
+  element.props.rotate = next;
+  clampElement(element, canvasMm());
+  markDirty(); drawOverlay(); drawProps();
+}
+
+function syncDesignBar() {
+  const rotate = $('designRotateEl');
+  const element = S.label ? S.label.elements[S.selected] : null;
+  rotate.disabled = !canTurn(element);
+  rotate.setAttribute('data-tip', canTurn(element)
+    ? 'Turn this box a quarter — the box turns with it, so the words still '
+      + 'have room.'
+    : element
+      ? `A ${S.catalog.elements[element.type]?.name || element.type} looks the `
+        + 'same whichever way up it is, so there is nothing to turn.'
+      : 'Pick a box on the label first.');
+  const snapButton = $('designSnap');
+  snapButton.setAttribute('aria-pressed', String(snapOn()));
+  snapButton.classList.toggle('on', snapOn());
+}
+
 function drawProps() {
+  syncDesignBar();
   const holder = $('props'), empty = $('propsEmpty');
   const element = S.label.elements[S.selected];
   holder.hidden = !element;
@@ -581,6 +1037,7 @@ function drawProps() {
   holder.append(el('h3', null, spec.name));
   if (spec.help) holder.append(el('p', 'lede', spec.help));
 
+  const mm = canvasMm();
   const geometry = el('div', 'row');
   for (const [key, label] of [['x_mm', 'X'], ['y_mm', 'Y'], ['w_mm', 'W'], ['h_mm', 'H']]) {
     const field = el('label', 'field');
@@ -588,13 +1045,21 @@ function drawProps() {
     const input = el('input');
     input.type = 'number'; input.step = '0.5'; input.value = element[key];
     input.oninput = () => {
+      /* Typed values are clamped the same way dragged ones are. Without it
+       * the one route into the designer that could put a box off the label
+       * was the keyboard — and the renderer clamps at print time, so the
+       * only sign was a label that came out different from the screen. */
       element[key] = Number(input.value) || 0;
+      clampElement(element, mm);
+      input.value = element[key];
       markDirty(); drawOverlay();
     };
     field.append(input);
     geometry.append(field);
   }
   holder.append(geometry);
+
+  holder.append(alignTools(element, mm));
 
   for (const [name, meta] of Object.entries(spec.fields)) {
     holder.append(propField(element, name, meta));
@@ -605,7 +1070,9 @@ function drawProps() {
   duplicate.onclick = () => {
     const copy = structuredClone(element);
     copy.y_mm = Math.round((copy.y_mm + copy.h_mm + 1) * 10) / 10;
+    clampElement(copy, canvasMm());
     S.label.elements.push(copy);
+    drawOverlay();
     select(S.label.elements.length - 1);
     markDirty();
   };
@@ -639,13 +1106,19 @@ function propField(element, name, meta) {
     }
     input.value = String(element.props[name]);
   } else if (meta.type === 'font') {
-    input = el('select');
-    for (const font of S.fonts) {
-      const option = el('option', null, font.name);
-      option.value = font.key;
-      input.append(option);
-    }
-    input.value = element.props[name];
+    /* The same picker the Quick tab has, because there is one question here
+     * and it is "what will the words look like". `input.value` is read by
+     * the shared oninput below, so the button carries one. */
+    input = el('button', 'fontpick');
+    input.type = 'button';
+    input.value = element.props[name] || '';
+    setFontButton(input, input.value);
+    input.onclick = () => openFontPicker(input.value, (key) => {
+      input.value = key;
+      setFontButton(input, key);
+      element.props[name] = key;
+      markDirty();
+    });
   } else if (meta.type === 'asset') {
     input = el('select');
     const none = el('option', null, '— none —'); none.value = '';
@@ -697,11 +1170,20 @@ function drawLayers() {
 
 $('designStock').addEventListener('change', () => {
   S.label.stock = $('designStock').value;
-  markDirty(); drawOverlay();
+  /* Changing the stock is choosing a different label, so the direction comes
+   * with it — a tube wrap reads along the roll and an address label reads
+   * across it, and carrying the old answer over is how you get a design laid
+   * out sideways on a stock that never reads that way. */
+  const stock = stockById(S.label.stock);
+  if (stock) S.label.rotate = Number(stock.turn) || 0;
+  updateTurnLines();
+  markDirty(); drawOverlay(); drawProps();
 });
-$('designRotate').addEventListener('change', () => {
-  S.label.rotate = Number($('designRotate').value);
-  markDirty(); drawOverlay();
+$('designRotateEl').addEventListener('click', rotateSelected);
+$('designSnap').addEventListener('click', () => {
+  prefSet('bruhprint.snap', snapOn() ? '0' : '1');
+  syncDesignBar();
+  toast(snapOn() ? 'Snapping on.' : 'Snapping off.');
 });
 $('designName').addEventListener('input', () => { S.label.name = $('designName').value; });
 $('overlay').addEventListener('pointerdown', (event) => {
@@ -1083,33 +1565,45 @@ function renderPrinter() {
   for (const stock of S.stocks) {
     const row = el('div', 'strow');
     row.append(el('span', 'nm', stock.name));
-    row.append(el('span', 'dim', stock.label));
+    /* The two numbers, in words. "2.25" × 1.25"" is the vendor's order and
+     * says nothing about which one the head covers — which is the single
+     * most common way a label comes out sideways, and it was written here in
+     * the one notation that cannot answer it. */
+    row.append(el('span', 'dim',
+      `${stock.across_in}\u2033 across \u00b7 ${stock.feed_in || '\u2014'}`
+      + `${stock.feed_in ? '\u2033 along the roll' : ' (continuous)'}`));
     if (stock.sku) row.append(el('span', 'sku', stock.sku));
     if (stock.loaded)
       row.append(el('span', 'pill in', `in the ${stock.loaded_side} roll`));
     row.append(el('span', 'spacer'));
     // Everything after the spacer is a control, right-aligned together.
 
-    /* Which way text sits on this stock, set once here rather than asked on
-     * every print. `turn_set` is the difference between a shape BRUH Print
-     * guessed from and an answer somebody gave — they diverge the moment
-     * the measurements are swapped. */
+    /* ONE setting for which way text sits, and this is where it lives. It
+     * used to be asked in three places — here, on the Quick tab and in the
+     * design bar — which is three controls that can disagree about a
+     * property of the roll. `turn_set` is the difference between a shape
+     * BRUH Print guessed from and an answer somebody gave; they diverge the
+     * moment the measurements are swapped. */
     const turn = el('select', 'turnpick');
+    turn.setAttribute('aria-label', 'Text direction');
     /* "Automatic" that does not say what it decided is a setting you cannot
-     * check without printing one. The derived answer rides in the option's
-     * own text, so the closed select reads as the answer either way. */
-    const derived = stock.turn === 90 ? 'along' : 'across';
-    for (const [value, text] of [['', `Turn: auto (${derived})`],
-                                 ['0', 'Turn: across'],
-                                 ['90', 'Turn: along the roll']]) {
+     * check without printing one, so the derived answer rides in the
+     * option's own text and the closed select reads as the answer. */
+    const derived = stock.turn === 90 ? 'along the roll' : 'across';
+    for (const [value, text] of [
+      ['', `Text direction: automatic \u2014 ${derived}`],
+      ['0', 'Text direction: across the label'],
+      ['90', 'Text direction: along the roll'],
+    ]) {
       const option = el('option', null, text);
       option.value = value;
       turn.append(option);
     }
     turn.value = stock.turn_set ? String(stock.turn) : '';
     turn.setAttribute('data-tip',
-      'How text sits on this label, every time you print one. Automatic '
-      + 'reads it off the shape — a long, narrow stock is a wrap-around '
+      'Which way the words sit on this label, every time one is printed — '
+      + 'the Quick tab and the designer both follow it. Automatic reads it '
+      + 'off the shape: a stock much longer than it is wide is a wrap-around '
       + 'label and its text runs along the roll.');
     turn.onchange = async () => {
       try {
@@ -1121,24 +1615,17 @@ function renderPrinter() {
     };
     row.append(turn);
 
-    const swap = el('button', 'btn tiny',
-      `Swap to ${stock.feed_in}" × ${stock.across_in}"`);
-    swap.setAttribute('data-tip',
-      'These two numbers are which way round the label sits in the printer: '
-      + 'the first lies ACROSS the print head, the second travels through '
-      + 'it. Nothing can work out which is which for you, so if a label '
-      + 'comes out with the text running off the edge, they are the wrong '
-      + 'way round — press this. Print the ruler to check.');
-    swap.onclick = async () => {
-      try { await post(`/api/stock/${stock.id}/swap`, {}); await loadState(); renderPrinter(); toast('Swapped.', 'good'); }
-      catch (error) { fail(error); }
-    };
+    const edit = el('button', 'btn tiny', 'Edit');
+    edit.setAttribute('data-tip',
+      'The two measurements, the margin and how many are on a roll. This is '
+      + 'also where you say the two numbers are the wrong way round.');
+    edit.onclick = () => editStockDialog(stock);
     const remove = el('button', 'btn tiny danger', stock.builtin ? 'Hide' : 'Delete');
     remove.onclick = async () => {
       try { await del(`/api/stock/${stock.id}`); await loadState(); renderPrinter(); }
       catch (error) { fail(error); }
     };
-    row.append(swap, remove);
+    row.append(edit, remove);
     table.append(row);
   }
 
@@ -1183,7 +1670,47 @@ function renderPrinter() {
     + 'Print the ruler above. Standard is what everything is tested against; '
     + 'try the others in order. Tell us which one worked — a LabelWriter '
     + 'cannot be asked which commands it understands, so this is the only '
-    + 'way to find out.'));
+    + 'way to find out. Bare minimum also drops the darkness and speed '
+    + 'commands.'));
+
+  /* Darkness and speed. Both are commands in the same preamble, so `bare`
+   * above overrides both — it sends neither, which is the whole reason it
+   * exists, and the lede on that select says so. */
+  for (const [key, label, fallback, options, lede] of [
+    ['density', 'Darkness', 'dark', [
+      ['dark', 'Dark — recommended'],
+      ['normal', "Normal — the printer's own default"],
+      ['medium', 'Medium'],
+      ['light', 'Light'],
+    ], 'How much heat the head puts into each dot. A LabelWriter left to '
+      + 'itself prints at Normal, which on ordinary thermal stock comes out '
+      + 'faint. Turn it down if labels smudge or the paper curls.'],
+    ['quality', 'Print speed', 'graphics', [
+      ['graphics', "Slow & dark — recommended (the printer's "
+        + '"barcodes and graphics" mode)'],
+      ['text', 'Fast (text mode)'],
+    ], 'The slow mode steps the paper at 600 lines to the inch instead of '
+      + '300, so the head dwells twice as long over every line: darker, and '
+      + "more accurate for barcodes and QR codes. Fast is the printer's "
+      + 'own default and roughly halves the time a long run takes.'],
+  ]) {
+    const wrap = el('label', 'field');
+    wrap.append(el('span', null, label));
+    const select = el('select');
+    for (const [value, text] of options) {
+      const option = el('option', null, text);
+      option.value = value;
+      select.append(option);
+    }
+    select.value = S.settings[key] || fallback;
+    select.onchange = async () => {
+      try { await post('/api/settings', { [key]: select.value }); await loadState(); }
+      catch (error) { fail(error); }
+    };
+    wrap.append(select);
+    settings.append(wrap);
+    settings.append(el('p', 'lede', lede));
+  }
 
   for (const [key, label, help] of toggles) {
     const wrap = el('label', 'check');
@@ -1199,6 +1726,99 @@ function renderPrinter() {
   }
 }
 
+/* One roll, edited in one place.
+ *
+ * The two measurements are the whole reason this dialog exists, and they are
+ * labelled by what they DO rather than by the order the vendor prints them
+ * in. "These are the wrong way round" is the old Swap button with a sentence
+ * for a name: `Swap to 1.25" × 2.25"` described its arithmetic and left the
+ * question — which of these numbers is which? — unanswered right next to it.
+ */
+function editStockDialog(stock) {
+  const body = $('modalBody');
+  body.innerHTML = '';
+  body.append(el('h2', null, stock.name));
+  body.append(el('p', 'lede',
+    'Across the print head is the width the head covers in one pass. Along '
+    + 'the roll is how far the paper travels for one label. Nothing can work '
+    + 'out which is which for you \u2014 print the ruler and hold it against '
+    + 'a real label.'));
+
+  const fields = {};
+  const field = (key, label, value, step, hint) => {
+    const wrap = el('label', 'field');
+    wrap.append(el('span', null, label));
+    const input = el('input');
+    input.type = 'number';
+    input.step = step;
+    input.min = '0';
+    input.value = value;
+    wrap.append(input);
+    if (hint) wrap.append(el('span', 'muted', hint));
+    fields[key] = input;
+    return wrap;
+  };
+
+  const name = el('label', 'field');
+  name.append(el('span', null, 'Name'));
+  const nameInput = el('input');
+  nameInput.value = stock.name;
+  name.append(nameInput);
+  body.append(name);
+
+  const sizes = el('div', 'row');
+  sizes.append(field('across', 'Across the print head (in)', stock.across_in, '0.01'));
+  sizes.append(field('feed', 'Along the roll (in)', stock.feed_in, '0.01',
+                     '0 for continuous stock'));
+  body.append(sizes);
+
+  const swap = el('button', 'btn', 'These are the wrong way round');
+  swap.type = 'button';
+  swap.setAttribute('data-tip',
+    'Exchanges the two numbers and saves. If a label comes out rotated with '
+    + 'the text running off the edge, this is what is wrong.');
+  swap.onclick = async () => {
+    try {
+      await post(`/api/stock/${stock.id}/swap`, {});
+      $('modal').close();
+      await loadState(); renderPrinter(); fillPickers();
+      toast('Swapped. Print the ruler to check.', 'good');
+    } catch (error) { fail(error); }
+  };
+  body.append(swap);
+
+  const rest = el('div', 'row');
+  rest.append(field('margin', 'Margin (mm)', stock.margin_mm, '0.1',
+                    'The band BRUH Print keeps clear of the edge'));
+  rest.append(field('count', 'Labels per roll', stock.per_roll, '1'));
+  body.append(rest);
+
+  const actions = el('div', 'actions');
+  const save = el('button', 'btn primary', 'Save');
+  save.onclick = async () => {
+    if (!nameInput.value.trim()) return toast('Give it a name.');
+    try {
+      await post('/api/stock', {
+        id: stock.id,
+        name: nameInput.value.trim(),
+        sku: stock.sku,
+        across_in: Number(fields.across.value),
+        feed_in: Number(fields.feed.value),
+        margin_mm: Number(fields.margin.value),
+        per_roll: Number(fields.count.value) || 0,
+      });
+      $('modal').close();
+      await loadState(); renderPrinter(); fillPickers();
+      toast('Saved.', 'good');
+    } catch (error) { fail(error); }
+  };
+  const cancel = el('button', 'btn', 'Cancel');
+  cancel.onclick = () => $('modal').close();
+  actions.append(save, cancel);
+  body.append(actions);
+  $('modal').showModal();
+}
+
 $('addStock').addEventListener('click', async () => {
   try {
     await post('/api/stock', {
@@ -1207,8 +1827,14 @@ $('addStock').addEventListener('click', async () => {
       across_in: Number($('newStockAcross').value),
       feed_in: Number($('newStockFeed').value),
       per_roll: Number($('newStockCount').value) || 0,
+      /* Omitted rather than sent as 0 when the box is empty: the server's
+       * default is the right answer for a roll nobody has measured, and a
+       * literal zero would be a stock with no margin at all. */
+      ...($('newStockMargin').value === ''
+        ? {} : { margin_mm: Number($('newStockMargin').value) }),
     });
-    ['newStockName', 'newStockSku', 'newStockAcross', 'newStockFeed', 'newStockCount']
+    ['newStockName', 'newStockSku', 'newStockAcross', 'newStockFeed',
+     'newStockCount', 'newStockMargin']
       .forEach((id) => { $(id).value = ''; });
     await loadState(); renderPrinter();
     toast('Stock added.', 'good');

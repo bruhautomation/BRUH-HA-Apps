@@ -190,6 +190,132 @@ class TestRendering(unittest.TestCase):
         self.assertTrue(any("Continuous" in note for note in rendered.notes))
 
 
+class TestTextFitsItsInk(unittest.TestCase):
+    """Text was fitted and placed by the LINE BOX, which is neither edge.
+
+    Two measurements were wrong in the same direction and the complaint was
+    both of them at once — "labels are kind of falling off edges". Vertically
+    a line box reserves room for the ascenders and descenders of glyphs a
+    given word may not contain (DejaVu's is ~1.29em against a cap height of
+    0.73em), so a word fitted to it filled about 60% of the height it was
+    given. Horizontally the width came from `textlength`, the ADVANCE — where
+    the next glyph would start — so a "W" or a "j" put ink outside the box on
+    either end, and on a quick label the box is the whole drawable area.
+
+    Measured on this fixture, a 40 × 12mm box on the 2.25 × 1.25 cryo stock:
+    "Rice" filled **0.599** of the box's height before and **0.958** after.
+    """
+
+    def setUp(self):
+        self.stocks = store()
+        self.cryo = self.stocks.require("edcc-082wh")
+        self.margin = render_image.mm_to_dots(self.cryo.margin_mm, 300)
+
+    def ink_box(self, rendered):
+        """(left, right, top, bottom) of every black dot on the sheet."""
+        image = rendered.image.convert("L")
+        pixels = image.load()
+        rows = [y for y in range(image.height)
+                if any(pixels[x, y] == 0 for x in range(image.width))]
+        columns = [x for x in range(image.width)
+                   if any(pixels[x, y] == 0 for y in range(image.height))]
+        self.assertTrue(rows and columns, "nothing was drawn at all")
+        return columns[0], columns[-1], rows[0], rows[-1]
+
+    def render(self, document, stock_id="edcc-082wh", **kwargs):
+        stock = self.stocks.require(stock_id)
+        return render_image.render(label_doc.Label.from_dict(document), stock,
+                                   **kwargs)
+
+    def test_a_fitted_word_fills_the_height_it_was_given(self):
+        rendered = self.render({"stock": "edcc-082wh", "elements": [
+            {"type": "text", "x_mm": 2, "y_mm": 2, "w_mm": 40, "h_mm": 12,
+             "props": {"text": "Rice"}}]})
+        _, _, top, bottom = self.ink_box(rendered)
+        box_height = render_image.mm_to_dots(12, 300)
+        filled = (bottom - top + 1) / box_height
+        self.assertGreater(
+            filled, 0.70,
+            f"the word fills {filled:.0%} of its box; the line-box "
+            f"measurement this replaced filled 60%")
+
+    def test_a_quick_label_keeps_off_the_drawable_edge(self):
+        """The complaint, in one measurement: on the quick path the text box
+        IS the drawable area, so a measurement that ran to the advance width
+        put the last glyph's ink on the die cut."""
+        fitted = quick.fit("Freezer", self.cryo)
+        rendered = render_image.render(fitted.label, self.cryo)
+        left, right, top, bottom = self.ink_box(rendered)
+        self.assertGreater(left, self.margin, "ink on the left margin")
+        self.assertLess(right, rendered.across_dots - self.margin - 1,
+                        "ink on the right margin")
+        self.assertGreater(top, self.margin, "ink on the top margin")
+        self.assertLess(bottom, rendered.feed_dots - self.margin - 1,
+                        "ink on the bottom margin")
+
+    def test_descenders_and_overhangs_stay_inside_their_box_at_any_turn(self):
+        """"Wj", "Ay" and "fgj" are the shapes that hang past their advance
+        and below their baseline. A rotation swaps which edge that is, so all
+        four are asserted rather than the one that happens to be tested."""
+        left_mm, top_mm, width_mm, height_mm = 5, 3, 30, 15
+        box = (self.margin + render_image.mm_to_dots(left_mm, 300),
+               self.margin + render_image.mm_to_dots(top_mm, 300),
+               render_image.mm_to_dots(width_mm, 300),
+               render_image.mm_to_dots(height_mm, 300))
+        for text in ("Wj", "Ay", "fgj"):
+            for turn in (0, 90, 180, 270):
+                with self.subTest(text=text, turn=turn):
+                    rendered = self.render(
+                        {"stock": "edcc-082wh", "elements": [
+                            {"type": "text", "x_mm": left_mm, "y_mm": top_mm,
+                             "w_mm": width_mm, "h_mm": height_mm,
+                             "props": {"text": text, "rotate": turn}}]})
+                    left, right, top, bottom = self.ink_box(rendered)
+                    self.assertGreaterEqual(left, box[0])
+                    self.assertLess(right, box[0] + box[2])
+                    self.assertGreaterEqual(top, box[1])
+                    self.assertLess(bottom, box[1] + box[3])
+
+    def test_an_autofitted_word_is_centred_by_its_ink(self):
+        """Centring on the advance width leaves the block visibly left of
+        centre — six dots on this box, which is the trailing side bearing of
+        the last glyph and nothing else."""
+        rendered = self.render({"stock": "edcc-082wh", "elements": [
+            {"type": "text", "x_mm": 2, "y_mm": 2, "w_mm": 40, "h_mm": 12,
+             "props": {"text": "Jam", "align": "center",
+                       "valign": "middle"}}]})
+        left, right, top, bottom = self.ink_box(rendered)
+        box_x = self.margin + render_image.mm_to_dots(2, 300)
+        box_y = self.margin + render_image.mm_to_dots(2, 300)
+        centre_x = box_x + render_image.mm_to_dots(40, 300) / 2
+        centre_y = box_y + render_image.mm_to_dots(12, 300) / 2
+        self.assertLessEqual(abs((left + right) / 2 - centre_x), 2)
+        self.assertLessEqual(abs((top + bottom) / 2 - centre_y), 2)
+
+    def test_the_inset_is_at_least_a_dot_and_scales_with_the_box(self):
+        """A proportion alone disappears on a 0.56" strip and a fixed number
+        of dots eats a small label."""
+        self.assertEqual(1, render_image.text_inset(10, 10))
+        self.assertEqual(3, render_image.text_inset(472, 142))
+
+
+class TestTheMarginIsThePrintersNotYours(unittest.TestCase):
+    def test_the_default_is_two_millimetres(self):
+        """One was measured against the wrong thing: a LabelWriter's
+        registration wanders either way as the roll unwinds, so 1mm was text
+        on the die cut every other label."""
+        self.assertEqual(2.0, stock_store.DEFAULT_MARGIN_MM)
+        self.assertEqual(2.0, store().require("edcc-082wh").margin_mm)
+
+    def test_a_stock_that_saved_its_own_margin_keeps_it(self):
+        """The whole point of an override: a correction made against the old
+        default is not undone by the default moving."""
+        stocks = store()
+        stocks.put(stock_store.replace(stocks.require("edcc-082wh"),
+                                       margin_mm=0.5))
+        self.assertEqual(0.5, stocks.require("edcc-082wh").margin_mm)
+
+
 class TestBarcodeGeometry(unittest.TestCase):
     """The one thing that decides whether a small barcode scans."""
 

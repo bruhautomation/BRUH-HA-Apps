@@ -45,6 +45,18 @@ DEFAULTS: dict[str, Any] = {
     #   bare     — drops roll select too, which costs the Twin Turbo its
     #              second bay and is the last thing to try
     "print_mode": "standard",
+    # How dark, and how slowly. Both are commands the printer takes in the
+    # standard and compact modes and neither is sent in `bare`.
+    #   Dark, because light labels were the complaint: a LabelWriter with
+    #   no density command runs at `normal`, and on ordinary thermal stock
+    #   that reads as faint. Nothing here is per-job — a person who wants
+    #   dark labels wants them on every label.
+    "density": "dark",
+    #   Graphics is the slow 300x600 mode. The head dwells twice as long
+    #   over every line, which is darker as well as more accurate for
+    #   barcodes, and the fast text mode is one menu item away for anybody
+    #   printing runs where the seconds matter.
+    "quality": "graphics",
     "quick_uppercase": False,
     # Counting down from a number somebody typed is an estimate dressed as
     # a gauge: nothing on a LabelWriter reports a roll's real level, so the
@@ -57,6 +69,18 @@ DEFAULTS: dict[str, Any] = {
     "preview_scale": 2,
     "confirm_over_copies": 10,
     "notify_service": "",
+}
+
+# The three settings whose value is one of a fixed few, and the only ones
+# where "a string" is not enough: `density: "darkk"` would be stored, read
+# back into the panel's picker as nothing, and quietly print at whatever
+# the last good value was — a setting somebody believes they changed. The
+# protocol refuses an unknown density outright, so a stored typo is also a
+# print that fails rather than one that is merely wrong.
+CHOICES: dict[str, tuple[str, ...]] = {
+    "print_mode": ("standard", "compact", "bare"),
+    "density": ("light", "medium", "normal", "dark"),
+    "quality": ("text", "graphics"),
 }
 
 
@@ -88,7 +112,8 @@ class SettingsStore:
         the panel and by the HA bridge, and a typo'd key that persists is a
         setting somebody believes they changed. The type check is the same
         argument — `confirm_over_copies: "ten"` would compare against an int
-        somewhere far from here.
+        somewhere far from here — and so is `CHOICES`, for the keys where
+        the set of legal strings is short and fixed.
         """
         for key, value in (values or {}).items():
             if key not in DEFAULTS:
@@ -101,6 +126,11 @@ class SettingsStore:
                     self._values[key] = int(value)
                 except (TypeError, ValueError):
                     continue
+            elif key in CHOICES:
+                text = str(value)
+                if text not in CHOICES[key]:
+                    continue
+                self._values[key] = text
             else:
                 self._values[key] = str(value)
         self.save()

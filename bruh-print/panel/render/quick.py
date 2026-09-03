@@ -115,6 +115,13 @@ def fit(text: str, stock, *, font: str = "sans-bold", dpi: int = 300,
                                 else (across_mm, feed_mm))
     width_px = ri.mm_to_dots(canvas_w_mm, dpi)
     height_px = ri.mm_to_dots(canvas_h_mm, dpi)
+    # The same breathing room the renderer will take off this box when it
+    # draws the label. Measuring against the full canvas and rendering
+    # against the inset one is two answers to "how big does this go", and
+    # the one on screen would be the smaller of them.
+    inset = ri.text_inset(width_px, height_px)
+    width_px = max(1, width_px - 2 * inset)
+    height_px = max(1, height_px - 2 * inset)
 
     plate = ri._new(8, 8)
     draw = ImageDraw.Draw(plate)

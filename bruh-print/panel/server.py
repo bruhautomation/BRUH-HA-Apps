@@ -24,6 +24,7 @@
     GET  /api/history                what was printed
     POST /api/history/{id}/reprint   print exactly that again
     GET/POST/DEL /api/assets         images a label may use
+    GET  /api/font/{key}/sample.png  what that font looks like, drawn by the renderer
 
 Two rules shape the whole file.
 
@@ -479,11 +480,19 @@ async def _send(state: Panel, rendered, *, side: str, copies: int) -> dict:
     # to whichever bay the printer last used, which is a real cost and the
     # reason it is the last mode to try rather than a safe default.
     mode = str(state.settings.get("print_mode", "standard"))
+    # `bare` is the one mode that sends neither darkness nor speed, leaving
+    # the printer at its own defaults — which is the whole point of it: it
+    # is what somebody tries when a firmware will not take a command, and a
+    # mode that still sent two of them would not answer that question.
+    bare = mode == "bare"
     payload = protocol.job(
         lines, bytes_per_line=model.bytes_per_line,
-        roll=None if mode == "bare" else roll_code,
+        roll=None if bare else roll_code,
         copies=copies, label_length_dots=rendered.feed_dots,
-        compress=(mode == "compact"))
+        compress=(mode == "compact"),
+        density=None if bare else str(state.settings.get("density", "dark")),
+        quality=None if bare else str(
+            state.settings.get("quality", "graphics")))
 
     try:
         return await asyncio.to_thread(
@@ -665,13 +674,24 @@ async def h_stock_put(request: web.Request) -> web.Response:
         return bad("The feed measurement cannot be negative. Use 0 for "
                    "continuous stock with no die-cut length.")
 
+    # Editing an existing row keeps everything the caller did not name. The
+    # Edit dialog shows the measurements, the margin and the count; it does
+    # not show the text direction or the roll's own notes, and a Save that
+    # blanked them would undo a correction somebody made one control away —
+    # the same partial-update rule the registry services follow.
+    existing = state.stocks.get(identifier)
     entry = stock_store.Stock(
         id=identifier, name=name, across_in=across, feed_in=feed,
-        sku=str(payload.get("sku", "") or ""),
-        per_roll=max(0, int(payload.get("per_roll", 0) or 0)),
-        margin_mm=max(0.0, float(payload.get("margin_mm",
-                                             stock_store.DEFAULT_MARGIN_MM))),
-        notes=str(payload.get("notes", "") or ""),
+        sku=str(payload.get("sku", existing.sku if existing else "") or ""),
+        per_roll=max(0, int(payload.get("per_roll",
+                                        existing.per_roll if existing else 0)
+                            or 0)),
+        margin_mm=max(0.0, float(payload.get(
+            "margin_mm",
+            existing.margin_mm if existing else stock_store.DEFAULT_MARGIN_MM))),
+        notes=str(payload.get("notes", existing.notes if existing else "")
+                  or ""),
+        turn=existing.turn if existing else None,
     )
     state.stocks.put(entry)
     state.mirror_state()
@@ -793,13 +813,27 @@ async def h_preview(request: web.Request) -> web.Response:
                                           state.settings.get("preview_scale", 2)))))
     document = payload.get("label") or payload
     parsed, entry, rendered = await asyncio.to_thread(_render, state, document)
-    png = await asyncio.to_thread(rendered.png, scale)
+    # `view: "canvas"` is the designer asking for the label the way it is
+    # DRAWN rather than the way it prints: the same sheet turned back by the
+    # label's own rotate, so a 90° tube wrap arrives as the long strip the
+    # overlay's coordinates describe. Everything else — the Quick tab, the
+    # Templates tab, the card — wants the sheet, because that is what comes
+    # out of the printer and a preview is for being believed.
+    view = str(payload.get("view", "") or "sheet")
+    turn = parsed.rotate if view == "canvas" else 0
+    png = await asyncio.to_thread(rendered.png, scale, turn=turn)
     return web.Response(
         body=png, content_type="image/png",
         headers={
             "Cache-Control": "no-store",
+            "X-Label-View": "canvas" if turn else "sheet",
             "X-Label-Dots": f"{rendered.across_dots}x{rendered.feed_dots}",
             "X-Label-Notes": json.dumps(rendered.notes),
+            # The same messages with the element each belongs to, so the
+            # designer can outline the box that is wrong instead of printing
+            # a sentence under a canvas with six boxes on it. `notes` is
+            # unchanged, because five other things read it.
+            "X-Label-Problems": json.dumps(rendered.problems),
         })
 
 
@@ -1104,6 +1138,35 @@ async def h_asset_delete(request: web.Request) -> web.Response:
     return ok(assets=state.asset_list())
 
 
+# -- fonts ------------------------------------------------------------------
+# A day: the sample for a given family and text never changes, and the picker
+# asks for one image per font every time it opens.
+FONT_SAMPLE_CACHE = "max-age=86400"
+
+
+async def h_font_sample(request: web.Request) -> web.Response:
+    """This font, drawn by the renderer that prints labels.
+
+    A picker whose preview is a CSS font-family shows the browser's idea of
+    "Monospace" beside a label that will print in DejaVu Sans Mono — which is
+    the exact failure a font preview exists to prevent. So the sample comes
+    off `render.image`, and what you pick is what comes out of the printer.
+    """
+    key = request.match_info["font_key"]
+    if key not in fonts.catalog():
+        # The key is echoed by NAME only — `_for_log`-clean and quoted by the
+        # JSON encoder — because it arrives off the wire and this is a
+        # message that goes back over it. The list is what makes the answer
+        # useful; the typo is what makes it findable.
+        return bad(f"There is no font called {key!r} on this machine. "
+                   f"Known: {', '.join(sorted(fonts.catalog()))}.", 404)
+    text = str(request.query.get("text", "") or "")[
+        :render_image.SAMPLE_MAX_CHARS] or render_image.SAMPLE_TEXT
+    png = await asyncio.to_thread(render_image.sample_png, text, key)
+    return web.Response(body=png, content_type="image/png",
+                        headers={"Cache-Control": FONT_SAMPLE_CACHE})
+
+
 # -- settings ---------------------------------------------------------------
 async def h_settings_get(request: web.Request) -> web.Response:
     return ok(settings=panel(request).settings.all())
@@ -1248,6 +1311,8 @@ def build_app(state: Panel | None = None) -> web.Application:
     app.router.add_post("/api/assets", h_asset_upload)
     app.router.add_get("/api/assets/{name}", h_asset_get)
     add("DELETE", "/api/assets/{name}", h_asset_delete)
+
+    app.router.add_get("/api/font/{font_key}/sample.png", h_font_sample)
 
     app.router.add_get("/api/settings", h_settings_get)
     app.router.add_post("/api/settings", h_settings_put)

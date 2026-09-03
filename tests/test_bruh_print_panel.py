@@ -8,6 +8,7 @@ refused, what the history records, what the raster bytes say — is the code
 that ships, and the roll-select byte is asserted on the payload that would
 have been written.
 """
+import io
 import json
 import logging
 import os
@@ -737,6 +738,177 @@ class TestTheRemainingCountIsOptional(PanelCase):
         self.assertIn("def consume(self, side: str, count: int)", source)
 
 
+class TestTheFontPickerShowsTheFont(PanelCase):
+    """A <select> of family names shows the one thing a font choice is not
+    about. Every sample is drawn by the label renderer, so what a person
+    picks is what the printer draws — a CSS font-family preview would be the
+    browser's idea of "Monospace" beside a label printed in DejaVu Sans
+    Mono, which is the failure a preview exists to prevent.
+    """
+
+    async def test_a_known_font_answers_with_a_png(self):
+        response = await self.client.get("/api/font/mono/sample.png")
+        self.assertEqual(200, response.status)
+        self.assertEqual("image/png", response.content_type)
+        body = await response.read()
+        self.assertTrue(body.startswith(b"\x89PNG"), "not a PNG at all")
+        self.assertIn("max-age", response.headers.get("Cache-Control", ""))
+
+    async def test_the_sample_text_can_be_asked_for(self):
+        plain = await (await self.client.get("/api/font/mono/sample.png")).read()
+        asked = await (await self.client.get(
+            "/api/font/mono/sample.png?text=Chest%20freezer")).read()
+        self.assertNotEqual(plain, asked, "the text argument did nothing")
+
+    async def test_an_unknown_font_is_a_404_in_the_panel_s_own_words(self):
+        response = await self.client.get("/api/font/comic-sans/sample.png")
+        self.assertEqual(404, response.status)
+        body = await response.json()
+        self.assertIn("comic-sans", body["error"])
+        self.assertIn("mono", body["error"], "it does not say what there is")
+
+    async def test_the_error_never_carries_the_text_argument(self):
+        """The key is the typo worth naming; the text is a string somebody
+        else's automation put in a query. Echoing it back is how an error
+        message becomes a place to put things."""
+        response = await self.client.get(
+            "/api/font/nope/sample.png?text=%3Cscript%3Ealert(1)%3C/script%3E")
+        self.assertEqual(404, response.status)
+        raw = await response.text()
+        self.assertNotIn("alert(1)", raw)
+        self.assertNotIn("<script>", raw)
+
+
+class TestAPreviewSaysWhichBoxIsWrong(PanelCase):
+    """`notes` is a sentence under a canvas with six identical boxes on it.
+
+    The designer can draw a red outline instead — but only if it is told
+    which element each message belongs to, which is what `problems` carries.
+    `notes` is unchanged, because five other things read it.
+    """
+
+    async def test_a_barcode_too_wide_for_its_box_names_its_index(self):
+        document = {"stock": "edcc-082wh", "elements": [
+            {"type": "text", "x_mm": 1, "y_mm": 1, "w_mm": 30, "h_mm": 8,
+             "props": {"text": "Chest freezer"}},
+            {"type": "barcode", "x_mm": 1, "y_mm": 12, "w_mm": 5, "h_mm": 8,
+             "props": {"data": "A-VERY-LONG-LOT-NUMBER-1234567890"}}]}
+        response = await self.client.post("/api/preview",
+                                          json={"label": document})
+        self.assertEqual(200, response.status)
+        problems = json.loads(response.headers["X-Label-Problems"])
+        self.assertEqual([1], [p["index"] for p in problems])
+        self.assertIn("modules", problems[0]["message"])
+        # Unchanged for everything that already reads it.
+        notes = json.loads(response.headers["X-Label-Notes"])
+        self.assertTrue(any("modules" in note for note in notes))
+
+    async def test_a_clean_label_reports_none(self):
+        """A label whose only note is about the stock being wider than the
+        head has no element to blame, and blaming one would be worse than
+        saying nothing."""
+        response = await self.client.post(
+            "/api/preview", json={"label": self.label()})
+        self.assertEqual([], json.loads(response.headers["X-Label-Problems"]))
+
+
+class TestEditingAStockKeepsWhatTheDialogDoesNotShow(PanelCase):
+    """The Edit dialog shows the measurements, the margin and the count.
+
+    It does not show the text direction, and a Save that blanked it would
+    undo a correction made one control away on the same row.
+    """
+
+    async def test_the_text_direction_survives_a_save(self):
+        await self.client.post("/api/stock/edcc-082wh/turn", json={"turn": 90})
+        await self.client.post("/api/stock", json={
+            "id": "edcc-082wh", "name": "Chemical-Resistant Cryo Labels",
+            "across_in": 2.25, "feed_in": 1.25, "margin_mm": 3.0,
+            "per_roll": 1000})
+        rows = {s["id"]: s for s in
+                (await (await self.client.get("/api/stocks")).json())["stocks"]}
+        self.assertEqual(90, rows["edcc-082wh"]["turn"])
+        self.assertTrue(rows["edcc-082wh"]["turn_set"])
+        self.assertEqual(3.0, rows["edcc-082wh"]["margin_mm"])
+
+    async def test_a_new_stock_takes_the_default_margin(self):
+        await self.client.post("/api/stock", json={
+            "name": "Storage box lids", "across_in": 2.0, "feed_in": 1.0})
+        rows = {s["id"]: s for s in
+                (await (await self.client.get("/api/stocks")).json())["stocks"]}
+        self.assertEqual(2.0, rows["storage-box-lids"]["margin_mm"])
+
+
+class TestOneSettingForWhichWayTheTextSits(PanelCase):
+    """It was asked in three places — the Quick tab, the design bar and the
+    Printer tab — which is three controls that can disagree about a property
+    of the roll. Two of them are gone and the third is a sentence."""
+
+    async def test_the_two_pickers_are_gone_from_the_page(self):
+        page = (PANEL_DIR / "index.html").read_text()
+        self.assertNotIn('id="quickRotate"', page)
+        self.assertNotIn('id="designRotate"', page)
+        self.assertIn('id="quickTurnLine"', page)
+        self.assertIn('id="designTurnLine"', page)
+
+    async def test_the_quick_tab_never_sends_a_turn(self):
+        """The server takes the stock's own answer when none is sent, which
+        is what makes a quick print unable to contradict the Printer tab."""
+        source = (PANEL_DIR / "app.js").read_text()
+        self.assertNotIn("quickRotate", source)
+        self.assertNotIn("rotate: Number(rotate)", source)
+
+
+class TestDarkByDefault(PanelCase):
+    """Labels printed light because nothing ever told the printer not to.
+
+    A LabelWriter with no density and no quality command in the preamble
+    runs at its own defaults — normal density, text speed — and on ordinary
+    thermal stock that comes out faint. Asserted on the bytes that would
+    have been written, because the response says "Printed 1" either way.
+    """
+
+    async def test_a_default_print_carries_dark_and_the_slow_mode(self):
+        await self.post("/api/roll/left", {"stock": "edcc-082wh"})
+        status, _ = await self.post("/api/print", {"label": self.label()})
+        self.assertEqual(200, status)
+        self.assertIn(protocol.set_density("dark"), self.sent[-1])
+        self.assertIn(protocol.set_quality("graphics"), self.sent[-1])
+
+    async def test_bare_mode_sends_neither(self):
+        """`bare` is what somebody tries when the printer takes a job and
+        prints nothing, so it has to drop these two as well — a mode that
+        still sent them would not answer the question it is asked."""
+        await self.post("/api/roll/left", {"stock": "edcc-082wh"})
+        await self.post("/api/settings", {"print_mode": "bare"})
+        await self.post("/api/print", {"label": self.label()})
+        for command in (b"\x1bc", b"\x1bd", b"\x1be", b"\x1bg",
+                        b"\x1bh", b"\x1bi"):
+            self.assertNotIn(command, self.sent[-1], command)
+
+    async def test_a_chosen_darkness_reaches_the_printer(self):
+        await self.post("/api/roll/left", {"stock": "edcc-082wh"})
+        await self.post("/api/settings", {"density": "light",
+                                          "quality": "text"})
+        await self.post("/api/print", {"label": self.label()})
+        self.assertIn(protocol.set_density("light"), self.sent[-1])
+        self.assertIn(protocol.set_quality("text"), self.sent[-1])
+        self.assertNotIn(protocol.set_quality("graphics"), self.sent[-1])
+
+    async def test_a_typo_is_not_stored(self):
+        """A stored typo is a setting somebody believes they changed — and
+        here it is worse than inert: the protocol refuses an unknown
+        density, so it would turn every print into a failure."""
+        status, _ = await self.post("/api/settings", {"density": "darkk"})
+        self.assertEqual(200, status)
+        _, body = await self.get("/api/settings")
+        self.assertEqual("dark", body["settings"]["density"])
+
+        await self.post("/api/settings", {"quality": "photo"})
+        _, body = await self.get("/api/settings")
+        self.assertEqual("graphics", body["settings"]["quality"])
+
+
 class TestMirror(unittest.TestCase):
     """The file Home Assistant actually reads."""
 
@@ -769,3 +941,46 @@ class TestMirror(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTheDesignerSeesTheCanvasNotTheSheet(PanelCase):
+    """A label drawn at 90° is designed as the strip it reads as.
+
+    `render` turns the canvas by -rotate on its way to the sheet, so the
+    printed sheet of a 0.56" × 3.44" tube wrap is a tall strip with its words
+    on their side. That is the right picture on the Quick tab and the wrong
+    one under a drag overlay whose coordinates are the canvas's: the box being
+    held and the ink it described sat in two different places, which made a
+    wrap-around label undesignable — and every new label on a wrap stock
+    takes 90° automatically now. `view: "canvas"` hands back the same bitmap
+    turned back the way it was drawn; nothing else changes.
+    """
+
+    async def _size(self, payload):
+        from PIL import Image  # noqa: PLC0415
+        response = await self.client.post("/api/preview", json=payload)
+        self.assertEqual(200, response.status)
+        body = await response.read()
+        image = Image.open(io.BytesIO(body))
+        return image.size, response.headers.get("X-Label-View")
+
+    async def test_the_sheet_is_the_default_and_the_canvas_is_asked_for(self):
+        label = self.label(stock="ed1f-060wh", text="Freezer")
+        label["rotate"] = 90
+        (sheet_w, sheet_h), view = await self._size({"label": label})
+        self.assertEqual("sheet", view)
+        self.assertGreater(sheet_h, sheet_w, "a tube wrap comes off the roll tall")
+
+        (canvas_w, canvas_h), view = await self._size(
+            {"label": label, "view": "canvas"})
+        self.assertEqual("canvas", view)
+        self.assertGreater(canvas_w, canvas_h, "and is designed as a long strip")
+        # The same bitmap, turned — not a second render.
+        self.assertEqual((sheet_h, sheet_w), (canvas_w, canvas_h))
+
+    async def test_an_unturned_label_is_the_same_picture_either_way(self):
+        label = self.label(text="Pantry")
+        sheet, _ = await self._size({"label": label})
+        canvas, view = await self._size({"label": label, "view": "canvas"})
+        self.assertEqual(sheet, canvas)
+        self.assertEqual("sheet", view, "nothing was turned, and the header says so")
