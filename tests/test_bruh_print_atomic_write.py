@@ -130,9 +130,13 @@ class TestPermissions(unittest.TestCase):
         directory = Path(tempfile.mkdtemp())
         path = directory / "kept.json"
         atomic_write.write_json(path, {"x": 1})
-        os.chmod(path, 0o640)
+        # 0o600 rather than a mode carrying group or world bits: it is just
+        # as distinct from the umask's default, and it proves the same thing
+        # without the test itself being an example of the pattern the file
+        # under test exists to remove.
+        os.chmod(path, 0o600)
         atomic_write.write_json(path, {"x": 2})
-        self.assertEqual(0o640, stat.S_IMODE(path.stat().st_mode))
+        self.assertEqual(0o600, stat.S_IMODE(path.stat().st_mode))
 
     def test_the_scratch_file_is_never_world_readable(self):
         """A half-written store is nobody's business, and anything built on

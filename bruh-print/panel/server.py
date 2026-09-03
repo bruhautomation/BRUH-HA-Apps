@@ -371,7 +371,8 @@ async def body(request: web.Request) -> dict:
     try:
         payload = await request.json()
     except (ValueError, TypeError) as exc:
-        log.warning("Malformed JSON body on %s: %s", _for_log(request.path), exc)
+        log.warning("Malformed JSON body on %s: %s",
+                    _for_log(request.path), _for_log(exc, 200))
         raise web.HTTPBadRequest(
             text=json.dumps({
                 "ok": False,
@@ -394,15 +395,24 @@ def _refuse(message: str) -> web.HTTPBadRequest:
         content_type="application/json")
 
 
-# Control characters are what turn one log line into two, and a forged line
-# in an add-on log is a forged line in whatever a person pastes into an
-# issue. Paths and template names both arrive from the wire.
-_LOG_UNSAFE = re.compile(r"[\x00-\x1f\x7f]")
+# Everything else a control character does to a log is cosmetic; CR and LF
+# are the two that end a line, and a forged line in an add-on log is a
+# forged line in whatever a person pastes into an issue. Paths, template
+# names and a decoder's message quoting the body all arrive from the wire.
+_LOG_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 
 
 def _for_log(value: object, limit: int = 120) -> str:
-    """A value from the wire, safe to put in a log line."""
-    return _LOG_UNSAFE.sub("?", str(value))[:limit]
+    """A value from the wire, safe to put in a log line.
+
+    The two `replace` calls are not redundant against the regex below —
+    they are the part that matters, written so it is unmistakable which
+    characters are the hazard. The regex then takes the rest, which corrupt
+    a line rather than forging one, and the slice keeps a long path from
+    pushing everything else off the end of it.
+    """
+    text = str(value).replace("\r", "?").replace("\n", "?")
+    return _LOG_CONTROL.sub("?", text)[:limit]
 
 
 def _render(state: Panel, document: dict, *, dpi: int | None = None,
@@ -1051,11 +1061,17 @@ class QuietAccessLogger:
     def log(self, request, response, time_taken):  # noqa: D102
         status = getattr(response, "status", 0)
         path = getattr(request, "path", "")
-        if status < 400 and any(path.startswith(p) for p in self.QUIET):
-            self._log.debug("%s %s %s", request.method, path, status)
+        # The prefix test is on the REAL path and the log line carries the
+        # cleaned one: sanitising first would let a crafted path match a
+        # quiet prefix it does not have, which is a request that goes
+        # unlogged rather than a forged line — quieter, and worse.
+        quiet = status < 400 and any(path.startswith(p) for p in self.QUIET)
+        method = _for_log(getattr(request, "method", "?"), 8)
+        if quiet:
+            self._log.debug("%s %s %s", method, _for_log(path), status)
             return
         level = logging.WARNING if status >= 400 else logging.INFO
-        self._log.log(level, "%s %s %s (%.0fms)", request.method, path,
+        self._log.log(level, "%s %s %s (%.0fms)", method, _for_log(path),
                       status, time_taken * 1000)
 
 

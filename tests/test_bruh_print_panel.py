@@ -13,6 +13,7 @@ import os
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -408,10 +409,38 @@ class TestFailureShapes(PanelCase):
 
     async def test_a_control_character_cannot_forge_a_log_line(self):
         """A forged line in an add-on log is a forged line in whatever a
-        person pastes into an issue."""
+        person pastes into an issue — and everything reaching a log line
+        here (a path, a template name, a decoder quoting the body) came off
+        the wire."""
         self.assertEqual("a?b", server._for_log("a\nb"))
         self.assertEqual("a?b", server._for_log("a\rb"))
+        self.assertEqual("a??b", server._for_log("a\r\nb"))
+        self.assertEqual("a?b", server._for_log("a\x00b"))
         self.assertEqual(120, len(server._for_log("x" * 400)))
+
+    async def test_a_forged_path_does_not_reach_the_access_log(self):
+        """The access logger writes a path on every non-quiet request — the
+        line that runs most often, and the one left raw when the middleware
+        above it was fixed."""
+        records = []
+
+        class Sink:
+            def debug(self, fmt, *args):
+                records.append(fmt % args)
+
+            def log(self, _level, fmt, *args):
+                records.append(fmt % args)
+
+        logger = server.QuietAccessLogger(Sink())
+        request = make_mocked_request("GET", "/api/print")
+        response = type("Response", (), {"status": 500})()
+        with unittest.mock.patch.object(
+                type(request), "path",
+                property(lambda _self: "/api/x\nFAKE LINE")):
+            logger.log(request, response, 0.01)
+        self.assertTrue(records)
+        self.assertNotIn("\n", records[-1])
+        self.assertIn("FAKE LINE", records[-1])
 
     async def test_every_error_is_json_with_a_sentence_in_it(self):
         """An aiohttp HTTPException renders as an HTML page by default, and
