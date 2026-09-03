@@ -14,9 +14,12 @@ model.
 from __future__ import annotations
 
 import json
+import logging
 import os
 
 from ._util import DAY, House, age_days, join_names, listify, walk, when
+
+log = logging.getLogger("brain.checks.automations")
 
 # An automation is "old enough to have fired" after this long. Younger ones
 # are still being written.
@@ -499,6 +502,87 @@ def trigger_unavailable(snap: dict, now: float) -> list[dict]:
 # on this list that nothing else in Home Assistant can see — the
 # automation ran, nothing errored, and the light is off.
 OVERRIDE_MIN = 3
+# And three of WHAT. A count with nothing under it is not evidence: three
+# undos of a rule that ran three times is a rule that is wrong for this
+# house, and three undos of one that ran three hundred is a person having
+# an unusual Tuesday. The first shipped without this and reported both
+# identically, which is the shape of finding people learn to ignore.
+OVERRIDE_RATE = 0.25
+# A rate needs something to be a rate OF. Below this many runs the share
+# is one or two events deciding it — 3 of 3 is 100% and says nothing more
+# than the count already did — so the floor above carries it alone.
+RATE_MIN_RUNS = 8
+
+# Two automations undoing each other. Lower than OVERRIDE_MIN because
+# nobody is choosing to do this: a person overriding a rule twice may
+# simply have changed their mind, while two rules that have disagreed
+# twice will disagree every time their triggers land in that order.
+CONFLICT_MIN = 2
+
+
+def _override_history() -> dict[str, list[dict]]:
+    """The ledger, grouped. Empty on a dev checkout, or a fresh install.
+
+    Read here rather than carried in the snapshot because it is the one
+    thing on this check that is not about the window the snapshot covers
+    — and a snapshot key that meant "unavailable" would stop
+    `clear_resolved` clearing rows the acute half is perfectly able to
+    answer for.
+    """
+    try:
+        import override_ledger  # noqa: PLC0415 — the package stays
+        # importable without the panel on the path; see checks/baseline.py
+        return override_ledger.by_automation(override_ledger.load())
+    except Exception as exc:  # noqa: BLE001 — no ledger is no history,
+        # which is a real state on a fresh install and never a failure.
+        log.debug("override ledger unreadable: %s", exc)
+        return {}
+
+
+def _override_pattern(rows: list[dict], now: float) -> dict | None:
+    """The shape of a run of overrides, or None when there isn't one.
+
+    ``now`` is the pass's own clock, not the wall clock: the recency gate
+    that stops a fixed automation being reported for eight more weeks has
+    to age from the same instant every other check in the pass does.
+    """
+    if not rows:
+        return None
+    try:
+        import baselines  # noqa: PLC0415
+        import override_ledger  # noqa: PLC0415
+
+        tz, _name = baselines.house_timezone()
+        return override_ledger.pattern(rows, tz, now)
+    except Exception as exc:  # noqa: BLE001 — a pattern is an extra
+        # sentence on a finding, never a reason to lose the finding.
+        log.debug("override pattern unavailable: %s", exc)
+        return None
+
+
+def _pattern_sentence(shape: dict | None) -> str:
+    """The half that teaches — *when* is the condition the rule is missing."""
+    if not shape:
+        return ""
+    bits = []
+    if "from_hour" in shape:
+        bits.append(f"between {shape['from_hour']:02d}:00 and "
+                    f"{shape['to_hour']:02d}:00")
+    if shape.get("when_days"):
+        bits.append(f"only on {shape['when_days']}")
+    if not bits:
+        return ""
+    return (" Almost always " + " and ".join(bits)
+            + f" ({shape['events']} times over {shape['days']} days).")
+
+
+def _pattern_fix(shape: dict | None) -> str:
+    if shape and ("from_hour" in shape or shape.get("when_days")):
+        return ("The times you override it are the condition it is "
+                "missing — add one that stands the automation down then. ")
+    return ("Change the automation's condition so it does not run when you "
+            "do not want it to; the times you overrode it are the "
+            "condition. ")
 
 
 def overridden(snap: dict, now: float) -> list[dict]:
@@ -524,24 +608,121 @@ def overridden(snap: dict, now: float) -> list[dict]:
             g["entities"].append(o["entity_id"])
         g["last"] = max(g["last"], o.get("ts") or 0.0)
 
+    moves = mined.get("moves") or {}
+    history = _override_history()
     out = []
-    for key, g in sorted(groups.items()):
-        if g["count"] < OVERRIDE_MIN:
+
+    # Two routes in, and the second is the one that matters most. The
+    # acute case is a bad evening; the chronic one is somebody putting
+    # the same thing back once a day for a month, which never reaches
+    # three in any single day and so was invisible to the first version
+    # of this check entirely.
+    keys = sorted(set(groups) | set(history))
+    for key in keys:
+        g = groups.get(key)
+        past = history.get(key) or []
+        acute = bool(g) and g["count"] >= OVERRIDE_MIN
+        if acute:
+            # The denominator. An automation that ran often and was undone
+            # a few times is a person; one undone a quarter of the time is
+            # a rule that does not fit this house. Below RATE_MIN_RUNS the
+            # share is one event either way, so the count stands alone.
+            ran = int(moves.get(key) or 0)
+            if ran >= RATE_MIN_RUNS and g["count"] / ran < OVERRIDE_RATE:
+                acute = False
+        shape = _override_pattern(past, now)
+        if not acute and not shape:
             continue
+
+        name = (g or {}).get("name") or (past[0].get("by_name") if past else key)
+        entities = sorted((g or {}).get("entities")
+                          or {r["entity_id"] for r in past if r.get("entity_id")})
+        last = max((g or {}).get("last") or 0.0,
+                   float(shape["last"]) if shape else 0.0)
+
+        if acute:
+            ran = int(moves.get(key) or 0)
+            said = (f"{g['count']} of the {ran} times it acted"
+                    if ran >= g["count"] else f"{g['count']} times")
+            lead = f"{said} in the last day"
+        else:
+            lead = (f"{shape['events']} times across {shape['days']} "
+                    "different days")
+
         out.append({
-            "text": f"You keep undoing what '{g['name']}' does",
-            "detail": (f"{g['count']} times in the last day, on "
-                       + join_names(sorted(g["entities"]))
-                       + f". The last was {when(g['last'])}. The automation "
-                         "is working; it is doing the wrong thing for this "
-                         "house."),
-            "fix": ("Change the automation's condition so it does not run "
-                    "when you do not want it to — the times you overrode it "
-                    "are the condition. Ask brAIn to read the automation "
-                    "and the overrides together if it is not obvious."),
+            # Stable across runs: every number in here moves, so they all
+            # live in `detail` and the store can refresh them in place.
+            "text": f"You keep undoing what '{name}' does",
+            "detail": (lead + ", on " + join_names(entities)
+                       + f". The last was {when(last)}."
+                       + _pattern_sentence(shape)
+                       + " The automation is working; it is doing the wrong "
+                         "thing for this house."),
+            "fix": (_pattern_fix(shape)
+                    + "Ask brAIn to read the automation and the overrides "
+                      "together if it is not obvious."),
             "severity": "info",
             "fixable": False,
             "entity_id": key if key.startswith("automation.") else "",
+        })
+    return out
+
+
+def conflicting(snap: dict, now: float) -> list[dict]:
+    """Two automations that keep undoing each other.
+
+    The failure with two working automations in it. Both ran, neither
+    errored, and the entity is in whichever state the later trigger left
+    it — so which one "wins" depends on the order two triggers happened
+    to fire in, which is not a thing anybody designed. No check that
+    reads Core can see it and no trace shows it, because nothing went
+    wrong in either run.
+
+    Read off `actions.find_conflicts` rather than recomputed here, the
+    same reason `overridden` reads `find_overrides`: the window, the
+    must-differ rule and the one-undo-per-move rule have one home.
+    """
+    mined = snap.get("actions") or {}
+    pairs: dict[tuple, dict] = {}
+    for c in mined.get("conflicts") or []:
+        first, second = c.get("first") or "", c.get("second") or ""
+        if not first or not second:
+            continue
+        # A pair is a pair whichever way round it happened this time —
+        # keyed unordered, or A-undoes-B and B-undoes-A count as two
+        # separate disagreements between the same two rules.
+        key = tuple(sorted((first, second)))
+        names = {first: c.get("first_name") or first,
+                 second: c.get("second_name") or second}
+        p = pairs.setdefault(key, {"names": names, "count": 0,
+                                   "entities": [], "last": 0.0})
+        p["names"].update(names)
+        p["count"] += 1
+        if c["entity_id"] not in p["entities"]:
+            p["entities"].append(c["entity_id"])
+        p["last"] = max(p["last"], c.get("ts") or 0.0)
+
+    out = []
+    for key, p in sorted(pairs.items()):
+        if p["count"] < CONFLICT_MIN:
+            continue
+        a, b = (p["names"].get(k, k) for k in key)
+        out.append({
+            "text": f"'{a}' and '{b}' keep undoing each other",
+            "detail": (f"{p['count']} times in the last day, on "
+                       + join_names(sorted(p["entities"]))
+                       + f". The last was {when(p['last'])}. Both ran and "
+                         "neither failed — which one wins depends on the "
+                         "order their triggers happen to fire in, so the "
+                         "result is different from one day to the next."),
+            "fix": ("Decide which one should own "
+                    + join_names(sorted(p["entities"]))
+                    + " and give the other a condition that stands down, "
+                      "or merge them into one automation with the "
+                      "decision written out."),
+            "severity": "warning",
+            "fixable": False,
+            "entity_id": key[0] if key[0].startswith("automation.") else "",
         })
     return out
 
@@ -571,6 +752,9 @@ CHECKS = [
      "needs": ("registry", "automations"), "run": duplicate},
     {"id": "auto.blueprint_missing", "title": "Automations on a missing blueprint",
      "needs": ("registry", "automations"), "run": blueprint_missing},
+    {"id": "auto.conflict",
+     "title": "Automations undoing each other",
+     "needs": ("actions",), "run": conflicting},
     {"id": "auto.overridden", "title": "Automations a person keeps undoing",
      "needs": ("actions",), "run": overridden},
 ]

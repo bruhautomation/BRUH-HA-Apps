@@ -499,5 +499,305 @@ class TestTheCauseVocabularyIsClosed(unittest.TestCase):
             self.assertIn(f"{cause}:", block, f"{cause} has no label in app.js")
 
 
+class TestTheDenominator(unittest.TestCase):
+    """Three overrides of WHAT.
+
+    `auto.overridden` shipped counting overrides with nothing under them,
+    so three undos of a rule that ran three times and three undos of one
+    that ran three hundred were reported identically. The first is a rule
+    that is wrong for this house; the second is a person having an
+    unusual Tuesday.
+    """
+
+    def setUp(self):
+        sys.path.insert(0, str(PANEL_DIR))
+        from checks import automations as auto  # noqa: PLC0415
+        import override_ledger  # noqa: PLC0415
+        self.auto = auto
+        # The ledger is the check's other route in; these cases are about
+        # the acute one, so point it at a path that does not exist.
+        self._old = override_ledger.STORE
+        override_ledger.STORE = "/nonexistent/overrides.json"
+        self.addCleanup(setattr, override_ledger, "STORE", self._old)
+
+    def moves(self, ts, eid, cause, by):
+        return {"ts": ts, "entity_id": eid, "state": "on", "cause": cause,
+                "by": by, "by_name": by, "name": eid}
+
+    def test_it_counts_what_each_automation_did(self):
+        rows = ([self.moves(NOW + i, "light.k", "automation", "automation.a")
+                 for i in range(5)]
+                + [self.moves(NOW, "light.k", "automation", "automation.b")]
+                + [self.moves(NOW, "light.k", "person", "user1")]
+                + [self.moves(NOW, "light.k", "script", "script.x")])
+        self.assertEqual(actions.automation_moves(rows),
+                         {"automation.a": 5, "automation.b": 1})
+
+    def snap(self, overrides, ran):
+        return {"actions": {"available": True, "overrides": overrides,
+                            "moves": {"automation.evening": ran}}}
+
+    def override(self):
+        return {"ts": NOW, "entity_id": "light.k", "name": "light.k",
+                "from_state": "on", "to_state": "off",
+                "by": "automation.evening", "by_name": "Evening lights",
+                "by_cause": "automation", "person": "Ben", "after_s": 60}
+
+    def test_three_undos_of_three_hundred_runs_is_a_person(self):
+        # The case the check could not see. Asserted before its opposite,
+        # because passing this one is the whole point of the change.
+        snap = self.snap([self.override() for _ in range(3)], ran=300)
+        self.assertEqual(self.auto.overridden(snap, NOW), [])
+
+    def test_three_undos_of_four_runs_is_a_broken_rule(self):
+        snap = self.snap([self.override() for _ in range(3)], ran=4)
+        found = self.auto.overridden(snap, NOW)
+        self.assertEqual(len(found), 1)
+        self.assertIn("3 of the 4 times it acted", found[0]["detail"])
+
+    def test_a_rule_that_barely_ran_is_judged_on_the_count_alone(self):
+        # 3 of 3 is 100% and says nothing the count did not. Below the
+        # floor the share is one event either way, so it is not asked.
+        snap = self.snap([self.override() for _ in range(3)], ran=3)
+        self.assertEqual(len(self.auto.overridden(snap, NOW)), 1)
+
+    def test_the_rate_only_bites_once_there_are_runs_to_rate(self):
+        auto = self.auto
+        just_under = auto.RATE_MIN_RUNS - 1
+        # Same count, same share, either side of the floor: under it the
+        # count carries the finding, over it the share refuses it.
+        self.assertEqual(
+            len(auto.overridden(self.snap([self.override()] * 3,
+                                          ran=just_under), NOW)), 1)
+        self.assertEqual(
+            auto.overridden(self.snap([self.override()] * 3,
+                                      ran=100), NOW), [])
+
+    def test_a_pass_with_no_denominator_still_reports(self):
+        # An older mined payload, or a window whose moves could not be
+        # counted. "I do not know how often it ran" is not "it ran often".
+        snap = {"actions": {"available": True,
+                            "overrides": [self.override()] * 3}}
+        self.assertEqual(len(self.auto.overridden(snap, NOW)), 1)
+
+
+class TestTwoRulesFighting(unittest.TestCase):
+    """`find_conflicts`, and the four things it must not call a conflict.
+
+    Named as a separate finding when the override rules were written and
+    deferred then: a person undoing a rule is evidence the rule is wrong,
+    while two rules undoing each other is neither being wrong on its own.
+    Nothing reports it — both ran, neither errored, and the entity is in
+    whichever state the later trigger left it.
+    """
+
+    def act(self, ts, state, cause, by, name=None):
+        return {"ts": ts, "entity_id": "light.hall", "state": state,
+                "cause": cause, "by": by, "by_name": name or by,
+                "name": "Hall light"}
+
+    def test_two_rules_undoing_each_other(self):
+        found = actions.find_conflicts([
+            self.act(NOW, "on", "automation", "automation.dusk", "Dusk"),
+            self.act(NOW + 30, "off", "automation", "automation.away", "Away"),
+        ])
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]["first"], "automation.dusk")
+        self.assertEqual(found[0]["second"], "automation.away")
+
+    def test_a_rule_cannot_fight_itself(self):
+        # One automation that sets a light on and then off inside a single
+        # run would otherwise report itself as its own opponent.
+        self.assertEqual(actions.find_conflicts([
+            self.act(NOW, "on", "automation", "automation.dusk"),
+            self.act(NOW + 2, "off", "automation", "automation.dusk"),
+        ]), [])
+
+    def test_a_person_is_an_override_not_a_conflict(self):
+        rows = [self.act(NOW, "on", "automation", "automation.dusk"),
+                self.act(NOW + 30, "off", "person", "user1", "Ben")]
+        self.assertEqual(actions.find_conflicts(rows), [])
+        self.assertEqual(len(actions.find_overrides(rows)), 1)
+
+    def test_two_rules_agreeing_is_not_a_fight(self):
+        # Exactly the rule `find_overrides` carries, for exactly the same
+        # reason: counting agreement puts the best-behaved rules on top.
+        self.assertEqual(actions.find_conflicts([
+            self.act(NOW, "on", "automation", "automation.dusk"),
+            self.act(NOW + 30, "on", "automation", "automation.away"),
+        ]), [])
+
+    def test_a_move_undone_long_after_is_not_a_fight(self):
+        self.assertEqual(actions.find_conflicts([
+            self.act(NOW, "on", "automation", "automation.dusk"),
+            self.act(NOW + actions.OVERRIDE_WINDOW_S + 60, "off",
+                     "automation", "automation.away"),
+        ]), [])
+
+    def test_one_move_is_undone_once(self):
+        found = actions.find_conflicts([
+            self.act(NOW, "on", "automation", "automation.dusk"),
+            self.act(NOW + 10, "off", "automation", "automation.away"),
+            self.act(NOW + 20, "off", "automation", "automation.away"),
+        ])
+        self.assertEqual(len(found), 1)
+
+    def test_a_person_in_between_ends_the_pairing(self):
+        # What follows a person's move answers the person, not the rule
+        # that ran before them.
+        self.assertEqual(actions.find_conflicts([
+            self.act(NOW, "on", "automation", "automation.dusk"),
+            self.act(NOW + 10, "off", "person", "user1", "Ben"),
+            self.act(NOW + 20, "on", "automation", "automation.away"),
+        ]), [])
+
+
+class TestTheConflictCheck(unittest.TestCase):
+    def setUp(self):
+        sys.path.insert(0, str(PANEL_DIR))
+        from checks import automations as auto  # noqa: PLC0415
+        self.auto = auto
+
+    def conflict(self, entity="light.hall", first="automation.dusk",
+                 second="automation.away"):
+        return {"ts": NOW, "entity_id": entity, "name": entity,
+                "first": first, "first_name": "Dusk", "first_state": "on",
+                "second": second, "second_name": "Away",
+                "second_state": "off", "after_s": 30}
+
+    def snap(self, conflicts):
+        return {"actions": {"available": True, "conflicts": conflicts,
+                            "overrides": []}}
+
+    def test_silent_below_the_floor(self):
+        for n in range(self.auto.CONFLICT_MIN):
+            self.assertEqual(
+                self.auto.conflicting(self.snap([self.conflict()] * n), NOW),
+                [], n)
+
+    def test_it_names_both_and_puts_the_numbers_in_the_detail(self):
+        found = self.auto.conflicting(
+            self.snap([self.conflict()] * self.auto.CONFLICT_MIN), NOW)
+        self.assertEqual(len(found), 1)
+        self.assertIn("Dusk", found[0]["text"])
+        self.assertIn("Away", found[0]["text"])
+        self.assertNotIn(str(self.auto.CONFLICT_MIN), found[0]["text"])
+        self.assertIn(str(self.auto.CONFLICT_MIN), found[0]["detail"])
+
+    def test_a_pair_is_a_pair_whichever_way_round_it_happened(self):
+        # A undoing B and B undoing A is one disagreement between two
+        # rules, not two. Keyed unordered, or the same pair is reported
+        # twice and each half sits under its floor.
+        rows = [self.conflict(), self.conflict(first="automation.away",
+                                               second="automation.dusk")]
+        found = self.auto.conflicting(self.snap(rows), NOW)
+        self.assertEqual(len(found), 1)
+
+    def test_two_different_pairs_are_two_findings(self):
+        rows = ([self.conflict()] * self.auto.CONFLICT_MIN
+                + [self.conflict(first="automation.x", second="automation.y")]
+                * self.auto.CONFLICT_MIN)
+        self.assertEqual(len(self.auto.conflicting(self.snap(rows), NOW)), 2)
+
+    def test_a_window_that_could_not_be_read_files_nothing(self):
+        self.assertEqual(self.auto.conflicting({}, NOW), [])
+
+
+class TestTheChronicOverride(unittest.TestCase):
+    """The case that never reaches three in any one day.
+
+    Somebody putting the same thing back once a day for a month is the
+    clearest signal a house gives about a rule not fitting it, and the
+    first version of this check could not see it at all.
+    """
+
+    def setUp(self):
+        sys.path.insert(0, str(PANEL_DIR))
+        from checks import automations as auto  # noqa: PLC0415
+        import override_ledger  # noqa: PLC0415
+        self.auto = auto
+        self.ledger = override_ledger
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self._old = override_ledger.STORE
+        override_ledger.STORE = os.path.join(self.dir.name, "overrides.json")
+        self.addCleanup(setattr, override_ledger, "STORE", self._old)
+
+    def fill(self, weeks=3) -> float:
+        """Three weeks of weekday mornings, and the clock just after them.
+
+        Returned rather than assumed: the pattern only fires while the
+        overrides are still happening, so a test that ran its check at
+        some unrelated instant would be passing that gate by accident.
+        """
+        import datetime as dt  # noqa: PLC0415
+        monday = dt.datetime(2026, 8, 3, 8, 10, tzinfo=dt.timezone.utc)
+        rows = [{"ts": (monday + dt.timedelta(weeks=w, days=d)).timestamp(),
+                 "entity_id": "light.hall", "by": "automation.dusk",
+                 "by_name": "Dusk", "by_cause": "automation"}
+                for w in range(weeks) for d in range(5)]
+        now = max(r["ts"] for r in rows) + 3600.0
+        self.ledger.record(rows, now)
+        return now
+
+    def test_once_a_day_for_three_weeks_is_reported(self):
+        now = self.fill()
+        found = self.auto.overridden(
+            {"actions": {"available": True, "overrides": []}}, now)
+        self.assertEqual(len(found), 1)
+        self.assertIn("Dusk", found[0]["text"])
+        self.assertIn("15 times across 15 different days",
+                      found[0]["detail"])
+
+    def test_it_names_when_because_when_is_the_missing_condition(self):
+        now = self.fill()
+        found = self.auto.overridden(
+            {"actions": {"available": True, "overrides": []}}, now)
+        detail = found[0]["detail"]
+        self.assertIn("08:00", detail)
+        self.assertIn("09:00", detail)
+        self.assertIn("weekdays", detail)
+        self.assertIn("condition", found[0]["fix"])
+
+    def test_an_empty_ledger_changes_nothing(self):
+        self.assertEqual(self.auto.overridden(
+            {"actions": {"available": True, "overrides": []}}, NOW), [])
+
+    def test_one_evening_in_the_ledger_is_not_a_pattern(self):
+        import datetime as dt  # noqa: PLC0415
+        evening = dt.datetime(2026, 8, 3, 21, 0, tzinfo=dt.timezone.utc)
+        self.ledger.record(
+            [{"ts": (evening + dt.timedelta(minutes=15 * i)).timestamp(),
+              "entity_id": "light.hall", "by": "automation.dusk",
+              "by_name": "Dusk", "by_cause": "automation"} for i in range(6)],
+            dt.datetime(2026, 8, 4, tzinfo=dt.timezone.utc).timestamp())
+        self.assertEqual(self.auto.overridden(
+            {"actions": {"available": True, "overrides": []}}, NOW), [])
+
+    def test_one_row_however_the_two_routes_agree(self):
+        # Both routes speaking about one automation must not make two
+        # rows: the store dedupes on text, so the second would be lost
+        # silently rather than visibly.
+        now = self.fill()
+        acute = [{"ts": now, "entity_id": "light.hall", "name": "light.hall",
+                  "from_state": "on", "to_state": "off",
+                  "by": "automation.dusk", "by_name": "Dusk",
+                  "by_cause": "automation", "person": "Ben", "after_s": 60}]
+        found = self.auto.overridden(
+            {"actions": {"available": True, "overrides": acute * 4}}, now)
+        self.assertEqual(len(found), 1)
+
+    def test_a_rule_that_was_fixed_stops_being_reported(self):
+        # The ledger keeps two months, so a rule somebody FIXED goes on
+        # having a beautiful shape in the history. A finding that cannot
+        # clear for eight weeks after the problem is gone is the list
+        # nobody reads.
+        import override_ledger as ol  # noqa: PLC0415
+        now = self.fill()
+        later = now + (ol.RECENT_DAYS + 1) * 86400
+        self.assertEqual(self.auto.overridden(
+            {"actions": {"available": True, "overrides": []}}, later), [])
+
+
 if __name__ == "__main__":
     unittest.main()
