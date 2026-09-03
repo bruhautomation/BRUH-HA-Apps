@@ -82,6 +82,11 @@ window.fetch = async (url) => {
     status: 200, headers: { 'Content-Type': 'application/json' } });
   if (p.includes('api/activity/entity/')) {
     const id = decodeURIComponent(p.split('api/activity/entity/')[1].split('?')[0]);
+    // Deliberately slow. A row's history is a real round trip, so the pane
+    // opens on 'Reading…' and fills afterwards — and an instant stub hides
+    // that, which is how the first version of this file asserted on the
+    // interim state and passed locally while failing in CI.
+    await new Promise((r) => setTimeout(r, 150));
     return answer({ available: true, error: '', entity_id: id,
                     changes: window.__activity.actions.filter(
                       (a) => a.entity_id === id) });
@@ -93,7 +98,20 @@ window.fetch = async (url) => {
     }
     return answer(window.__activity);
   }
-  if (p.includes('api/status')) return answer({ auth: { state: 'ok' } });
+  // The shape the panel actually READS, not a plausible-looking one.
+  // /api/status is dereferenced unguarded in several places (the auth
+  // chip's auth_check.state, the grid's categories and jobs), so a stub
+  // that omits a key throws a page error seconds later — which this file
+  // fails on, and which has nothing to do with the tab under test. Same
+  // lesson as BRight's demo panel seeding a registry shape nothing read.
+  if (p.includes('api/status')) {
+    return answer({
+      version: 'test', authenticated: true, auth_type: 'oauth',
+      auth_source: 'panel', auth_check: { state: 'ok', error: '' },
+      model: 'default', settings: {}, usage: {}, auto: {},
+      categories: [], jobs: {}, queue_size: 0, findings_open: 0,
+    });
+  }
   if (p.includes('api/settings')) return answer({});
   if (p.includes('api/insights')) return answer({ insights: [] });
   if (p.includes('api/findings')) {
@@ -188,12 +206,25 @@ for (const width of WIDTHS) {
   // Tapping a row opens that entity's history, and tapping it again closes it.
   await page.locator('.actrow').first().click();
   await page.waitForSelector('.actwhy');
+  // The pane appears on 'Reading…' and fills when the fetch lands, so
+  // settling is what is being waited for. Waiting on the element alone
+  // measures whichever the race happened to reach first.
+  let settled = true;
+  try {
+    await page.waitForFunction(() => {
+      const el = document.querySelector('.actwhy');
+      return el && !/Reading/.test(el.textContent);
+    }, null, { timeout: 5000 });
+  } catch {
+    settled = false;
+    note(`${width}px`, 'history pane never stopped saying "Reading…"');
+  }
   const why = await page.evaluate(() => {
     const el = document.querySelector('.actwhy');
     return { text: el.textContent, count: document.querySelectorAll('.actwhy').length };
   });
   if (why.count !== 1) note(`${width}px`, `${why.count} history panes open at once`);
-  if (!/light\.kitchen/.test(why.text)) {
+  if (settled && !/light\.kitchen/.test(why.text)) {
     note(`${width}px`, 'history pane does not name the entity');
   }
   await page.locator('.actrow').first().click();
