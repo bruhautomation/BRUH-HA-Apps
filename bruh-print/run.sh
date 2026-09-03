@@ -123,19 +123,22 @@ prepare_filesystem() {
 # USB: report what is actually visible, at startup, in one line.
 #
 # "BRUH Print cannot see my printer" is the failure this add-on will be asked
-# about most, and it has three causes that look identical from the panel: the
-# printer is off (a LabelWriter with no power does not enumerate at all), the
-# `usb: true` permission has not been granted, or it was granted without the
-# restart that makes it take effect. Saying which at boot is the cheapest
-# diagnostic there is — and it costs one bus walk.
+# about most, and its causes look identical from the panel: the printer is
+# off (a LabelWriter with no power does not enumerate at all), the cable is
+# charge-only, or the Supervisor did not map /dev/bus/usb at all. Saying
+# which at boot is the cheapest diagnostic there is, and it costs one bus
+# walk. Note what is NOT on that list: a setting. `usb: true` is a manifest
+# permission the Supervisor applies when it creates the container, so there
+# is no switch for anyone to have missed.
 # ----------------------------------------------------------------------------
 report_usb() {
     if [ ! -d /dev/bus/usb ]; then
         bashio::log.warning \
             "/dev/bus/usb is not mapped into this container, so no printer " \
-            "can be reached. Enable USB access for BRUH Print in the add-on " \
-            "configuration and RESTART the add-on — the Supervisor only " \
-            "applies it on a restart."
+            "can be reached. There is no setting to change for this — the " \
+            "add-on asks for USB in its manifest — so this is the Supervisor " \
+            "or the host not exposing the device tree. Reinstalling the " \
+            "add-on is the thing worth trying."
         return 0
     fi
     local found

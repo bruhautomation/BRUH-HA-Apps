@@ -9,6 +9,7 @@ that ships, and the roll-select byte is asserted on the payload that would
 have been written.
 """
 import json
+import logging
 import os
 import sys
 import tempfile
@@ -431,7 +432,7 @@ class TestFailureShapes(PanelCase):
             def log(self, _level, fmt, *args):
                 records.append(fmt % args)
 
-        logger = server.QuietAccessLogger(Sink())
+        logger = server.QuietAccessLogger(Sink(), "%r %s")
         request = make_mocked_request("GET", "/api/print")
         response = type("Response", (), {"status": 500})()
         with unittest.mock.patch.object(
@@ -466,6 +467,48 @@ class TestFailureShapes(PanelCase):
         status, body = await self.post("/api/print", {"label": {"elements": []}})
         self.assertEqual(400, status)
         self.assertIn("stock", body["error"])
+
+
+class TestItCanActuallyStart(unittest.IsolatedAsyncioTestCase):
+    """The one path `build_app` does not cover: how `main` serves it.
+
+    v0.1.0 started, logged "listening on 0.0.0.0:8097", and died on the next
+    line — `run_app` type-checks `access_log_class` and `QuietAccessLogger`
+    was a plain class with a duck-typed `log`. Every test instantiated it
+    directly and the demo panel called `run_app` without it, so nothing in
+    CI ever handed it to aiohttp. A panel that passes every route test and
+    cannot start is the failure this class is for.
+    """
+
+    async def test_aiohttp_accepts_the_access_logger(self):
+        """Runs aiohttp's own check rather than a restatement of it.
+
+        The check is in `Application._make_handler`, which `AppRunner.setup`
+        reaches and `AppRunner.__init__` does not — so a synchronous
+        construction passes against the broken code and proves nothing.
+        `setup()` builds the server without binding a port; the failure here
+        is the exact TypeError the add-on died on.
+        """
+        from aiohttp import web as aiohttp_web  # noqa: PLC0415
+
+        data = Path(tempfile.mkdtemp())
+        panel = server.Panel(data)
+        panel.discover = lambda force=False: []
+        runner = aiohttp_web.AppRunner(server.build_app(panel),
+                                       access_log_class=server.QuietAccessLogger)
+        await runner.setup()
+        await runner.cleanup()
+
+    async def test_it_is_constructed_the_way_aiohttp_constructs_it(self):
+        """(logger, log_format) — `AbstractAccessLogger.__init__` takes both
+        and `log_format` has no default, so a one-argument construction in a
+        test is a construction aiohttp never makes."""
+        from aiohttp.abc import AbstractAccessLogger  # noqa: PLC0415
+
+        self.assertTrue(issubclass(server.QuietAccessLogger,
+                                   AbstractAccessLogger))
+        logger = server.QuietAccessLogger(logging.getLogger("t"), "%r %s")
+        self.assertIs(logging.getLogger("t"), logger.logger)
 
 
 class TestMirror(unittest.TestCase):

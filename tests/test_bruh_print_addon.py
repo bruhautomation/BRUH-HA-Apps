@@ -147,6 +147,25 @@ class TestRunScript(unittest.TestCase):
         self.assertIn("/dev/bus/usb", panel_note,
                       "run.sh no longer explains why the panel is root")
 
+    def test_nothing_tells_a_person_to_enable_a_setting_that_does_not_exist(self):
+        """`usb: true` is a manifest permission the Supervisor applies when
+        it builds the container. There is no switch in the Configuration tab
+        and there never was — but the README, DOCS, the startup warning and
+        the panel's own "cannot open the printer" message all told people to
+        go and find one, which is the worst kind of wrong documentation:
+        confidently specific about a place to look that does not exist.
+        """
+        claims = ("usb access is on", "turn usb access on",
+                  "enable usb access", "after enabling it",
+                  "only grants on a restart")
+        files = [ADDON / "README.md", ADDON / "DOCS.md", ADDON / "run.sh",
+                 PANEL / "dymo" / "usb_link.py"]
+        for path in files:
+            body = path.read_text().lower()
+            for claim in claims:
+                with self.subTest(file=path.name, claim=claim):
+                    self.assertNotIn(claim, body)
+
     def test_it_reports_what_is_on_the_usb_bus_at_startup(self):
         """"BRUH Print cannot see my printer" has three causes that look
         identical from the panel. One line at boot tells them apart."""

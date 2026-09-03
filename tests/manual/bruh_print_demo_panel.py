@@ -15,6 +15,7 @@ stores, the renderer, the roll routing, the refusals — is the code that
 ships, which is what makes a measurement of this panel a measurement of the
 panel. A demo that faked the renderer would be measuring its own fixture.
 """
+import logging
 import os
 import sys
 from pathlib import Path
@@ -94,5 +95,14 @@ if not panel.history.all():
                                          "wrap": False, "line_spacing": 1.05,
                                          "rotate": 0, "invert": False}}]})
 
+# Served the way `server.main()` serves it, access logger included. The demo
+# used to call `run_app` with just a host and a port, so the one argument
+# that can stop the add-on booting — `access_log_class`, which aiohttp
+# type-checks — was the one argument nothing in CI ever passed. v0.1.0
+# started, logged "listening on 0.0.0.0:8097" and died on the next line,
+# with every route test and every layout measure green.
 print(f"[demo] BRUH Print panel on http://127.0.0.1:{PORT}", flush=True)
-web.run_app(server.build_app(panel), host="127.0.0.1", port=PORT, print=None)
+web.run_app(server.build_app(panel), host="127.0.0.1", port=PORT,
+            access_log_class=server.QuietAccessLogger,
+            access_log=logging.getLogger("bruh_print.access"),
+            print=None)

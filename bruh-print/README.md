@@ -50,9 +50,13 @@ that does nothing.
 
 ## Getting started
 
-1. Install the add-on and **turn USB access on** in its configuration, then
-   **restart it** — the Supervisor only applies USB access on a restart, and
-   that is the most common reason a printer is not found.
+1. Install the add-on and start it. **There is no USB setting to turn on** —
+   the add-on's manifest declares `usb: true`, so the Supervisor maps the
+   printer in for you. The log's first lines say what it found:
+
+   ```
+   INFO: USB printers: LabelWriter 450 Twin Turbo (0022:21040321401861)
+   ```
 2. Open the panel. The Printer tab should show your LabelWriter.
 3. Tell it what is loaded. Pick the stock for each roll — the two cryo
    stocks are already in the list, along with the common DYMO part numbers.

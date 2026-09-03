@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.1.1
+
+**0.1.0 could not start.** The panel bound its port, logged "listening on
+0.0.0.0:8097", and died on the next line:
+
+    TypeError: access_log_class must be subclass of
+    aiohttp.abc.AbstractAccessLogger
+
+`QuietAccessLogger` was a plain class with a duck-typed `log` method, and
+`run_app` type-checks the class it is handed. Nothing caught it because
+nothing ever handed it to aiohttp: every test constructed it directly, and
+the demo panel CI boots called `run_app` without an access logger at all. So
+the demo now serves exactly the way `server.main()` does, and there is a test
+that runs aiohttp's own check rather than a restatement of it — it fails
+against 0.1.0 with the same TypeError, word for word.
+
+**And it said it was listening before it was.** The "listening on
+0.0.0.0:8097" line sat above the `run_app` call, so it printed whether or not
+the server came up — directly above the traceback proving it had not. That is
+BRight's own `panel_port` lesson repeated in a new add-on. The line is now the
+callback `run_app` invokes once the site is actually serving; what comes
+before it says "starting".
+
+**And the docs were wrong about USB.** They told people to "turn USB access
+on in the add-on's configuration", which is not a thing that exists: `usb:
+true` is a manifest permission the Supervisor applies when it builds the
+container, so the Configuration tab has no switch for it and never did. The
+README, DOCS, the startup warning and the panel's own "cannot open the
+printer" message all said some version of it. They now say what is actually
+worth checking — the power brick, the cable, and whether another add-on has
+claimed the printer.
+
 ## 0.1.0
 
 First release.
