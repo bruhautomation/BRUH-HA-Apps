@@ -215,9 +215,9 @@ class TestPrinting(PanelCase):
         self.assertEqual([], body["history"])
 
     async def test_reprint_sends_the_same_bytes(self):
-        """The vial came out of the freezer with a torn label; they need
+        """The box came out of the loft with a torn label; they need
         THAT label, not a similar one."""
-        await self.post("/api/print", {"label": self.label(text="Sample 9912")})
+        await self.post("/api/print", {"label": self.label(text="Winter coats")})
         first = self.sent[-1]
         _, history = await self.get("/api/history")
         entry = history["history"][0]
@@ -251,21 +251,22 @@ class TestPrinting(PanelCase):
 
 class TestQuick(PanelCase):
     async def test_a_word_previews_without_printing(self):
-        status, body = await self.post("/api/quick", {"text": "Buffer A"})
+        status, body = await self.post("/api/quick", {"text": "Spare keys"})
         self.assertEqual(200, status)
         self.assertTrue(body["png"].startswith("data:image/png;base64,"))
-        self.assertEqual(["Buffer", "A"], body["fit"]["lines"])
+        self.assertEqual(["Spare", "keys"], body["fit"]["lines"])
         self.assertEqual([], self.sent)
 
     async def test_the_same_call_prints_when_asked(self):
         status, body = await self.post(
-            "/api/quick", {"text": "Buffer A", "print": True})
+            "/api/quick", {"text": "Spare keys", "print": True})
         self.assertEqual(200, status)
         self.assertEqual(1, body["printed"])
         self.assertEqual(1, len(self.sent))
 
     async def test_narrow_stock_turns_the_text_along_the_roll(self):
-        """A wrap-around vial label reads along the tube. Not guessing means
+        """A wrap-around label reads along the tube or cable it wraps.
+        Not guessing means
         the cryo wrap's first quick print is always wrong."""
         _, body = await self.post("/api/quick",
                                   {"text": "HEK293T", "stock": "ed1f-060wh"})
@@ -286,12 +287,12 @@ class TestQuick(PanelCase):
 
 class TestTemplates(PanelCase):
     TEMPLATE = {
-        "name": "Cryo vial",
+        "name": "Freezer bag",
         "label": {"stock": "edcc-082wh", "elements": [
             {"type": "text", "x_mm": 1, "y_mm": 1, "w_mm": 40, "h_mm": 12,
-             "props": {"text": "{{sample}} — {{date}}"}},
+             "props": {"text": "{{contents}} — {{date}}"}},
             {"type": "barcode", "x_mm": 1, "y_mm": 14, "w_mm": 50, "h_mm": 12,
-             "props": {"data": "{{sample}}"}}]},
+             "props": {"data": "{{contents}}"}}]},
     }
 
     async def save(self):
@@ -303,12 +304,12 @@ class TestTemplates(PanelCase):
         template needs; a declared field that no longer appears is a box on
         the form that fills nothing."""
         template = await self.save()
-        self.assertEqual(["sample"], [f["key"] for f in template["fields"]])
+        self.assertEqual(["contents"], [f["key"] for f in template["fields"]])
 
     async def test_date_fills_itself_in(self):
         template = await self.save()
         status, body = await self.post(
-            f"/api/template/{template['id']}/print", {"fields": {"sample": "9912"}})
+            f"/api/template/{template['id']}/print", {"fields": {"contents": "Chili"}})
         self.assertEqual(200, status)
         self.assertEqual([], body["missing"])
 
@@ -319,7 +320,7 @@ class TestTemplates(PanelCase):
         template = await self.save()
         status, body = await self.post(f"/api/template/{template['id']}/print")
         self.assertEqual(422, status)
-        self.assertEqual(["sample"], body["missing"])
+        self.assertEqual(["contents"], body["missing"])
         self.assertEqual([], self.sent)
 
     async def test_a_template_can_be_printed_by_name(self):
@@ -327,19 +328,19 @@ class TestTemplates(PanelCase):
         case-sensitive because nobody remembers the capitals."""
         await self.save()
         status, _ = await self.post(
-            "/api/template/cryo vial/print", {"fields": {"sample": "9912"}})
+            "/api/template/freezer bag/print", {"fields": {"contents": "Chili"}})
         self.assertEqual(200, status)
 
     async def test_an_unknown_template_names_the_ones_that_exist(self):
         await self.save()
         status, body = await self.post("/api/template/Nope/print")
         self.assertEqual(404, status)
-        self.assertIn("Cryo vial", body["error"])
+        self.assertIn("Freezer bag", body["error"])
 
     async def test_the_preview_reports_what_is_still_empty(self):
         template = await self.save()
         _, body = await self.post(f"/api/template/{template['id']}/preview")
-        self.assertEqual(["sample"], body["missing"])
+        self.assertEqual(["contents"], body["missing"])
         self.assertTrue(body["png"].startswith("data:image/png"))
 
     async def test_a_placeholder_never_reaches_the_label(self):

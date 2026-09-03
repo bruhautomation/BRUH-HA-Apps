@@ -135,6 +135,12 @@ class Status:
     """What the printer said about itself, and whether it said anything."""
 
     answered: bool
+    # There was nothing to ask WITH — no bulk IN endpoint on the interface
+    # we print through — as opposed to a question that went out and got no
+    # reply. A different sentence, because only the second is about the
+    # printer; the first sends somebody to go and check hardware that is
+    # fine.
+    unreadable: bool = False
     busy: bool = False
     out_of_labels: bool = False
     lid_open: bool = False
@@ -147,8 +153,17 @@ class Status:
 
     @property
     def summary(self) -> str:
+        """One sentence, and the two silences are not the same sentence.
+
+        "No status reported" was both of them, which is why it was useless:
+        a person reads it and goes to check the printer, when half the time
+        the printer is fine and the add-on simply has no channel to ask on.
+        """
+        if self.unreadable:
+            return ("no read-back channel on this printer, so it cannot be "
+                    "asked — printing is unaffected")
         if not self.answered:
-            return "no status reported"
+            return "asked, but the printer did not answer"
         problems = []
         if self.lid_open:
             problems.append("lid open")

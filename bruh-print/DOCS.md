@@ -109,12 +109,12 @@ All measurements are in millimetres from the top-left of the *drawable* area
 {
   "stock": "edcc-082wh",
   "rotate": 0,
-  "name": "Sample vial",
+  "name": "Pantry jar",
   "elements": [
     {
       "type": "text",
       "x_mm": 1, "y_mm": 1, "w_mm": 38, "h_mm": 11,
-      "props": {"text": "Buffer A pH 7.4", "font": "sans-bold", "size_mm": 0,
+      "props": {"text": "Chest freezer — chili", "font": "sans-bold", "size_mm": 0,
                 "align": "center", "valign": "middle", "wrap": true}
     },
     {
@@ -184,15 +184,15 @@ All six return response data (`printed`, `side`, `notes`, `status`).
 # One word, biggest that fits
 action: bruh_print.print_text
 data:
-  text: Buffer A pH 7.4
+  text: Chest freezer — chili
   copies: 2
 
 # Fill in a template. No roll to name — the template's label says which
 # stock it is for, and BRUH Print knows which bay holds it.
 action: bruh_print.print_template
 data:
-  template: Cryo vial
-  fields: {sample: "9912", owner: MS}
+  template: Freezer bag
+  fields: {contents: Chili, date: 3 Sep}
 
 # Tell it a new roll went in
 action: bruh_print.set_roll
@@ -254,6 +254,16 @@ prints correctly at the printer's default, and a byte sent to the wrong
 firmware is a wedged printer rather than a lighter label.
 
 ## When something goes wrong
+
+**"Ask the printer" says it cannot be asked.** That is about the add-on, not
+the printer: this LabelWriter's interface exposes no bulk IN endpoint, so
+there is nothing to read a reply from. Printing is unaffected — a
+unidirectional printer prints perfectly well. Press **USB details** to see
+which interfaces and endpoints it does expose.
+
+**"Ask the printer" says it did not answer.** That one is about the printer,
+and it is ordinary: a LabelWriter mid-feed does not reply, and neither does
+one whose firmware predates the status command.
 
 **It says it printed and nothing came out.** The bytes were accepted and the
 printer did not use them — which produces no error anywhere, because from

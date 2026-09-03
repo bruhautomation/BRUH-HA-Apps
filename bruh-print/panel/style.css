@@ -378,6 +378,12 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
   border-radius: var(--radius); padding: 12px 14px; }
 .addstock summary { cursor: pointer; font-weight: 600; min-height: 30px; }
 .settings { display: grid; gap: 10px; }
+/* The USB dump: fixed-width, and it scrolls inside itself rather than
+   taking the dialog's width with it. */
+.usbdump { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px; line-height: 1.5; white-space: pre; overflow-x: auto;
+  background: var(--line-2); border-radius: 8px; padding: 10px 12px;
+  margin: 10px 0; max-height: 45vh; }
 
 .hlist { display: grid; gap: 8px; margin-bottom: 14px; }
 .hrow {

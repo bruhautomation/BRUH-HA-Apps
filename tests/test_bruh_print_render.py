@@ -91,7 +91,7 @@ class TestRendering(unittest.TestCase):
         dot wider than the scanner expects."""
         rendered = self.render({"stock": "edcc-082wh", "elements": [
             {"type": "text", "x_mm": 1, "y_mm": 1, "w_mm": 40, "h_mm": 20,
-             "props": {"text": "Buffer A"}}]})
+             "props": {"text": "Spare keys"}}]})
         self.assertEqual("1", rendered.image.mode)
         levels = set(rendered.image.convert("L").tobytes())
         self.assertTrue(levels <= {0, 255},
@@ -234,7 +234,7 @@ class TestAutofit(unittest.TestCase):
         """Two words are bigger stacked than side by side on a 2.25 x 1.25
         label. Trying only one arrangement is what makes an autofit label
         look like it did not try."""
-        self.assertEqual(["Buffer", "A"], quick.fit("Buffer A", self.cryo).lines)
+        self.assertEqual(["Spare", "keys"], quick.fit("Spare keys", self.cryo).lines)
 
     def test_a_short_string_stays_on_one_line(self):
         self.assertEqual(["9912"], quick.fit("9912", self.cryo).lines)
@@ -261,7 +261,7 @@ class TestAutofit(unittest.TestCase):
     def test_it_returns_a_real_label_the_designer_can_open(self):
         """A quick print that rendered its own way would be a second
         renderer to keep in step with the first."""
-        fitted = quick.fit("Buffer A", self.cryo)
+        fitted = quick.fit("Spare keys", self.cryo)
         rendered = render_image.render(fitted.label, self.cryo)
         self.assertGreater(len(ink_columns(rendered)), 40)
 

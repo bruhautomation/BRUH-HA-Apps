@@ -11,8 +11,9 @@ a dashboard.
 
 **Type a word, get a label.** The Quick tab takes what you typed and finds
 the largest arrangement that fits — every way of breaking the words across
-lines is rendered and the biggest wins. `Buffer A` comes out on two lines
-because that is bigger than one; `9912` comes out on one because that is.
+lines is rendered and the biggest wins. `Spare keys` comes out on two
+lines because that is bigger than one; `Attic` comes out on one because
+that is.
 
 **A real designer.** Text, Code 128 barcodes, QR codes, boxes, rules and
 uploaded images, dragged and resized on the label itself. Everything is in
@@ -82,10 +83,10 @@ Six services, all of which return what happened so a script can branch on it:
 ```yaml
 action: bruh_print.print_template
 data:
-  template: Cryo vial
+  template: Freezer bag
   fields:
-    sample: "{{ states('input_text.sample_id') }}"
-    owner: MS
+    contents: "{{ states('input_text.leftovers') }}"
+    date: "{{ now().strftime('%-d %b') }}"
   copies: 2
 ```
 
@@ -104,11 +105,11 @@ type: custom:bruh-print-card
 title: Label the freezer
 mode: text
 quick:
-  - label: "Biohazard"
-    text: "BIOHAZARD"
-  - label: "Today's date"
-    template: Cryo vial
-    fields: { sample: "{{date}}" }
+  - label: "Leftovers"
+    text: "Leftovers"
+  - label: "Dated freezer bag"
+    template: Freezer bag
+    fields: { date: "{{date}}" }
 ```
 
 `mode: template` turns it into a form for one saved template. The card reads

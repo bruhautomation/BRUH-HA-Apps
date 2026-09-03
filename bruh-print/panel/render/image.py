@@ -94,7 +94,7 @@ def _wrap(draw, text: str, font, max_px: int) -> list[str]:
 
     Breaking mid-word is the right answer here even though it is the wrong
     answer in prose: label text is one long identifier at least as often as
-    it is a sentence, and a 24-character reagent name on a 0.56" label that
+    it is a sentence, and a 24-character name on a 0.56" label that
     refuses to break is a line that runs off the edge and silently loses its
     tail.
     """

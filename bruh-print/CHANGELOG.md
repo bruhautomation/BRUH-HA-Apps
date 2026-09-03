@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.2.2
+
+**"Ask the printer" could only ever say it had nothing to report**, and the
+reason was on this side of the cable.
+
+`config[(0, 0)]` — interface 0, altsetting 0 — is the interface this add-on
+printed through, hardcoded. The USB printer class defines two protocols and
+devices routinely expose both as *altsettings* of one interface: `01`
+unidirectional (bulk OUT only) and `02` bidirectional (OUT and IN).
+Altsetting 0 is very often the unidirectional one — so there was no endpoint
+to read from, no question was ever sent, and the panel reported the printer
+as silent. The printer was fine.
+
+BRUH Print now walks every interface and altsetting and prefers one with both
+directions, falling back to one that can at least print. **Which one it
+chose is reported rather than decided silently**, because a choice nobody can
+check is a choice nobody can correct — and this one was wrong for two
+releases with no way to see it.
+
+**The two silences no longer share a sentence.** "No status reported" meant
+both *the printer did not answer* and *there is no channel to ask on*, so a
+person read it and went to check hardware that was working. They are now
+"asked, but the printer did not answer" and "no read-back channel on this
+printer, so it cannot be asked — printing is unaffected". Neither is ever
+rendered as ready.
+
+**And the lab vocabulary is gone.** This prints labels for a house, and it
+was written as though it printed them for a bench: `Buffer A pH 7.4` in every
+placeholder, a "Cryo vial" template, a "Sample id" field, a "reagent name" in
+the docs. The examples are a chest freezer, a freezer bag, spare keys and a
+pantry jar now. The two stock *names* stay as they are — "Chemical-Resistant
+Cryo Labels" is what is printed on the roll and what you would reorder by.
+
+**And a USB details button**, beside Print the ruler. Interfaces,
+altsettings, endpoints, and which one is in use. This add-on has now been
+debugged twice by somebody standing at a printer reading a panel that could
+not say what it had found — and USB descriptors are always readable, even
+from a device that answers nothing. Worth copying into a bug report.
+
+Note what this does **not** claim to fix: printing. A unidirectional
+altsetting prints perfectly well, so if labels are still not coming out, the
+0.2.1 note below is the live one and the **If nothing comes out** setting is
+still the thing to work through.
+
 ## 0.2.1
 
 **It said it printed and nothing came out.** Every layer reported success —

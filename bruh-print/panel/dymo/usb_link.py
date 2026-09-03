@@ -176,6 +176,8 @@ class Link:
         self.device: Any = None
         self.info: printers.Discovered | None = None
         self._interface = 0
+        self._altsetting = 0
+        self._alt_reason = ""
         self._detached = False
         self._out = None
         self._in = None
@@ -192,8 +194,9 @@ class Link:
             except Exception as exc:  # noqa: BLE001
                 raise self._explain(exc) from exc
 
-        interface = config[(0, 0)]
+        interface, self._alt_reason = self._pick_interface(config)
         self._interface = interface.bInterfaceNumber
+        self._altsetting = interface.bAlternateSetting
 
         try:
             if self.device.is_kernel_driver_active(self._interface):
@@ -206,6 +209,17 @@ class Link:
         except Exception as exc:  # noqa: BLE001
             raise self._explain(exc) from exc
 
+        # A device whose chosen altsetting is not the default has to be told
+        # so, or the endpoints addressed below are not the ones in force.
+        if self._altsetting:
+            try:
+                self.device.set_interface_altsetting(
+                    interface=self._interface, alternate_setting=self._altsetting)
+            except Exception:  # noqa: BLE001 - some backends refuse; the
+                # endpoints usually still work, and failing the print over
+                # a call that is often a no-op would be the worse trade.
+                pass
+
         self._out = self._endpoint(interface, out=True)
         self._in = self._endpoint(interface, out=False)
         if self._out is None:
@@ -214,6 +228,78 @@ class Link:
                 f"means it is not in printing mode. Unplug it, wait for the "
                 f"light to go out, and plug it back in.")
         return self
+
+    def _pick_interface(self, config: Any) -> tuple[Any, str]:
+        """The interface and altsetting to print on, and why that one.
+
+        `config[(0, 0)]` — interface 0, altsetting 0 — is what shipped, and
+        it is wrong on a great many USB printers. The printer class defines
+        two protocols and devices routinely expose both as ALTSETTINGS of
+        the same interface: `01` unidirectional (bulk OUT only) and `02`
+        bidirectional (bulk OUT and bulk IN). Altsetting 0 is very often the
+        unidirectional one, so hardcoding it takes the read channel away —
+        which is why "Ask the printer" could only ever answer "no status
+        reported": there was nothing to read from.
+
+        So: prefer an altsetting that has both directions, fall back to one
+        that can at least print, and record which for the USB report — a
+        choice this makes silently is a choice nobody can check.
+        """
+        candidates = []
+        for interface in config:
+            has_out = self._endpoint(interface, out=True) is not None
+            has_in = self._endpoint(interface, out=False) is not None
+            if not has_out:
+                continue
+            candidates.append((has_in, interface))
+        if not candidates:
+            # Nothing to print on at all: hand back interface 0 so `open`
+            # raises the sentence written for that, rather than IndexError.
+            return config[(0, 0)], "no interface has a bulk OUT endpoint"
+        bidirectional = [i for ok, i in candidates if ok]
+        if bidirectional:
+            chosen = bidirectional[0]
+            return chosen, (
+                f"interface {chosen.bInterfaceNumber} altsetting "
+                f"{chosen.bAlternateSetting} (bulk in and out)")
+        chosen = candidates[0][1]
+        return chosen, (
+            f"interface {chosen.bInterfaceNumber} altsetting "
+            f"{chosen.bAlternateSetting} (bulk out only — this printer "
+            f"exposes no read-back channel, so it cannot report status)")
+
+    def describe(self, config: Any = None) -> dict:
+        """What the USB device actually looks like.
+
+        Written because this add-on has now been debugged twice from the
+        outside, by a person standing at a printer reading a panel that
+        could not say what it had found. A device that answers nothing is
+        not a device nobody can describe.
+        """
+        usb = self._usb
+        config = config or self.device.get_active_configuration()
+        out = []
+        for interface in config:
+            endpoints = []
+            for endpoint in interface:
+                endpoints.append({
+                    "address": f"0x{endpoint.bEndpointAddress:02x}",
+                    "direction": ("in" if usb.util.endpoint_direction(
+                        endpoint.bEndpointAddress) == usb.util.ENDPOINT_IN
+                        else "out"),
+                    "type": {0: "control", 1: "isochronous", 2: "bulk",
+                             3: "interrupt"}.get(
+                        usb.util.endpoint_type(endpoint.bmAttributes), "?"),
+                    "packet": int(endpoint.wMaxPacketSize),
+                })
+            out.append({
+                "interface": int(interface.bInterfaceNumber),
+                "altsetting": int(interface.bAlternateSetting),
+                "class": int(interface.bInterfaceClass),
+                "protocol": int(interface.bInterfaceProtocol),
+                "endpoints": endpoints,
+            })
+        return {"interfaces": out, "using": getattr(self, "_alt_reason", "")}
 
     def _endpoint(self, interface: Any, *, out: bool) -> Any:
         usb = self._usb
@@ -263,16 +349,26 @@ class Link:
         return written
 
     def status(self) -> protocol.Status:
-        """Ask the printer how it is. Silence is an answer of its own.
+        """Ask the printer how it is — and say which silence you got.
 
-        A LabelWriter that is mid-feed does not reply, and neither does one
-        whose firmware predates the status command — so a timeout here is
-        `answered=False` rather than a raised error. The caller renders that
-        as "no status reported", which is honest, where rendering it as
-        ready would be the panel inventing good news.
+        There are two, they read identically from the panel, and collapsing
+        them is what made "no status reported" useless. **There is nothing
+        to ask with**: this printer (or the altsetting we are on) has no
+        bulk IN endpoint, so no question was ever sent and no amount of
+        waiting would change it. **It did not answer**: the question went
+        out and nothing came back, which is ordinary — a LabelWriter
+        mid-feed does not reply, and neither does one whose firmware
+        predates the status command.
+
+        Only the second is about the printer. The first is about us, and it
+        is the one that needs a different sentence, because somebody
+        reading "no status reported" goes and checks the printer.
+
+        Neither is ever rendered as ready. A panel inventing good news about
+        hardware it cannot hear is worse than one that says it cannot hear.
         """
         if self._in is None:
-            return protocol.Status(answered=False)
+            return protocol.Status(answered=False, unreadable=True)
         try:
             self._out.write(protocol.status_request(), WRITE_TIMEOUT_MS)
             block = self._in.read(32, READ_TIMEOUT_MS)
@@ -331,15 +427,36 @@ def send(payload: bytes, key: str | None = None) -> dict:
     }
 
 
+def describe(key: str | None = None) -> dict:
+    """The USB device's own shape, for a person who can see the printer.
+
+    This add-on has now been debugged twice by somebody standing at a
+    LabelWriter reading a panel that could not say what it had found. A
+    device that answers nothing is not a device nobody can describe: the
+    descriptors are always readable, they say which interfaces and
+    endpoints exist, and that is exactly the information that was missing
+    both times.
+    """
+    with _bus_lock:
+        with Link(key) as link:
+            report = link.describe()
+            report["printer"] = link.info.as_dict() if link.info else {}
+            report["status"] = link.status().summary
+    return report
+
+
 def probe(key: str | None = None) -> dict:
     """Status only — the panel's "is it ready" without printing anything."""
     with _bus_lock:
         with Link(key) as link:
             status = link.status()
             info = link.info
+            using = link._alt_reason
     return {
         "printer": info.as_dict() if info else {},
         "status": status.summary,
         "status_ok": status.ok,
         "status_answered": status.answered,
+        "status_unreadable": status.unreadable,
+        "using": using,
     }

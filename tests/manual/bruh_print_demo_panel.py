@@ -70,26 +70,26 @@ from stores import templates as template_store  # noqa: E402
 
 if not panel.templates.all():
     panel.templates.put(template_store.Template(
-        id="", name="Cryo vial", icon="mdi:test-tube",
+        id="", name="Freezer bag", icon="mdi:snowflake",
         description="Wraps a 2ml tube",
         label={"stock": "ed1f-060wh", "rotate": 90, "elements": [
             {"type": "text", "x_mm": 1, "y_mm": 0.5, "w_mm": 48, "h_mm": 10,
-             "props": {"text": "{{sample}}", "font": "sans-bold",
+             "props": {"text": "{{contents}}", "font": "sans-bold",
                        "size_mm": 0, "align": "left", "valign": "middle",
                        "wrap": True, "line_spacing": 1.1, "rotate": 0,
                        "invert": False}},
             {"type": "barcode", "x_mm": 50, "y_mm": 1, "w_mm": 33, "h_mm": 10,
-             "props": {"data": "{{sample}}", "hri": False, "hri_font": "mono",
+             "props": {"data": "{{contents}}", "hri": False, "hri_font": "mono",
                        "hri_mm": 2.5, "quiet": 10, "rotate": 0}}]},
-        fields=[template_store.Field(key="sample", label="Sample id")]))
+        fields=[template_store.Field(key="contents", label="What is in it")]))
 
 if not panel.history.all():
     panel.history.add(stock="edcc-082wh", side="left", copies=2,
-                      title="Buffer A pH 7.4", label={
+                      title="Chest freezer — chili", label={
                           "stock": "edcc-082wh", "rotate": 0, "elements": [
                               {"type": "text", "x_mm": 0, "y_mm": 0,
                                "w_mm": 55, "h_mm": 29,
-                               "props": {"text": "Buffer A pH 7.4",
+                               "props": {"text": "Chest freezer — chili",
                                          "font": "sans-bold", "size_mm": 0,
                                          "align": "center", "valign": "middle",
                                          "wrap": False, "line_spacing": 1.05,

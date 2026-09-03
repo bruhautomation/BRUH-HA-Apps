@@ -5,7 +5,7 @@ A template is an ordinary label document whose text carries `{{field}}`
 placeholders, plus a declaration of what those fields are. That is the
 difference between a designer and the thing people actually use: the
 designer is opened once per label *kind*, and after that the job is "sample
-id 9912, today's date, print two" — which is one form and one button.
+the date, print two" — which is one form and one button.
 
 Placeholders are substituted into `text`, `data` and `asset` props and
 nowhere else, and the substitution is plain string replacement with no
@@ -97,7 +97,7 @@ def placeholders(label: dict) -> list[str]:
     Order matters because it is the order of the form, and a form whose
     boxes are in a different order from the label is a form people fill in
     wrong. Sorting alphabetically was the first cut and it put "date" above
-    "sample id" on every template.
+    "contents" on every template.
     """
     seen: list[str] = []
     for element in label.get("elements") or []:

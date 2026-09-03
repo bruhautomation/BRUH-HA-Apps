@@ -10,7 +10,7 @@ print_text:
       description: What the label should say. Line breaks are honoured; without
         them BRUH Print picks the arrangement that comes out biggest.
       required: true
-      example: Buffer A pH 7.4
+      example: Chest freezer — chili
       selector:
         text:
     stock:
@@ -36,7 +36,7 @@ print_text:
       name: Rotation
       description: >-
         Leave unset and BRUH Print turns the text along the roll on tall,
-        narrow stock (a wrap-around vial label) and across it on everything
+        narrow stock (a wrap-around cable or jar label) and across it on everything
         else.
       selector:
         select:
@@ -57,7 +57,7 @@ print_template:
       description: Its name, as shown on the panel's Templates tab. Not
         case-sensitive.
       required: true
-      example: Cryo vial
+      example: Freezer bag
       selector:
         text:
     fields:
@@ -65,7 +65,7 @@ print_template:
       description: >-
         The values to put in, keyed by field name. {{date}} and
         {{time}} fill themselves in and do not need to be given.
-      example: '{"sample": "9912", "owner": "MS"}'
+      example: '{"contents": "Chili", "date": "3 Sep"}'
       selector:
         object:
     copies:

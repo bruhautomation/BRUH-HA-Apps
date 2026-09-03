@@ -9,8 +9,8 @@ only question it answers is *how big*, and the answer is "as big as fits".
 Getting that answer right takes two ideas that a naive largest-font-that-fits
 does not have.
 
-**Layout is chosen, not assumed.** "Buffer A" on a 2.25 × 1.25 label is
-biggest on two lines; "9912" is biggest on one; "Tris-HCl pH 8.0 500mM" is
+**Layout is chosen, not assumed.** "Spare keys" on a 2.25 × 1.25 label is
+biggest on two lines; "9912" is biggest on one; "Christmas decorations loft" is
 biggest on three. So every plausible line-break of the words is *rendered*
 and the one whose glyphs come out largest wins. Trying only one arrangement
 is what makes an auto-fit label look like it did not try, and people go

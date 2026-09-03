@@ -366,7 +366,7 @@ class BruhPrintCard extends HTMLElement {
     label.textContent = 'What should it say?';
     const input = document.createElement('textarea');
     input.rows = 2;
-    input.placeholder = 'Buffer A pH 7.4';
+    input.placeholder = 'Chest freezer — chili';
     input.value = this._form.text;
     input.addEventListener('input', () => { this._form.text = input.value; });
     input.addEventListener('keydown', (event) => {
