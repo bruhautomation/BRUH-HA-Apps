@@ -1183,7 +1183,47 @@ function renderPrinter() {
     + 'Print the ruler above. Standard is what everything is tested against; '
     + 'try the others in order. Tell us which one worked — a LabelWriter '
     + 'cannot be asked which commands it understands, so this is the only '
-    + 'way to find out.'));
+    + 'way to find out. Bare minimum also drops the darkness and speed '
+    + 'commands.'));
+
+  /* Darkness and speed. Both are commands in the same preamble, so `bare`
+   * above overrides both — it sends neither, which is the whole reason it
+   * exists, and the lede on that select says so. */
+  for (const [key, label, fallback, options, lede] of [
+    ['density', 'Darkness', 'dark', [
+      ['dark', 'Dark — recommended'],
+      ['normal', "Normal — the printer's own default"],
+      ['medium', 'Medium'],
+      ['light', 'Light'],
+    ], 'How much heat the head puts into each dot. A LabelWriter left to '
+      + 'itself prints at Normal, which on ordinary thermal stock comes out '
+      + 'faint. Turn it down if labels smudge or the paper curls.'],
+    ['quality', 'Print speed', 'graphics', [
+      ['graphics', "Slow & dark — recommended (the printer's "
+        + '"barcodes and graphics" mode)'],
+      ['text', 'Fast (text mode)'],
+    ], 'The slow mode steps the paper at 600 lines to the inch instead of '
+      + '300, so the head dwells twice as long over every line: darker, and '
+      + "more accurate for barcodes and QR codes. Fast is the printer's "
+      + 'own default and roughly halves the time a long run takes.'],
+  ]) {
+    const wrap = el('label', 'field');
+    wrap.append(el('span', null, label));
+    const select = el('select');
+    for (const [value, text] of options) {
+      const option = el('option', null, text);
+      option.value = value;
+      select.append(option);
+    }
+    select.value = S.settings[key] || fallback;
+    select.onchange = async () => {
+      try { await post('/api/settings', { [key]: select.value }); await loadState(); }
+      catch (error) { fail(error); }
+    };
+    wrap.append(select);
+    settings.append(wrap);
+    settings.append(el('p', 'lede', lede));
+  }
 
   for (const [key, label, help] of toggles) {
     const wrap = el('label', 'check');

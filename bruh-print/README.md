@@ -117,6 +117,13 @@ the integration's sensors and calls its services — it never talks to the
 add-on directly, so it works from a phone on mobile data through Nabu Casa
 exactly as it does on the LAN.
 
+Home Assistant serves the card with a month-long cache header, so it is
+registered under a URL that changes whenever the file does. An update reaches
+your dashboard on the next page load, with nothing to clear. If a dashboard
+still shows the old card straight after this update, refresh it once (or
+close and reopen the app) — the *old* URL is the one your browser cached, and
+that is the last time it will need doing.
+
 ## Documentation
 
 [DOCS.md](DOCS.md) has the full reference: the label document format, the

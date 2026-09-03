@@ -112,18 +112,29 @@ class TestAJobAPrinterCanActuallyRead(unittest.TestCase):
     only knows SYN*, which is the guarantee that was missing.
     """
 
-    @staticmethod
-    def _decode(payload: bytes, bytes_per_line: int) -> list[bytes]:
+    # The escape commands this reader knows, and how many argument bytes
+    # each takes. Density (c/d/e/g) and quality (h/i) take none — they are
+    # the whole command — so a job that sends them still decodes here, and
+    # a reader that did not know them would reject a perfectly ordinary
+    # job for being unreadable.
+    _ARGS = {ord("D"): 1, ord("B"): 1, ord("q"): 1, ord("L"): 2,
+             ord("E"): 0, ord("G"): 0, ord("A"): 0,
+             ord("c"): 0, ord("d"): 0, ord("e"): 0, ord("g"): 0,
+             ord("h"): 0, ord("i"): 0}
+
+    @classmethod
+    def _decode(cls, payload: bytes, bytes_per_line: int) -> list[bytes]:
         """Walk a job the way a printer would, knowing only SYN and ESC."""
         lines, i = [], 0
         while i < len(payload):
             byte = payload[i]
             if byte == protocol.ESC:
-                i += 2
-                if payload[i - 1] in (ord("D"), ord("B"), ord("q")):
-                    i += 1
-                elif payload[i - 1] == ord("L"):
-                    i += 2
+                letter = payload[i + 1]
+                if letter not in cls._ARGS:
+                    raise AssertionError(
+                        f"byte {i + 1} is ESC 0x{letter:02x} ({chr(letter)!r}), "
+                        f"which is not a command this printer knows")
+                i += 2 + cls._ARGS[letter]
             elif byte == protocol.SYN:
                 lines.append(payload[i + 1:i + 1 + bytes_per_line])
                 i += 1 + bytes_per_line
@@ -195,6 +206,115 @@ class TestJob(unittest.TestCase):
     def test_an_empty_label_is_refused(self):
         with self.assertRaises(protocol.ProtocolError):
             protocol.job([], bytes_per_line=84)
+
+
+class TestHowDarkAndHowSlow(unittest.TestCase):
+    """Labels came out light because nothing ever asked them not to.
+
+    With no density and no quality command a LabelWriter runs at its own
+    defaults — normal density, text speed — and on ordinary thermal stock
+    that is faint. These are the two commands that change it, in the order
+    cups-filters has sent them for twenty years, and the whole of the risk
+    is that a firmware reads one of them as something else: which is what
+    `bare` (neither byte) is the escape route from.
+    """
+
+    LINE = b"\xf0" * 84
+
+    def test_the_preamble_opens_with_density_then_quality(self):
+        """Order matters only because it is the one known to print. What
+        matters here is that both arrive before the geometry: a length set
+        and then a mode change is a printer asked to measure in one unit
+        and print in another."""
+        payload = protocol.job([self.LINE], bytes_per_line=84,
+                               label_length_dots=1,
+                               density="dark", quality="graphics")
+        self.assertTrue(payload.startswith(b"\x1bg\x1bi"), payload[:8])
+        self.assertLess(payload.index(b"\x1bi"),
+                        payload.index(bytes([ESC, ord("L")])))
+
+    def test_the_roll_still_comes_first(self):
+        payload = protocol.job([self.LINE], bytes_per_line=84, roll=1,
+                               label_length_dots=1,
+                               density="dark", quality="graphics")
+        self.assertTrue(payload.startswith(
+            protocol.select_roll(1) + b"\x1bg\x1bi"))
+
+    def test_both_are_re_sent_for_every_copy(self):
+        """Same reasoning as the roll byte: four bytes to start each label
+        from a known state rather than inheriting the last job's."""
+        payload = protocol.job([self.LINE], bytes_per_line=84, copies=3,
+                               label_length_dots=1,
+                               density="dark", quality="graphics")
+        self.assertEqual(3, payload.count(b"\x1bg"))
+        self.assertEqual(3, payload.count(b"\x1bi"))
+
+    def test_graphics_mode_sends_every_line_twice(self):
+        """The printer steps the paper 600 times per inch in this mode and
+        the renderer draws 300 — so a label whose rows went once would come
+        out half its length, with everything on it squashed."""
+        rows = [bytes([i]) * 84 for i in range(10)]
+        payload = protocol.job(rows, bytes_per_line=84,
+                               label_length_dots=10,
+                               density="dark", quality="graphics")
+        decoded = TestAJobAPrinterCanActuallyRead._decode(payload, 84)
+        self.assertEqual([row for row in rows for _ in (0, 1)], decoded)
+
+    def test_graphics_mode_doubles_the_label_length(self):
+        """`ESC L` is counted in the same 600-per-inch steps, so a length
+        left at 375 would tell the printer the label is half as long as the
+        raster it is about to receive."""
+        payload = protocol.job([self.LINE] * 375, bytes_per_line=84,
+                               label_length_dots=375,
+                               density="dark", quality="graphics")
+        self.assertIn(protocol.set_label_length(750), payload)
+        self.assertNotIn(protocol.set_label_length(375), payload)
+
+    def test_text_mode_sends_each_line_once_and_the_plain_length(self):
+        rows = [bytes([i]) * 84 for i in range(10)]
+        payload = protocol.job(rows, bytes_per_line=84,
+                               label_length_dots=10,
+                               density="normal", quality="text")
+        self.assertEqual(rows,
+                         TestAJobAPrinterCanActuallyRead._decode(payload, 84))
+        self.assertIn(protocol.set_label_length(10), payload)
+        self.assertIn(b"\x1bh", payload)
+
+    def test_bare_sends_neither_byte_and_is_the_job_that_always_shipped(self):
+        """`bare` is the escape route: the printer at its own defaults, and
+        byte-for-byte what this add-on sent before darkness existed. If the
+        two ever differ, the mode somebody falls back to is not the one
+        that used to work."""
+        rows = [bytes([i]) * 84 for i in range(20)]
+        bare = protocol.job(rows, bytes_per_line=84, roll=1, copies=2,
+                            label_length_dots=20,
+                            density=None, quality=None)
+        before = protocol.job(rows, bytes_per_line=84, roll=1, copies=2,
+                              label_length_dots=20)
+        self.assertEqual(before, bare)
+        for command in (b"\x1bc", b"\x1bd", b"\x1be", b"\x1bg",
+                        b"\x1bh", b"\x1bi"):
+            self.assertNotIn(command, bare, command)
+
+    def test_an_unknown_density_or_quality_is_refused(self):
+        """Falling through to the printer's default would be a darkness
+        setting that silently did nothing — the complaint, restated."""
+        for level in ("darkk", "DARK", "", "very dark"):
+            with self.subTest(density=level), \
+                    self.assertRaises(protocol.ProtocolError):
+                protocol.job([self.LINE], bytes_per_line=84, density=level)
+        for mode in ("graphic", "TEXT", "photo"):
+            with self.subTest(quality=mode), \
+                    self.assertRaises(protocol.ProtocolError):
+                protocol.job([self.LINE], bytes_per_line=84, quality=mode)
+
+    def test_the_helpers_refuse_the_same_way(self):
+        self.assertEqual(b"\x1bc", protocol.set_density("light"))
+        self.assertEqual(b"\x1be", protocol.set_density("normal"))
+        with self.assertRaises(protocol.ProtocolError):
+            protocol.set_density("darker")
+        with self.assertRaises(protocol.ProtocolError):
+            protocol.set_quality("fast")
 
 
 class TestWhichAltsettingWePrintThrough(unittest.TestCase):

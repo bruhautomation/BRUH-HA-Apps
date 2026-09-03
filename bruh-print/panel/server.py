@@ -479,11 +479,19 @@ async def _send(state: Panel, rendered, *, side: str, copies: int) -> dict:
     # to whichever bay the printer last used, which is a real cost and the
     # reason it is the last mode to try rather than a safe default.
     mode = str(state.settings.get("print_mode", "standard"))
+    # `bare` is the one mode that sends neither darkness nor speed, leaving
+    # the printer at its own defaults — which is the whole point of it: it
+    # is what somebody tries when a firmware will not take a command, and a
+    # mode that still sent two of them would not answer that question.
+    bare = mode == "bare"
     payload = protocol.job(
         lines, bytes_per_line=model.bytes_per_line,
-        roll=None if mode == "bare" else roll_code,
+        roll=None if bare else roll_code,
         copies=copies, label_length_dots=rendered.feed_dots,
-        compress=(mode == "compact"))
+        compress=(mode == "compact"),
+        density=None if bare else str(state.settings.get("density", "dark")),
+        quality=None if bare else str(
+            state.settings.get("quality", "graphics")))
 
     try:
         return await asyncio.to_thread(

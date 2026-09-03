@@ -40,11 +40,33 @@ commands whose meaning is unambiguous are here, deliberately:
                     has long runs of identical blank lines, and a run of
                     ETBs is one byte each where SYN is 85.
 
-What is NOT sent, and why: the density and print-mode opcodes. Their
-encodings differ across the 400/450/550 generations, thermal label stock
-prints correctly at the printer's own default, and a byte sent to the wrong
-generation of firmware is a wedged printer rather than a lighter label. A
-guess that is only sometimes right is worse here than not asking.
+    ESC c/d/e/g    Print density: light, medium, normal, dark. `normal` is
+                    what the printer does with no command at all.
+    ESC h           Text Speed Mode: 300x300 dpi, and the printer's default.
+    ESC i           Barcode and Graphics Mode: 300x600 dpi, slower, and the
+                    reference calls out "greater positional and sizing
+                    accuracy". The head dwells twice as long over each inch
+                    of paper, which is also why it prints darker. In this
+                    mode the printer steps the paper 600 times per inch, so
+                    a 300 dpi raster has to send EACH LINE TWICE, and the
+                    `ESC L` length is in those same steps and doubles with
+                    it — otherwise the label comes out half its length.
+                    (cups-filters duplicates nothing: CUPS rasterises at
+                    whichever vertical resolution the PPD's `300x600dpi`
+                    option asked for, so every line it has is already a
+                    600 dpi line. We render at 300 and repeat.)
+
+Density and quality ARE sent, in the standard and compact modes, because
+labels coming out light was the complaint and the printer's own default is
+the fast mode at normal density. The encodings above are the 400/450
+generation's — the same bytes cups-filters' `rastertolabel.c` has sent, in
+this order (density, quality, `ESC L`, `ESC D`, the lines, `ESC E`), for
+twenty years. What has not changed is the reason for caution: the 550
+generation's command set differs (and it refuses third-party stock anyway),
+and a byte a firmware reads as something else is a wedged printer rather
+than a lighter label. That is what the **bare** print mode is for — it sends
+neither, leaving the printer at its own defaults — and it is the escape
+route from a guess this add-on cannot test from inside a container.
 """
 from __future__ import annotations
 
@@ -97,6 +119,55 @@ def select_roll(roll: int) -> bytes:
             f"roll must be {ROLL_LEFT} (left) or {ROLL_RIGHT} (right), "
             f"got {roll!r}")
     return _esc("q", roll)
+
+
+# Density and quality are the two commands that change how DARK a label
+# comes out, and in practice they are a pair: the slow mode is darker than
+# the fast one at the same density, because the head spends twice as long
+# over every line.
+DENSITIES = {
+    "light": _esc("c"),
+    "medium": _esc("d"),
+    "normal": _esc("e"),
+    "dark": _esc("g"),
+}
+QUALITIES = {
+    # 300x300 dpi, fast, the printer's own default.
+    "text": _esc("h"),
+    # 300x600 dpi. Slower, darker, and every raster line has to be sent
+    # twice — see `raster`'s `line_repeat` and `job`'s doubled length.
+    "graphics": _esc("i"),
+}
+
+# How many times one 300 dpi line is sent in each mode. Named rather than a
+# bare 2 in `job`, because the repeated lines and the doubled label length
+# are the same fact and must not drift apart.
+LINE_REPEAT = {"text": 1, "graphics": 2}
+
+
+def set_density(level: str) -> bytes:
+    """One of light/medium/normal/dark, refused rather than guessed.
+
+    A typo falling through to the printer's default would be a darkness
+    setting that silently did nothing — which is exactly the complaint this
+    command exists to answer.
+    """
+    try:
+        return DENSITIES[str(level)]
+    except KeyError:
+        raise ProtocolError(
+            f"density must be one of {', '.join(DENSITIES)}, "
+            f"got {level!r}") from None
+
+
+def set_quality(mode: str) -> bytes:
+    """`text` (fast, 300x300) or `graphics` (slow, 300x600, darker)."""
+    try:
+        return QUALITIES[str(mode)]
+    except KeyError:
+        raise ProtocolError(
+            f"quality must be one of {', '.join(QUALITIES)}, "
+            f"got {mode!r}") from None
 
 
 def form_feed() -> bytes:
@@ -205,8 +276,14 @@ def pack_line(bits: bytes, bytes_per_line: int) -> bytes:
 
 
 def raster(lines: list[bytes], bytes_per_line: int, *,
-           compress: bool = False) -> bytes:
+           compress: bool = False, line_repeat: int = 1) -> bytes:
     """The raster body: a SYN line each, or ETB for a repeat when asked.
+
+    `line_repeat` is 2 in the printer's graphics mode and nothing else: the
+    paper steps 600 times per inch there while the renderer draws 300, so
+    each row has to be sent twice or the label comes out half its length.
+    It repeats the PACKED line rather than the source row, so padding and
+    truncation still happen exactly once per row.
 
     **Compression is off by default, and that is the whole of a bug that
     shipped.** `ETB` as "repeat the previous line" is the one opcode in this
@@ -225,20 +302,23 @@ def raster(lines: list[bytes], bytes_per_line: int, *,
     """
     out = bytearray()
     previous: bytes | None = None
+    repeat = max(1, int(line_repeat))
     for line in lines:
         packed = pack_line(line, bytes_per_line)
-        if compress and packed == previous:
-            out.append(ETB)
-            continue
-        out.append(SYN)
-        out.extend(packed)
-        previous = packed
+        for _ in range(repeat):
+            if compress and packed == previous:
+                out.append(ETB)
+                continue
+            out.append(SYN)
+            out.extend(packed)
+            previous = packed
     return bytes(out)
 
 
 def job(lines: list[bytes], *, bytes_per_line: int, roll: int | None = None,
         copies: int = 1, label_length_dots: int | None = None,
-        compress: bool = False, dot_tab: bool = False) -> bytes:
+        compress: bool = False, dot_tab: bool = False,
+        density: str | None = None, quality: str | None = None) -> bytes:
     """A complete print job: preamble, raster, feed — repeated per copy.
 
     The preamble is re-sent for every copy rather than once for the job. It
@@ -251,18 +331,35 @@ def job(lines: list[bytes], *, bytes_per_line: int, roll: int | None = None,
     advances a whole label past the head, so a run of ten came out as ten
     printed and ten blank — which reads as the printer wasting half the roll,
     because it is.
+
+    `density` and `quality` are both optional and both `None` in the `bare`
+    print mode, which is the one arrangement that leaves the printer at its
+    own defaults. `quality="graphics"` is the slow, darker 300x600 mode, and
+    it changes the body as well as the preamble: every line goes twice and
+    the label length doubles, because both are counted in the printer's
+    600-per-inch steps.
     """
     if not lines:
         raise ProtocolError("nothing to print: the rendered label has no rows")
     copies = max(1, int(copies))
-    body = raster(lines, bytes_per_line, compress=compress)
+    # Validate before rendering the body: a typo'd density must not cost a
+    # megabyte of raster before it is refused.
+    density_bytes = set_density(density) if density is not None else b""
+    quality_bytes = set_quality(quality) if quality is not None else b""
+    repeat = LINE_REPEAT.get(quality or "text", 1)
+    body = raster(lines, bytes_per_line, compress=compress,
+                  line_repeat=repeat)
     length = (label_length_dots if label_length_dots is not None
-              else len(lines))
+              else len(lines)) * repeat
 
     out = bytearray()
     for index in range(copies):
         if roll is not None:
             out.extend(select_roll(roll))
+        # Density then quality then the geometry, which is the order the
+        # long-standing cups-filters DYMO path sends them in.
+        out.extend(density_bytes)
+        out.extend(quality_bytes)
         # `ESC B 0` is a no-op by construction — the renderer already knows
         # where the left edge is, so the dot tab is always zero — and a
         # no-op is pure risk in a preamble: a firmware that does not take

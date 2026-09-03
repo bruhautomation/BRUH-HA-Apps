@@ -737,6 +737,56 @@ class TestTheRemainingCountIsOptional(PanelCase):
         self.assertIn("def consume(self, side: str, count: int)", source)
 
 
+class TestDarkByDefault(PanelCase):
+    """Labels printed light because nothing ever told the printer not to.
+
+    A LabelWriter with no density and no quality command in the preamble
+    runs at its own defaults — normal density, text speed — and on ordinary
+    thermal stock that comes out faint. Asserted on the bytes that would
+    have been written, because the response says "Printed 1" either way.
+    """
+
+    async def test_a_default_print_carries_dark_and_the_slow_mode(self):
+        await self.post("/api/roll/left", {"stock": "edcc-082wh"})
+        status, _ = await self.post("/api/print", {"label": self.label()})
+        self.assertEqual(200, status)
+        self.assertIn(protocol.set_density("dark"), self.sent[-1])
+        self.assertIn(protocol.set_quality("graphics"), self.sent[-1])
+
+    async def test_bare_mode_sends_neither(self):
+        """`bare` is what somebody tries when the printer takes a job and
+        prints nothing, so it has to drop these two as well — a mode that
+        still sent them would not answer the question it is asked."""
+        await self.post("/api/roll/left", {"stock": "edcc-082wh"})
+        await self.post("/api/settings", {"print_mode": "bare"})
+        await self.post("/api/print", {"label": self.label()})
+        for command in (b"\x1bc", b"\x1bd", b"\x1be", b"\x1bg",
+                        b"\x1bh", b"\x1bi"):
+            self.assertNotIn(command, self.sent[-1], command)
+
+    async def test_a_chosen_darkness_reaches_the_printer(self):
+        await self.post("/api/roll/left", {"stock": "edcc-082wh"})
+        await self.post("/api/settings", {"density": "light",
+                                          "quality": "text"})
+        await self.post("/api/print", {"label": self.label()})
+        self.assertIn(protocol.set_density("light"), self.sent[-1])
+        self.assertIn(protocol.set_quality("text"), self.sent[-1])
+        self.assertNotIn(protocol.set_quality("graphics"), self.sent[-1])
+
+    async def test_a_typo_is_not_stored(self):
+        """A stored typo is a setting somebody believes they changed — and
+        here it is worse than inert: the protocol refuses an unknown
+        density, so it would turn every print into a failure."""
+        status, _ = await self.post("/api/settings", {"density": "darkk"})
+        self.assertEqual(200, status)
+        _, body = await self.get("/api/settings")
+        self.assertEqual("dark", body["settings"]["density"])
+
+        await self.post("/api/settings", {"quality": "photo"})
+        _, body = await self.get("/api/settings")
+        self.assertEqual("graphics", body["settings"]["quality"])
+
+
 class TestMirror(unittest.TestCase):
     """The file Home Assistant actually reads."""
 

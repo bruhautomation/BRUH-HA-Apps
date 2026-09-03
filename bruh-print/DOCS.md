@@ -214,6 +214,29 @@ None of them goes unavailable when the add-on is stopped. They report it and
 keep their attributes — Home Assistant hides the attributes of an unavailable
 entity, so the reason would go with them.
 
+## The Lovelace card
+
+`install_lovelace_card` copies `bruh-print-card.js` into `/config/www` on
+every start and the integration registers it, so there is nothing to add to
+your dashboard resources by hand — **BRUH Print** is in the card picker.
+
+Core serves everything under `/local` with `Cache-Control: max-age=2678400`,
+which is 31 days. Updating the file in place therefore reaches nobody: the
+browser keeps what it has. So the card is registered under a URL carrying a
+hash of the file's own bytes — change the card and the URL changes with it,
+leave it alone and the cached copy is still used. That is a hash of the
+*content* rather than of the card's version string, because the version is
+what somebody remembers to bump and the hash is what changed.
+
+One refresh may still be needed on the update that introduces this, on each
+browser: the URL your browser cached is the old one, and only a reload asks
+Home Assistant for the page that names the new one.
+
+If the integration is set up before the add-on has finished copying the card
+in — a first install, or an add-on update while Home Assistant was already
+running — it keeps looking for about twenty minutes rather than waiting for
+the next Core restart.
+
 ## How the printing works
 
 There is no CUPS in this container and no DYMO driver. `panel/dymo/` speaks
@@ -221,6 +244,8 @@ the LabelWriter's own raster protocol:
 
 ```
 ESC q 1|2      roll select — the Twin Turbo's whole reason for existing
+ESC c|d|e|g    print density: light, medium, normal, dark
+ESC h|i        300 x 300 (fast) or 300 x 600 ("barcodes and graphics", slow)
 ESC L hi lo    label length in dots
 ESC D 84       bytes per line (672 dots / 8)
 SYN <84 bytes> one raster line, one per row
@@ -240,18 +265,39 @@ opcode, and a firmware that does not read `0x17` that way takes the job and
 produces nothing. There is no error to report; the bytes were accepted.
 
 **Bare minimum** drops roll select as well, for a firmware that will not take
-`ESC q`. On a Twin Turbo that means the printer uses whichever bay it used
-last, which is why it is the last thing to try rather than a safe default.
+`ESC q`, along with the darkness and speed commands below. On a Twin Turbo
+that means the printer uses whichever bay it used last, which is why it is
+the last thing to try rather than a safe default.
 
 `ESC B 0` (dot tab) is not sent at all. It was a no-op by construction — the
 renderer already knows where the left edge is — and a no-op in a preamble is
 pure risk: a firmware that does not take the command may swallow the byte
 after it.
 
-The density and print-mode opcodes are deliberately **not** sent. Their
-encodings differ across the 400/450/550 generations, thermal label stock
-prints correctly at the printer's default, and a byte sent to the wrong
-firmware is a wedged printer rather than a lighter label.
+### How dark, and how slowly
+
+A LabelWriter that is told nothing prints at its own defaults — normal
+density, text speed — and on ordinary thermal stock that comes out light.
+Two commands change it, and both are on the Printer tab under Settings:
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| **Darkness** | Dark | `ESC c/d/e/g` — how much heat the head puts into each dot. Turn it down if labels smudge or the paper curls. |
+| **Print speed** | Slow & dark | `ESC h` (fast, 300 x 300) or `ESC i` (the printer's "barcodes and graphics" mode, 300 x 600). The slow one steps the paper at 600 lines to the inch, so the head dwells twice as long over every line: darker, and more accurate for barcodes and QR codes. |
+
+In the slow mode BRUH Print sends each raster line **twice** and doubles the
+`ESC L` length with it, because both are counted in those 600-per-inch steps
+— a 300 dpi raster sent as-is would come out half its length with everything
+on it squashed. A long run takes roughly twice as long to print; that is the
+whole of the cost, and Fast is one menu item away.
+
+These are the 400/450 generation's encodings — the same bytes, in the same
+order, that cups-filters' DYMO path has sent for twenty years. The caution
+that used to keep them out of the preamble has not gone away: the 550
+generation's command set differs (and it refuses third-party stock in any
+case), and a byte a firmware reads as something else is a wedged printer
+rather than a lighter label. **Bare minimum** is the escape route — it sends
+neither command, leaving the printer exactly where it was before any of this.
 
 ## When something goes wrong
 
@@ -270,8 +316,9 @@ printer did not use them — which produces no error anywhere, because from
 the add-on's side the job succeeded. Printer tab → Settings → **If nothing
 comes out**: change it, press **Print the ruler**, repeat. Standard is what
 everything is tested against; Compact adds a compression opcode not every
-firmware reads; Bare minimum also drops roll select, which costs a Twin
-Turbo its second bay and is the last thing to try. Whether a given
+firmware reads; Bare minimum also drops roll select — which costs a Twin
+Turbo its second bay — along with the darkness and speed commands, and is
+the last thing to try. Whether a given
 LabelWriter takes every command in the preamble is not something this add-on
 can ask it, so please say which one worked.
 

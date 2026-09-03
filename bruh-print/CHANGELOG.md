@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.0
+
+_(release notes are written at the end of this branch)_
+
 ## 0.2.2
 
 **"Ask the printer" could only ever say it had nothing to report**, and the
