@@ -339,3 +339,4 @@ podman run -p 8099:8099 -p 7681:7681 -v $(pwd)/config:/config local/brain
 - YAML: 2-space indentation
 - Shell: 4-space indentation
 - Error handling: `bashio::log.error` for HA scripts, colored output for user-facing tools
+- **A name bound inside a `try` whose `except` skips or returns is still a name every line after it has to prove is set**, and CodeQL says so (`py/uninitialized-local-variable`) — twice now, on `tokyo` in `test_baselines.py` and `ny` in `test_notify_router.py`, both the same optional-`zoneinfo` guard written the same way. Bind it to `None` *before* the `try` and test it *after*; `self.skipTest` from inside the handler reads like a `return` and is not one the analyser can see. Same class as reaching for a file without `with`: `open(...).read()` in a test is a leaked descriptor whether or not the test passes

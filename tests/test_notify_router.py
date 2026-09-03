@@ -75,10 +75,17 @@ class TestTheQuietWindow(unittest.TestCase):
         # The test that fails if the argument were ignored, which is the
         # shape this bug takes: 02:30 UTC is 21:30 in New York, outside a
         # 22->7 window that it is squarely inside in UTC.
+        ny = None
         try:
             from zoneinfo import ZoneInfo
             ny = ZoneInfo("America/New_York")
         except Exception:  # noqa: BLE001 — a system with no tz database
+            pass
+        if ny is None:
+            # Bound before the try and tested after it, rather than
+            # skipping from inside the handler: a name assigned only on
+            # the branch that did not raise is one every reader after it
+            # has to prove is set.
             self.skipTest("no zoneinfo data on this system")
         when = self.at(2)
         self.assertTrue(notify_router.in_quiet_hours(when, 22, 7))
@@ -224,7 +231,8 @@ class TestTheHoldQueue(unittest.TestCase):
             "ts": 1, "text": "Short", "severity": "warning",
             "detail": "x" * 5000, "fix": "y" * 5000, "html": "z" * 5000,
         }], 100.0, self.path)
-        raw = open(self.path, encoding="utf-8").read()
+        with open(self.path, encoding="utf-8") as fh:
+            raw = fh.read()
         self.assertLess(len(raw), 400)
         self.assertNotIn("xxxx", raw)
         self.assertEqual(json.loads(raw)[0]["ts"], 1)
