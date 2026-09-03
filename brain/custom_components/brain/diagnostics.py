@@ -35,9 +35,7 @@ except ImportError:  # pragma: no cover — very old cores, or a partial stub
     def async_redact_data(data: Any, to_redact: Any) -> Any:  # type: ignore[misc]
         return data
 
-from .const import FINDINGS_STATE_FILENAME, SHARED_DIR
-
-DIAGNOSTICS_FILENAME = "diagnostics.json"
+from .const import DIAGNOSTICS_FILENAME, FINDINGS_STATE_FILENAME, SHARED_DIR
 USAGE_FILENAME = "usage_limits.json"
 # Any of these files hand-edited into something enormous must not stall
 # the event loop's executor for long.

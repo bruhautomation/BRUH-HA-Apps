@@ -117,6 +117,7 @@ import engine
 import feedback_store
 import findings_store
 import fixer
+import health
 import hypotheses
 import journal
 import knowledge_store
@@ -2247,7 +2248,7 @@ def _diagnostics_payload() -> dict:
         usage = usage_store.budget_state(settings)
     except Exception:  # noqa: BLE001 — a diagnostics payload must not fail on one reader
         usage = {}
-    return {
+    payload = {
         "generated_at": int(time.time()),
         "versions": {
             "addon": os.environ.get("ADDON_VERSION", "dev"),
@@ -2281,6 +2282,13 @@ def _diagnostics_payload() -> dict:
         "daemons": _daemon_rollcall(),
         "usage": {k: usage.get(k) for k in ("source", "used_percent", "limits")},
     }
+    # Derived last, from everything above it. The verdict is part of the
+    # payload rather than a route of its own so that the panel, the mirror,
+    # the integration's sensor and `brain report` cannot disagree about
+    # whether brAIn is working — which is exactly the kind of drift a second
+    # copy of a rule produces.
+    payload["health"] = health.verdict(payload, safe_options)
+    return payload
 
 
 def publish_diagnostics() -> None:

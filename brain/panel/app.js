@@ -1927,6 +1927,17 @@ function renderDiagnostics(d) {
   const ok = (j.by_outcome || {}).ok || 0;
   const failures = j.failures || [];
   const rows = [];
+  // The verdict first, because it is the one line somebody who is not
+  // debugging should have to read. Everything below it is the evidence.
+  const h = d.health || {};
+  rows.push(diagRow("brAIn", esc(h.reason || h.state || "unknown"),
+    h.state && h.state !== "ok"));
+  if (h.fix) rows.push(diagRow("What to do", esc(h.fix), true));
+  if ((h.problems || []).length > 1) {
+    const more = h.problems.slice(1, 5).map(
+      (p) => `<li>${esc(p.what)} &mdash; ${esc(p.fix)}</li>`);
+    rows.push(diagRow("Also", `<ul>${more.join("")}</ul>`, true));
+  }
   rows.push(diagRow("Add-on version",
     esc((d.versions || {}).addon || "unknown")));
   rows.push(diagRow("Claude Code",

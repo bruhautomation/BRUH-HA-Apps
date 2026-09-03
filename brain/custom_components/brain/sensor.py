@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -29,6 +30,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
 from .const import (
     CONF_INSIGHT_TEMPLATE,
+    DIAGNOSTICS_FILENAME,
     DOMAIN,
     ENTRY_TYPE_INSIGHT,
     SHARED_DIR,
@@ -136,6 +138,11 @@ async def async_setup_entry(
 
     # What brAIn thinks is broken, countable from an automation.
     entities.append(BrainOpenFindingsSensor(config_entry))
+
+    # Whether brAIn itself is working. Same reasoning as the usage tracker
+    # sensor above and the same rule: it never goes unavailable, because
+    # its whole job is to be readable at the moment nothing else is.
+    entities.append(BrainHealthSensor(config_entry))
 
     async_add_entities(entities, update_before_add=True)
 
@@ -395,6 +402,128 @@ class BrainUsageTrackerSensor(SensorEntity):
             _LOGGER.debug("Could not read usage limits: %s", exc)
             return None
         return data if isinstance(data, dict) else None
+
+
+# ---------------------------------------------------------------------------
+# Is brAIn working
+# ---------------------------------------------------------------------------
+
+# The panel says how long its own answer is good for; this is only the
+# fallback for a mirror written by a version that did not.
+HEALTH_STALE_AFTER_H = 2.5
+
+
+class BrainHealthSensor(SensorEntity):
+    """Whether brAIn is working, and the sentence for what is not.
+
+    Its state is one of ``ok`` / ``degraded`` / ``failed`` and its
+    attributes carry the reason, the thing to do about it, and everything
+    else that is wrong underneath.
+
+    Two rules, both learned from the usage sensors.
+
+    **It never goes unavailable.** Home Assistant hides the attributes of
+    an unavailable entity, so an entity that vanishes takes its own
+    explanation with it — and this is the entity somebody looks at
+    precisely when the others have gone. A panel that has published
+    nothing is a state (``failed``), not an absence.
+
+    **A stale verdict is not a healthy one.** The panel rewrites this file
+    after every checks pass and hourly in between, so a file that has
+    stopped changing means the panel has stopped running, and serving its
+    last good answer would be a reading nothing can correct. The
+    freshness window comes out of the file itself rather than being
+    agreed twice.
+
+    The verdict is computed by the panel and read here, not recomputed:
+    the panel, this sensor, the settings dialog's Diagnostics section and
+    `brain report` all answer "is brAIn working" out of one derivation.
+    """
+
+    _attr_has_entity_name = True
+    _attr_should_poll = True
+    _attr_name = "Health"
+    _attr_icon = "mdi:heart-pulse"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_device_info = USAGE_DEVICE_INFO
+
+    def __init__(self, config_entry: ConfigEntry) -> None:
+        self._entry = config_entry
+        self._attr_unique_id = f"{DOMAIN}_health"
+        self._attr_native_value = "failed"
+        self._attrs: dict[str, Any] = {}
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return self._attrs
+
+    async def async_update(self) -> None:
+        path = self.hass.config.path(SHARED_DIR, DIAGNOSTICS_FILENAME)
+        data, age_h = await self.hass.async_add_executor_job(self._read, path)
+        if data is None:
+            self._attr_native_value = "failed"
+            self._attrs = {
+                "reason": "brAIn has not published its state",
+                "fix": "The add-on may be starting, stopped, or unable to "
+                       "write to /config/.brain. Check that it is running.",
+                "problem_count": 1,
+            }
+            return
+
+        health = data.get("health")
+        if not isinstance(health, dict):
+            # A mirror written before the verdict existed. Reporting it as
+            # healthy would be inventing an answer the writer never gave.
+            self._attr_native_value = "failed"
+            self._attrs = {
+                "reason": "this version of brAIn does not report its health",
+                "fix": "Update the add-on, or restart it if it has just been "
+                       "updated, so the panel republishes.",
+                "problem_count": 1,
+            }
+            return
+
+        attrs: dict[str, Any] = {
+            "reason": health.get("reason") or "",
+            "fix": health.get("fix") or "",
+            "problems": [p.get("what") for p in (health.get("problems") or [])
+                         if isinstance(p, dict)],
+            "published_age_minutes": None if age_h is None else round(age_h * 60),
+        }
+        attrs["problem_count"] = len(attrs["problems"])
+
+        window = health.get("stale_after_h")
+        window = window if isinstance(window, (int, float)) else HEALTH_STALE_AFTER_H
+        if age_h is not None and age_h > window:
+            self._attr_native_value = "failed"
+            attrs["reason"] = "brAIn has stopped publishing its state"
+            attrs["fix"] = (
+                f"The last update was {age_h:.1f} hours ago. The panel writes "
+                "this after every checks pass and hourly in between, so it is "
+                "not running. Check the add-on is started.")
+            attrs["problem_count"] += 1
+            self._attrs = attrs
+            return
+
+        state = health.get("state")
+        self._attr_native_value = state if state in ("ok", "degraded", "failed") \
+            else "failed"
+        self._attrs = attrs
+
+    def _read(self, path: str) -> tuple[dict | None, float | None]:
+        try:
+            stat = os.stat(path)
+            with open(path) as fh:
+                data = json.load(fh)
+        except (OSError, json.JSONDecodeError) as exc:
+            _LOGGER.debug("Could not read the diagnostics mirror: %s", exc)
+            return None, None
+        if not isinstance(data, dict):
+            return None, None
+        # The file's own mtime, not `generated_at`: a clock that has been
+        # corrected leaves a stamp in the future, and a verdict that can
+        # never go stale is a verdict nothing can correct.
+        return data, max(0.0, (time.time() - stat.st_mtime) / 3600.0)
 
 
 # ---------------------------------------------------------------------------

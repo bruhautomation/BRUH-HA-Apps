@@ -306,6 +306,25 @@ else
     fail "Panel not answering (:8099/api/health) — check the add-on log"
 fi
 
+# The panel's own verdict on itself. This script walks the plumbing and the
+# panel watches it over time, so the two answer different questions and both
+# belong on one report: a doctor run at 9am cannot see the listener that died
+# at 3am, and the verdict can.
+diag=$(curl -s -m 10 "http://127.0.0.1:8099/api/diagnostics" 2>/dev/null)
+health_state=$(echo "$diag" | jq -r '.health.state // empty' 2>/dev/null)
+health_reason=$(echo "$diag" | jq -r '.health.reason // empty' 2>/dev/null)
+case "$health_state" in
+    ok)       pass "brAIn reports itself healthy" ;;
+    degraded) warn "brAIn reports itself degraded: ${health_reason}" ;;
+    failed)   fail "brAIn reports itself failed: ${health_reason}" ;;
+    *)        info "the panel did not report a health verdict (older add-on?)" ;;
+esac
+if [ "$health_state" = "degraded" ] || [ "$health_state" = "failed" ]; then
+    echo "$diag" | jq -r '.health.fix // empty' 2>/dev/null | while read -r line; do
+        [ -n "$line" ] && info "$line"
+    done
+fi
+
 chat_state=$(curl -s -m 5 "http://127.0.0.1:8099/api/chat/state" 2>/dev/null)
 if [ -n "$chat_state" ]; then
     cstate=$(echo "$chat_state" | jq -r '.state // empty' 2>/dev/null)
