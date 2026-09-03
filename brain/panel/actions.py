@@ -356,6 +356,84 @@ def find_overrides(actions: list[dict],
     return out
 
 
+def find_conflicts(actions: list[dict],
+                   window_s: float = OVERRIDE_WINDOW_S) -> list[dict]:
+    """Every time one automation put back what another had just done.
+
+    Deliberately not an override. A person undoing a rule is evidence the
+    rule is wrong for this house; two rules undoing each other is neither
+    of them being wrong on its own — they disagree, the entity ends up in
+    whichever state happened to run last, and *nothing* reports it. Both
+    automations ran, neither errored, and the light is in one of two
+    states depending on the order two triggers fired in. It was named as
+    a separate finding when the override rules were written and this is
+    it.
+
+    The same three rules apply, for the same reasons: inside the window,
+    the state has to actually differ (two rules agreeing is not a fight),
+    and one move is undone once. The fourth is new — **an automation
+    cannot conflict with itself**, or a rule that sets a light on and
+    then off within one run reports itself as its own opponent.
+    """
+    last_auto: dict[str, dict] = {}
+    out: list[dict] = []
+    for action in sorted(actions, key=lambda a: a["ts"]):
+        eid = action["entity_id"]
+        if action["cause"] not in AUTOMATED:
+            # A person's move is not a conflict, and it ends the pairing:
+            # what follows answers the person, not the earlier rule.
+            last_auto.pop(eid, None)
+            continue
+        prior = last_auto.get(eid)
+        last_auto[eid] = action
+        if not prior:
+            continue
+        if action["ts"] - prior["ts"] > window_s:
+            continue
+        if action["state"] == prior["state"]:
+            continue
+        first = prior.get("by") or prior.get("by_name") or ""
+        second = action.get("by") or action.get("by_name") or ""
+        if not first or not second or first == second:
+            continue
+        out.append({
+            "ts": action["ts"],
+            "entity_id": eid,
+            "name": action["name"],
+            "first": first,
+            "first_name": prior.get("by_name") or first,
+            "first_state": prior["state"],
+            "second": second,
+            "second_name": action.get("by_name") or second,
+            "second_state": action["state"],
+            "after_s": round(action["ts"] - prior["ts"], 1),
+        })
+        last_auto.pop(eid, None)
+    return out
+
+
+def automation_moves(actions: list[dict]) -> dict[str, int]:
+    """How many state changes each automation made in this window.
+
+    The denominator. `find_overrides` counts the times a person undid an
+    automation, and a count with nothing under it is not evidence: three
+    undos of a rule that ran three times is a rule that is wrong for this
+    house, and three undos of one that ran three hundred times is a
+    person having an unusual Tuesday. Nothing could tell those apart.
+
+    Keyed the same way the overrides are (`by`, falling back to `by_name`)
+    so the two can be divided without a join that could mismatch.
+    """
+    counts: dict[str, int] = {}
+    for action in actions or []:
+        if action.get("cause") != "automation":
+            continue
+        key = action.get("by") or action.get("by_name") or ""
+        if key:
+            counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
 def group_overrides(overrides: list[dict]) -> dict[str, dict]:
     """Overrides gathered under the automation that was undone."""
     groups: dict[str, dict] = {}
@@ -460,7 +538,8 @@ async def collect(session, start: float, end: float,
     entries = await fetch_logbook(session, start, end, entity_id)
     if entries is None:
         return {"available": False, "error": "logbook could not be read",
-                "actions": [], "overrides": [], "counts": count_causes([]),
+                "actions": [], "overrides": [], "conflicts": [],
+                "moves": {}, "counts": count_causes([]),
                 "capped": False, "start": start, "end": end}
     mined = mine(entries, users, read_ledger(start))
     return {
@@ -472,4 +551,10 @@ async def collect(session, start: float, end: float,
         "capped": mined["capped"],
         "counts": mined["counts"],
         "overrides": find_overrides(mined["actions"]),
+        "conflicts": find_conflicts(mined["actions"]),
+        # The denominator rides beside the overrides rather than being
+        # recomputed by whoever divides by it: they are counted off the
+        # same mined list over the same window, and two passes over the
+        # same data is two chances to disagree about the window.
+        "moves": automation_moves(mined["actions"]),
     }

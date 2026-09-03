@@ -123,6 +123,7 @@ import hypotheses
 import journal
 import knowledge_store
 import notify_router
+import override_ledger
 import onboarding
 import prompt_store
 import run_sources
@@ -2117,6 +2118,28 @@ def eff_checks_interval_hours() -> float:
         return 6.0
 
 
+def _record_overrides(snapshot: dict, now: float) -> int:
+    """Keep the overrides this pass saw. Never fails the pass that saw them.
+
+    `actions.py` persists nothing on purpose, and this is the deliberate
+    exception: overrides are a handful of rows a week, and *"you undo
+    this every weekday morning"* is a sentence about weeks that one day
+    of logbook cannot produce. See `override_ledger`'s own docstring for
+    why that is a narrower claim than the timeline this does not keep.
+    """
+    mined = snapshot.get("actions") or {}
+    if not mined.get("available"):
+        # "I could not look" is not "nothing happened" — the same rule
+        # `clear_resolved` follows about a check that could not run.
+        return 0
+    try:
+        return override_ledger.record(mined.get("overrides") or [], now)
+    except Exception as exc:  # noqa: BLE001 — accounting must not fail
+        # the pass it is accounting for; same rule as `journal.record`.
+        log.warning("could not file this pass's overrides: %s", exc)
+        return 0
+
+
 async def run_checks(reason: str = "schedule") -> dict:
     """One pass of every house check, applied to the findings store.
 
@@ -2139,6 +2162,12 @@ async def run_checks(reason: str = "schedule") -> dict:
     started = time.time()
     try:
         snapshot = await checks.snapshot.collect(started)
+        # Filed BEFORE the checks run, so this pass's own overrides count
+        # toward the pattern the check is about to read. The ledger is
+        # deduped on the event, which is what makes that safe: passes run
+        # every few hours over a day-long window, so the same override is
+        # offered four or five times and only the first one lands.
+        await asyncio.to_thread(_record_overrides, snapshot, started)
         result = checks.run_all(snapshot, started)
 
         def apply() -> tuple[list[dict], int, list[dict]]:

@@ -172,10 +172,27 @@ ordinary findings under a "check" label, with no Claude run at all.
 
 - **A reading well outside what your house normally does at this hour** —
   see below.
-- **An automation you keep undoing.** Three times in a day that a rule did
-  something and somebody put it straight back. Nothing else can see it — the
-  automation ran, nothing errored, and the light is off — and it is the
-  clearest signal a house gives about a rule being wrong for it.
+- **An automation you keep undoing.** A rule did something and somebody put
+  it straight back. Nothing else can see it — the automation ran, nothing
+  errored, and the light is off — and it is the clearest signal a house
+  gives about a rule being wrong for it. Two shapes count: three times in a
+  day, *measured against how often that rule actually ran* (three undos of
+  something that ran three hundred times is you having an unusual Tuesday,
+  not a broken rule), and the slower one — putting the same thing back once
+  a day for weeks, which never reaches three in any single day and so is
+  invisible to a daily count.
+
+  When there is a pattern in **when** you override it, the finding says so,
+  because that is the condition the automation is missing: *"almost always
+  between 08:00 and 09:00 and only on weekdays"* is something you can write
+  a condition around. When there isn't one, it says nothing rather than
+  reading a shape into a coincidence.
+
+- **Two automations undoing each other.** Both ran, neither failed, and the
+  light is in whichever state the later trigger happened to leave it — so
+  the result is different from one day to the next depending on the order
+  two triggers fired in, which is not something anybody designed. No trace
+  shows it, because nothing went wrong in either run.
 
 A check's finding clears itself when the check stops finding it — the device
 came back, the battery was changed — and it is simply removed, so it can be

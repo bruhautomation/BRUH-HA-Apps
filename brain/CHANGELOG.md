@@ -2,6 +2,75 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.34.0
+
+### Fixed
+
+- **`auto.overridden` counted overrides with no denominator, and reported two
+  opposite things identically.** Three undos of a rule that ran three times is
+  a rule that does not fit this house; three undos of one that ran three
+  hundred times is somebody having an unusual Tuesday. The check could not
+  tell them apart, which is the shape of finding people learn to ignore.
+  `actions.automation_moves` counts what each automation actually did over the
+  same window off the same mined list, the check fires on a *share* once there
+  are enough runs for a share to mean anything, and the detail says "3 of the
+  4 times it acted" rather than "3 times". Below that floor the count stands
+  alone, because 3 of 3 is 100% and says nothing the count did not.
+
+### Added
+
+- **The slow override — the one that never reaches three in a day.** Somebody
+  putting the same thing back once a day for a month is the clearest signal a
+  house gives about a rule not fitting it, and a check that only ever looks at
+  today is structurally unable to see it. `panel/override_ledger.py` keeps
+  overrides — and only overrides — so that the sentence *"you undo this every
+  weekday morning"* can be said at all.
+
+  This is a deliberate exception to `actions.py` persisting nothing, and a
+  narrower claim than the rule that made: what that rejected was keeping the
+  **timeline**, tens of thousands of rows a day and a second copy of Home
+  Assistant's own logbook. Overrides are a handful of rows a week.
+
+  And a pattern has to still be **happening**, not merely be well shaped.
+  The ledger keeps two months so a shape has room to appear, but a rule
+  somebody fixed goes on having a beautiful shape in that history — and a
+  finding that cannot clear for eight weeks after the problem is gone is
+  the list nobody reads. Nothing is reported unless the last override was
+  within the last week.
+
+  Two more details are load-bearing. Passes overlap — every six hours over a
+  twenty-six hour window — so the same override is offered four or five times
+  and a ledger that appended what it was given would report one disagreement
+  as five; the id is the **event**, not the offering. And a pattern is about
+  **days**: four overrides in one evening is one evening, and nothing here
+  reports a shape that does not span several distinct days, whatever the count.
+
+- **When you override it is the condition the automation is missing**, so the
+  finding names it: *"almost always between 08:00 and 09:00 and only on
+  weekdays"*. The hours reported are the ones that are **occupied**, not the
+  window that found them — the first cut searched four-hour windows and took
+  whichever start it tried first, so fifteen overrides all at 08:10 came back
+  as "between 05:00 and 09:00", which is not a slightly loose answer but a
+  condition somebody would write that stands the automation down for three
+  hours nothing happens in. A day that has no shape gets no sentence, rather
+  than a coincidence dressed as a pattern.
+
+- **`auto.conflict` — two automations undoing each other.** Named as a separate
+  finding when the override rules were written, and deferred then. Both ran,
+  neither errored, and the entity is in whichever state the later trigger left
+  it — so which one "wins" depends on the order two triggers happened to fire
+  in, which is not something anybody designed, and the result is different from
+  one day to the next. No check that reads Core can see it and no trace shows
+  it, because nothing went wrong in either run.
+
+  `find_conflicts` carries the same three rules as `find_overrides` for the
+  same reasons (inside the window, the state has to actually differ, one move
+  is undone once) plus a fourth that is new: **an automation cannot conflict
+  with itself**, or a rule that sets a light on and then off inside one run
+  reports itself as its own opponent. A pair is keyed unordered, or A-undoes-B
+  and B-undoes-A count as two disagreements between the same two rules and each
+  half sits under the floor.
+
 ## 1.33.0
 
 ### Added

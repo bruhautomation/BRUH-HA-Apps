@@ -304,7 +304,25 @@ timeline that guesses is not something you can use as evidence.
 Above the list, when there are any: **the times somebody put back what an automation had
 just done**. That is the clearest signal a house gives about a rule being wrong for it,
 and it is invisible everywhere else — the automation ran, nothing errored, and the light
-is off. Three of those against one automation in a day becomes a finding.
+is off.
+
+Two shapes of that become a finding. **Three in a day, measured against how often that
+rule actually ran** — three undos of something that ran three hundred times is you having
+an unusual Tuesday, and only the share can tell that from a rule nobody wants. And **the
+slow one**: putting the same thing back once a day for weeks, which never reaches three
+on any single day. Only overrides are kept for that (a handful of rows a week, not a copy
+of the logbook), because *"you undo this every weekday morning"* is a sentence about weeks
+and one day of history can only ever produce a count.
+
+When there is a pattern in **when**, the finding names it, because that is the condition
+the automation is missing — *"almost always between 08:00 and 09:00 and only on
+weekdays"*. When there isn't one it says nothing, rather than reading a shape into a
+coincidence somebody would then write a condition around.
+
+And **two automations undoing each other** is its own finding. Both ran, neither failed,
+and the light ends up in whichever state the later trigger left it — so the result differs
+from day to day depending on the order two triggers happened to fire in. No trace shows
+it, because nothing went wrong in either run.
 
 ## Terminal
 
