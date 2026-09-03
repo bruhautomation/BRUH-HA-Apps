@@ -564,6 +564,17 @@ async def h_printer_status(request: web.Request) -> web.Response:
     return ok(result)
 
 
+async def h_printer_usb(request: web.Request) -> web.Response:
+    """What the USB device looks like — descriptors, not guesses."""
+    state = panel(request)
+    try:
+        report = await asyncio.to_thread(usb_link.describe, state.printer_key())
+    except (usb_link.UsbUnavailable, usb_link.PrinterNotFound,
+            usb_link.PrinterBusy) as exc:
+        return bad(str(exc), 503)
+    return ok(**report)
+
+
 async def h_printer_test(request: web.Request) -> web.Response:
     """Print the ruler.
 
@@ -1207,6 +1218,7 @@ def build_app(state: Panel | None = None) -> web.Application:
     app.router.add_post("/api/printer/select", h_printer_select)
     app.router.add_get("/api/printer/status", h_printer_status)
     app.router.add_post("/api/printer/test", h_printer_test)
+    app.router.add_get("/api/printer/usb", h_printer_usb)
 
     app.router.add_get("/api/stocks", h_stocks)
     app.router.add_post("/api/stock", h_stock_put)

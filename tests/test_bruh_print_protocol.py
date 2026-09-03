@@ -18,7 +18,8 @@ import bruh_print_env  # noqa: E402
 # BRight's panel has a top-level `stores` too, so importing ours by putting
 # a directory on sys.path is a collision under `unittest discover`. See
 # tests/bruh_print_env.py.
-printers, protocol = bruh_print_env.load("dymo.printers", "dymo.protocol")
+printers, protocol, usb_link = bruh_print_env.load(
+    "dymo.printers", "dymo.protocol", "dymo.usb_link")
 
 ESC = 0x1B
 
@@ -196,6 +197,107 @@ class TestJob(unittest.TestCase):
             protocol.job([], bytes_per_line=84)
 
 
+class TestWhichAltsettingWePrintThrough(unittest.TestCase):
+    """`config[(0, 0)]` — interface 0, altsetting 0 — is what shipped.
+
+    The USB printer class defines two protocols and devices routinely
+    expose both as ALTSETTINGS of one interface: `01` unidirectional (bulk
+    OUT only) and `02` bidirectional (OUT and IN). Altsetting 0 is very
+    often the unidirectional one, so hardcoding it takes the read channel
+    away — which is why "Ask the printer" could only ever answer that it
+    had nothing to report: there was no endpoint to read from.
+    """
+
+    class _Endpoint:
+        def __init__(self, address, attributes):
+            self.bEndpointAddress = address
+            self.bmAttributes = attributes
+            self.wMaxPacketSize = 64
+
+    class _Interface:
+        def __init__(self, number, alt, endpoints, protocol=2):
+            self.bInterfaceNumber = number
+            self.bAlternateSetting = alt
+            self.bInterfaceClass = 7
+            self.bInterfaceProtocol = protocol
+            self._endpoints = endpoints
+
+        def __iter__(self):
+            return iter(self._endpoints)
+
+    class _Config:
+        def __init__(self, interfaces):
+            self._interfaces = interfaces
+
+        def __iter__(self):
+            return iter(self._interfaces)
+
+        def __getitem__(self, key):
+            return self._interfaces[0]
+
+    class _Util:
+        """Just the four things `_endpoint` asks of `usb.util`.
+
+        pyusb lives in the add-on image and not in the test environment, and
+        depending on it here would test pyusb rather than the choice this
+        module makes. The constants are USB's own.
+        """
+        ENDPOINT_IN, ENDPOINT_OUT, ENDPOINT_TYPE_BULK = 0x80, 0x00, 2
+
+        @staticmethod
+        def endpoint_direction(address):
+            return address & 0x80
+
+        @staticmethod
+        def endpoint_type(attributes):
+            return attributes & 0x03
+
+    def _link(self):
+        link = usb_link.Link.__new__(usb_link.Link)
+        link._usb = type("usb", (), {"util": self._Util})
+        return link
+
+    def _printer_class_device(self):
+        """What a great many USB printers actually look like."""
+        out = self._Endpoint(0x01, 2)   # bulk OUT
+        inn = self._Endpoint(0x82, 2)   # bulk IN
+        return self._Config([
+            self._Interface(0, 0, [out], protocol=1),        # unidirectional
+            self._Interface(0, 1, [out, inn], protocol=2),   # bidirectional
+        ])
+
+    def test_the_bidirectional_altsetting_wins(self):
+        chosen, why = self._link()._pick_interface(self._printer_class_device())
+        self.assertEqual(1, chosen.bAlternateSetting,
+                         "altsetting 0 is the unidirectional one here")
+        self.assertIn("bulk in and out", why)
+
+    def test_a_printer_with_only_one_direction_still_prints(self):
+        """Losing status is not a reason to refuse to print."""
+        out = self._Endpoint(0x01, 2)
+        config = self._Config([self._Interface(0, 0, [out], protocol=1)])
+        chosen, why = self._link()._pick_interface(config)
+        self.assertEqual(0, chosen.bAlternateSetting)
+        self.assertIn("cannot report status", why)
+
+    def test_an_interface_with_no_bulk_out_is_never_chosen(self):
+        inn = self._Endpoint(0x82, 2)
+        out = self._Endpoint(0x01, 2)
+        config = self._Config([
+            self._Interface(0, 0, [inn]),          # nothing to print through
+            self._Interface(0, 1, [out, inn]),
+        ])
+        chosen, _ = self._link()._pick_interface(config)
+        self.assertEqual(1, chosen.bAlternateSetting)
+
+    def test_the_choice_is_reported_rather_than_made_silently(self):
+        """A choice nobody can check is a choice nobody can correct — and
+        this one was wrong for two releases without any way to see it."""
+        _, why = self._link()._pick_interface(self._printer_class_device())
+        self.assertTrue(why.strip())
+        self.assertIn("interface 0 altsetting 1", why)
+
+
 class TestStatus(unittest.TestCase):
     def test_silence_is_not_ready(self):
         """The distinction the whole command exists for: a printer that did
@@ -206,7 +308,26 @@ class TestStatus(unittest.TestCase):
                 status = protocol.parse_status(quiet)
                 self.assertFalse(status.answered)
                 self.assertFalse(status.ok)
-                self.assertEqual("no status reported", status.summary)
+                self.assertIn("did not answer", status.summary)
+
+    def test_the_two_silences_do_not_share_a_sentence(self):
+        """"No status reported" meant both "the printer stayed quiet" and
+        "there is no channel to ask on", so a person read it and went to
+        check a printer that was fine.
+
+        Only the first is about the printer. The second is about which USB
+        altsetting we are printing through, and it is the one that used to
+        be reported as the printer's fault.
+        """
+        quiet = protocol.Status(answered=False)
+        deaf = protocol.Status(answered=False, unreadable=True)
+        self.assertNotEqual(quiet.summary, deaf.summary)
+        self.assertIn("did not answer", quiet.summary)
+        self.assertIn("read-back", deaf.summary)
+        self.assertIn("printing is unaffected", deaf.summary)
+        # Neither is ever good news.
+        self.assertFalse(quiet.ok)
+        self.assertFalse(deaf.ok)
 
     def test_a_clean_answer_is_ready(self):
         status = protocol.parse_status(bytes([0x00] * 32))

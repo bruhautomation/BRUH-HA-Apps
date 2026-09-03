@@ -187,8 +187,8 @@ BUILTIN: list[Stock] = [
         name="Cryogenic Labels",
         across_in=0.56, feed_in=3.44, per_roll=350,
         notes="Wrap-around tube label: the long dimension goes round the "
-              "vial. Text almost always wants rotating 90° — the template "
-              "'Cryo vial' already does.",
+              "tube or a cable. Text almost always wants rotating 90°, "
+              "which is what this stock's Turn setting already says.",
     ),
     _builtin(id="dymo-30252", sku="30252", name="Address",
              across_in=1.125, feed_in=3.5, per_roll=350),

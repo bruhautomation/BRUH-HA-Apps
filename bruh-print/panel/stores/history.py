@@ -2,7 +2,7 @@
 """What was printed, so it can be printed again.
 
 An index, not a queue: capped, never drained. The reason is the one thing
-people actually want from a label printer's history — the vial came out of
+people actually want from a label printer's history — the box came out of
 the freezer with a torn label and they need *that* label again, not a
 similar one. So each entry carries the fully-resolved label document, fields
 already substituted, and reprinting is a render of exactly those bytes.

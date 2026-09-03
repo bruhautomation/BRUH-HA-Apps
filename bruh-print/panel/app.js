@@ -739,7 +739,7 @@ function saveTemplateDialog() {
   nameField.append(el('span', null, 'Name'));
   const nameInput = el('input');
   nameInput.value = S.label.name || '';
-  nameInput.placeholder = 'Cryo vial';
+  nameInput.placeholder = 'Freezer bag';
   nameField.append(nameInput);
 
   const descField = el('label', 'field');
@@ -953,6 +953,36 @@ function renderPrinter() {
       try { const data = await api('/api/printer/status'); toast(`${printer.name}: ${data.status}.`, data.status_ok ? 'good' : 'bad'); }
       catch (error) { fail(error); }
     };
+    /* The descriptors, on a button. This add-on has been debugged twice by
+     * somebody standing at the printer reading a panel that could not say
+     * what it had found — and the descriptors are always readable even when
+     * the printer answers nothing. */
+    const usb = el('button', 'btn tiny', 'USB details');
+    usb.setAttribute('data-tip',
+      'Which interfaces and endpoints this printer exposes, and which one '
+      + 'BRUH Print is using. Worth copying into a bug report.');
+    usb.onclick = async () => {
+      try {
+        const data = await api('/api/printer/usb');
+        const body = $('modalBody');
+        body.innerHTML = '';
+        body.append(el('h3', null, 'USB details'));
+        body.append(el('p', 'lede', data.using || ''));
+        body.append(el('p', 'lede', `Status: ${data.status}`));
+        const pre = el('pre', 'usbdump');
+        pre.textContent = (data.interfaces || []).map((i) =>
+          `interface ${i.interface} alt ${i.altsetting}  `
+          + `class ${i.class} protocol ${i.protocol}\n`
+          + i.endpoints.map((e) =>
+            `    ${e.address}  ${e.type} ${e.direction}  ${e.packet} bytes`)
+            .join('\n')).join('\n\n') || 'no interfaces reported';
+        body.append(pre);
+        const close = el('button', 'btn', 'Close');
+        close.onclick = () => $('modal').close();
+        body.append(close);
+        $('modal').showModal();
+      } catch (error) { fail(error); }
+    };
     const ruler = el('button', 'btn tiny', 'Print the ruler');
     ruler.setAttribute('data-tip',
       'A label with millimetre ticks on both axes — the only way to check '
@@ -961,7 +991,7 @@ function renderPrinter() {
       try { const data = await post('/api/printer/test', {}); toast(`Ruler printed on the ${data.side} roll.`, 'good'); }
       catch (error) { fail(error); }
     };
-    foot.append(use, status, ruler);
+    foot.append(use, status, ruler, usb);
     card.append(foot);
     cards.append(card);
   }
