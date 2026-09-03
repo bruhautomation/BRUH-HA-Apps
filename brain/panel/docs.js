@@ -267,6 +267,19 @@ thermometers drift together that is the weather rather than a device, so the
 whole class stands down — what you get is the one room doing something the
 others are not.
 
+## When your house gets up
+
+Everything scheduled used to happen at a time somebody typed in, which is a
+timer rather than a rhythm. brAIn measures it instead: the first thing a
+**person** does each day is your house waking up, the last is it settling. Not
+a motion sensor (it fires for a cat and for the heating) and not a light (an
+automation does that at dawn) — somebody actually doing something.
+
+Two numbers a day, nothing else, and no answer until there is a fortnight of
+them. Weekdays and weekends are measured apart, so the weekend answer takes
+about five weeks to appear. A home that stirs anywhere between 05:00 and 11:00
+has no usual time and is told so, rather than handed the middle of that.
+
 ## When it rings your phone
 
 \`findings_notify_service\` pushes new findings straight to a \`notify.*\` service.
@@ -278,6 +291,14 @@ impossible reading.
 Urgency is not severity. A \`critical\` battery forecast is three weeks away; a
 \`warning\` about a boiler that has stopped answering is now. So it is a property
 of the check that raised the row, not of how the row is worded.
+
+**Send a morning brief** is the other half: one short message a day, at the
+hour your home actually starts moving. The part that matters is when it does
+not send — that decision is made before Claude is asked anything, out of
+things already counted (findings since the last one, brAIn itself not working,
+an odd night). A quiet morning costs nothing and sends nothing, because "all
+quiet" every day is the message people mute and each one that *is* sent costs
+a Claude turn.
 
 Everything else is **held rather than dropped**, and arrives as one message when
 the quiet ends. Anything you fixed or dismissed overnight is dropped from that

@@ -451,6 +451,43 @@ one room that is doing something the others are not.
 Claude can read it too: ask *"is the utility room damp?"* and it looks up
 what damp normally is in your utility room rather than picking a number.
 
+### It knows when your house gets up
+
+Everything scheduled used to happen at a time somebody typed into a box,
+which is a timer, not a rhythm — 07:00 is early on a Sunday and late on a
+Tuesday in the same home. So brAIn measures it instead: the first thing a
+**person** does each day is the house waking up, and the last is it settling.
+Not a motion sensor (which fires for a cat and for the heating) and not a
+light (an automation does that at dawn) — somebody actually doing something.
+
+It keeps two numbers a day and nothing else, and it will not answer until it
+has a fortnight of them. Weekdays and weekends are measured apart, because one
+number over both is wrong on all seven days rather than on none — which does
+mean the weekend answer takes about five weeks to appear, since a weekend is
+two days a week. And a home that stirs anywhere between 05:00 and 11:00 has no
+usual time, so it says so rather than reporting the middle of that as one.
+
+### A morning brief, when there is something to say
+
+Turn on **Send a morning brief** and brAIn sends one short message a day to
+your notify service, at the hour your home actually starts moving.
+
+The part that matters is when it *doesn't*. The decision to send is made
+before Claude is asked anything, out of things already counted: findings filed
+since the last brief, brAIn itself not working, an odd night. A quiet morning
+costs nothing and sends nothing — "all quiet" every day is the message people
+mute, and each one that *is* sent costs a Claude turn, which is why this is
+off by default.
+
+What Claude is for is the sentence: under eighty words, one paragraph, no
+greeting and no headings, because this is read on a lock screen. It can look
+things up to make a reason specific ("the freezer is at -12, usually -18") but
+it is not handed your house and it may not invent a number.
+
+Until brAIn has watched for a couple of weeks it uses the fallback hour you
+set. If it has been restarted and missed the window it waits for tomorrow
+rather than delivering breakfast at lunchtime.
+
 ### It knows what changed, and what changed it
 
 A state does not carry a cause. Nothing in `light.kitchen` being on says
@@ -638,6 +675,8 @@ the Terminal tab itself), because it changes nothing about how the add-on runs.
 | `findings_notify_min_severity` | `info` \| `warning` \| `serious` \| `critical` | `serious` | Only findings at or above this severity are pushed. The default means dying batteries and silent sensors ring your phone while naming nitpicks wait on the tab. |
 | `notify_quiet_start` | string | `22` | The hour (0–23, your home's timezone) from which only urgent findings ring your phone. Everything else is held and delivered as one message when the quiet ends. |
 | `notify_quiet_end` | string | `7` | The hour held findings are delivered. A window that crosses midnight (22 to 7) is the normal case. Set both the same, or both empty, for no quiet hours. |
+| `morning_brief` | bool | `false` | One short message a day, at the hour your home actually starts moving, and only when there is something to say. Each one sent costs a Claude turn; a quiet morning costs nothing. Needs `findings_notify_service` set. |
+| `morning_brief_hour` | string | `7` | When to send it until brAIn has measured your home's own hour (about a fortnight), or if your days are too irregular for there to be one. |
 
 > **Why the study limits are generous.** A turn cap is not a safety valve — it
 > *truncates*. A study session that hits it stops mid-thought and produces no

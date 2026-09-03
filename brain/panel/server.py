@@ -109,6 +109,7 @@ import actions
 import addon_options
 import atomic_write
 import baselines
+import brief
 import card_tags
 import chat_session
 import checks
@@ -126,6 +127,7 @@ import notify_router
 import override_ledger
 import onboarding
 import prompt_store
+import rhythm
 import run_sources
 import settings_store
 import terminal_proxy
@@ -866,6 +868,158 @@ def _notify_diagnostics() -> dict:
             time.time(), start, end, _tz),
         "held": len(queued),
         "held_since": oldest,
+    }
+
+
+# The brief is checked for often and sent at most once a day; the loop is
+# cheap because `brief.due` is arithmetic and `worth_saying` reads what is
+# already in memory. Nothing asks Claude until both have said yes.
+BRIEF_POLL_S = 5 * 60
+BRIEF_FIRST_DELAY_S = 300
+BRIEF_STATE: dict = {"last_sent": 0.0, "last_reasons": [], "last_error": ""}
+# What "overnight" means for the summary that rides in the prompt.
+BRIEF_NIGHT_HOURS = 12
+
+
+def _local_now(now: float):
+    """`now` on the house's own clock. One implementation, one answer."""
+    import datetime  # noqa: PLC0415 — the module has no other need of it
+
+    tz, _name = baselines.house_timezone()
+    return datetime.datetime.fromtimestamp(now, tz)
+
+
+def _brief_enabled() -> tuple[bool, int]:
+    opts = addon_options.snapshot() or {}
+    on = opts.get("morning_brief")
+    if on is None:
+        on = os.environ.get("BRAIN_MORNING_BRIEF", "").lower() in (
+            "true", "1", "yes")
+    hour = notify_router.parse_hour(
+        opts.get("morning_brief_hour")
+        if opts.get("morning_brief_hour") is not None
+        else os.environ.get("BRAIN_MORNING_BRIEF_HOUR", ""))
+    return bool(on), 7 if hour is None else hour
+
+
+async def _brief_overnight(now: float) -> dict:
+    """What the night looked like, as counts. One logbook fetch, once a day."""
+    import aiohttp
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            mined = await actions.collect(
+                session, now - BRIEF_NIGHT_HOURS * 3600, now,
+                await checks.snapshot._users(session))
+    except Exception as exc:  # noqa: BLE001 — a brief without the night is
+        # still a brief; a brief that failed because of it is not.
+        log.info("brief could not read the night: %s", exc)
+        return {}
+    if not mined.get("available"):
+        return {}
+    counts = mined.get("counts") or {}
+    out = {"counts": counts}
+    # "More than usual" needs a usual. Without one this says nothing
+    # rather than picking a number, which is the same rule the baselines
+    # and the override pattern carry.
+    unattributed = int(counts.get("unattributed") or 0)
+    total = sum(int(v or 0) for v in counts.values())
+    if total >= 20 and unattributed > total * 0.6:
+        out["unattributed_spike"] = unattributed
+    return out
+
+
+async def _send_brief(now: float) -> str:
+    """Gather, decide, and only then ask. Returns what was sent, or ''."""
+    verdict = {}
+    try:
+        payload = await _diagnostics_payload()
+        verdict = payload.get("health") or {}
+    except Exception as exc:  # noqa: BLE001 — the verdict is one reason of
+        # several, and not having it is not a reason to skip the morning.
+        log.info("brief could not read the health verdict: %s", exc)
+
+    night = await _brief_overnight(now)
+    state = brief.state_from(
+        await asyncio.to_thread(findings_store.list_all),
+        verdict, night, BRIEF_STATE["last_sent"] or (now - 86400))
+
+    reasons = brief.worth_saying(state)
+    BRIEF_STATE["last_reasons"] = reasons
+    if not reasons:
+        # The whole point. "All quiet" every morning is the message people
+        # mute, and it would cost a Claude turn to produce.
+        log.info("morning brief: nothing worth saying, not sent")
+        return ""
+
+    local = _local_now(now)
+    state["woke_at"] = rhythm.clock(
+        rhythm.wake_minute(rhythm.profile(), local))
+
+    result = await asyncio.to_thread(
+        engine.run_analyst, brief.frame(reasons, state), brief.SYSTEM,
+        eff_model(), brief.TIMEOUT_S, brief.MAX_TURNS,
+        "brief")
+    if not result.get("ok"):
+        BRIEF_STATE["last_error"] = str(result.get("error") or "no reply")
+        log.warning("morning brief failed: %s", BRIEF_STATE["last_error"])
+        return ""
+
+    body = brief.tidy(result.get("text") or result.get("raw") or "")
+    if not body:
+        BRIEF_STATE["last_error"] = "the reply was too short to send"
+        log.warning("morning brief: %s", BRIEF_STATE["last_error"])
+        return ""
+
+    BRIEF_STATE["last_error"] = ""
+    await _send_notification([{"text": body, "severity": "info"}])
+    return body
+
+
+async def _brief_loop():
+    """Wake often, send at most once, and only when there is something to say."""
+    await asyncio.sleep(BRIEF_FIRST_DELAY_S)
+    while True:
+        try:
+            on, fallback = _brief_enabled()
+            service, _sev = _findings_notify_target()
+            if on and service:
+                now = time.time()
+                local = _local_now(now)
+                if brief.due(now, local.hour * 60 + local.minute,
+                             rhythm.wake_minute(rhythm.profile(), local),
+                             fallback, BRIEF_STATE["last_sent"]):
+                    # Stamped before the run, not after: a pass that takes
+                    # three minutes must not let the next tick start a
+                    # second one, and a failed brief is still this
+                    # morning's — retrying it all morning is worse.
+                    BRIEF_STATE["last_sent"] = now
+                    sent = await _send_brief(now)
+                    log.info("morning brief %s",
+                             "sent" if sent else "skipped")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — the loop outlives a pass
+            log.warning("morning brief pass failed: %s", exc)
+        await asyncio.sleep(BRIEF_POLL_S)
+
+
+def _rhythm_diagnostics() -> dict:
+    """When this house is measured to stir, and what the brief did with it."""
+    try:
+        measured = rhythm.profile()
+    except Exception as exc:  # noqa: BLE001 — a dev checkout has no store
+        return {"error": str(exc)[:120]}
+    on, fallback = _brief_enabled()
+    return {
+        "days": measured.get("days", 0),
+        "weekday": measured.get(rhythm.WEEKDAY, {}),
+        "weekend": measured.get(rhythm.WEEKEND, {}),
+        "brief_enabled": on,
+        "brief_fallback_hour": fallback,
+        "brief_last_sent": int(BRIEF_STATE["last_sent"]),
+        "brief_last_reasons": len(BRIEF_STATE["last_reasons"]),
+        "brief_last_error": BRIEF_STATE["last_error"],
     }
 
 
@@ -2140,6 +2294,25 @@ def _record_overrides(snapshot: dict, now: float) -> int:
         return 0
 
 
+def _record_rhythm(snapshot: dict, now: float) -> int:
+    """File the first and last person-caused minute of each day this pass saw.
+
+    Same shape and the same reason as `_record_overrides`: the window is
+    a day and the question is about a fortnight, so somebody has to keep
+    the two numbers a day reduces to. Two per day is not a timeline.
+    """
+    mined = snapshot.get("actions") or {}
+    if not mined.get("available"):
+        return 0
+    try:
+        tz, _name = baselines.house_timezone()
+        return rhythm.record(mined.get("actions") or [], tz, now)
+    except Exception as exc:  # noqa: BLE001 — accounting must not fail the
+        # pass it is accounting for; same rule as `journal.record`.
+        log.warning("could not file this pass's rhythm: %s", exc)
+        return 0
+
+
 async def run_checks(reason: str = "schedule") -> dict:
     """One pass of every house check, applied to the findings store.
 
@@ -2168,6 +2341,7 @@ async def run_checks(reason: str = "schedule") -> dict:
         # every few hours over a day-long window, so the same override is
         # offered four or five times and only the first one lands.
         await asyncio.to_thread(_record_overrides, snapshot, started)
+        await asyncio.to_thread(_record_rhythm, snapshot, started)
         result = checks.run_all(snapshot, started)
 
         def apply() -> tuple[list[dict], int, list[dict]]:
@@ -2579,6 +2753,10 @@ def _diagnostics_payload() -> dict:
         # findings since Tuesday" — which is the failure this file exists
         # to make visible from outside.
         "notify": _notify_diagnostics(),
+        # The two things that decide when a person hears from brAIn, and
+        # both are invisible from outside: a rhythm that never gathered
+        # enough days looks exactly like one that did and chose 07:00.
+        "rhythm": _rhythm_diagnostics(),
         "daemons": _daemon_rollcall(),
         "usage": {k: usage.get(k) for k in ("source", "used_percent", "limits")},
     }
@@ -4492,6 +4670,7 @@ def make_app() -> web.Application:
         app["checks"] = asyncio.create_task(_checks_loop())
         app["baselines"] = asyncio.create_task(_baseline_loop())
         app["notify_flush"] = asyncio.create_task(_notify_flush_loop())
+        app["brief"] = asyncio.create_task(_brief_loop())
         if addon_options.available():
             app["options"] = asyncio.create_task(_options_poller())
         if engine.get_auth():
