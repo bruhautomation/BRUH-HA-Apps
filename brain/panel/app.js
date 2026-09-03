@@ -1970,6 +1970,13 @@ function renderDiagnostics(d) {
   } else {
     rows.push(diagRow("House checks", "no pass has finished yet"));
   }
+  const b = d.baselines || {};
+  rows.push(diagRow("What's normal here",
+    b.built_at
+      ? `${b.measured} sensors measured ${timeAgo(new Date(b.built_at * 1000).toISOString())}`
+        + (b.stale ? " — stale" : "")
+      : "not measured yet (the first pass runs overnight)",
+    !!b.stale && !!b.built_at));
   rows.push(diagRow("Findings open", String((d.findings || {}).open ?? 0)));
   if (failures.length) {
     const items = failures.slice(0, 5).map((f) =>

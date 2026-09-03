@@ -30,6 +30,10 @@ and so cannot clear anything):
     zha_devices    [{name, ieee, available, last_seen}] — absent unless ZHA
                     is installed, which is what makes the key unavailable
     recorder       {db_bytes, db_path, purge_keep_days}
+    baselines      what is normal here, per entity per hour of the week,
+                    as `panel/baselines.py` last measured it. Unavailable
+                    until the first nightly pass has run, which is a real
+                    state on a fresh install and not an unusual house
     actions        {actions, overrides, counts} — the last LOGBOOK_HOURS of
                     the logbook, with every state change filed under what
                     caused it. Unavailable when the logbook integration is
@@ -188,6 +192,7 @@ async def collect(now: float | None = None) -> dict:
     import aiohttp
 
     import actions
+    import baselines
     import ha_data
 
     now = time.time() if now is None else now
@@ -307,6 +312,16 @@ async def collect(now: float | None = None) -> dict:
             snap["actions"] = {"available": False, "actions": [],
                                "overrides": [], "counts": {}}
             _mark("actions", False, str(exc))
+
+    # Read, never built: the nightly pass in the panel measures the house
+    # and this only picks up what it left. A checks pass that rebuilt them
+    # would spend minutes of statistics queries every six hours to answer
+    # a question whose answer changes over weeks.
+    snap["baselines"] = baselines.load()
+    _mark("baselines", bool(snap["baselines"].get("entities")),
+          "" if snap["baselines"].get("entities") else
+          "brAIn has not measured what is normal here yet — the first "
+          "pass runs overnight")
 
     recorder = load_recorder()
     snap["recorder"] = recorder or {}

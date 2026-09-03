@@ -55,7 +55,7 @@ def house(**over) -> dict:
         "available": {k: True for k in (
             "states", "registry", "services", "automations", "traces",
             "stats", "battery_stats", "dashboards", "supervisor",
-            "recorder", "zha_devices", "actions")},
+            "recorder", "zha_devices", "actions", "baselines")},
         "errors": {},
         "blueprints_dir": "",
         "states": {
@@ -137,6 +137,18 @@ def house(**over) -> dict:
                      "db_path": "/config/home-assistant_v2.db"},
         "zha_devices": [{"name": "Back Door sensor", "ieee": "00:11",
                          "available": True, "last_seen": iso(1800)}],
+        # A month of readings, measured. `sensor.hall_temp` sits around 20
+        # with an ordinary wobble, so nothing about it is unusual — which
+        # is what `base.unusual` has to stay silent about.
+        "baselines": {
+            "built_at": int(NOW - DAY), "tz": "UTC", "days": 28, "asked": 1,
+            "entities": {"sensor.hall_temp": {
+                "unit": "°C", "samples": 672,
+                "overall": {"median": 20.0, "spread": 0.5, "n": 672},
+                "buckets": {str(h): {"median": 20.0, "spread": 0.5, "n": 4}
+                            for h in range(168)},
+            }},
+        },
         # A day of the house behaving: an automation acted, a person acted,
         # and nobody undid anybody.
         "actions": {

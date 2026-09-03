@@ -2,6 +2,68 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.32.0
+
+### Added
+
+- **The baseline engine: what is normal for this house** (`panel/baselines.py`).
+  "Unusual" is the word behind most of what people want a smart home to
+  notice — water running at night, a freezer drifting, a boiler on for twice
+  as long as it usually is — and until there is a number behind it, every
+  rule that uses it is a threshold somebody guessed. brAIn now measures, for
+  every numeric sensor, what it normally reads at **this hour of this day of
+  the week** and how far it normally strays, from a month of the house's own
+  long-term statistics. It runs overnight, costs no Claude turn, and decides
+  nothing by itself.
+
+  Five rules keep it honest. **The bucket is an hour of the week in the
+  house's own timezone** — a weekday 7am is not a Sunday 7am, and UTC would
+  smear every household's morning across two buckets and move it twice a
+  year; a timezone that cannot be read falls back to UTC and says so.
+  **Spread is a median absolute deviation, not a standard deviation** —
+  one meter that spiked when the oven came on would otherwise set a band
+  nothing can ever fall outside. **A reading that never moves has no
+  spread**, and dividing by it makes every change infinite, so there is a
+  floor under the spread and an entity whose whole history is one value is
+  reported as having no useful baseline rather than an exquisitely
+  sensitive one. **A bucket with too few samples says nothing** — an hour
+  seen twice is an anecdote. And **nothing here decides anything**: it
+  answers "how far outside its own normal is this, in units of its own
+  spread", and the checks and the model decide what is worth saying.
+
+- **`base.unusual`** — a reading well outside what this house normally does
+  at this hour. Six spreads (a MAD runs about two thirds of a standard
+  deviation, so the bar is higher than the number looks), nine when the
+  answer had to come from the entity's whole history rather than this hour,
+  and never for a move too small for a person to notice. It stands down for
+  a reading `dev.implausible` already claims — a thermometer at 99°C is
+  impossible before it is unusual, and two checks on one sensor under two
+  different fixes is how a list stops being read; they share the question so
+  they cannot disagree about it. And it says nothing at all when it would
+  say too much: more than a handful of rows means the *baseline* has stopped
+  describing the house (a heating season starting, a meter replaced), and
+  reporting fifty rows would be reporting the measurement rather than the
+  home.
+
+- **`base.stale`** — the measurement itself has stopped being taken. Not a
+  fact about the house but about brAIn, and it belongs on the list because
+  every baseline check silently says nothing while it is true, which is
+  indistinguishable from a house with nothing odd in it.
+
+- **`get_baseline`** MCP tool, read-only and on the analyst's allow-list.
+  It is what turns "that looks high" into "4.2 times its normal variation
+  for a Tuesday morning" — without it a model asked whether a reading is odd
+  has to invent a threshold, and it invents the same one for a freezer and a
+  water meter. `GET /api/baselines` and `POST /api/baselines/run` are the
+  same answer for the panel and for a person who does not want to wait until
+  tonight.
+
+### Changed
+
+- The settings dialog's Diagnostics section and the `brain report` bundle
+  both carry whether the house has been measured, how many sensors, and when
+  — numbers only, never a month of hourly medians for four hundred sensors.
+
 ## 1.31.0
 
 ### Added
