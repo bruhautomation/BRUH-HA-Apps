@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from . import fonts, image as ri
 from .label import Element, Label
 
 # Above this many words, every line-break combination is more arrangements
@@ -75,8 +76,6 @@ def _arrangements(words: list[str]) -> list[list[str]]:
 def _measure(draw, lines: list[str], font_key: str, box_px: tuple[int, int],
              spacing: float) -> tuple[int, list[str]]:
     """The largest whole-pixel font at which these exact lines fit."""
-    from . import fonts, image as ri  # noqa: PLC0415
-
     width_px, height_px = box_px
     low, high = 1, max(2, height_px)
     best = 0
@@ -104,8 +103,6 @@ def fit(text: str, stock, *, font: str = "sans-bold", dpi: int = 300,
     first.
     """
     from PIL import ImageDraw  # noqa: PLC0415
-
-    from . import image as ri  # noqa: PLC0415
 
     words = [w for w in str(text or "").split() if w]
     if uppercase:

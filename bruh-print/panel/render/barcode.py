@@ -18,8 +18,6 @@ switching encoder that drops into set C for a run of digits is what fits a
 """
 from __future__ import annotations
 
-import re
-
 # ---------------------------------------------------------------------------
 # Code 128
 # ---------------------------------------------------------------------------
@@ -49,7 +47,6 @@ _START_A, _START_B, _START_C = 103, 104, 105
 _CODE_A, _CODE_B, _CODE_C = 101, 100, 99
 _STOP = 106
 
-_DIGITS = re.compile(r"\d")
 
 
 class BarcodeError(ValueError):

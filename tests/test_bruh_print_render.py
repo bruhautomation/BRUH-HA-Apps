@@ -272,5 +272,34 @@ class TestAutofit(unittest.TestCase):
         self.assertGreater(len(fitted.lines), 1)
 
 
+class TestNumbersFromTheWire(unittest.TestCase):
+    """A label document is typed by hand or written by an automation, and
+    either can produce a number no canvas can be made from."""
+
+    def test_nan_and_the_infinities_both_fall_back(self):
+        """`w_mm: 1e999` parses to `inf`, and an infinite canvas is not a
+        slow render — it is an allocation nothing serves. The earlier guard
+        was `out == out`, which is a NaN test written as a comparison of
+        identical values: it read as a typo and caught only half of this."""
+        for bad in ("nan", "inf", "-inf", "1e999", float("nan")):
+            with self.subTest(value=bad):
+                self.assertEqual(7.0, label_doc._num(bad, 7.0))
+
+    def test_an_ordinary_number_is_untouched(self):
+        for good, want in ((3, 3.0), ("2.5", 2.5), (-1, -1.0), (0, 0.0)):
+            with self.subTest(value=good):
+                self.assertEqual(want, label_doc._num(good, 99.0))
+
+    def test_a_label_refuses_with_its_own_error_type(self):
+        """The panel echoes this type's message and nothing else's, so a
+        ValueError raised four frames down inside Pillow never reaches the
+        wire."""
+        with self.assertRaises(label_doc.LabelError):
+            label_doc.Label.from_dict({"elements": []})
+        with self.assertRaises(label_doc.LabelError):
+            label_doc.Label.from_dict(
+                {"stock": "x", "elements": [{"type": "hologram"}]})
+
+
 if __name__ == "__main__":
     unittest.main()

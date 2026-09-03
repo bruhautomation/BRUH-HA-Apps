@@ -39,7 +39,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # Everything the CodeQL workflow analyses. `.git` is excluded by walking from
 # the tracked trees rather than the root, and a directory that does not exist
 # in a partial checkout is simply skipped.
-PYTHON_TREES = ("brain", "bright", "bruh-minecraft-server", "tests", "branding")
+PYTHON_TREES = ("brain", "bright", "bruh-minecraft-server", "bruh-print",
+                "tests", "branding")
 
 
 def python_files() -> list[Path]:

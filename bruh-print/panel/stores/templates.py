@@ -37,6 +37,14 @@ PLACEHOLDER = re.compile(r"\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}")
 SUBSTITUTED = ("text", "data", "asset")
 
 
+class UnknownTemplate(KeyError):
+    """No template by that id or name. `detail` is what to show."""
+
+    def __init__(self, detail: str):
+        super().__init__(detail)
+        self.detail = detail
+
+
 @dataclass
 class Field:
     """One hole in a template, as the form that fills it."""
@@ -187,8 +195,9 @@ class TemplateStore:
         found = self.get(ref) or self.by_name(ref)
         if found is None:
             names = ", ".join(f'"{t.name}"' for t in self.all()[:8])
-            raise KeyError(
-                f"No template called {ref!r}. Saved templates: {names or 'none yet'}.")
+            raise UnknownTemplate(
+                f"No template called {ref!r}. Saved templates: "
+                f"{names or 'none yet'}.")
         return found
 
     def put(self, template: Template) -> Template:

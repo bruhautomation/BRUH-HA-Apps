@@ -121,9 +121,11 @@ def status_request() -> bytes:
 # means "the printer did not say", never "everything is fine". That
 # distinction is the whole value of asking — a panel that renders silence as
 # ready is a panel that says "ready" about an open lid.
-STATUS_READY = 0x00
-_BUSY_BITS = 0x01
-_TOP_OF_FORM_BIT = 0x02
+# Bit 0x02 is top-of-form, and it is deliberately not read: it says where
+# the paper is, not whether anything is wrong, and a status summary that
+# recites it would put a word in front of a person that means nothing to
+# them. Only the three that change what they should do are parsed.
+_BUSY_BIT = 0x01
 _OUT_OF_PAPER_BIT = 0x04
 _LID_OPEN_BIT = 0x08
 
@@ -163,7 +165,7 @@ def parse_status(block: bytes | None) -> Status:
     first = block[0]
     return Status(
         answered=True,
-        busy=bool(first & _BUSY_BITS),
+        busy=bool(first & _BUSY_BIT),
         out_of_labels=bool(first & _OUT_OF_PAPER_BIT),
         lid_open=bool(first & _LID_OPEN_BIT),
         raw=bytes(block),

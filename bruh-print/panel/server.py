@@ -47,6 +47,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -139,7 +140,13 @@ class Panel:
             self._printers_error = str(exc)
         except OSError as exc:
             self._printers = []
-            self._printers_error = f"The USB bus could not be read: {exc}"
+            # An OSError from the bus walk is the one place a message this
+            # codebase did not write is shown, and it earns it: the errno
+            # text ("Permission denied", "No such device") IS the diagnostic,
+            # and there is nothing else to say. Clamped, because the panel
+            # renders it on a card.
+            self._printers_error = (
+                f"The USB bus could not be read: {exc}"[:200])
         self._printers_at = time.time()
         return self._printers
 
@@ -309,6 +316,16 @@ class Panel:
         }
         try:
             SHARED.mkdir(parents=True, exist_ok=True)
+            # The one file here another process reads: Home Assistant Core,
+            # for the integration's sensors. It takes the umask's default
+            # like every other store rather than naming a mode — the same
+            # arrangement brAIn's mirrors use, and the reason a literal is
+            # wrong is that it would override a umask an operator set on
+            # purpose. It carries no credential (printer names, roll counts,
+            # template names), so the default being readable is fine; a
+            # deployment that narrows the umask far enough to hide it from
+            # Core would see the integration's entities go to "add-on
+            # stopped", which the binary sensor's `reason` then says.
             atomic_write.write_json(SHARED / "state.json", payload)
         except OSError as exc:
             log.warning("Could not mirror state to %s: %s", SHARED, exc)
@@ -343,12 +360,25 @@ def bad(message: str, status: int = 400, **extra) -> web.Response:
 
 
 async def body(request: web.Request) -> dict:
+    """The request's JSON object, or a 400 that does not quote the parser.
+
+    The decoder's message names a line and a column of the body it was
+    handed, which is useful and is not ours to hand back: it is text from a
+    library, about input, echoed to whoever sent it. It goes to the log,
+    where the person debugging an automation can read it, and the caller
+    gets the sentence that tells them what to change.
+    """
     try:
         payload = await request.json()
     except (ValueError, TypeError) as exc:
+        log.warning("Malformed JSON body on %s: %s", _for_log(request.path), exc)
         raise web.HTTPBadRequest(
-            text=json.dumps({"ok": False,
-                             "error": f"That was not JSON: {exc}"}),
+            text=json.dumps({
+                "ok": False,
+                "error": "That request body was not valid JSON. The add-on "
+                         "log has the parser's own message, with the line it "
+                         "stopped on.",
+            }),
             content_type="application/json") from exc
     return payload if isinstance(payload, dict) else {}
 
@@ -357,22 +387,39 @@ def panel(request: web.Request) -> Panel:
     return request.app[PANEL_KEY]
 
 
+def _refuse(message: str) -> web.HTTPBadRequest:
+    """A 400 whose body is a sentence this codebase wrote."""
+    return web.HTTPBadRequest(
+        text=json.dumps({"ok": False, "error": message}),
+        content_type="application/json")
+
+
+# Control characters are what turn one log line into two, and a forged line
+# in an add-on log is a forged line in whatever a person pastes into an
+# issue. Paths and template names both arrive from the wire.
+_LOG_UNSAFE = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _for_log(value: object, limit: int = 120) -> str:
+    """A value from the wire, safe to put in a log line."""
+    return _LOG_UNSAFE.sub("?", str(value))[:limit]
+
+
 def _render(state: Panel, document: dict, *, dpi: int | None = None,
             head_dots: int | None = None):
     """Parse and draw a label document. Raises with a readable sentence."""
     try:
         parsed = label_doc.Label.from_dict(document)
-    except ValueError as exc:
-        raise web.HTTPBadRequest(
-            text=json.dumps({"ok": False, "error": str(exc)}),
-            content_type="application/json") from exc
+    except label_doc.LabelError as exc:
+        # LabelError, not ValueError: the message is one this codebase wrote
+        # for a person, and catching the base class would put any ValueError
+        # raised four frames down inside Pillow on the wire too.
+        raise _refuse(exc.args[0] if exc.args else "That label cannot be read.")
 
     try:
         stock = state.stocks.require(parsed.stock)
-    except KeyError as exc:
-        raise web.HTTPBadRequest(
-            text=json.dumps({"ok": False, "error": str(exc).strip('"')}),
-            content_type="application/json") from exc
+    except stock_store.UnknownStock as exc:
+        raise _refuse(exc.detail)
 
     printer = state.chosen()
     model = printer.model if printer else dymo_printers.UNKNOWN
@@ -400,6 +447,9 @@ async def _send(state: Panel, rendered, *, side: str, copies: int) -> dict:
             usb_link.send, payload, state.printer_key())
     except (usb_link.UsbUnavailable, usb_link.PrinterNotFound,
             usb_link.PrinterBusy) as exc:
+        # These three are the only exceptions usb_link raises, and every one
+        # of their messages is composed in `usb_link._explain` for somebody
+        # standing at a printer. Echoing them is the point.
         raise PrintRefused(str(exc)) from exc
 
 
@@ -466,6 +516,7 @@ async def h_printer_status(request: web.Request) -> web.Response:
         result = await asyncio.to_thread(usb_link.probe, state.printer_key())
     except (usb_link.UsbUnavailable, usb_link.PrinterNotFound,
             usb_link.PrinterBusy) as exc:
+        # Authored in usb_link._explain — see the note in `_send`.
         return bad(str(exc), 503)
     return ok(result)
 
@@ -487,8 +538,8 @@ async def h_printer_test(request: web.Request) -> web.Response:
 
     try:
         stock = state.stocks.require(stock_id)
-    except KeyError as exc:
-        return bad(str(exc).strip('"'), 404)
+    except stock_store.UnknownStock as exc:
+        return bad(exc.detail, 404)
 
     side, notes = state.resolve_side(stock.id, side)
     document = _ruler_label(stock)
@@ -578,8 +629,8 @@ async def h_stock_swap(request: web.Request) -> web.Response:
     state = panel(request)
     try:
         entry = state.stocks.require(request.match_info["stock_id"])
-    except KeyError as exc:
-        return bad(str(exc).strip('"'), 404)
+    except stock_store.UnknownStock as exc:
+        return bad(exc.detail, 404)
     swapped = state.stocks.put(entry.swapped())
     state.mirror_state()
     return ok(stock=swapped.as_dict(),
@@ -615,8 +666,8 @@ async def h_roll_set(request: web.Request) -> web.Response:
     stock_id = str(payload.get("stock", "") or "")
     try:
         entry = state.stocks.require(stock_id)
-    except KeyError as exc:
-        return bad(str(exc).strip('"'), 404)
+    except stock_store.UnknownStock as exc:
+        return bad(exc.detail, 404)
     count = payload.get("remaining")
     if count in (None, ""):
         count = entry.per_roll
@@ -624,8 +675,8 @@ async def h_roll_set(request: web.Request) -> web.Response:
         roll = state.rolls.load_roll(
             side, entry.id, count=int(count),
             note=str(payload.get("note", "") or ""))
-    except KeyError as exc:
-        return bad(str(exc).strip('"'), 404)
+    except loaded.UnknownSide as exc:
+        return bad(exc.detail, 404)
     state.mirror_state()
     return ok(roll=roll.as_dict(),
               rolls=[r.as_dict() for r in state.rolls.all()])
@@ -635,8 +686,8 @@ async def h_roll_clear(request: web.Request) -> web.Response:
     state = panel(request)
     try:
         state.rolls.unload(request.match_info["side"])
-    except KeyError as exc:
-        return bad(str(exc).strip('"'), 404)
+    except loaded.UnknownSide as exc:
+        return bad(exc.detail, 404)
     state.mirror_state()
     return ok(rolls=[r.as_dict() for r in state.rolls.all()])
 
@@ -704,8 +755,8 @@ async def h_quick(request: web.Request) -> web.Response:
 
     try:
         entry = state.stocks.require(stock_id)
-    except KeyError as exc:
-        return bad(str(exc).strip('"'), 404)
+    except stock_store.UnknownStock as exc:
+        return bad(exc.detail, 404)
 
     rotate = payload.get("rotate")
     if rotate is None:
@@ -727,6 +778,8 @@ async def h_quick(request: web.Request) -> web.Response:
             max_mm=(float(payload["max_mm"]) if payload.get("max_mm") else None),
         )
     except ValueError as exc:
+        # quick.fit raises exactly one, and its text is written for a person
+        # ("There is nothing to print — type a word first.").
         return bad(str(exc))
 
     document = fitted.label.as_dict()
@@ -769,8 +822,8 @@ async def h_template_put(request: web.Request) -> web.Response:
     document = payload.get("label") or {}
     try:
         parsed = label_doc.Label.from_dict(document)
-    except ValueError as exc:
-        return bad(str(exc))
+    except label_doc.LabelError as exc:
+        return bad(exc.args[0] if exc.args else "That label cannot be read.")
 
     declared = {f.get("key"): f for f in (payload.get("fields") or [])
                 if isinstance(f, dict) and f.get("key")}
@@ -829,8 +882,8 @@ async def h_template_preview(request: web.Request) -> web.Response:
     payload = await body(request)
     try:
         template = state.templates.resolve(request.match_info["template_id"])
-    except KeyError as exc:
-        return bad(str(exc).strip('"'), 404)
+    except template_store.UnknownTemplate as exc:
+        return bad(exc.detail, 404)
     document, missing = _fill(state, template, payload)
     parsed, entry, rendered = await asyncio.to_thread(_render, state, document)
     scale = max(1, min(8, int(payload.get("scale", 2))))
@@ -845,8 +898,8 @@ async def h_template_print(request: web.Request) -> web.Response:
     payload = await body(request)
     try:
         template = state.templates.resolve(request.match_info["template_id"])
-    except KeyError as exc:
-        return bad(str(exc).strip('"'), 404)
+    except template_store.UnknownTemplate as exc:
+        return bad(exc.detail, 404)
 
     document, missing = _fill(state, template, payload)
     if missing and payload.get("require_fields", True):
@@ -1023,12 +1076,17 @@ async def json_errors(request: web.Request, handler):
         return web.json_response(
             {"ok": False, "error": exc.reason or "request failed"},
             status=exc.status)
-    except Exception as exc:  # noqa: BLE001 - the panel must not 500 silently
-        log.exception("Unhandled error on %s", request.path)
+    except Exception:  # noqa: BLE001 - the panel must not 500 silently
+        # The traceback goes to the log and the exception's text does not go
+        # to the caller: an unexpected error is by definition one whose
+        # message nobody here wrote, so it may name a path, a library
+        # internal or a value from somewhere else entirely.
+        log.exception("Unhandled error on %s", _for_log(request.path))
         return web.json_response(
             {"ok": False,
-             "error": f"BRUH Print hit an unexpected error: {exc}. The "
-                      f"add-on log has the traceback."},
+             "error": "BRUH Print hit an unexpected error. The add-on log "
+                      "has the traceback — it is the one thing worth "
+                      "attaching to a bug report."},
             status=500)
 
 

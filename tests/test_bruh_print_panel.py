@@ -17,7 +17,9 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-from aiohttp.test_utils import TestClient, TestServer  # noqa: E402
+from aiohttp.test_utils import (  # noqa: E402
+    TestClient, TestServer, make_mocked_request,
+)
 
 import bruh_print_env  # noqa: E402
 
@@ -381,6 +383,36 @@ class TestStocks(PanelCase):
 
 
 class TestFailureShapes(PanelCase):
+    async def test_an_unexpected_error_does_not_carry_its_own_text_out(self):
+        """An unexpected error is by definition one whose message nobody here
+        wrote, so it may name a path, a library internal, or a value from
+        somewhere else entirely. The traceback goes to the log.
+
+        The middleware is driven directly rather than through a route: the
+        router is frozen once the server is up, and a handler that raises is
+        not something a request can be made to produce on purpose. Same
+        reason `_settle` is a named function in brAIn's terminal bridge.
+        """
+        boom = "a-secret-looking-internal-detail"
+
+        async def explode(_request):
+            raise RuntimeError(boom)
+
+        request = make_mocked_request("GET", "/api/anything")
+        with self.assertLogs("bruh_print.panel", level="ERROR"):
+            response = await server.json_errors(request, explode)
+        self.assertEqual(500, response.status)
+        body = json.loads(response.text)
+        self.assertNotIn(boom, body["error"])
+        self.assertIn("add-on log", body["error"])
+
+    async def test_a_control_character_cannot_forge_a_log_line(self):
+        """A forged line in an add-on log is a forged line in whatever a
+        person pastes into an issue."""
+        self.assertEqual("a?b", server._for_log("a\nb"))
+        self.assertEqual("a?b", server._for_log("a\rb"))
+        self.assertEqual(120, len(server._for_log("x" * 400)))
+
     async def test_every_error_is_json_with_a_sentence_in_it(self):
         """An aiohttp HTTPException renders as an HTML page by default, and
         an HTML page reaching the bridge is an automation trace that says
@@ -389,13 +421,17 @@ class TestFailureShapes(PanelCase):
         self.assertEqual("application/json", response.content_type)
         self.assertIn("error", await response.json())
 
-    async def test_a_body_that_is_not_json_says_so(self):
+    async def test_a_body_that_is_not_json_says_so_without_quoting_the_parser(self):
+        """The decoder's own message names a line and a column of the body it
+        was handed — useful, and not ours to hand back to whoever sent it. It
+        goes to the log; the caller gets the sentence that says what to do."""
         response = await self.client.post(
             "/api/print", data="not json",
             headers={"Content-Type": "application/json"})
         self.assertEqual(400, response.status)
         body = await response.json()
-        self.assertIn("not JSON", body["error"])
+        self.assertIn("not valid JSON", body["error"])
+        self.assertNotIn("line 1", body["error"])
 
     async def test_a_label_with_no_stock_says_which_field_is_missing(self):
         status, body = await self.post("/api/print", {"label": {"elements": []}})

@@ -36,6 +36,14 @@ import atomic_write
 SIDES = ("left", "right")
 
 
+class UnknownSide(KeyError):
+    """A bay name that is not one of the two. `detail` is what to show."""
+
+    def __init__(self, detail: str):
+        super().__init__(detail)
+        self.detail = detail
+
+
 @dataclass
 class Roll:
     """One bay of the printer."""
@@ -83,7 +91,7 @@ class LoadedStore:
 
     def get(self, side: str) -> Roll:
         if side not in self._rolls:
-            raise KeyError(
+            raise UnknownSide(
                 f"A printer has a {SIDES[0]} and a {SIDES[1]} roll; there is "
                 f"no {side!r}.")
         return self._rolls[side]

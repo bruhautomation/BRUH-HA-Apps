@@ -16,6 +16,7 @@ would be a label silently missing its barcode.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -125,12 +126,34 @@ CATALOG: dict[str, dict[str, Any]] = {
 ROTATIONS = (0, 90, 180, 270)
 
 
+class LabelError(ValueError):
+    """A label document that cannot be read, with a sentence for a person.
+
+    A distinct type because the PANEL echoes this one's text to the caller
+    and nothing else's. Every message raised here is written for somebody
+    holding a printer — "there is no element called 'hologram'", "this label
+    does not say which stock it is for" — and echoing a bare `ValueError`
+    instead would mean the day Pillow or the stdlib raises one from four
+    frames down, its text goes out over HTTP too. The scanner is right that
+    the pattern is the problem rather than any one message.
+    """
+
+
 def _num(value: Any, default: float) -> float:
+    """A finite float, or the default.
+
+    NaN and the infinities both have to go: a label file is typed by hand or
+    written by an automation, and either can produce one — `w_mm: 1e999`
+    parses to `inf` and turns into a canvas size no allocator will serve.
+    `math.isfinite` covers both, where the earlier `out == out` was a NaN
+    test written as a comparison of identical values, which reads as a typo
+    and only ever caught half of it.
+    """
     try:
         out = float(value)
     except (TypeError, ValueError):
         return float(default)
-    return out if out == out and abs(out) != float("inf") else float(default)
+    return out if math.isfinite(out) else float(default)
 
 
 def _clamp(value: float, low: float, high: float) -> float:
@@ -153,7 +176,7 @@ class Element:
         kind = str(raw.get("type", "")).strip()
         if kind not in CATALOG:
             known = ", ".join(sorted(CATALOG))
-            raise ValueError(
+            raise LabelError(
                 f"There is no label element called {kind!r}. This label was "
                 f"probably saved by a newer BRUH Print. Known types: {known}.")
         spec = CATALOG[kind]["fields"]
@@ -199,7 +222,7 @@ class Label:
     def from_dict(cls, raw: dict) -> "Label":
         stock = str(raw.get("stock", "")).strip()
         if not stock:
-            raise ValueError(
+            raise LabelError(
                 "This label does not say which stock it is for. Pick one in "
                 "the designer — a label's size is the stock's size, so there "
                 "is nothing to render without it.")

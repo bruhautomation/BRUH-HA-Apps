@@ -49,6 +49,20 @@ MM_PER_IN = 25.4
 DEFAULT_MARGIN_MM = 1.0
 
 
+class UnknownStock(KeyError):
+    """A stock id nothing in the catalog answers to.
+
+    Its `detail` is what the panel shows. A `KeyError`'s own `str()` wraps
+    the message in quotes — which is why the panel used to `.strip('"')`,
+    and which is the sort of thing that gets copied into the next handler
+    and then forgotten.
+    """
+
+    def __init__(self, detail: str):
+        super().__init__(detail)
+        self.detail = detail
+
+
 @dataclass
 class Stock:
     """One kind of label."""
@@ -216,7 +230,7 @@ class StockStore:
         stock = self.get(stock_id)
         if stock is None:
             known = ", ".join(s.id for s in self.all()[:6])
-            raise KeyError(
+            raise UnknownStock(
                 f"No label stock called {stock_id!r}. Known: {known}…")
         return stock
 
