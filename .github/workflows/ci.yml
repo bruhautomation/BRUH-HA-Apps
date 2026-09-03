@@ -133,6 +133,22 @@ jobs:
       - name: Measure BRight's Manual tab
         run: node tests/manual/measure-manual.mjs
 
+      # BRUH Print's panel, on its own booted instance. Every failure this
+      # catches is a layout one that geometry can see and reading cannot:
+      # a bar wider than the window, a <select> sized to its widest option,
+      # a touch target under 44px, an empty toast that `[hidden]` did not
+      # hide, a design canvas that does not fit its pane. The only thing
+      # stood in for is the USB write.
+      - name: Measure BRUH Print's panel
+        run: |
+          pip install --quiet aiohttp pillow qrcode
+          python3 tests/manual/bruh_print_demo_panel.py /tmp/bruh-print-demo &
+          for _ in $(seq 1 40); do
+            curl -sf -o /dev/null http://127.0.0.1:8097/api/health && break
+            sleep 0.5
+          done
+          node tests/manual/measure-print-panel.mjs
+
   hassfest:
     name: HA integration validation
     runs-on: ubuntu-latest

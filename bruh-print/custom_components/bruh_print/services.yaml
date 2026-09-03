@@ -1,0 +1,220 @@
+print_text:
+  name: Print text
+  description: >-
+    Type a word or a line and BRUH Print fits it to the label as large as it
+    will go. The quickest way to label something from an automation, a script
+    or a voice command.
+  fields:
+    text:
+      name: Text
+      description: What the label should say. Line breaks are honoured; without
+        them BRUH Print picks the arrangement that comes out biggest.
+      required: true
+      example: Buffer A pH 7.4
+      selector:
+        text:
+    stock:
+      name: Label stock
+      description: Which label to fit it to. Defaults to the one set in the
+        add-on's configuration.
+      example: edcc-082wh
+      selector:
+        text:
+    side:
+      name: Roll
+      description: >-
+        Which roll of a Twin Turbo to print on. Leave empty and BRUH Print
+        uses whichever roll holds this stock.
+      selector:
+        select:
+          options:
+            - label: Wherever this stock is loaded
+              value: ""
+            - label: Left
+              value: left
+            - label: Right
+              value: right
+    copies:
+      name: Copies
+      selector:
+        number:
+          min: 1
+          max: 500
+          mode: box
+    font:
+      name: Font
+      example: sans-bold
+      selector:
+        text:
+    rotate:
+      name: Rotation
+      description: >-
+        Leave unset and BRUH Print turns the text along the roll on tall,
+        narrow stock (a wrap-around vial label) and across it on everything
+        else.
+      selector:
+        select:
+          options: ["0", "90", "180", "270"]
+    uppercase:
+      name: Uppercase
+      selector:
+        boolean:
+
+print_template:
+  name: Print a template
+  description: >-
+    Fill in a saved template and print it. Templates are made in the panel:
+    anywhere you write {{field}} becomes a box to fill in here.
+  fields:
+    template:
+      name: Template
+      description: Its name, as shown on the panel's Templates tab. Not
+        case-sensitive.
+      required: true
+      example: Cryo vial
+      selector:
+        text:
+    fields:
+      name: Fields
+      description: >-
+        The values to put in, keyed by field name. {{date}} and
+        {{time}} fill themselves in and do not need to be given.
+      example: '{"sample": "9912", "owner": "MS"}'
+      selector:
+        object:
+    side:
+      name: Roll
+      selector:
+        select:
+          options:
+            - label: Wherever this stock is loaded
+              value: ""
+            - label: Left
+              value: left
+            - label: Right
+              value: right
+    copies:
+      name: Copies
+      selector:
+        number:
+          min: 1
+          max: 500
+          mode: box
+
+print_label:
+  name: Print a label
+  description: >-
+    Print a complete label document — the same JSON the panel's designer
+    produces. For scripts that build a label rather than filling one in.
+  fields:
+    label:
+      name: Label
+      description: The label document, with a stock and a list of elements.
+      required: true
+      selector:
+        object:
+    side:
+      name: Roll
+      selector:
+        select:
+          options:
+            - label: Wherever this stock is loaded
+              value: ""
+            - label: Left
+              value: left
+            - label: Right
+              value: right
+    copies:
+      name: Copies
+      selector:
+        number:
+          min: 1
+          max: 500
+          mode: box
+
+reprint:
+  name: Print the last label again
+  description: >-
+    Reprint something from the history, exactly as it came out — fields
+    already filled in. Without an entry id it reprints the most recent label.
+  fields:
+    entry:
+      name: History entry
+      description: The id from sensor.bruh_print_last_label's attributes.
+        Leave empty for the most recent.
+      selector:
+        text:
+    copies:
+      name: Copies
+      selector:
+        number:
+          min: 1
+          max: 500
+          mode: box
+    side:
+      name: Roll
+      selector:
+        select:
+          options:
+            - label: Same roll as before
+              value: ""
+            - label: Left
+              value: left
+            - label: Right
+              value: right
+
+set_roll:
+  name: Say what is loaded
+  description: >-
+    Tell BRUH Print which labels are in a roll. It cannot see this for
+    itself — a LabelWriter has no idea what stock is in it — and it is what
+    stops a 2.25-inch label being printed onto a 0.56-inch roll.
+  fields:
+    side:
+      name: Roll
+      required: true
+      selector:
+        select:
+          options:
+            - label: Left
+              value: left
+            - label: Right
+              value: right
+    stock:
+      name: Label stock
+      description: The stock id, from the panel's Printer tab.
+      required: true
+      example: edcc-082wh
+      selector:
+        text:
+    remaining:
+      name: Labels remaining
+      description: Defaults to a full roll. This is only ever an estimate.
+      selector:
+        number:
+          min: 0
+          max: 10000
+          mode: box
+
+print_test:
+  name: Print the ruler
+  description: >-
+    Print a label with millimetre ticks along both edges. The only way to
+    check that a stock's measurements are the way round BRUH Print thinks
+    they are, since a LabelWriter never reports what it printed on.
+  fields:
+    stock:
+      name: Label stock
+      selector:
+        text:
+    side:
+      name: Roll
+      selector:
+        select:
+          options:
+            - label: Wherever this stock is loaded
+              value: ""
+            - label: Left
+              value: left
+            - label: Right
+              value: right

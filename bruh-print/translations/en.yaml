@@ -1,0 +1,42 @@
+---
+# Option labels and help text for BRUH Print's configuration UI.
+#
+# config.yaml documents every option inline and none of that reaches the
+# person filling in the form. This file is that documentation, moved to where
+# it is read.
+configuration:
+  enable_ha_integration:
+    name: Home Assistant integration
+    description: >-
+      Deploy the companion bruh_print integration, which adds the
+      bruh_print.print_text, print_template and print_label services, sensors
+      for the printer and each roll, and the data the Lovelace card reads.
+      Turn it off if you only ever print from the panel.
+  install_lovelace_card:
+    name: Install the Lovelace card
+    description: >-
+      Copy the BRUH Print card into your dashboard resources so it appears in
+      the card picker. It is a plain JavaScript file in /config/www/bruh_print
+      — turning this off leaves it there and only stops it being registered,
+      so nothing you have already added to a dashboard breaks.
+  default_stock:
+    name: Default label stock
+    description: >-
+      Which label a new design starts on, and what a print_text service call
+      assumes when it does not name one. Use the id shown beside each stock on
+      the panel's Printer tab (for example edcc-082wh). You can change stocks
+      in the panel without restarting; this is only the starting point.
+  enforce_stock:
+    name: Check the label against the roll
+    description: >-
+      Refuse to print when the label's stock is not what the target roll
+      holds. Leave this on: a LabelWriter cannot tell what is loaded, so
+      sending a 2.25-inch-wide label to a 0.56-inch roll prints across the
+      backing paper — once for every copy. Turn it off only if you change
+      rolls more often than you update the panel.
+  log_level:
+    name: Log level
+    description: >-
+      Verbosity of the add-on's own logging. "info" is normal. Successful
+      status polls are hidden at every level except "debug", because the
+      Lovelace card polls and they would otherwise fill the log.

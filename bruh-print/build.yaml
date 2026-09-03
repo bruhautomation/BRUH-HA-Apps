@@ -1,0 +1,14 @@
+# Only read by Supervisor versions before 2026.04.0 — newer Supervisors
+# ignore build.yaml entirely and use the Dockerfile's own ARG defaults.
+build_from:
+  aarch64: ghcr.io/home-assistant/aarch64-base:3.24
+  amd64: ghcr.io/home-assistant/amd64-base:3.24
+
+args:
+  ADDON_VERSION: "{{ version }}"
+
+labels:
+  org.opencontainers.image.title: "Home Assistant App: BRUH Print"
+  org.opencontainers.image.description: "Design and print labels on a USB DYMO LabelWriter from Home Assistant"
+  org.opencontainers.image.source: "https://github.com/bruhautomation/BRUH-HA-Apps"
+  org.opencontainers.image.licenses: "MIT"

@@ -1,0 +1,122 @@
+---
+name: "BRUH Print"
+description: "Design and print labels on a USB DYMO LabelWriter from Home Assistant — a full label designer, fill-in-the-blank templates, Twin Turbo roll selection, and a Lovelace card"
+version: "0.1.0"
+slug: "bruh-print"
+init: false
+
+# Pull the prebuilt image rather than building on the user's machine. Same
+# arrangement as the other add-ons here, and the same trap: with this key set
+# the Supervisor stops building and pulls, so a version here with no matching
+# tag on the registry — or a package that is not Public — is not a slow
+# install, it is an add-on that will not install at all.
+#
+# The image name follows the FOLDER, not the slug (they agree here, but they
+# do not for bruh-minecraft-server): build.yml names it after the matrix
+# entry, which is the directory it builds.
+image: "ghcr.io/bruhautomation/{arch}-bruh-print"
+
+arch:
+  - aarch64
+  - amd64
+
+url: "https://github.com/bruhautomation/BRUH-HA-Apps/tree/main/bruh-print"
+
+# AppArmor profile — see apparmor.txt next to this file. Same host-escape
+# denials as the other add-ons, plus the one thing that is specific here:
+# this add-on opens USB device nodes, so /dev/bus/usb is allowed explicitly
+# rather than by the blanket `file,` rule alone.
+apparmor: true
+
+boot: auto
+startup: services
+stage: stable
+
+# The panel is on a bridged network and its port is not published, so this
+# URL is the Supervisor reaching the container internally. Unlike BRight,
+# nothing here needs host_network — a LabelWriter is on USB, not the LAN —
+# so the port can be pinned and the watchdog can be the Supervisor's own.
+watchdog: "http://[HOST]:[PORT:8097]/api/health"
+
+homeassistant: "2023.6.0"
+
+# Nothing under /data is a credential — there is no login here at all — but
+# uploaded images and the render cache are bulk that a backup does not need.
+# Paths are relative to /data.
+backup_exclude:
+  - assets/**
+
+ingress: true
+ingress_port: 8097
+panel_icon: mdi:printer-pos
+panel_title: "BRUH Print"
+panel_admin: true
+
+# USB access. This is the whole reason the add-on exists and it is the one
+# permission it needs: `usb: true` maps the host's /dev/bus/usb in, which is
+# what libusb opens to talk to the printer. It does NOT publish a port, does
+# not need host networking, and does not affect the add-on's security rating.
+#
+# It only takes effect on a RESTART after it is granted, which is the single
+# most common "BRUH Print cannot see my printer" — so panel/dymo/usb_link.py
+# words that failure as a restart rather than as a permissions error.
+usb: true
+
+# ============================================================================
+# App configuration options
+# ----------------------------------------------------------------------------
+# Documented inline for whoever edits this file; the text users actually see
+# is in translations/en.yaml, because nobody installing an add-on reads YAML
+# comments.
+# ============================================================================
+options:
+  # enable_ha_integration: deploy the companion `bruh_print` custom
+  # integration and run the file-IPC bridge, which is what gives Home
+  # Assistant the bruh_print.print_text / print_template / print_label
+  # services, the printer sensors, and the data the Lovelace card reads.
+  enable_ha_integration: true
+
+  # install_lovelace_card: copy bruh-print-card.js into /config/www and
+  # register it as a frontend resource, so the card is available in the
+  # dashboard picker without anyone editing resources by hand.
+  install_lovelace_card: true
+
+  # default_stock: which label stock a new label starts on, and what the
+  # print_text service assumes when a call does not name one. It is the id
+  # from the Printer tab's stock list.
+  default_stock: edcc-082wh
+
+  # enforce_stock: refuse a print whose label stock is not what the target
+  # roll holds. On by default, because sending a 2.25"-wide raster to a
+  # 0.56" roll prints across the liner once per copy. The panel can change
+  # this without a restart; this is the value it starts from.
+  enforce_stock: true
+
+  # log_level: verbosity of the add-on's own logging. Successful polls of
+  # /api/state and /api/health are dropped at every level except debug —
+  # the Lovelace card polls, and a working install would otherwise write a
+  # line every couple of seconds.
+  log_level: info
+schema:
+  enable_ha_integration: bool
+  install_lovelace_card: bool
+  default_stock: "str"
+  enforce_stock: bool
+  log_level: "list(trace|debug|info|notice|warning|error|fatal)"
+
+# /config carries the custom integration deploy, the shared state the
+# integration reads, and (when install_lovelace_card is on) www/bruh_print.
+map:
+  - type: homeassistant_config
+    read_only: false
+    path: /config
+
+hassio_api: true
+hassio_role: default
+homeassistant_api: true
+auth_api: false
+
+# Auto-discovery: registers "bruh_print" with the Supervisor so HA Core can
+# offer a one-click setup tile for the companion integration.
+discovery:
+  - bruh_print

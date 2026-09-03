@@ -55,6 +55,29 @@ switch-driven party lights run the show in sync.
 
 📖 [add-on README](bright/) · [full documentation](bright/DOCS.md)
 
+### [BRUH Print](bruh-print/)
+
+**Type a word, get a label.** Plug a DYMO LabelWriter into your Home
+Assistant box over USB and print to it from the sidebar, from a dashboard, or
+from an automation.
+
+- **A real designer** — text, Code 128 barcodes, QR codes, boxes, rules and
+  images, dragged and resized on the label itself, in millimetres
+- **Type it and print it** — every way of breaking your words across lines is
+  rendered and the biggest wins, so you only say the words
+- **Templates** — write `{{sample}}` anywhere and it becomes a box to fill in,
+  in the panel, in the card, and in `bruh_print.print_template`
+- **It knows what is in the printer** — which stock is in which roll, checked
+  before every print, because a LabelWriter cannot tell you itself and a
+  2.25″ label on a 0.56″ roll prints across the liner once per copy
+- **Twin Turbo roll selection**, and no roll control at all on a printer that
+  has one
+- **No CUPS, no drivers** — it speaks the LabelWriter's raster protocol
+  directly over USB
+- **A Lovelace card** with a text mode, a template mode and one-press buttons
+
+📖 [add-on README](bruh-print/) · [full documentation](bruh-print/DOCS.md)
+
 ## Installation
 
 Click the badge above, or add this repository URL to your Home Assistant add-on store (**Settings → Add-ons → Add-on Store → ⋮ → Repositories**):
@@ -76,7 +99,7 @@ https://github.com/bruhautomation/BRUH-HA-Apps
 
 ## Disclaimer
 
-BRUH Automation and these add-ons are independent projects, **not affiliated with, endorsed by, or sponsored by Anthropic, Home Assistant / Nabu Casa, Mojang, or Microsoft**. "Claude" and "Claude Code" are trademarks of Anthropic, PBC; "Minecraft" is a trademark of Mojang Synergies AB; "Home Assistant" is a trademark of the Open Home Foundation; "LIFX" is a trademark of LIFX Pty Ltd, and BRight speaks the published LIFX LAN protocol without being affiliated with or endorsed by them. The brAIn add-on runs the official Claude Code CLI under **your own** Anthropic account — your use of Claude through it is governed by [Anthropic's terms](https://www.anthropic.com/legal/consumer-terms). The BRUH Minecraft add-on downloads server software from official upstream sources at runtime and requires you to accept the [Minecraft EULA](https://www.minecraft.net/eula) yourself.
+BRUH Automation and these add-ons are independent projects, **not affiliated with, endorsed by, or sponsored by Anthropic, Home Assistant / Nabu Casa, Mojang, or Microsoft**. "Claude" and "Claude Code" are trademarks of Anthropic, PBC; "Minecraft" is a trademark of Mojang Synergies AB; "Home Assistant" is a trademark of the Open Home Foundation; "LIFX" is a trademark of LIFX Pty Ltd, and BRight speaks the published LIFX LAN protocol without being affiliated with or endorsed by them; "DYMO" and "LabelWriter" are trademarks of Newell Brands, and BRUH Print speaks the published LabelWriter raster protocol without being affiliated with or endorsed by them. The brAIn add-on runs the official Claude Code CLI under **your own** Anthropic account — your use of Claude through it is governed by [Anthropic's terms](https://www.anthropic.com/legal/consumer-terms). The BRUH Minecraft add-on downloads server software from official upstream sources at runtime and requires you to accept the [Minecraft EULA](https://www.minecraft.net/eula) yourself.
 
 ## Credits
 

@@ -265,8 +265,21 @@ class TestEveryStoreUsesIt(unittest.TestCase):
         shows up as one failed CI run in three.
         """
         offenders = []
-        for panel in (BASE_DIR / "brain" / "panel", BASE_DIR / "bright" / "panel"):
-            for path in sorted(panel.glob("*.py")):
+        # rglob, not glob: the stores that would copy this pattern live in
+        # subpackages (`stores/`, `checks/`), which a flat glob never looked
+        # at — so the guard covered the files least likely to grow a new
+        # store and none of the ones most likely to.
+        #
+        # bruh-minecraft-server is deliberately absent. It has three real
+        # instances of exactly this pattern (`server.properties.tmp`, written
+        # from a request handler), and they are somebody else's change: a
+        # guard added here that fails on code this test's PR did not touch is
+        # a guard that gets deleted rather than obeyed.
+        panels = (BASE_DIR / "brain" / "panel",
+                  BASE_DIR / "bright" / "panel",
+                  BASE_DIR / "bruh-print" / "panel")
+        for panel in panels:
+            for path in sorted(panel.rglob("*.py")):
                 if path.name == "atomic_write.py":
                     continue  # the one file allowed to talk about scratch files
                 text = path.read_text(encoding="utf-8")

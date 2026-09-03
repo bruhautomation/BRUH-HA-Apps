@@ -34,6 +34,7 @@ INTEGRATIONS = [
     ("brain", "brain"),
     ("bruh-minecraft-server", "bruh_minecraft"),
     ("bright", "bright"),
+    ("bruh-print", "bruh_print"),
 ]
 
 # The four files HA looks for, and the size each must be. Icons are exact
