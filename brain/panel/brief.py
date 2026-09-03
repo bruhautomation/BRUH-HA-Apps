@@ -28,10 +28,7 @@ It is not handed the house.
 """
 from __future__ import annotations
 
-import logging
 import time
-
-log = logging.getLogger("brain.brief")
 
 # Under eighty words, because this is read on a lock screen. A brief that
 # has to be opened to be read is a notification that failed.
