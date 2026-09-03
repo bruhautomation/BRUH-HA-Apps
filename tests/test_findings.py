@@ -16,6 +16,7 @@ expensive in a way a screenshot wouldn't show:
     reports as a failure carrying the tail rather than raising.
 """
 
+import datetime as dt
 import asyncio
 import importlib
 import json
@@ -343,14 +344,14 @@ class TestFindingsStateMirror(StoreCase):
         self.assertEqual(self._state()["open"], 1)
 
 
-class TestFindingsNotify(StoreCase):
-    """New findings can reach a phone, gated on severity.
+class NotifyCase(StoreCase):
+    """A findings store plus a notify service that records instead of sending.
 
-    The gate lives server-side in _announce_findings: only CREATED rows are
-    ever handed to it (add_many dedupes across every status and the settled
-    ledger), the notify target comes from the add-on option with an env
-    fallback, and a failed delivery is a log line — the finding is already
-    safe on the list by the time this runs."""
+    Shared rather than inherited from one test class by another: a subclass
+    of a TestCase re-runs every one of its parent's cases under the
+    subclass's own setUp, so `TestQuietHoursRouting` inheriting the notify
+    cases would have re-run them inside quiet hours and failed them.
+    """
 
     def setUp(self):
         super().setUp()
@@ -374,6 +375,16 @@ class TestFindingsNotify(StoreCase):
 
     def _announce(self, created):
         asyncio.run(self.server._announce_findings(created))
+
+
+class TestFindingsNotify(NotifyCase):
+    """New findings can reach a phone, gated on severity.
+
+    The gate lives server-side in _announce_findings: only CREATED rows are
+    ever handed to it (add_many dedupes across every status and the settled
+    ledger), the notify target comes from the add-on option with an env
+    fallback, and a failed delivery is a log line — the finding is already
+    safe on the list by the time this runs."""
 
     def test_no_target_means_no_notification(self):
         created = findings_store.add_many([{"text": "X", "severity": "critical"}])
@@ -413,6 +424,147 @@ class TestFindingsNotify(StoreCase):
         self.ha_data.send_notification = boom
         created = findings_store.add_many([{"text": "X", "severity": "critical"}])
         self._announce(created)   # must not raise
+
+
+class TestQuietHoursRouting(NotifyCase):
+    """The panel's own use of the router, driven rather than grepped.
+
+    `notify_router` is tested on its own; this is the wiring, which is
+    where the mistakes actually live — a quiet window read from the wrong
+    place, an urgent row held with the rest, a held row never queued.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.notify_router = importlib.import_module("notify_router")
+        self.baselines = importlib.import_module("baselines")
+        self.queue = str(Path(self.tmp.name) / "notify-queue.json")
+        self._old_queue = self.notify_router.QUEUE_FILE
+        self.notify_router.QUEUE_FILE = self.queue
+        os.environ["BRAIN_FINDINGS_NOTIFY"] = "mobile_app_phone"
+        os.environ["BRAIN_FINDINGS_NOTIFY_MIN_SEVERITY"] = "info"
+        # The house's clock is the router's clock, and a test may not
+        # depend on the machine's.
+        self._old_tz = self.baselines.house_timezone
+        self.baselines.house_timezone = lambda *a, **k: (
+            dt.timezone.utc, "UTC")
+
+    def tearDown(self):
+        self.notify_router.QUEUE_FILE = self._old_queue
+        self.baselines.house_timezone = self._old_tz
+        for var in ("BRAIN_NOTIFY_QUIET_START", "BRAIN_NOTIFY_QUIET_END"):
+            os.environ.pop(var, None)
+        super().tearDown()
+
+    def quiet(self, start="22", end="7"):
+        os.environ["BRAIN_NOTIFY_QUIET_START"] = start
+        os.environ["BRAIN_NOTIFY_QUIET_END"] = end
+
+    def at(self, hour):
+        """Pin the panel's clock inside or outside the window."""
+        when = dt.datetime(2026, 3, 4, hour, 30,
+                           tzinfo=dt.timezone.utc).timestamp()
+        old = self.server.time.time
+        self.server.time.time = lambda: when
+        self.addCleanup(lambda: setattr(self.server.time, "time", old))
+
+    def rows(self, *specs):
+        return findings_store.add_many([
+            {"text": text, "severity": "warning", "source": source}
+            for text, source in specs])
+
+    def test_outside_the_window_everything_goes_straight_out(self):
+        self.quiet()
+        self.at(14)
+        self._announce(self.rows(("Drifting", "check:forecast.decline")))
+        self.assertEqual(len(self.sent), 1)
+        self.assertEqual(self.notify_router.load_queue(self.queue), [])
+
+    def test_inside_the_window_an_ordinary_row_is_held_not_sent(self):
+        self.quiet()
+        self.at(3)
+        self._announce(self.rows(("Drifting", "check:forecast.decline")))
+        self.assertEqual(self.sent, [])
+        held = self.notify_router.load_queue(self.queue)
+        self.assertEqual([r["text"] for r in held], ["Drifting"])
+
+    def test_inside_the_window_an_urgent_row_still_gets_through(self):
+        self.quiet()
+        self.at(3)
+        self._announce(self.rows(("Boiler offline", "check:dev.unavailable")))
+        self.assertEqual(len(self.sent), 1)
+        self.assertIn("Boiler offline", self.sent[0][2])
+        self.assertEqual(self.notify_router.load_queue(self.queue), [])
+
+    def test_one_batch_can_split_both_ways(self):
+        self.quiet()
+        self.at(3)
+        self._announce(self.rows(
+            ("Boiler offline", "check:dev.unavailable"),
+            ("Drifting", "check:forecast.decline")))
+        self.assertEqual(len(self.sent), 1)
+        self.assertIn("Boiler offline", self.sent[0][2])
+        self.assertNotIn("Drifting", self.sent[0][2])
+        self.assertEqual(
+            [r["text"] for r in self.notify_router.load_queue(self.queue)],
+            ["Drifting"])
+
+    def test_no_quiet_hours_configured_holds_nothing(self):
+        self.at(3)
+        self._announce(self.rows(("Drifting", "check:forecast.decline")))
+        self.assertEqual(len(self.sent), 1)
+        self.assertEqual(self.notify_router.load_queue(self.queue), [])
+
+    def test_the_severity_floor_still_comes_first(self):
+        # A row nobody wanted notifying about must not be held either —
+        # otherwise it arrives in the morning digest instead.
+        os.environ["BRAIN_FINDINGS_NOTIFY_MIN_SEVERITY"] = "serious"
+        self.quiet()
+        self.at(3)
+        self._announce(self.rows(("Nitpick", "check:reg.no_area")))
+        self.assertEqual(self.sent, [])
+        self.assertEqual(self.notify_router.load_queue(self.queue), [])
+
+    def test_the_flush_sends_what_was_held_as_one_message(self):
+        self.quiet()
+        self.at(3)
+        self._announce(self.rows(
+            ("Drifting", "check:forecast.decline"),
+            ("No area", "check:reg.no_area")))
+        self.assertEqual(self.sent, [])
+        sent = asyncio.run(self.server._flush_held_findings())
+        self.assertEqual(sent, 2)
+        self.assertEqual(len(self.sent), 1)
+        _service, title, message = self.sent[0]
+        self.assertIn("held", title.lower())
+        self.assertIn("Drifting", message)
+        self.assertIn("No area", message)
+        self.assertEqual(self.notify_router.load_queue(self.queue), [])
+
+    def test_a_finding_ended_overnight_is_not_in_the_morning_digest(self):
+        self.quiet()
+        self.at(3)
+        created = self.rows(("Gone by morning", "check:forecast.decline"),
+                            ("Still there", "check:reg.no_area"))
+        self._announce(created)
+        findings_store.settle_and_clear(created[0]["ts"], "fixed")
+        self.assertEqual(asyncio.run(self.server._flush_held_findings()), 1)
+        self.assertIn("Still there", self.sent[0][2])
+        self.assertNotIn("Gone by morning", self.sent[0][2])
+
+    def test_an_empty_queue_sends_nothing_at_all(self):
+        self.assertEqual(asyncio.run(self.server._flush_held_findings()), 0)
+        self.assertEqual(self.sent, [])
+
+    def test_the_diagnostics_payload_says_what_is_being_held(self):
+        self.quiet()
+        self.at(3)
+        self._announce(self.rows(("Drifting", "check:forecast.decline")))
+        diag = self.server._notify_diagnostics()
+        self.assertEqual(diag["held"], 1)
+        self.assertTrue(diag["quiet_now"])
+        self.assertEqual((diag["quiet_start"], diag["quiet_end"]), (22, 7))
+        self.assertTrue(diag["service"])
 
 
 class TestExportImport(StoreCase):

@@ -82,6 +82,19 @@ MAX_ENTITIES = 400
 
 HOURS_PER_WEEK = 168
 
+# --- the trend, which is a different question from the band -------------
+# A drift needs whole daily cycles under it: a fridge's hourly means rise
+# and fall every day, and a line fitted across three days is fitting that
+# cycle rather than any drift.
+TREND_MIN_DAYS = 14.0
+# Fewer hourly points than this and the line is drawn through gaps.
+TREND_MIN_POINTS = 120
+# A `total` or `total_increasing` sensor only ever goes up — that is what
+# the state class means — so a trend on one says nothing at all. This is
+# the single way this check could have fired on every energy meter in
+# every house, and it is a property of the class rather than of the row.
+TREND_STATE_CLASSES = frozenset({"measurement"})
+
 
 # ---------------------------------------------------------------------------
 # The house's own clock
@@ -133,6 +146,29 @@ def mad(values: list[float], centre: float | None = None) -> float:
         return 0.0
     centre = median(values) if centre is None else centre
     return median([abs(v - centre) for v in values])
+
+
+def least_squares(points: list[tuple[float, float]]) -> tuple[float, float] | None:
+    """Slope and intercept through (x, y), or None when there is no line.
+
+    The one copy. `checks/forecasts.py` fits the same line through a
+    battery's discharge and this fits it through a month of hourly means;
+    two implementations of "the slope of these points" is two answers to
+    a question that has one, and the copy that drifts is the one nobody
+    is looking at.
+    """
+    n = len(points)
+    if n < 2:
+        return None
+    sx = sum(p[0] for p in points)
+    sy = sum(p[1] for p in points)
+    sxx = sum(p[0] * p[0] for p in points)
+    sxy = sum(p[0] * p[1] for p in points)
+    den = n * sxx - sx * sx
+    if abs(den) < 1e-9:
+        return None
+    slope = (n * sxy - sx * sy) / den
+    return slope, (sy - slope * sx) / n
 
 
 def spread_floor(centre: float) -> float:
@@ -224,6 +260,85 @@ def deviation(value: float, baseline: dict, bucket: int) -> dict | None:
         "sigmas": round((value - centre) / spread, 2),
         "n": entry.get("n", 0),
         "source": source,
+    }
+
+
+def trend(rows: list[dict], built: dict, tz: dt.tzinfo,
+          now: float) -> dict | None:
+    """How far the readings have travelled across the window, and how surely.
+
+    A different question from `deviation`, and one that question cannot
+    answer. `base.unusual` buckets by hour of the week, so a *drift* moves
+    the bucket along with the reading: a freezer 6°C warmer than a month
+    ago has bucket samples of 0, 2, 4, 6 — a median of 3 and a spread of
+    2 — and today's 6 comes out at one and a half spreads. Structurally
+    invisible, however far it has gone, because every single reading is
+    inside the band the drift itself widened.
+
+    So this fits a line instead, and it fits it to what is left once the
+    week's own pattern is taken out: each hourly mean minus the median
+    for its hour of the week. Subtracting a constant per bucket removes
+    the daily and weekly shape without touching a slope, so what is left
+    is the drift plus genuine noise — and the noise is then measured as
+    the spread *about the line*, which is the one estimate the drift
+    cannot inflate.
+
+    Returns the measurement and nothing else. Whether four spreads of
+    travel is worth telling somebody about is the check's judgement, and
+    keeping it there is what stops the threshold from being invisible.
+    """
+    buckets = (built or {}).get("buckets") or {}
+    overall = (built or {}).get("overall") or {}
+    if not overall:
+        return None
+
+    points: list[tuple[float, float]] = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        start = row.get("start")
+        value = row.get("mean")
+        if not isinstance(start, (int, float)) or isinstance(start, bool):
+            continue
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            continue
+        entry = buckets.get(str(hour_of_week(float(start), tz))) or overall
+        points.append(((float(start) - now) / 86400.0,
+                       float(value) - (entry.get("median") or 0.0)))
+
+    if len(points) < TREND_MIN_POINTS:
+        return None
+    points.sort()
+    span = points[-1][0] - points[0][0]
+    if span < TREND_MIN_DAYS:
+        return None
+
+    whole = least_squares(points)
+    if whole is None:
+        return None
+    slope, intercept = whole
+
+    # A line through a V has a slope and is not a drift. Both halves of
+    # the window have to be going the same way, or what happened is that
+    # something turned around in the middle of it.
+    half = len(points) // 2
+    first = least_squares(points[:half])
+    second = least_squares(points[half:])
+    consistent = bool(
+        first and second
+        and (first[0] > 0) == (second[0] > 0) == (slope > 0))
+
+    residuals = [y - (slope * x + intercept) for x, y in points]
+    noise = max(mad(residuals), spread_floor(overall.get("median") or 0.0))
+    move = slope * span
+    return {
+        "per_day": round(slope, 6),
+        "move": round(move, 4),
+        "days": round(span, 2),
+        "noise": round(noise, 6),
+        "spreads": round(abs(move) / noise, 2),
+        "consistent": consistent,
+        "points": len(points),
     }
 
 
@@ -357,12 +472,21 @@ async def build(session, states: dict, now: float | None = None,
     rows = await fetch_hourly(session, ids, now)
     for eid, series in rows.items():
         built = build_buckets(series, tz)
-        if built:
-            unit = ((states.get(eid) or {}).get("attributes") or {}).get(
-                "unit_of_measurement")
-            if unit:
-                built["unit"] = str(unit)[:16]
-            payload["entities"][eid] = built
+        if not built:
+            continue
+        attrs = ((states.get(eid) or {}).get("attributes") or {})
+        unit = attrs.get("unit_of_measurement")
+        if unit:
+            built["unit"] = str(unit)[:16]
+        # A `total_increasing` meter goes up because that is what the
+        # class means. Fitting a line to one finds a slope every time,
+        # in every house, so the gate is here rather than in the check:
+        # a trend nothing should read is a trend nothing should store.
+        if str(attrs.get("state_class") or "") in TREND_STATE_CLASSES:
+            moved = trend(series, built, tz, now)
+            if moved:
+                built["trend"] = moved
+        payload["entities"][eid] = built
     save(payload, path)
     log.info("baselines: %d of %d entities measured over %d days (%s)",
              len(payload["entities"]), len(ids), HISTORY_DAYS, tz_name)

@@ -566,9 +566,23 @@ def get_baseline(entity_id):
         "overall": baseline.get("overall"),
         "samples": baseline.get("samples"),
         "by_hour_of_week": baseline.get("buckets"),
+        # The band and the drift are different questions and a model has to
+        # be able to ask both: a reading can be squarely inside its usual
+        # range and still be six degrees from where it was a month ago,
+        # which is a fact about the house that the buckets cannot express.
+        "trend": baseline.get("trend"),
         "note": ("`spread` is a median absolute deviation, not a standard "
                  "deviation — about two thirds of one for ordinary data. "
-                 "Hour-of-week buckets are 0 = Monday 00:00 local."),
+                 "Hour-of-week buckets are 0 = Monday 00:00 local. `trend` "
+                 "is a separate question: how far the reading has TRAVELLED "
+                 "across the window (`move`, over `days`), in units of the "
+                 "noise it travelled through (`spreads`). A drift hides "
+                 "from the buckets, because the buckets moved with it — so "
+                 "a reading can be entirely normal and still be somewhere "
+                 "it has never been. `consistent` false means the window "
+                 "turned around in the middle and is not a drift at all; "
+                 "absent means this is a total that only ever goes up, or "
+                 "there was not enough history to fit a line through."),
     }
 
 

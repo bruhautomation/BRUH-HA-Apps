@@ -20,6 +20,7 @@ Each is asserted against the failure, not just the fix.
 
 import datetime as dt
 import json
+import math
 import os
 import sys
 import tempfile
@@ -251,6 +252,7 @@ class TestTheChecksThatUseIt(unittest.TestCase):
             "now": self.now,
             "states": {"sensor.hall_temp": {
                 "state": value, "attributes": {"device_class": "temperature",
+                                               "state_class": "measurement",
                                                "unit_of_measurement": "°C"},
                 "last_changed": "", "last_updated": ""}},
             "entities": [{"entity_id": "sensor.hall_temp", "name": "Hall"}],
@@ -347,6 +349,305 @@ class TestTheThresholdIsNotASigma(unittest.TestCase):
                / "ha_mcp_server.py").read_text()
         block = mcp.split("def get_baseline", 1)[1].split("\ndef ", 1)[0]
         self.assertIn("median absolute deviation", flat(block))
+
+
+class TestTheDriftTheBandCannotSee(unittest.TestCase):
+    """The trend, and the reason it is a separate measurement at all.
+
+    `deviation` buckets by hour of the week, so a drift moves the bucket
+    along with the reading and hides inside the band it widened. Every
+    case here is about that: what a drift must look like to be reported,
+    and the four shapes that must not be.
+    """
+
+    NOW = 1_700_000_000.0
+    TZ = dt.timezone.utc
+
+    def series(self, fn, hours=28 * 24):
+        """A month of hourly means ending now, from f(hour_index)."""
+        return [{"start": self.NOW - (hours - h) * 3600, "mean": fn(h)}
+                for h in range(hours)]
+
+    def wobble(self, h):
+        """A deterministic stand-in for noise — a test may not be random."""
+        return 0.3 * math.sin(h * 2.399963) + 0.15 * math.cos(h * 5.77)
+
+    def measure(self, fn, hours=28 * 24):
+        rows = self.series(fn, hours)
+        built = baselines.build_buckets(rows, self.TZ)
+        return rows, built, baselines.trend(rows, built, self.TZ, self.NOW)
+
+    # -- the case the whole check exists for -----------------------------
+
+    def test_a_drift_the_band_cannot_see_is_16_spreads_to_the_trend(self):
+        # A freezer 6°C warmer than it was a month ago, with an ordinary
+        # 2°C daily cycle. This is the measurement, not the argument: the
+        # bucket median rose along with it, so the newest reading is a
+        # couple of spreads from "normal" and `base.unusual` — which
+        # needs six — can never see it however far the drift goes.
+        def freezer(h):
+            return (-18 + 6 * (h / (28 * 24))
+                    + 2.0 * math.sin(2 * math.pi * h / 24) + self.wobble(h))
+
+        rows, built, moved = self.measure(freezer)
+        self.assertIsNotNone(moved)
+        self.assertTrue(moved["consistent"])
+        self.assertGreater(moved["spreads"], 8.0)
+        self.assertAlmostEqual(moved["move"], 6.0, delta=1.0)
+
+        seen = baselines.deviation(
+            rows[-1]["mean"], built,
+            baselines.hour_of_week(self.NOW, self.TZ))
+        self.assertLess(abs(seen["sigmas"]), 6.0,
+                        "if the band could see this, the trend would be "
+                        "a second answer to a question already answered")
+
+    # -- and the shapes that must say nothing ----------------------------
+
+    def test_a_steady_reading_does_not_drift(self):
+        _r, _b, moved = self.measure(
+            lambda h: -18 + 2.0 * math.sin(2 * math.pi * h / 24)
+            + self.wobble(h))
+        self.assertLess(moved["spreads"], 1.0)
+
+    def test_a_v_shape_has_a_slope_and_is_not_a_drift(self):
+        # Something turned around in the middle of the window. A line
+        # through it has a slope; calling that a drift is how a check
+        # reports the spring.
+        _r, _b, moved = self.measure(
+            lambda h: 20 + abs(h - 336) / 60.0 + self.wobble(h))
+        self.assertFalse(moved["consistent"])
+
+    def test_a_step_change_is_not_weeks_of_drifting(self):
+        # A meter replaced, or a room's door left open from one day on.
+        # Both halves are flat, so neither agrees on a direction.
+        _r, _b, moved = self.measure(
+            lambda h: (20 if h < 336 else 26) + self.wobble(h))
+        self.assertFalse(moved["consistent"])
+
+    def test_a_drift_smaller_than_its_own_noise_is_not_a_drift(self):
+        _r, _b, moved = self.measure(
+            lambda h: 20 + 0.05 * (h / (28 * 24)) + self.wobble(h))
+        self.assertLess(moved["spreads"], 4.0)
+
+    # -- when there is not enough to fit a line through ------------------
+
+    def test_a_short_window_says_nothing(self):
+        # Four days of a fridge is four daily cycles, and a line through
+        # them is fitting the cycle rather than any drift.
+        _r, _b, moved = self.measure(
+            lambda h: 20 + 2.0 * math.sin(2 * math.pi * h / 24), hours=4 * 24)
+        self.assertIsNone(moved)
+
+    def test_a_window_with_too_few_points_says_nothing(self):
+        rows = [{"start": self.NOW - (20 - i) * 86400, "mean": 20 + i}
+                for i in range(20)]
+        built = baselines.build_buckets(rows, self.TZ)
+        self.assertIsNone(baselines.trend(rows, built, self.TZ, self.NOW))
+
+    def test_no_baseline_means_no_trend(self):
+        self.assertIsNone(
+            baselines.trend(self.series(lambda h: 20.0), {}, self.TZ, self.NOW))
+
+    def test_rubbish_rows_are_skipped_rather_than_crashing(self):
+        rows = self.series(lambda h: 20 + 3 * (h / 672) + self.wobble(h))
+        built = baselines.build_buckets(rows, self.TZ)
+        rows = rows + ["nope", {"start": None, "mean": 1},
+                       {"start": self.NOW, "mean": True}, {}]
+        self.assertIsNotNone(
+            baselines.trend(rows, built, self.TZ, self.NOW))
+
+    # -- the gate that keeps it off every energy meter in every house ----
+
+    def test_a_total_increasing_meter_is_never_given_a_trend(self):
+        # A meter goes up because that is what the class means, so a line
+        # through one finds a slope in every house — measured here at
+        # eleven spreads, which is what would have fired.
+        rows = self.series(lambda h: 1000 + 0.4 * h)
+        built = baselines.build_buckets(rows, self.TZ)
+        moved = baselines.trend(rows, built, self.TZ, self.NOW)
+        self.assertGreater(moved["spreads"], 4.0)
+        self.assertTrue(moved["consistent"])
+        self.assertNotIn("measurement", baselines.TREND_STATE_CLASSES
+                         - {"measurement"})
+        for state_class in ("total", "total_increasing", "", None):
+            self.assertNotIn(str(state_class or ""),
+                             baselines.TREND_STATE_CLASSES, state_class)
+
+
+class TestTheCheckThatReadsTheDrift(unittest.TestCase):
+    """`forecast.decline`, and every floor that keeps it off a good house."""
+
+    NOW = 1_700_000_000.0
+
+    def setUp(self):
+        sys.path.insert(0, str(PANEL_DIR / "checks"))
+        import importlib
+        self.forecasts = importlib.import_module("checks.forecasts")
+        self.band = importlib.import_module("checks.baseline")
+
+    def house(self, *entities, value="20.0"):
+        """A snapshot holding one baselined sensor per (name, trend, attrs)."""
+        bucket = str(baselines.hour_of_week(self.NOW, dt.timezone.utc))
+        states, registry, store = {}, [], {}
+        for eid, moved, attrs in entities:
+            states[eid] = {
+                "state": value,
+                "attributes": {"state_class": "measurement",
+                               "unit_of_measurement": "°C", **attrs},
+                "last_changed": "", "last_updated": ""}
+            registry.append({"entity_id": eid, "name": eid.split(".")[1]})
+            entry = {"unit": "°C", "samples": 672,
+                     "overall": {"median": 20.0, "spread": 0.5, "n": 672},
+                     "buckets": {bucket: {"median": 20.0, "spread": 0.5,
+                                          "n": 4}}}
+            if moved is not None:
+                entry["trend"] = moved
+            store[eid] = entry
+        return {"now": self.NOW, "states": states, "entities": registry,
+                "devices": [], "areas": [],
+                "baselines": {"built_at": int(self.NOW - 3600), "tz": "UTC",
+                              "days": 28, "entities": store}}
+
+    def drift(self, spreads=8.0, move=6.0, consistent=True, per_day=0.2):
+        return {"per_day": per_day, "move": move, "days": 28.0,
+                "noise": 0.4, "spreads": spreads, "consistent": consistent,
+                "points": 672}
+
+    # -- silent on a healthy house, first --------------------------------
+
+    def test_a_house_with_no_baselines_files_nothing(self):
+        self.assertEqual(self.forecasts.decline({"now": self.NOW}, self.NOW), [])
+
+    def test_a_sensor_with_no_trend_files_nothing(self):
+        snap = self.house(("sensor.hall", None, {}))
+        self.assertEqual(self.forecasts.decline(snap, self.NOW), [])
+
+    def test_a_small_drift_files_nothing(self):
+        snap = self.house(("sensor.hall", self.drift(spreads=2.0), {}))
+        self.assertEqual(self.forecasts.decline(snap, self.NOW), [])
+
+    def test_an_inconsistent_drift_files_nothing(self):
+        # Something turned around mid-window. A slope is not a direction.
+        snap = self.house(("sensor.hall",
+                           self.drift(consistent=False), {}))
+        self.assertEqual(self.forecasts.decline(snap, self.NOW), [])
+
+    def test_a_drift_too_small_to_act_on_files_nothing(self):
+        # Twenty spreads of a band 0.001 wide is 0.02 degrees.
+        snap = self.house(("sensor.hall",
+                           self.drift(spreads=20.0, move=0.02), {}))
+        self.assertEqual(self.forecasts.decline(snap, self.NOW), [])
+
+    # -- and then the thing it is for ------------------------------------
+
+    def test_a_real_drift_is_reported_with_the_numbers_in_the_detail(self):
+        snap = self.house(("sensor.hall", self.drift(), {}))
+        found = self.forecasts.decline(snap, self.NOW)
+        self.assertEqual(len(found), 1)
+        row = found[0]
+        self.assertEqual(row["entity_id"], "sensor.hall")
+        self.assertIn("drifting up", row["text"])
+        # The store dedupes on `text`, so every number that moves nightly
+        # has to be in `detail` or the row re-files every single night.
+        for moving in ("6", "8", "28"):
+            self.assertNotIn(moving, row["text"])
+        self.assertIn("6", row["detail"])
+        self.assertIn("28", row["detail"])
+
+    def test_a_downward_drift_says_down(self):
+        snap = self.house(("sensor.hall",
+                           self.drift(move=-6.0, per_day=-0.2), {}))
+        self.assertIn("drifting down",
+                      self.forecasts.decline(snap, self.NOW)[0]["text"])
+
+    # -- the floors that answer "it fires on a healthy house" ------------
+
+    def test_the_weather_is_not_a_device(self):
+        # A heating season starting drifts every thermometer at once.
+        # Reporting five is reporting the season; the class stands down.
+        snap = self.house(*[(f"sensor.room{i}", self.drift(),
+                             {"device_class": "temperature"})
+                            for i in range(5)])
+        self.assertEqual(self.forecasts.decline(snap, self.NOW), [])
+
+    def test_two_of_a_kind_is_still_a_house(self):
+        snap = self.house(*[(f"sensor.room{i}", self.drift(),
+                             {"device_class": "temperature"})
+                            for i in range(2)])
+        self.assertEqual(len(self.forecasts.decline(snap, self.NOW)), 2)
+
+    def test_one_class_standing_down_does_not_silence_another(self):
+        rows = [(f"sensor.room{i}", self.drift(),
+                 {"device_class": "temperature"}) for i in range(5)]
+        rows.append(("sensor.damp", self.drift(),
+                     {"device_class": "humidity"}))
+        found = self.forecasts.decline(self.house(*rows), self.NOW)
+        self.assertEqual([f["entity_id"] for f in found], ["sensor.damp"])
+
+    def test_too_many_at_once_is_the_measurement_not_the_house(self):
+        rows = [(f"sensor.thing{i}", self.drift(),
+                 {"device_class": f"class{i}"}) for i in range(6)]
+        self.assertEqual(self.forecasts.decline(self.house(*rows), self.NOW), [])
+
+    def test_a_battery_is_the_other_forecasts(self):
+        snap = self.house(("sensor.hall", self.drift(),
+                           {"device_class": "battery"}))
+        self.assertEqual(self.forecasts.decline(snap, self.NOW), [])
+
+    def test_a_diagnostic_entity_is_not_news(self):
+        snap = self.house(("sensor.hall", self.drift(), {}))
+        snap["entities"][0]["entity_category"] = "diagnostic"
+        self.assertEqual(self.forecasts.decline(snap, self.NOW), [])
+
+    # -- and the two checks may not both speak about one sensor ----------
+
+    def test_the_band_stands_down_for_a_sensor_that_is_drifting(self):
+        # Far from normal AND walking one way for a month is the walk,
+        # and `forecast.decline` has the fix that matters on it. Asserted
+        # from both sides so the two provably do not both fire.
+        drifting = self.house(("sensor.hall", self.drift(), {}), value="28.0")
+        self.assertEqual(self.band.unusual(drifting, self.NOW), [])
+        self.assertEqual(len(self.forecasts.decline(drifting, self.NOW)), 1)
+
+        still = self.house(("sensor.hall", None, {}), value="28.0")
+        self.assertEqual(len(self.band.unusual(still, self.NOW)), 1)
+        self.assertEqual(self.forecasts.decline(still, self.NOW), [])
+
+    def test_a_total_increasing_sensor_is_neither_checks_business(self):
+        # It is higher than it has ever been every hour of its life. The
+        # band was quiet by accident before this (its own spread widens
+        # with the ramp); now it is quiet on purpose.
+        snap = self.house(("sensor.grid", self.drift(),
+                           {"state_class": "total_increasing"}),
+                          value="99999")
+        self.assertEqual(self.band.unusual(snap, self.NOW), [])
+        self.assertEqual(self.forecasts.decline(snap, self.NOW), [])
+
+    def test_the_two_checks_ask_one_question_about_eligibility(self):
+        src = (PANEL_DIR / "checks" / "forecasts.py").read_text()
+        self.assertIn("baseline_check.eligible", src)
+
+
+class TestOneLeastSquaresFit(unittest.TestCase):
+    def test_it_fits_a_line(self):
+        got = baselines.least_squares([(0.0, 1.0), (1.0, 3.0), (2.0, 5.0)])
+        self.assertAlmostEqual(got[0], 2.0)
+        self.assertAlmostEqual(got[1], 1.0)
+
+    def test_no_line_through_one_point_or_one_x(self):
+        self.assertIsNone(baselines.least_squares([(1.0, 1.0)]))
+        self.assertIsNone(baselines.least_squares([(1.0, 1.0), (1.0, 9.0)]))
+
+    def test_the_forecast_check_uses_this_one_rather_than_its_own(self):
+        # Two implementations of "the slope of these points" is two
+        # answers to a question that has one, and a battery's discharge is
+        # the obvious case — nothing would ever notice them disagreeing.
+        src = (PANEL_DIR / "checks" / "forecasts.py").read_text()
+        block = src.split("def _fit", 1)[1].split("\ndef ", 1)[0]
+        self.assertIn("least_squares", block)
+        self.assertNotIn("sxy", block,
+                         "forecasts.py has grown a second fit of its own")
 
 
 if __name__ == "__main__":

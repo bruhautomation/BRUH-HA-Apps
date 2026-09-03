@@ -122,6 +122,7 @@ import health
 import hypotheses
 import journal
 import knowledge_store
+import notify_router
 import onboarding
 import prompt_store
 import run_sources
@@ -783,13 +784,139 @@ def _findings_notify_target() -> tuple[str, str]:
     return service, severity
 
 
+# The flush loop is a clock-watcher rather than a poller: it sleeps until
+# the quiet window closes. The ceiling is what makes a Configuration-tab
+# edit land without a restart — a loop that had committed to a nine-hour
+# sleep would honour last night's bedtime all of today.
+NOTIFY_FLUSH_POLL_S = 15 * 60
+NOTIFY_FLUSH_FIRST_DELAY_S = 120
+
+
+def _quiet_hours() -> tuple[int | None, int | None]:
+    """The hours between which only an urgent finding may ring a phone."""
+    opts = addon_options.snapshot() or {}
+    start = notify_router.parse_hour(
+        opts.get("notify_quiet_start")
+        if opts.get("notify_quiet_start") is not None
+        else os.environ.get("BRAIN_NOTIFY_QUIET_START", ""))
+    end = notify_router.parse_hour(
+        opts.get("notify_quiet_end")
+        if opts.get("notify_quiet_end") is not None
+        else os.environ.get("BRAIN_NOTIFY_QUIET_END", ""))
+    return start, end
+
+
+async def _send_notification(rows: list[dict], held: bool = False) -> bool:
+    """Deliver one message. A failure is a log line, never an exception.
+
+    The finding is already safe on the list before this is called, so a
+    bad service name must not be able to fail the run that filed it.
+    """
+    service, _sev = _findings_notify_target()
+    if not service or not rows:
+        return False
+    title, body = notify_router.compose(rows, held=held)
+    import ha_data
+    try:
+        await ha_data.send_notification(service, title, body)
+    except Exception as exc:  # noqa: BLE001 — a bad target can't fail the run
+        log.warning("findings notification via %s failed: %s", service, exc)
+        return False
+    log.info("notified %s of %d finding(s)%s", service, len(rows),
+             " held overnight" if held else "")
+    return True
+
+
+async def _flush_held_findings() -> int:
+    """Send whatever the quiet hours held, as one message. Returns the count.
+
+    Anything settled or cleared while it waited is dropped rather than
+    announced: a problem that went away at four in the morning is not
+    news at seven, and being told about one is what teaches somebody
+    these messages are not about anything.
+    """
+    try:
+        live = {int(f.get("ts") or 0) for f in findings_store.list_all()}
+    except Exception as exc:  # noqa: BLE001 — an unreadable store is not
+        # evidence that a problem is over, so everything held goes out.
+        log.info("could not read the findings store before a flush: %s", exc)
+        live = None
+    rows = notify_router.take_queue(live)
+    if not rows:
+        return 0
+    await _send_notification(rows, held=True)
+    return len(rows)
+
+
+def _notify_diagnostics() -> dict:
+    """What the router is holding, and what window it is holding it for."""
+    start, end = _quiet_hours()
+    queued = notify_router.load_queue()
+    _tz, tz_name = baselines.house_timezone()
+    oldest = min((int(r.get("held_at") or 0) for r in queued), default=0)
+    service, severity = _findings_notify_target()
+    return {
+        "service": bool(service),
+        "min_severity": severity,
+        "quiet_start": start,
+        "quiet_end": end,
+        "tz": tz_name,
+        "quiet_now": notify_router.in_quiet_hours(
+            time.time(), start, end, _tz),
+        "held": len(queued),
+        "held_since": oldest,
+    }
+
+
+async def _notify_flush_loop():
+    """Wake at the end of each quiet window and send what it held.
+
+    The wait is recomputed every pass rather than slept once: the option
+    can be edited from the Configuration tab without a restart, and a
+    loop that had already committed to a 9-hour sleep would honour the
+    old bedtime until tomorrow.
+    """
+    await asyncio.sleep(NOTIFY_FLUSH_FIRST_DELAY_S)
+    while True:
+        try:
+            start, end = _quiet_hours()
+            now = time.time()
+            if start is None or end is None:
+                # No quiet hours: anything left in the queue is from
+                # before somebody turned them off, and has waited enough.
+                if notify_router.load_queue():
+                    await _flush_held_findings()
+                await asyncio.sleep(NOTIFY_FLUSH_POLL_S)
+                continue
+            tz, _name = baselines.house_timezone()
+            if not notify_router.in_quiet_hours(now, start, end, tz):
+                if notify_router.load_queue():
+                    await _flush_held_findings()
+                await asyncio.sleep(NOTIFY_FLUSH_POLL_S)
+                continue
+            wait = notify_router.quiet_ends_at(now, end, tz) - now
+            await asyncio.sleep(max(60.0, min(wait, NOTIFY_FLUSH_POLL_S)))
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — the loop outlives a bad pass
+            log.warning("notification flush pass failed: %s", exc)
+            await asyncio.sleep(NOTIFY_FLUSH_POLL_S)
+
+
 async def _announce_findings(created: list[dict]) -> None:
-    """Push newly-created findings to the configured notify service.
+    """Push newly-created findings out, or hold them until morning.
 
     Only ever handed the CREATED list — add_many dedupes against every
     status and the settled ledger, so a re-reported problem cannot ring the
     phone twice, and there is nothing to announce at startup because a
     replayed store creates nothing.
+
+    Inside quiet hours the split is by `notify_router.urgency_of`, which
+    is a different axis from severity: a `critical` battery forecast is
+    three weeks away and a `warning` about a boiler that has stopped
+    answering is now. The severity floor is applied FIRST, so a row
+    nobody wanted notifying about is not held either — otherwise it would
+    simply arrive in the morning digest instead.
 
     A failed delivery is a log line, never an error: the finding is already
     safe on the list, and the notification is the courtesy copy.
@@ -797,21 +924,28 @@ async def _announce_findings(created: list[dict]) -> None:
     service, min_severity = _findings_notify_target()
     if not service or not created:
         return
-    floor = findings_store.SEVERITIES.index(min_severity)
-    worthy = [f for f in created
-              if findings_store.SEVERITIES.index(f["severity"]) >= floor]
+    worthy = notify_router.worth_sending(created, min_severity)
     if not worthy:
         return
-    lines = [f"[{f['severity']}] {f['text']}" for f in worthy]
-    title = ("brAIn found a problem" if len(worthy) == 1
-             else f"brAIn found {len(worthy)} problems")
-    import ha_data
-    try:
-        await ha_data.send_notification(
-            service, title, "\n".join(lines)[:1500])
-        log.info("notified %s of %d new finding(s)", service, len(worthy))
-    except Exception as exc:  # noqa: BLE001 — a bad target can't fail the run
-        log.warning("findings notification via %s failed: %s", service, exc)
+
+    start, end = _quiet_hours()
+    tz, _name = baselines.house_timezone()
+    if not notify_router.in_quiet_hours(time.time(), start, end, tz):
+        await _send_notification(worthy)
+        return
+
+    # Inside the quiet window only the urgent get through, and the rest
+    # are HELD rather than dropped: they are on the Findings tab either
+    # way, and a notifier that silently decides some problems were not
+    # worth mentioning is one nobody can reason about.
+    urgent = [f for f in worthy if notify_router.urgency_of(f) == "now"]
+    later = [f for f in worthy if notify_router.urgency_of(f) != "now"]
+    if urgent:
+        await _send_notification(urgent)
+    if later:
+        depth = notify_router.hold(later, time.time())
+        log.info("held %d finding(s) until quiet hours end (%d waiting)",
+                 len(later), depth)
 
 
 async def _search_run(insight_id: str, cat: dict, framing: dict):
@@ -2410,6 +2544,12 @@ def _diagnostics_payload() -> dict:
                       if _baseline_store.get("built_at") else True),
             "last": BASELINE_STATE["last"],
         },
+        # A hold queue nobody can see is a queue that silently swallows.
+        # The count and the oldest stamp are what tell "quiet hours are
+        # working" apart from "the flush loop has died holding four
+        # findings since Tuesday" — which is the failure this file exists
+        # to make visible from outside.
+        "notify": _notify_diagnostics(),
         "daemons": _daemon_rollcall(),
         "usage": {k: usage.get(k) for k in ("source", "used_percent", "limits")},
     }
@@ -4322,6 +4462,7 @@ def make_app() -> web.Application:
         app["scheduler"] = asyncio.create_task(_scheduler())
         app["checks"] = asyncio.create_task(_checks_loop())
         app["baselines"] = asyncio.create_task(_baseline_loop())
+        app["notify_flush"] = asyncio.create_task(_notify_flush_loop())
         if addon_options.available():
             app["options"] = asyncio.create_task(_options_poller())
         if engine.get_auth():

@@ -1978,6 +1978,23 @@ function renderDiagnostics(d) {
       : "not measured yet (the first pass runs overnight)",
     !!b.stale && !!b.built_at));
   rows.push(diagRow("Findings open", String((d.findings || {}).open ?? 0)));
+  const n = d.notify || {};
+  if (n.service) {
+    // A hold queue nobody can see is a queue that silently swallows: this
+    // row is what tells "quiet hours are working" from "the flush died".
+    const window_ = (n.quiet_start === null || n.quiet_end === null)
+      ? "no quiet hours"
+      : `quiet ${String(n.quiet_start).padStart(2, "0")}:00–`
+        + `${String(n.quiet_end).padStart(2, "0")}:00 ${esc(n.tz || "UTC")}`
+        + (n.quiet_now ? " (now)" : "");
+    const held = n.held
+      ? `, ${n.held} held` + (n.held_since
+        ? ` since ${timeAgo(new Date(n.held_since * 1000).toISOString())}`
+        : "")
+      : "";
+    rows.push(diagRow("Notifications",
+      `at ${esc(n.min_severity || "serious")} and up — ${window_}${held}`));
+  }
   if (failures.length) {
     const items = failures.slice(0, 5).map((f) =>
       `<li><b>${esc(f.source || "?")}</b> · ${esc(f.outcome || "?")}`

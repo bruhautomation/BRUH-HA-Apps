@@ -2,6 +2,85 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.33.0
+
+### Added
+
+- **The drift the band cannot see** (`baselines.trend`, `forecast.decline`).
+  The failure with no bad reading in it: a freezer 6°C warmer than it was a
+  month ago has never once been outside its usual range, because the range is
+  built from the same weeks the drift happened in and moved along with it.
+  Measured on a real-shaped month, that freezer reads **2.3 spreads** to
+  `base.unusual` — which needs six — and **16** to the trend. It is not that
+  the band is badly tuned; it is structurally incapable of seeing a drift,
+  however far the drift goes, and nobody notices until something spoils.
+
+  So a line is fitted through the month, to what is left once the week's own
+  pattern is taken out (each hourly mean minus the median for its hour of the
+  week — subtracting a constant per bucket removes the daily and weekly shape
+  without touching a slope). The noise it is measured against is the spread
+  *about that line*, which is the one estimate a drift cannot inflate.
+
+  Four floors answer "does this fire on a healthy house". A window that
+  **turned around in the middle** is not a drift and a step change is not
+  weeks of drifting — both halves have to agree on a direction. A move
+  smaller than the noise it sits in is not a move, and one too small to act
+  on is not either. **Five thermometers drifting together is the weather
+  rather than a device**, so the whole device class stands down and what is
+  left is the one room doing something the others are not. And past a
+  handful of rows it says nothing at all, the same rule `base.unusual`
+  caps itself with.
+
+- **Quiet hours, and urgency as its own axis** (`panel/notify_router.py`).
+  Before this there was a sender and no router: five callers each handed new
+  findings straight to one notify service, and the whole policy was a service
+  name and a severity floor. So `sys.disk_low` at 03:40 was a phone lighting
+  up a bedroom about something that would still be true at breakfast, and the
+  second time that happens the notification is gone for good.
+
+  Between `notify_quiet_start` and `notify_quiet_end` (22 to 7 by default, in
+  the house's own timezone) only urgent findings get through. **Urgency is
+  not severity**: a `critical` battery forecast is three weeks out and a
+  `warning` about a boiler that has stopped answering is now, so it is
+  declared per **producer** — a line of code — rather than per row, whose
+  wording a model or an f-string would change out from under it.
+
+  **A quiet hour is a hold, not a silence.** Held rows queue on disk and leave
+  together as one message when the quiet ends; dropping them would mean a
+  notifier silently deciding some problems were not worth mentioning. Anything
+  settled or cleared while it waited is dropped from the queue rather than
+  announced — being told at seven about a problem that went away at four is
+  how these messages stop meaning anything — and a findings store that cannot
+  be read sends everything, because not knowing whether a problem is over is
+  not evidence that it is.
+
+### Fixed
+
+- **`base.unusual` was quiet on energy meters by accident rather than on
+  purpose.** A `total_increasing` total is higher than it has ever been every
+  hour of its life — that is what the class means — so "far outside its usual
+  range" is a statement about arithmetic. What kept it quiet was that the
+  band's own spread widens along with the ramp, which is not a guarantee: a
+  meter that resets has no such protection. Both baseline checks now require
+  `state_class: measurement`, and the trend is never even computed for a
+  total, since a trend nothing should read is a trend nothing should store.
+- **A reading far outside its band on a sensor that has been drifting for a
+  month is now reported once, as the drift.** The two checks share
+  `baselines.trend` and one eligibility question, so they cannot disagree
+  about it — the same rule `dev.unavailable` and `dev.zwave_dead` follow for
+  a dead Z-Wave node.
+
+### Changed
+
+- One least-squares fit, in `baselines.least_squares`. `checks/forecasts.py`
+  had its own copy for the battery runway; two implementations of "the slope
+  of these points" is two answers to a question that has one, and nothing
+  would ever have noticed them disagreeing.
+- The ⚙ Diagnostics section reports what the router is holding and for which
+  window. A hold queue nobody can see is a queue that silently swallows, and
+  "quiet hours are working" has to be tellable from "the flush loop died
+  holding four findings since Tuesday".
+
 ## 1.32.0
 
 ### Added

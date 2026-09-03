@@ -1,7 +1,7 @@
 ---
 name: "brAIn"
 description: "Give your smart home a mind — Claude with full run of Home Assistant: every entity, device, area, dashboard and automation, plus insights, findings, memory, voice and a terminal"
-version: "1.32.0"
+version: "1.33.0"
 slug: "brain"
 init: false
 
@@ -111,6 +111,8 @@ options:
   memory_max_kb: 32
   findings_notify_service: ""
   findings_notify_min_severity: serious
+  notify_quiet_start: "22"
+  notify_quiet_end: "7"
   checks_interval_hours: 6
   protected_entities: []
   edit_journal_days: 14
@@ -150,6 +152,8 @@ schema:
   memory_max_kb: "int(1,64)?"
   findings_notify_service: "str?"
   findings_notify_min_severity: "list(info|warning|serious|critical)?"
+  notify_quiet_start: "str?"
+  notify_quiet_end: "str?"
   checks_interval_hours: "int(0,168)?"
   protected_entities:
     - str

@@ -113,6 +113,22 @@ configuration:
       service. "serious" (the default) means batteries about to die and
       sensors gone silent ring your phone, while naming nitpicks wait on
       the Findings tab.
+  notify_quiet_start:
+    name: Quiet hours start (hour, 0-23)
+    description: >-
+      From this hour until "Quiet hours end", only urgent findings ring
+      your phone — a device that has gone offline, an add-on that has
+      stopped, a disk about to fill. Everything else is held and arrives
+      as one message when the quiet ends, so nothing is lost and nothing
+      wakes you about a battery three weeks from dying. Leave both empty
+      (or set them the same) to notify at any hour.
+  notify_quiet_end:
+    name: Quiet hours end (hour, 0-23)
+    description: >-
+      When held findings are delivered, in your home's own timezone. A
+      window that crosses midnight (22 to 7) is the normal case. Anything
+      you have already fixed or dismissed overnight is dropped rather
+      than announced.
   checks_interval_hours:
     name: House checks every (hours)
     description: >-
