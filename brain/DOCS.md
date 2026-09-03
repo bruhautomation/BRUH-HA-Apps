@@ -60,7 +60,7 @@ subscription — or your own API key.
 
 Most AI integrations can turn on a light. brAIn administers the installation.
 
-It reaches Home Assistant three ways at once — a **native MCP server** (38 tools) for
+It reaches Home Assistant three ways at once — a **native MCP server** (39 tools) for
 reading and controlling, **65 registry-management services** for the parts of Home
 Assistant that normally only exist behind the Settings UI, and a **real shell** in
 `/config` for everything that is still a YAML file.
@@ -170,6 +170,8 @@ ordinary findings under a "check" label, with no Claude run at all.
 - **Forecasts**: a battery running down, from the slope of its last sixty
   days, three weeks before it is flat.
 
+- **A reading well outside what your house normally does at this hour** —
+  see below.
 - **An automation you keep undoing.** Three times in a day that a rule did
   something and somebody put it straight back. Nothing else can see it — the
   automation ran, nothing errored, and the light is off — and it is the
@@ -367,6 +369,37 @@ simply because you prefer it.
   at all.
 - `sensor.brain_health` says whether brAIn itself is working, so an automation can
   tell you the add-on is in trouble rather than you noticing the insights stopped.
+
+### It knows what "unusual" means here
+
+"Unusual" is behind most of what people want a smart home to notice — water
+running at night, a freezer drifting, a boiler on for twice as long as it
+usually is. Until there is a number behind it, every rule that uses it is a
+threshold somebody guessed.
+
+So brAIn measures your house. Overnight, for every numeric sensor, it works
+out what that sensor normally reads **at this hour of this day of the week**
+and how much it normally varies, from a month of Home Assistant's own
+long-term statistics. It costs no Claude turn.
+
+A few things it deliberately will not do:
+
+- **It won't call a sensor that never moves "unusual".** A thermostat
+  setpoint that has read 20.0 for a month has no variation to measure
+  against, so it gets no baseline rather than one where 20.5 is an
+  emergency.
+- **It won't build a normal out of two readings.** An hour of the week it
+  has only seen twice is an anecdote, and it says so instead.
+- **It won't report an impossible reading as an odd one.** A thermometer at
+  99°C is broken, not unusual, and the device check says so with the right
+  fix on it.
+- **It won't hand you fifty rows.** More than a handful at once means the
+  *baseline* has stopped describing your house — a heating season starting,
+  a meter replaced — and reporting them all would be reporting the
+  measurement rather than the home.
+
+Claude can read it too: ask *"is the utility room damp?"* and it looks up
+what damp normally is in your utility room rather than picking a number.
 
 ### It knows what changed, and what changed it
 

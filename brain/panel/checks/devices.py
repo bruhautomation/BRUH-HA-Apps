@@ -174,6 +174,24 @@ def battery_low(snap: dict, now: float) -> list[dict]:
 # dev.implausible — a reading no sensor should give
 # ---------------------------------------------------------------------------
 
+def out_of_range(state: dict) -> bool:
+    """True when a reading is outside what its kind of sensor can produce.
+
+    Shared with `base.unusual`, which stands down for exactly these: a
+    thermometer reading 99°C is impossible before it is unusual, and the
+    two checks reporting one sensor under two different fixes is how a
+    list stops being read. Same reasoning — and the same shape — as
+    `dev.unavailable` standing down for a dead Z-Wave node.
+    """
+    attrs = (state or {}).get("attributes") or {}
+    bounds = _RANGES.get((attrs.get("device_class"),
+                          attrs.get("unit_of_measurement")))
+    value = num((state or {}).get("state"))
+    if not bounds or value is None:
+        return False
+    return not bounds[0] <= value <= bounds[1]
+
+
 def implausible(snap: dict, now: float) -> list[dict]:
     house = House(snap)
     out = []
@@ -187,7 +205,7 @@ def implausible(snap: dict, now: float) -> list[dict]:
         if value is None:
             continue
         lo, hi = bounds
-        if lo <= value <= hi:
+        if not out_of_range(st):
             continue
         out.append({
             "text": f"{house.name(eid)} is reporting an impossible value",

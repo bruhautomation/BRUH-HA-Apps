@@ -524,6 +524,54 @@ def _window(result):
         return None
 
 
+def get_baseline(entity_id):
+    """What is normal for one entity, and how far outside it the reading is.
+
+    This is what turns "unusual" from a word into a number. Without it a
+    model asked whether a reading is odd has to invent a threshold, and
+    the threshold it invents is the same one for a freezer and a water
+    meter.
+    """
+    if not re.match(r"^[a-z0-9_]+\.[a-z0-9_]+$", str(entity_id or "")):
+        return {"error": (
+            f"'{str(entity_id)[:64]}' is not an entity id. They look like "
+            "sensor.hall_temperature."
+        )}
+    quoted = urllib.parse.quote(str(entity_id), safe="")
+    result = _panel_get(f"/api/baselines?entity_id={quoted}")
+    if isinstance(result, dict) and result.get("error"):
+        return result
+    baseline = (result or {}).get("baseline")
+    if not baseline:
+        measured = (result or {}).get("measured", 0)
+        return {"entity_id": entity_id, "baseline": None, "note": (
+            "brAIn has no baseline for this entity. It measures numeric "
+            "sensors with long-term statistics overnight" + (
+                f" ({measured} measured so far)" if measured else
+                " and has not run yet") + ". An entity that never changes "
+            "is deliberately not given one."
+        )}
+    if baseline.get("flat"):
+        return {"entity_id": entity_id, "baseline": None, "note": (
+            f"This entity has read {baseline.get('value')} for its whole "
+            "history, so it has no spread to measure oddness against. Any "
+            "change at all is worth looking at on its own terms."
+        )}
+    return {
+        "entity_id": entity_id,
+        "measured_over_days": (result or {}).get("days"),
+        "timezone": (result or {}).get("tz"),
+        "stale": (result or {}).get("stale"),
+        "unit": baseline.get("unit"),
+        "overall": baseline.get("overall"),
+        "samples": baseline.get("samples"),
+        "by_hour_of_week": baseline.get("buckets"),
+        "note": ("`spread` is a median absolute deviation, not a standard "
+                 "deviation — about two thirds of one for ordinary data. "
+                 "Hour-of-week buckets are 0 = Monday 00:00 local."),
+    }
+
+
 def explain_change(entity_id, hours=24):
     """Why an entity is the way it is: its recent changes, and what caused each.
 
@@ -2522,6 +2570,26 @@ TOOLS = [
         }
     },
     {
+        "name": "get_baseline",
+        "description": (
+            "What is NORMAL for one numeric entity — its usual reading for each "
+            "hour of the week and how much it usually varies, measured from a "
+            "month of this house's own history. Use it before calling anything "
+            "unusual: it is the difference between 'that looks high' and '4.2 "
+            "times its normal variation for a Tuesday morning'."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "entity_id": {
+                    "type": "string",
+                    "description": "The entity ID to look up"
+                }
+            },
+            "required": ["entity_id"]
+        }
+    },
+    {
         "name": "explain_change",
         "description": (
             "Why an entity is the way it is: its recent changes and what caused "
@@ -2764,6 +2832,7 @@ TOOL_IMPLEMENTATIONS = {
     "get_logbook": "get_logbook",
     "get_history": "get_history",
     "explain_change": "explain_change",
+    "get_baseline": "get_baseline",
     "get_activity": "get_activity",
     "get_statistics": "get_statistics",
     "get_weather_forecast": "get_weather_forecast",

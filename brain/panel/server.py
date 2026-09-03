@@ -108,6 +108,7 @@ from aiohttp.abc import AbstractAccessLogger
 import actions
 import addon_options
 import atomic_write
+import baselines
 import card_tags
 import chat_session
 import checks
@@ -2084,6 +2085,103 @@ async def _checks_loop() -> None:
         await asyncio.sleep(CHECKS_TICK_S)
 
 
+# Nightly. A baseline describes weeks, so measuring it more often buys
+# nothing and costs a statistics query over every numeric sensor in the
+# house; measuring it less often lets it describe a house that has
+# changed. `base.stale` is what reports this loop having stopped.
+BASELINE_INTERVAL_S = 24 * 3600
+BASELINE_FIRST_DELAY_S = 300
+BASELINE_STATE: dict = {"running": False, "last": None}
+
+
+async def build_baselines(reason: str = "schedule") -> dict:
+    """Measure what is normal in this house, and write the store.
+
+    Separate from the checks pass on purpose: this reads hourly
+    statistics for a month over every numeric sensor, which is minutes of
+    recorder work, and the answer changes over weeks. The checks pass
+    only ever *reads* what this leaves.
+    """
+    if BASELINE_STATE["running"]:
+        return {"error": "a baseline pass is already running",
+                **(BASELINE_STATE["last"] or {})}
+    BASELINE_STATE["running"] = True
+    started = time.time()
+    try:
+        import aiohttp
+
+        import ha_data  # deferred so the module loads without aiohttp in tests
+        async with aiohttp.ClientSession() as session:
+            states = await ha_data._rest_get(session, "/states", timeout=60)
+            by_id = {s["entity_id"]: s for s in (states or [])
+                     if isinstance(s, dict) and s.get("entity_id")}
+            payload = await baselines.build(session, by_id, started)
+        summary = {"reason": reason, "started_at": int(started),
+                   "finished_at": int(time.time()),
+                   "duration_s": round(time.time() - started, 1),
+                   "measured": len(payload.get("entities") or {}),
+                   "asked": payload.get("asked", 0),
+                   "tz": payload.get("tz", ""), "error": ""}
+        journal.record("baselines", "ok", duration_s=summary["duration_s"],
+                       extra={"measured": summary["measured"],
+                              "asked": summary["asked"]})
+    except Exception as exc:  # noqa: BLE001 — a bad pass must not take the loop down
+        log.warning("baseline pass failed: %s", exc)
+        journal.record("baselines", "error", error=str(exc))
+        summary = {"reason": reason, "started_at": int(started),
+                   "finished_at": int(time.time()), "measured": 0, "asked": 0,
+                   "tz": "", "error": str(exc)[:300]}
+    finally:
+        BASELINE_STATE["running"] = False
+    BASELINE_STATE["last"] = summary
+    return summary
+
+
+async def _baseline_loop() -> None:
+    """Rebuild the baselines nightly, starting once the panel has settled."""
+    await asyncio.sleep(BASELINE_FIRST_DELAY_S)
+    while True:
+        try:
+            store = await asyncio.to_thread(baselines.load)
+            age = baselines.age_days(store)
+            # A store that has never been written has no age, and that is
+            # the case this loop exists for: the first pass on a fresh
+            # install, not a rebuild.
+            if age is None or age * 86400 >= BASELINE_INTERVAL_S:
+                await build_baselines("schedule")
+        except Exception as exc:  # noqa: BLE001
+            log.debug("baseline loop: %s", exc)
+        await asyncio.sleep(3600)
+
+
+async def h_baselines(request: web.Request) -> web.Response:
+    """What brAIn thinks is normal, as numbers rather than as a verdict."""
+    store = await asyncio.to_thread(baselines.load)
+    entity_id = (request.query.get("entity_id") or "").strip()
+    payload = {
+        "built_at": store.get("built_at", 0),
+        "tz": store.get("tz", ""),
+        "days": store.get("days", baselines.HISTORY_DAYS),
+        "measured": len(store.get("entities") or {}),
+        "stale": baselines.is_stale(store) if store.get("built_at") else True,
+        "running": BASELINE_STATE["running"],
+        "last": BASELINE_STATE["last"],
+    }
+    if entity_id:
+        if not actions.is_entity_id(entity_id):
+            return web.json_response({"error": "not an entity id", **payload},
+                                     status=400)
+        payload["entity_id"] = entity_id
+        payload["baseline"] = (store.get("entities") or {}).get(entity_id)
+    return web.json_response(payload)
+
+
+async def h_baselines_run(request: web.Request) -> web.Response:
+    summary = await build_baselines("manual")
+    status = 409 if summary.get("error", "").startswith("a baseline pass") else 200
+    return web.json_response(summary, status=status)
+
+
 async def h_checks(request: web.Request) -> web.Response:
     return web.json_response({
         "catalog": [{"id": c["id"], "title": c["title"],
@@ -2269,6 +2367,7 @@ def _diagnostics_payload() -> dict:
         usage = usage_store.budget_state(settings)
     except Exception:  # noqa: BLE001 — a diagnostics payload must not fail on one reader
         usage = {}
+    _baseline_store = baselines.load()
     payload = {
         "generated_at": int(time.time()),
         "versions": {
@@ -2300,6 +2399,17 @@ def _diagnostics_payload() -> dict:
             "hypotheses_open": len(hypotheses.list_all("open")),
         },
         "checks": CHECKS_STATE["last"],
+        # Numbers, not the buckets: a bug report needs to know whether the
+        # house has been measured and when, not a month of hourly medians
+        # for four hundred sensors.
+        "baselines": {
+            "built_at": _baseline_store.get("built_at", 0),
+            "measured": len(_baseline_store.get("entities") or {}),
+            "tz": _baseline_store.get("tz", ""),
+            "stale": (baselines.is_stale(_baseline_store)
+                      if _baseline_store.get("built_at") else True),
+            "last": BASELINE_STATE["last"],
+        },
         "daemons": _daemon_rollcall(),
         "usage": {k: usage.get(k) for k in ("source", "used_percent", "limits")},
     }
@@ -4106,6 +4216,8 @@ def make_app() -> web.Application:
     app.router.add_get("/api/checks", h_checks)
     app.router.add_post("/api/checks/run", h_checks_run)
     app.router.add_get("/api/diagnostics", h_diagnostics)
+    app.router.add_get("/api/baselines", h_baselines)
+    app.router.add_post("/api/baselines/run", h_baselines_run)
     app.router.add_get("/api/activity", h_activity)
     app.router.add_get("/api/activity/entity/{entity_id}", h_activity_entity)
     app.router.add_post("/api/finding/{ts}/fix", h_finding_fix)
@@ -4209,6 +4321,7 @@ def make_app() -> web.Application:
         app["worker"] = asyncio.create_task(_worker())
         app["scheduler"] = asyncio.create_task(_scheduler())
         app["checks"] = asyncio.create_task(_checks_loop())
+        app["baselines"] = asyncio.create_task(_baseline_loop())
         if addon_options.available():
             app["options"] = asyncio.create_task(_options_poller())
         if engine.get_auth():

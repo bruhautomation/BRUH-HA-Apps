@@ -384,6 +384,7 @@ ANALYST_TOOLS = [
     f"{MCP}get_history",
     f"{MCP}get_statistics",
     f"{MCP}get_logbook",
+    f"{MCP}get_baseline",         # what is NORMAL here, so "unusual" is a number
     f"{MCP}explain_change",       # what CAUSED a change, not just that it happened
     f"{MCP}get_activity",
     f"{MCP}get_areas",

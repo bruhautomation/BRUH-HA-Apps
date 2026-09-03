@@ -40,7 +40,7 @@ subscription — or your own API key.
 ## It runs Home Assistant
 
 Most AI integrations can turn on a light. brAIn administers the installation. It
-reaches Home Assistant three ways at once — **38 native tools** for reading and
+reaches Home Assistant three ways at once — **39 native tools** for reading and
 controlling, **65 registry-management services** for the parts of Home Assistant that
 normally only exist behind the Settings UI, and a **real shell** in \`/config\` for
 everything that is still a YAML file.
@@ -233,6 +233,23 @@ reporting. Cards run on their own schedule, and **⋯ → Regenerate** does one 
 
 Things brAIn thinks are **broken**, and what it did about them. See **Findings** in this
 guide. A number on the tab means something is waiting on your decision.
+
+## What counts as unusual
+
+brAIn measures your house overnight: for every numeric sensor, what it normally
+reads **at this hour of this day of the week**, and how much it normally varies,
+from a month of Home Assistant's own statistics. No Claude run, nothing spent.
+
+That is what lets a finding say *"4.2 times its normal variation for a Tuesday
+morning"* instead of *"that looks high"*. Claude reads the same numbers when you
+ask it something like "is the utility room damp?".
+
+It is deliberately quiet in four cases: a sensor that never moves gets no
+baseline (there is nothing to measure oddness against), an hour of the week it
+has only seen twice is an anecdote rather than a normal, an *impossible* reading
+is the device check's to report, and more than a handful of odd readings at once
+means the baseline has stopped describing your house rather than that your house
+has changed.
 
 ## Activity
 
