@@ -220,19 +220,33 @@ There is no CUPS in this container and no DYMO driver. `panel/dymo/` speaks
 the LabelWriter's own raster protocol:
 
 ```
-ESC B 0        dot tab
-ESC D 84       bytes per line (672 dots / 8)
-ESC L hi lo    label length in dots
 ESC q 1|2      roll select — the Twin Turbo's whole reason for existing
-SYN <84 bytes> one raster line
-ETB            repeat the previous line
+ESC L hi lo    label length in dots
+ESC D 84       bytes per line (672 dots / 8)
+SYN <84 bytes> one raster line, one per row
 ESC G          short form feed, between copies
 ESC E          form feed, after the last one
 ```
 
-`ETB` matters more than it looks: a label is mostly white, and a run of
-identical blank lines costs one byte each instead of 85. A typical 2.25″ ×
-1.25″ label is 7 KB on the wire against 32 KB uncompressed.
+That is the **Standard** mode and the default: one `SYN` and one full line
+for every row, which is the shape cups-filters' DYMO path has printed with
+for twenty years. A 2.25″ × 1.25″ label is 31,886 bytes, or under three
+milliseconds of USB 2.0.
+
+**Compact** mode adds `ETB` — repeat the previous line — which takes that
+same label to about 7 KB. It is not the default because it *was*, and it did
+not print: a label is mostly blank, so nearly the whole job became that one
+opcode, and a firmware that does not read `0x17` that way takes the job and
+produces nothing. There is no error to report; the bytes were accepted.
+
+**Bare minimum** drops roll select as well, for a firmware that will not take
+`ESC q`. On a Twin Turbo that means the printer uses whichever bay it used
+last, which is why it is the last thing to try rather than a safe default.
+
+`ESC B 0` (dot tab) is not sent at all. It was a no-op by construction — the
+renderer already knows where the left edge is — and a no-op in a preamble is
+pure risk: a firmware that does not take the command may swallow the byte
+after it.
 
 The density and print-mode opcodes are deliberately **not** sent. Their
 encodings differ across the 400/450/550 generations, thermal label stock
@@ -240,6 +254,16 @@ prints correctly at the printer's default, and a byte sent to the wrong
 firmware is a wedged printer rather than a lighter label.
 
 ## When something goes wrong
+
+**It says it printed and nothing came out.** The bytes were accepted and the
+printer did not use them — which produces no error anywhere, because from
+the add-on's side the job succeeded. Printer tab → Settings → **If nothing
+comes out**: change it, press **Print the ruler**, repeat. Standard is what
+everything is tested against; Compact adds a compression opcode not every
+firmware reads; Bare minimum also drops roll select, which costs a Twin
+Turbo its second bay and is the last thing to try. Whether a given
+LabelWriter takes every command in the preamble is not something this add-on
+can ask it, so please say which one worked.
 
 **"No DYMO printer is on the USB bus."** In order of likelihood: the printer
 has no power (a LabelWriter with no power does not enumerate at all); the

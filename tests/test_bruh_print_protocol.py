@@ -57,27 +57,110 @@ class TestRaster(unittest.TestCase):
                          protocol.pack_line(b"\xff", 84))
         self.assertEqual(84, len(protocol.pack_line(b"\xff" * 200, 84)))
 
-    def test_repeated_lines_become_one_byte_each(self):
-        """The compression that makes a label cheap: a 1.25" label is 375
-        lines of 84 bytes and most of them are the same blank line."""
+    def test_every_line_is_sent_whole_by_default(self):
+        """The default is one SYN and one full line, every line.
+
+        This is the shape cups-filters' DYMO path has printed with for
+        twenty years, and it is the default because the alternative shipped
+        and did not print. `ETB`-as-repeat is the one opcode in this file
+        written from memory rather than from something unambiguous, and a
+        label is mostly blank — so the compressed job was ~370 ETBs and a
+        printer that does not read 0x17 that way takes the job, writes
+        nothing, and reports success.
+        """
         blank = b"\x00" * 84
         body = protocol.raster([blank] * 100, 84)
+        self.assertEqual(100 * 85, len(body))
+        self.assertNotIn(protocol.ETB, body)
+        self.assertEqual([protocol.SYN] * 100,
+                         [body[i * 85] for i in range(100)])
+
+    def test_compression_is_available_and_only_when_asked(self):
+        blank = b"\x00" * 84
+        body = protocol.raster([blank] * 100, 84, compress=True)
         self.assertEqual(protocol.SYN, body[0])
         self.assertEqual(85 + 99, len(body))
         self.assertEqual(b"\x17" * 99, body[85:])
 
-    def test_a_changed_line_starts_a_new_run(self):
+    def test_a_changed_line_starts_a_new_run_when_compressing(self):
         blank, solid = b"\x00" * 84, b"\xff" * 84
-        body = protocol.raster([blank, blank, solid, solid], 84)
+        body = protocol.raster([blank, blank, solid, solid], 84, compress=True)
         self.assertEqual([protocol.SYN, protocol.ETB], [body[0], body[85]])
         self.assertEqual(protocol.SYN, body[86])
 
-    def test_measured_compression_on_a_real_shaped_label(self):
-        """Not a ratio for its own sake: this is the difference between a
-        job a LabelWriter takes in one bulk write and one it does not."""
+    def test_the_uncompressed_job_is_a_size_usb_does_not_notice(self):
+        """The saving compression buys is real and is not worth a guess: a
+        full 1.25" label is 31,886 bytes, which is under 3ms of USB 2.0."""
         lines = [b"\x00" * 84] * 300 + [b"\xf0" * 84] * 75
-        packed = protocol.raster(lines, 84)
-        self.assertLess(len(packed), len(lines) * 85 // 4)
+        self.assertEqual(375 * 85, len(protocol.raster(lines, 84)))
+        self.assertLess(len(protocol.raster(lines, 84, compress=True)),
+                        len(lines) * 85 // 4)
+
+
+class TestAJobAPrinterCanActuallyRead(unittest.TestCase):
+    """0.2.0 was accepted by a real LabelWriter and printed nothing.
+
+    Every layer said it worked: the bulk write returned its byte count, the
+    status read came back, the panel said "Printed 1 on the left roll". What
+    went down the wire for a 375-line label was 474 bytes, of which about
+    370 were `ETB` — an opcode this file assumed meant "repeat the previous
+    line". A printer that does not read it that way gets a valid preamble
+    and then 370 bytes it cannot use.
+
+    So the default job is now checked for being *decodable by a reader that
+    only knows SYN*, which is the guarantee that was missing.
+    """
+
+    @staticmethod
+    def _decode(payload: bytes, bytes_per_line: int) -> list[bytes]:
+        """Walk a job the way a printer would, knowing only SYN and ESC."""
+        lines, i = [], 0
+        while i < len(payload):
+            byte = payload[i]
+            if byte == protocol.ESC:
+                i += 2
+                if payload[i - 1] in (ord("D"), ord("B"), ord("q")):
+                    i += 1
+                elif payload[i - 1] == ord("L"):
+                    i += 2
+            elif byte == protocol.SYN:
+                lines.append(payload[i + 1:i + 1 + bytes_per_line])
+                i += 1 + bytes_per_line
+            else:
+                raise AssertionError(
+                    f"byte {i} is 0x{byte:02x}, which a printer that knows "
+                    f"only SYN and the escape commands cannot read")
+        return lines
+
+    def test_the_default_job_decodes_to_exactly_the_rows_it_was_given(self):
+        rows = [bytes([i % 256]) * 84 for i in range(40)]
+        payload = protocol.job(rows, bytes_per_line=84, roll=1,
+                               label_length_dots=40)
+        self.assertEqual(rows, self._decode(payload, 84))
+
+    def test_a_mostly_blank_label_still_sends_every_row(self):
+        """The case that failed: blank rows are most of a label, and they
+        are exactly the ones compression replaced."""
+        rows = [b"\x00" * 84] * 300 + [b"\xf0" * 84] * 75
+        payload = protocol.job(rows, bytes_per_line=84, roll=1,
+                               label_length_dots=375)
+        self.assertEqual(rows, self._decode(payload, 84))
+        self.assertNotIn(protocol.ETB, payload)
+
+    def test_the_compact_mode_is_the_one_that_needs_ETB(self):
+        rows = [b"\x00" * 84] * 50
+        payload = protocol.job(rows, bytes_per_line=84, compress=True,
+                               label_length_dots=50)
+        with self.assertRaises(AssertionError):
+            self._decode(payload, 84)
+
+    def test_nothing_no_op_rides_in_the_preamble(self):
+        """`ESC B 0` is a dot tab of zero — it cannot change the output, and
+        a firmware that does not take the command may swallow the byte after
+        it and desync the whole job. A no-op in a preamble is pure risk."""
+        payload = protocol.job([b"\x00" * 84], bytes_per_line=84, roll=1,
+                               label_length_dots=1)
+        self.assertNotIn(bytes([protocol.ESC, ord("B")]), payload)
 
 
 class TestJob(unittest.TestCase):

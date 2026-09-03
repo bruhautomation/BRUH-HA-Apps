@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.2.1
+
+**It said it printed and nothing came out.** Every layer reported success —
+the bulk write returned its byte count, the status read came back, the panel
+said "Printed 1 on the left roll" — and the printer produced nothing.
+
+A 375-line label went down the wire as **474 bytes**. About 370 of those were
+`ETB` (0x17), which this add-on assumed means "repeat the previous line". A
+label is mostly blank, so nearly the whole job was that one opcode — and it
+is the one opcode in `protocol.py` written from memory rather than from
+something unambiguous. A printer that does not read 0x17 that way receives a
+valid preamble followed by 370 bytes it cannot use, and prints nothing. There
+is no error for it to report: the bytes were accepted.
+
+**Compression is off by default now.** Every row is sent as its own `SYN`
+line, which is what cups-filters' DYMO path has printed with for twenty
+years. The same label is 31,886 bytes — under three milliseconds of USB 2.0.
+That is not a saving worth a guess.
+
+`ESC B 0` (dot tab) is gone from the preamble too. It was a no-op by
+construction — the renderer already knows where the left edge is — and a
+no-op in a preamble is pure risk: a firmware that does not take the command
+may swallow the byte after it and desync everything that follows.
+
+**And a setting for the part that cannot be tested from here.** Whether a
+given LabelWriter firmware accepts every command in the preamble is not
+something an add-on in a container can find out, and a printer that takes a
+job and prints nothing is otherwise a guessing game played one release at a
+time. **If nothing comes out** (Printer tab → Settings) offers three shapes:
+
+- **Standard** — the new default; what everything is tested against.
+- **Compact** — adds the `ETB` compression, for a printer that understands it.
+- **Bare minimum** — also drops roll select, which costs a Twin Turbo its
+  second bay. The last thing to try.
+
+Change it, press **Print the ruler**, and tell us which one worked.
+
+The tests that were supposed to hold this asserted the compression *happens*
+— they pinned the bug in place. What replaces them walks a finished job the
+way a printer would, knowing only `SYN` and the escape commands, and fails on
+any byte such a reader cannot use. Against 0.2.0 it reports
+`byte 98 is 0x17, which a printer that knows only SYN and the escape commands
+cannot read`.
+
 ## 0.2.0
 
 **You pick the label. BRUH Print remembers where it is.**

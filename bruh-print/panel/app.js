@@ -1124,6 +1124,37 @@ function renderPrinter() {
       + 'on a LabelWriter reports the real level, so it is only as good as '
       + 'the last time you told it. Turn this off to just print.'],
   ];
+  /* Not a toggle: three named shapes for the bytes, because whether a given
+   * LabelWriter firmware takes every command in the preamble is the one
+   * thing this add-on cannot find out from inside a container. A printer
+   * that accepts a job and prints nothing is otherwise a guessing game
+   * played one release at a time. */
+  const modeWrap = el('label', 'field');
+  modeWrap.append(el('span', null, 'If nothing comes out'));
+  const mode = el('select');
+  for (const [value, text] of [
+    ['standard', 'Standard — recommended'],
+    ['compact', 'Compact — smaller jobs, not every printer understands it'],
+    ['bare', 'Bare minimum — no roll select (Twin Turbo picks its own bay)'],
+  ]) {
+    const option = el('option', null, text);
+    option.value = value;
+    mode.append(option);
+  }
+  mode.value = S.settings.print_mode || 'standard';
+  mode.onchange = async () => {
+    try { await post('/api/settings', { print_mode: mode.value }); await loadState(); }
+    catch (error) { fail(error); }
+  };
+  modeWrap.append(mode);
+  settings.append(modeWrap);
+  settings.append(el('p', 'lede',
+    'The printer takes the job and prints nothing? Change this, then press '
+    + 'Print the ruler above. Standard is what everything is tested against; '
+    + 'try the others in order. Tell us which one worked — a LabelWriter '
+    + 'cannot be asked which commands it understands, so this is the only '
+    + 'way to find out.'));
+
   for (const [key, label, help] of toggles) {
     const wrap = el('label', 'check');
     const input = el('input'); input.type = 'checkbox';

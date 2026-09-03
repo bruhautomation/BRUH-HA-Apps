@@ -475,9 +475,15 @@ async def _send(state: Panel, rendered, *, side: str, copies: int) -> dict:
     roll_code = protocol.ROLL_CODES.get(side) if model.twin else None
 
     lines = render_image.raster_lines(rendered, model.bytes_per_line)
+    # `bare` drops roll select: on a Twin Turbo that means every label goes
+    # to whichever bay the printer last used, which is a real cost and the
+    # reason it is the last mode to try rather than a safe default.
+    mode = str(state.settings.get("print_mode", "standard"))
     payload = protocol.job(
-        lines, bytes_per_line=model.bytes_per_line, roll=roll_code,
-        copies=copies, label_length_dots=rendered.feed_dots)
+        lines, bytes_per_line=model.bytes_per_line,
+        roll=None if mode == "bare" else roll_code,
+        copies=copies, label_length_dots=rendered.feed_dots,
+        compress=(mode == "compact"))
 
     try:
         return await asyncio.to_thread(
