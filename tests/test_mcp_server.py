@@ -496,6 +496,8 @@ class TestMCPProtocol(unittest.TestCase):
             "get_automations", "get_automation_trace", "get_ha_config",
             "get_services", "get_device_registry", "get_areas", "get_logbook",
             "get_history", "get_statistics", "get_weather_forecast",
+            # Activity — what caused a change
+            "explain_change", "get_activity",
             "get_error_log", "render_template", "fire_event",
             "get_supervisor_info", "reload_config",
             # Memory

@@ -40,7 +40,7 @@ subscription — or your own API key.
 ## It runs Home Assistant
 
 Most AI integrations can turn on a light. brAIn administers the installation. It
-reaches Home Assistant three ways at once — **36 native tools** for reading and
+reaches Home Assistant three ways at once — **38 native tools** for reading and
 controlling, **65 registry-management services** for the parts of Home Assistant that
 normally only exist behind the Settings UI, and a **real shell** in \`/config\` for
 everything that is still a YAML file.

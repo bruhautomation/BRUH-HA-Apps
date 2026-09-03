@@ -45,6 +45,12 @@
       <span>Findings</span>
       <span id="findBadge" class="badge hidden"></span>
     </button>
+    <button class="viewtab" data-view="activity" role="tab" data-tip="Activity">
+      <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M3 12h4l2.5-7 5 14L17 12h4"/></svg>
+      <!-- No badge either. This is a record, not a queue: nothing on it is
+           waiting on anybody, and what IS waiting is on Findings. -->
+      <span>Activity</span>
+    </button>
     <button class="viewtab" data-view="terminal" role="tab" data-tip="Terminal">
       <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="m5 8 4 4-4 4M13 16h6"/></svg>
       <span>Terminal</span>
@@ -277,6 +283,46 @@
          Hidden until a producer has enough endings to mean something. -->
     <div id="findScore" class="findscore" hidden></div>
     <div id="findList" class="findlist"></div>
+  </section>
+</div>
+
+<!-- What changed, and what changed it. Read from Home Assistant's own
+     logbook every time the tab is opened, never cached and never stored:
+     it is a question somebody is asking now, and a cache would be a second
+     copy of the logbook to keep true.
+
+     Every row names a cause or says plainly that nothing does. A wall
+     switch and a device's own integration reach Home Assistant the same
+     way, so "unattributed" is the honest answer for both, and a timeline
+     that guessed between them would be a timeline nobody could use as
+     evidence. -->
+<div id="viewActivity" class="view">
+  <section class="actwrap">
+    <div class="acthead">
+      <div>
+        <h2>What changed</h2>
+        <p class="sub">Every state change in the house with the thing that caused it —
+          an automation, a script, a scene, a person, a voice command, or brAIn.
+          Read straight from the logbook: no Claude run, nothing spent.
+          Tap a row for that entity's own recent history.</p>
+      </div>
+      <div class="actside">
+        <div class="actfilters" id="actFilters"></div>
+        <div class="actnav">
+          <button id="actPrev" class="btn small ghost"
+                  data-tip="The day before this one">&lsaquo; Earlier</button>
+          <span id="actRange" class="actrange"></span>
+          <button id="actNext" class="btn small ghost"
+                  data-tip="The day after this one">Later &rsaquo;</button>
+        </div>
+      </div>
+    </div>
+    <!-- The times somebody put back what an automation had just done. It is
+         the one thing in this window that is evidence rather than history,
+         so it is called out above the list rather than left to be spotted
+         in it. -->
+    <div id="actOverrides" class="actoverrides" hidden></div>
+    <div id="actList" class="actlist"></div>
   </section>
 </div>
 

@@ -3431,6 +3431,248 @@ $("#obRetry").addEventListener("click", async (ev) => {
   await refreshOnboarding();
 });
 
+// ------------------------------------------------------------- activity
+// What changed, and what changed it.
+//
+// Everything here is one fetch of Home Assistant's own logbook, mined
+// server-side. Nothing is cached and nothing is stored: the window is a
+// question somebody is asking now, and a cached copy of a stream is a
+// second thing to keep true. Leaving the tab and coming back re-asks,
+// which is also what makes "Later" mean now.
+const actState = {
+  end: null,        // epoch seconds; null means "up to now"
+  hours: 24,
+  cause: "",
+  data: null,
+  loading: false,
+  open: "",         // "entity_id|ts" of the row whose history is expanded
+  why: null,
+};
+
+const CAUSE_WORDS = {
+  brain: "brAIn",
+  automation: "Automation",
+  script: "Script",
+  scene: "Scene",
+  voice: "Voice",
+  person: "Person",
+  unattributed: "No cause recorded",
+};
+
+function actTime(ts) {
+  return new Date(ts * 1000).toLocaleTimeString([],
+    { hour: "2-digit", minute: "2-digit" });
+}
+
+function actDayLabel(end) {
+  const d = new Date((end || Date.now() / 1000) * 1000);
+  const today = new Date();
+  const sameDay = d.toDateString() === today.toDateString();
+  if (sameDay) return "Today";
+  return d.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
+}
+
+async function refreshActivity() {
+  actState.loading = true;
+  renderActivity();
+  const q = new URLSearchParams({ hours: String(actState.hours) });
+  if (actState.end) q.set("end", String(Math.round(actState.end)));
+  if (actState.cause) q.set("cause", actState.cause);
+  try {
+    actState.data = await api("api/activity?" + q.toString());
+  } catch (e) {
+    // A window that could not be fetched is not an empty window, and the
+    // difference is the whole design of this tab — so it says which.
+    actState.data = { available: false, error: String(e.message || e),
+                      actions: [], overrides: [], counts: {}, total: 0 };
+  }
+  actState.loading = false;
+  renderActivity();
+}
+
+function renderActFilters(counts) {
+  const el = $("#actFilters");
+  if (!el) return;
+  const kinds = ["", ...Object.keys(CAUSE_WORDS)];
+  el.innerHTML = "";
+  kinds.forEach((kind) => {
+    const n = kind ? (counts[kind] || 0) : Object.values(counts)
+      .reduce((a, b) => a + b, 0);
+    // A filter for a cause this window does not contain is a control that
+    // can only ever empty the list.
+    if (kind && !n) return;
+    const b = document.createElement("button");
+    b.className = "fchip" + (actState.cause === kind ? " active" : "");
+    b.textContent = (kind ? CAUSE_WORDS[kind] : "Everything") + " · " + n;
+    b.addEventListener("click", () => {
+      actState.cause = actState.cause === kind ? "" : kind;
+      actState.open = "";
+      refreshActivity();
+    });
+    el.appendChild(b);
+  });
+}
+
+function renderActOverrides(overrides) {
+  const el = $("#actOverrides");
+  if (!el) return;
+  if (!overrides || !overrides.length) { el.hidden = true; return; }
+  const byAuto = new Map();
+  overrides.forEach((o) => {
+    const key = o.by || o.by_name;
+    if (!byAuto.has(key)) byAuto.set(key, { name: o.by_name || key, n: 0 });
+    byAuto.get(key).n += 1;
+  });
+  const parts = [...byAuto.values()]
+    .sort((a, b) => b.n - a.n)
+    .map((g) => `<b>${esc(g.name)}</b> ${g.n}&times;`);
+  el.innerHTML = `<h3>Somebody put things back</h3>`
+    + `<div>${parts.join(" &middot; ")}</div>`
+    + `<div>Each of these is a moment an automation did something and a person `
+    + `undid it within a few minutes. It is the clearest signal a house gives `
+    + `about an automation being wrong for it, and it is invisible everywhere `
+    + `else &mdash; the automation ran, nothing errored, and the light is off.</div>`;
+  el.hidden = false;
+}
+
+function actRowKey(a) { return a.entity_id + "|" + a.ts; }
+
+function renderActivity() {
+  const list = $("#actList");
+  if (!list) return;
+  const data = actState.data;
+  $("#actRange").textContent = actDayLabel(actState.end);
+  // "Later" is meaningless on the window that already ends now.
+  $("#actNext").disabled = !actState.end;
+
+  if (actState.loading && !data) {
+    list.innerHTML = `<div class="actempty">Reading the logbook&hellip;</div>`;
+    return;
+  }
+  if (!data) { list.innerHTML = ""; return; }
+
+  if (!data.available) {
+    renderActFilters({});
+    renderActOverrides([]);
+    list.innerHTML = `<div class="actempty">Home Assistant's logbook could not be `
+      + `read, so nothing here can say what caused a change.`
+      + (data.error ? ` <code>${esc(data.error)}</code>` : "")
+      + ` The <code>logbook</code> integration is part of the default config; `
+      + `if it has been removed from <code>configuration.yaml</code>, this tab `
+      + `and the "automations you keep undoing" check both go quiet.</div>`;
+    return;
+  }
+
+  renderActFilters(data.counts || {});
+  renderActOverrides(data.overrides);
+
+  if (!data.actions.length) {
+    list.innerHTML = `<div class="actempty">Nothing changed in this window.</div>`;
+    return;
+  }
+
+  const frag = document.createDocumentFragment();
+  let hour = null;
+  data.actions.forEach((a) => {
+    const h = new Date(a.ts * 1000).getHours();
+    if (h !== hour) {
+      hour = h;
+      const head = document.createElement("div");
+      head.className = "acthour";
+      head.textContent = String(h).padStart(2, "0") + ":00";
+      frag.appendChild(head);
+    }
+    const key = actRowKey(a);
+    const row = document.createElement("button");
+    row.className = "actrow";
+    row.dataset.cause = a.cause;
+    row.dataset.key = key;
+    row.dataset.entity = a.entity_id;
+    const cause = a.cause === "unattributed"
+      ? CAUSE_WORDS.unattributed
+      : `${CAUSE_WORDS[a.cause] || a.cause}${a.by_name ? ": " + a.by_name : ""}`;
+    // The root user is the other half of an automation somebody started by
+    // hand: reporting only the automation loses the one fact that explains
+    // an unexpected run.
+    const root = (a.root_user_name && a.cause !== "person")
+      ? ` (started by ${a.root_user_name})` : "";
+    row.innerHTML = `<span class="t">${esc(actTime(a.ts))}</span>`
+      + `<span class="who"></span>`
+      + `<span class="what"><b>${esc(a.name)}</b> <span class="st">&rarr; `
+      + `${esc(a.state)}</span></span>`
+      + `<span class="cause">${esc(cause + root)}</span>`;
+    frag.appendChild(row);
+    if (actState.open === key) {
+      const why = document.createElement("div");
+      why.className = "actwhy";
+      why.innerHTML = actWhyHtml(a);
+      frag.appendChild(why);
+    }
+  });
+  list.innerHTML = "";
+  list.appendChild(frag);
+}
+
+function actWhyHtml(a) {
+  const why = actState.why;
+  if (!why || why.entity_id !== a.entity_id) return "Reading&hellip;";
+  if (!why.changes.length) {
+    return `Nothing else changed <code>${esc(a.entity_id)}</code> in this window.`;
+  }
+  return `<div>Everything that changed <code>${esc(a.entity_id)}</code> `
+    + `in this window, newest first:</div>`
+    + why.changes.map((c) => {
+      const cause = c.cause === "unattributed"
+        ? CAUSE_WORDS.unattributed
+        : `${CAUSE_WORDS[c.cause] || c.cause}${c.by_name ? " &middot; " + esc(c.by_name) : ""}`;
+      return `<div><span class="t">${esc(actTime(c.ts))}</span> &rarr; `
+        + `${esc(c.state)} &mdash; ${cause}</div>`;
+    }).join("");
+}
+
+async function actOpenRow(key, entityId) {
+  if (actState.open === key) { actState.open = ""; actState.why = null;
+                               renderActivity(); return; }
+  actState.open = key;
+  actState.why = null;
+  renderActivity();
+  const q = new URLSearchParams({ hours: String(actState.hours) });
+  if (actState.end) q.set("end", String(Math.round(actState.end)));
+  try {
+    const data = await api(
+      `api/activity/entity/${encodeURIComponent(entityId)}?` + q.toString());
+    actState.why = data;
+  } catch (e) {
+    actState.why = { entity_id: entityId, changes: [] };
+  }
+  // The row may have gone (a filter press, a day step) while this was in
+  // flight; renderActivity draws whatever is open now, which may be nothing.
+  if (actState.open === key) renderActivity();
+}
+
+// Delegated: every row in this list is rebuilt on each render.
+document.addEventListener("click", (ev) => {
+  const row = ev.target.closest && ev.target.closest(".actrow");
+  if (!row) return;
+  actOpenRow(row.dataset.key, row.dataset.entity);
+});
+
+$("#actPrev").addEventListener("click", () => {
+  actState.end = (actState.end || Date.now() / 1000) - actState.hours * 3600;
+  actState.open = "";
+  refreshActivity();
+});
+$("#actNext").addEventListener("click", () => {
+  if (!actState.end) return;
+  const next = actState.end + actState.hours * 3600;
+  // Stepping forward past now lands on the live window, which is what
+  // "Later" means at the end of the list rather than a window ending in
+  // the future with nothing in it.
+  actState.end = next >= Date.now() / 1000 - 60 ? null : next;
+  actState.open = "";
+  refreshActivity();
+});
+
 // ---------------------------------------------------------------- views
 // Insights / Terminal / Memory. The Memory pane reuses the knowledge
 // dialog's markup verbatim — it is relocated out of the modal at startup
@@ -3479,6 +3721,10 @@ function switchView(name) {
   applyTermChrome();
   if (name === "memory") renderKnowledge();
   if (name === "docs") renderDocs();
+  // Re-fetched on every entry rather than kept: the window ends "now", and
+  // a timeline showing the state of the house when you last looked is the
+  // one thing a timeline may not do.
+  if (name === "activity") { actState.end = null; actState.open = ""; refreshActivity(); }
 }
 
 document.querySelectorAll(".viewtab").forEach((b) =>

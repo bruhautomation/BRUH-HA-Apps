@@ -105,6 +105,7 @@ from pathlib import Path
 from aiohttp import web
 from aiohttp.abc import AbstractAccessLogger
 
+import actions
 import addon_options
 import atomic_write
 import card_tags
@@ -2099,6 +2100,105 @@ async def h_checks_run(request: web.Request) -> web.Response:
 
 
 # ---------------------------------------------------------------------------
+# Activity — what changed, and what changed it
+# ---------------------------------------------------------------------------
+
+# A window a person asks for. A day is what the tab opens on; a week is
+# as far back as one logbook fetch is a window rather than a download.
+ACTIVITY_MAX_HOURS = 24 * 7
+ACTIVITY_DEFAULT_HOURS = 24
+
+
+def _activity_window(request: web.Request) -> tuple[float, float]:
+    """The window a request asked for, as (start, end) epoch seconds.
+
+    ``end`` lets the tab page backwards through days without the client
+    and the server disagreeing about where a day begins — the browser
+    knows the viewer's timezone and the panel does not.
+    """
+    now = time.time()
+    try:
+        hours = float(request.query.get("hours") or ACTIVITY_DEFAULT_HOURS)
+    except ValueError:
+        hours = ACTIVITY_DEFAULT_HOURS
+    hours = max(1.0, min(ACTIVITY_MAX_HOURS, hours))
+    try:
+        end = float(request.query.get("end") or now)
+    except ValueError:
+        end = now
+    end = min(end, now)
+    return end - hours * 3600, end
+
+
+async def _activity(start: float, end: float) -> dict:
+    import aiohttp
+    async with aiohttp.ClientSession() as session:
+        users = await checks.snapshot._users(session)
+        return await actions.collect(session, start, end, users)
+
+
+async def h_activity(request: web.Request) -> web.Response:
+    """A window of the house's own history, with a cause on every row.
+
+    Fetched per request and never cached: this is a question somebody is
+    asking now, the answer changes every few seconds, and a cache would be
+    a second copy of the logbook to keep true.
+    """
+    start, end = _activity_window(request)
+    try:
+        mined = await _activity(start, end)
+    except Exception as exc:  # noqa: BLE001 — a failed look is an answer
+        log.warning("activity fetch failed: %s", exc)
+        return web.json_response({"available": False, "error": str(exc)[:200],
+                                  "actions": [], "overrides": [],
+                                  "counts": {}, "start": start, "end": end})
+    cause = (request.query.get("cause") or "").strip()
+    if cause and cause in actions.CAUSES:
+        mined = dict(mined)
+        mined["actions"] = [a for a in mined["actions"] if a["cause"] == cause]
+    limit = 400
+    try:
+        limit = max(1, min(2000, int(request.query.get("limit") or limit)))
+    except ValueError:
+        # A typed limit is a preference, not a request. Refusing the whole
+        # window over an unparseable one would be a blank tab.
+        pass
+    rows = sorted(mined["actions"], key=lambda a: a["ts"], reverse=True)
+    mined = dict(mined)
+    # The count is of everything in the window; the list is capped. Two
+    # numbers that disagree quietly is what the memory queue's list and
+    # count were, so the cap is reported rather than applied silently.
+    mined["total"] = len(rows)
+    mined["actions"] = rows[:limit]
+    mined["causes"] = list(actions.CAUSES)
+    return web.json_response(mined)
+
+
+async def h_activity_entity(request: web.Request) -> web.Response:
+    """Why one entity is the way it is: its recent changes and their causes.
+
+    The deterministic half of "why did that happen". What is left — whether
+    the automation that did it was right to — is a question for the model,
+    and it answers it from this rather than from a state with no cause on
+    it.
+    """
+    entity_id = request.match_info["entity_id"]
+    start, end = _activity_window(request)
+    try:
+        mined = await _activity(start, end)
+    except Exception as exc:  # noqa: BLE001
+        return web.json_response({"available": False, "error": str(exc)[:200],
+                                  "entity_id": entity_id, "changes": []})
+    return web.json_response({
+        "available": mined["available"],
+        "error": mined.get("error") or "",
+        "entity_id": entity_id,
+        "start": start, "end": end,
+        "changes": actions.explain(mined["actions"], entity_id),
+    })
+
+
+# ---------------------------------------------------------------------------
 # Diagnostics — what a bug report needs, in one payload
 # ---------------------------------------------------------------------------
 
@@ -3977,6 +4077,8 @@ def make_app() -> web.Application:
     app.router.add_get("/api/checks", h_checks)
     app.router.add_post("/api/checks/run", h_checks_run)
     app.router.add_get("/api/diagnostics", h_diagnostics)
+    app.router.add_get("/api/activity", h_activity)
+    app.router.add_get("/api/activity/entity/{entity_id}", h_activity_entity)
     app.router.add_post("/api/finding/{ts}/fix", h_finding_fix)
     app.router.add_post("/api/finding/{ts}/snooze", h_finding_snooze)
     app.router.add_post("/api/finding/{ts}/discuss", h_finding_discuss)
