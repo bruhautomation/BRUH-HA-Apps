@@ -35,7 +35,6 @@ const DEFAULTS = {
   mode: 'text',          // 'text' | 'template'
   template: '',
   stock: '',
-  side: '',
   copies: 1,
   show_status: true,
   show_rolls: true,
@@ -71,6 +70,17 @@ const css = `
   .roll .bar > i { display: block; height: 100%;
     background: var(--primary-color); }
   .roll .est { font-size: 11px; color: var(--secondary-text-color); margin-top: 4px; }
+  /* A roll box is a button when there is a choice to make, and a readout
+     when there is not — one loaded roll is not a selection. Both draw the
+     same, so the card does not change shape when a second roll is set. */
+  button.roll { width: 100%; text-align: left; font: inherit; cursor: pointer;
+    min-height: 44px; border: 1px solid var(--divider-color, #0002);
+    background: var(--card-background-color, #fff); }
+  button.roll.on { border-color: var(--primary-color);
+    box-shadow: 0 0 0 1px var(--primary-color) inset; }
+  button.roll.on .who { color: var(--primary-color); font-weight: 700; }
+  button.roll:focus-visible { outline: 2px solid var(--primary-color);
+    outline-offset: 2px; }
 
   .field { display: block; margin-bottom: 10px; }
   .field > span { display: block; font-size: 12px; font-weight: 600;
@@ -119,7 +129,7 @@ class BruhPrintCard extends HTMLElement {
      * install — and a re-render that read the inputs back would fight
      * whoever is typing. So the DOM is rebuilt only when something the card
      * actually shows has changed, and the fields are restored from here. */
-    this._form = { text: '', fields: {}, copies: null, side: null };
+    this._form = { text: '', fields: {}, copies: null, stock: '' };
     this._signature = '';
   }
 
@@ -139,7 +149,7 @@ class BruhPrintCard extends HTMLElement {
       throw new Error('a template card needs a template name');
     this._config = { ...DEFAULTS, ...config };
     this._form.copies = null;
-    this._form.side = null;
+    this._form.stock = '';
     this._signature = '';
     this._render();
   }
@@ -237,22 +247,71 @@ class BruhPrintCard extends HTMLElement {
     this.shadowRoot.replaceChildren(root);
   }
 
+  /* The loaded rolls ARE the label picker.
+   *
+   * A roll is not a thing anybody wants to choose — it is where the label
+   * happens to be, which the add-on already knows. What a person wants to
+   * choose is which label they are printing, and on a Twin Turbo that is
+   * exactly a choice between the two things on this card. So the boxes are
+   * the selector: press one, and that is what prints. A separate "Roll"
+   * dropdown under them was the same decision asked twice, in the harder
+   * of the two vocabularies.
+   *
+   * A single-roll printer draws one box and it is simply what is loaded —
+   * a selector offering one choice is a readout, and it is styled as one. */
+  _selectedStock() {
+    /* The config's stock wins until somebody presses a box, so a dashboard
+     * pinned to one label keeps printing that label. */
+    if (this._form.stock) return this._form.stock;
+    if (this._config.stock) return this._config.stock;
+    const first = this._loadedRolls()[0];
+    return first ? first.stock : '';
+  }
+
+  _loadedRolls() {
+    const printer = this._find('printer');
+    const sides = printer?.attributes?.two_rolls === false ? ['left'] : ['left', 'right'];
+    const out = [];
+    for (const side of sides) {
+      const entity = this._find(`${side}_roll`);
+      if (!entity || !entity.attributes.loaded) continue;
+      out.push({ side, entity, stock: entity.attributes.stock || '' });
+    }
+    return out;
+  }
+
   _rolls() {
     const wrap = document.createElement('div');
     wrap.className = 'rolls';
     const printer = this._find('printer');
     const sides = printer?.attributes?.two_rolls === false ? ['left'] : ['left', 'right'];
+    const choosable = this._loadedRolls().length > 1;
+    const chosen = this._selectedStock();
     for (const side of sides) {
       const entity = this._find(`${side}_roll`);
       if (!entity) continue;
-      const box = document.createElement('div');
+      const loaded = !!entity.attributes.loaded;
+      const box = document.createElement(choosable && loaded ? 'button' : 'div');
       box.className = 'roll';
+      if (choosable && loaded) {
+        box.classList.add('pick');
+        if (entity.attributes.stock === chosen) box.classList.add('on');
+        box.setAttribute('aria-pressed',
+          entity.attributes.stock === chosen ? 'true' : 'false');
+        box.addEventListener('click', () => {
+          this._form.stock = entity.attributes.stock;
+          this._signature = '';
+          this._render();
+        });
+      }
       const who = document.createElement('div');
       who.className = 'who';
-      who.textContent = side === 'left' ? 'Left roll' : 'Right roll';
+      who.textContent = loaded && choosable
+        ? (entity.attributes.stock === chosen ? 'printing on this' : 'tap to use')
+        : (side === 'left' ? 'left roll' : 'right roll');
       const what = document.createElement('div');
       what.className = 'what';
-      what.textContent = entity.attributes.loaded
+      what.textContent = loaded
         ? (entity.attributes.stock_name || entity.attributes.stock)
         : 'not set';
       box.append(who, what);
@@ -404,27 +463,9 @@ class BruhPrintCard extends HTMLElement {
     copiesField.append(copiesLabel, copies);
     row.append(copiesField);
 
-    /* The roll picker is shown only on a printer that has two, and only
-     * once we have actually heard from one. A control offering a choice the
-     * hardware does not have is a control that lies about what it did. */
-    const printer = this._find('printer');
-    if (!printer || printer.attributes.two_rolls) {
-      const sideField = document.createElement('label');
-      sideField.className = 'field';
-      const sideLabel = document.createElement('span');
-      sideLabel.textContent = 'Roll';
-      const side = document.createElement('select');
-      for (const [value, text] of [['', 'Wherever it is'], ['left', 'Left'], ['right', 'Right']]) {
-        const option = document.createElement('option');
-        option.value = value;
-        option.textContent = text;
-        side.append(option);
-      }
-      side.value = this._form.side ?? this._config.side ?? '';
-      side.addEventListener('change', () => { this._form.side = side.value; });
-      sideField.append(sideLabel, side);
-      row.append(sideField);
-    }
+    /* No roll picker. The rolls above are the selector — pressing one is
+     * how you say which label this prints on, in the vocabulary of the
+     * thing you are actually choosing. */
     return row;
   }
 
@@ -474,8 +515,11 @@ class BruhPrintCard extends HTMLElement {
     const data = {};
     const copies = this._form.copies ?? this._config.copies;
     if (copies && copies > 1) data.copies = copies;
-    const side = this._form.side ?? this._config.side;
-    if (side) data.side = side;
+    /* `stock`, never `side`: the add-on remembers which bay holds which
+     * label, so naming the label has already named the bay — and a card
+     * that sent a side would be the one place able to contradict it. */
+    const stock = this._selectedStock();
+    if (stock) data.stock = stock;
     return data;
   }
 
@@ -499,9 +543,7 @@ class BruhPrintCard extends HTMLElement {
       this._render();
       return;
     }
-    const data = { text, ...this._common() };
-    if (this._config.stock) data.stock = this._config.stock;
-    this._call('print_text', data);
+    this._call('print_text', { text, ...this._common() });
   }
 
   _quickPrint(item) {
@@ -510,15 +552,14 @@ class BruhPrintCard extends HTMLElement {
       this._call('print_template', {
         template: item.template, fields: item.fields || {},
         ...(item.copies ? { copies: item.copies } : {}),
-        ...(item.side ? { side: item.side } : {}),
+        ...(item.stock ? { stock: item.stock } : { stock: this._selectedStock() }),
       });
       return;
     }
     this._call('print_text', {
       text: item.text || item.label,
-      ...(item.stock || this._config.stock ? { stock: item.stock || this._config.stock } : {}),
       ...(item.copies ? { copies: item.copies } : {}),
-      ...(item.side ? { side: item.side } : {}),
+      stock: item.stock || this._selectedStock(),
     });
   }
 }

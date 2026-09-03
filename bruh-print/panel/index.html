@@ -49,18 +49,14 @@
                   autocomplete="off" spellcheck="false"></textarea>
       </label>
 
+      <!-- No roll picker anywhere but the Printer tab. Which bay a label
+           prints on is not a decision anybody wants to make per print — the
+           add-on knows which roll holds which stock, so picking the stock
+           has already picked the roll. -->
       <div class="row">
         <label class="field grow">
-          <span>Label stock</span>
+          <span>Label</span>
           <select id="quickStock"></select>
-        </label>
-        <label class="field">
-          <span>Roll</span>
-          <select id="quickSide">
-            <option value="">Wherever it is</option>
-            <option value="left">Left</option>
-            <option value="right">Right</option>
-          </select>
         </label>
       </div>
 
@@ -73,11 +69,15 @@
           <span>Font</span>
           <select id="quickFont"></select>
         </label>
+        <!-- Defaults to whatever this label's stock is set to, and follows
+             the stock when you change it. Overriding is for one print;
+             correcting it for good is a press on the Printer tab. -->
         <label class="field">
           <span>Turn</span>
-          <select id="quickRotate">
-            <option value="">Automatic</option>
-            <option value="0">Across</option>
+          <select id="quickRotate" data-tip="How the text sits on this label.
+            It follows whatever the stock is set to; the Printer tab is where
+            you change that for good.">
+            <option value="0">Across the label</option>
             <option value="90">Along the roll</option>
           </select>
         </label>
@@ -152,11 +152,6 @@
   <div class="actions sticky">
     <label class="field inline"><span>Copies</span>
       <input type="number" id="designCopies" value="1" min="1" max="500"></label>
-    <label class="field inline"><span>Roll</span>
-      <select id="designSide">
-        <option value="">Wherever it is</option>
-        <option value="left">Left</option><option value="right">Right</option>
-      </select></label>
     <span class="spacer"></span>
     <button class="btn" id="designSaveTemplate">Save as template</button>
     <button class="btn primary big" id="designPrint">Print</button>

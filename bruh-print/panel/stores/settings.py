@@ -33,8 +33,27 @@ DEFAULTS: dict[str, Any] = {
     # one press either way. Turning it off is for somebody who reloads rolls
     # faster than they update the panel and would rather we not ask.
     "enforce_stock": True,
+    # What the printer is sent, for the one thing this add-on cannot test
+    # from here: whether a given firmware takes every command in the
+    # preamble. "standard" is the shape cups-filters' DYMO path has printed
+    # with for twenty years — a SYN line per row, no compression. The other
+    # two exist because a printer that stays silent is otherwise a guessing
+    # game played one release at a time.
+    #   standard — recommended, and what everything is tested against
+    #   compact  — adds ETB run-compression; a fraction of the bytes, and
+    #              the opcode this add-on is least sure of
+    #   bare     — drops roll select too, which costs the Twin Turbo its
+    #              second bay and is the last thing to try
+    "print_mode": "standard",
     "quick_uppercase": False,
-    "quick_rotate_narrow": True,
+    # Counting down from a number somebody typed is an estimate dressed as
+    # a gauge: nothing on a LabelWriter reports a roll's real level, so the
+    # count is only ever as good as the last time it was set. Some people
+    # want it and keep it honest; some want the printer to just print. Off
+    # hides every bar and estimate and stops the decrement — a number that
+    # is not shown must not go on being kept, or turning tracking back on
+    # reveals a count that has been quietly wrong for a month.
+    "track_remaining": True,
     "preview_scale": 2,
     "confirm_over_copies": 10,
     "notify_service": "",

@@ -199,20 +199,42 @@ function renderBar() {
   }
 }
 
+/* What you can print on: the stock that is actually in the printer.
+ *
+ * The full catalog is a list of every label BRUH Print has ever heard of,
+ * and offering it on the Quick tab means the commonest first action is
+ * choosing between fourteen rows of which two are real — then being refused
+ * for picking one of the twelve. The catalog belongs on the Printer tab,
+ * where the question is "what did I just load"; everywhere else the answer
+ * is already known and the picker should only be able to be right.
+ *
+ * A printer with nothing recorded falls back to the whole catalog rather
+ * than to an empty picker: an empty select is a panel that looks broken,
+ * and somebody who has not filled the Printer tab in yet still wants to
+ * print. */
+function loadedStocks() {
+  const on = S.stocks.filter((stock) => stock.loaded);
+  return on.length ? on : S.stocks;
+}
+
 function fillPickers() {
   const options = (select, keep) => {
     const previous = keep ?? select.value;
+    const rows = loadedStocks();
     select.innerHTML = '';
-    for (const stock of S.stocks) {
+    for (const stock of rows) {
       const option = el('option', null, `${stock.name} — ${stock.label}`);
       option.value = stock.id;
       select.append(option);
     }
-    if (previous && S.stocks.some((s) => s.id === previous)) select.value = previous;
-    else select.value = S.settings.default_stock || (S.stocks[0] || {}).id || '';
+    if (previous && rows.some((s) => s.id === previous)) select.value = previous;
+    else if (rows.some((s) => s.id === S.settings.default_stock))
+      select.value = S.settings.default_stock;
+    else select.value = (rows[0] || {}).id || '';
   };
   options($('quickStock'), prefGet('bruhprint.stock', null));
   options($('designStock'), S.label ? S.label.stock : null);
+  syncTurnToStock();
 
   const fontSelect = $('quickFont');
   const keptFont = fontSelect.value || S.settings.default_font;
@@ -227,6 +249,23 @@ function fillPickers() {
   if (!$('addBar').childElementCount) buildAddBar();
 }
 
+/* The Turn control follows the stock, because which way text sits on a
+ * label is the label's property and not the job's. Switching from a 2.25 ×
+ * 1.25 address label to a 0.56 × 3.44 cryo wrap has to move it to "along
+ * the roll" without being asked — that IS the difference between the two
+ * stocks — and an override is remembered only until the stock changes,
+ * because the override was about the label you were looking at. */
+let turnFollows = '';
+function syncTurnToStock() {
+  const select = $('quickRotate');
+  if (!select) return;
+  const chosen = $('quickStock').value;
+  if (chosen === turnFollows) return;
+  turnFollows = chosen;
+  const stock = stockById(chosen);
+  if (stock) select.value = String(stock.turn ?? 0);
+}
+
 /* ── Quick ──────────────────────────────────────────────────────────── */
 let quickTimer = 0;
 let quickSeq = 0;
@@ -237,7 +276,6 @@ function quickPayload(printIt) {
     stock: $('quickStock').value,
     font: $('quickFont').value,
     copies: Number($('quickCopies').value) || 1,
-    side: $('quickSide').value,
     uppercase: $('quickUpper').checked,
     ...(rotate === '' ? {} : { rotate: Number(rotate) }),
     ...(printIt ? { print: true } : { scale: 2 }),
@@ -283,7 +321,10 @@ function notes(list, items) {
 const debouncedQuick = () => { clearTimeout(quickTimer); quickTimer = setTimeout(quickPreview, 260); };
 ['quickText', 'quickStock', 'quickFont', 'quickRotate', 'quickUpper']
   .forEach((id) => $(id).addEventListener('input', () => {
-    if (id === 'quickStock') prefSet('bruhprint.stock', $('quickStock').value);
+    if (id === 'quickStock') {
+      prefSet('bruhprint.stock', $('quickStock').value);
+      syncTurnToStock();
+    }
     debouncedQuick();
   }));
 
@@ -675,7 +716,7 @@ $('designPrint').addEventListener('click', async () => {
   button.disabled = true;
   try {
     const data = await post('/api/print', {
-      label: S.label, copies, side: $('designSide').value, source: 'designer',
+      label: S.label, copies, source: 'designer',
     });
     toast(`Printed ${data.printed} on the ${data.side} roll.`, 'good');
     notes($('designNotes'), data.notes);
@@ -804,20 +845,12 @@ function pickTemplate(template) {
   copies.type = 'number'; copies.min = '1'; copies.value = String(template.copies || 1);
   copiesField.append(copies);
 
-  const sideField = el('label', 'field inline');
-  sideField.append(el('span', null, 'Roll'));
-  const side = el('select');
-  for (const [value, label] of [['', 'Wherever it is'], ['left', 'Left'], ['right', 'Right']]) {
-    const option = el('option', null, label); option.value = value; side.append(option);
-  }
-  sideField.append(side);
-
   const print = el('button', 'btn primary big', 'Print');
   print.onclick = async () => {
     print.disabled = true;
     try {
       const data = await post(`/api/template/${template.id}/print`, {
-        fields: values(inputs), copies: Number(copies.value) || 1, side: side.value,
+        fields: values(inputs), copies: Number(copies.value) || 1,
       });
       toast(`Printed ${data.printed} on the ${data.side} roll.`, 'good');
       notes($('templateNotes'), data.notes);
@@ -839,7 +872,7 @@ function pickTemplate(template) {
     } catch (error) { fail(error); }
   };
 
-  row.append(copiesField, sideField, print, edit, remove);
+  row.append(copiesField, print, edit, remove);
   form.append(row);
   templatePreview(template, inputs);
 }
@@ -900,12 +933,22 @@ function renderPrinter() {
         'This generation checks an RFID tag on the roll and refuses stock '
         + 'that does not carry one. Nothing here can work around that.'));
     const foot = el('div', 'foot');
-    const use = el('button', 'btn tiny', S.printer?.key === printer.key ? 'In use' : 'Use this one');
+    const mine = S.printer?.key === printer.key;
+    const use = el('button', 'btn tiny', mine ? 'In use' : 'Use this one');
+    use.setAttribute('data-tip', mine
+      ? 'Everything prints to this one. It only matters when more than one '
+        + 'LabelWriter is plugged in — press another to move printing there.'
+      : 'Send every print to this printer instead. Remembered by serial, so '
+        + 'it survives a reboot that renumbers the USB bus.');
+    use.disabled = mine && S.printers.length < 2;
     use.onclick = async () => {
       try { await post('/api/printer/select', { printer: printer.key }); await loadState(); renderPrinter(); }
       catch (error) { fail(error); }
     };
-    const status = el('button', 'btn tiny', 'Check it');
+    const status = el('button', 'btn tiny', 'Ask the printer');
+    status.setAttribute('data-tip',
+      'Asks the printer how it is, right now — paper out, lid open, busy, '
+      + 'or ready. It prints nothing.');
     status.onclick = async () => {
       try { const data = await api('/api/printer/status'); toast(`${printer.name}: ${data.status}.`, data.status_ok ? 'good' : 'bad'); }
       catch (error) { fail(error); }
@@ -952,23 +995,55 @@ function renderPrinter() {
     bay.append(select);
 
     const stock = stockById(roll.stock);
-    if (stock) {
+    if (stock && S.settings.track_remaining !== false) {
+      /* The bar is a control, not a readout. The count is an estimate that
+       * drifts the moment somebody prints from another machine or throws
+       * half a roll away, so the fix has to be where the wrong number is —
+       * press the bar, type the truth. A number you can see and cannot
+       * correct is a number you stop reading. */
       const full = stock.per_roll || roll.remaining || 1;
+      const gauge = el('button', 'remaining');
+      gauge.setAttribute('data-tip',
+        'An estimate, counted down from what you set when you loaded the '
+        + 'roll — nothing on a LabelWriter reports the real level. Press to '
+        + 'correct it.');
       const bar = el('div', 'bar');
       const fillEl = el('i');
       fillEl.style.width = clamp(roll.remaining / full * 100, 0, 100) + '%';
       bar.append(fillEl);
-      bay.append(bar);
-      bay.append(el('div', 'est',
-        `About ${roll.remaining} left — an estimate, counted from prints. `
-        + `Nothing on a LabelWriter reports the real level.`));
-      const reset = el('button', 'btn tiny', 'New roll (reset the count)');
+      gauge.append(bar, el('span', 'est',
+        `About ${roll.remaining} left — press to correct`));
+      const setCount = async () => {
+        const typed = prompt(
+          `How many ${stock.name} labels are left on the ${roll.side} roll?`,
+          String(roll.remaining));
+        if (typed === null) return;
+        const count = Number(typed);
+        if (!Number.isFinite(count) || count < 0)
+          return toast('That is not a number of labels.', 'bad');
+        try {
+          await post(`/api/roll/${roll.side}`,
+                     { stock: stock.id, remaining: Math.round(count) });
+          await loadState(); renderPrinter();
+          toast('Count updated.', 'good');
+        } catch (error) { fail(error); }
+      };
+      gauge.onclick = setCount;
+      bay.append(gauge);
+
+      const reset = el('button', 'btn tiny', 'Full roll');
+      reset.setAttribute('data-tip',
+        `Put the count back to a full roll of ${stock.per_roll || '?'} — `
+        + 'what you press when you drop a new one in.');
       reset.onclick = async () => {
-        try { await post(`/api/roll/${roll.side}`, { stock: stock.id, remaining: stock.per_roll }); await loadState(); renderPrinter(); }
+        try { await post(`/api/roll/${roll.side}`, { stock: stock.id, remaining: stock.per_roll }); await loadState(); renderPrinter(); toast('Counted as a full roll.', 'good'); }
         catch (error) { fail(error); }
       };
       const foot = el('div', 'foot'); foot.append(reset);
       bay.append(foot);
+    } else if (stock) {
+      bay.append(el('div', 'est',
+        'Not counting what is left. Turn it back on under Settings below.'));
     }
     bays.append(bay);
   }
@@ -980,11 +1055,50 @@ function renderPrinter() {
     row.append(el('span', 'nm', stock.name));
     row.append(el('span', 'dim', stock.label));
     if (stock.sku) row.append(el('span', 'sku', stock.sku));
+    if (stock.loaded)
+      row.append(el('span', 'pill in', `in the ${stock.loaded_side} roll`));
     row.append(el('span', 'spacer'));
-    const swap = el('button', 'btn tiny', 'Swap');
+    // Everything after the spacer is a control, right-aligned together.
+
+    /* Which way text sits on this stock, set once here rather than asked on
+     * every print. `turn_set` is the difference between a shape BRUH Print
+     * guessed from and an answer somebody gave — they diverge the moment
+     * the measurements are swapped. */
+    const turn = el('select', 'turnpick');
+    /* "Automatic" that does not say what it decided is a setting you cannot
+     * check without printing one. The derived answer rides in the option's
+     * own text, so the closed select reads as the answer either way. */
+    const derived = stock.turn === 90 ? 'along' : 'across';
+    for (const [value, text] of [['', `Turn: auto (${derived})`],
+                                 ['0', 'Turn: across'],
+                                 ['90', 'Turn: along the roll']]) {
+      const option = el('option', null, text);
+      option.value = value;
+      turn.append(option);
+    }
+    turn.value = stock.turn_set ? String(stock.turn) : '';
+    turn.setAttribute('data-tip',
+      'How text sits on this label, every time you print one. Automatic '
+      + 'reads it off the shape — a long, narrow stock is a wrap-around '
+      + 'label and its text runs along the roll.');
+    turn.onchange = async () => {
+      try {
+        await post(`/api/stock/${stock.id}/turn`,
+                   { turn: turn.value === '' ? null : Number(turn.value) });
+        await loadState(); renderPrinter(); fillPickers();
+        toast('Saved.', 'good');
+      } catch (error) { fail(error); }
+    };
+    row.append(turn);
+
+    const swap = el('button', 'btn tiny',
+      `Swap to ${stock.feed_in}" × ${stock.across_in}"`);
     swap.setAttribute('data-tip',
-      'Exchange the two measurements. Press this if a label comes out '
-      + 'rotated 90° with the text off the edge.');
+      'These two numbers are which way round the label sits in the printer: '
+      + 'the first lies ACROSS the print head, the second travels through '
+      + 'it. Nothing can work out which is which for you, so if a label '
+      + 'comes out with the text running off the edge, they are the wrong '
+      + 'way round — press this. Print the ruler to check.');
     swap.onclick = async () => {
       try { await post(`/api/stock/${stock.id}/swap`, {}); await loadState(); renderPrinter(); toast('Swapped.', 'good'); }
       catch (error) { fail(error); }
@@ -1005,9 +1119,42 @@ function renderPrinter() {
       'On by default. Printing a 2.25" raster onto a 0.56" roll runs across '
       + 'the liner, once per copy.'],
     ['quick_uppercase', 'Quick labels are UPPERCASE', ''],
-    ['quick_rotate_narrow', 'Turn text along the roll on tall, narrow stock',
-      'A wrap-around cryo label reads along the tube, not across it.'],
+    ['track_remaining', 'Keep an estimate of how many labels are left',
+      'Counted down from whatever you set when you loaded the roll. Nothing '
+      + 'on a LabelWriter reports the real level, so it is only as good as '
+      + 'the last time you told it. Turn this off to just print.'],
   ];
+  /* Not a toggle: three named shapes for the bytes, because whether a given
+   * LabelWriter firmware takes every command in the preamble is the one
+   * thing this add-on cannot find out from inside a container. A printer
+   * that accepts a job and prints nothing is otherwise a guessing game
+   * played one release at a time. */
+  const modeWrap = el('label', 'field');
+  modeWrap.append(el('span', null, 'If nothing comes out'));
+  const mode = el('select');
+  for (const [value, text] of [
+    ['standard', 'Standard — recommended'],
+    ['compact', 'Compact — smaller jobs, not every printer understands it'],
+    ['bare', 'Bare minimum — no roll select (Twin Turbo picks its own bay)'],
+  ]) {
+    const option = el('option', null, text);
+    option.value = value;
+    mode.append(option);
+  }
+  mode.value = S.settings.print_mode || 'standard';
+  mode.onchange = async () => {
+    try { await post('/api/settings', { print_mode: mode.value }); await loadState(); }
+    catch (error) { fail(error); }
+  };
+  modeWrap.append(mode);
+  settings.append(modeWrap);
+  settings.append(el('p', 'lede',
+    'The printer takes the job and prints nothing? Change this, then press '
+    + 'Print the ruler above. Standard is what everything is tested against; '
+    + 'try the others in order. Tell us which one worked — a LabelWriter '
+    + 'cannot be asked which commands it understands, so this is the only '
+    + 'way to find out.'));
+
   for (const [key, label, help] of toggles) {
     const wrap = el('label', 'check');
     const input = el('input'); input.type = 'checkbox';

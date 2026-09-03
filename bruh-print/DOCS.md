@@ -77,15 +77,27 @@ does not match. That refusal is the point of the feature. Without it, sending
 a 2.25″-wide raster to the 0.56″ roll prints across the liner — once per copy,
 so a run of fifty ruins fifty labels and there is no error anywhere.
 
-Roll selection:
+**Nothing asks you which roll.** You pick the label; BRUH Print knows which
+bay it is in, because you told it on the Printer tab. There is no roll picker
+on the Quick tab, in the designer, on a template, on the card, or in the print
+services — a roll is where a label happens to be, not a decision. The bay
+holding that stock wins; a printer with nothing recorded prints on the left,
+which on a single-roll model is the only bay.
 
-- An explicit `side` is honoured, and checked. If the roll holds something
-  else you get a refusal naming both stocks.
-- Otherwise the bay holding that stock wins.
-- Otherwise the left bay, which on a single-roll printer is the only bay.
+(The services still accept a `side` if one is passed, so an automation
+written before 0.2.0 keeps working. Nothing offers it. `set_roll` keeps it,
+because saying what is loaded is a statement about a bay.)
 
-The remaining count is an **estimate**, counted down from prints. Nothing on
-a LabelWriter reports a real level. It says so everywhere it appears.
+**Only what is loaded can be picked.** Every stock picker outside the Printer
+tab lists the rolls that are actually in the printer. The Printer tab is
+where the whole catalog lives, because that is where the question is "what
+did I just load".
+
+The remaining count is an **estimate**, counted down from prints — nothing on
+a LabelWriter reports a real level, so it is only as good as the last time
+you set it. Press the bar on the Printer tab to correct it, or turn
+**Keep an estimate of how many labels are left** off under Settings and BRUH
+Print stops counting entirely.
 
 ## The label document
 
@@ -117,6 +129,12 @@ All measurements are in millimetres from the top-left of the *drawable* area
 `rotate` turns the *design canvas*: at 90 or 270 you lay the label out on its
 side, which is how a 0.56″ × 3.44″ tube wrap is designed as a long strip and
 printed as a narrow one.
+
+Each **stock** carries the turn its labels take, so you do not set this per
+print — switching from an address label to a tube wrap switches the turn with
+it. BRUH Print derives it from the shape (a stock much longer than it is wide
+is a wrap-around label and reads along the roll) and the Printer tab is where
+you correct it for good; the closed picker says what "automatic" decided.
 
 `size_mm: 0` on a text element means "as large as fits its box". A non-zero
 size that does not fit is reported as a note and clipped — never silently
@@ -169,12 +187,12 @@ data:
   text: Buffer A pH 7.4
   copies: 2
 
-# Fill in a template
+# Fill in a template. No roll to name — the template's label says which
+# stock it is for, and BRUH Print knows which bay holds it.
 action: bruh_print.print_template
 data:
   template: Cryo vial
   fields: {sample: "9912", owner: MS}
-  side: right
 
 # Tell it a new roll went in
 action: bruh_print.set_roll
@@ -202,19 +220,33 @@ There is no CUPS in this container and no DYMO driver. `panel/dymo/` speaks
 the LabelWriter's own raster protocol:
 
 ```
-ESC B 0        dot tab
-ESC D 84       bytes per line (672 dots / 8)
-ESC L hi lo    label length in dots
 ESC q 1|2      roll select — the Twin Turbo's whole reason for existing
-SYN <84 bytes> one raster line
-ETB            repeat the previous line
+ESC L hi lo    label length in dots
+ESC D 84       bytes per line (672 dots / 8)
+SYN <84 bytes> one raster line, one per row
 ESC G          short form feed, between copies
 ESC E          form feed, after the last one
 ```
 
-`ETB` matters more than it looks: a label is mostly white, and a run of
-identical blank lines costs one byte each instead of 85. A typical 2.25″ ×
-1.25″ label is 7 KB on the wire against 32 KB uncompressed.
+That is the **Standard** mode and the default: one `SYN` and one full line
+for every row, which is the shape cups-filters' DYMO path has printed with
+for twenty years. A 2.25″ × 1.25″ label is 31,886 bytes, or under three
+milliseconds of USB 2.0.
+
+**Compact** mode adds `ETB` — repeat the previous line — which takes that
+same label to about 7 KB. It is not the default because it *was*, and it did
+not print: a label is mostly blank, so nearly the whole job became that one
+opcode, and a firmware that does not read `0x17` that way takes the job and
+produces nothing. There is no error to report; the bytes were accepted.
+
+**Bare minimum** drops roll select as well, for a firmware that will not take
+`ESC q`. On a Twin Turbo that means the printer uses whichever bay it used
+last, which is why it is the last thing to try rather than a safe default.
+
+`ESC B 0` (dot tab) is not sent at all. It was a no-op by construction — the
+renderer already knows where the left edge is — and a no-op in a preamble is
+pure risk: a firmware that does not take the command may swallow the byte
+after it.
 
 The density and print-mode opcodes are deliberately **not** sent. Their
 encodings differ across the 400/450/550 generations, thermal label stock
@@ -222,6 +254,16 @@ prints correctly at the printer's default, and a byte sent to the wrong
 firmware is a wedged printer rather than a lighter label.
 
 ## When something goes wrong
+
+**It says it printed and nothing came out.** The bytes were accepted and the
+printer did not use them — which produces no error anywhere, because from
+the add-on's side the job succeeded. Printer tab → Settings → **If nothing
+comes out**: change it, press **Print the ruler**, repeat. Standard is what
+everything is tested against; Compact adds a compression opcode not every
+firmware reads; Bare minimum also drops roll select, which costs a Twin
+Turbo its second bay and is the last thing to try. Whether a given
+LabelWriter takes every command in the preamble is not something this add-on
+can ask it, so please say which one worked.
 
 **"No DYMO printer is on the USB bus."** In order of likelihood: the printer
 has no power (a LabelWriter with no power does not enumerate at all); the

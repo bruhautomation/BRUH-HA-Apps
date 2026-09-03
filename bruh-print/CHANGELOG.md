@@ -1,5 +1,104 @@
 # Changelog
 
+## 0.2.1
+
+**It said it printed and nothing came out.** Every layer reported success —
+the bulk write returned its byte count, the status read came back, the panel
+said "Printed 1 on the left roll" — and the printer produced nothing.
+
+A 375-line label went down the wire as **474 bytes**. About 370 of those were
+`ETB` (0x17), which this add-on assumed means "repeat the previous line". A
+label is mostly blank, so nearly the whole job was that one opcode — and it
+is the one opcode in `protocol.py` written from memory rather than from
+something unambiguous. A printer that does not read 0x17 that way receives a
+valid preamble followed by 370 bytes it cannot use, and prints nothing. There
+is no error for it to report: the bytes were accepted.
+
+**Compression is off by default now.** Every row is sent as its own `SYN`
+line, which is what cups-filters' DYMO path has printed with for twenty
+years. The same label is 31,886 bytes — under three milliseconds of USB 2.0.
+That is not a saving worth a guess.
+
+`ESC B 0` (dot tab) is gone from the preamble too. It was a no-op by
+construction — the renderer already knows where the left edge is — and a
+no-op in a preamble is pure risk: a firmware that does not take the command
+may swallow the byte after it and desync everything that follows.
+
+**And a setting for the part that cannot be tested from here.** Whether a
+given LabelWriter firmware accepts every command in the preamble is not
+something an add-on in a container can find out, and a printer that takes a
+job and prints nothing is otherwise a guessing game played one release at a
+time. **If nothing comes out** (Printer tab → Settings) offers three shapes:
+
+- **Standard** — the new default; what everything is tested against.
+- **Compact** — adds the `ETB` compression, for a printer that understands it.
+- **Bare minimum** — also drops roll select, which costs a Twin Turbo its
+  second bay. The last thing to try.
+
+Change it, press **Print the ruler**, and tell us which one worked.
+
+The tests that were supposed to hold this asserted the compression *happens*
+— they pinned the bug in place. What replaces them walks a finished job the
+way a printer would, knowing only `SYN` and the escape commands, and fails on
+any byte such a reader cannot use. Against 0.2.0 it reports
+`byte 98 is 0x17, which a printer that knows only SYN and the escape commands
+cannot read`.
+
+## 0.2.0
+
+**You pick the label. BRUH Print remembers where it is.**
+
+A roll is not a thing anybody wants to choose — it is where a label happens
+to be, which the add-on already knows. Every roll picker outside the Printer
+tab is gone: from the Quick tab, the designer, the templates, the Lovelace
+card and the four print services. Naming the stock has already named the bay,
+and two ways to say where a label goes is one way to contradict the other.
+
+The services still *accept* `side`, quietly and undocumented, so an
+automation written against 0.1.2 does not start failing validation. Nothing
+offers it. `set_roll` keeps it, because saying what is loaded is a statement
+about a bay by definition.
+
+**Only what is in the printer can be picked.** The full catalog is fourteen
+rows of which two are real; offering it on the Quick tab made the commonest
+first action a choice between twelve wrong answers and then a refusal for
+picking one. The catalog lives on the Printer tab, where the question is
+"what did I just load". Everywhere else the picker can only be right. A
+printer with nothing recorded still offers everything — an empty picker is a
+panel that looks broken.
+
+**Each stock remembers which way its labels read.** A 0.56 × 3.44 cryo wrap
+reads along the roll and a 2.25 × 1.25 label reads across it — always, for
+that stock. That is a property of the label, not of the job, so it is stored
+per stock and switching labels switches the turn with it. Set from the
+Printer tab, where "automatic" says what it decided rather than leaving you
+to print one to find out. Swapping a stock's dimensions re-derives it, since
+the shape is what the guess reads.
+
+The old global "turn text along the roll on tall, narrow stock" switch is
+gone: one setting cannot answer for stocks that disagree with each other.
+
+**The remaining count is a control, not a readout.** Press the bar and type
+what is really left — the number is an estimate that drifts the moment
+somebody prints from another machine, and a number you can see and cannot
+correct is a number you stop reading. Or turn it off: **Keep an estimate of
+how many labels are left** hides every bar and stops the count. Hidden and
+still counting would be worse than not counting, because turning it back on
+would reveal a number that has been quietly wrong for a month — so the gate
+is one method every print path goes through rather than five call sites
+remembering to ask.
+
+**On the card, the rolls are the selector.** Tap one and that is what prints,
+with the chosen one outlined. A single-roll printer draws the same box as a
+readout, because a selector offering one choice is not a selection.
+
+**Two buttons that did not say what they were for** now do, on hover and on
+focus: **In use / Use this one** (which printer everything prints to, only
+meaningful with more than one plugged in) and **Ask the printer**, renamed
+from "Check it" — it asks how the printer is right now and prints nothing.
+**Swap** names the two numbers it exchanges (`Swap to 1.25" × 2.25"`), so it
+is readable without the tooltip; the tooltip explains what the pair means.
+
 ## 0.1.2
 
 **The panel rendered as unstyled HTML.** Every view stacked down the page,

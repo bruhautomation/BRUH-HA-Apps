@@ -189,19 +189,30 @@ def pack_line(bits: bytes, bytes_per_line: int) -> bytes:
     return bytes(bits) + b"\x00" * (bytes_per_line - len(bits))
 
 
-def raster(lines: list[bytes], bytes_per_line: int) -> bytes:
-    """The raster body: SYN per changed line, ETB per repeat.
+def raster(lines: list[bytes], bytes_per_line: int, *,
+           compress: bool = False) -> bytes:
+    """The raster body: a SYN line each, or ETB for a repeat when asked.
 
-    Compression matters more than it looks. A 1.25" label at 300dpi is 375
-    lines of 84 bytes, and on a label that is mostly white the blank runs
-    are most of it — a wrap-around cryo label is 3.44" of mostly nothing.
-    ETB turns each of those lines into one byte, and the printer expands it.
+    **Compression is off by default, and that is the whole of a bug that
+    shipped.** `ETB` as "repeat the previous line" is the one opcode in this
+    file written from memory rather than from something unambiguous, and a
+    label is mostly blank — so a 375-line label came out as 474 bytes, of
+    which about 370 were ETB. A printer that does not read 0x17 that way
+    gets a valid preamble followed by 370 bytes of nothing it recognises,
+    and prints nothing at all: the job is accepted, the write succeeds, the
+    panel says "printed", and no label appears. Which is exactly what
+    happened on the first real printer this add-on ever met.
+
+    Uncompressed is what cups-filters' DYMO path has sent for twenty years:
+    one SYN and one full line, every line. It costs 31,886 bytes for that
+    same label, which over USB 2.0 is under three milliseconds. That is not
+    a saving worth a guess.
     """
     out = bytearray()
     previous: bytes | None = None
     for line in lines:
         packed = pack_line(line, bytes_per_line)
-        if packed == previous:
+        if compress and packed == previous:
             out.append(ETB)
             continue
         out.append(SYN)
@@ -211,7 +222,8 @@ def raster(lines: list[bytes], bytes_per_line: int) -> bytes:
 
 
 def job(lines: list[bytes], *, bytes_per_line: int, roll: int | None = None,
-        copies: int = 1, label_length_dots: int | None = None) -> bytes:
+        copies: int = 1, label_length_dots: int | None = None,
+        compress: bool = False, dot_tab: bool = False) -> bytes:
     """A complete print job: preamble, raster, feed — repeated per copy.
 
     The preamble is re-sent for every copy rather than once for the job. It
@@ -228,7 +240,7 @@ def job(lines: list[bytes], *, bytes_per_line: int, roll: int | None = None,
     if not lines:
         raise ProtocolError("nothing to print: the rendered label has no rows")
     copies = max(1, int(copies))
-    body = raster(lines, bytes_per_line)
+    body = raster(lines, bytes_per_line, compress=compress)
     length = (label_length_dots if label_length_dots is not None
               else len(lines))
 
@@ -236,9 +248,18 @@ def job(lines: list[bytes], *, bytes_per_line: int, roll: int | None = None,
     for index in range(copies):
         if roll is not None:
             out.extend(select_roll(roll))
-        out.extend(set_dot_tab(0))
-        out.extend(set_bytes_per_line(bytes_per_line))
+        # `ESC B 0` is a no-op by construction — the renderer already knows
+        # where the left edge is, so the dot tab is always zero — and a
+        # no-op is pure risk in a preamble: a firmware that does not take
+        # this command may swallow the byte after it and desync everything
+        # that follows. Off unless somebody turns it on.
+        if dot_tab:
+            out.extend(set_dot_tab(0))
+        # Length before bytes-per-line, which is the order the long-standing
+        # cups-filters DYMO path uses. Almost certainly irrelevant, and
+        # matching a shape that is known to print costs nothing.
         out.extend(set_label_length(length))
+        out.extend(set_bytes_per_line(bytes_per_line))
         out.extend(body)
         out.extend(short_form_feed() if index < copies - 1 else form_feed())
     return bytes(out)

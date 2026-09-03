@@ -76,6 +76,15 @@ class Stock:
     margin_mm: float = DEFAULT_MARGIN_MM
     notes: str = ""
     builtin: bool = False
+    # Which way artwork sits on THIS stock, remembered per stock rather than
+    # decided per print. A wrap-around cryo label is 0.56" across and 3.44"
+    # along, and its text runs along the roll; a 2.25 × 1.25 address label
+    # reads the ordinary way round. That is a property of the label, not of
+    # the job, and asking about it on every print is asking a question whose
+    # answer never changes. `None` means "work it out from the shape", which
+    # is right for a stock nobody has corrected; a number is somebody having
+    # corrected it, and survives.
+    turn: int | None = None
 
     # -- derived -----------------------------------------------------------
     @property
@@ -99,6 +108,20 @@ class Stock:
         return (max(1.0, self.across_mm - 2 * margin),
                 max(1.0, self.feed_mm - 2 * margin))
 
+    @property
+    def natural_turn(self) -> int:
+        """The rotation artwork takes on this stock unless told otherwise.
+
+        A stock much longer than it is wide is a wrap-around label and its
+        text runs along the roll. 1.6 rather than 1.0 because a stock only
+        slightly taller than it is wide (a 2 × 3 shelf label) reads the
+        ordinary way round, and guessing 90° there is worse than not
+        guessing at all.
+        """
+        if self.turn is not None:
+            return self.turn
+        return 90 if self.feed_in > self.across_in * 1.6 else 0
+
     def dots(self, dpi: int = 300) -> tuple[int, int]:
         """(across, feed) in printer dots."""
         return (max(1, round(self.across_in * dpi)),
@@ -112,7 +135,13 @@ class Stock:
         choose between with no way to tell which is right.
         """
         return Stock(**{**asdict(self), "across_in": self.feed_in,
-                        "feed_in": self.across_in, "builtin": False})
+                        "feed_in": self.across_in, "builtin": False,
+                        # Deliberately not carried over: the shape is what
+                        # `natural_turn` reads, so a derived turn has to be
+                        # re-derived from the new shape. Keeping the old
+                        # answer is how a swap fixes the width and leaves
+                        # the text lying the way it was wrong before.
+                        "turn": None})
 
     def as_dict(self) -> dict:
         data = asdict(self)
@@ -121,7 +150,19 @@ class Stock:
         width, height = self.drawable_mm
         data["drawable_mm"] = [round(width, 2), round(height, 2)]
         data["label"] = f'{self.across_in}" × {self.feed_in}"'
+        data["turn"] = self.natural_turn
+        data["turn_set"] = self.turn is not None
         return data
+
+
+def replace(entry: Stock, **changes) -> Stock:
+    """A copy of `entry` with fields changed.
+
+    `dataclasses.replace` would do, except a builtin edited into a custom
+    row has to flip `builtin` too, and every caller forgetting that is a row
+    that silently reverts on the next release.
+    """
+    return Stock(**{**asdict(entry), **changes})
 
 
 def _builtin(**kwargs) -> Stock:
