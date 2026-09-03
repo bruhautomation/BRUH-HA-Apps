@@ -2104,9 +2104,11 @@ async def h_checks_run(request: web.Request) -> web.Response:
 # Activity — what changed, and what changed it
 # ---------------------------------------------------------------------------
 
-# A window a person asks for. A day is what the tab opens on; a week is
-# as far back as one logbook fetch is a window rather than a download.
-ACTIVITY_MAX_HOURS = 24 * 7
+# How LONG a window may be, which is not how far back it may reach. A
+# logbook fetch is unfiltered — a week of a busy house is tens of
+# megabytes of JSON through a Pi — so the window stays short and `end` is
+# what reaches back, which is also how the tab pages a day at a time.
+ACTIVITY_MAX_HOURS = 48
 ACTIVITY_DEFAULT_HOURS = 24
 
 
@@ -2131,11 +2133,11 @@ def _activity_window(request: web.Request) -> tuple[float, float]:
     return end - hours * 3600, end
 
 
-async def _activity(start: float, end: float) -> dict:
+async def _activity(start: float, end: float, entity_id: str = "") -> dict:
     import aiohttp
     async with aiohttp.ClientSession() as session:
         users = await checks.snapshot._users(session)
-        return await actions.collect(session, start, end, users)
+        return await actions.collect(session, start, end, users, entity_id)
 
 
 async def h_activity(request: web.Request) -> web.Response:
@@ -2172,6 +2174,10 @@ async def h_activity(request: web.Request) -> web.Response:
     mined["total"] = len(rows)
     mined["actions"] = rows[:limit]
     mined["causes"] = list(actions.CAUSES)
+    # The window that was actually used, not the one that was asked for: a
+    # request for a week gets two days, and a caller echoing its own
+    # argument would report a window it never had.
+    mined["hours"] = _window_hours(mined["start"], mined["end"])
     return web.json_response(mined)
 
 
@@ -2186,7 +2192,11 @@ async def h_activity_entity(request: web.Request) -> web.Response:
     entity_id = request.match_info["entity_id"]
     start, end = _activity_window(request)
     try:
-        mined = await _activity(start, end)
+        # Filtered at the logbook rather than after it: this is a per-row
+        # press on a list that may be hundreds of rows long, and re-reading
+        # the whole window for one entity is the difference between a tap
+        # and a wait on the hardware most of these run on.
+        mined = await _activity(start, end, entity_id)
     except Exception as exc:  # noqa: BLE001
         return web.json_response({"available": False, "error": str(exc)[:200],
                                   "entity_id": entity_id, "changes": []})
@@ -2197,6 +2207,10 @@ async def h_activity_entity(request: web.Request) -> web.Response:
         "start": start, "end": end,
         "changes": actions.explain(mined["actions"], entity_id),
     })
+
+
+def _window_hours(start: float, end: float) -> float:
+    return round((end - start) / 3600.0, 2)
 
 
 # ---------------------------------------------------------------------------

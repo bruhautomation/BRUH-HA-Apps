@@ -515,6 +515,14 @@ def _panel_get(path, timeout=60):
         return {"error": f"the brAIn panel did not answer: {e}"}
 
 
+def _window(result):
+    """How many hours the panel actually read, from the window it returned."""
+    try:
+        return round((float(result["end"]) - float(result["start"])) / 3600.0, 2)
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 def explain_change(entity_id, hours=24):
     """Why an entity is the way it is: its recent changes, and what caused each.
 
@@ -523,7 +531,7 @@ def explain_change(entity_id, hours=24):
     that somebody pressed the switch, or that brAIn did.
     """
     try:
-        hours = max(1, min(168, float(hours or 24)))
+        hours = max(1, float(hours or 24))
     except (TypeError, ValueError):
         hours = 24
     quoted = urllib.parse.quote(str(entity_id), safe="")
@@ -535,11 +543,16 @@ def explain_change(entity_id, hours=24):
             "Home Assistant's logbook could not be read, so nothing can say "
             "what caused a change. The logbook integration may not be set up."
         )}
+    # The window the PANEL used, not the one asked for. It caps how long a
+    # window may be (a week of unfiltered logbook is a download, not a
+    # window), and echoing the argument here would report a window that was
+    # never read.
+    window = _window(result)
     changes = (result or {}).get("changes") or []
     if not changes:
-        return {"entity_id": entity_id, "hours": hours, "changes": [],
+        return {"entity_id": entity_id, "hours": window, "changes": [],
                 "note": "nothing changed this entity in that window"}
-    return {"entity_id": entity_id, "hours": hours, "changes": changes}
+    return {"entity_id": entity_id, "hours": window, "changes": changes}
 
 
 def get_activity(hours=24, cause=None, limit=200):
@@ -550,7 +563,7 @@ def get_activity(hours=24, cause=None, limit=200):
     plainly that nothing did.
     """
     try:
-        hours = max(1, min(168, float(hours or 24)))
+        hours = max(1, float(hours or 24))
     except (TypeError, ValueError):
         hours = 24
     try:
@@ -569,7 +582,7 @@ def get_activity(hours=24, cause=None, limit=200):
             "integration may not be set up."
         )}
     return {
-        "hours": hours,
+        "hours": _window(result),
         "counts": (result or {}).get("counts") or {},
         "total": (result or {}).get("total", 0),
         "overrides": (result or {}).get("overrides") or [],
@@ -2520,7 +2533,10 @@ TOOLS = [
                 },
                 "hours": {
                     "type": "number",
-                    "description": "How many hours back (1-168, default 24)"
+                    "description": ("How many hours back, default 24. The panel caps how "
+                                    "long one window may be; ask about an "
+                                    "earlier day by asking about it, not by "
+                                    "widening the window.")
                 }
             },
             "required": ["entity_id"]
@@ -2539,7 +2555,10 @@ TOOLS = [
             "properties": {
                 "hours": {
                     "type": "number",
-                    "description": "How many hours back (1-168, default 24)"
+                    "description": ("How many hours back, default 24. The panel caps how "
+                                    "long one window may be; ask about an "
+                                    "earlier day by asking about it, not by "
+                                    "widening the window.")
                 },
                 "cause": {
                     "type": "string",

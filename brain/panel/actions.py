@@ -417,10 +417,16 @@ async def fetch_logbook(session, start: float, end: float,
 
 
 async def collect(session, start: float, end: float,
-                  users: dict[str, str] | None = None) -> dict:
+                  users: dict[str, str] | None = None,
+                  entity_id: str = "") -> dict:
     """Fetch a window and mine it. ``available`` is False when the logbook
-    could not be read, and every reader has to branch on it."""
-    entries = await fetch_logbook(session, start, end)
+    could not be read, and every reader has to branch on it.
+
+    ``entity_id`` filters at the logbook rather than after it, which is
+    what makes "why is this one thing the way it is" a cheap question on
+    a window that is expensive to fetch whole.
+    """
+    entries = await fetch_logbook(session, start, end, entity_id)
     if entries is None:
         return {"available": False, "error": "logbook could not be read",
                 "actions": [], "overrides": [], "counts": count_causes([]),
