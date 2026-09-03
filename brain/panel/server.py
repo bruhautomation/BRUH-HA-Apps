@@ -2190,6 +2190,13 @@ async def h_activity_entity(request: web.Request) -> web.Response:
     it.
     """
     entity_id = request.match_info["entity_id"]
+    # Validated at the edge, before it can reach a URL this process asks
+    # Core for. An id that is not an entity id is not a house this cannot
+    # read — it is a request that was never answerable.
+    if not actions.is_entity_id(entity_id):
+        return web.json_response(
+            {"error": "not an entity id", "entity_id": entity_id[:64],
+             "changes": [], "available": False}, status=400)
     start, end = _activity_window(request)
     try:
         # Filtered at the logbook rather than after it: this is a per-row

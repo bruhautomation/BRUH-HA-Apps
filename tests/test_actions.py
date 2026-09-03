@@ -388,6 +388,67 @@ class TestTheOverriddenCheck(unittest.TestCase):
         self.assertEqual(self.auto.overridden({}, NOW), [])
 
 
+class TestAnEntityIdReachesAUrl(unittest.TestCase):
+    """The one piece of user input on this path, and it ends up in the
+    query of a request the panel makes to Core.
+
+    So it is validated at the edge (the route refuses a 400), validated
+    again at the last line before the request leaves, and quoted on the
+    way out. A barrier only at the edge is a barrier the next caller
+    forgets, and quoting alone would stop the `&` while letting
+    everything else through.
+    """
+
+    def test_a_real_entity_id_passes(self):
+        for eid in ("light.kitchen", "binary_sensor.back_door_2",
+                    "sensor.a", "input_boolean.x_1"):
+            self.assertTrue(actions.is_entity_id(eid), eid)
+
+    def test_anything_that_could_steer_a_url_is_refused(self):
+        for bad in ("light.kitchen&entity=other", "light.kitchen#x",
+                    "../../states", "light.kitchen?end_time=0",
+                    "http://elsewhere/x", "light kitchen", "light.KITCHEN",
+                    "light.", ".kitchen", "kitchen", "", None,
+                    "light.kitchen\nX-Injected: 1"):
+            self.assertFalse(actions.is_entity_id(bad), repr(bad))
+
+    def test_the_fetch_refuses_before_it_asks_rather_than_quoting_and_asking(self):
+        """Driven, not read: the request must not be made at all."""
+        import asyncio  # noqa: PLC0415
+
+        asked = []
+
+        class Boom:
+            pass
+
+        async def fake_rest_get(session, path, timeout=30):
+            asked.append(path)
+            return []
+
+        import ha_data  # noqa: PLC0415
+        original = ha_data._rest_get
+        ha_data._rest_get = fake_rest_get
+        try:
+            got = asyncio.run(actions.fetch_logbook(
+                Boom(), 0, 100, "light.kitchen&entity=lock.front_door"))
+            self.assertIsNone(got)
+            self.assertEqual(asked, [])
+            # And a real one does go, with the id quoted rather than raw.
+            asyncio.run(actions.fetch_logbook(Boom(), 0, 100, "light.kitchen"))
+            self.assertEqual(len(asked), 1)
+            self.assertIn("entity=light.kitchen", asked[0])
+        finally:
+            ha_data._rest_get = original
+
+    def test_the_route_and_the_tool_hold_the_same_shape(self):
+        """Three layers, one rule. A second spelling of it is a second
+        answer, and the loosest one is the one that decides."""
+        server = (PANEL_DIR / "server.py").read_text()
+        self.assertIn("actions.is_entity_id(entity_id)", server)
+        mcp = (MCP_DIR / "ha_mcp_server.py").read_text()
+        self.assertIn(actions.ENTITY_RE.pattern, mcp)
+
+
 class TestTheCauseVocabularyIsClosed(unittest.TestCase):
     def test_every_cause_a_classifier_can_emit_is_in_the_list(self):
         """Every reader switches on this vocabulary — the check, the tab's

@@ -45,6 +45,8 @@ import datetime as dt
 import json
 import logging
 import os
+import re
+import urllib.parse
 from typing import Any
 
 log = logging.getLogger("brain.actions")
@@ -75,6 +77,19 @@ CAUSES = (
     "person",         # a signed-in user, with no automation above them
     "unattributed",   # a wall switch, or a device's integration; unknowable
 )
+# Home Assistant's own entity-id shape. This is a *barrier*, not a
+# nicety: an entity id arrives from a URL path and is put into the query
+# of a request this process then makes to Core, so anything unvalidated
+# there is somebody else choosing what brAIn asks Core for. Quoting alone
+# would stop the `&` and keep the rest; refusing anything that is not an
+# entity id is the answer to a question that has exactly one legal shape.
+ENTITY_RE = re.compile(r"^[a-z0-9_]+\.[a-z0-9_]+$")
+
+
+def is_entity_id(value: str) -> bool:
+    return bool(ENTITY_RE.match(str(value or "")))
+
+
 # The domains of a context_entity_id that name what ran, in the order they
 # are tested. A scene called by a script is reported as the script: the
 # outer thing is the one somebody would go and edit.
@@ -403,7 +418,14 @@ async def fetch_logbook(session, start: float, end: float,
 
     path = f"/logbook/{iso(start)}?end_time={iso(end)}"
     if entity_id:
-        path += f"&entity={entity_id}"
+        # Refused rather than sent. The caller validates too — this is the
+        # last line before the request leaves, and a barrier that is only
+        # at the edge is a barrier the next caller forgets.
+        if not is_entity_id(entity_id):
+            log.info("refusing a logbook fetch for %r: not an entity id",
+                     entity_id[:64])
+            return None
+        path += "&entity=" + urllib.parse.quote(entity_id, safe="")
     try:
         raw = await ha_data._rest_get(session, path, timeout=timeout)
     except Exception as exc:  # noqa: BLE001 — every failure is "cannot look"

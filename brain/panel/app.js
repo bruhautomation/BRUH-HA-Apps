@@ -3633,11 +3633,17 @@ function actWhyHtml(a) {
   return `<div>Everything that changed <code>${esc(a.entity_id)}</code> `
     + `in this window, newest first:</div>`
     + why.changes.map((c) => {
+      // Escaped as one string rather than assembled from escaped parts:
+      // `CAUSE_WORDS[c.cause] || c.cause` falls through to whatever the
+      // server called an unknown cause, and that fallback was the one
+      // piece of this row reaching innerHTML unescaped — which the
+      // sibling renderer above does not do, and the difference between
+      // two renderers of the same thing is exactly how that happens.
       const cause = c.cause === "unattributed"
         ? CAUSE_WORDS.unattributed
-        : `${CAUSE_WORDS[c.cause] || c.cause}${c.by_name ? " &middot; " + esc(c.by_name) : ""}`;
+        : `${CAUSE_WORDS[c.cause] || c.cause}${c.by_name ? " · " + c.by_name : ""}`;
       return `<div><span class="t">${esc(actTime(c.ts))}</span> &rarr; `
-        + `${esc(c.state)} &mdash; ${cause}</div>`;
+        + `${esc(c.state)} &mdash; ${esc(cause)}</div>`;
     }).join("");
 }
 

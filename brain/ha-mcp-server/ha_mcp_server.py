@@ -14,6 +14,7 @@ import base64
 import io
 import json
 import os
+import re
 import sys
 import time
 import urllib.parse
@@ -530,6 +531,11 @@ def explain_change(entity_id, hours=24):
     light went on at 18:04; this says the evening automation did it, or
     that somebody pressed the switch, or that brAIn did.
     """
+    if not re.match(r"^[a-z0-9_]+\.[a-z0-9_]+$", str(entity_id or "")):
+        return {"error": (
+            f"'{str(entity_id)[:64]}' is not an entity id. They look like "
+            "light.kitchen — use get_all_states to find the one you mean."
+        )}
     try:
         hours = max(1, float(hours or 24))
     except (TypeError, ValueError):
