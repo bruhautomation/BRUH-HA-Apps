@@ -125,10 +125,10 @@ def _find_device(key: str | None) -> tuple[Any, printers.Discovered]:
     candidates = discover()
     if not candidates:
         raise PrinterNotFound(
-            "No DYMO printer is on the USB bus. Check the cable and the "
-            "power brick — a LabelWriter with no power does not enumerate — "
-            "then confirm the add-on has USB access (Settings > Add-ons > "
-            "BRUH Print > restart after enabling it)."
+            "No DYMO printer is on the USB bus. Check the power brick first "
+            "— a LabelWriter with no power does not enumerate at all — then "
+            "the cable, which has to be a data one. There is no USB setting "
+            "to check: the add-on asks for it in its manifest."
         )
 
     chosen = None
@@ -288,12 +288,12 @@ class Link:
         if "ACCESS" in text or "Access denied" in text or "Permission" in text:
             return PrinterBusy(
                 f"{head}{name} is connected but this add-on may not open it. "
-                f"That is a permissions answer from the kernel, not a printer "
-                f"fault: BRUH Print needs USB access, which the Supervisor "
-                f"only grants on a restart after it is enabled. Restart the "
-                f"add-on; if it persists, check that Protection mode is off "
-                f"is NOT required — this add-on does not need it — and that "
-                f"the printer is not claimed by another add-on."
+                f"That is the kernel refusing the device node, not a printer "
+                f"fault — and it is not a setting: BRUH Print asks for USB in "
+                f"its manifest, so there is nothing to switch on. The usual "
+                f"cause is another add-on holding the printer (a CUPS or "
+                f"print-server one will claim a LabelWriter on sight); stop "
+                f"it, or unbind the printer there."
             )
         if "BUSY" in text or "Resource busy" in text:
             return PrinterBusy(

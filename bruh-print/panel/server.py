@@ -53,6 +53,7 @@ import time
 from pathlib import Path
 
 from aiohttp import web
+from aiohttp.abc import AbstractAccessLogger
 
 PANEL_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(PANEL_DIR))
@@ -1044,19 +1045,28 @@ async def h_settings_put(request: web.Request) -> web.Response:
 # ---------------------------------------------------------------------------
 # App
 # ---------------------------------------------------------------------------
-class QuietAccessLogger:
+class QuietAccessLogger(AbstractAccessLogger):
     """Successful polls are not news.
 
     The Lovelace card and the panel both poll `/api/state`, so at the default
     level a working install writes a line every couple of seconds and the
     add-on log becomes useless for the one thing it is for. Failures always
     log, and `log_level: debug` turns everything back on.
+
+    It subclasses `AbstractAccessLogger` because `run_app` type-checks the
+    class it is handed, and the version that shipped did not — it was a
+    plain class with a duck-typed `log`, which every test instantiated
+    directly and therefore never type-checked. The add-on started, wrote
+    "listening on 0.0.0.0:8097", and died on the next line with
+
+        TypeError: access_log_class must be subclass of
+        aiohttp.abc.AbstractAccessLogger
+
+    The base class also owns `__init__`, taking (logger, log_format) — which
+    is what `run_app` passes and what a test has to pass too.
     """
 
     QUIET = ("/api/state", "/api/health", "/api/printers")
-
-    def __init__(self, logger, *_args, **_kwargs):
-        self._log = logger
 
     def log(self, request, response, time_taken):  # noqa: D102
         status = getattr(response, "status", 0)
@@ -1068,10 +1078,10 @@ class QuietAccessLogger:
         quiet = status < 400 and any(path.startswith(p) for p in self.QUIET)
         method = _for_log(getattr(request, "method", "?"), 8)
         if quiet:
-            self._log.debug("%s %s %s", method, _for_log(path), status)
+            self.logger.debug("%s %s %s", method, _for_log(path), status)
             return
         level = logging.WARNING if status >= 400 else logging.INFO
-        self._log.log(level, "%s %s %s (%.0fms)", method, _for_log(path),
+        self.logger.log(level, "%s %s %s (%.0fms)", method, _for_log(path),
                       status, time_taken * 1000)
 
 
@@ -1170,11 +1180,19 @@ def main() -> None:
     port = int(os.environ.get("BRUH_PRINT_PANEL_PORT", DEFAULT_PORT))
     state = Panel()
     state.mirror_state()
-    log.info("BRUH Print panel listening on %s:%s", BIND_HOST, port)
+
+    # "Listening" is said by the callback `run_app` invokes once every site
+    # is actually up, not by a line above the call that runs whether it works
+    # or not. v0.1.0 logged "listening on 0.0.0.0:8097" immediately above the
+    # traceback proving it was not — which is BRight's `panel_port` lesson
+    # word for word, repeated in a new add-on: a log that claims a thing
+    # before doing it is a log that sends whoever reads it past the failure.
+    log.info("Starting the BRUH Print panel on %s:%s", BIND_HOST, port)
     web.run_app(build_app(state), host=BIND_HOST, port=port,
                 access_log_class=QuietAccessLogger,
                 access_log=logging.getLogger("bruh_print.access"),
-                print=None)
+                print=lambda *_args: log.info(
+                    "BRUH Print panel listening on %s:%s", BIND_HOST, port))
 
 
 if __name__ == "__main__":

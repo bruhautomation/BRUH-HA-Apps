@@ -3,11 +3,14 @@
 ## Installation
 
 1. Add this repository to Home Assistant, install **BRUH Print**.
-2. In the add-on's **Configuration** tab, make sure USB access is on.
-3. **Restart the add-on.** The Supervisor grants USB access at container
-   start, so enabling it without restarting leaves the add-on unable to see
-   the printer while every setting says it should be able to.
-4. Start the add-on and open its panel from the sidebar.
+2. Start it, and open its panel from the sidebar.
+
+**There is nothing to enable for USB.** The add-on's `config.yaml` declares
+`usb: true`, which is a manifest permission rather than a user setting — the
+Supervisor maps the host's USB devices in when it creates the container, and
+the Configuration tab has no switch for it because there is nothing to
+switch. Protection mode does not need turning off either; this add-on does
+not ask for the Docker API.
 
 The add-on log's first few lines say what it found on the USB bus, which is
 the quickest way to tell the three "no printer" causes apart:
@@ -221,8 +224,12 @@ firmware is a wedged printer rather than a lighter label.
 ## When something goes wrong
 
 **"No DYMO printer is on the USB bus."** In order of likelihood: the printer
-has no power (a LabelWriter with no power does not enumerate at all); USB
-access is off; USB access was turned on without restarting the add-on.
+has no power (a LabelWriter with no power does not enumerate at all); the
+cable is a charge-only one; it is plugged into a hub the host has not
+enumerated. There is no setting to check — see the note under Installation.
+If the log says `/dev/bus/usb is not mapped into this container`, the
+Supervisor did not map the device tree, which is a host or Supervisor
+problem rather than a configuration one.
 
 **"...is connected but this add-on may not open it."** The kernel refused the
 device node. Restart the add-on. If it persists, something else on the
