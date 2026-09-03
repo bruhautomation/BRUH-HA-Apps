@@ -412,7 +412,7 @@ class TestAnEntityIdReachesAUrl(unittest.TestCase):
                     "light.kitchen\nX-Injected: 1"):
             self.assertFalse(actions.is_entity_id(bad), repr(bad))
 
-    def test_the_fetch_refuses_before_it_asks_rather_than_quoting_and_asking(self):
+    def test_the_fetch_refuses_before_it_asks_rather_than_asking_carefully(self):
         """Driven, not read: the request must not be made at all."""
         import asyncio  # noqa: PLC0415
 
@@ -421,8 +421,8 @@ class TestAnEntityIdReachesAUrl(unittest.TestCase):
         class Boom:
             pass
 
-        async def fake_rest_get(session, path, timeout=30):
-            asked.append(path)
+        async def fake_rest_get(session, path, timeout=30, params=None):
+            asked.append((path, params))
             return []
 
         import ha_data  # noqa: PLC0415
@@ -433,12 +433,36 @@ class TestAnEntityIdReachesAUrl(unittest.TestCase):
                 Boom(), 0, 100, "light.kitchen&entity=lock.front_door"))
             self.assertIsNone(got)
             self.assertEqual(asked, [])
-            # And a real one does go, with the id quoted rather than raw.
             asyncio.run(actions.fetch_logbook(Boom(), 0, 100, "light.kitchen"))
             self.assertEqual(len(asked), 1)
-            self.assertIn("entity=light.kitchen", asked[0])
+            path, params = asked[0]
+            # The id is a PARAMETER, not part of a path this file built. The
+            # client encodes it, so a value holding an `&` stays a value.
+            self.assertNotIn("entity", path)
+            self.assertEqual(params["entity"], "light.kitchen")
         finally:
             ha_data._rest_get = original
+
+    def test_nothing_builds_the_logbook_query_by_hand(self):
+        """The guard is the API contract; `params` is the safety property.
+        A future edit that goes back to concatenating a query would pass
+        every other test in this class."""
+        source = (PANEL_DIR / "actions.py").read_text()
+        body = source.split("async def fetch_logbook", 1)[1].split("\nasync def", 1)[0]
+        for banned in ("&entity=", "?end_time=", "path +="):
+            self.assertNotIn(banned, body,
+                             f"{banned!r} is a query built by hand again")
+
+    def test_the_refusal_does_not_put_the_refused_value_in_a_log(self):
+        """A log line is read by somebody else later, and the one string
+        this function has just refused is the last thing that should be
+        able to write into one. The caller is told what it sent; the log
+        records that it happened."""
+        source = (PANEL_DIR / "actions.py").read_text()
+        body = source.split("async def fetch_logbook", 1)[1].split("\nasync def", 1)[0]
+        refusal = body.split("if not is_entity_id", 1)[1].split("return None", 1)[0]
+        self.assertIn("len(entity_id)", refusal)
+        self.assertNotIn("entity_id[", refusal)
 
     def test_the_route_and_the_tool_hold_the_same_shape(self):
         """Three layers, one rule. A second spelling of it is a second

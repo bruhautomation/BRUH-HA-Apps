@@ -46,7 +46,6 @@ import json
 import logging
 import os
 import re
-import urllib.parse
 from typing import Any
 
 log = logging.getLogger("brain.actions")
@@ -416,18 +415,28 @@ async def fetch_logbook(session, start: float, end: float,
     def iso(value: float) -> str:
         return dt.datetime.fromtimestamp(value, dt.timezone.utc).isoformat()
 
-    path = f"/logbook/{iso(start)}?end_time={iso(end)}"
+    params = {"end_time": iso(end)}
     if entity_id:
         # Refused rather than sent. The caller validates too — this is the
         # last line before the request leaves, and a barrier that is only
-        # at the edge is a barrier the next caller forgets.
+        # at the edge is a barrier the next caller forgets. What it is
+        # NOT is the thing keeping the value out of the URL: that is
+        # `params`, which the client encodes. A guard and an encoder
+        # answer different halves — "was this answerable" and "can this
+        # change what was asked" — and only the second is a safety
+        # property.
         if not is_entity_id(entity_id):
-            log.info("refusing a logbook fetch for %r: not an entity id",
-                     entity_id[:64])
+            # The value itself is deliberately not logged. The caller is
+            # told what it sent (the route answers 400 with it); a log
+            # line is read by somebody else later, and a refused string is
+            # the last thing that should be able to write into one.
+            log.info("refusing a logbook fetch: %d characters that are not "
+                     "an entity id", len(entity_id))
             return None
-        path += "&entity=" + urllib.parse.quote(entity_id, safe="")
+        params["entity"] = entity_id
     try:
-        raw = await ha_data._rest_get(session, path, timeout=timeout)
+        raw = await ha_data._rest_get(session, f"/logbook/{iso(start)}",
+                                      timeout=timeout, params=params)
     except Exception as exc:  # noqa: BLE001 — every failure is "cannot look"
         log.info("logbook unavailable: %s", exc)
         return None
