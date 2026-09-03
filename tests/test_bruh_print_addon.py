@@ -295,10 +295,33 @@ class TestPanelUI(unittest.TestCase):
         favicon = (PANEL / "favicon.svg").read_text()
         self.assertIn("M159.55,176c0-23.95", favicon)
 
-    def test_the_panel_serves_its_own_static_files(self):
+    def test_the_panel_serves_named_assets_and_not_a_directory(self):
+        """This test used to assert `add_static("/static/", PANEL_DIR)` —
+        it pinned the bug in place rather than a behaviour, which is what a
+        test of an implementation line does. Serving that directory answered
+        `GET /static/server.py` with the panel's own source. The routes are
+        named now, and `test_bruh_print_panel.TestItDoesNotServeItsOwnSource`
+        drives them rather than reading for them."""
         server = (PANEL / "server.py").read_text()
-        self.assertIn('add_static("/static/"', server)
+        # Comments stripped before looking: the file SAYS why add_static is
+        # gone, and a test that reads the prose passes on a file that says
+        # one thing and routes another. Same trap as the "no CUPS" check.
+        code = "\n".join(line.split("#", 1)[0]
+                         for line in server.splitlines())
+        self.assertNotIn("add_static(", code)
+        for asset in ("style.css", "app.js", "favicon.svg"):
+            with self.subTest(asset=asset):
+                self.assertIn(f'_asset("{asset}"', server)
         self.assertIn('add_get("/api/health"', server)
+
+    def test_the_page_asks_for_its_assets_relatively(self):
+        """Ingress mounts the panel under a prefix, so an absolute asset URL
+        is a request to Home Assistant's own root — which is what 0.1.1 did,
+        and it rendered as unstyled HTML with every view stacked."""
+        page = (PANEL / "index.html").read_text()
+        for bad in ('href="/', 'src="/'):
+            with self.subTest(pattern=bad):
+                self.assertNotIn(bad, page)
 
 
 if __name__ == "__main__":
