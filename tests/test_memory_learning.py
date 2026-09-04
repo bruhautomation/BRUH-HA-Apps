@@ -1676,6 +1676,195 @@ def test_share_login_status_and_revoke(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# `ha login` without a terminal, and the three stores it has to report
+# ---------------------------------------------------------------------------
+
+
+def run_login(tmp_path, *args, stdin=subprocess.DEVNULL, timeout=20, **extra_env):
+    """Drive the real script with all three credential stores redirected."""
+    env = dict(
+        os.environ,
+        BRAIN_AUTH_DIR=str(tmp_path / "shared"),
+        BRAIN_SECRETS=str(tmp_path / "panel"),
+        BRAIN_HOME=str(tmp_path / "home"),
+        **extra_env,
+    )
+    (tmp_path / "panel").mkdir(exist_ok=True)
+    (tmp_path / "home" / ".claude").mkdir(parents=True, exist_ok=True)
+    return subprocess.run(
+        ["bash", str(SHARE_LOGIN), *args],
+        env=env, capture_output=True, text=True, check=False,
+        stdin=stdin, timeout=timeout,
+    )
+
+
+def _panel_login(tmp_path, value, kind="oauth_token"):
+    path = tmp_path / "panel" / "claude_auth.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"type": kind, "value": value, "saved_at": 1756000000}))
+
+
+def _cli_login(tmp_path, *, live=True):
+    path = tmp_path / "home" / ".claude" / ".credentials.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    offset = 9000 if live else -3600
+    path.write_text(json.dumps({"claudeAiOauth": {
+        "accessToken": "sk-ant-" + "x" * 40,
+        "expiresAt": int((time.time() + offset) * 1000)}}))
+
+
+def test_login_without_a_terminal_refuses_instead_of_hanging(tmp_path):
+    """The failure that started all of this.
+
+    `claude setup-token` prints a link and then BLOCKS reading a code from
+    stdin. With no terminal there is nothing to type into, so it sat there
+    until something killed it — and the last thing printed was "Starting the
+    Claude OAuth token flow...", which is indistinguishable from working.
+    Anything driving this without a tty (a script, CI, an agent) hit it.
+
+    Stdin is an OPEN PIPE THAT NEVER DELIVERS, not /dev/null, and that is
+    the whole fidelity of this test: `/dev/null` gives the child an instant
+    EOF, so the old script fails fast there and the test would pass against
+    the bug. Measured both ways on the pre-fix script — DEVNULL exits 1 in
+    under a second, a held-open pipe times out — and the second is what an
+    agent, a CI runner or any non-interactive caller actually hands it.
+
+    The stub stands in for the CLI so the assertion is about this script's
+    guard rather than about whether `claude` is installed.
+    """
+    stub = tmp_path / "fake-claude"
+    stub.write_text(
+        "#!/bin/bash\n"
+        "echo 'Open this: https://claude.ai/oauth/authorize?x=1'\n"
+        "read -r code\n")
+    stub.chmod(0o755)
+
+    read_fd, write_fd = os.pipe()  # write end held open below: never EOF
+    try:
+        result = run_login(tmp_path, stdin=read_fd, timeout=20,
+                           BRAIN_CLAUDE_BIN=str(stub))
+    finally:
+        os.close(read_fd)
+        os.close(write_fd)
+    assert result.returncode == 2, result.stdout + result.stderr
+    combined = result.stdout + result.stderr
+    # It must not merely refuse — it has to name the routes that DO work
+    # without a terminal, or the refusal is a dead end.
+    assert "needs a real terminal" in combined
+    for route in ("--share", "--token", "--status", "Terminal"):
+        assert route in combined, f"the refusal never mentions {route}"
+    # ...and every route it names has to be one that exists.
+    assert "ha-share-login" not in combined
+    # And nothing may have been written on the way out.
+    assert not (tmp_path / "shared" / "claude_auth.json").exists()
+
+
+def test_status_does_not_call_a_panel_login_no_login(tmp_path):
+    """"Shared" and "signed in" are different questions.
+
+    `--status` read only the file it writes itself, so somebody who had
+    signed in through the panel perfectly well was told "not set up" and
+    pointed at a fresh OAuth round trip they did not need.
+    """
+    _panel_login(tmp_path, "sk-ant-oat01-" + "p" * 40)
+    result = run_login(tmp_path, "--status")
+    assert result.returncode == 0
+    assert "are" in result.stdout and "signed in" in result.stdout
+    assert "--share" in result.stdout, "it never says how to publish it"
+
+
+def test_status_names_a_command_that_exists(tmp_path):
+    """`ha-share-login` is this script's FILENAME and has never been a
+    command: only `brain` and `ha` are copied onto PATH (see run.sh's
+    install_cli_tools). So the one line somebody would act on — in
+    `--status`, in the failure hint, and in run.sh's own startup tip —
+    answered "command not found".
+
+    The no-argument path is deliberately not driven here: it is the
+    interactive one, and the test above owns it (with a stub, and with the
+    stdin shape that reproduces the hang). Reaching it from this test would
+    make a dead *word* fail as a twenty-second timeout.
+    """
+    for args in (["--status"], ["--share"], ["--help"]):
+        result = run_login(tmp_path, *args)
+        combined = result.stdout + result.stderr
+        assert "ha-share-login" not in combined, f"{args} still names a dead command"
+
+    # run.sh's startup tip is the fourth place it appeared, and the one
+    # nobody would think to check — it is a log line, not a command output.
+    run_sh = (ADDON / "run.sh").read_text()
+    assert "'ha-share-login'" not in run_sh, "run.sh still tells people to run it"
+
+
+def test_share_publishes_a_panel_login_without_signing_in_again(tmp_path):
+    token = "sk-ant-oat01-" + "p" * 40
+    _panel_login(tmp_path, token)
+    result = run_login(tmp_path, "--share")
+    assert result.returncode == 0, result.stderr
+
+    shared = tmp_path / "shared" / "claude_auth.json"
+    data = json.loads(shared.read_text())
+    assert data == {"type": "oauth_token", "value": token, "saved_at": data["saved_at"]}
+    assert isinstance(data["saved_at"], int)
+    assert stat.S_IMODE(shared.stat().st_mode) == 0o600
+
+    # A second share is refused rather than silently replacing what is there.
+    again = run_login(tmp_path, "--share")
+    assert again.returncode != 0
+    assert "--force" in again.stdout + again.stderr
+
+
+def test_a_session_token_is_never_published(tmp_path):
+    """It refreshes itself and the shared file records no refresh token, so a
+    copy works for hours and then breaks every add-on reading it, silently.
+    This is also the store most likely to be the only one present."""
+    _cli_login(tmp_path, live=True)
+    result = run_login(tmp_path, "--share")
+    assert result.returncode != 0
+    assert not (tmp_path / "shared" / "claude_auth.json").exists()
+    combined = result.stdout + result.stderr
+    assert "refresh" in combined.lower()
+
+    # And --status must still say the person IS signed in — the whole point
+    # is that this is a working login that cannot be shared, not a missing one.
+    status = run_login(tmp_path, "--status")
+    assert "active" in status.stdout.lower()
+
+
+def test_status_reads_the_expiry_the_cli_store_records(tmp_path):
+    """The only store of the three that records one, so the only one where
+    "there is a credential here" and "there is a working credential here"
+    are separable questions."""
+    _cli_login(tmp_path, live=False)
+    assert "EXPIRED" in run_login(tmp_path, "--status").stdout
+    _cli_login(tmp_path, live=True)
+    assert "EXPIRED" not in run_login(tmp_path, "--status").stdout
+
+
+def test_both_dispatchers_route_login(tmp_path):
+    """`brain login` is what somebody types, because brAIn is the add-on and
+    the credential is brAIn's. It answered "Unknown subcommand"."""
+    for dispatcher in ("brain.sh", "ha.sh"):
+        result = subprocess.run(
+            ["bash", str(ADDON / "scripts" / dispatcher), "login", "--status"],
+            env=dict(os.environ,
+                     BRAIN_SCRIPTS_DIR=str(ADDON / "scripts"),
+                     BRAIN_AUTH_DIR=str(tmp_path / "shared"),
+                     BRAIN_SECRETS=str(tmp_path / "panel"),
+                     BRAIN_HOME=str(tmp_path / "home")),
+            capture_output=True, text=True, check=False, timeout=20,
+            stdin=subprocess.DEVNULL)
+        assert result.returncode == 0, f"{dispatcher}: {result.stderr}"
+        assert "Claude credentials" in result.stdout, dispatcher
+        # Both help texts have to name it, or it is a command nobody finds.
+        helped = subprocess.run(
+            ["bash", str(ADDON / "scripts" / dispatcher), "help"],
+            env=dict(os.environ, BRAIN_SCRIPTS_DIR=str(ADDON / "scripts")),
+            capture_output=True, text=True, check=False, timeout=20)
+        assert "login" in helped.stdout, f"{dispatcher} help never mentions login"
+
+
+# ---------------------------------------------------------------------------
 # run.sh / config plumbing (source-level, matching test_shell_scripts style)
 # ---------------------------------------------------------------------------
 

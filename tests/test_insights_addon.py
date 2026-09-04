@@ -774,6 +774,15 @@ class TestSharedAuth(unittest.TestCase):
         self.assertIsNone(engine.get_auth())
 
     def test_logout_leaves_shared_file_intact(self):
+        """The DEFAULT still spares the shared file, and must.
+
+        It may have been published from a terminal by somebody else, and it
+        is the one credential of the three that other add-ons read — so
+        deleting it is a decision, never a side effect of signing out here.
+        What the test below adds is the other half: that sparing it is also
+        what makes an unqualified sign-out a no-op, which is why the panel
+        asks rather than picking either behaviour silently.
+        """
         engine.save_auth("sk-ant-oat01-" + "l" * 30)
         self._write_shared({"type": "oauth_token", "value": "sk-ant-oat01-" + "s" * 30,
                             "saved_at": 1752000000})
@@ -782,6 +791,235 @@ class TestSharedAuth(unittest.TestCase):
         # after logout, the shared credential takes over again
         auth = engine.get_auth()
         self.assertEqual(auth["source"], "shared")
+
+    def test_signing_out_while_shared_leaves_you_signed_in(self):
+        """The failure the dialog's ticked box exists to answer.
+
+        `get_auth` reads the shared file two branches below its own store,
+        so a sign-out that spares it hands the very next call the credential
+        it just removed — from the panel that is a Sign out button that
+        visibly does nothing. Demonstrated here rather than described,
+        because the fix is a parameter and a parameter with no failing case
+        behind it is a parameter somebody will default the other way.
+        """
+        for include_shared in (False, True):
+            with self.subTest(include_shared=include_shared):
+                engine.save_auth("sk-ant-oat01-" + "l" * 30)
+                self._write_shared({"type": "oauth_token",
+                                    "value": "sk-ant-oat01-" + "s" * 30,
+                                    "saved_at": 1752000000})
+                self.assertTrue(engine.get_auth())
+                engine.clear_auth(include_shared=include_shared)
+                if include_shared:
+                    self.assertIsNone(engine.get_auth(),
+                                      "sign out did not sign out")
+                else:
+                    self.assertEqual(engine.get_auth()["source"], "shared")
+
+    def test_sharing_publishes_the_panels_login_where_addons_read_it(self):
+        """The half the panel could not do at all.
+
+        Writing that file was `ha login`'s alone, so somebody who signed in
+        through the panel had no route to sharing but a command they had to
+        already know about — and `ha login --status` answered them "not set
+        up", because it read only the file it writes itself.
+        """
+        token = "sk-ant-oat01-" + "p" * 30
+        engine.save_auth(token)
+        self.assertFalse(os.path.exists(engine.SHARED_AUTH_FILE))
+
+        self.assertEqual(engine.share_auth(), {"shared": True, "reason": "ok"})
+        with open(engine.SHARED_AUTH_FILE) as fh:
+            published = json.load(fh)
+        # The same shape contract `_read_shared_auth` documents and the
+        # shell half greps for — an epoch int, not an ISO string.
+        self.assertEqual(published["type"], "oauth_token")
+        self.assertEqual(published["value"], token)
+        self.assertIsInstance(published["saved_at"], int)
+        # A credential is 0600 from the open, never a chmod afterwards.
+        self.assertEqual(stat.S_IMODE(os.stat(engine.SHARED_AUTH_FILE).st_mode), 0o600)
+        # And it must survive the round trip through the reader other
+        # add-ons actually use, or "shared" is a file nothing can read.
+        engine.clear_auth()
+        self.assertEqual(engine.get_auth()["source"], "shared")
+
+        self.assertTrue(engine.unshare_auth())
+        self.assertFalse(os.path.exists(engine.SHARED_AUTH_FILE))
+        self.assertFalse(engine.unshare_auth(), "a second withdraw removed nothing")
+
+    def test_claude_codes_own_session_token_is_never_published(self):
+        """The refusal that is the feature.
+
+        `.credentials.json` holds a SESSION token the CLI refreshes for
+        itself. The shared file records no refresh token and no reader knows
+        how to use one, so a copy works for a few hours and then breaks
+        every add-on reading it — silently, with nothing to say why. It is
+        also the store most likely to be the only one present, which is
+        exactly when somebody would reach for the button.
+        """
+        cli = Path(engine.CLAUDE_HOME) / ".claude"
+        cli.mkdir(parents=True, exist_ok=True)
+        (cli / ".credentials.json").write_text(json.dumps({"claudeAiOauth": {
+            "accessToken": "sk-ant-" + "x" * 40,
+            "expiresAt": int((time.time() + 9000) * 1000)}}))
+
+        # Signed in — this is not a "no credential" case.
+        self.assertEqual(engine.get_auth()["type"], "cli_login")
+        self.assertEqual(engine.share_auth(),
+                         {"shared": False, "reason": "cli_login_cannot_be_shared"})
+        self.assertFalse(os.path.exists(engine.SHARED_AUTH_FILE))
+        # And the overview says so, so the button is absent rather than
+        # present-and-failing.
+        self.assertFalse(engine.auth_overview()["can_share"])
+
+    def test_the_overview_reports_every_store_not_only_its_own(self):
+        """"Signed in" and "signed in AND shared" are different states.
+
+        A surface that can see only its own file answers the second with the
+        first one's words, which is what `ha login --status` did to somebody
+        who had signed in through the panel perfectly well.
+        """
+        blank = engine.auth_overview()
+        self.assertFalse(blank["authenticated"])
+        self.assertEqual({k: v["present"] for k, v in blank["stores"].items()},
+                         {"local": False, "cli": False, "shared": False})
+
+        engine.save_auth("sk-ant-oat01-" + "p" * 30)
+        self._write_shared({"type": "oauth_token", "value": "sk-ant-oat01-" + "s" * 30,
+                            "saved_at": 1752000000})
+        both = engine.auth_overview()
+        self.assertTrue(both["stores"]["local"]["present"])
+        self.assertTrue(both["stores"]["shared"]["present"])
+        # `source` names which one actually answered — the field that makes
+        # "the terminal works and the panel doesn't" diagnosable at all.
+        self.assertEqual(both["source"], "local")
+        self.assertTrue(both["can_share"])
+        # Nothing here may carry a credential: this payload is rendered in a
+        # dialog and read out of bug reports.
+        self.assertNotIn("sk-ant", json.dumps(both))
+
+    def test_an_expired_cli_login_is_not_reported_as_a_login(self):
+        """The one store that records an expiry is the one store where
+        "there is a credential here" and "there is a working credential
+        here" are separable — and reporting a dead token as a login is what
+        sent people to redo a sign-in that was already fine."""
+        cli = Path(engine.CLAUDE_HOME) / ".claude"
+        cli.mkdir(parents=True, exist_ok=True)
+        creds = cli / ".credentials.json"
+        for offset, expected in ((9000, True), (-3600, False)):
+            creds.write_text(json.dumps({"claudeAiOauth": {
+                "accessToken": "sk-ant-" + "x" * 40,
+                "expiresAt": int((time.time() + offset) * 1000)}}))
+            with self.subTest(offset=offset):
+                self.assertEqual(
+                    engine.auth_overview()["stores"]["cli"]["present"], expected)
+
+    # -- the routes the ⚙ dialog's Claude account section drives ----------
+    # Driven through a real client rather than by calling the handlers, for
+    # the reason `build_app is not main` records elsewhere in this repo: a
+    # route that is never registered is a route every direct-call test passes
+    # against. /api/auth in particular is new, and a handler nobody can reach
+    # is exactly the failure the section exists to end.
+
+    def _drive(self, steps):
+        """Run `steps(client)` against a real panel."""
+        from aiohttp.test_utils import TestClient, TestServer
+        server = importlib.import_module("server")
+        old_dir = server.INSIGHTS_DIR
+        server.INSIGHTS_DIR = Path(self.tmp.name) / "insights"
+        server.QUEUE = asyncio.Queue()
+        old_validate = engine.validate_auth
+        old_check = dict(server.AUTH_CHECK)
+        # A real verification is a `claude -p` turn; these tests are about
+        # the routes, so it is stubbed and its having run is not asserted.
+        engine.validate_auth = lambda timeout=120: {"ok": True, "error": ""}
+
+        async def run():
+            client = TestClient(TestServer(server.make_app()))
+            await client.start_server()
+            try:
+                await self._settle_startup_check(server)
+                return await steps(client)
+            finally:
+                await client.close()
+
+        try:
+            return asyncio.run(run())
+        finally:
+            server.INSIGHTS_DIR = old_dir
+            engine.validate_auth = old_validate
+            server.AUTH_CHECK.clear()
+            server.AUTH_CHECK.update(old_check)
+
+    def test_the_account_routes_share_and_withdraw_a_login(self):
+        token = "sk-ant-oat01-" + "p" * 30
+        engine.save_auth(token)
+
+        async def steps(client):
+            before = await (await client.get("/api/auth")).json()
+            self.assertTrue(before["authenticated"])
+            self.assertFalse(before["stores"]["shared"]["present"])
+            self.assertTrue(before["can_share"])
+
+            after = await (await client.post("/api/auth/share")).json()
+            self.assertTrue(after["stores"]["shared"]["present"])
+
+            gone = await (await client.post("/api/auth/unshare")).json()
+            self.assertTrue(gone["removed"])
+            self.assertFalse(gone["stores"]["shared"]["present"])
+            return after
+
+        shared = self._drive(steps)
+        # The route wrote the real file, not just a payload saying it had.
+        self.assertNotIn("sk-ant", json.dumps(shared))
+
+    def test_sharing_a_session_login_is_refused_with_a_sentence(self):
+        """A 409 carrying the reason, never a silent success.
+
+        Publishing Claude Code's own session token would work for a few
+        hours and then break every add-on reading it, so the refusal is the
+        feature — and it has to arrive as something a person can read,
+        because from the outside "signed in" is exactly what they see.
+        """
+        cli = Path(engine.CLAUDE_HOME) / ".claude"
+        cli.mkdir(parents=True, exist_ok=True)
+        (cli / ".credentials.json").write_text(json.dumps({"claudeAiOauth": {
+            "accessToken": "sk-ant-" + "x" * 40,
+            "expiresAt": int((time.time() + 9000) * 1000)}}))
+
+        async def steps(client):
+            resp = await client.post("/api/auth/share")
+            self.assertEqual(resp.status, 409)
+            return await resp.text()
+
+        body = self._drive(steps)
+        self.assertIn("refresh", body.lower())
+        self.assertIn("ha login", body)
+        self.assertFalse(os.path.exists(engine.SHARED_AUTH_FILE))
+
+    def test_logout_over_the_wire_can_take_the_shared_copy_with_it(self):
+        """Both shapes, because the old one still has to work.
+
+        A body-less POST is what a panel served before this update sends,
+        and it must not fail on the parse — it simply means the default.
+        """
+        async def steps(client):
+            out = []
+            for body in (None, {"shared": False}, {"shared": True}):
+                engine.save_auth("sk-ant-oat01-" + "l" * 30)
+                self._write_shared({"type": "oauth_token",
+                                    "value": "sk-ant-oat01-" + "s" * 30,
+                                    "saved_at": 1752000000})
+                kwargs = {} if body is None else {"json": body}
+                resp = await client.post("/api/auth/logout", **kwargs)
+                self.assertEqual(resp.status, 200)
+                out.append(os.path.exists(engine.SHARED_AUTH_FILE))
+            return out
+
+        kept_none, kept_false, kept_true = self._drive(steps)
+        self.assertTrue(kept_none, "a body-less logout must keep the default")
+        self.assertTrue(kept_false)
+        self.assertFalse(kept_true, "the ticked box did not remove the shared copy")
 
     async def _settle_startup_check(self, server):
         """Wait out the check make_app() fires on startup.
@@ -2539,6 +2777,38 @@ class TestAuthVerdictIsReEarned(unittest.TestCase):
         self.assertTrue(asyncio.run(drive()))
         self.assertEqual(self.server.AUTH_CHECK["state"], "ok")
         self.assertTrue(self.server.AUTH_CHECK["running"])
+
+
+class TestBriefReadsTheHealthVerdict(unittest.TestCase):
+    """`_send_brief` awaited `_diagnostics_payload()` — a plain function
+    returning a dict — so every call raised inside a `try` that logged at
+    info and carried on with an empty verdict. The health trigger in
+    `brief.worth_saying` could therefore never fire. Driven, not grepped."""
+
+    def test_a_degraded_verdict_reaches_worth_saying(self):
+        server = importlib.import_module("server")
+        brief = importlib.import_module("brief")
+        seen = {}
+        saved = (server._diagnostics_payload, server._brief_overnight,
+                 server.findings_store.list_all, brief.worth_saying)
+        try:
+            server._diagnostics_payload = lambda: {
+                "health": {"state": "degraded", "reason": "listener down"}}
+
+            async def overnight(now):
+                return {}
+            server._brief_overnight = overnight
+            server.findings_store.list_all = lambda: []
+
+            def worth(state):
+                seen.update(state)
+                return []
+            brief.worth_saying = worth
+            asyncio.run(server._send_brief(1_800_000_000.0))
+        finally:
+            (server._diagnostics_payload, server._brief_overnight,
+             server.findings_store.list_all, brief.worth_saying) = saved
+        self.assertEqual(seen.get("health", {}).get("state"), "degraded")
 
 
 if __name__ == "__main__":

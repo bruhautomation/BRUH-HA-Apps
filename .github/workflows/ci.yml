@@ -100,6 +100,9 @@ jobs:
       - name: Measure the proposals tab
         run: node tests/manual/measure-proposals.mjs
 
+      - name: Measure the Claude account surfaces
+        run: node tests/manual/measure-account.mjs
+
       - name: Measure BRight's light map
         run: node tests/manual/measure-lightmap.mjs
 

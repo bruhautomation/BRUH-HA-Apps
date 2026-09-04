@@ -126,6 +126,11 @@ document.addEventListener("keydown", (ev) => {
 
 const state = {
   status: null,
+  // Show the sign-in screen even though a credential exists. Without it the
+  // screen was reachable only while `authenticated` was false, so the one
+  // state that most needs it — a stored credential that has stopped working
+  // — was the one state with no way in.
+  showSignIn: false,
   insights: [],
   findings: [],
   // Guesses waiting to be confirmed. They come down the findings endpoint
@@ -338,11 +343,22 @@ function renderAuth() {
   chip.classList.toggle("hidden", settled);
   // The words are hidden on a phone, so the state has to survive without them.
   chip.setAttribute("aria-label", text.textContent);
-  // Three states, not two: not connected → connect; connected but never
-  // onboarded → the first-run flow; onboarded → the dashboard.
-  const ready = s.authenticated && obState.onboarded;
-  $("#setup").classList.toggle("hidden", s.authenticated);
-  $("#onboard").classList.toggle("hidden", !s.authenticated || obState.onboarded);
+  // The chip only ever renders for trouble, and trouble is exactly when
+  // there is something to press: it went to the sign-in screen from nowhere
+  // before, so the panel could report a failed login and offer no way to
+  // answer it.
+  chip.title = settled ? chip.title : chip.title + " — press to fix the sign-in";
+
+  // Four states, not three: not connected → connect; asked for the sign-in
+  // screen → connect (with a way back); connected but never onboarded → the
+  // first-run flow; onboarded → the dashboard.
+  const signIn = !s.authenticated || state.showSignIn;
+  const ready = s.authenticated && obState.onboarded && !state.showSignIn;
+  $("#setup").classList.toggle("hidden", !signIn);
+  $("#setupBack").classList.toggle("hidden", !s.authenticated);
+  $("#setupTitle").textContent = s.authenticated
+    ? "Sign in to Claude again" : "Connect your Claude account ✨";
+  $("#onboard").classList.toggle("hidden", signIn || obState.onboarded);
   $("#dash").classList.toggle("hidden", !ready);
   $("#settingsBtn").classList.toggle("hidden", !s.authenticated);
   renderUsageChip();
@@ -725,6 +741,7 @@ async function saveToken(value) {
   try {
     await api("api/auth/token", { method: "POST", body: JSON.stringify({ token: value }) });
     toast("Connected! Verifying with Claude…");
+    state.showSignIn = false;   // same reason as the guided flow's `done`
     await refreshStatus();
   } catch (e) {
     toast(e.message);
@@ -806,13 +823,25 @@ async function pollSetup() {
     $("#setupCodeRow").classList.remove("hidden"); // keep Cancel reachable
     $("#setupSubmit").disabled = true;
   }
+  const was = pollSetup.lastPhase;
   pollSetup.lastPhase = st.phase;
+  // "done" is a state the server keeps reporting for as long as the
+  // credential lives, so the toast is for ARRIVING there — from a phase
+  // this page watched — never for finding it there on a tab switch.
+  if (st.phase === "done"
+      && !["starting", "awaiting_code", "working"].includes(was)) return;
   if (st.phase === "done") {
     phaseChip.classList.remove("busy");
     phaseChip.classList.add("ok");
     phaseText.textContent = "Connected!";
     toast("Claude account connected 🎉");
     resetSetupUI();
+    // A sign-in that succeeded is the end of asking for the sign-in screen.
+    // Without this the screen is sticky in exactly the case it was added
+    // for — signing in AGAIN over a credential that had stopped working —
+    // because `authenticated` was already true and so nothing else here
+    // would ever take it down.
+    state.showSignIn = false;
     await refreshStatus();
     return;
   }
@@ -1368,6 +1397,13 @@ function renderIfChanged() {
   const s = state.status;
   const key = JSON.stringify({
     auth: s && [s.authenticated, s.auth_check.state, s.auth_source],
+    // Asking for the sign-in screen is state this render reads, so it has
+    // to be in the key. Without it, opening the screen over a credential
+    // that already exists changes none of the three auth fields above —
+    // and neither does signing in again successfully, so the screen went
+    // up and never came down. Which is the failure in the one case the
+    // screen was added for.
+    signIn: state.showSignIn,
     jobs: s && s.jobs,
     // a card pinned to a past run keys on that run, not generated_at — the
     // poll loop must not clobber it when the latest regenerates elsewhere
@@ -1848,6 +1884,7 @@ function renderSettingsForm(data) {
 
 async function openSettings() {
   openBox("#setModal");
+  loadAuth();
   loadDiagnostics();
   try {
     renderSettingsForm(await api("api/settings"));
@@ -2054,6 +2091,194 @@ $("#diagCopy").addEventListener("click", async () => {
   }
 });
 $("#diagRefresh").addEventListener("click", loadDiagnostics);
+
+// ------------------------------------------------------- Claude account
+// The panel could sign you in and could never show you what it had signed
+// you in with, nor sign you out, nor share that login with the other BRUH
+// add-ons — all three of which the terminal could do. So a login that died
+// was answerable only from a command line, and `ha login --status` reported
+// a perfectly good panel sign-in as "not set up" because it only ever read
+// its own file.
+
+function fmtSaved(epoch) {
+  if (!epoch) return "";
+  const d = new Date(epoch * 1000);
+  return isNaN(d.getTime()) ? "" : d.toLocaleString();
+}
+
+// Where the credential in use came from. `source` is the field that makes a
+// confusing report diagnosable — "the terminal works and the panel doesn't"
+// is two stores answering differently, and nothing used to name them.
+const AUTH_SOURCE = {
+  local: ["Signed in here", "Stored by this panel, in the add-on's own storage."],
+  shared: ["The shared login", "Published to /config for every BRUH add-on to read."],
+  cli: ["Claude Code's own login", "From `claude /login` or `ha login` in the Terminal tab."],
+};
+
+function renderAuthBox(a) {
+  authState = a;
+  const rows = [];
+  if (!a.authenticated) {
+    rows.push('<p class="authbad"><b>Not connected.</b> brAIn cannot analyze anything, '
+      + "answer questions, or run the chat until it has a Claude credential.</p>");
+  } else {
+    const [where, why] = AUTH_SOURCE[a.source] || ["Signed in", ""];
+    const kind = a.type === "api_key" ? "an Anthropic API key"
+      : a.type === "cli_login" ? "a Claude Code session login"
+      : "a Claude subscription token";
+    const saved = fmtSaved(a.saved_at);
+    rows.push(`<p><b>${esc(where)}</b> — using ${esc(kind)}.`
+      + (saved ? ` Saved ${esc(saved)}.` : "") + `<br><span class="subtext">${esc(why)}</span></p>`);
+  }
+
+  // The verdict, in its own words. A credential that is *shaped* right is
+  // not one that works, and the only liveness signal a pasted token has is
+  // a 401 when something uses it — so what a real `claude -p` turn last
+  // answered is the only honest line here.
+  const c = a.auth_check || {};
+  const verdict = {
+    ok: ["ok", "Verified with Claude."],
+    failed: ["bad", "Claude rejected it: " + (c.error || "no reason given")],
+    checking: ["busy", "Verifying with Claude…"],
+    unchecked: ["", "Not verified yet — brAIn checks it the next time you open the panel."],
+  }[c.state] || ["", "Not verified yet."];
+  const when = c.checked_at ? ` (last checked ${esc(fmtSaved(c.checked_at))})` : "";
+  rows.push(`<p class="authverdict ${verdict[0]}">${esc(verdict[1])}${when}</p>`);
+
+  // Every store, not only the one that answered — the same reason
+  // `ha login --status` reports three lines. A panel that can see only its
+  // own file says "not signed in" to somebody who is.
+  const st = a.stores || {};
+  const store = (on, name, note) =>
+    `<li class="${on ? "on" : "off"}">${on ? "✓" : "—"} ${esc(name)}`
+    + (note ? ` <span class="subtext">${esc(note)}</span>` : "") + "</li>";
+  rows.push("<ul class=\"authstores\">"
+    + store(st.local && st.local.present, "This panel's own store", "/data/secrets")
+    + store(st.cli && st.cli.present, "Claude Code's login",
+            (st.cli && st.cli.present) ? "live (it refreshes itself)" : "none, or expired")
+    + store(st.shared && st.shared.present, "Shared with other add-ons", "/config/.brain/secrets")
+    + "</ul>");
+  $("#authBody").innerHTML = rows.join("");
+
+  // -- the sharing half --
+  const shared = !!(st.shared && st.shared.present);
+  const chip = $("#authShareState");
+  chip.classList.remove("ok", "warn");
+  chip.classList.add(shared ? "ok" : "warn");
+  chip.lastElementChild.textContent = shared ? "Shared" : "Not shared";
+  $("#authShare").classList.toggle("hidden", shared || !a.can_share);
+  $("#authUnshare").classList.toggle("hidden", !shared);
+  $("#authShareNote").textContent = shared
+    ? "Other BRUH add-ons are using this login. Stopping removes the file; the token "
+      + "itself stays valid until you revoke it at claude.ai."
+    : a.can_share
+      ? "One sign-in for the whole family — nothing else has to be signed in separately."
+      // The refusal that has to be a sentence: a Claude Code session token
+      // is live, useful, and unshareable, and a button that failed on press
+      // would read as a broken feature rather than as a real distinction.
+      : a.authenticated
+        ? "This login is Claude Code's own session token, which refreshes itself and cannot "
+          + "be shared — a copy would stop working within hours. Sign in here (or run "
+          + "`ha login` in the Terminal tab) to mint a long-lived token that can be."
+        : "Sign in first.";
+  $("#authSignout").classList.toggle("hidden", !a.authenticated);
+}
+
+let authState = null;
+
+async function loadAuth() {
+  $("#authBody").textContent = "Loading…";
+  try {
+    renderAuthBox(await api("api/auth"));
+  } catch (e) {
+    authState = null;
+    $("#authBody").textContent = "Could not read the credential state: " + e.message;
+  }
+}
+
+$("#authSignin").addEventListener("click", () => {
+  closeBox("#setModal");
+  openSignIn();
+});
+
+$("#authRecheck").addEventListener("click", async () => {
+  try {
+    await api("api/auth/recheck", { method: "POST" });
+    toast("Asking Claude…");
+    // The check is a real run and takes a moment; the verdict lands on the
+    // status poll, so read it back rather than claiming an answer we do not
+    // have yet.
+    setTimeout(() => { loadAuth(); refreshStatus().catch(() => {}); }, 2500);
+  } catch (e) { toast(e.message); }
+});
+
+$("#authShare").addEventListener("click", async () => {
+  try {
+    renderAuthBox(await api("api/auth/share", { method: "POST" }));
+    toast("Shared — other BRUH add-ons will pick this login up");
+  } catch (e) { toast(e.message); }
+});
+
+$("#authUnshare").addEventListener("click", async () => {
+  try {
+    renderAuthBox(await api("api/auth/unshare", { method: "POST" }));
+    toast("Stopped sharing");
+  } catch (e) { toast(e.message); }
+});
+
+// Signing out while a shared copy exists and NOT removing it is a sign-out
+// that does nothing: the server reads that file two branches below its own,
+// so the next request reports you signed in again. The box is ticked and
+// the sentence says what each choice leaves behind, rather than the panel
+// deciding on somebody's behalf about the one file other add-ons read.
+$("#authSignout").addEventListener("click", async () => {
+  const shared = !!(authState && authState.stores
+    && authState.stores.shared && authState.stores.shared.present);
+  const msg = shared
+    ? "Sign out of Claude?\n\nA copy of this login is shared with the other BRUH "
+      + "add-ons. Press OK to remove that too (otherwise brAIn will simply read it "
+      + "back and you will still be signed in).\n\nThe token stays valid at "
+      + "claude.ai either way — revoke it there to end it for good."
+    : "Sign out of Claude?\n\nThe token stays valid at claude.ai — revoke it there "
+      + "to end it for good.";
+  if (!confirm(msg)) return;
+  try {
+    await api("api/auth/logout", { method: "POST", body: JSON.stringify({ shared }) });
+    closeBox("#setModal");
+    state.showSignIn = false;
+    await refreshStatus();
+    render();
+    toast("Signed out");
+  } catch (e) { toast(e.message); }
+});
+
+// Opening the sign-in screen from anywhere: the chip, ⚙, or the gate.
+//
+// Through `renderIfChanged`, never a bare `renderAuth()`. A direct render
+// paints the screen but leaves `lastRenderKey` holding the state from
+// BEFORE it opened — so the poll that follows the sign-in computes a key
+// equal to the stale one, skips the render, and the screen stays up over a
+// credential that has just been accepted. The flag is in the key precisely
+// so this bookkeeping is the render's job and not each caller's.
+function openSignIn() {
+  state.showSignIn = true;
+  switchView("insights");
+  resetSetupUI();
+  renderIfChanged();
+  window.scrollTo(0, 0);
+}
+
+$("#setupBack").addEventListener("click", async () => {
+  state.showSignIn = false;
+  // Same reason as openSignIn: the key has to move with the flag, or the
+  // next poll reads a state the screen is no longer in.
+  renderIfChanged();
+  await refreshStatus().catch(() => {});
+});
+
+// The chip renders only for trouble (see renderAuth), so a press on it is
+// always somebody answering that trouble.
+$("#authChip").addEventListener("click", openSignIn);
 
 $("#setEnabled").addEventListener("change", () =>
   saveSettings({ auto_enabled: $("#setEnabled").checked }));
@@ -5980,7 +6205,7 @@ document.addEventListener("visibilitychange", () => {
     renderIfChanged();
   }).catch(() => {});
   api("api/auth/setup/status").then((st) => {
-    if (["starting", "awaiting_code", "working", "done"].includes(st.phase)) pollSetup();
+    if (["starting", "awaiting_code", "working"].includes(st.phase)) pollSetup();
   }).catch(() => {});
 });
 

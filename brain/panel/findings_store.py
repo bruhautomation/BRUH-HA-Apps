@@ -434,6 +434,33 @@ def is_known(text: str) -> bool:
 # Writes
 # ---------------------------------------------------------------------------
 
+def split_overlong(text: str, detail: str) -> tuple[str, str]:
+    """A title over MAX_TEXT is cut at a sentence, and the rest goes to the
+    body — never sliced mid-word and dropped.
+
+    The model was told the title is a short statement and routinely wrote
+    the whole argument into it; the store then took the first 200
+    characters and threw the remainder away, so the card read *"If that
+    BLE beacon is something you int"* and the sentence that explained what
+    to do was gone for good. Nothing is discarded now: the head is the
+    last sentence end inside the cap (the last space failing that), and
+    the tail leads the detail, ahead of whatever the model put there.
+    """
+    if len(text) <= MAX_TEXT:
+        return text, detail
+    head = text[:MAX_TEXT]
+    cut = max(head.rfind(". "), head.rfind("? "), head.rfind("! "),
+              head.rfind("; "))
+    if cut < MAX_TEXT // 3:
+        cut = head.rfind(" ")
+        if cut < MAX_TEXT // 3:
+            cut = MAX_TEXT
+    else:
+        cut += 1  # keep the sentence's own full stop on the title
+    tail = text[cut:].strip()
+    return text[:cut].strip(), (f"{tail}\n{detail}" if detail else tail).strip()
+
+
 def coerce(obj: dict) -> dict | None:
     """One wire-shaped finding — from a model reply or an inbox line — turned
     into a stored entry, or None if there is nothing there.
@@ -444,13 +471,15 @@ def coerce(obj: dict) -> dict | None:
     """
     if not isinstance(obj, dict):
         return None
-    text = str(obj.get("text") or obj.get("finding") or "").strip()[:MAX_TEXT]
+    text = str(obj.get("text") or obj.get("finding") or "").strip()
+    detail = str(obj.get("detail") or "").strip()
+    text, detail = split_overlong(text, detail)
     if not normalize(text):
         return None
     severity = str(obj.get("severity") or "").strip().lower()
     return {
         "text": text,
-        "detail": str(obj.get("detail") or "").strip()[:MAX_DETAIL],
+        "detail": detail[:MAX_DETAIL],
         "fix": str(obj.get("fix") or "").strip()[:MAX_FIX],
         "severity": severity if severity in SEVERITIES else "warning",
         # absent means fixable; only an explicit false means hands required

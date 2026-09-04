@@ -15,7 +15,7 @@
 #   ha addon <action>      Manage add-ons
 #   ha notify <args>       Send a notification
 #   ha share <args>        Share a file / message with other BRUH add-ons
-#   ha login               Authenticate the shared Claude credential
+#   ha login               Sign in to Claude / share that login (= brain login)
 #   ha help                This help
 
 set -uo pipefail
@@ -40,7 +40,10 @@ Usage:
   ha addon <action>        Manage add-ons
   ha notify <args>         Send a notification
   ha share <args>          Share with other BRUH add-ons
-  ha login                 Authenticate the shared Claude credential
+  ha login [--status]      Sign in to Claude, and share that login with other
+                           BRUH add-ons. `brain login` is the same command;
+                           the panel's ⚙ Settings → Claude account does it
+                           with a button. --status reports every store.
   ha help                  This help
 
 brAIn's memory and learning live under `brain` (brain memory, brain learn, ...).

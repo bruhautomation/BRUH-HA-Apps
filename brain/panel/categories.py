@@ -209,7 +209,7 @@ OUTPUT CONTRACT (strict JSON; title, summary, highlights, and html are required)
   "highlights": [ {"label": "Metric name", "value": "42 kWh", "delta": "+12% vs avg (optional)", "status": "good|warning|serious|critical (optional)"} ],
   "hypotheses": [ "Optional: something you believe about this home, phrased so it can be answered yes or no" ],
   "learned": [ "Optional: durable facts about this home worth remembering" ],
-  "findings": [ {"text": "Short statement of what is broken", "detail": "Evidence: the entity, the number, when it started", "fix": "The specific change that would resolve it", "severity": "info|warning|serious|critical", "fixable": true, "entity_id": "sensor.example (optional)"} ],
+  "findings": [ {"text": "ONE sentence naming what is broken, under 120 chars — it is the card's title and anything longer is cut", "detail": "The argument: the evidence, the entity, the number, when it started, what you noticed along the way", "fix": "The specific change that would resolve it", "severity": "info|warning|serious|critical", "fixable": true, "entity_id": "sensor.example (optional)"} ],
   "tags": [ "2-4 short lowercase topic tags" ],
   "html": "<!DOCTYPE html>... one complete self-contained HTML document ..."
 }

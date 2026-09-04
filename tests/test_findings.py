@@ -236,6 +236,27 @@ class TestFindingsStore(StoreCase):
         self.assertEqual([f["text"] for f in created], ["One", "Two"])
         self.assertEqual(len(writes), 1, "add_many rewrote the store per item")
 
+    def test_an_overlong_title_is_split_into_the_body_not_sliced(self):
+        # The screenshot: a 300-character "text" was cut at 200 mid-word
+        # and the half that said what to do was gone. The head is a whole
+        # sentence, the tail leads the detail, and no character is lost.
+        first = "One of the named devices shares its MAC with the unclaimed BLE device already noted in home memory under the presence gap."
+        rest = "If that BLE beacon is something you intend to keep, claim it under the device so the two stop reading as strangers."
+        entry = findings_store.coerce({"text": f"{first} {rest}",
+                                       "detail": "Seen since Tuesday."})
+        self.assertEqual(entry["text"], first)
+        self.assertEqual(entry["detail"], f"{rest}\nSeen since Tuesday.")
+        self.assertLessEqual(len(entry["text"]), findings_store.MAX_TEXT)
+        # No sentence end inside the cap: cut at a space, never mid-word.
+        words = " ".join(["word"] * 60)
+        entry = findings_store.coerce({"text": words})
+        self.assertTrue(entry["text"].endswith("word"))
+        self.assertTrue(entry["detail"].startswith("word"))
+        self.assertEqual(f'{entry["text"]} {entry["detail"]}', words)
+        # A title under the cap is untouched, detail included.
+        entry = findings_store.coerce({"text": "Short.", "detail": "d"})
+        self.assertEqual((entry["text"], entry["detail"]), ("Short.", "d"))
+
     def test_coerce_is_the_one_reader_of_the_wire_shape(self):
         """Both producers — a model reply and an inbox line — hand over the
         same loose shape, so both go through one coercion."""

@@ -2,7 +2,7 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
-## 1.43.0
+## 1.44.0
 
 **1.42.0's last two steps did nothing.** It shipped the proposal lifecycle —
 `proposed → trialling → accepted | declined` — and the two that make it mean
@@ -189,6 +189,140 @@ is broken, and both of these read from the tab as the second.
   pure) and skips a habit on an entity `automation_writer.apply` would refuse.
   The writer has to refuse one, being the last gate before `/config`, but a
   card offering something brAIn will not do is a wasted no.
+## 1.43.1
+
+Three things that ran, quietly, and did the wrong thing.
+
+- **The morning brief never saw the health verdict.** `_send_brief` awaited
+  `_diagnostics_payload()` — a plain function returning a dict — so every
+  call raised, the `try` around it logged at *info* and carried on with an
+  empty verdict, and the "brAIn itself is degraded" reason in
+  `brief.worth_saying` could never fire. It runs on a thread now, and a test
+  drives a degraded verdict through to `worth_saying` rather than grepping
+  for the line.
+- **`every day` was granted at the weekday hour for a house that sleeps
+  in at weekends.** `routines._best_shape` earns `every day` only when both
+  halves of the week hold up on their own — right — but it never asked
+  whether they hold up at the *same time*, and the merged set could not
+  tell it: the spread is a median deviation, so fifteen weekday presses at
+  07:00 hid six weekend ones at 10:00 completely and the union came out
+  as `every day at 07:00`, spread zero. That is the exact trigger the
+  function exists to refuse. The halves have to agree on the hour now, and
+  when they do not the answer is the narrower true claim rather than
+  nothing (the old code also dropped the habit outright whenever the
+  union was refused).
+- **The fixer had no Home Assistant.** Every other Claude path runs from
+  `/config` and inherits `.mcp.json` and `settings.local.json` for free;
+  the engine runs card and fix runs from CLAUDE_HOME on purpose (so their
+  transcripts stay out of the Chats rail) and inherited neither. So the
+  analyst had no tools, and "Fix it" answered — accurately — *I have no
+  working Home Assistant connection … this session is confined to
+  /data/home*. The project is lent by flag now: `--mcp-config` for both,
+  `--add-dir` and `--settings` for the fixer alone, because the analyst's
+  allow-list is asserted from both ends and a file pre-approving Bash and
+  Write would widen it.
+- **A finding's title was sliced at 200 characters, mid-word.** The model
+  wrote the whole argument into `text`, the store kept the first 200
+  characters and threw the rest away, so the card read *"something you
+  int"* and the sentence saying what to do was gone. An over-long title is
+  cut at its last sentence end and the remainder leads the detail; the
+  contract now says the title is one sentence and where the argument goes.
+- **"Claude account connected 🎉" on every return to the tab.** The
+  sign-in poll toasted whenever the server reported `done`, which it does
+  for as long as the credential lives, and the tab-visibility handler
+  re-ran the poll for that phase. The toast is for *arriving* at done from
+  a phase this page watched, and a return to the tab no longer polls a
+  finished sign-in at all.
+- **Discuss opens its own conversation.** Handing a finding to the chat
+  appended it to whatever conversation was open — the garage lights under
+  a half-finished question about the heating. It starts a fresh one; the
+  old chat stays in the list.
+- **Switching the chat to the classic terminal froze the panel.** The
+  handoff ran `tmux new-window` with a blocking `subprocess.run` directly
+  on the event loop, so every request, SSE stream and the terminal bridge
+  stalled for up to ten seconds. It runs on a thread.
+
+## 1.43.0
+
+Signing in, from the panel. brAIn could sign you in **once**, and after that
+had nothing to say about it: the sign-in screen was gated on `authenticated`
+alone, so the moment a credential existed there was no route back to it — and
+`authenticated` is true for a credential that has **stopped working**, because
+the panel's own store records no expiry and the only liveness signal a pasted
+token has is a 401 when something uses it. So the exact state that needed the
+screen (a token that died on a Tuesday, the chip reading *Claude auth failed*)
+was the one state with nothing to press. `/api/auth/logout` had existed since
+the first release and nothing in the UI ever called it.
+
+The command line was the other half, and it had three separate ways of telling
+somebody a true thing that read as a false one.
+
+### Added
+
+- **⚙ Settings → Claude account.** The first section of the dialog, because
+  everything else in there is a preference and this is what decides whether
+  the add-on works at all. It names the credential in use, **which of the
+  three stores it came from**, when it was saved, and the verdict of the last
+  real check — then **Sign in again**, **Check it now** and **Sign out**.
+- **All three credential stores, always** (`GET /api/auth`). A surface that
+  can see only its own file answers *"signed in and shared"* with *"not signed
+  in"*, which is exactly what `ha login --status` did to somebody who had
+  signed in through the panel perfectly well.
+- **Sharing a login is a button** (`POST /api/auth/share` / `/unshare`, and
+  `ha login --share`). Writing `/config/.brain/secrets/claude_auth.json` — the
+  one store outside the add-on that other BRUH add-ons can read — used to be
+  `ha login`'s alone, so a panel sign-in could not be shared without a fresh
+  OAuth round trip through a command you had to already know about. It stays
+  **off unless you turn it on**, and the dialog says why: `/config` rides in
+  Home Assistant backups, which are unencrypted unless you opted in.
+- **`brain login`**, the same command as `ha login`. The split is *brAIn's
+  faculties* vs *Home Assistant operations* and a credential is neither, so
+  the rule cannot settle it; what does is that both spellings are things
+  people type.
+- **`ha login --share`** publishes a login you already have, and
+  **`ha login --status`** now reports all three stores with the CLI's expiry
+  read, so *"signed in"* and *"signed in **and** shared"* are different lines.
+- **Check it now** re-earns the auth verdict on demand
+  (`POST /api/auth/recheck`). It was otherwise only ever re-earned lazily on a
+  six-hour ageing — right for an unattended poll, useless to somebody who has
+  just fixed their login in the terminal and is looking at a chip that still
+  says it failed.
+- `tests/manual/measure-account.mjs`, in CI's `layout` job: it drives the real
+  renderers and fails when the sign-in screen is unreachable, when a store
+  goes unlisted, or when a target in the section is under the touch floor.
+
+### Fixed
+
+- **`ha login` with no terminal hung forever instead of refusing.**
+  `claude setup-token` prints a link and then blocks reading a code from
+  stdin; with nothing attached there is nothing to paste into, so it sat
+  there until something killed it — and the last thing printed was
+  *"Starting the Claude OAuth token flow..."*, which is indistinguishable
+  from working. Anything non-interactive (a script, CI, an agent) hit it. It
+  now refuses immediately, naming the routes that **do** work without a
+  terminal. The test holds it with stdin as an open pipe that never delivers,
+  not `/dev/null`: `/dev/null` is an instant EOF, so the old script fails fast
+  there and the test would have passed against the bug.
+- **The auth chip is a control.** It renders only for trouble, and trouble is
+  exactly when there is something to press — it was a `<span>` with no
+  handler (and unreachable from a keyboard). It presses through to the
+  sign-in screen, which is now reachable with a credential stored.
+- **Signing out while a login was shared left you signed in.** `get_auth`
+  reads the shared file two branches below the panel's own, so a sign-out
+  that spared it handed the very next request the credential it had just
+  removed. The dialog now says a shared copy exists and ticks the box to
+  take it with you; the default is unchanged, because that file may have been
+  published from a terminal by somebody else.
+- **Three places named `ha-share-login`, which has never been a command.**
+  It is this script's *filename*; only `brain` and `ha` are copied onto PATH.
+  `--status`, the failure hint and `run.sh`'s startup tip all told people to
+  run something that answers *command not found*.
+- **Claude Code's own session token is refused for sharing, in a sentence.**
+  Its `accessToken` is short-lived and the CLI refreshes it for itself; the
+  shared file records no refresh token, so a copy works for a few hours and
+  then breaks every add-on reading it, silently. It is also the store most
+  likely to be the only one present — which is exactly when somebody reaches
+  for the button.
 
 ## 1.42.0
 
