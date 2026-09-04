@@ -358,10 +358,16 @@ class NotifyCase(StoreCase):
         self.server = importlib.import_module("server")
         self.ha_data = importlib.import_module("ha_data")
         self.sent = []
+        self.payloads = []
         self._old_send = self.ha_data.send_notification
 
-        async def record(service, title, message, timeout=15):
+        async def record(service, title, message, timeout=15, data=None):
+            # `data` is recorded, not ignored: the buttons on a message
+            # are the difference between a notification you read and one
+            # you can answer, and a stub that dropped the argument would
+            # let the whole of that ride untested.
             self.sent.append((service, title, message))
+            self.payloads.append(data)
 
         self.ha_data.send_notification = record
         os.environ.pop("BRAIN_FINDINGS_NOTIFY", None)
@@ -424,6 +430,49 @@ class TestFindingsNotify(NotifyCase):
         self.ha_data.send_notification = boom
         created = findings_store.add_many([{"text": "X", "severity": "critical"}])
         self._announce(created)   # must not raise
+
+
+class TestButtonsOnTheMessage(NotifyCase):
+    """A notification you can answer, and the three places it is refused.
+
+    `notify_router` is tested on its own in test_finding_requests.py;
+    this is the wiring — whether the panel actually attaches the buttons
+    when it should, and sends the payload it always did when it should
+    not. That gate is the whole risk of the feature: every notifier that
+    is not the companion app takes `data` and means something different
+    by it or nothing at all.
+    """
+
+    def setUp(self):
+        super().setUp()
+        os.environ["BRAIN_FINDINGS_NOTIFY_MIN_SEVERITY"] = "info"
+
+    def test_one_finding_to_a_phone_arrives_with_the_three_endings(self):
+        os.environ["BRAIN_FINDINGS_NOTIFY"] = "notify.mobile_app_pixel"
+        row, _ = findings_store.add("The hall sensor has stopped")
+        self._announce([row])
+        self.assertEqual(len(self.payloads), 1)
+        actions = self.payloads[0]["actions"]
+        self.assertEqual([a["action"] for a in actions],
+                         [f"brain.fixed.{row['ts']}",
+                          f"brain.wrong.{row['ts']}",
+                          f"brain.snooze.{row['ts']}"])
+
+    def test_any_other_notifier_gets_the_payload_it_always_did(self):
+        # Not an empty `data` either: several notifiers treat the key's
+        # presence as a request to be parsed.
+        for service in ("notify.notify", "telegram", "notify.everyone"):
+            self.payloads.clear()
+            os.environ["BRAIN_FINDINGS_NOTIFY"] = service
+            row, _ = findings_store.add(f"Something about {service}")
+            self._announce([row])
+            self.assertEqual(self.payloads, [None], service)
+
+    def test_a_batch_carries_none_because_it_could_not_say_which(self):
+        os.environ["BRAIN_FINDINGS_NOTIFY"] = "notify.mobile_app_pixel"
+        rows = [findings_store.add(f"Problem {i}")[0] for i in range(3)]
+        self._announce(rows)
+        self.assertEqual(self.payloads, [None])
 
 
 class TestQuietHoursRouting(NotifyCase):

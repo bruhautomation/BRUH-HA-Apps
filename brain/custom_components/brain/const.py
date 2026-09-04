@@ -78,6 +78,17 @@ QUESTIONS_FILE = "questions.jsonl"
 # Findings mirror the add-on republishes on every change (see the add-on's
 # findings_store._publish_state): {ts, open, by_severity, findings[]}.
 FINDINGS_STATE_FILENAME = "findings_state.json"
+
+# Where an answer given outside the panel is dropped for the add-on to
+# pick up. The panel owns the findings store and is deliberately its only
+# writer — port 8099 is unpublished and stays that way — so what crosses
+# the gap is a request, not a write.
+FINDING_REQUESTS_DIRNAME = "finding-requests"
+
+# The identifier prefix on a notification button, and the event the
+# companion app fires when one is pressed.
+EVENT_MOBILE_ACTION = "mobile_app_notification_action"
+ACTION_PREFIX = "brain"
 # The panel's own published state: versions, the run journal's last day,
 # the last checks pass, the daemon roll-call and the health verdict. Two
 # platforms read it now (diagnostics and the health sensor), so the name

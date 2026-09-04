@@ -272,9 +272,79 @@ def compose(rows: list[dict], held: bool = False) -> tuple[str, str]:
     return title, "\n".join(lines)[:MESSAGE_MAX]
 
 
+
+# ---------------------------------------------------------------------------
+# Buttons on the message
+# ---------------------------------------------------------------------------
+
+# The identifier the companion app hands back in
+# `mobile_app_notification_action`. Prefixed so a house with other
+# actionable notifications can tell whose button was pressed, and short
+# because it travels in a payload with a length limit nobody documents.
+ACTION_PREFIX = "brain"
+ACTION_LABELS = (("fixed", "I've fixed it"), ("wrong", "Not a problem"),
+                 ("snooze", "Later"))
+
+
+def can_answer(service: str) -> bool:
+    """Whether this notifier is one that can carry buttons back.
+
+    Only the Home Assistant companion app. Every other notifier — a
+    Telegram bot, a Discord webhook, `persistent_notification`, a group
+    that fans out to several — takes `data` and means something different
+    by it or nothing at all, and a payload built on a guess is how a
+    working notification stops arriving. A missing button is a much
+    smaller loss than that, so the gate is the one signal that is not a
+    guess: the service is a `mobile_app_*` one.
+
+    A notify GROUP containing mobile apps is deliberately not detected.
+    It cannot be, from a name, and guessing wrong is the failure above.
+    """
+    name = str(service or "").strip().removeprefix("notify.")
+    return name.startswith("mobile_app_")
+
+
+def actions_for(rows: list[dict], service: str) -> list[dict]:
+    """The buttons for this message, or none.
+
+    **Only ever for a message about exactly one finding.** A digest is
+    several problems in one notification, and a button on it would have
+    to guess which — so a held batch and a checks pass that filed three
+    arrive as they always did, and the person opens the tab. That is the
+    honest answer rather than ending an arbitrary one of them.
+    """
+    if len(rows) != 1 or not can_answer(service):
+        return []
+    ts = rows[0].get("ts")
+    if isinstance(ts, bool) or not isinstance(ts, (int, float)):
+        return []
+    return [{"action": f"{ACTION_PREFIX}.{verb}.{int(ts)}", "title": title}
+            for verb, title in ACTION_LABELS]
+
+
+def parse_action(identifier: str) -> tuple[str, int] | None:
+    """`"brain.fixed.1720"` as `("fixed", 1720)`, or None for anything else.
+
+    The companion app fires one event for every actionable notification
+    in the house, brAIn's and everybody else's, so this has to reject far
+    more than it accepts.
+    """
+    parts = str(identifier or "").split(".")
+    if len(parts) != 3 or parts[0] != ACTION_PREFIX:
+        return None
+    verb = parts[1]
+    if verb not in [v for v, _t in ACTION_LABELS]:
+        return None
+    try:
+        return verb, int(parts[2])
+    except (TypeError, ValueError):
+        return None
+
+
 __all__ = [
-    "DEFAULT_URGENCY", "PRODUCER_URGENCY", "QUEUE_FILE",
-    "URGENCY", "compose", "hold", "in_quiet_hours", "load_queue",
-    "parse_hour", "quiet_ends_at", "save_queue", "take_queue", "urgency_of",
+    "ACTION_LABELS", "ACTION_PREFIX", "DEFAULT_URGENCY", "PRODUCER_URGENCY",
+    "QUEUE_FILE", "URGENCY", "actions_for", "can_answer", "compose", "hold",
+    "in_quiet_hours", "load_queue", "parse_action", "parse_hour",
+    "quiet_ends_at", "save_queue", "take_queue", "urgency_of",
     "worth_sending",
 ]

@@ -234,6 +234,20 @@ reporting. Cards run on their own schedule, and **⋯ → Regenerate** does one 
 Things brAIn thinks are **broken**, and what it did about them. See **Findings** in this
 guide. A number on the tab means something is waiting on your decision.
 
+The same list is \`todo.brain\` in Home Assistant's own **To-do** panel and mobile app
+(needs core 2023.11+). Ticking one off is *I've fixed it*; deleting one is *not a
+problem here* — the two endings on this tab, so answering there teaches brAIn exactly
+what pressing the button would have. You cannot add an item: there would be nothing
+behind it, and it would vanish on the next refresh.
+
+A notification about **one** finding, sent to the companion app
+(\`notify.mobile_app_*\`), arrives with those endings as buttons. Any other notifier
+means something different by the payload they ride in — or nothing at all — and a
+digest about three problems could not say which one a button answered, so both get
+the message they always did. Answers reach the add-on through a file on
+\`/config/.brain\` rather than over the network, so one given while the add-on is
+stopped waits for it instead of being lost.
+
 ## What counts as unusual
 
 brAIn measures your house overnight: for every numeric sensor, what it normally

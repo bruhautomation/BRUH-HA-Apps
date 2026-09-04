@@ -91,6 +91,8 @@ STATE_FILE = Path(os.environ.get(
     "BRAIN_FINDINGS_STATE", "/config/.brain/findings_state.json"))
 # Plenty for a sensor attribute; the panel remains the place to work a list.
 STATE_MAX_ROWS = 50
+# Per-row cap on the prose in the mirror. See `_publish_state`.
+STATE_MAX_PROSE = 240
 
 MAX_FINDINGS = 200
 # Far more than the list, because it is one short line each and losing the
@@ -203,8 +205,17 @@ def _publish_state(items: list[dict]) -> None:
                                       if s["severity"] == sev])
                             for sev in SEVERITIES},
             "findings": [
-                {k: s[k] for k in ("ts", "text", "severity", "status",
-                                   "entity_id", "fixable", "source_title")}
+                # `detail` and `fix` are cut harder here than in the
+                # store: this file is a summary Home Assistant reads on
+                # a timer, the panel holds the full text, and a to-do
+                # item's description is read on a phone before deciding
+                # whether to get up. Fifty rows of 600 characters each
+                # would be 60 KB of mirror for two paragraphs nobody
+                # scrolls to the end of.
+                {**{k: s[k] for k in ("ts", "text", "severity", "status",
+                                      "entity_id", "fixable", "source_title")},
+                 "detail": s["detail"][:STATE_MAX_PROSE],
+                 "fix": s["fix"][:STATE_MAX_PROSE]}
                 for s in live[:STATE_MAX_ROWS]
             ],
         })

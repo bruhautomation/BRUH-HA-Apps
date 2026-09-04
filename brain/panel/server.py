@@ -119,6 +119,7 @@ import conversations
 import energy
 import engine
 import feedback_store
+import finding_requests
 import findings_store
 import fixer
 import health
@@ -823,9 +824,14 @@ async def _send_notification(rows: list[dict], held: bool = False) -> bool:
     if not service or not rows:
         return False
     title, body = notify_router.compose(rows, held=held)
+    # Buttons, but only where they can be answered and only when the
+    # message is about one finding — see `notify_router.actions_for`.
+    buttons = notify_router.actions_for(rows, service)
     import ha_data
     try:
-        await ha_data.send_notification(service, title, body)
+        await ha_data.send_notification(
+            service, title, body,
+            data={"actions": buttons} if buttons else None)
     except Exception as exc:  # noqa: BLE001 — a bad target can't fail the run
         log.warning("findings notification via %s failed: %s", service, exc)
         return False
@@ -1173,6 +1179,85 @@ def _weekly_diagnostics() -> dict:
         "last_error": WEEKLY_STATE["last_error"],
         "last_chars": len(WEEKLY_STATE["last_text"]),
         "last_state": WEEKLY_STATE["last_state"],
+    }
+
+
+# Answers given somewhere else. A glob of a directory that is nearly
+# always empty, often enough that ticking an item off in the To-do app
+# makes it disappear from the Findings tab while you are still looking at
+# your phone — a list that takes half a minute to notice is a list people
+# tick twice.
+REQUESTS_POLL_S = 15
+REQUESTS_FIRST_DELAY_S = 20
+REQUESTS_STATE: dict = {"applied": 0, "missed": 0, "last": 0.0}
+
+
+async def _apply_finding_requests() -> list[dict]:
+    """Drain the request drop, through the tab's own endings.
+
+    Returns one result per request, for the log and for the tests: a
+    request naming a finding that is gone is `ok: False`, which is an
+    ordinary race — somebody's phone was a few seconds out of date — and
+    never a reason to retry or to put the row back.
+    """
+    requests = await asyncio.to_thread(finding_requests.collect)
+    out: list[dict] = []
+    for req in requests:
+        ts, action = req["ts"], req["action"]
+        result = {"ts": ts, "action": action, "via": req.get("via", ""),
+                  "ok": False, "why": "no such finding"}
+        if action == "snooze":
+            until = int(time.time() + req["hours"] * 3600)
+            row = await asyncio.to_thread(findings_store.snooze, ts, until)
+            result["ok"] = bool(row)
+        else:
+            finding = await asyncio.to_thread(findings_store.get, ts)
+            spec = FINDING_VERBS.get(finding_requests.verb_for(action))
+            if finding and spec:
+                # No undo token: `undo_store` is the toast's, and there is
+                # no toast on a lock screen. By the time somebody un-ticks
+                # an item the row it stood for is already gone, so an
+                # offer nothing can accept would be worse than none.
+                await _end_finding(finding, spec, req.get("note", ""))
+                result["ok"] = True
+        if result["ok"]:
+            result["why"] = ""
+            REQUESTS_STATE["applied"] += 1
+        else:
+            REQUESTS_STATE["missed"] += 1
+        REQUESTS_STATE["last"] = time.time()
+        log.info("finding %s: %s from %s%s", ts, action,
+                 result["via"] or "elsewhere",
+                 "" if result["ok"] else f" — {result['why']}")
+        out.append(result)
+    return out
+
+
+async def _requests_loop():
+    """Watch the drop directory. Cheap, and empty nearly every pass."""
+    await asyncio.sleep(REQUESTS_FIRST_DELAY_S)
+    while True:
+        try:
+            await _apply_finding_requests()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — the loop outlives a pass
+            log.warning("finding request pass failed: %s", exc)
+        await asyncio.sleep(REQUESTS_POLL_S)
+
+
+def _requests_diagnostics() -> dict:
+    """What has come in from outside the panel, and what is stuck.
+
+    A queue nobody can see is a queue that silently swallows: "nothing
+    has been ticked this week" and "the loop died on Tuesday holding
+    four answers" look identical from every other surface.
+    """
+    return {
+        "pending": finding_requests.pending(),
+        "applied": REQUESTS_STATE["applied"],
+        "missed": REQUESTS_STATE["missed"],
+        "last": int(REQUESTS_STATE["last"]),
     }
 
 
@@ -3013,6 +3098,9 @@ def _diagnostics_payload() -> dict:
         # sent because nothing was worth reporting reads, from outside,
         # exactly like one whose loop died in March.
         "weekly": _weekly_diagnostics(),
+        # Answers given in the To-do app or on a notification, on
+        # their way back to the one store that owns them.
+        "finding_requests": _requests_diagnostics(),
         # Numbers, not the buckets: a bug report needs to know whether
         # the house has been watched and when, not 168 fractions for
         # sixty doors.
@@ -3171,6 +3259,25 @@ async def h_finding_verb(request: web.Request) -> web.Response:
 
         return web.json_response(await asyncio.to_thread(move))
 
+    payload, fact = await _end_finding(finding, spec, note)
+    # Both endings delete the row, which is the point of them and also the
+    # reason this exists: they sit next to each other and mean opposite
+    # things, so a mis-tap is not hypothetical and there is nothing to put
+    # back by hand.
+    payload["undo"] = undo_store.record(
+        "finding", finding=finding, key=findings_store.normalize(finding["text"]),
+        fact=fact, fact_source=spec.get("source", "homeowner"))
+    return web.json_response(payload)
+
+
+async def _end_finding(finding: dict, spec: dict, note: str) -> tuple[dict, str]:
+    """Settle a finding and record what it taught. One implementation.
+
+    Both front doors reach this: the tab's own buttons, and a request
+    dropped on the shared volume by a tick in the To-do app or a button
+    on a notification. A second copy would be the same press teaching
+    brAIn two different things depending on where it was made.
+    """
     def settle() -> dict:
         findings_store.settle_and_clear(finding["ts"], spec["kind"], note=note)
         return _findings_payload()
@@ -3185,14 +3292,7 @@ async def h_finding_verb(request: web.Request) -> web.Response:
         fact = template.format(text=finding["text"], note=note,
                                date=time.strftime("%Y-%m-%d"))
         await _submit_memory(fact, source=spec.get("source", "homeowner"))
-    # Both endings delete the row, which is the point of them and also the
-    # reason this exists: they sit next to each other and mean opposite
-    # things, so a mis-tap is not hypothetical and there is nothing to put
-    # back by hand.
-    payload["undo"] = undo_store.record(
-        "finding", finding=finding, key=findings_store.normalize(finding["text"]),
-        fact=fact, fact_source=spec.get("source", "homeowner"))
-    return web.json_response(payload)
+    return payload, fact
 
 
 async def h_undo(request: web.Request) -> web.Response:
@@ -4939,6 +5039,7 @@ def make_app() -> web.Application:
         app["brief"] = asyncio.create_task(_brief_loop())
         app["evening"] = asyncio.create_task(_evening_loop())
         app["weekly"] = asyncio.create_task(_weekly_loop())
+        app["requests"] = asyncio.create_task(_requests_loop())
         if addon_options.available():
             app["options"] = asyncio.create_task(_options_poller())
         if engine.get_auth():
