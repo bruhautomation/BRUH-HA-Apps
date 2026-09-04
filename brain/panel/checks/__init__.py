@@ -46,8 +46,8 @@ from __future__ import annotations
 # ``snapshot`` is imported here too, so ``checks.snapshot.collect`` resolves
 # off the package the way server.py calls it; its aiohttp import is lazy,
 # inside the collector, so this costs the test suite nothing.
-from . import (automations, baseline, dashboards, devices, evening,  # noqa: F401
-               forecasts, registry, snapshot, system)
+from . import (automations, baseline, chores, dashboards,  # noqa: F401
+               devices, evening, forecasts, registry, snapshot, system)
 
 # The catalog. Order is the order results are filed in, which is also the
 # order the Findings tab shows a fresh batch: what breaks an automation
@@ -63,6 +63,7 @@ CHECKS: list[dict] = [
     # these answer one whose answer is different in every house.
     *baseline.CHECKS,
     *evening.CHECKS,
+    *chores.CHECKS,
 ]
 
 CHECK_IDS = [c["id"] for c in CHECKS]
@@ -78,6 +79,7 @@ GROUP_TITLES = {
     "forecast": "Forecast",
     "base": "Baseline check",
     "evening": "Bedtime check",
+    "chore": "Chore",
 }
 
 

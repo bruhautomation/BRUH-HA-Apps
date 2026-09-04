@@ -67,6 +67,11 @@ PRODUCER_URGENCY = {
     # window starts. Anything but `now` holds it until morning, which is
     # the one delivery that makes the check pointless.
     "check:evening.left_open": "now",
+    # A chore is never urgent and often arrives in the evening: an
+    # emptied dishwasher at eight in the morning is the same dishwasher.
+    # `whenever` is what lets quiet hours hold it, which is the whole
+    # reason urgency is declared per producer.
+    "check:chore.waiting": "whenever",
     # A trend, a forecast, a tidy-up. None of these change overnight.
     "check:forecast.": "whenever",
     "check:base.": "whenever",

@@ -2,6 +2,64 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.39.0
+
+### Added
+
+- **Appliance state tracking** (`panel/appliances.py`), the measurement the
+  roadmap's chore engine stands on and the last third of **#7**. Nothing in
+  Home Assistant says a wash finished, and every rule anybody writes on top
+  of a smart plug is a wattage typed into a box: `> 10 W` is a running
+  dishwasher in one house and a phone charger in the next. So the numbers are
+  measured, per machine, from its own ten days of five-minute statistics —
+  the argument `baselines.py` makes about the word "unusual", applied to a
+  distribution that is a different shape. A power reading is not a band with
+  a middle and a spread; it is **bimodal**, and a sensor that does not have
+  that shape (a router, a standing draw) gets **no profile** rather than a
+  guessed threshold.
+
+  Five rules, four of them about being confidently wrong:
+
+  - **The floor is a low percentile, never the minimum.** One zero during a
+    power cut would otherwise set the idle level for good.
+  - **"Below the threshold" is not "finished".** A dishwasher's dry phase
+    draws almost nothing for twenty minutes, so a machine that reports done
+    the moment the draw drops reports done three times a cycle. The wait is
+    measured too: the gaps between draws are *themselves* bimodal — lulls of
+    minutes inside a cycle, idles of hours between them — and **the widest
+    jump in that sorted list is the appliance saying how long its own quiet
+    phases last**.
+  - **A blip is not a cycle.** Every compressor, kettle and inrush clears a
+    threshold for a moment.
+  - **"Unloaded" cannot be seen from power at all**, and this does not
+    pretend otherwise: an emptied machine and a full one draw exactly the
+    same watts. Three states are measured — `idle`, `running`, `finished` —
+    and the fourth is a person saying so, which is what 1.38's To-do list and
+    notification buttons are for.
+  - **And nothing here decides anything**, the same split the baselines keep.
+
+  It rides the nightly baseline pass: one `/states` fetch, three measurements
+  of the same house. `GET /api/appliances` is where somebody checks whether
+  their washing machine was measured at all, and ⚙ Diagnostics carries how
+  many machines have a shape against how many are chores — nine profiled
+  sensors and no chores means nothing here is *named* like a machine somebody
+  has to empty.
+
+- **`chore.waiting`** — the washing that finished and is still in the
+  machine. It is the first check whose question no state answers, and it
+  carries three floors of its own. **Only what a person has to empty**: the
+  measurement is universal, the chore is narrowed by NAME to a washer, a
+  dryer and a dishwasher — the one guess here, made in the direction where
+  being wrong is cheap, because a missed chore costs nothing and a
+  notification telling somebody to go and empty their television is how the
+  whole feature gets turned off. **It waits** `QUIET_MIN` on top of the
+  machine's own measured settle time, because a cycle that ended four minutes
+  ago is somebody standing at the machine. And **it stops asking** past
+  `STALE_HOURS`: yesterday's washing is a fact about the week, not something
+  to do. Its notification urgency is `whenever` — a chore arrives in the
+  evening by construction and an emptied dishwasher at eight in the morning
+  is the same dishwasher, so quiet hours have to be able to hold it.
+
 ## 1.38.0
 
 ### Added

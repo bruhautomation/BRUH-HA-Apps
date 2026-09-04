@@ -248,6 +248,30 @@ the message they always did. Answers reach the add-on through a file on
 \`/config/.brain\` rather than over the network, so one given while the add-on is
 stopped waits for it instead of being lost.
 
+## When the washing finished
+
+Nothing in Home Assistant says a cycle ended, so brAIn measures each machine
+overnight from ten days of its own five-minute history — looking for the
+**shape** an appliance has: hours near a floor, punctuated by runs well above
+it. A sensor without that shape (a router, a fridge) gets no profile rather
+than a guessed threshold, and you need a power sensor on the appliance plus
+about ten days of it running.
+
+The waiting is the part that matters. A dishwasher's dry phase draws almost
+nothing for twenty minutes, so "done the moment the power drops" would say
+done three times a cycle. That quiet phase is measured too: the gaps between
+draws fall into two groups — lulls inside a cycle, idles between them — and
+the jump between the groups is the machine's own answer.
+
+The **chore** is narrower than the measurement: a washing machine, a tumble
+dryer or a dishwasher that has finished and is still full, matched on the
+sensor's name. A deliberate guess in the cheap direction — not recognising
+your machine costs a missing reminder, recognising the wrong one means being
+told to go and empty your television. brAIn **cannot see that you emptied
+it** (an empty machine and a full one draw the same power), so the chore ends
+the way any finding does: tick it off, press the notification button, or press
+it here. It clears itself if the machine runs again.
+
 ## What counts as unusual
 
 brAIn measures your house overnight: for every numeric sensor, what it normally

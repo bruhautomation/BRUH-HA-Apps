@@ -571,6 +571,46 @@ was reset or replaced mid-week those days are dropped, and with them the
 comparison: you get the total it could measure and "no comparison to make"
 rather than a plausible-looking drop.
 
+### It knows when the washing finished
+
+Nothing in Home Assistant says a cycle ended. A smart plug reports watts, and
+every rule written on one is a number typed into a box — `> 10 W` is a running
+dishwasher in one house and a phone charger in the next.
+
+So brAIn measures each machine instead, overnight, from ten days of its own
+five-minute history. What it looks for is a **shape**: hours near a floor,
+punctuated by runs well above it. A sensor that does not have that shape — a
+router, a fridge's standing draw — gets no profile at all rather than a
+guessed threshold.
+
+The part that matters is the waiting. A dishwasher's dry phase draws almost
+nothing for twenty minutes, so a machine that reported "done" the moment the
+power dropped would report it three times a cycle. That quiet phase is
+measured too: the gaps between draws are themselves in two groups — lulls of
+minutes inside one cycle, idles of hours between them — and the jump between
+the groups is the machine telling brAIn how long its own quiet phases last.
+
+You need a power sensor on the appliance (a smart plug is enough) and about
+ten days for it to have run a few times. `GET /api/appliances` shows what was
+measured; ⚙ Diagnostics shows how many machines have a shape.
+
+**The chore** is narrower than the measurement. brAIn will tell you a washing
+machine, a tumble dryer or a dishwasher has finished and is still full — and
+nothing else, matched on the sensor's name. That is a deliberate guess in the
+cheap direction: not recognising your machine costs a missing reminder, while
+recognising the wrong one means a notification telling you to go and empty
+your television.
+
+It waits before saying anything (a cycle that ended four minutes ago is
+somebody standing at the machine), it stops asking after about half a day
+(yesterday's washing is not a chore), and it is never urgent — so quiet hours
+hold it until morning.
+
+**It cannot see that you emptied it.** An empty machine and a full one draw
+exactly the same power. So the chore ends the way every finding ends: tick it
+off in the To-do app, press the button on the notification, or press it on
+the Findings tab. It also clears itself if the machine runs again.
+
 ### Answering without opening anything
 
 Two places show brAIn's work list, and both of them can end an item.

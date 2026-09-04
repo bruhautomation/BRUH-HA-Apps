@@ -56,7 +56,7 @@ def house(**over) -> dict:
             "states", "registry", "services", "automations", "traces",
             "stats", "battery_stats", "dashboards", "supervisor",
             "recorder", "zha_devices", "actions", "baselines",
-                          "closures")},
+                          "closures", "appliances")},
         "errors": {},
         "blueprints_dir": "",
         "states": {
@@ -149,6 +149,24 @@ def house(**over) -> dict:
                                      else 0.08, "hours": 4.0}
                             for h in range(168)},
             }},
+        },
+        # Ten days of five-minute readings, measured. The dishwasher has
+        # a real shape and ran this morning — and finished long enough
+        # ago to be stale rather than a chore, which is an ordinary
+        # house at teatime and is what `chore.waiting` has to stay
+        # silent about.
+        "appliances": {
+            "built_at": int(NOW - DAY),
+            "entities": {"sensor.dishwasher_power": {
+                "name": "Dishwasher power", "idle_w": 0.6, "busy_w": 1850.0,
+                "threshold_w": 462.9, "settle_min": 22.0,
+                "measured_settle": True, "runs": 9,
+                "typical_run_min": 115.0, "built_at": int(NOW - DAY)}},
+            # One run that ended fifteen hours ago: past STALE_HOURS, so
+            # it is a fact about yesterday rather than something to do.
+            "recent": {"sensor.dishwasher_power": [
+                {"start": NOW - 15.5 * 3600 + i * 300, "mean": 1800.0}
+                for i in range(8)]},
         },
         # A month of readings, measured. `sensor.hall_temp` sits around 20
         # with an ordinary wobble, so nothing about it is unusual — which
