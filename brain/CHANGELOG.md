@@ -2,6 +2,76 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.42.0
+
+The capability map's **shadow runner**, and the fifth kind of knowledge it
+exists to serve. Everything ranked above the forecasts on that map stands on
+one thing brAIn could not do: try a change without committing the house to it.
+
+### Added
+
+- **`panel/shadow.py` — what an automation would have done.** Takes an
+  automation, evaluates its triggers and conditions against the **recorded
+  past**, and reports when it would have fired and what it would have done. It
+  calls no service and touches nothing. *"Over the last 30 days this would have
+  fired 26 times; on 4 a condition would have blocked it."*
+
+  **The scope is four trigger kinds and the refusal is the feature.** `time`,
+  `state`, `numeric_state` and `template` are what the recorder can
+  reconstruct. Anything else is refused **whole**, naming the kind — never
+  trimmed to the replayable subset, because reporting "this would have fired
+  twice" about an automation whose webhook fires forty times a day is a
+  confident wrong number that reads exactly like a right one, and it is the
+  number somebody would decide on.
+
+  A template is replayed only when every entity it names is in the timeline,
+  and only a named set of Home Assistant's own helpers is allowed. Rendering
+  against a half-built world gives a blank; a blank reads as `unknown`, which
+  reads as `false`, which is a confident *no*.
+
+  The details that decide whether a number is right: `for:` is a promise about
+  a stretch, answered from the **next** sample rather than this one;
+  `numeric_state` is a **crossing**, never a level; a template fires on the
+  **edge**, not on every moment it stays true; and an area or device target is
+  recorded and deliberately **not** resolved, because expanding one needs the
+  registry as it was at the time.
+
+- **`panel/proposals.py` — what could be better.** The fifth kind of knowledge,
+  with its own store and its own tab: a list of things you might want sitting
+  beside a list of things that are broken makes both worse. The lifecycle is
+  `proposed → trialling → accepted | declined`, and **nothing brAIn writes is
+  ever enabled without a trial**.
+
+  Its decisions are refusals: the key is the **change** and not the sentence,
+  so a miner that rewords its explanation is still offering what you declined;
+  a declined key is remembered forever while the row is prunable; past
+  `MAX_OPEN` the tab **refuses** a new proposal rather than pushing an
+  unanswered one out; `record_trial` does not end the trial, because a store
+  that ended one by writing its own result would be deciding the thing it is
+  reporting on; and a decline **with** a reason is a fact about the house while
+  one without is a preference about a suggestion, which memory has no use for.
+
+- **The API**: `GET /api/proposals`, `POST /api/proposal/{ts}/trial`,
+  `POST /api/proposal/{ts}/{accept,decline}` and `POST /api/replay`. A decline's
+  note goes through the same `_submit_memory` path a finding's "Wrong" uses, so
+  an answer teaches the same thing whichever list it was given on. A replay
+  refusal is a **422 with the reason in words**, because "it would never have
+  fired" and "brAIn cannot replay this" are different answers.
+
+  **The replay does not use `ha_data.get_history`.** That helper downsamples
+  numeric series into hourly buckets, drops `unavailable`/`unknown` and caps how
+  many changes it keeps — correct for handing a model a summary, fatal here. A
+  replay counts **edges**, and an hourly bucket has already thrown away the
+  moment a sensor crossed its threshold.
+
+### Tests
+
+- `tests/test_shadow.py` (35) and `tests/test_proposals.py` (27), with every
+  guard verified by **mutation** — break it, watch the test fail, restore it.
+  That caught one test whose name claimed something it did not measure: the
+  numeric-crossing fixture never had two consecutive samples above the bar, so
+  "fires on the crossing" and "fires on the level" gave the same answer.
+
 ## 1.41.1
 
 ### Fixed
