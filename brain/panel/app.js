@@ -217,6 +217,13 @@ function toast(msg, undo) {
           renderFindings();
         }
         if (data.restored_conversation) refreshConversationLists();
+        // An accepted proposal's undo answers with the whole proposals
+        // payload, the row back on it — the same "re-render from what
+        // came back" the accept itself does.
+        if (data.proposals) {
+          propState.data = data;
+          renderProposals();
+        }
         t.classList.remove("show");
         // `undone: false` means the row could not go back — the analyst
         // re-reported it while the toast was up, so the list already holds
@@ -225,6 +232,12 @@ function toast(msg, undo) {
         // reports its count, and a partial one says both numbers — "put
         // back" over a half-restored list would lie about the other half.
         toast(data.undone ? "Put back"
+                          // Undoing an accept reverses three things —
+                          // the file, the reload, the row — and says
+                          // which one it could not. The automation may
+                          // still be running, and "It's already back on
+                          // the list" would be a lie about that.
+                          : data.error ? data.error
                           : data.restore_total
                             ? `Put back ${data.restored_count} of ${data.restore_total}`
                             : data.restored_conversation
@@ -3474,7 +3487,14 @@ $("#obRetry").addEventListener("click", async (ev) => {
 // you might want beside a list of things that are broken makes both
 // worse.
 
-const propState = { data: null, busy: 0, noteFor: 0 };
+const propState = {
+  data: null,
+  busy: 0,          // ts of the row a press is in flight for
+  busyVerb: "",     // and which press, so the card can say "Adding it…"
+  noteFor: 0,       // ts of the row whose reason box is open
+  errorFor: 0,      // ts of the row whose accept was refused
+  error: "",        // and the sentence it was refused with, verbatim
+};
 
 async function refreshProposals() {
   try {
@@ -3485,6 +3505,9 @@ async function refreshProposals() {
   renderProposals();
 }
 
+// `open` is proposed + trialling, and it stays that way: a trial whose
+// week is up is still waiting on you — ending one is a press, which is
+// exactly what the store refuses to do for itself.
 function propBadge() {
   const badge = $("#propBadge");
   if (!badge) return;
@@ -3493,20 +3516,83 @@ function propBadge() {
   badge.classList.toggle("hidden", !open);
 }
 
-function propTrialLine(row) {
+// The three verdicts, said the way somebody would say them. "Contradicted"
+// is the word the store uses and it is the one nobody would use out loud:
+// what it means is that you put the thing back the other way, and the card
+// has to say that rather than make somebody learn a vocabulary to read it.
+const TRIAL_WORDS = [
+  ["agreed", "you did the same on"],
+  ["disagreed", "nothing happened on"],
+  ["contradicted", "you did the opposite on"],
+];
+
+function propTrialOver(row) {
+  const ends = Number(row.trial_ends_at) || 0;
+  return !!ends && Date.now() / 1000 >= ends;
+}
+
+// Which day of the week this is. `trial_result.days` is the server's own
+// count of whole elapsed days and is preferred wherever there is one, so
+// the card and the store cannot disagree about how far in this is; the
+// clock is the fallback for a row nothing has graded yet.
+function propTrialDay(row) {
+  const started = Number(row.trial_started_at) || 0;
+  const ends = Number(row.trial_ends_at) || 0;
+  const total = started && ends
+    ? Math.max(1, Math.round((ends - started) / 86400))
+    : (propState.data?.trial_days || 7);
   const result = row.trial_result;
-  if (!result) {
-    const ends = row.trial_ends_at ? new Date(row.trial_ends_at * 1000) : null;
-    return ends
-      ? `Running in shadow — nothing is enabled. Reports ${ends.toLocaleDateString()}.`
-      : "Running in shadow — nothing is enabled.";
+  const graded = result && !result.refused && result.days != null;
+  const elapsed = graded
+    ? Number(result.days) || 0
+    : (started ? (Date.now() / 1000 - started) / 86400 : 0);
+  return { day: Math.min(total, Math.max(1, Math.floor(elapsed))), total };
+}
+
+// Every number here comes off the payload. `firings` is capped at 50 and
+// the counts are not, so adding the list up on the client would be a
+// second answer to the same question that goes quietly wrong in the one
+// week busy enough to matter.
+function propTrialCounts(result) {
+  const fired = Number(result.would_fire) || 0;
+  const parts = [
+    `would have fired ${fired} ${fired === 1 ? "time" : "times"}`,
+  ];
+  TRIAL_WORDS.forEach(([key, words]) => {
+    const n = Number(result[key]) || 0;
+    // The three add up to the firing count, so a zero clause carries
+    // nothing and costs the end of a line somebody has to read.
+    if (n) parts.push(`${words} ${n}`);
+  });
+  return parts.join(" · ");
+}
+
+function propTrialLine(row) {
+  const over = propTrialOver(row);
+  const { day, total } = propTrialDay(row);
+  const lead = over ? "Trial over:" : `Day ${day} of ${total} ·`;
+  const result = row.trial_result;
+  // `refused` is branched on FIRST and its sentence is carried whole. A
+  // trial brAIn could not replay has no counts at all, and rendering the
+  // missing ones as zeros would say "it would never have fired" — a
+  // different answer, about the automation rather than about brAIn.
+  if (result && result.refused) {
+    return `${lead} brAIn could not grade this trial — ${result.error
+      || "this automation cannot be replayed"}`;
   }
-  // The whole point of the week: not "it would have fired", but "and you
-  // agreed with it that many times".
-  const fired = result.would_fire ?? 0;
-  const agreed = result.agreed ?? 0;
-  return `It would have fired ${fired} ${fired === 1 ? "time" : "times"}`
-    + `. On ${agreed} of those you did the same thing by hand.`;
+  // Nothing has graded it yet: a row that started trialling since the
+  // last checks pass. Saying so is not the same as showing zeros, which
+  // read as a week of the automation never firing.
+  if (!result) {
+    return over
+      ? `${lead} it was never graded — no checks pass ran while it was on trial.`
+      : `${lead} replaying in shadow, nothing graded yet — the first report `
+        + "lands at the next checks pass.";
+  }
+  if (!(Number(result.would_fire) || 0)) {
+    return `${lead} it would not have fired ${over ? "at all" : "yet"}.`;
+  }
+  return `${lead} ${propTrialCounts(result)}.`;
 }
 
 function propReplayLine(row) {
@@ -3521,31 +3607,84 @@ function propReplayLine(row) {
   return line + ".";
 }
 
+// `api()` throws the response *text* on anything but a 2xx, which is the
+// right shape everywhere else and the wrong one here: an accept that is
+// refused answers 409 with a sentence AND the whole list, the row still
+// on it. Losing that payload to an exception would mean refetching to
+// find out nothing had changed.
+async function propPost(ts, path, body) {
+  const resp = await fetch(`api/proposal/${ts}/${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body || {}),
+  });
+  let data = null;
+  try {
+    data = await resp.json();
+  } catch {
+    data = null;
+  }
+  return { ok: resp.ok, status: resp.status, data };
+}
+
 async function propAct(ts, path, body) {
   if (propState.busy) return;
   propState.busy = ts;
+  propState.busyVerb = path;
+  propState.errorFor = 0;
+  propState.error = "";
   renderProposals();
   try {
-    const out = await api(`api/proposal/${ts}/${path}`, {
-      method: "POST", body: JSON.stringify(body || {}),
-    });
-    propState.data = out;
-    if (out.learned) toast("Noted — brAIn has written that down.");
+    const { ok, status, data } = await propPost(ts, path, body);
+    if (!ok) {
+      // A refused yes is not a failure to mention in passing. The row is
+      // still open and still in `proposals`, so the list re-renders from
+      // the payload and the sentence goes ON THE CARD, where the buttons
+      // were — a toast is gone in three seconds and this is the thing
+      // somebody has to read before they can decide what to do instead.
+      if (data && data.proposals) propState.data = data;
+      const why = (data && data.error) || `HTTP ${status}`;
+      if (data && (data.proposals || []).some((r) => r.ts === ts)) {
+        propState.errorFor = ts;
+        propState.error = why;
+      } else {
+        toast(why);
+        if (!data || !data.proposals) await refreshProposals();
+      }
+      return;
+    }
+    propState.data = data;
+    if (data.undo) {
+      // The one press in the panel that changes /config, so the one that
+      // owes a way back: the same toast-and-token contract every ending
+      // on the Findings tab uses, and the same Undo button. The alias is
+      // the proposal's own title by construction — `automation_writer`
+      // writes it as the alias — so the toast names what somebody will
+      // now find in their automations list.
+      const alias = data.alias || data.proposal?.title || "the automation";
+      toast(`Added “${alias}” to your automations`, data.undo);
+    } else if (data.learned) {
+      toast("Noted — brAIn has written that down.");
+    }
   } catch (err) {
     toast(String(err && err.message ? err.message : err));
     await refreshProposals();
   } finally {
     propState.busy = 0;
+    propState.busyVerb = "";
     propState.noteFor = 0;
     renderProposals();
   }
 }
 
-function propCard(row) {
+function propCard(row, withHint) {
   const card = el("div", "propcard");
   const head = el("div", "prophead-row");
   head.appendChild(el("h3", "proptitle", row.title || "A proposal"));
-  if (row.status === "trialling") head.appendChild(el("span", "pilltrial", "On trial"));
+  const over = row.status === "trialling" && propTrialOver(row);
+  if (row.status === "trialling") {
+    head.appendChild(el("span", "pilltrial", over ? "Trial over" : "On trial"));
+  }
   card.appendChild(head);
 
   if (row.why) card.appendChild(el("p", "propwhy", row.why));
@@ -3553,6 +3692,34 @@ function propCard(row) {
   if (replay) card.appendChild(el("p", "propreplay", replay));
   if (row.status === "trialling") {
     card.appendChild(el("p", "proptrial", propTrialLine(row)));
+    // Once per list rather than once per card: three trials open means
+    // three cards, and the same sentence three times is the sentence
+    // nobody reads on any of them.
+    if (withHint) {
+      card.appendChild(el("p", "prophint",
+        "Re-graded every few hours, so this fills in as the week goes on. "
+        + "Nothing is enabled until you accept it."));
+    }
+  }
+
+  // A yes that could not be honoured, said where the buttons were. Same
+  // arrangement as the reason box below, for the same reason: what you
+  // are reading about has to stay on screen while you read it.
+  if (propState.errorFor === row.ts) {
+    const box = el("div", "properror");
+    box.setAttribute("role", "alert");
+    box.appendChild(el("p", null, propState.error));
+    const bar = el("div", "propbtns");
+    const back = el("button", "btn small", "Dismiss");
+    back.addEventListener("click", () => {
+      propState.errorFor = 0;
+      propState.error = "";
+      renderProposals();
+    });
+    bar.appendChild(back);
+    box.appendChild(bar);
+    card.appendChild(box);
+    return card;
   }
 
   // The reason box opens IN PLACE of the buttons, inside the card: you are
@@ -3577,18 +3744,29 @@ function propCard(row) {
   }
 
   const btns = el("div", "propbtns");
+  const busy = !!propState.busy;
   if (row.status === "proposed") {
     const trial = el("button", "btn small", "Try it for a week");
     trial.dataset.tip = "Runs in shadow — it logs what it would have done and changes nothing";
     trial.addEventListener("click", () => propAct(row.ts, "trial"));
     btns.appendChild(trial);
   }
-  const yes = el("button", "btn small",
+  // Once the week is up, accepting is what the card is for: the trial has
+  // already said what it has to say, and the only thing left is the
+  // decision. Before that it is one option among three.
+  const yes = el("button", over ? "btn small primary" : "btn small",
     row.status === "trialling" ? "Keep it" : "Enable it");
+  // Writing the automation, reloading, and waiting for Home Assistant to
+  // show it can take a few seconds, and a button that only greys out
+  // reads as a press that did nothing.
+  if (propState.busy === row.ts && propState.busyVerb === "accept") {
+    yes.textContent = "Adding it…";
+  }
   yes.addEventListener("click", () => propAct(row.ts, "accept"));
   const no = el("button", "btn small ghost", "✕ No thanks");
   no.addEventListener("click", () => { propState.noteFor = row.ts; renderProposals(); });
   btns.append(yes, no);
+  [...btns.children].forEach((b) => { b.disabled = busy; });
   card.appendChild(btns);
   return card;
 }
@@ -3611,7 +3789,9 @@ function renderProposals() {
       + "does it for you."));
     return;
   }
-  rows.forEach((row) => list.appendChild(propCard(row)));
+  const firstTrial = rows.find((r) => r.status === "trialling");
+  rows.forEach((row) =>
+    list.appendChild(propCard(row, row === firstTrial)));
 }
 
 

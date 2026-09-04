@@ -128,6 +128,49 @@ is broken, and both of these read from the tab as the second.
   with a result" is the exact shape of the failure this release fixes, and it
   is unreadable from a single count.
 
+### Panel
+
+- **A trial that reports nothing is a trial nobody can tell is running, and
+  that is what the card showed for a release.** The Proposals tab now says
+  where a trial has got to and what the week has found, in words somebody
+  would use: *"Day 3 of 7 · would have fired 6 times · you did the same on 4
+  · nothing happened on 1 · you did the opposite on 1"*. Every number comes
+  off `trial_result` — `firings` is capped at 50 where the counts are not, so
+  adding the list up in the browser would be a second answer that goes wrong
+  in exactly the week busy enough to matter. The three states a trial can be
+  in are three different sentences, because they are three different answers:
+  graded; **not graded yet**, for a row that started trialling since the last
+  checks pass, where zeros would read as *"it would never have fired"*; and
+  **refused**, carried whole, which is about brAIn rather than about the
+  automation — and that card keeps its buttons, since a trial that could not
+  be graded is still a person's decision and the replay evidence is still on
+  it. Past `trial_ends_at` the line becomes *"Trial over:"*, the row stays on
+  the list (ending one is a press) and Accept becomes the primary action. The
+  "re-graded every few hours" sentence appears once for the list rather than
+  once per card, because three open trials would otherwise carry it three
+  times and it would be read on none of them.
+
+- **A yes that Home Assistant would not honour is read on the card, not in a
+  toast.** The 409 carries a sentence and the whole list with the row still on
+  it, so the panel re-renders from the payload and puts the refusal *where the
+  buttons were* — the arrangement the decline reason box already uses, for the
+  same reason: what you are reading about has to stay on screen while you read
+  it. Dismiss brings the buttons back. A yes that landed takes the row away
+  and says *"Added ‹name› to your automations"* with **Undo** on the same
+  toast every finding ending uses; undoing reverses the file, the reload and
+  the row, and when it cannot, the toast says which half failed in the
+  server's own words — an "undone" over an automation still running would be
+  worse than the failure it hid. Undo is a 44px target on touch: it takes back
+  a change to somebody's house and the offer expires with the toast.
+
+- **`tests/manual/measure-proposals.mjs` drives all of it** against the real
+  renderer behind a stubbed fetch, with a proposal in each trial state. It
+  fails on a missing progress line, on the store's vocabulary reaching the
+  card (`contradicted` is nobody's word), on an ungraded trial rendering
+  zeros, on a refused accept that does not leave its sentence on the card, on
+  an accepted one that stays on the list or offers no Undo, and on anything
+  under the touch floor at 390, 430, 768 and 1200px.
+
 ### Fixed
 
 - **A protected entity is dropped at the producer as well as at the writer.**
