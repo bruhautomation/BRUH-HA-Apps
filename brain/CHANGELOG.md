@@ -2,6 +2,140 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.43.0
+
+**1.42.0's last two steps did nothing.** It shipped the proposal lifecycle —
+`proposed → trialling → accepted | declined` — and the two that make it mean
+anything were unimplemented. "Try it for a week" set a status and an end date,
+and nothing ever looked at the week: `proposals.trial_due` and
+`proposals.record_trial` had no caller outside their own tests. Accept recorded
+a status, wrote a memory line and deleted the row, and **the automation was
+never created**. A feature that does nothing is indistinguishable from one that
+is broken, and both of these read from the tab as the second.
+
+### Added
+
+- **`panel/trials.py` — a trial is a replay of the week you lived through,
+  graded against what you actually did.** There is no live-event subscription
+  behind this and there does not need to be: `shadow.replay` already says when
+  the automation would have fired over a window the recorder holds, and
+  `panel/routines.py`'s ledger already says what a *person* did in it. So the
+  whole trial is arithmetic over two things that exist, and nothing here
+  fetches, writes or decides — the split `baselines.py`, `closures.py` and
+  `thermal.py` keep.
+
+  It is re-run on **every checks pass** rather than once at the end. A replay
+  costs one history fetch, so *"three days in: it would have fired three times
+  and you did the same twice"* is free, where a report that only exists on the
+  seventh day is a week of a card saying nothing. When the week is up the row
+  stays `trialling` with its result attached: ending a trial is a person's
+  press, which is exactly what `record_trial` already refused to do for itself.
+
+  **Three verdicts, and the third is the one worth having.** *Agreed* is a
+  press to the same state within `AGREE_WINDOW_S` of the firing. *Disagreed* is
+  nothing happening, which is weak evidence either way and says so by its name.
+  *Contradicted* is the person putting the entity to the **opposite** state in
+  that window — they would have undone it, and folding that into "disagreed"
+  reports a change somebody actively did not want as merely unproven, which is
+  `auto.overridden`'s argument one layer earlier. Each firing lands in exactly
+  one bucket, decided by the **nearest** press, so a verdict cannot depend on
+  the order the ledger happens to be in.
+
+  **A refusal is carried, never zeroed.** *"It would never have fired"* and
+  *"brAIn cannot replay this"* are different answers and only one of them is
+  about the automation. The same holds for an action this cannot read as one
+  entity going to one state — `routines.service_for` is the authority on that,
+  so the reader cannot drift from the producer that wrote the config.
+
+- **`panel/automation_writer.py` — a yes becomes an automation, and it can be
+  taken back.** This is the first code in the add-on that changes `/config`
+  **without a Claude run and without somebody pressing Fix it**, so it is the
+  narrowest thing that can do the job.
+
+  **Snapshot first, append never rewrite.** The snapshot goes into the same
+  edit journal `scripts/brain-edit-snapshot.py` writes, in the same line shape,
+  so `brain undo` reverts this exactly as it reverts a Claude edit — there is
+  no second undo mechanism to keep true, and `tests/test_automation_writer.py`
+  drives the real shell script rather than asserting a shape it might not read.
+  The append is *text*: `automations.yaml` is somebody's file, with their
+  ordering, their comments and their quoting, and a writer that re-serialised
+  the whole list would hand back a diff nobody asked for on every accept. The
+  test asserts the prefix of the file is **byte-identical**, not merely that it
+  still parses.
+
+  **Four refusals, each a sentence rather than a guess.** A **protected
+  entity** is asked about here because `protected_entities` is enforced at the
+  MCP server's `call_service` and a YAML file the panel writes is not one of
+  its callers — same patterns, same wildcards; an **area or device target** is
+  refused outright while the list is non-empty, because resolving one needs
+  registries this has none of and a protected entity reached through its area
+  is the bypass. A house with no `automation: !include automations.yaml` keeps
+  its automations somewhere this cannot find, and appending to a file Core does
+  not read is a change that silently does nothing — the refusal **names the
+  line it looked for** rather than guessing at another file. A file that is not
+  a list of automations is somebody's config in a shape this does not
+  understand. And a duplicate `id` is a config Core refuses to load, where a
+  duplicate `alias` is a house where nobody can tell the two apart.
+
+  The `alias` is added at write time rather than in `routines.to_config`, which
+  deliberately carries none: that config is what `proposals.key_for` hashes,
+  and a title holds the entity's name and the time, either of which can move
+  without the change moving.
+
+- **Accept writes it, reloads, verifies, and only then settles.** Three claims,
+  and they were being reported as one. *The file was written* is the writer.
+  *Home Assistant read it* is `automation.reload`. *The automation exists* is a
+  state in Core — and only the third is what somebody pressing Accept meant. A
+  `mode:` Core does not recognise, a trigger a custom integration owns and has
+  not loaded, a read-only `/config`: each of those leaves a file on disk and a
+  reload that returns 200 and no automation. The same distinction BRight draws
+  between a `play_media` call being accepted and a speaker making a sound.
+
+  Any of the three failing puts the file back, reloads again and returns a
+  **409 with the sentence**. A yes that could not be honoured is not a yes that
+  was recorded: the proposal is exactly where it was, with no memory line and
+  no settled key.
+
+  **Undo reverses all three effects or says which one it could not** — the
+  file, the reload, and the row (`proposals.reopen`, keyed on the original
+  `ts`, refusing over an occupied one and dropping the settled key as
+  `unsettle` does), plus the queued memory line. A trial that was running when
+  it was accepted comes back as a *proposal* rather than as a trial whose week
+  has since passed, because "try it for a week" is a promise about the next
+  seven days. And an undo that claimed success while the automation was still
+  running would be worse than one that reported the failure, so `undone` is all
+  three or none.
+
+  The settled entry carries the `automation_id` and `entity_id`, because
+  "accepted" and "accepted, and here is what it became" are different claims
+  and only the second can be checked against the house six months later. The
+  change is announced as **its own message** rather than as a finding — nothing
+  is wrong, there is no severity and no button on it that could end anything —
+  and it is sent rather than held, which is the one sender here with somebody
+  awake by construction. `journal.OUTCOMES` gains `applied`.
+
+- **`ha_data.call_core_service` and `ha_data.entity_exists`.**
+  `ha_data.call_service` is `brain.*`-only by construction — it hardcodes the
+  domain, which is what stops a caller turning a request for brAIn's own
+  service into a request for anybody's. The general one has exactly one caller,
+  and both halves of its path are checked against the shape a service name can
+  have, because pasting a name off the wire into a URL is what made
+  `history_params` a partial SSRF. `entity_exists` reads a 404 as *the answer*
+  and anything else as an error: "Core did not answer" and "Core says it is not
+  there" are different claims.
+
+- **`/api/diagnostics` reports trials apart from results.** "3 trialling, 0
+  with a result" is the exact shape of the failure this release fixes, and it
+  is unreadable from a single count.
+
+### Fixed
+
+- **A protected entity is dropped at the producer as well as at the writer.**
+  `routines.mine` now takes the patterns (read by the caller — the miner stays
+  pure) and skips a habit on an entity `automation_writer.apply` would refuse.
+  The writer has to refuse one, being the last gate before `/config`, but a
+  card offering something brAIn will not do is a wasted no.
+
 ## 1.42.0
 
 The capability map's **shadow runner**, and the fifth kind of knowledge it
