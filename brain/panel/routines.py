@@ -324,17 +324,32 @@ def _best_shape(stamps: list, tz) -> dict | None:
 
 
 def mine(payload: dict | None = None, tz=None, now: float | None = None,
-         path: str | None = None) -> list[dict]:
+         path: str | None = None,
+         protected: list[str] | None = None) -> list[dict]:
     """Every habit the ledger can prove, strongest first and capped.
 
     Pure over what it is handed: nothing here fetches, writes or
-    decides.
+    decides — which is why `protected` arrives as patterns rather than
+    being read from the environment here. The caller reads the option;
+    this only obeys it.
+
+    A protected entity is dropped at the **producer**, not only at the
+    writer. `automation_writer.apply` refuses one too, and has to — it is
+    the last gate before `/config` — but a proposal that can only ever be
+    refused is a card offering something brAIn will not do, and the first
+    press on it is a wasted no.
     """
     payload = load(path) if payload is None else payload
     tz = tz or dt.timezone.utc
     now = time.time() if now is None else now
     rows = payload.get("rows") or []
     automated = payload.get("automated") or {}
+    if protected:
+        # One implementation of what the pattern means: an exact id, a
+        # `domain.*` or a bare `*`, the same three `ha_mcp_server` reads.
+        from automation_writer import is_protected  # noqa: PLC0415
+        rows = [r for r in rows
+                if not is_protected(str(r.get("entity_id") or ""), protected)]
 
     groups: dict[str, list[dict]] = {}
     for r in rows:

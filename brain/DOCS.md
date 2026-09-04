@@ -749,12 +749,64 @@ proposed  ──"Try it for a week"──▶  trialling  ──▶  accepted
           └──"No thanks"──────────────────────────▶  declined
 ```
 
-**Nothing brAIn writes is ever enabled without a trial.** A trial runs the
-proposed automation in shadow — it watches live events and logs what it *would*
-have done, calling nothing — and reports at the end: *it would have fired six
-times; on five of those you did the same thing by hand.* An automation you
-accepted after watching it be right five times out of six is a different object
-from one you accepted because it sounded reasonable.
+**Nothing brAIn writes is enabled on its own.** You can accept a proposal
+straight away — it is your house and your yes — or press *Try it for a week*
+first, and what you give up by skipping the trial is the evidence: a trial is
+a replay of the week as you live it: every few hours brAIn replays the proposed
+automation over the days since you started it and grades each firing against
+what you *actually did*, from the record of your own presses it already keeps.
+Nothing is called and nothing is enabled. The card fills in as the week goes
+on — *"three days in: it would have fired three times, and you did the same
+thing yourself on two of them"* — rather than staying blank until Sunday.
+
+Each firing gets one of three answers. **Agreed**: you did the same thing
+within a quarter of an hour. **Nothing happened**: weak evidence either way,
+and it says so rather than counting against the change. **You did the
+opposite**: you would have undone it, which is the one answer worth having and
+is deliberately not folded into the second.
+
+Some automations cannot be replayed at all, and the trial says which rather
+than reporting a confident zero — see *What a replay can and cannot answer*
+below. When the week is up the trial stays where it is with its report
+attached: ending it is your press, not brAIn's.
+
+An automation you accepted after watching it be right five times out of six is
+a different object from one you accepted because it sounded reasonable.
+
+### Saying yes, and taking it back
+
+**Accept writes a real automation.** It is appended to `automations.yaml` with
+an `id` of `brain_<proposal id>`, the proposal's title as its alias, and a
+description saying where it came from. Your file is not reformatted — the
+automation is added at the end and everything above it is left exactly as you
+wrote it, comments and all.
+
+Then three things have to be true before the proposal is marked accepted:
+Home Assistant reloads its automations, the new `automation.<name>` entity
+turns up, and only then does the row leave the list. If any of them fails,
+brAIn **puts the file back**, reloads again, and tells you what it tried — a
+yes it could not honour is not a yes it records, so the proposal is still
+there to press again once the reason is fixed.
+
+**Undo is on the toast, and it reverses all three.** The automation is removed,
+Home Assistant is reloaded, and the proposal comes back on the list under its
+own id. If the file cannot be put back — the snapshot has aged out of the edit
+journal — it says so rather than claiming a success, because the automation is
+still running.
+
+The file is snapshotted into the same edit journal that records Claude's own
+edits **before** it is touched, so `brain undo` in the terminal reverts an
+accepted proposal exactly as it reverts anything else Claude changed.
+
+**Four things stop an accept, each in a sentence.** An automation acting on
+something in your **protected entities** list — asked here as well as in the
+MCP server, because a file the panel writes never passes through that
+chokepoint, and refused outright when it targets an *area* rather than named
+entities, since brAIn cannot expand one safely. A `configuration.yaml` with no
+`automation: !include automations.yaml` line: your automations live somewhere
+brAIn cannot find, and appending to a file Home Assistant does not read would
+be a change that silently does nothing. An `automations.yaml` that is not a
+list of automations. And a duplicate `id` or name.
 
 **Every proposal carries its evidence**, because a suggestion from nowhere
 deserves a no. That is the reason it was raised, plus a **replay** — brAIn runs

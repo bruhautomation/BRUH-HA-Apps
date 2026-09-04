@@ -361,10 +361,38 @@ The **Proposals** tab is the only list here that is not about something being
 wrong. It has its own tab rather than a row on Findings, because a list of
 things you might want beside a list of things that are broken makes both worse.
 
-**Nothing brAIn writes is enabled without a trial.** Press *Try it for a week*
-and the automation runs in **shadow** — it watches live events and logs what it
-*would* have done, calling nothing. At the end: *it would have fired six times;
-on five of those you did the same thing by hand.*
+**Nothing brAIn writes is enabled on its own.** You can accept a proposal
+straight away, or press *Try it for a week* first — what the trial buys you is
+evidence. brAIn replays the automation, every few hours, over the days since you
+started — grading each firing against what you actually did, from the record of
+your own presses it already keeps. Nothing is called and nothing is enabled,
+and the card fills in as the week goes on rather than staying blank until
+Sunday: *three days in, it would have fired three times and you did the same
+thing on two of them.*
+
+Each firing gets one of three answers: **agreed** (you did the same within a
+quarter of an hour), **nothing happened** (weak evidence either way, and it
+says so), or **you did the opposite** — which is the one worth having, and is
+deliberately not counted as the second. When the week is up the trial stays
+where it is with its report attached; ending it is your press.
+
+**Accept writes a real automation.** It is appended to \`automations.yaml\` with
+an id of \`brain_<id>\`, and your file is not reformatted — everything above the
+new block is left exactly as you wrote it. Then Home Assistant is reloaded and
+the new \`automation.<name>\` entity has to actually turn up before the proposal
+is marked accepted; if it does not, brAIn puts the file back and says what it
+tried. A yes it could not honour is not a yes it records.
+
+**Undo is on the toast and reverses all three**: the automation goes, Home
+Assistant is reloaded, and the proposal comes back on the list. The file is
+snapshotted into the same journal \`brain undo\` reads before it is touched, so
+the terminal can revert it too.
+
+An accept is refused — in a sentence — for a **protected entity** (asked here
+as well as in the MCP server, because a file the panel writes never reaches
+that chokepoint), for a \`configuration.yaml\` with no
+\`automation: !include automations.yaml\` line, for an \`automations.yaml\` that
+is not a list of automations, and for a duplicate id or name.
 
 Every proposal shows its evidence and a **replay** — what the automation would
 have done over the last month of your own history, answered in seconds. A

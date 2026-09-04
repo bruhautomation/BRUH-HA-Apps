@@ -1361,6 +1361,13 @@ body.modal-open {
   /* The conversation filter chips are reachable from the ⋯ dialog on a
      phone, where the rail that normally holds them isn't rendered. */
   .crfilter { min-height: 40px; padding: 8px 14px; }
+  /* Undo is a button rather than a chip on a finger: what it takes back
+     can be an automation now running in somebody's house, and the offer
+     expires with the toast — there is no second chance to aim at it.
+     Here rather than beside `.toastundo` so this stays the one touch
+     block, and later in the file than that rule, which is what makes it
+     win at equal specificity. */
+  .toastundo { min-height: 44px; padding: 0 14px; }
 }
 
 
@@ -3170,6 +3177,25 @@ body.term-classic #termMode .ico-out { display: block; }
   font-variant-numeric: tabular-nums;
 }
 .proptrial { color: var(--ink); }
+/* The hint under the first trial on the list, and only the first: three
+   open trials means three cards, and the same sentence on all of them is
+   the sentence nobody reads on any of them. */
+.prophint {
+  margin: -4px 0 8px; font-size: 12.5px; line-height: 1.45;
+  color: var(--ink-3);
+}
+/* A yes Home Assistant would not honour. It sits where the buttons were,
+   inside the card, because it is the reason somebody's press did not
+   take and they have to be able to read it while looking at the thing it
+   is about -- the arrangement `.propnote` already uses one rule down. */
+.properror {
+  margin-top: 12px; padding: 10px 12px;
+  border-left: 3px solid var(--warning);
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+  border-radius: 0 8px 8px 0;
+}
+.properror p { margin: 0 0 10px; line-height: 1.5; }
+.properror .propbtns { margin-top: 0; }
 
 .propbtns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
 /* These are the primary actions of the tab and one of them enables an
