@@ -479,10 +479,26 @@ def render_template(text: str, timeline: dict, when: float) -> bool:
     }
     try:
         from jinja2.sandbox import SandboxedEnvironment  # noqa: PLC0415
-    except ImportError:  # pragma: no cover — the image ships jinja2
+    except ImportError:  # pragma: no cover — see the note below
+        # This branch shipped with a comment claiming "the image ships
+        # jinja2", and the Dockerfile did not install it. So every
+        # template trigger refused on every real install while three
+        # tests passed on a laptop that happened to have Jinja — the
+        # comment was the only thing asserting it, and a comment cannot
+        # fail. `py3-jinja2` is in the image now, `jinja2` is in the
+        # test requirements, and `test_the_image_ships_what_a_template
+        # _needs` fails if either goes.
         raise Refused("templates cannot be replayed without Jinja") from None
+    # `autoescape=True` on a renderer whose output never reaches a browser
+    # looks like cargo cult, and CodeQL rates the default critical for a
+    # reason worth honouring rather than suppressing: this is a sandbox
+    # evaluating a string somebody wrote in their own automations, and the
+    # day its output is put on a page is the day the missing escape
+    # matters. It cannot change the verdict here — the result is compared
+    # against a fixed set of words — so the safe setting is free.
+    env_jinja = SandboxedEnvironment(autoescape=True)
     try:
-        rendered = SandboxedEnvironment().from_string(body).render(**env)
+        rendered = env_jinja.from_string(body).render(**env)
     except Exception as exc:  # noqa: BLE001 — a template that will not render
         # against the rebuilt world is refused, never read as false.
         raise Refused(f"this template would not render: {exc}"[:160]) from None

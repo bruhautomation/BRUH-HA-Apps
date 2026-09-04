@@ -2531,8 +2531,8 @@ body.term-classic #termMode .ico-out { display: block; }
    controls to fit either. What changes with width is the layout, and there
    are two layouts:
 
-     >=1240   one row, tabs labelled             needs 1204px (paused)
-     390-1239 two rows, tabs on their own strip   fits from 390px
+     >=1340   one row, tabs labelled             needs 1328px (failed login)
+     390-1339 two rows, tabs on their own strip   fits from 390px
      <390     the same, without the wordmark      fits from 320px
 
    There used to be a third band — 960 to 1239, one row with the tab labels
@@ -2547,8 +2547,14 @@ body.term-classic #termMode .ico-out { display: block; }
    Measured by tests/manual/measure-topbar.mjs across the three states the
    bar can be in (running, paused, a failed login) — none is a superset of
    the others, and the two trouble states are the ones that put a second
-   chip in the row. Below 1240 they simply take a third line rather than
-   costing anyone their tab labels. */
+   chip in the row. Below 1340 they simply take a third line rather than
+   costing anyone their tab labels.
+
+   The number moved from 1240 when the Proposals tab arrived: a seventh
+   tab is ~90px of row, and the one-row shape stopped fitting the two
+   trouble states at 1240 and at 1280. It is taken from what the measure
+   reports — 1302px paused, 1328px on a failed login — and not guessed,
+   which is the whole reason that script exists. */
 
 /* Nothing in the bar may shrink; only the spacer flexes. A shrinking chip
    compresses its own nowrap text and reads as a rendering glitch rather than
@@ -2557,7 +2563,7 @@ body.term-classic #termMode .ico-out { display: block; }
 .topbar > * { flex: none; }
 .topbar .spacer { flex: 1; min-width: 0; }
 
-@media (max-width: 1239px) {
+@media (max-width: 1339px) {
   /* The two-row bar. One row cannot hold five thumb-sized targets and a
      labelled status pill at 320px — and dropping the labels to make it fit
      is what made the bar unreadable on the only device where hovering isn't
@@ -2589,11 +2595,21 @@ body.term-classic #termMode .ico-out { display: block; }
     margin-left: 0;
     gap: 2px;
     justify-content: center;
+    /* The strip wraps, and the arithmetic decides when rather than a
+       number somebody typed. Seven 44px tabs plus their gaps need 320px
+       exactly, so on the narrowest phone there is nothing left for the
+       bar's own padding and the tabs came out 42px — under the floor,
+       on every one of them. What gives way is the row, not the label
+       and not the target: `min-width` on the tab makes the fit binary,
+       so they take a second line at whatever width stops holding them
+       and the panel remeasures --bar-h to match. */
+    flex-wrap: wrap;
+    row-gap: 2px;
   }
 
   .viewtab {
     flex: 1;
-    min-width: 0;
+    min-width: 44px;
     max-width: 168px;
     flex-direction: column;
     justify-content: center;
@@ -2639,9 +2655,11 @@ body.term-classic #termMode .ico-out { display: block; }
 
 /* The view's negative margins exist to cancel .wrap's padding, so they
    follow the SAME breakpoint the padding changes at (640px) — not the
-   bar's. Scoped to 1239px they undershot by 6px across the whole 641-1239
-   band, which pushed the view's bottom 6px past the viewport and took the
-   chat's meta line with it. Bottom stays 0 — see the base rule: a negative
+   bar's. Scoped to the bar's breakpoint instead they undershot by 6px
+   across that whole band, which pushed the view's bottom 6px past the
+   viewport and took the chat's meta line with it — and the band moved
+   when the Proposals tab did, which is exactly why it may not be scoped
+   to a number that can move. Bottom stays 0 — see the base rule: a negative
    bottom margin is what let .wrap's overflow clip that line the rest of
    the way. */
 @media (max-width: 640px) {
@@ -2653,7 +2671,7 @@ body.term-classic #termMode .ico-out { display: block; }
    it there is no such pressure, so the tab is typeset like the rest of the
    panel instead of like a phone's tab bar. The shape does not change; only
    the type does. */
-@media (min-width: 600px) and (max-width: 1239px) {
+@media (min-width: 600px) and (max-width: 1339px) {
   :root { --bar-h: 109px; }
   .viewtab { height: 56px; font-size: 0.8rem; gap: 4px; }
   .viewtab .ico { width: 22px; height: 22px; }

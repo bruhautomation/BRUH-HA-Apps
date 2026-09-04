@@ -109,13 +109,48 @@ one thing brAIn could not do: try a change without committing the house to it.
   replay counts **edges**, and an hourly bucket has already thrown away the
   moment a sensor crossed its threshold.
 
+### Fixed
+
+- **The image did not ship Jinja, and only a comment said it did.** The
+  template branch of the replay carried `# pragma: no cover — the image ships
+  jinja2` and `brain/Dockerfile` installed no such package, so **every
+  template trigger refused on every real install** while three tests passed on
+  machines that happened to have Jinja from somewhere else. A comment cannot
+  fail — the same shape as a grep for a line standing in for a test of what
+  the line does. `py3-jinja2` is in the image, `jinja2` is in the test
+  requirements, and `test_the_image_ships_what_a_template_needs` fails if
+  either goes; a second test renders a template through `shadow`'s own path
+  rather than asking whether `jinja2` imports.
+
+- **The sandbox renders with `autoescape=True`.** Its output never reaches a
+  browser and cannot change the verdict — the result is compared against a
+  fixed set of words — so the safe setting is free, and the day somebody puts
+  that output on a page is the day the missing escape matters.
+
+- **The seventh tab moved the top bar's breakpoint, and broke its touch floor
+  at 320px.** A tab is ~90px of row, so the single-row shape stopped fitting
+  the two trouble states (1302px paused, 1328px on a failed login): the band
+  moves from 1240 to **1340**, taken from what `measure-topbar.mjs` reports
+  rather than guessed. And seven 44px tabs plus their gaps need 320px exactly,
+  leaving nothing for the bar's own padding — every tab came out 42px on the
+  narrowest phone. The strip **wraps** now, with `min-width` on the tab making
+  the fit binary, so the row gives way at whatever width stops holding it and
+  the labels and the targets both survive; only 320px pays for it, and the
+  panel remeasures `--bar-h` to match.
+
 ### Tests
 
-- `tests/test_shadow.py` (35) and `tests/test_proposals.py` (27), with every
-  guard verified by **mutation** — break it, watch the test fail, restore it.
-  That caught one test whose name claimed something it did not measure: the
-  numeric-crossing fixture never had two consecutive samples above the bar, so
-  "fires on the crossing" and "fires on the level" gave the same answer.
+- `tests/test_shadow.py` (37), `tests/test_proposals.py` (30) and
+  `tests/test_routines.py` (30), with every guard verified by **mutation** —
+  break it, watch the test fail, restore it. That caught one test whose name
+  claimed something it did not measure: the numeric-crossing fixture never had
+  two consecutive samples above the bar, so "fires on the crossing" and "fires
+  on the level" gave the same answer.
+
+- `tests/manual/measure-proposals.mjs` joins the `layout` job, and
+  `test_no_width_gets_a_row_of_bare_glyphs` now names its tabs instead of
+  counting them — a count says nothing about whether the tab added last kept
+  its label.
 
 ## 1.41.1
 

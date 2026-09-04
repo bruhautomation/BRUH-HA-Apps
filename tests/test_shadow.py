@@ -333,5 +333,42 @@ class TestWhatItWouldHaveDone(unittest.TestCase):
                          ["binary_sensor.door", "person.ben"])
 
 
+class TestTheDependencyNothingWasAsserting(unittest.TestCase):
+    """A comment claimed the image shipped Jinja. The image did not.
+
+    Every template trigger refused on every real install, and the three
+    template tests passed anyway, because CI and a laptop both happened
+    to have Jinja from somewhere else. The claim lived in a `# pragma:
+    no cover` comment, and a comment cannot fail — the same failure as a
+    grep for a line standing in for a test of what the line does.
+
+    So both environments are asserted, and separately: the tests run
+    where pip installed it, the add-on runs where apk did, and neither
+    is evidence about the other.
+    """
+
+    def test_a_template_can_actually_be_rendered_here(self):
+        # Not "is jinja2 importable" — the sandbox class shadow.py
+        # reaches for, through shadow's own path.
+        timeline = shadow.build_timeline(
+            {"sensor.t": [{"state": "21", "last_changed": iso(0)}]})
+        self.assertTrue(
+            shadow.render_template(
+                "{{ states('sensor.t') | float > 20 }}", timeline, T0 + 60))
+
+    def test_the_image_ships_what_a_template_needs(self):
+        root = Path(__file__).resolve().parent.parent
+        dockerfile = (root / "brain" / "Dockerfile").read_text(encoding="utf-8")
+        self.assertIn("py3-jinja2", dockerfile,
+                      "shadow.render_template needs Jinja, and an add-on "
+                      "that does not install it refuses every template "
+                      "trigger on every real install")
+        reqs = (root / "tests" / "requirements-dev.txt").read_text(
+            encoding="utf-8")
+        self.assertIn("jinja2", reqs.lower(),
+                      "the suite must not depend on Jinja arriving by "
+                      "accident — that is what hid this for a release")
+
+
 if __name__ == "__main__":
     unittest.main()

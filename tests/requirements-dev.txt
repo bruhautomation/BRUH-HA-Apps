@@ -1,5 +1,6 @@
 aiofiles
 aiohttp
+jinja2
 numpy
 pillow
 pytest
