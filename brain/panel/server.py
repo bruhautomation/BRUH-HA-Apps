@@ -140,6 +140,7 @@ import settings_store
 import shadow
 import terminal_proxy
 import thermal
+import trials
 import undo_store
 import usage_store
 import user_categories
@@ -1086,7 +1087,14 @@ def _proposals_diagnostics() -> dict:
         rows = proposals.listing()
     except Exception as exc:  # noqa: BLE001
         return {"error": str(exc)[:120]}
-    return {**proposals.counts(rows), "settled": len(proposals.settled_keys())}
+    return {**proposals.counts(rows),
+            "settled": len(proposals.settled_keys()),
+            # A trial with no report behind it is what 1.42.0 shipped, so
+            # the two numbers are reported apart: "3 trialling, 0 with a
+            # result" is the shape of that failure and is unreadable from
+            # a single count.
+            "trial_results": sum(1 for r in rows if r.get("trial_result")),
+            "trials_due": sum(1 for r in rows if proposals.trial_due(r))}
 
 
 # The weekly report. The same poll as the brief's and a different gate:
@@ -2728,6 +2736,83 @@ async def _offer_routines(now: float) -> int:
     return offered
 
 
+async def _evaluate_trials(now: float) -> int:
+    """Re-grade every running trial against the week so far. Returns how many.
+
+    1.42.0 set `trialling` and a `trial_ends_at` and never looked again,
+    so the one step that separates a suggestion from a change reported
+    nothing — which from the tab is indistinguishable from a trial that
+    is not running. There is no live-event subscription behind this and
+    there does not need to be: `shadow.replay` says when the automation
+    would have fired over a window the recorder already holds, and
+    `routines.load()` says what a person did in it.
+
+    It runs on **every** pass rather than once at the end, because a
+    replay costs one history fetch and a card that says *"three days in,
+    it would have fired three times and you did the same twice"* is worth
+    more than a blank one until Sunday. When the week is up the row stays
+    `trialling` with its result attached: ending a trial is a person's
+    press, which is the same reason `proposals.record_trial` refuses to.
+    """
+    import aiohttp  # noqa: PLC0415 — as `_offer_routines` does
+
+    rows = [r for r in await asyncio.to_thread(proposals.listing)
+            if r.get("status") == "trialling"]
+    if not rows:
+        return 0
+    tz, _name = await asyncio.to_thread(baselines.house_timezone)
+    ledger = await asyncio.to_thread(routines.load)
+    person_rows = ledger.get("rows") or []
+
+    graded = 0
+    async with aiohttp.ClientSession() as session:
+        for row in rows:
+            try:
+                result = await _trial_result(session, row, person_rows,
+                                             now, tz)
+            except Exception as exc:  # noqa: BLE001 — a trial is a report;
+                # the pass that would have written it is not optional.
+                log.warning("could not evaluate the trial on %s: %s",
+                            row.get("ts"), exc)
+                continue
+            if result is None:
+                continue
+            if await asyncio.to_thread(
+                    proposals.record_trial, row["ts"], result):
+                graded += 1
+    return graded
+
+
+async def _trial_result(session, row: dict, person_rows: list[dict],
+                        now: float, tz) -> dict | None:
+    """One trial's report, or None when the row is not one yet.
+
+    The window is the trial's own — from when it started to now, or to
+    when it ended, whichever came first. Reading it to `now` past the end
+    would go on re-grading a finished week with days it was never
+    watching, which is a report that quietly changes after it is read.
+    """
+    config = row.get("config")
+    started = float(row.get("trial_started_at") or 0)
+    if not isinstance(config, dict) or not started:
+        return None
+    end = min(now, float(row.get("trial_ends_at") or now))
+    if end <= started:
+        return None
+
+    watched = sorted(shadow.entities_watched(config))
+    if len(watched) > shadow.MAX_ENTITIES:
+        return {"refused": True,
+                "error": f"this reads {len(watched)} entities, more than a "
+                         "replay can honestly rebuild",
+                "window": {"start": int(started), "end": int(end)}}
+    history = {}
+    if watched:
+        history = await shadow.fetch_history(session, watched, started, end)
+    return await asyncio.to_thread(
+        trials.evaluate, config, history, person_rows, started, end, tz, now)
+
+
 async def run_checks(reason: str = "schedule") -> dict:
     """One pass of every house check, applied to the findings store.
 
@@ -2779,6 +2864,13 @@ async def run_checks(reason: str = "schedule") -> dict:
         except Exception as exc:  # noqa: BLE001
             log.warning("could not offer routines: %s", exc)
             offered = 0
+        # And the other half of the same lifecycle: a trial that nothing
+        # evaluates is a status with no report behind it.
+        try:
+            graded = await _evaluate_trials(started)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("could not evaluate trials: %s", exc)
+            graded = 0
         summary = {
             "reason": reason,
             "started_at": int(started),
@@ -2793,6 +2885,7 @@ async def run_checks(reason: str = "schedule") -> dict:
             "refreshed": refreshed,
             "cleared": cleared,
             "proposed": offered,
+            "trials_evaluated": graded,
             "snapshot_errors": snapshot.get("errors") or {},
         }
         journal.record(
