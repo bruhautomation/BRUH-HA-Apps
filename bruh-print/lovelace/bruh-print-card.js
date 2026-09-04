@@ -9,6 +9,16 @@
  * integration publishes, and everything it does goes out as a service call
  * over the connection the dashboard already has.
  *
+ * Those are two different questions and they are asked separately. CAN THIS
+ * CARD PRINT is `hass.services.bruh_print.print_text` and nothing else: the
+ * service exists whenever the integration is loaded, whatever the entities
+ * happen to be called. CAN THIS CARD SHOW STATUS is the sensors. 0.4.0
+ * gated Print on the sensors, so a renamed device, a renamed entity or a
+ * second config entry — anything whose id does not end in exactly
+ * `printer` / `left_roll` / `right_roll` — produced a card that could not
+ * print at all, on a house where printing worked perfectly. A status
+ * readout may never take the action away.
+ *
  * It is written in plain custom elements with no build step and no imports.
  * A card that needs a bundler is a card that cannot ship inside an add-on
  * image, and one that imports LitElement off a CDN is a card that breaks the
@@ -21,7 +31,11 @@
  * reloaded it.
  */
 
-const CARD_VERSION = '0.4.0';
+const CARD_VERSION = '0.5.0';
+
+/* The integration's domain: the name on the services and the string every
+ * entity id this card looks for carries. */
+const DOMAIN = 'bruh_print';
 
 /* eslint-disable no-console */
 console.info(
@@ -56,6 +70,10 @@ const css = `
   .pill.bad { background: color-mix(in srgb, var(--error-color, #c0392b) 16%, transparent);
     color: var(--error-color, #c0392b); }
   .pill.bad .dot { background: var(--error-color, #c0392b); }
+  /* Nothing is wrong at the printer — this card just cannot find the
+     entities that would say. A green dot beside "no status" is the
+     contradiction; a red one is a fault that is not happening. */
+  .pill.unknown .dot { background: var(--secondary-text-color); }
 
   .rolls { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
     margin-bottom: 14px; }
@@ -148,7 +166,7 @@ class BruhPrintCard extends HTMLElement {
 
   static getStubConfig(hass) {
     const found = Object.keys(hass?.states || {})
-      .find((id) => id.startsWith('sensor.') && id.includes('bruh_print') && id.includes('printer'));
+      .find((id) => id.startsWith('sensor.') && id.includes(DOMAIN) && id.includes('printer'));
     return { type: 'custom:bruh-print-card', title: 'BRUH Print', mode: 'text',
              show_status: !!found };
   }
@@ -175,7 +193,12 @@ class BruhPrintCard extends HTMLElement {
      * card rebuilds its DOM on every state change in the house and the
      * cursor jumps out of the text box mid-word. */
     const next = JSON.stringify([this._state('printer'), this._state('problem'),
-      this._rollState('left'), this._rollState('right'), this._busy, this._message]);
+      this._rollState('left'), this._rollState('right'), this._busy, this._message,
+      /* An integration that finishes loading after this card was built
+       * changes what the card says and touches no entity it reads, so the
+       * signature has to carry it or the block stays up until something
+       * unrelated in the house moves. */
+      this._missingService()]);
     if (next !== this._signature) {
       this._signature = next;
       this._render();
@@ -195,8 +218,13 @@ class BruhPrintCard extends HTMLElement {
     const states = this._hass?.states || {};
     const id = Object.keys(states).find((key) =>
       /^(sensor|binary_sensor)\./.test(key)
-      && key.includes('bruh_print')
-      && key.endsWith(suffix));
+      && key.includes(DOMAIN)
+      /* A second BRUH Print gets `_2` on the end of every id it publishes,
+       * and there is nothing else different about it. Stripping the counter
+       * before the match is the difference between a second printer having
+       * a readout and having none; which of two entries answers is
+       * arbitrary, and `<suffix>_entity` is how you say which. */
+      && key.replace(/_\d+$/, '').endsWith(suffix));
     return id ? states[id] : null;
   }
 
@@ -215,12 +243,16 @@ class BruhPrintCard extends HTMLElement {
     const problem = this._find('problem');
     const printer = this._find('printer');
 
-    /* Worked out once per render and read by every Print button: a
-     * button that cannot work is worse than no button, because pressing
-     * it produces a failure about a service call rather than the sentence
-     * above it. */
-    const missing = this._missing();
-    this._blocked = missing.length > 0;
+    /* Worked out once per render and read by every Print button. Only the
+     * missing SERVICE blocks: a button that cannot work is worse than no
+     * button, because pressing it produces a failure about a service call
+     * rather than the sentence above it — but missing sensors are a
+     * readout this card cannot draw, and a card that will not print
+     * because it cannot draw a readout is the bug this split exists to
+     * end. */
+    const missingService = this._missingService();
+    const missingSensors = this._missingSensors();
+    this._blocked = !!missingService;
 
     const root = document.createElement('div');
     const style = document.createElement('style');
@@ -240,17 +272,22 @@ class BruhPrintCard extends HTMLElement {
        * that found nothing at all used to say ready in the same breath as
        * the block below it says it cannot find anything. The pill reports
        * the missing setup first, because that is what is wrong. */
-      const trouble = this._blocked || problem?.state === 'on';
-      pill.className = 'pill' + (trouble ? ' bad' : '');
+      const bad = this._blocked || problem?.state === 'on';
+      /* Three states, not two. "Not set up" and "the printer is jammed"
+       * are both faults; "there is no sensor to read" is neither, and a
+       * red pill about a printer that is fine sends somebody to the
+       * hardware. */
+      const unknown = !bad && !printer;
+      pill.className = 'pill' + (bad ? ' bad' : (unknown ? ' unknown' : ''));
       const dot = document.createElement('span');
       dot.className = 'dot';
       const text = document.createElement('span');
       if (this._blocked) text.textContent = 'not set up';
-      else text.textContent = trouble
-        ? (problem?.attributes?.reason || 'not ready')
-        : (printer?.state || 'ready');
+      else if (problem?.state === 'on')
+        text.textContent = problem?.attributes?.reason || 'not ready';
+      else text.textContent = printer?.state || 'no status';
       pill.append(dot, text);
-      pill.title = trouble ? (problem?.attributes?.reason || '') : '';
+      pill.title = bad ? (problem?.attributes?.reason || '') : '';
       head.append(pill);
     }
     card.append(head);
@@ -259,7 +296,8 @@ class BruhPrintCard extends HTMLElement {
      * the card used to have about this lived inside the rolls block, so
      * turning the rolls off turned off the only thing that could explain
      * an empty card. */
-    if (this._blocked) card.append(this._trouble(missing));
+    if (missingService || missingSensors.length)
+      card.append(this._trouble(missingService, missingSensors));
 
     if (config.show_rolls) card.append(this._rolls());
     if (config.quick.length) card.append(this._quickRow());
@@ -276,19 +314,48 @@ class BruhPrintCard extends HTMLElement {
     this.shadowRoot.replaceChildren(root);
   }
 
-  /* ── When there is nothing to print with ────────────────────────────
-   * Two things reach this card as an empty screen and neither is about
-   * the printer: the integration is not set up, or the add-on is stopped
-   * and has never published a sensor. A text box and a Print button
-   * cannot say either, and pressing Print says only that a service call
-   * failed — so the card names what it went looking for and what to do
-   * about it, and stops offering the button.
+  /* ── When something is not there ────────────────────────────────────
+   * Two questions, asked of the two different things that answer them.
+   *
+   * `_missingService` is the only one that may stop a print. Printing is a
+   * service call and nothing else: `bruh_print.print_text` is registered
+   * the moment the integration loads, whatever the entities are named, and
+   * it is gone only when the integration is not set up — or has not
+   * finished loading, which is the same screen a few seconds earlier.
+   *
+   * `_missingSensors` is the readout, and its absence is worth saying and
+   * must never take Print away. It is nearly always an entity this card
+   * does not recognise rather than an entity that is not there: the ids
+   * are matched by suffix, so a renamed device or a renamed entity leaves
+   * a working printer with a card that cannot describe it — which is what
+   * `<suffix>_entity` in the card's config is for, and why the block names
+   * those options rather than sending somebody to set up an integration
+   * they already have.
    *
    * The version rides along because a screenshot of a broken dashboard
    * should answer "which card is this" without anybody having to ask —
    * and a browser holding a month-old cached copy is one of the answers.
    */
-  _missing() {
+  _serviceName() {
+    return this._config.mode === 'template' ? 'print_template' : 'print_text';
+  }
+
+  _missingService() {
+    const services = this._hass?.services;
+    /* Fails open, on purpose and on every path. `hass.services` is the
+     * frontend's domain -> service map and is always there on a real
+     * dashboard; handed anything else, the honest answer is that this
+     * cannot tell — and a card that refuses to print because it could not
+     * answer a question about itself is worse than one that tries and
+     * reports what came back. Same rule as the integration's /local
+     * check: a diagnosis may never become a gate. */
+    if (!services || typeof services !== 'object') return null;
+    const service = this._serviceName();
+    if (services[DOMAIN] && services[DOMAIN][service]) return null;
+    return `${DOMAIN}.${service}`;
+  }
+
+  _missingSensors() {
     const out = [];
     if (!this._find('printer')) out.push('the printer sensor');
     if (!this._find('left_roll') && !this._find('right_roll'))
@@ -296,17 +363,34 @@ class BruhPrintCard extends HTMLElement {
     return out;
   }
 
-  _trouble(missing) {
+  _trouble(missingService, missingSensors) {
     const box = document.createElement('div');
     box.className = 'trouble';
     const what = document.createElement('p');
     what.className = 'what';
-    what.textContent = `This card cannot find ${missing.join(' or ')}.`;
     const todo = document.createElement('p');
-    todo.textContent = 'Check that the BRUH Print add-on is running, and that '
-      + 'BRUH Print is set up under Settings \u2192 Devices & services. The '
-      + 'add-on is what talks to the printer; the integration is what puts it '
-      + 'in here.';
+    if (missingService) {
+      what.textContent = `This card cannot print: Home Assistant has no `
+        + `${missingService} service.`;
+      if (missingSensors.length)
+        what.textContent += ` It cannot find ${missingSensors.join(' or ')} `
+          + 'either.';
+      todo.textContent = 'Check that the BRUH Print add-on is running, and that '
+        + 'BRUH Print is set up under Settings \u2192 Devices & services. '
+        + 'The add-on is what talks to the printer; the integration is what '
+        + 'puts it in here. If Home Assistant has just restarted, give it a '
+        + 'moment and reload this page.';
+    } else {
+      what.textContent = `Printing works from here, but this card cannot find `
+        + `${missingSensors.join(' or ')}, so it cannot show what is loaded.`;
+      /* Named in full, because nothing else in this card or its docs ever
+       * told anybody these options exist. */
+      todo.textContent = 'That usually means the entities are called '
+        + 'something this card does not recognise \u2014 a renamed device, a '
+        + 'renamed entity, or a second BRUH Print. Point it at them in this '
+        + 'card\u2019s configuration: printer_entity, left_roll_entity, '
+        + 'right_roll_entity, problem_entity.';
+    }
     const who = document.createElement('p');
     who.className = 'who';
     who.textContent = `BRUH Print card ${CARD_VERSION}`;
@@ -352,7 +436,11 @@ class BruhPrintCard extends HTMLElement {
     wrap.className = 'rolls';
     const printer = this._find('printer');
     const sides = printer?.attributes?.two_rolls === false ? ['left'] : ['left', 'right'];
-    const choosable = this._loadedRolls().length > 1;
+    /* A roll box is a selector only while there is something for the
+     * selection to lead to. On a card that cannot print, picking a label
+     * is a control that goes nowhere — the same reason one loaded roll
+     * draws as a readout rather than a choice of one. */
+    const choosable = !this._blocked && this._loadedRolls().length > 1;
     const chosen = this._selectedStock();
     for (const side of sides) {
       const entity = this._find(`${side}_roll`);
@@ -536,26 +624,27 @@ class BruhPrintCard extends HTMLElement {
     this._signature = '';
     this._render();
     try {
-      /* return_response, so the card can say which roll it landed on. A
-       * "printed" toast that cannot name the roll is a toast that does not
-       * answer the one thing a Twin Turbo user is checking. */
-      const result = await this._hass.callService('bruh_print', service, data,
+      /* The argument list is Home Assistant's:
+       * (domain, service, serviceData, target, notifyOnError, returnResponse).
+       * `notifyOnError: false` because this card renders the add-on's own
+       * sentence itself and a red toast saying the same thing over the top
+       * of it is one message twice. `returnResponse: true` so the card can
+       * say which roll it landed on — a "printed" that cannot name the
+       * roll does not answer the one thing a Twin Turbo user is checking. */
+      const result = await this._hass.callService(DOMAIN, service, data,
         undefined, false, true);
-      const answer = result?.response || {};
-      const side = answer.side ? ` on the ${answer.side} roll` : '';
-      this._message = {
-        text: `Printed ${answer.printed || data.copies || 1}${side}.`,
-        bad: false,
-      };
-      if (Array.isArray(answer.notes) && answer.notes.length)
-        this._message.text += ` ${answer.notes[0]}`;
+      this._message = this._outcome(result);
     } catch (error) {
       /* The add-on's own sentence — "the left roll holds Cryogenic Labels
        * and this label is for Chemical-Resistant Cryo Labels" — arrives as
        * the error's message. Replacing it with "print failed" is how a
-       * fixable mistake becomes a mystery. */
+       * fixable mistake becomes a mystery. Home Assistant throws a plain
+       * object over the websocket rather than an Error, and something in
+       * the chain may throw a bare string, so all three shapes are read. */
       this._message = {
-        text: error?.message || error?.error || 'BRUH Print could not print that.',
+        text: (typeof error === 'string' && error)
+          || error?.message || error?.error
+          || 'BRUH Print could not print that.',
         bad: true,
       };
     } finally {
@@ -569,6 +658,40 @@ class BruhPrintCard extends HTMLElement {
         this._render();
       }, 8000);
     }
+  }
+
+  /* What actually came back, and nothing else.
+   *
+   * `Printed 1` used to be printed unconditionally: an empty object stood
+   * in for a missing response, and the count fell back to the copies on the
+   * REQUEST and then to 1. So a call that resolved with no response data at
+   * all — an older frontend that ignores the `returnResponse` argument, a
+   * service registered without response support, an add-on that answered
+   * `{}` — announced a label the card had never been told about. A card
+   * that claims a print it cannot confirm is exactly what "it doesn't
+   * print anything" looks like from the other side, so the three cases are
+   * three sentences: it printed, it printed nothing, or nobody said. */
+  _outcome(result) {
+    const answer = (result && typeof result === 'object' && result.response
+      && typeof result.response === 'object') ? result.response : null;
+    const printed = Number(answer?.printed);
+    if (!answer || !Number.isFinite(printed)) {
+      return {
+        text: 'BRUH Print took the job, but sent nothing back to say a label '
+          + 'came out. Check the printer.',
+        bad: true,
+      };
+    }
+    const notes = Array.isArray(answer.notes) && answer.notes.length
+      ? ` ${answer.notes[0]}` : '';
+    /* The add-on answered, and what it said was that no label came out.
+     * Reported as the failure it is rather than as `Printed 0`, which
+     * reads as a working card that happened to print a zero. */
+    if (printed < 1)
+      return { text: `BRUH Print took the job and printed nothing.${notes}`,
+               bad: true };
+    const side = answer.side ? ` on the ${answer.side} roll` : '';
+    return { text: `Printed ${printed}${side}.${notes}`, bad: false };
   }
 
   _common() {
@@ -610,19 +733,22 @@ class BruhPrintCard extends HTMLElement {
 
   _quickPrint(item) {
     if (this._busy || this._blocked) return;
+    /* A stock is sent only when there is one to send. With no roll sensors
+     * `_selectedStock()` is the empty string, and `stock: ""` is a
+     * different thing from an absent `stock` — the add-on's own default is
+     * the right answer there, and it is what `_common` has always done. */
+    const stock = item.stock || this._selectedStock();
+    const extra = {
+      ...(item.copies ? { copies: item.copies } : {}),
+      ...(stock ? { stock } : {}),
+    };
     if (item.template) {
       this._call('print_template', {
-        template: item.template, fields: item.fields || {},
-        ...(item.copies ? { copies: item.copies } : {}),
-        ...(item.stock ? { stock: item.stock } : { stock: this._selectedStock() }),
+        template: item.template, fields: item.fields || {}, ...extra,
       });
       return;
     }
-    this._call('print_text', {
-      text: item.text || item.label,
-      ...(item.copies ? { copies: item.copies } : {}),
-      stock: item.stock || this._selectedStock(),
-    });
+    this._call('print_text', { text: item.text || item.label, ...extra });
   }
 }
 

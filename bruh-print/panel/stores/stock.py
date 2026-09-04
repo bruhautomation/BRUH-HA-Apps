@@ -119,6 +119,19 @@ class Stock:
                 max(1.0, self.feed_mm - 2 * margin))
 
     @property
+    def continuous(self) -> bool:
+        """No die cut, so no sense holes and no label length.
+
+        `feed_in == 0` is how a stock says it is continuous — the renderer
+        already reads it that way (`dots()` floors at 1, and `render` takes
+        a feed of one dot as "as long as the artwork") — and the print path
+        needs the same fact under a name, because ESC L means something
+        entirely different here: a positive length would send the printer
+        hunting for a top-of-form hole that does not exist on this paper.
+        """
+        return self.feed_in <= 0
+
+    @property
     def natural_turn(self) -> int:
         """The rotation artwork takes on this stock unless told otherwise.
 

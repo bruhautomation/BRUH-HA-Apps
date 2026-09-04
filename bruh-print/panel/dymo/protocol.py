@@ -11,22 +11,61 @@ a container: the entire "driver" is this file.
 Command set (LabelWriter 400/450 series technical reference). Only the
 commands whose meaning is unambiguous are here, deliberately:
 
-    ESC B n         Set dot tab — how many bytes of blank to skip at the
-                    start of every line. Always 0 here; the renderer already
-                    knows where the label's left edge is and a second
-                    opinion about the margin is a second answer.
+    ESC B n         Set dot tab — how many BYTES of blank the printer puts
+                    at the start of every line before our data begins.
+                    Always 0 here, and sent rather than assumed: the manual
+                    is explicit that the dot tab is state the printer holds
+                    "until changed by a new command sequence or reset by a
+                    power-on reset", so not sending it does not mean zero,
+                    it means whatever DYMO Connect or another driver last
+                    set. A printer shared with DYMO's own software is the
+                    ordinary case, and an inherited dot tab of 4 is every
+                    label shifted 32 dots to the right.
     ESC D n         Set bytes per line. Every SYN line after this must be
-                    exactly n bytes, padding included.
-    ESC L n1 n2     Set label length in dots, big-endian. Advisory — the
-                    printer feeds to the next die-cut gap regardless — but
-                    it is what stops a long job being cut short on
-                    continuous stock.
-    ESC q n         Roll select: 1 = left, 2 = right. The Twin Turbo's whole
-                    reason for existing, and a no-op the single-roll models
-                    ignore rather than fault on. It is still gated on the
-                    model's own capability flag (see printers.py), because
-                    sending it to a printer with one roll and calling that
-                    "printing on the left" would be a lie the panel repeats.
+                    exactly n bytes, padding included. The manual pairs it
+                    with the dot tab — a line that starts n bytes in has to
+                    send n fewer — which is why the two go together, and
+                    why 0 and 84 are one statement about the head rather
+                    than two commands.
+    ESC L n1 n2     Set label length, big-endian, in dot lines FROM SENSE
+                    HOLE TO SENSE HOLE. Not the height of the raster, and
+                    not advisory: it is "the maximum distance the printer
+                    should travel while searching for the top-of-form hole
+                    or mark", and "print lines and lines fed both count
+                    towards this total". So sending the artwork's own
+                    height spends the whole allowance on the artwork and
+                    ends the search exactly where the label does — before
+                    the hole, which is in the gap after it. See
+                    `search_length`. The top half of the range is a
+                    different mode entirely: see `continuous_form`.
+    ESC q n         Roll select, and its parameter is an ASCII DIGIT — not
+                    the number it stands for. The reference, verbatim:
+
+                        <esc> q n Select Roll (Twin Turbo printer Only)
+                        1B 71 ? n specifies the roll to print on, where:
+                         30 (ASCII '0') = Automatic selection
+                         31 (ASCII '1') = Left roll
+                         32 (ASCII '2') = Right roll
+
+                    It spells ASCII out for this one command where every
+                    other parameter it documents is plainly binary (`ESC D
+                    n`, "1 <= n <= 84"; `ESC B n`, "valid values are 0-83"),
+                    which is the author saying so. This add-on shipped
+                    `0x01`/`0x02` — written from memory, the third byte in
+                    this file to be, after the `ETB` compression that
+                    shipped a printer which could not print and the `ESC L`
+                    that was sent as the raster's height. If a firmware does
+                    not recognise `0x01` as a roll selector then roll select
+                    is a no-op, every label goes to whichever bay was last
+                    used, and on a Twin Turbo with two different stocks in
+                    it that is a label printed on the wrong-size liner.
+
+                    The Twin Turbo's whole reason for existing, and a no-op
+                    the single-roll models ignore rather than fault on. It
+                    is still gated on the model's own capability flag (see
+                    printers.py), because sending it to a printer with one
+                    roll and calling that "printing on the left" would be a
+                    lie the panel repeats.
     ESC E           Form feed. Advances to the next label and is what makes
                     the printed one tearable.
     ESC G           Short form feed. Advances just past the print head, so
@@ -76,11 +115,32 @@ ESC = 0x1B
 SYN = 0x16
 ETB = 0x17
 
+# The panel's names for the two bays. These are this add-on's own numbering
+# and they are NOT what goes on the wire — see `ROLL_WIRE`. Keeping them is
+# deliberate: `1` and `2` are what the settings file, the history rows and
+# every caller above this module already say, and translating once, here, is
+# how a corrected wire byte reaches a printer without anything else knowing
+# it changed.
 ROLL_LEFT = 1
 ROLL_RIGHT = 2
 
 ROLL_NAMES = {ROLL_LEFT: "left", ROLL_RIGHT: "right"}
 ROLL_CODES = {"left": ROLL_LEFT, "right": ROLL_RIGHT}
+
+# What `ESC q` actually takes: ASCII '1' and ASCII '2'. See the command
+# table at the top of this file for the manual's own wording and for what
+# sending 0x01 instead most likely did.
+ROLL_WIRE = {ROLL_LEFT: 0x31, ROLL_RIGHT: 0x32}
+
+# ASCII '0' — automatic selection, the third value the manual documents and
+# the one nothing here uses, on purpose: "in Automatic Selection mode, the
+# printer assumes that both rolls have the same media, and it will toggle
+# back and forth as rolls become empty." This add-on's whole design is that
+# the panel knows which stock is in which bay, so a printer choosing a bay
+# for itself would print a 2.25" raster onto a 0.56" roll — the one thing
+# the stock check exists to prevent. Named so nobody has to rediscover it,
+# and unwired for the reason on this line.
+ROLL_WIRE_AUTO = 0x30
 
 
 class ProtocolError(ValueError):
@@ -92,7 +152,23 @@ def _esc(letter: str, *args: int) -> bytes:
 
 
 def set_dot_tab(tabs: int = 0) -> bytes:
-    return _esc("B", tabs & 0xFF)
+    """Where on the head a line starts, in bytes of 8 dots.
+
+    Zero is the only value this add-on sends — the renderer draws the whole
+    label and the margin is part of the artwork — but sending it is not the
+    same as leaving it out. The dot tab is a variable inside the printer,
+    kept until something changes it or the printer is power-cycled, so a
+    preamble that omits it inherits whatever the last driver to talk to that
+    printer set. That is the horizontal half of "the alignment is off".
+
+    0-83 is the manual's own range for an 84-byte head. A value outside it
+    is refused rather than masked, because `n & 0xFF` turns a mistake into a
+    left margin nobody asked for.
+    """
+    tabs = int(tabs)
+    if not 0 <= tabs <= 83:
+        raise ProtocolError(f"dot tab must be 0..83 bytes, got {tabs}")
+    return _esc("B", tabs)
 
 
 def set_bytes_per_line(count: int) -> bytes:
@@ -101,24 +177,98 @@ def set_bytes_per_line(count: int) -> bytes:
     return _esc("D", count)
 
 
-def set_label_length(dots: int) -> bytes:
-    """Label length in dots, clamped rather than refused.
+# The top half of ESC L's two-byte range is not a length: "any negative
+# value (0x8000 - 0xFFFF) will place the printer in continuous feed mode",
+# which changes what a form feed does. So a positive length clamps at
+# 0x7FFF — 32,767 dot lines, or nine feet of label — and NOT at 0xFFFF,
+# which is what the old clamp did: an absurd feed measurement typed into a
+# stock would have put the printer into a mode nobody asked for.
+MAX_LENGTH = 0x7FFF
 
-    A length that overflows two bytes is a label over 18 feet long, which is
-    not a job anybody typed on purpose — but the length is advisory and the
-    printer feeds to the die-cut gap anyway, so clamping prints the label and
-    refusing prints nothing.
+# The continuous-form flag itself: -1 as a signed 16-bit integer. Any value
+# in 0x8000-0xFFFF selects the mode; -1 is the one that cannot be read back
+# as a plausible length by anything downstream.
+CONTINUOUS_LENGTH = 0xFFFF
+
+
+def set_label_length(dots: int) -> bytes:
+    """The top-of-form search budget, in dot lines, clamped rather than
+    refused.
+
+    Clamped because this number is a maximum the printer searches within,
+    not a measurement it prints to: on die-cut stock the sense hole re-syncs
+    the counter long before the budget runs out, so an over-long value costs
+    nothing and refusing would print nothing.
     """
-    dots = max(0, min(0xFFFF, int(dots)))
+    dots = max(0, min(MAX_LENGTH, int(dots)))
     return _esc("L", (dots >> 8) & 0xFF, dots & 0xFF)
 
 
+def continuous_form() -> bytes:
+    """Put the printer into continuous-feed mode.
+
+    There are no sense holes on continuous stock, so a search budget is
+    meaningless there and a positive one is actively wrong: the printer
+    would hunt for a hole that does not exist. The manual gives this its own
+    mechanism — "when the label length variable is set to any negative 2
+    byte integer value (0x8000-0xFFFF), it allows for the use of continuous
+    form paper. In the continuous form mode, the Form Feed command (<esc> E)
+    is changed to feed enough dot lines to allow for the last line of print
+    data to extend past the printer tear-bar" — which is exactly what a
+    continuous label wants at the end of a job, and which this add-on had
+    never sent while shipping a continuous stock in the catalog.
+    """
+    return _esc("L", (CONTINUOUS_LENGTH >> 8) & 0xFF, CONTINUOUS_LENGTH & 0xFF)
+
+
+# How much further than the label the top-of-form search may run. The gap
+# between two die-cut labels is not something the catalog knows — it varies
+# by stock and nothing here can measure it — so the headroom is a fraction
+# of the label with a floor under it: a quarter of a label is more than any
+# DYMO die-cut gap, and the floor is what a short stock needs when a quarter
+# of it is not (a 1.75" spine label is 525 dots; a 0.5" one is 150).
+#
+# Generous is the safe direction, and that is the manual's own advice: "for
+# normal labels with top-of-form marks, the actual distance fed is adjusted
+# once the top-of-form mark is detected. As a result this command is usually
+# set to a value slightly longer than the true label length." The printer's
+# own power-up value is 3058 — 10.2" — for the same reason.
+LENGTH_HEADROOM = 0.25
+MIN_HEADROOM_DOTS = 60  # 0.2" at 300 dpi
+
+
+def search_length(feed_dots: int) -> int:
+    """The ESC L value for a die-cut label `feed_dots` lines long.
+
+    `feed_dots` is the label; the answer is the label plus room to reach the
+    hole in the gap after it. The two must not be the same number, and for
+    the life of this add-on they were: `job` was handed the rendered
+    raster's own height, which for a 2.25" x 1.25" label is exactly 375
+    lines of 300ths — so the printer spent its entire search allowance on
+    the 375 lines it was printing and stopped looking at the instant the
+    artwork ended. The sense hole is further on than that, always, so the
+    hole was never found, the logical counter was never re-synced, and each
+    label started fractionally further along the roll than the one before.
+    That is a systematic drift down a roll rather than a one-off, which is
+    what makes it visible on a printed ruler.
+    """
+    feed = max(1, int(feed_dots))
+    return feed + max(MIN_HEADROOM_DOTS, round(feed * LENGTH_HEADROOM))
+
+
 def select_roll(roll: int) -> bytes:
-    if roll not in ROLL_NAMES:
+    """`ROLL_LEFT` or `ROLL_RIGHT` — translated to the ASCII digit the
+    printer wants on its way out.
+
+    Refused rather than clamped: silently taking a bad roll to be the left
+    one would print the label on the left roll and report success about the
+    right.
+    """
+    if roll not in ROLL_WIRE:
         raise ProtocolError(
             f"roll must be {ROLL_LEFT} (left) or {ROLL_RIGHT} (right), "
             f"got {roll!r}")
-    return _esc("q", roll)
+    return _esc("q", ROLL_WIRE[roll])
 
 
 # Density and quality are the two commands that change how DARK a label
@@ -316,9 +466,10 @@ def raster(lines: list[bytes], bytes_per_line: int, *,
 
 
 def job(lines: list[bytes], *, bytes_per_line: int, roll: int | None = None,
-        copies: int = 1, label_length_dots: int | None = None,
-        compress: bool = False, dot_tab: bool = False,
-        density: str | None = None, quality: str | None = None) -> bytes:
+        copies: int = 1, label_feed_dots: int | None = None,
+        continuous: bool = False, compress: bool = False,
+        dot_tab: bool = True, density: str | None = None,
+        quality: str | None = None) -> bytes:
     """A complete print job: preamble, raster, feed — repeated per copy.
 
     The preamble is re-sent for every copy rather than once for the job. It
@@ -332,12 +483,26 @@ def job(lines: list[bytes], *, bytes_per_line: int, roll: int | None = None,
     printed and ten blank — which reads as the printer wasting half the roll,
     because it is.
 
+    `label_feed_dots` is the LABEL — the die-cut length of the stock, which
+    for everything but continuous paper is also the height of the raster —
+    and never the ESC L value itself. `search_length` turns one into the
+    other, because the two are different quantities and passing the first
+    where the second belonged is what made every label drift down the roll.
+    `continuous=True` is the separate mode for stock with no die cut at all:
+    the length field becomes the continuous-form flag and this argument is
+    not read.
+
+    `dot_tab` sends `ESC B 0` and is on by default, because the dot tab is
+    the printer's state and not ours: a job that does not set it starts
+    wherever the last driver left it. `bare` turns it off along with
+    everything else, which is what `bare` is for.
+
     `density` and `quality` are both optional and both `None` in the `bare`
     print mode, which is the one arrangement that leaves the printer at its
     own defaults. `quality="graphics"` is the slow, darker 300x600 mode, and
     it changes the body as well as the preamble: every line goes twice and
-    the label length doubles, because both are counted in the printer's
-    600-per-inch steps.
+    the label length doubles with it, because both are counted in the
+    printer's 600-per-inch steps.
     """
     if not lines:
         raise ProtocolError("nothing to print: the rendered label has no rows")
@@ -349,8 +514,15 @@ def job(lines: list[bytes], *, bytes_per_line: int, roll: int | None = None,
     repeat = LINE_REPEAT.get(quality or "text", 1)
     body = raster(lines, bytes_per_line, compress=compress,
                   line_repeat=repeat)
-    length = (label_length_dots if label_length_dots is not None
-              else len(lines)) * repeat
+    if continuous:
+        length_bytes = continuous_form()
+    else:
+        feed = label_feed_dots if label_feed_dots is not None else len(lines)
+        # The headroom is worked out in 300 dpi lines and then scaled with
+        # the raster, because the label and the budget spent on it are one
+        # fact counted in whatever steps the printer is taking — the same
+        # reason `LINE_REPEAT` is named rather than written as a bare 2.
+        length_bytes = set_label_length(search_length(feed) * repeat)
 
     out = bytearray()
     for index in range(copies):
@@ -360,17 +532,30 @@ def job(lines: list[bytes], *, bytes_per_line: int, roll: int | None = None,
         # long-standing cups-filters DYMO path sends them in.
         out.extend(density_bytes)
         out.extend(quality_bytes)
-        # `ESC B 0` is a no-op by construction — the renderer already knows
-        # where the left edge is, so the dot tab is always zero — and a
-        # no-op is pure risk in a preamble: a firmware that does not take
-        # this command may swallow the byte after it and desync everything
-        # that follows. Off unless somebody turns it on.
+        # Length before the pair that describes a line, which is the order
+        # the long-standing cups-filters DYMO path uses for the two commands
+        # it sends. Almost certainly irrelevant, and matching a shape that is
+        # known to print costs nothing.
+        out.extend(length_bytes)
+        # `ESC B 0` was left out on the grounds that it is "a no-op by
+        # construction — the renderer already knows where the left edge is".
+        # That reasoning is wrong, and wrong in the way that only shows up on
+        # somebody else's printer: the dot tab is a variable held INSIDE the
+        # printer "until changed by a new command sequence or reset by a
+        # power-on reset", so it is zero only if nothing has ever set it.
+        # DYMO Connect, another driver or an earlier job can each leave it
+        # set, and every label we print then starts that many bytes — eight
+        # dots each — to the right, silently, with nothing on this side able
+        # to see it. A printer shared with DYMO's own software is the
+        # ordinary case, not an exotic one.
+        #
+        # It sits beside the bytes-per-line because the manual pairs them: a
+        # line that starts n bytes in must send n fewer, so 0 with 84 is one
+        # statement about the whole head rather than two commands. `bare`
+        # drops it with everything else, which is the escape route from a
+        # firmware that will not take the command at all.
         if dot_tab:
             out.extend(set_dot_tab(0))
-        # Length before bytes-per-line, which is the order the long-standing
-        # cups-filters DYMO path uses. Almost certainly irrelevant, and
-        # matching a shape that is known to print costs nothing.
-        out.extend(set_label_length(length))
         out.extend(set_bytes_per_line(bytes_per_line))
         out.extend(body)
         out.extend(short_form_feed() if index < copies - 1 else form_feed())

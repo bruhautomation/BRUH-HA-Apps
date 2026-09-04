@@ -1,5 +1,82 @@
 # Changelog
 
+## 0.5.0
+
+**Three of the bytes this add-on sends a printer were written from memory
+rather than from the manual, and all three were wrong.** DYMO publishes a
+LabelWriter 450 Series Technical Reference. It was read properly this time,
+and it contradicts what the code believed in three places — two of which
+produce exactly the reported symptom: labels printing out of alignment.
+
+**`ESC L` is not the length of the label.** The manual: *"nl, n2 = number of
+dot lines **from sense hole to sense hole**"*, and *"this command indicates
+the **maximum distance the printer should travel while searching for the
+top-of-form hole or mark**. **Print lines and lines fed both count towards
+this total**."* It is a search budget, hole to hole — not a length. BRUH Print
+sent the height of its own raster, which is wrong twice over: hole-to-hole is
+the label *pitch*, which includes the inter-label gap, and because printed
+lines are charged against the budget, printing a full label exhausted the
+entire allowance at exactly the moment the artwork ended, before the sense
+hole it was supposed to reach. The search gave up short on every label and the
+error accumulated down the roll. It is a real budget with headroom now, and
+**continuous stock finally gets the mechanism the manual gives it** — a
+negative length selects continuous-form mode, where the form feed advances far
+enough to clear the tear bar, which this add-on had never sent.
+
+**The dot tab is state inside the printer, and we never set it.** The manual:
+*"Both the dot tab variable and the bytes-per-line variable are **held by the
+control electronics until they are changed by a new command sequence or are
+reset to default values by a power-on reset or a software reset**."* BRUH Print
+deliberately did not send `ESC B 0`, on the reasoning — written in this
+repository, in as many words — that it was "a no-op by construction". It is
+not: the dot tab is not something our renderer controls, it is a value the
+printer keeps. Anything that ever set it, DYMO's own software included, leaves
+it set, and every label after that starts that many bytes to the right. The
+preamble states where the line begins now instead of inheriting a stranger's
+answer.
+
+**And roll select was sending the wrong kind of number.** The manual is
+explicit, and deliberately so — every other parameter it documents is plainly
+binary (`ESC D n`, *"1 <= n <= 84"*), while this one spells the encoding out:
+*"30 (ASCII '0') = Automatic selection, 31 (ASCII '1') = Left roll, 32
+(ASCII '2') = Right roll"*. BRUH Print sent binary 1 and 2. On a Twin Turbo
+with two different stocks loaded, a roll select the printer does not recognise
+means every label goes to whichever bay was last used — which is a label
+printed on the wrong-size stock, and looks from the outside exactly like bad
+alignment.
+
+> **Worth checking after this update:** the roll byte is the one change here
+> that could *regress* a Twin Turbo whose bays work today. It is what the
+> manual says and it has not been tested on hardware. Print the ruler from the
+> Printer tab and check which bay it comes out of.
+
+What the manual **confirmed correct** and is unchanged: the 300 x 600 graphics
+mode really does step half as far per dot line, so sending each raster line
+twice is right; 84 bytes per line is 672 dots, the width of the head; and the
+density commands are what made labels dark.
+
+**The Lovelace card could not print, and 0.4.0 is what broke it.** The card
+gates Print on finding its sensors — but printing is a *service call*, and the
+service exists whenever the integration is loaded, whatever the entities are
+named. A renamed device, a renamed entity or a second BRUH Print gave a card
+that could not print at all, on a printer that was working. Those are two
+different questions and they are asked separately now: the service decides
+whether Print works, the sensors decide only whether the card can show what is
+loaded — and when it cannot, it says which of the two is missing and names the
+`printer_entity` / `left_roll_entity` / `right_roll_entity` options that point
+it at renamed ones. Those options existed and were documented nowhere.
+
+**And the card announced prints it was never told about.** It reported
+`printed || copies || 1`, so a service call that came back with nothing to say
+rendered as *"Printed 1"*. Driven against the shipped code, the worst case was
+the add-on answering `printed: 0` with the note "The printer did not answer."
+and the card rendering **"Printed 1. The printer did not answer."** as a green
+success. It reports what actually came back now, and an unconfirmed print says
+so.
+
+Twenty-one of these were reproduced as failures against the shipped card
+before anything was changed, in a real browser.
+
 ## 0.4.0
 
 **The card was not being served at all, and nothing could have said so.**

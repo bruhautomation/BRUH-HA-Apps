@@ -317,6 +317,68 @@ in — a first install, or an add-on update while Home Assistant was already
 running — it keeps looking for about twenty minutes rather than waiting for
 the next Core restart.
 
+### What the card needs, and what it only shows
+
+The card does two things, and they depend on two different things.
+
+**Printing is a service call** — `bruh_print.print_text`, or
+`bruh_print.print_template` on a template card. Those exist whenever the
+integration is loaded, whatever the entities happen to be called, so that is
+the only thing that can take the Print button away. When it does, the card
+says which service is missing:
+
+> This card cannot print: Home Assistant has no `bruh_print.print_text`
+> service.
+
+**The status pill and the roll boxes are the sensors**, and the card finds
+them by the end of their entity id. A renamed device, a renamed entity, or a
+second BRUH Print — anything whose id does not end in `printer`, `left_roll`
+or `right_roll` — leaves it with nothing to show. It says that too, and it
+goes on printing, because a readout may not take the action away:
+
+> Printing works from here, but this card cannot find the printer sensor or
+> the roll sensors, so it cannot show what is loaded.
+
+(0.4.0 disabled every Print button whenever it could not find those sensors,
+which stopped the card printing on houses where printing was perfectly fine.
+Gating an action on a status readout is the error; the two questions are
+asked separately now.)
+
+Point the card at your entities by name:
+
+```yaml
+type: custom:bruh-print-card
+printer_entity: sensor.label_maker_printer
+left_roll_entity: sensor.label_maker_left_roll
+right_roll_entity: sensor.label_maker_right_roll
+problem_entity: binary_sensor.label_maker_problem
+```
+
+A named entity always wins. Leave one out and the card goes on looking for
+that one by suffix, so naming the odd one out is enough — and a second BRUH
+Print, whose ids all carry a `_2`, is found without naming anything.
+
+### What the card says after a print
+
+The confirmation is the add-on's own: how many labels came out, which roll
+they came off, and any notes about the label itself ("the barcode would not
+fit at one whole dot per module"). *Printed 1 on the left roll* is that
+answer, not the card's assumption about it.
+
+Three other things can happen and each gets its own sentence, because they
+send you to different places:
+
+| What came back | What the card says |
+| --- | --- |
+| A refusal | The add-on's own sentence — *the left roll holds Cryogenic Labels and this label is for Chemical-Resistant Cryo Labels* — never "print failed" |
+| An answer saying nothing printed | *BRUH Print took the job and printed nothing*, with the note that says why |
+| Nothing at all to confirm it | *BRUH Print took the job, but sent nothing back to say a label came out. Check the printer.* |
+
+The last one is the one worth knowing about. A service call that resolves
+means Home Assistant accepted it, which is not the same claim as a label
+existing — and a card that reports the first as the second is exactly what
+"the card doesn't print anything" looks like from the other side.
+
 ### The card shows "Custom element doesn't exist"
 
 Restart Home Assistant once. This happens on a house that had no
@@ -344,10 +406,11 @@ There is no CUPS in this container and no DYMO driver. `panel/dymo/` speaks
 the LabelWriter's own raster protocol:
 
 ```
-ESC q 1|2      roll select — the Twin Turbo's whole reason for existing
+ESC q '1'|'2'  roll select — ASCII digits, not 1 and 2 (see below)
 ESC c|d|e|g    print density: light, medium, normal, dark
 ESC h|i        300 x 300 (fast) or 300 x 600 ("barcodes and graphics", slow)
-ESC L hi lo    label length in dots
+ESC L hi lo    how far to search for the next sense hole (see below)
+ESC B 0        dot tab: where on the head a line starts, in bytes
 ESC D 84       bytes per line (672 dots / 8)
 SYN <84 bytes> one raster line, one per row
 ESC G          short form feed, between copies
@@ -366,14 +429,74 @@ opcode, and a firmware that does not read `0x17` that way takes the job and
 produces nothing. There is no error to report; the bytes were accepted.
 
 **Bare minimum** drops roll select as well, for a firmware that will not take
-`ESC q`, along with the darkness and speed commands below. On a Twin Turbo
-that means the printer uses whichever bay it used last, which is why it is
-the last thing to try rather than a safe default.
+`ESC q`, along with the dot tab and the darkness and speed commands below. On
+a Twin Turbo that means the printer uses whichever bay it used last, and the
+left margin is left wherever the last driver to talk to that printer set it —
+which is why it is the last thing to try rather than a safe default.
 
-`ESC B 0` (dot tab) is not sent at all. It was a no-op by construction — the
-renderer already knows where the left edge is — and a no-op in a preamble is
-pure risk: a firmware that does not take the command may swallow the byte
-after it.
+### The roll byte is an ASCII digit
+
+`ESC q` is the Twin Turbo's whole reason for existing, and its parameter is
+the *character* `1` or `2` — `0x31` / `0x32` — not the numbers 1 and 2. DYMO's
+reference spells ASCII out for this one command, where every other parameter
+it documents is plainly binary (`ESC D n`, "1 <= n <= 84"). BRUH Print sent
+`0x01` / `0x02` up to this release. If a printer does not read those as roll
+selectors it ignores the command, and every label goes to whichever bay it
+used last — which on a machine with two different stocks loaded is a label
+printed on the wrong-size liner, and reads from across the room as the
+alignment being off.
+
+The manual documents a third value, ASCII `0`, for **automatic** selection.
+BRUH Print does not send it and will not: the printer then "assumes that both
+rolls have the same media, and it will toggle back and forth as rolls become
+empty", and this add-on's whole design is that the panel knows which stock is
+in which bay. A printer choosing a bay for itself is the 2.25″ raster on the
+0.56″ roll that the stock check exists to prevent.
+
+### What `ESC L` actually is
+
+It is **not** the length of the label, and it is not the height of the
+artwork. DYMO's own reference calls it the "number of dot lines **from sense
+hole to sense hole**", and says the command "indicates the maximum distance
+the printer should travel while searching for the top-of-form hole or mark.
+**Print lines and lines fed both count towards this total.**"
+
+So it is a budget, and printing spends it. A LabelWriter finds the top of
+each label by watching for the punched hole in the gap between labels; the
+hole re-syncs its position counter, and everything about where the next
+label starts follows from that. Send the height of the artwork — 375 dot
+lines for a 2.25″ × 1.25″ label — and the budget runs out on the last line
+of the artwork, which is *before* the gap the hole is in. The hole is never
+seen, the counter is never re-synced, and each label starts a little further
+along the roll than the one before it. That is the difference between a
+label that is slightly off and a roll that gets worse as it goes.
+
+BRUH Print sends the label's own length **plus a quarter of it**, with a
+floor of 0.2″ for short stock — 469 dot lines for that same label, 938 in
+the 300 × 600 mode, where the printer is counting in half-steps. Generous is
+the safe direction and it is what the reference advises: on stock with
+top-of-form marks "the actual distance fed is adjusted once the top-of-form
+mark is detected", so an over-long budget costs nothing (the printer's own
+power-up value is 10.2″), and a short one is the bug above.
+
+**Continuous stock takes a different value entirely.** There are no sense
+holes on paper with no die cut, so any positive budget sends the printer
+hunting for something that is not there. Setting the length to a negative
+16-bit value puts it into continuous-feed mode, where a form feed instead
+"feeds enough dot lines to allow for the last line of print data to extend
+past the printer tear-bar". A stock whose feed measurement is `0` — which is
+how the catalog says "as long as the artwork" — gets that.
+
+`ESC B 0` (dot tab) **is** sent, in Standard and Compact. It was left out for
+a release on the grounds that it is a no-op — the renderer already knows
+where the left edge is — and that reasoning is wrong. The dot tab is a
+variable held *inside the printer*, "until they are changed by a new command
+sequence or are reset to default values by a power-on reset". Whatever DYMO
+Connect, another driver or an earlier job last set is what our first line
+starts at, and each unit is a byte: eight dots of left margin, on every line
+of every label, with nothing on this side able to see it. Sending it is how
+a job stops inheriting a stranger's margin. **Bare minimum** does not send
+it, along with everything else.
 
 ### How dark, and how slowly
 
@@ -387,7 +510,7 @@ Two commands change it, and both are on the Printer tab under Settings:
 | **Print speed** | Slow & dark | `ESC h` (fast, 300 x 300) or `ESC i` (the printer's "barcodes and graphics" mode, 300 x 600). The slow one steps the paper at 600 lines to the inch, so the head dwells twice as long over every line: darker, and more accurate for barcodes and QR codes. |
 
 In the slow mode BRUH Print sends each raster line **twice** and doubles the
-`ESC L` length with it, because both are counted in those 600-per-inch steps
+`ESC L` budget with it, because both are counted in those 600-per-inch steps
 — a 300 dpi raster sent as-is would come out half its length with everything
 on it squashed. A long run takes roughly twice as long to print; that is the
 whole of the cost, and Fast is one menu item away.
