@@ -152,6 +152,15 @@ jobs:
           done
           node tests/manual/measure-print-panel.mjs
 
+      # BRUH Print's Lovelace card, which needs no panel at all: it reads
+      # the integration's sensors and calls its services, so a stubbed
+      # `hass` is the whole world it lives in. It is here because nothing
+      # in the repository had ever EXECUTED the card — every test of it
+      # read the file, and a grep for a line is not a test of what the
+      # line does.
+      - name: Measure BRUH Print's Lovelace card
+        run: node tests/manual/measure-print-card.mjs
+
   hassfest:
     name: HA integration validation
     runs-on: ubuntu-latest

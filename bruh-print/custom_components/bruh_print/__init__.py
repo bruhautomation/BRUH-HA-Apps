@@ -17,6 +17,7 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.event import async_call_later
 
 from .bridge import send_request
@@ -25,7 +26,10 @@ from .const import (
     CARD_RETRY_CANCEL,
     CARD_RETRY_SECONDS,
     CARD_RETRY_TRIES,
+    DOCS_URL,
     DOMAIN,
+    ISSUE_LOCAL_NOT_SERVED,
+    LOCAL_PATH,
     SERVICE_PRINT_LABEL,
     SERVICE_PRINT_TEMPLATE,
     SERVICE_PRINT_TEST,
@@ -178,12 +182,88 @@ async def _register_card(hass: HomeAssistant, tries: int = 0) -> None:
     except ImportError:  # pragma: no cover - frontend is always there in core
         return
     add_extra_js_url(hass, url)
+    _sync_local_issue(hass)
     if tries:
         # Worth a line at info: somebody whose card appeared four minutes
         # after Home Assistant started should be able to see why.
         _LOGGER.info("Registered the BRUH Print card at %s", url)
     else:
         _LOGGER.debug("Registered the BRUH Print card at %s", url)
+
+
+def _local_is_served(hass: HomeAssistant) -> bool:
+    """Is Home Assistant actually serving the folder the card is in?
+
+    It decides that once, while it is starting, and only if the folder is
+    already there — this is core's own frontend setup, verbatim:
+
+        local = hass.config.path("www")
+        if await hass.async_add_executor_job(os.path.isdir, local):
+            static_paths_configs.append(StaticPathConfig("/local", local, ...))
+
+    BRUH Print's run.sh creates /config/www/bruh_print when the ADD-ON
+    starts, which on any ordinary install is after Home Assistant started.
+    So on a house that had no /config/www at all — and you only have one if
+    you have already installed a custom card or HACS — /local is not a route
+    on this run, every request for the card is a 404, and the dashboard says
+    "Custom element doesn't exist: bruh-print-card". Restarting the add-on
+    cannot fix that; only restarting Home Assistant can, and then only once.
+
+    Asked of the running app's own router rather than by fetching the URL.
+    A request has to guess a base URL, cross the network stack and a proxy,
+    and can fail for half a dozen reasons that are not the question — the
+    same reasoning BRight's playback check follows: walk the links, do not
+    infer them.
+
+    It FAILS OPEN. This is a diagnosis and never a gate: an answer it cannot
+    get means "assume it is served", because being wrong that way costs
+    nothing and being wrong the other way nags a house whose card works.
+    """
+    try:
+        routes = [getattr(resource, "canonical", None)
+                  for resource in hass.http.app.router.resources()]
+    except Exception:  # noqa: BLE001 - a diagnosis may not fail a setup
+        _LOGGER.debug("Could not ask the router whether %s is served",
+                      LOCAL_PATH, exc_info=True)
+        return True
+    if not routes:
+        # A router with nothing on it is not a Home Assistant serving
+        # nothing; it is the question asked somewhere it cannot be
+        # answered. Same rule as a house check that could not look.
+        _LOGGER.debug("The router listed no routes at all; taking %s as served",
+                      LOCAL_PATH)
+        return True
+    return LOCAL_PATH in routes
+
+
+@callback
+def _sync_local_issue(hass: HomeAssistant) -> bool:
+    """Raise the one-restart repair, or take it away once it is done.
+
+    The card is registered either way — the URL it is registered at works
+    the moment Home Assistant restarts, and refusing to register would leave
+    a repair nothing could clear. This only says so where somebody looks:
+    the card being missing is otherwise invisible from every surface the
+    add-on has, and the message Home Assistant shows in its place blames
+    the card.
+
+    Deleted again the next time the check passes, so a house that has
+    restarted stops being told to.
+    """
+    served = _local_is_served(hass)
+    if served:
+        ir.async_delete_issue(hass, DOMAIN, ISSUE_LOCAL_NOT_SERVED)
+        return True
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        ISSUE_LOCAL_NOT_SERVED,
+        is_fixable=False,
+        severity=ir.IssueSeverity.WARNING,
+        translation_key=ISSUE_LOCAL_NOT_SERVED,
+        learn_more_url=DOCS_URL,
+    )
+    return False
 
 
 def _schedule_card_retry(hass: HomeAssistant, tries: int) -> None:

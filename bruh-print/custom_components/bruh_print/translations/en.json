@@ -14,6 +14,12 @@
       "already_configured": "BRUH Print is already set up."
     }
   },
+  "issues": {
+    "local_not_served": {
+      "title": "Restart Home Assistant once to finish installing the BRUH Print card",
+      "description": "The card is installed, but Home Assistant is not serving it yet.\n\nHome Assistant only serves the `/config/www` folder if that folder was already there when it started, and BRUH Print has just created it. Until Home Assistant restarts, a dashboard using the card shows \"Custom element doesn't exist: bruh-print-card\".\n\nRestart Home Assistant once — Settings > System, then Restart at the top right — and the card appears. You will not have to do this again."
+    }
+  },
   "services": {
     "print_text": {
       "name": "Print text",
