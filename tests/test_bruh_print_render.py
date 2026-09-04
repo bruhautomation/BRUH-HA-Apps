@@ -429,3 +429,145 @@ class TestNumbersFromTheWire(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestWhereThePrintingStarts(unittest.TestCase):
+    """The print offset, driven on the bitmap it moves.
+
+    This is the one part of the label pipeline that cannot be checked by
+    reading it: everything above the wire was *measured* correct on this
+    exact stock — a 672 x 375 raster with its ink inset exactly 24 dots on
+    all four sides — while the printed label came out 4.7mm low. So the
+    tests below build a real label, shift a real raster, and count the dot
+    rows the ink actually moved.
+    """
+
+    # The roll the misregistration was measured on, with the 5.2mm border
+    # its owner had typed in by hand to compensate for it.
+    def stock(self, **changes):
+        return stock_store.Stock(
+            id="edcc-082wh", name="Chemical-Resistant Cryo Labels",
+            across_in=2.25, feed_in=1.25, margin_mm=5.2, **changes)
+
+    def rendered(self, entry=None, text="Rice"):
+        entry = entry or self.stock()
+        label = label_doc.Label.from_dict({"stock": entry.id, "elements": [
+            {"type": "text", "x_mm": 0, "y_mm": 0, "w_mm": 40, "h_mm": 12,
+             "props": {"text": text, "font": "sans-bold", "size_mm": 0}}]})
+        return render_image.render(label, entry)
+
+    def test_the_measured_case_moves_the_ink_up_and_loses_nothing(self):
+        """The report, reproduced. The printer began laying ink 4.7mm after
+        the leading edge — top margin 9.9mm against a bottom of 0.3mm on a
+        label whose renderer was symmetric to the dot — so the correction is
+        4.7mm back toward the edge that comes out first.
+
+        4.7mm at 300 dpi is 55.5 dot lines, which is why the diagnosis said
+        "about 55": the shift rounds to 56, and 56 lines is 4.74mm. That is
+        four hundredths of a millimetre of rounding on a number somebody
+        read off a printed label with a ruler.
+        """
+        before = self.rendered()
+        self.assertEqual((672, 375), before.image.size)
+        box = render_image._ink_box(before.image)
+        moved, note = render_image.offset_raster(before, feed_mm=-4.7)
+        shifted = render_image._ink_box(moved.image)
+
+        rows = shifted[1] - box[1]
+        self.assertEqual(-56, rows)
+        self.assertEqual(-56, shifted[3] - box[3], "the ink was scaled, not moved")
+        self.assertAlmostEqual(-4.7, rows / 300 * 25.4, delta=0.05)
+        self.assertEqual(box[0], shifted[0], "a feed offset moved it sideways")
+        self.assertIsNone(note, "4.7mm of blank border is not worth a note")
+
+    def test_the_sheet_stays_exactly_one_label(self):
+        """What moves off one edge is gone and what moves on at the other is
+        paper — which is the whole reason this is a raster shift rather than
+        the printer's own `ESC f` skip, whose tail runs into the gap where
+        nothing checks."""
+        before = self.rendered()
+        moved, _ = render_image.offset_raster(before, feed_mm=-4.7,
+                                              across_mm=2.0)
+        self.assertEqual(before.image.size, moved.image.size)
+        self.assertEqual(before.feed_dots, moved.feed_dots)
+        self.assertEqual(before.across_dots, moved.across_dots)
+
+    def test_an_across_offset_moves_columns_and_not_rows(self):
+        before = self.rendered()
+        box = render_image._ink_box(before.image)
+        moved, note = render_image.offset_raster(before, across_mm=-2.0)
+        shifted = render_image._ink_box(moved.image)
+        self.assertEqual(round(-2.0 / 25.4 * 300), shifted[0] - box[0])
+        self.assertEqual(box[1], shifted[1])
+        self.assertIsNone(note)
+
+    def test_no_offset_is_the_same_object(self):
+        """Nothing is rendered twice for a roll nobody has calibrated, which
+        is every roll by default."""
+        before = self.rendered()
+        moved, note = render_image.offset_raster(before)
+        self.assertIs(before, moved)
+        self.assertIsNone(note)
+
+    def test_a_shift_that_costs_ink_says_so_and_still_prints(self):
+        """The standing rule: the stock/roll mismatch is the only refusal,
+        and everything else is a note beside a label that still comes out.
+        The note has to name the amount, the edge and the control."""
+        before = self.rendered()
+        box = render_image._ink_box(before.image)
+        # Enough to take a measurable bite out of the ink itself, not just
+        # the border: the ink starts 82 dot lines down a 375-line sheet.
+        over_mm = (box[1] + 30) / 300 * 25.4
+        moved, note = render_image.offset_raster(before, feed_mm=-over_mm)
+        self.assertIsNotNone(note)
+        self.assertIn("2.5mm past the leading edge", note)
+        self.assertIn("Where the printing starts", note)
+        self.assertIn("back toward the edge that comes out first", note)
+        # And it really did print: the rest of the word is still there.
+        self.assertIsNotNone(render_image._ink_box(moved.image))
+
+    def test_the_note_is_about_lost_ink_and_not_about_a_non_zero_shift(self):
+        """A correction normally slides blank border off one edge and blank
+        border on at the other. A note on every print is a note nobody reads
+        by the second roll, so the test is on the ink."""
+        before = self.rendered()
+        for feed in (-4.7, -3.0, 1.0, 4.0):
+            _, note = render_image.offset_raster(before, feed_mm=feed)
+            self.assertIsNone(note, f"{feed}mm of border produced a note")
+
+    def test_ink_off_the_trailing_and_right_edges_is_reported_too(self):
+        before = self.rendered()
+        box = render_image._ink_box(before.image)
+        down = (before.image.height - box[3] + 40) / 300 * 25.4
+        right = (before.image.width - box[2] + 40) / 300 * 25.4
+        _, note = render_image.offset_raster(before, feed_mm=down,
+                                             across_mm=right)
+        self.assertIn("past the trailing edge", note)
+        self.assertIn("past the right edge", note)
+        self.assertIn("to the right", note)
+
+    def test_a_note_never_carries_a_signed_number(self):
+        """Nobody knows which way "+" goes on a label printer, so a note
+        saying "offset -6.4mm" is a note somebody has to work out the
+        convention for before they can act on it."""
+        before = self.rendered()
+        _, note = render_image.offset_raster(before, feed_mm=-20.0)
+        self.assertNotIn("-20", note)
+        self.assertIn("20.0mm back toward", note)
+
+    def test_a_blank_label_is_never_reported_as_losing_ink(self):
+        entry = self.stock()
+        label = label_doc.Label.from_dict({"stock": entry.id, "elements": []})
+        blank = render_image.render(label, entry)
+        _, note = render_image.offset_raster(blank, feed_mm=-20.0)
+        self.assertIsNone(note)
+
+    def test_the_note_reaches_the_list_the_caller_already_reads(self):
+        """`_send` shifts a local copy and appends to the ORIGINAL's notes,
+        because every handler reads `rendered.notes` after the print has
+        gone out. If the two objects did not share that list the note would
+        be composed, attached to a throwaway, and never seen."""
+        before = self.rendered()
+        moved, _ = render_image.offset_raster(before, feed_mm=-4.7)
+        self.assertIs(before.notes, moved.notes)
+        self.assertIs(before.problems, moved.problems)

@@ -7,9 +7,11 @@
     POST /api/printer/select         remember which one is the default
     GET  /api/printer/status         ask the printer how it is
     POST /api/printer/test           print the ruler
+    POST /api/printer/calibrate      print the "where does the printing start" label
     GET  /api/stocks                 the label catalog
     POST /api/stock                  add or correct a stock
     POST /api/stock/{id}/swap        the two dimensions, exchanged
+    POST /api/stock/{id}/offset      where this roll needs the printing put
     DEL  /api/stock/{id}             delete a custom stock / hide a built-in
     POST /api/roll/{side}            say what is in a bay
     DEL  /api/roll/{side}            say a bay is empty
@@ -444,8 +446,15 @@ def _for_log(value: object, limit: int = 120) -> str:
 
 
 def _render(state: Panel, document: dict, *, dpi: int | None = None,
-            head_dots: int | None = None):
-    """Parse and draw a label document. Raises with a readable sentence."""
+            head_dots: int | None = None, stock=None):
+    """Parse and draw a label document. Raises with a readable sentence.
+
+    `stock` overrides the catalog lookup, and exactly one thing uses it: the
+    calibration label, which has to be drawn to the FULL sheet and so is
+    rendered against a copy of the roll with no margin. It is a copy that is
+    never saved — the point of the calibration label is to measure the roll
+    a person actually has, not to change it.
+    """
     try:
         parsed = label_doc.Label.from_dict(document)
     except label_doc.LabelError as exc:
@@ -454,10 +463,11 @@ def _render(state: Panel, document: dict, *, dpi: int | None = None,
         # raised four frames down inside Pillow on the wire too.
         raise _refuse(exc.args[0] if exc.args else "That label cannot be read.")
 
-    try:
-        stock = state.stocks.require(parsed.stock)
-    except stock_store.UnknownStock as exc:
-        raise _refuse(exc.detail)
+    if stock is None:
+        try:
+            stock = state.stocks.require(parsed.stock)
+        except stock_store.UnknownStock as exc:
+            raise _refuse(exc.detail)
 
     printer = state.chosen()
     model = printer.model if printer else dymo_printers.UNKNOWN
@@ -476,7 +486,19 @@ async def _send(state: Panel, rendered, *, stock, side: str,
     model = printer.model if printer else dymo_printers.UNKNOWN
     roll_code = protocol.ROLL_CODES.get(side) if model.twin else None
 
-    lines = render_image.raster_lines(rendered, model.bytes_per_line)
+    # Where this roll needs the printing put, applied on the way to the
+    # printer and nowhere else. It is a correction to the machine, not a
+    # change to the label, so the document, the preview and the designer all
+    # stay exactly as they were — and the note, when the shift costs ink,
+    # goes onto the rendered label's own list, which is what every caller
+    # already reads after `_send` returns.
+    to_print, offset_note = render_image.offset_raster(
+        rendered, across_mm=stock.offset_across_mm,
+        feed_mm=stock.offset_feed_mm)
+    if offset_note:
+        rendered.notes.append(offset_note)
+
+    lines = render_image.raster_lines(to_print, model.bytes_per_line)
     # `bare` drops roll select: on a Twin Turbo that means every label goes
     # to whichever bay the printer last used, which is a real cost and the
     # reason it is the last mode to try rather than a safe default.
@@ -658,6 +680,140 @@ def _ruler_label(stock) -> dict:
             "elements": elements}
 
 
+# How much of a big label the calibration ladders bother to cover. Twenty
+# millimetres is more than four times the worst misregistration this add-on
+# has been shown and more than any LabelWriter's registration can wander, and
+# a ladder that ran the whole length of a 3.44" wrap would be 87 ticks for a
+# number that is always in the first few.
+CALIBRATION_RUN_MM = 20.0
+# The thick line that says "the printing starts HERE", and the 1mm ticks
+# beside it. Both a hair over one dot at 300dpi so neither can round away.
+CALIBRATION_RULE_MM = 0.4
+CALIBRATION_TICK_MM = 0.3
+
+
+async def h_printer_calibrate(request: web.Request) -> web.Response:
+    """Print the calibration label.
+
+    Not the ruler. The ruler answers "which of these two measurements is
+    which", and it is drawn inside the stock's own margin — so on a roll
+    somebody has given a 5mm margin there is nothing within 5mm of the die
+    cut to measure anything against. This one answers the other question,
+    "where does the printing actually start", and to do that it has to be
+    drawn to the FULL sheet with the margin ignored.
+
+    It goes out through the ordinary print path, so this roll's offset is
+    applied to it exactly as it is to every other label — which is what makes
+    it the thing you print again to check that a correction worked.
+    """
+    state = panel(request)
+    payload = await body(request)
+    stock_id = str(payload.get("stock") or state.settings.get("default_stock"))
+    side = str(payload.get("side", "") or "")
+
+    try:
+        entry = state.stocks.require(stock_id)
+    except stock_store.UnknownStock as exc:
+        return bad(exc.detail, 404)
+
+    side, notes = state.resolve_side(entry.id, side)
+    full = stock_store.replace(entry, margin_mm=0.0)
+    document = _calibration_label(full)
+    parsed, _, rendered = await asyncio.to_thread(
+        _render, state, document, stock=full)
+    result = await _send(state, rendered, stock=entry, side=side, copies=1)
+    state.consume(side, 1)
+    state.mirror_state()
+    return ok(printed=1, side=side, stock=entry.id,
+              notes=notes + rendered.notes, **result)
+
+
+def _calibration_label(stock) -> dict:
+    """Where the printing starts, drawn from the sheet's own two edges.
+
+    `stock` here is a zero-margin copy, so (0, 0) in this document is the
+    first dot the printer lays: the corner of the two thick rules IS the
+    start of the raster. Everything else on the label is a scale away from
+    that corner, so the two numbers a person needs are read by holding the
+    printed label up and seeing where its own die-cut edges fall against the
+    ladders — which is the only reading that cannot be wrong, because the
+    ladder and the gap it measures are printed side by side.
+    """
+    across_mm, feed_mm = stock.drawable_mm
+    rule = CALIBRATION_RULE_MM
+    tick = CALIBRATION_TICK_MM
+    run_across = min(CALIBRATION_RUN_MM, across_mm)
+    run_feed = min(CALIBRATION_RUN_MM, feed_mm)
+
+    def line(x, y, w, h):
+        return {"type": "line", "x_mm": x, "y_mm": y, "w_mm": w, "h_mm": h,
+                "props": {"stroke_mm": min(w, h)}}
+
+    elements: list[dict] = [
+        # The two "printing starts here" rules, at the very first column and
+        # the very first row of the raster.
+        line(0, 0, run_across, rule),
+        line(0, 0, rule, run_feed),
+    ]
+
+    # A ladder per axis: 1mm ticks, long every 5mm. Numbers only where the
+    # label is wide (or tall) enough to carry them beside the ladder — a
+    # 0.56" wrap has 14mm across it, and a digit crammed into a tick is
+    # worse than a ladder you count.
+    number_size = 2.2
+    label_room = 4.0
+    for millimetre in range(1, int(run_feed) + 1):
+        long = millimetre % 5 == 0
+        elements.append(line(0, millimetre, 3.0 if long else 1.5, tick))
+        if long and across_mm >= 3.0 + label_room + 1:
+            elements.append({
+                "type": "text", "x_mm": 3.4,
+                "y_mm": max(0.0, millimetre - number_size / 2),
+                "w_mm": label_room, "h_mm": number_size,
+                "props": {"text": str(millimetre), "font": "sans",
+                          "size_mm": number_size, "align": "left",
+                          "valign": "middle", "wrap": False},
+            })
+    # The down ladder's numbers occupy a column from x=3.4 to x=3.4+label_room,
+    # and an across number is centred on its own tick — so every across number
+    # whose box reaches into that column lands on top of one. Near the corner
+    # that is always the case, and the two "5"s printed over each other read as
+    # a smudge on the one label whose whole job is to be read to the
+    # millimetre. The ticks are still there to count; only the digit is
+    # dropped, and only where it would collide.
+    numbers_from = 3.4 + label_room + label_room / 2
+    for millimetre in range(1, int(run_across) + 1):
+        long = millimetre % 5 == 0
+        elements.append(line(millimetre, 0, tick, 3.0 if long else 1.5))
+        if long and millimetre >= numbers_from and feed_mm >= 3.0 + number_size + 1:
+            elements.append({
+                "type": "text",
+                "x_mm": max(0.0, millimetre - label_room / 2), "y_mm": 3.4,
+                "w_mm": label_room, "h_mm": number_size,
+                "props": {"text": str(millimetre), "font": "sans",
+                          "size_mm": number_size, "align": "center",
+                          "valign": "top", "wrap": False},
+            })
+
+    # The label says what it is for, if it has the room. It usually does:
+    # this is printed on the roll somebody is trying to fix, and that roll is
+    # normally the big one.
+    caption_top = max(run_feed, 6.5) + 1.5
+    if across_mm >= 25 and feed_mm - caption_top >= 5:
+        elements.append({
+            "type": "text", "x_mm": 0, "y_mm": caption_top,
+            "w_mm": across_mm, "h_mm": min(8.0, feed_mm - caption_top),
+            "props": {
+                "text": "The corner of the two thick lines is where printing "
+                        "starts. Ticks are 1mm.",
+                "font": "sans", "size_mm": 2.0, "align": "left",
+                "valign": "top", "wrap": True, "line_spacing": 1.1},
+        })
+
+    return {"stock": stock.id, "rotate": 0, "name": "Calibration",
+            "elements": elements}
+
+
 # -- stocks -----------------------------------------------------------------
 async def h_stocks(request: web.Request) -> web.Response:
     return ok(stocks=[s.as_dict() for s in panel(request).stocks.all()])
@@ -703,6 +859,12 @@ async def h_stock_put(request: web.Request) -> web.Response:
         notes=str(payload.get("notes", existing.notes if existing else "")
                   or ""),
         turn=existing.turn if existing else None,
+        # Same partial-update rule as `turn`: the Edit dialog has no control
+        # for the print offset — that has its own dialog, because measuring
+        # it is a job rather than a field — and a Save here that blanked it
+        # would undo a measurement made one button away.
+        offset_across_mm=(existing.offset_across_mm if existing else 0.0),
+        offset_feed_mm=(existing.offset_feed_mm if existing else 0.0),
     )
     state.stocks.put(entry)
     state.mirror_state()
@@ -749,6 +911,55 @@ async def h_stock_turn(request: web.Request) -> web.Response:
             return bad(f"A label can be turned {allowed} — not {turn}°.")
     updated = state.stocks.put(
         stock_store.replace(entry, turn=turn, builtin=False))
+    state.mirror_state()
+    return ok(stock=state._stock_row(updated),
+              stocks=[state._stock_row(s) for s in state.stocks.all()])
+
+
+def _offset_mm(payload: dict, key: str, current: float) -> float:
+    """One offset off the wire, refused rather than clamped.
+
+    Clamping would print something other than what the field says, on a
+    control whose entire purpose is that the number on screen and the number
+    the printer gets are the same.
+    """
+    raw = payload.get(key, None)
+    if raw in (None, ""):
+        return float(current)
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        raise _refuse("An offset is a number of millimetres — a minus sign "
+                      "in front of it moves the printing the other way.")
+    if not -stock_store.MAX_OFFSET_MM <= value <= stock_store.MAX_OFFSET_MM:
+        raise _refuse(
+            f"{value}mm is further than a whole inch. A LabelWriter's "
+            f"registration is out by a millimetre or two, not by "
+            f"{stock_store.MAX_OFFSET_MM:.0f}mm — check the measurement, or "
+            f"the two boxes are the wrong way round.")
+    return value
+
+
+async def h_stock_offset(request: web.Request) -> web.Response:
+    """Where this roll needs the printing put.
+
+    Per stock, because registration on die-cut paper is dominated by where
+    the sense holes sit relative to the die cut, and that is a property of
+    the roll. Its own route rather than a pair of fields on `POST /api/stock`
+    for the same reason `turn` has one: it is set from a dialog that also
+    prints a label to measure with, and sending the whole stock back from
+    there would be that dialog quietly saving four numbers it never showed.
+    """
+    state = panel(request)
+    try:
+        entry = state.stocks.require(request.match_info["stock_id"])
+    except stock_store.UnknownStock as exc:
+        return bad(exc.detail, 404)
+    payload = await body(request)
+    across = _offset_mm(payload, "offset_across_mm", entry.offset_across_mm)
+    feed = _offset_mm(payload, "offset_feed_mm", entry.offset_feed_mm)
+    updated = state.stocks.put(stock_store.replace(
+        entry, offset_across_mm=across, offset_feed_mm=feed, builtin=False))
     state.mirror_state()
     return ok(stock=state._stock_row(updated),
               stocks=[state._stock_row(s) for s in state.stocks.all()])
@@ -1296,12 +1507,14 @@ def build_app(state: Panel | None = None) -> web.Application:
     app.router.add_post("/api/printer/select", h_printer_select)
     app.router.add_get("/api/printer/status", h_printer_status)
     app.router.add_post("/api/printer/test", h_printer_test)
+    app.router.add_post("/api/printer/calibrate", h_printer_calibrate)
     app.router.add_get("/api/printer/usb", h_printer_usb)
 
     app.router.add_get("/api/stocks", h_stocks)
     app.router.add_post("/api/stock", h_stock_put)
     app.router.add_post("/api/stock/{stock_id}/swap", h_stock_swap)
     app.router.add_post("/api/stock/{stock_id}/turn", h_stock_turn)
+    app.router.add_post("/api/stock/{stock_id}/offset", h_stock_offset)
     app.router.add_post("/api/stock/{stock_id}/restore", h_stock_restore)
     add("DELETE", "/api/stock/{stock_id}", h_stock_delete)
 

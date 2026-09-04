@@ -782,3 +782,147 @@ def raster_lines(rendered: Rendered, bytes_per_line: int) -> list[bytes]:
     inverted = bytes(255 - b for b in raw)
     return [inverted[row * stride:(row + 1) * stride][:bytes_per_line]
             for row in range(image.height)]
+
+
+# ---------------------------------------------------------------------------
+# Where the printing starts
+# ---------------------------------------------------------------------------
+#
+# **The manual DOES document a feed-direction print-position command, and it
+# is deliberately not what this uses.** `<esc> f 1 n` Skip "n" Lines: *"use
+# this command to force the LabelWriter printer to advance the number of
+# lines corresponding to the variable n (0 to 255 lines). This command is put
+# into the data buffer along with the print data so that it will take effect
+# at the appropriate point in the data stream."* That is unambiguous, it is
+# in the printer's own steps, and it is the right mechanism for exactly half
+# of this problem. It cannot express the other half, and the other half is
+# the one this feature exists for.
+#
+# A skip only ever moves paper FORWARD. The measured fault is a printer that
+# begins laying ink 4.7mm AFTER the leading edge, so the correction has to
+# move the artwork toward that edge — a negative skip, which is not a thing.
+# Using `ESC f` for a positive offset and a raster shift for a negative one
+# would give one control two behaviours at the sheet's edge as well: a skip
+# pushes the tail of the raster past the die cut and into the gap, where the
+# printer explicitly does not check ("the printer does not check for
+# inter-label gap when printing. It is the responsibility of the host
+# computer to avoid overrunning the label area"), while a raster shift keeps
+# the sheet exactly one label long, so ink pushed off it is ink this add-on
+# can SEE it is about to lose and say so. A control whose two directions
+# report differently is a control nobody can read. And a skip is charged
+# against the `ESC L` search budget on top of the print lines, which is the
+# arithmetic that took three releases to get right once already.
+#
+# The across axis has the same shape of answer and the same conclusion.
+# `ESC B n` (dot tab) is the documented mechanism and it is in whole BYTES of
+# eight dots — 0.68mm a step, against a misregistration measured in tenths of
+# a millimetre — it is likewise one-directional, and this add-on already
+# sends `ESC B 0` in every preamble for an unrelated and more important
+# reason (to clear whatever another driver left in the printer). Making the
+# same byte carry a per-roll correction would mean the preamble could no
+# longer state a known starting point, which is the whole reason it is sent.
+#
+# So: one mechanism, both axes, both directions, in the raster. The shift is
+# in whole dots and it is rounded exactly ONCE, by `mm_to_dots` at the print
+# resolution, which is the only place millimetres become dots in this file.
+
+# Nothing here is applied to the label a person is DESIGNING. The offset is a
+# correction to where the printer puts the sheet, not a change to the label,
+# and a design canvas that drew it would be showing somebody their printer's
+# registration as if it were their own layout.
+
+
+def _ink_box(image):
+    """The bounding box of the ink, or None for a blank sheet.
+
+    `getbbox` finds the non-zero pixels, and in mode "1" the set bit is
+    white — the paper. So the plane is inverted first, which is the same
+    flip `raster_lines` makes for the same reason and in the same direction:
+    everything above the wire thinks in ink.
+    """
+    return image.convert("L").point(lambda v: 255 - v).getbbox()
+
+
+def offset_raster(rendered: Rendered, *, across_mm: float = 0.0,
+                  feed_mm: float = 0.0) -> tuple[Rendered, str | None]:
+    """The rendered sheet, moved to where this roll needs it printed.
+
+    Returns the sheet to send and, when the shift pushes real INK off the
+    label, one sentence saying so. Not when the shift is merely non-zero: a
+    correction of a few millimetres normally slides blank margin off one
+    edge and blank margin on at the other, which costs nothing, and a note on
+    every print is a note nobody reads by the second roll. So the test is
+    whether ink was lost, measured on the ink.
+
+    `across_mm` is positive toward the right-hand edge as the label comes out
+    of the printer, `feed_mm` positive away from the edge that comes out
+    first. The sheet keeps its exact size: what moves off one edge is gone,
+    and what moves on at the other is paper.
+    """
+    dpi = rendered.dpi
+    across_dots = mm_to_dots(across_mm, dpi)
+    feed_dots = mm_to_dots(feed_mm, dpi)
+    if not across_dots and not feed_dots:
+        return rendered, None
+
+    image = rendered.image
+    width, height = image.width, image.height
+    box = _ink_box(image)
+
+    sheet = _new(width, height, 255)
+    # A negative paste origin is a crop, which is exactly the semantics
+    # wanted here: the sheet is one label and stays one label.
+    sheet.paste(image.convert("L"), (across_dots, feed_dots))
+    moved = Rendered(
+        image=sheet.point(lambda v: 0 if v < 128 else 255).convert("1"),
+        across_dots=rendered.across_dots,
+        feed_dots=rendered.feed_dots,
+        dpi=dpi,
+        # The SAME list objects, not copies. Everything that renders a label
+        # reads `rendered.notes` after the print has gone out, so a note
+        # added to either object has to be visible from both — the
+        # alternative is threading a second notes list through five handlers
+        # so that one of them can forget it.
+        notes=rendered.notes,
+        problems=rendered.problems,
+    )
+    if box is None:
+        return moved, None
+
+    x0, y0, x1, y1 = box
+    lost = {
+        "the leading edge": max(0, -(y0 + feed_dots)),
+        "the trailing edge": max(0, (y1 + feed_dots) - height),
+        "the left edge": max(0, -(x0 + across_dots)),
+        "the right edge": max(0, (x1 + across_dots) - width),
+    }
+    clipped = [(name, dots) for name, dots in lost.items() if dots > 0]
+    if not clipped:
+        return moved, None
+
+    where = " and ".join(f"{dots / dpi * 25.4:.1f}mm past {name}"
+                         for name, dots in clipped)
+    return moved, (
+        f"This roll’s print offset moves the printing "
+        f"{_offset_words(across_mm, feed_mm)}, so the artwork now runs "
+        f"{where} — that much of it did not print. Change the offset on "
+        f"the Printer tab, under “Where the printing starts”, or "
+        f"move the artwork in from that edge.")
+
+
+def _offset_words(across_mm: float, feed_mm: float) -> str:
+    """The offset as a direction and a distance, never as a signed number.
+
+    Nobody knows which way "+" goes on a label printer, which is the whole
+    reason this reads as words: a note saying "offset -6.4mm" is a note that
+    sends somebody to work out the convention before they can act on it.
+    """
+    parts = []
+    if feed_mm:
+        parts.append(f"{abs(feed_mm):.1f}mm "
+                     + ("further along the roll" if feed_mm > 0
+                        else "back toward the edge that comes out first"))
+    if across_mm:
+        parts.append(f"{abs(across_mm):.1f}mm "
+                     + ("to the right" if across_mm > 0 else "to the left"))
+    return " and ".join(parts) or "not at all"
