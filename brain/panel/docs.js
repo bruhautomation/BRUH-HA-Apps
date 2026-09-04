@@ -267,6 +267,21 @@ thermometers drift together that is the weather rather than a device, so the
 whole class stands down — what you get is the one room doing something the
 others are not.
 
+## What is normally open
+
+A door being open is not wrong — it is wrong at half past eleven in a home that
+always has it shut then, and nothing at all in one that leaves it open all
+summer. brAIn measures which house yours is: for every door, window, lock and
+cover, how much of each hour of the week it is normally open, from a month of
+your own history. Time-weighted, so a door open ten minutes and one open ten
+hours are not the same thing.
+
+Then **at your own bedtime** it files one finding if something is open that
+usually is not — one row, not one per door, because it is a single thing to do
+before bed. It is deliberately quiet in the afternoon, about an hour it has
+never watched, about a door that is usually open then, and when half the house
+is open at once (that is airing out, not a door left ajar).
+
 ## When your house gets up
 
 Everything scheduled used to happen at a time somebody typed in, which is a

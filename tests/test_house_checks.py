@@ -55,7 +55,8 @@ def house(**over) -> dict:
         "available": {k: True for k in (
             "states", "registry", "services", "automations", "traces",
             "stats", "battery_stats", "dashboards", "supervisor",
-            "recorder", "zha_devices", "actions", "baselines")},
+            "recorder", "zha_devices", "actions", "baselines",
+                          "closures")},
         "errors": {},
         "blueprints_dir": "",
         "states": {
@@ -137,6 +138,18 @@ def house(**over) -> dict:
                      "db_path": "/config/home-assistant_v2.db"},
         "zha_devices": [{"name": "Back Door sensor", "ieee": "00:11",
                          "available": True, "last_seen": iso(1800)}],
+        # A month of watching, measured. The front door is shut at night
+        # and open a little in the afternoon, which is an ordinary house
+        # and is what `evening.left_open` has to stay silent about.
+        "closures": {
+            "built_at": int(NOW - DAY), "tz": "UTC", "days": 28,
+            "entities": {"binary_sensor.front_door": {
+                "name": "Front door", "changes": 300, "overall": 0.02,
+                "buckets": {str(h): {"open": 0.0 if h % 24 >= 22 or h % 24 < 7
+                                     else 0.08, "hours": 4.0}
+                            for h in range(168)},
+            }},
+        },
         # A month of readings, measured. `sensor.hall_temp` sits around 20
         # with an ordinary wobble, so nothing about it is unusual — which
         # is what `base.unusual` has to stay silent about.
