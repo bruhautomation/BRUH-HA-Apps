@@ -611,6 +611,58 @@ exactly the same power. So the chore ends the way every finding ends: tick it
 off in the To-do app, press the button on the notification, or press it on
 the Findings tab. It also clears itself if the machine runs again.
 
+### It knows how your house holds its heat
+
+Every climate question people actually want answered is the same two numbers
+about a room, and until now brAIn held neither. *Start the heating so the
+bedroom is warm when we get up. Is a window open, or is it just cold? Will
+the pipes freeze by morning? What would a 17°C setback cost?* Each of those is
+a threshold somebody guesses at, and a threshold that is right in one house is
+wrong in the next — a stone cottage and a new flat lose heat an order of
+magnitude apart, and so do two rooms of one house.
+
+So brAIn measures them, per room, overnight, from a month of hourly history:
+
+- **How fast the room falls towards outside.** Its reciprocal is the number
+  people have an intuition for — *this room holds its heat for about eight
+  hours.*
+- **How fast anything puts it back**, in degrees per hour, from the hours the
+  room was seen to be gaining.
+
+You need one outdoor temperature sensor and at least one indoor one in an
+area. Without an outdoor reference there is no model at all and ⚙ Diagnostics
+says so in as many words — every number here is a *difference* from outside,
+so there is nothing to measure a room against.
+
+**The measurement is taken at night on purpose.** A south-facing room warms
+with the heating off, and a fit that includes an afternoon reports a room that
+gains heat as it gets colder outside. Deep night has no sun and, in most
+houses, no schedule.
+
+Two findings come out of it, and both are floored hard because both are
+extrapolations from a fit.
+
+**A room that never reaches the temperature it is set to.** Nothing errors:
+the thermostat calls, the valve opens, the boiler runs, and the room sits two
+degrees under its setpoint all winter. brAIn will only say so when the
+arithmetic *and* the evidence agree — the room must never once have been seen
+at the temperature it is asked for, over a month of hours. That second half is
+what keeps it off healthy houses: a thermostat that switches off at its
+setpoint never lets a room show what it could have done, so the measured
+ceiling of a well-heated room understates it. It also says nothing at all if
+the month held no cold night, because a January answer cannot be extrapolated
+out of an August.
+
+**A room that empties much faster than the rest of the house** — a draught, a
+loft hatch, an open flue. It needs four measured rooms before it will compare
+one against the others, and the room has to be fast in absolute terms too:
+twice the loss rate of a very well insulated house is still a good room. If
+half the house fires at once it says nothing, because that is the measurement
+and not a room.
+
+Neither is ever urgent. A room that has been two degrees short all winter is
+not two degrees shorter at three in the morning, so quiet hours hold both.
+
 ### Answering without opening anything
 
 Two places show brAIn's work list, and both of them can end an item.

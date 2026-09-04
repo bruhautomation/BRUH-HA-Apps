@@ -136,6 +136,7 @@ import run_sources
 import schedule_store
 import settings_store
 import terminal_proxy
+import thermal
 import undo_store
 import usage_store
 import user_categories
@@ -2761,6 +2762,18 @@ async def build_baselines(reason: str = "schedule") -> dict:
             # which is more rows per entity than the baselines read, and
             # is bounded by asking only power sensors and only ten days.
             machines = await appliances.build(session, by_id, started)
+            # And the fourth. This one needs the registries as well as the
+            # states — a room has to be nameable before it is worth
+            # measuring, and "which thermometer is outdoors" is largely
+            # "the one in no area at all".
+            areas, devices, ents = await ha_data._ws_commands(session, [
+                {"type": "config/area_registry/list"},
+                {"type": "config/device_registry/list"},
+                {"type": "config/entity_registry/list"}])
+            rooms = await thermal.build(
+                session, by_id,
+                {"areas": areas or [], "devices": devices or [],
+                 "entities": ents or []}, started)
         summary = {"reason": reason, "started_at": int(started),
                    "finished_at": int(time.time()),
                    "duration_s": round(time.time() - started, 1),
@@ -2768,6 +2781,7 @@ async def build_baselines(reason: str = "schedule") -> dict:
                    "asked": payload.get("asked", 0),
                    "closures": len(shut.get("entities") or {}),
                    "appliances": len(machines.get("entities") or {}),
+                   "rooms": len(rooms.get("rooms") or {}),
                    "tz": payload.get("tz", ""), "error": ""}
         journal.record("baselines", "ok", duration_s=summary["duration_s"],
                        extra={"measured": summary["measured"],
@@ -2777,7 +2791,7 @@ async def build_baselines(reason: str = "schedule") -> dict:
         journal.record("baselines", "error", error=str(exc))
         summary = {"reason": reason, "started_at": int(started),
                    "finished_at": int(time.time()), "measured": 0, "asked": 0,
-                   "closures": 0, "appliances": 0, "tz": "",
+                   "closures": 0, "appliances": 0, "rooms": 0, "tz": "",
                    "error": str(exc)[:300]}
     finally:
         BASELINE_STATE["running"] = False
@@ -3093,6 +3107,7 @@ def _diagnostics_payload() -> dict:
         usage = {}
     _baseline_store = baselines.load()
     _closure_store = closures.load()
+    _thermal_store = thermal.load()
     payload = {
         "generated_at": int(time.time()),
         "versions": {
@@ -3166,6 +3181,20 @@ def _diagnostics_payload() -> dict:
         # week" and "nothing here has a power sensor" look identical
         # from every other surface.
         "appliances": _appliance_summary(),
+        # Same rule again, plus the one field that is not a count: with
+        # no outdoor sensor there is no thermal model at all, and that is
+        # a sentence rather than a zero — "no climate findings" and "no
+        # room could be measured against anything" look identical from
+        # every other surface, and only one of them is a house that is
+        # fine.
+        "thermal": {
+            "built_at": _thermal_store.get("built_at", 0),
+            "measured": len(_thermal_store.get("rooms") or {}),
+            "asked": _thermal_store.get("asked", 0),
+            "outdoor": _thermal_store.get("outdoor", ""),
+            "coldest": _thermal_store.get("coldest"),
+            "reason": _thermal_store.get("reason", ""),
+        },
         "daemons": _daemon_rollcall(),
         "usage": {k: usage.get(k) for k in ("source", "used_percent", "limits")},
     }

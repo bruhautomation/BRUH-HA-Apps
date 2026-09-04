@@ -2,6 +2,113 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.40.0
+
+### Added
+
+- **A thermal model of the house** (`panel/thermal.py`), roadmap item **#11**'s
+  larger half. Every climate capability people actually want — start the
+  heating so the bedroom is warm *when we get up*, tell me a window is open
+  rather than that it is cold, warn me the pipes will freeze by morning, say
+  what a 17°C setback would cost — is the same two numbers about a room, and
+  brAIn held neither. Without them each of those is a threshold somebody
+  guesses at, and a threshold that is right in one house is wrong in the next:
+  a stone cottage and a new flat lose heat an order of magnitude apart, and so
+  do two rooms of one house.
+
+  The two numbers are Newton's. **`k`**, the loss coefficient, is how fast a
+  room falls towards outside; its reciprocal is the time constant, which is
+  the number people have an intuition for ("this room holds its heat for about
+  eight hours"). **`h`**, the gain, is how fast anything puts the heat back.
+  Both are measured per room, nightly, from a month of hourly statistics,
+  against one outdoor reference — and the reference brAIn chose is recorded in
+  the payload, because every `k` in the house is measured against that one
+  choice and a reference nobody can check is a reference nobody can correct.
+
+  Five rules keep it honest, and each answers a way it would otherwise be
+  confidently wrong:
+
+  - **The sun is the confounder, and night is the gate.** A south-facing room
+    warms with the heating off, so a fit that includes an afternoon reports a
+    room that gains heat as it gets colder outside. `k` is measured only in
+    the deep-night hours — the same shape of gate as the `state_class` one on
+    `baselines.trend`: a measurement that would be wrong in every house
+    belongs in the build, not in the check that reads it.
+  - **A fit is not a measurement until it is graded.** A month whose outdoor
+    temperature barely moved has no leverage — every point sits at the same x
+    and the line through them is whatever the noise says, which looks exactly
+    like a real answer. The delta has to span something, the fit is graded
+    against the scatter about its own line, and a slope that does not clear
+    that scatter is no slope.
+  - **A number outside physics is not a room.** A time constant of twenty
+    minutes is a thermometer in a draught and one of a fortnight is a
+    thermometer inside a wall; both are reported unmeasured rather than
+    measured badly.
+  - **Indoors and outdoors have to agree about what a degree is.** `k` is
+    unit-free only while both halves of the difference are in the same
+    degrees, so a Fahrenheit reference against a Celsius room is a loss rate
+    wrong by 1.8 with nothing downstream able to tell. That room gets no
+    model.
+  - **A freezer carries `device_class: temperature` too**, and so does a hot
+    water tank. A room is a reading that spends the month inside a band people
+    live in.
+
+  And, as with `baselines.py` and `closures.py`, **nothing here decides
+  anything**. It answers how fast a room loses heat, how fast it can gain, and
+  what those imply for a given night; whether any of that is worth telling
+  somebody is the check's.
+
+- **Two findings that read it** (`panel/checks/thermal.py`). Both are
+  invisible from any single state, which is why nothing could report them
+  before.
+
+  - **`climate.underheated`** — a room asked for a temperature it never
+    reaches. Nothing errors: the thermostat calls, the valve opens, the boiler
+    runs, and the room sits two degrees under its setpoint all winter. It
+    requires the arithmetic **and** the evidence — the room must never once
+    have been seen at the temperature it is asked for, over a month of hours —
+    because a thermostat that switches off at its setpoint never lets a room
+    show what it could have done, so a well-heated room's measured ceiling
+    understates it and a check reading the ceiling alone would fire on the
+    healthiest houses first. It also stands down entirely when the month held
+    no cold night, rather than extrapolating a January answer out of an
+    August.
+  - **`climate.heat_loss`** — a room that empties much faster than the rest of
+    the house. It needs four measured rooms before one can be unusual against
+    the others, and the room has to be fast in absolute terms as well as
+    relatively, because twice the loss rate of a very well insulated house is
+    still a good room. Past two rows it says nothing, because a cold snap or a
+    purged recorder moves every room at once.
+
+  The two share `underheated_rooms`, so a draughty room that also never
+  reaches its setpoint is one card with one fix rather than two — the same
+  arrangement `dev.unavailable` and `dev.zwave_dead` keep.
+
+- Both ride at `whenever` urgency (`check:climate.` in
+  `notify_router.PRODUCER_URGENCY`): a room that has been two degrees short all
+  winter is not two degrees shorter at three in the morning, so quiet hours may
+  hold them.
+
+- `⚙ Diagnostics` and `/api/diagnostics` carry the store's summary, including
+  the one field that is not a count: with no outdoor sensor there is no model
+  at all, and that is a **sentence** rather than a zero. "No climate findings"
+  and "no room could be measured against anything" look identical from every
+  other surface, and only one of them is a house that is fine.
+
+### Tests
+
+- `tests/test_thermal.py` (57 cases) builds rooms whose physics is *known* and
+  checks the number that comes back is the one that went in — 0.10 per hour
+  recovered as 0.10, a 1.5°C/h gain as 1.5 — rather than asserting that a
+  number came back. The night gate, the evidence half of `climate.underheated`
+  and the shared standing-down are each verified against the failure they
+  exist for: removing the gate moves the recovered loss rate off the physics,
+  and removing the evidence makes the check fire on a room that has been at
+  its setpoint all month.
+- The clean fixture in `tests/test_house_checks.py` gained a four-room thermal
+  store and a thermostat, so both checks are asserted silent on a healthy
+  house before they are asserted to find a planted one.
+
 ## 1.39.0
 
 ### Added

@@ -56,7 +56,7 @@ def house(**over) -> dict:
             "states", "registry", "services", "automations", "traces",
             "stats", "battery_stats", "dashboards", "supervisor",
             "recorder", "zha_devices", "actions", "baselines",
-                          "closures", "appliances")},
+                          "closures", "appliances", "thermal")},
         "errors": {},
         "blueprints_dir": "",
         "states": {
@@ -82,6 +82,12 @@ def house(**over) -> dict:
                                "friendly_name": "Hall Temperature",
                                "state_class": "measurement"},
                 "last_updated": iso(60), "last_changed": iso(60)},
+            "climate.hall": {
+                "state": "heat",
+                "attributes": {"friendly_name": "Hall thermostat",
+                               "temperature": 21.0,
+                               "current_temperature": 21.4},
+                "last_updated": iso(300), "last_changed": iso(300)},
         },
         "entities": [
             {"entity_id": "automation.morning", "platform": "automation",
@@ -91,6 +97,8 @@ def house(**over) -> dict:
             {"entity_id": "sensor.back_door_battery", "platform": "zha",
              "device_id": "dev-door-1"},
             {"entity_id": "sensor.hall_temp", "platform": "zha",
+             "device_id": "dev-temp-1", "area_id": "hall"},
+            {"entity_id": "climate.hall", "platform": "zha",
              "device_id": "dev-temp-1", "area_id": "hall"},
         ],
         "devices": [
@@ -179,6 +187,37 @@ def house(**over) -> dict:
                 "buckets": {str(h): {"median": 20.0, "spread": 0.5, "n": 4}
                             for h in range(168)},
             }},
+        },
+        # A month of nights, measured. Four rooms that hold their heat
+        # about equally well, and a hall that has been warmer than the
+        # 21 it is asked for — so `climate.underheated` has the evidence
+        # to stand down on and `climate.heat_loss` has nothing unusual to
+        # compare against, which is what an ordinary house looks like.
+        "thermal": {
+            "built_at": int(NOW - DAY), "tz": "UTC", "days": 28,
+            "outdoor": "sensor.garden_temp", "unit": "°C",
+            "coldest": 1.0, "asked": 4,
+            "rooms": {
+                "sensor.hall_temp": {
+                    "name": "Hall Temperature", "area": "Hall", "unit": "°C",
+                    "k": 0.08, "tau_h": 12.5, "gain": 1.8, "warmest": 22.4,
+                    "coolest": 17.9, "hours": 660, "points": 100, "fit": 9.0},
+                "sensor.lounge_temp": {
+                    "name": "Lounge Temperature", "area": "Lounge",
+                    "unit": "°C", "k": 0.075, "tau_h": 13.3, "gain": 2.0,
+                    "warmest": 22.8, "coolest": 18.4, "hours": 660,
+                    "points": 100, "fit": 8.0},
+                "sensor.kitchen_temp": {
+                    "name": "Kitchen Temperature", "area": "Kitchen",
+                    "unit": "°C", "k": 0.09, "tau_h": 11.1, "gain": 2.2,
+                    "warmest": 23.1, "coolest": 18.0, "hours": 660,
+                    "points": 100, "fit": 7.0},
+                "sensor.study_temp": {
+                    "name": "Study Temperature", "area": "Study",
+                    "unit": "°C", "k": 0.085, "tau_h": 11.8, "gain": 1.9,
+                    "warmest": 22.0, "coolest": 17.5, "hours": 660,
+                    "points": 100, "fit": 8.5},
+            },
         },
         # A day of the house behaving: an automation acted, a person acted,
         # and nobody undid anybody.

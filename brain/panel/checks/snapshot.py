@@ -38,6 +38,10 @@ and so cannot clear anything):
                     as `panel/baselines.py` last measured it. Unavailable
                     until the first nightly pass has run, which is a real
                     state on a fresh install and not an unusual house
+    thermal        how fast each room loses heat and how fast it gains it,
+                    as `panel/thermal.py` last measured it. Unavailable
+                    with no outdoor temperature sensor, which is not a
+                    fault: every number in it is a difference from outside
     actions        {actions, overrides, counts} — the last LOGBOOK_HOURS of
                     the logbook, with every state change filed under what
                     caused it. Unavailable when the logbook integration is
@@ -204,6 +208,7 @@ async def collect(now: float | None = None) -> dict:
     import baselines
     import closures
     import ha_data
+    import thermal
 
     now = time.time() if now is None else now
     snap: dict[str, Any] = {"now": now, "available": {}, "errors": {},
@@ -365,6 +370,13 @@ async def collect(now: float | None = None) -> dict:
           "" if snap["baselines"].get("entities") else
           "brAIn has not measured what is normal here yet — the first "
           "pass runs overnight")
+
+    snap["thermal"] = thermal.load()
+    _mark("thermal", bool(snap["thermal"].get("rooms")),
+          "" if snap["thermal"].get("rooms") else
+          (snap["thermal"].get("reason")
+           or "brAIn has not measured how this house holds its heat yet — "
+              "the first pass runs overnight"))
 
     recorder = load_recorder()
     snap["recorder"] = recorder or {}

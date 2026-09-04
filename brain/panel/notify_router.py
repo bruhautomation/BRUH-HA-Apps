@@ -72,6 +72,10 @@ PRODUCER_URGENCY = {
     # `whenever` is what lets quiet hours hold it, which is the whole
     # reason urgency is declared per producer.
     "check:chore.waiting": "whenever",
+    # A month of nights is what measured these, and the answer is about
+    # the building rather than about today: a room that has been two
+    # degrees short all winter is not two degrees shorter at 3am.
+    "check:climate.": "whenever",
     # A trend, a forecast, a tidy-up. None of these change overnight.
     "check:forecast.": "whenever",
     "check:base.": "whenever",
