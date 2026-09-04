@@ -107,6 +107,7 @@ from aiohttp.abc import AbstractAccessLogger
 
 import actions
 import addon_options
+import appliances
 import atomic_write
 import baselines
 import brief
@@ -1244,6 +1245,26 @@ async def _requests_loop():
         except Exception as exc:  # noqa: BLE001 — the loop outlives a pass
             log.warning("finding request pass failed: %s", exc)
         await asyncio.sleep(REQUESTS_POLL_S)
+
+
+def _appliance_summary() -> dict:
+    """How many machines have a measured shape, and how many are chores."""
+    try:
+        store = appliances.load()
+    except Exception as exc:  # noqa: BLE001 — a dev checkout has no store
+        return {"error": str(exc)[:120]}
+    entities = store.get("entities") or {}
+    named = sum(1 for shape in entities.values()
+                if checks.chores.kind_of(shape.get("name") or ""))
+    return {
+        "built_at": store.get("built_at", 0),
+        "measured": len(entities),
+        "asked": store.get("asked", 0),
+        # The gap between the two is the one worth reading: nine
+        # profiled sensors and no chores means nothing here is named
+        # like a machine somebody has to empty.
+        "chore_capable": named,
+    }
 
 
 def _requests_diagnostics() -> dict:
@@ -2733,12 +2754,20 @@ async def build_baselines(reason: str = "schedule") -> dict:
             # house over the same month — and it has already paid for the
             # one /states fetch both halves need.
             shut = await closures.build(session, by_id, started)
+            # And the third: one /states fetch, three measurements of the
+            # same house over the same nights. This one reads FIVE-MINUTE
+            # statistics rather than hourly ones, because a dishwasher's
+            # dry phase is twenty minutes and an hour cannot see it —
+            # which is more rows per entity than the baselines read, and
+            # is bounded by asking only power sensors and only ten days.
+            machines = await appliances.build(session, by_id, started)
         summary = {"reason": reason, "started_at": int(started),
                    "finished_at": int(time.time()),
                    "duration_s": round(time.time() - started, 1),
                    "measured": len(payload.get("entities") or {}),
                    "asked": payload.get("asked", 0),
                    "closures": len(shut.get("entities") or {}),
+                   "appliances": len(machines.get("entities") or {}),
                    "tz": payload.get("tz", ""), "error": ""}
         journal.record("baselines", "ok", duration_s=summary["duration_s"],
                        extra={"measured": summary["measured"],
@@ -2748,7 +2777,8 @@ async def build_baselines(reason: str = "schedule") -> dict:
         journal.record("baselines", "error", error=str(exc))
         summary = {"reason": reason, "started_at": int(started),
                    "finished_at": int(time.time()), "measured": 0, "asked": 0,
-                   "closures": 0, "tz": "", "error": str(exc)[:300]}
+                   "closures": 0, "appliances": 0, "tz": "",
+                   "error": str(exc)[:300]}
     finally:
         BASELINE_STATE["running"] = False
     BASELINE_STATE["last"] = summary
@@ -2851,6 +2881,28 @@ async def h_weekly_run(request: web.Request) -> web.Response:
     return web.json_response({
         "sent": bool(body), "text": body,
         "error": WEEKLY_STATE["last_error"],
+    })
+
+
+async def h_appliances(request: web.Request) -> web.Response:
+    """What each machine's own history says about it.
+
+    The measurement is universal — every power sensor with an
+    appliance's shape gets a profile — while the chore is narrow, so
+    this is where somebody checks whether their washing machine was
+    measured at all before wondering why no chore ever arrives.
+    """
+    store = await asyncio.to_thread(appliances.load)
+    rows = []
+    for eid, shape in sorted((store.get("entities") or {}).items()):
+        rows.append({"entity_id": eid, **shape,
+                     "chore_kind": checks.chores.kind_of(
+                         shape.get("name") or "")})
+    return web.json_response({
+        "built_at": store.get("built_at", 0),
+        "asked": store.get("asked", 0),
+        "days": store.get("days", appliances.HISTORY_DAYS),
+        "appliances": rows,
     })
 
 
@@ -3109,6 +3161,11 @@ def _diagnostics_payload() -> dict:
             "measured": len(_closure_store.get("entities") or {}),
             "asked": _closure_store.get("asked", 0),
         },
+        # Same rule: the shapes, not the watts. How many machines have a
+        # profile is the question a bug report needs — "no chores this
+        # week" and "nothing here has a power sensor" look identical
+        # from every other surface.
+        "appliances": _appliance_summary(),
         "daemons": _daemon_rollcall(),
         "usage": {k: usage.get(k) for k in ("source", "used_percent", "limits")},
     }
@@ -4929,6 +4986,7 @@ def make_app() -> web.Application:
     app.router.add_get("/api/diagnostics", h_diagnostics)
     app.router.add_get("/api/baselines", h_baselines)
     app.router.add_post("/api/baselines/run", h_baselines_run)
+    app.router.add_get("/api/appliances", h_appliances)
     app.router.add_get("/api/weekly", h_weekly)
     app.router.add_post("/api/weekly/run", h_weekly_run)
     app.router.add_get("/api/activity", h_activity)

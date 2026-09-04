@@ -70,6 +70,10 @@ SUPERVISOR_API = os.environ.get("BRAIN_SUPERVISOR_API", "http://supervisor")
 RECORDER_DB = os.environ.get(
     "BRAIN_RECORDER_DB", os.path.join(CONFIG_DIR, "home-assistant_v2.db"))
 STATS_DAYS = 7
+# How much of an appliance's recent draw a checks pass fetches. Long
+# enough that a wash finished before breakfast is still visible at
+# lunchtime, short enough to be a handful of rows per sensor.
+APPLIANCE_HOURS = 14
 BATTERY_DAYS = 60
 # Statistics are one WebSocket call per batch; keep a batch to what the
 # recorder answers comfortably on a Pi.
@@ -196,6 +200,7 @@ async def collect(now: float | None = None) -> dict:
     import aiohttp
 
     import actions
+    import appliances
     import baselines
     import closures
     import ha_data
@@ -306,6 +311,31 @@ async def collect(now: float | None = None) -> dict:
         _mark("supervisor", sup.get("backups") is not None
               and sup.get("addons") is not None,
               sup.get("error") or "")
+
+        # The appliance shapes are read from the nightly store, but what
+        # each one is doing *now* is a live question, so this is the one
+        # measurement the checks pass fetches for itself — and it is
+        # cheap by construction: a handful of profiled sensors over a few
+        # hours, never the whole house over a month.
+        try:
+            shapes = appliances.load()
+            live = {}
+            ids = sorted(shapes.get("entities") or {})
+            if ids:
+                start = dt.datetime.fromtimestamp(
+                    now - APPLIANCE_HOURS * 3600, tz=dt.timezone.utc)
+                live = await appliances.fetch(session, ids, start)
+            snap["appliances"] = {"entities": shapes.get("entities") or {},
+                                  "built_at": shapes.get("built_at", 0),
+                                  "recent": live}
+            _mark("appliances", bool(ids),
+                  "" if ids else
+                  "brAIn has not measured any appliances here yet — the "
+                  "first pass runs overnight, and it needs a power sensor "
+                  "on one")
+        except Exception as exc:  # noqa: BLE001
+            snap["appliances"] = {"entities": {}, "built_at": 0, "recent": {}}
+            _mark("appliances", False, str(exc))
 
         try:
             mined = await actions.collect(
