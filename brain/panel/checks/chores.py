@@ -36,11 +36,7 @@ a person's, and there is one press for it.
 """
 from __future__ import annotations
 
-import logging
-
 from ._util import House
-
-log = logging.getLogger("brain.checks.chores")
 
 # The three machines that finish and then wait for somebody. Matched
 # against the entity's own name, lower-cased; see the module docstring
