@@ -2,6 +2,87 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.38.0
+
+### Added
+
+- **brAIn's work list, in Home Assistant's own To-do app** (`todo.brain`).
+  The Findings tab is behind ingress, so a critical finding was a panel
+  somebody had to open; `sensor.brain_open_findings` answered *how much* and
+  nothing answered *what* anywhere a person already looks. **One list, two
+  views** — not a copy: every item is derived from the mirror the add-on
+  already publishes, nothing about a finding is stored on the Home Assistant
+  side, and the item's uid is the finding's own id.
+
+  Three decisions, each of them a refusal:
+
+  - **Adding an item is not offered.** An item created there would have
+    nothing behind it and would vanish on the next poll, and a list that
+    silently deletes what you put on it is worse than one that does not
+    offer to take it — so `CREATE_TODO_ITEM` is absent and the app hides the
+    button.
+  - **Completing is "I've fixed it" and deleting is "not a problem here".**
+    The tab's own two endings and no new vocabulary; each writes the memory
+    line it always did.
+  - **No due dates yet, deliberately.** A forecast's date lives in the prose
+    of its `detail` ("about 9 days left"), and a date parsed out of a
+    sentence is a guess with a calendar entry attached to it. The forecast
+    checks have to carry a real one first.
+
+  The platform is looked up rather than named (`getattr(Platform, "TODO")`):
+  `todo` arrived in core 2023.11 and this integration's floor is 2023.6, so
+  on an older core the list is simply absent — a missing platform is a
+  missing entity, where naming one the core has never heard of fails the
+  whole entry.
+
+- **Findings on a phone arrive with buttons** — *I've fixed it*, *Not a
+  problem*, *Later* — and pressing one ends the finding without opening
+  anything. Two gates, and both of them are about not breaking something
+  that works:
+
+  - **Only the companion app.** Every other notifier takes `data` and means
+    something different by it or nothing at all, and a payload built on a
+    guess is how a working notification stops arriving. The gate is the one
+    signal that is not a guess: a `mobile_app_*` service. A notify *group*
+    containing mobile apps is deliberately not detected — it cannot be, from
+    a name.
+  - **Only a message about exactly one finding.** A digest is several
+    problems in one notification and a button on it would have to guess
+    which, so a held batch arrives as it always did.
+
+- **One route back into the store, for both** (`panel/finding_requests.py` +
+  `custom_components/brain/requests.py`). The panel owns the findings store
+  and Home Assistant cannot reach it — 8099 is `null` in `ports:` on purpose
+  and stays that way — so what crosses the gap is a **request**, not a
+  write: a small JSON file on the shared volume, picked up within seconds
+  and applied **through the same code the tab's own buttons use**
+  (`_end_finding`, extracted for exactly this). A second implementation
+  would be the same answer teaching brAIn two different things depending on
+  where it was given.
+
+  Four rules, and every one of them is about the two sides being a few
+  seconds apart rather than about anything going wrong. **A request naming a
+  finding that is gone is an ordinary race**, not an error and not a reason
+  to retry or resurrect. **Applying twice is harmless** — settling an
+  already-settled finding changes nothing — which is why the delete being
+  able to fail needs no ledger of applied ids. **Every field is data from
+  another process**: the id is an int or the request is dropped, the verb is
+  one of a closed set, the note is capped. And **the queue is bounded**, so
+  an add-on that was off for a week does not spend its first minute on a
+  directory nothing drained.
+
+- ⚙ **Diagnostics** carries what has come in from outside the panel and what
+  is stuck: "nothing has been ticked this week" and "the loop died on
+  Tuesday holding four answers" look identical from every other surface.
+
+### Changed
+
+- The findings mirror now carries `detail` and `fix`, cut harder than the
+  store keeps them (240 characters each). A to-do item's description is read
+  on a phone before deciding whether to get up, and it wants the evidence
+  and the suggested fix — but fifty rows of the store's full 600 would be
+  60 KB of mirror for two paragraphs nobody scrolls to the end of.
+
 ## 1.37.0
 
 ### Added

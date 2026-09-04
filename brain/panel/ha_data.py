@@ -108,21 +108,30 @@ async def call_service(service: str, data: dict, timeout: int = 15) -> Any:
 
 
 async def send_notification(service: str, title: str, message: str,
-                            timeout: int = 15) -> None:
+                            timeout: int = 15, data: dict | None = None) -> None:
     """Deliver one notification through a notify.<service> HA service.
 
     ``service`` may arrive with or without the ``notify.`` prefix — people
     paste both, and the insight-job option on the integration side already
     tolerates both. Raises on failure; the caller decides whether a missed
     notification is worth a log line or a retry.
+
+    ``data`` is the notifier-specific payload (the companion app's
+    ``actions``, and nothing else so far). It is **omitted entirely when
+    empty** rather than sent as ``{}``: several notifiers treat the key's
+    presence as a request to be parsed, and the caller decides whether a
+    given service can take one — see ``notify_router.can_answer``.
     """
     service = str(service or "").strip().removeprefix("notify.")
     if not service:
         raise ValueError("no notify service given")
+    payload: dict = {"title": title, "message": message}
+    if data:
+        payload["data"] = data
     async with aiohttp.ClientSession() as session:
         async with session.post(
             f"{CORE_API}/services/notify/{service}", headers=_headers(),
-            json={"title": title, "message": message},
+            json=payload,
             timeout=aiohttp.ClientTimeout(total=timeout),
         ) as resp:
             resp.raise_for_status()

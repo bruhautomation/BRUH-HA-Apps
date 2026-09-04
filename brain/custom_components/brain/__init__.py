@@ -47,6 +47,8 @@ except ImportError:
 from .bridge import ClaudeBridge
 from .findings import FindingsWatcher
 from .learning import LearningWatcher
+from .requests import parse_action as parse_notification_action
+from .requests import write_request as write_finding_request
 from .const import (
     CONF_ENABLE_CONVERSATION,
     CONF_ENABLE_SENSORS,
@@ -67,6 +69,7 @@ from .const import (
     ENTRY_TYPE_AGENT,
     ENTRY_TYPE_INSIGHT,
     EVENT_INSIGHT_COMPLETE,
+    EVENT_MOBILE_ACTION,
     INSIGHTS_DIR,
     MEMORY_DIR,
     MEMORY_FILE,
@@ -172,6 +175,16 @@ def _get_platforms(entry: ConfigEntry) -> list[Platform]:
         platforms.append(Platform.SENSOR)
         # The system health binary sensor rides with the sensors-owner entry
         platforms.append(Platform.BINARY_SENSOR)
+        # The work list rides with them too — it is the same findings
+        # mirror the open-findings sensor counts, as items. Looked up
+        # rather than named: `todo` arrived in 2023.11 and this
+        # integration's floor is 2023.6, so on an older core the constant
+        # does not exist and the list is simply absent. A missing
+        # platform is a missing entity; naming one the core has never
+        # heard of fails the whole entry.
+        todo = getattr(Platform, "TODO", None)
+        if todo is not None:
+            platforms.append(todo)
     return platforms
 
 
@@ -197,6 +210,29 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
             config_entry, data=new_data, version=3
         )
     return True
+
+
+def _make_action_handler(hass: HomeAssistant):
+    """A listener for the companion app's notification buttons."""
+
+    async def _handle(event: Event) -> None:
+        parsed = parse_notification_action((event.data or {}).get("action"))
+        if parsed is None:
+            # Somebody else's actionable notification. Not ours, not an
+            # error, and not worth a log line at anything but debug —
+            # this fires for every button in the house.
+            return
+        action, ts = parsed
+        # A text-input action carries what was typed here. brAIn's three
+        # do not offer one, so this is empty today — reading it costs
+        # nothing and is what a "why?" button would need.
+        reply = str((event.data or {}).get("reply_text") or "")[:500]
+        await hass.async_add_executor_job(
+            write_finding_request, hass, ts, action, reply, "notification",
+            0,
+        )
+
+    return _handle
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -238,11 +274,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         unsub_findings = async_track_time_interval(
             hass, findings_watcher.async_poll, timedelta(seconds=60)
         )
+        # And the buttons on those findings' notifications, coming back.
+        # The companion app fires one event for every actionable
+        # notification in the house, brAIn's and everybody else's, so
+        # `parse_action` rejects far more than it accepts.
+        unsub_actions = hass.bus.async_listen(
+            EVENT_MOBILE_ACTION, _make_action_handler(hass))
         hass.data[DOMAIN]["_learning_watcher"] = entry.entry_id
 
         def _stop_learning() -> None:
             unsub_learning()
             unsub_findings()
+            unsub_actions()
             hass.data[DOMAIN].pop("_learning_watcher", None)
 
         entry.async_on_unload(_stop_learning)
@@ -297,6 +340,12 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if hass.data[DOMAIN].get("_health_entry") == entry.entry_id:
             hass.data[DOMAIN].pop("_health_entry", None)
             hass.data[DOMAIN].pop("_health_added", None)
+        # The work list rides with the health sensor and claims its own
+        # pair for the same reason: a flag left set over a reload is an
+        # entity that never comes back until Home Assistant restarts.
+        if hass.data[DOMAIN].get("_todo_entry") == entry.entry_id:
+            hass.data[DOMAIN].pop("_todo_entry", None)
+            hass.data[DOMAIN].pop("_todo_added", None)
         if hass.data[DOMAIN].get("_sensors_entry") == entry.entry_id:
             hass.data[DOMAIN].pop("_sensors_entry", None)
             hass.data[DOMAIN].pop("_sensors_added", None)

@@ -396,6 +396,10 @@ simply because you prefer it.
 - Findings surface as `sensor.brain_open_findings` and a `brain_finding` event per
   new one — and `findings_notify_service` pushes them to a phone with no automation
   at all.
+- The same findings are `todo.brain` in Home Assistant's own **To-do** panel and
+  mobile app: one list, two views. Ticking one off is "I've fixed it" and deleting
+  one is "not a problem here" — the Findings tab's own two endings, so answering
+  from your phone teaches brAIn exactly what pressing the button would have.
 - `sensor.brain_health` says whether brAIn itself is working, so an automation can
   tell you the add-on is in trouble rather than you noticing the insights stopped.
 
@@ -566,6 +570,39 @@ today, which would report a 45% fall that is nothing but the clock. If a meter
 was reset or replaced mid-week those days are dropped, and with them the
 comparison: you get the total it could measure and "no comparison to make"
 rather than a plausible-looking drop.
+
+### Answering without opening anything
+
+Two places show brAIn's work list, and both of them can end an item.
+
+**`todo.brain`** is the open findings in Home Assistant's own To-do panel and
+mobile app — the same list the Findings tab shows, as items. Completing one is
+"I've fixed it"; deleting one is "not a problem here". Both are the tab's own
+endings, so the memory line, the settled key and the row leaving the list all
+happen exactly as they would have.
+
+You cannot *add* an item. There would be nothing behind it and it would vanish
+on the next refresh, and a list that silently deletes what you put on it is
+worse than one that does not offer to take it. There are no due dates yet
+either: a forecast's date lives in the prose of its detail ("about 9 days
+left"), and a date parsed out of a sentence is a guess with a calendar entry
+attached to it.
+
+The list needs Home Assistant 2023.11 or newer (the To-do panel's own floor).
+On anything older it is simply absent.
+
+**Notifications get buttons** — *I've fixed it*, *Not a problem*, *Later* —
+when two things are true: the notify service is the Home Assistant companion
+app (`notify.mobile_app_*`), and the message is about exactly one finding.
+Every other notifier means something different by the payload the buttons ride
+in, or nothing at all, and a guess there is how a working notification stops
+arriving; and a digest about three problems could not say which one a button
+answered. In both cases the message is the one you were already getting.
+
+Either way the answer reaches the add-on through a small file on
+`/config/.brain/`, not over the network — brAIn's panel port is deliberately
+not published — so if the add-on is stopped when you tick something off, the
+answer waits for it rather than being lost.
 
 ### It knows what changed, and what changed it
 
