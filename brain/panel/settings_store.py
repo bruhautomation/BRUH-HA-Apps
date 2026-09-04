@@ -15,6 +15,13 @@ the panel's ⚙ dialog edits at runtime — no add-on restart needed:
                     rendered as messages) or "classic" (ttyd + tmux, the
                     character grid). Both drive the same CLI with the same
                     permissions; the difference is entirely presentation.
+  chat_max_sessions — how many chat conversations may hold a live Claude
+                    Code process at once (1-8, default 3). Switching
+                    between conversations stops nothing, so this is the
+                    number of processes the box carries, not the number of
+                    conversations you may have: past it, the least
+                    recently active IDLE one is stopped and reopens with
+                    --resume.
   chat_model      — the chat terminal's own model, chosen from the chat
                     itself. None means "follow the global model option":
                     the chat is where a different model is most often
@@ -76,6 +83,12 @@ OPTION_RANGES = {
 }
 MAX_MODEL_CHARS = 100
 
+# The chat's live-process cap. A range rather than a free integer for the
+# same reason budget_percent has one: the low end has to leave the chat
+# usable and the high end has to leave the box usable.
+CHAT_SESSIONS_RANGE = (1, 8)
+DEFAULT_CHAT_SESSIONS = 3
+
 DEFAULTS = {
     # A fresh install has no cards and no schedule. brAIn studies the home
     # first, then proposes cards grounded in what it actually found — a
@@ -102,6 +115,7 @@ DEFAULTS = {
     "model": None,
     "timeout_minutes": None,
     "chat_model": None,
+    "chat_max_sessions": DEFAULT_CHAT_SESSIONS,
 }
 
 _TIME_RE = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
@@ -135,6 +149,11 @@ def load() -> dict:
         val = data.get(name)
         if isinstance(val, int) and not isinstance(val, bool) and lo <= val <= hi:
             out[name] = val
+    lo, hi = CHAT_SESSIONS_RANGE
+    sessions = data.get("chat_max_sessions")
+    if isinstance(sessions, int) and not isinstance(sessions, bool) \
+            and lo <= sessions <= hi:
+        out["chat_max_sessions"] = sessions
     for key in ("model", "chat_model"):
         value = data.get(key)
         if isinstance(value, str) and value.strip():
@@ -222,6 +241,13 @@ def save(fields: dict) -> dict:
             if not isinstance(value, int) or isinstance(value, bool) \
                     or not 5 <= value <= 100:
                 raise ValueError("budget_percent must be an integer 5-100")
+            clean[key] = value
+        elif key == "chat_max_sessions":
+            lo, hi = CHAT_SESSIONS_RANGE
+            if not isinstance(value, int) or isinstance(value, bool) \
+                    or not lo <= value <= hi:
+                raise ValueError(
+                    f"chat_max_sessions must be an integer {lo}-{hi}")
             clean[key] = value
         elif key == "chat_model":
             # A panel setting, not a Configuration-tab option: it never

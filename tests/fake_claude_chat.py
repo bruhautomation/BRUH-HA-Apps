@@ -16,6 +16,10 @@ Behaviour switches via env:
                   deaf             never answer and ignore control_request
                                    too — an older CLI, where the only way
                                    out is killing it
+                  slow             answer, but only after FAKE_CHAT_DELAY
+                                   seconds (default 1.5) — a turn long
+                                   enough that a test can do something
+                                   else while it is still being written
                   crash            exit non-zero mid-turn
                   error            answer with an is_error result envelope
                   noresume         refuse --resume the way the real CLI
@@ -76,7 +80,10 @@ if os.environ.get("FAKE_CHAT_NOPROMPTFLAG") \
           "must be an MCP tool", file=sys.stderr)
     sys.exit(1)
 
-SESSION = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+# Distinct per process, because several of these run at once now: two
+# fresh sessions reporting one id would look to the registry like one
+# conversation held twice. A --resume still wins, as the real CLI's does.
+SESSION = f"aaaaaaaa-bbbb-cccc-dddd-{os.getpid():012d}"
 if "--resume" in argv:
     if mode == "noresume":
         print(f"No conversation found with session ID: "
@@ -282,6 +289,13 @@ for line in sys.stdin:
         continue
     if mode == "crash":
         sys.exit(3)
+    if mode == "slow":
+        # A turn that takes long enough to still be in flight while the
+        # test looks at another conversation. The whole point of the
+        # registry is that this one keeps writing.
+        time.sleep(float(os.environ.get("FAKE_CHAT_DELAY", "1.5")))
+        finish_turn(text)
+        continue
     if mode == "permission":
         # Ask before touching the tool, the way the real CLI does when
         # --permission-prompt-tool stdio is on the argv and the call is

@@ -75,6 +75,10 @@ backup_exclude:
   - .config/claude/**
   - home/.claude/**
   - terminal-credential
+  # The chat's scrollbacks. A directory since 1.45.0 (one file per
+  # conversation); the old single file is still named because an upgraded
+  # install still has one on disk.
+  - chat/**
   - chat_transcript.json
 
 # Lifecycle stage, declared rather than inherited from the default.

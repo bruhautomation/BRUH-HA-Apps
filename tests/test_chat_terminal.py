@@ -17,6 +17,7 @@ import importlib
 import json
 import os
 import re
+import shutil
 import sys
 import tempfile
 import time
@@ -383,6 +384,10 @@ class ChatSessionCase(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         os.environ["BRAIN_CHAT_TRANSCRIPT"] = os.path.join(self.tmp.name, "t.json")
+        os.environ["BRAIN_CHAT_TRANSCRIPT_DIR"] = os.path.join(
+            self.tmp.name, "chat")
+        os.environ["BRAIN_SETTINGS_FILE"] = os.path.join(
+            self.tmp.name, "settings.json")
         os.environ["BRAIN_CHAT_WORKDIR"] = self.tmp.name
         os.environ["BRAIN_CLAUDE_BIN"] = str(FAKE)
         # Explicit rather than popped: several tests below set a failure
@@ -499,7 +504,9 @@ class ChatSessionCase(unittest.IsolatedAsyncioTestCase):
             e.get("type") == "state" and e.get("state") == "ready" for e in evs[1:]))
         await self.session.stop()
 
-        reloaded = self.mod.ChatSession()
+        # Reopened by id, because a transcript belongs to a conversation
+        # now rather than to "the chat" — one file per session id.
+        reloaded = self.mod.ChatSession(self.session.session_id)
         kinds = [e["type"] for e in reloaded.events]
         self.assertIn("user", kinds)
         self.assertIn("text", kinds)
@@ -660,8 +667,9 @@ class ChatSessionCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.session.session_id, "dead-beef")
         self.assertEqual([e["type"] for e in self.session.events],
                          ["user", "text"])
-        # And it survives a reload, like any other transcript.
-        reloaded = self.mod.ChatSession()
+        # And it survives a reload, like any other transcript — under this
+        # conversation's own name, not a shared one.
+        reloaded = self.mod.ChatSession("dead-beef")
         self.assertEqual(len(reloaded.events), 2)
         self.assertEqual(reloaded.session_id, "dead-beef")
 
@@ -1127,6 +1135,318 @@ class ChatSessionCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.session.events[-1]["text"], "39")
 
 
+class TestManySessions(unittest.IsolatedAsyncioTestCase):
+    """Several conversations open at once, and a view attached to one.
+
+    The bug, in the words of the person who hit it: *"I'm trying to switch
+    conversations and it keeps giving me a 409 error that Claude is still
+    responding. I thought the whole point was like a hot swap between these
+    conversations."* They were right. Native Claude Code is one process per
+    open conversation; brAIn's chat was one process, so switching was a
+    stop and a ``--resume`` and had to refuse mid-answer. The fix is not a
+    better refusal — it is to stop having one process.
+
+    Everything here drives the real fake CLI through the real registry: the
+    parts that break are lifecycle, and a mocked process cannot be evicted.
+    """
+
+    async def asyncSetUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        os.environ["BRAIN_CHAT_TRANSCRIPT"] = os.path.join(self.tmp.name, "t.json")
+        os.environ["BRAIN_CHAT_TRANSCRIPT_DIR"] = os.path.join(
+            self.tmp.name, "chat")
+        os.environ["BRAIN_SETTINGS_FILE"] = os.path.join(
+            self.tmp.name, "settings.json")
+        os.environ["BRAIN_CHAT_WORKDIR"] = self.tmp.name
+        os.environ["BRAIN_CLAUDE_BIN"] = str(FAKE)
+        os.environ["FAKE_CHAT_MODE"] = "ok"
+        os.environ["FAKE_CHAT_DELAY"] = "1.5"
+        for key in ("FAKE_CHAT_LOG", "FAKE_CHAT_BROKEN", "FAKE_CHAT_NOPROMPTFLAG"):
+            os.environ.pop(key, None)
+        for name in ("engine", "settings_store", "chat_session"):
+            module = importlib.import_module(name)
+            setattr(self, name, importlib.reload(module))
+        self.reg = self.chat_session.SessionRegistry()
+
+    async def asyncTearDown(self):
+        await self.reg.stop_all()
+        for key in ("FAKE_CHAT_MODE", "FAKE_CHAT_DELAY", "FAKE_CHAT_LOG",
+                    "FAKE_CHAT_BROKEN", "FAKE_CHAT_NOPROMPTFLAG"):
+            os.environ.pop(key, None)
+        self.tmp.cleanup()
+
+    async def _open(self, session_id, text=None):
+        """Open a conversation and hand back its session."""
+        await self.reg.open(session_id, [{"type": "user", "text": text}]
+                            if text else [])
+        session = self.reg.get(session_id)
+        self.assertIsNotNone(session, f"{session_id} did not open")
+        return session
+
+    async def _wait(self, check, timeout=8.0):
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        while loop.time() < deadline:
+            if check():
+                return True
+            await asyncio.sleep(0.05)
+        return False
+
+    async def _busy(self, session_id):
+        """A conversation with an answer genuinely in flight."""
+        os.environ["FAKE_CHAT_MODE"] = "slow"
+        session = await self._open(session_id)
+        await session.send("take your time")
+        self.assertTrue(await self._wait(lambda: session.state == "busy"),
+                        "the fixture never started answering")
+        os.environ["FAKE_CHAT_MODE"] = "ok"
+        return session
+
+    # -- the refusal that is gone ---------------------------------------
+
+    async def test_switching_mid_answer_used_to_raise_and_no_longer_does(self):
+        """The old failure first, then the same moment through the registry.
+
+        ``ChatSession.resume`` is still the destructive path — it stops
+        this process and replays over its transcript — so it still refuses,
+        and that refusal is what the old switch went through. The registry
+        never takes that path for a switch: it opens a SECOND session and
+        moves the attachment, so the same moment succeeds.
+        """
+        busy = await self._busy("conv-busy")
+        with self.assertRaises(RuntimeError):
+            # Exactly what the panel used to do, and the 409 it produced.
+            await busy.resume("conv-other", [])
+        self.assertEqual(busy.state, "busy", "the refusal disturbed the answer")
+
+        out = await self.reg.open("conv-other", [])
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["session_id"], "conv-other")
+        self.assertIs(self.reg.attached(), self.reg.get("conv-other"))
+        # And the one we walked away from is still writing.
+        self.assertEqual(busy.state, "busy")
+        self.assertTrue(busy.alive())
+
+    async def test_the_abandoned_answer_lands_in_its_own_transcript(self):
+        """The half that makes the switch worth having: the conversation
+        you left goes on answering, into ITS events and not the one you are
+        now looking at."""
+        busy = await self._busy("conv-busy")
+        other = await self._open("conv-other")
+        self.assertTrue(
+            await self._wait(lambda: busy.state == "ready"),
+            "the abandoned answer never landed")
+        said = [e["text"] for e in busy.events if e["type"] == "text"]
+        self.assertTrue(any("take your time" in t for t in said), said)
+        # Not one word of it in the conversation that was on screen.
+        self.assertEqual([e for e in other.events if e["type"] == "text"], [])
+
+    async def test_switching_to_a_live_session_spawns_nothing(self):
+        """Instant is the feature. A switch back to something already open
+        must not stop, spawn or replay anything."""
+        log = os.path.join(self.tmp.name, "argv.log")
+        first = await self._open("conv-one")
+        await self._open("conv-two")
+        os.environ["FAKE_CHAT_LOG"] = log      # count only what follows
+        out = await self.reg.open("conv-one", [{"type": "user", "text": "no"}])
+        self.assertFalse(out["spawned"])
+        self.assertIs(self.reg.attached(), first)
+        self.assertTrue(first.alive())
+        self.assertFalse(os.path.exists(log), "switching spawned a process")
+        # The replay handed in was not written over the live transcript.
+        self.assertEqual([e for e in first.events if e["type"] == "user"], [])
+
+    # -- the cap ---------------------------------------------------------
+
+    def _cap(self, value):
+        self.settings_store.save({"chat_max_sessions": value})
+
+    async def test_the_cap_evicts_the_idle_one_never_the_busy_one(self):
+        self._cap(2)
+        busy = await self._busy("conv-busy")
+        idle = await self._open("conv-idle")
+        self.assertTrue(busy.alive() and idle.alive())
+
+        await self._open("conv-third")
+        self.assertTrue(busy.alive(), "the cap took the answer being written")
+        self.assertFalse(idle.alive(), "nothing was evicted")
+        # And it says why, so switching back explains the gap rather than
+        # looking like a session that died.
+        notice = [e for e in idle.events if e["type"] == "notice"]
+        self.assertTrue(notice, "an evicted session went quiet")
+        self.assertIn("chat_max_sessions", notice[-1]["text"])
+        # The transcript is kept — it is the conversation's, not the
+        # process's — and so is the row, so the switch back is instant.
+        self.assertIsNotNone(self.reg.get("conv-idle"))
+        self.assertEqual(self.reg.summary()["evicted"], 1)
+
+    async def test_all_busy_at_the_cap_is_the_one_refusal_left(self):
+        """And it is about the cap, not about "Claude is still responding":
+        it names how many are open and the setting that changes it."""
+        self._cap(1)
+        busy = await self._busy("conv-busy")
+        with self.assertRaises(self.chat_session.SessionCapReached) as caught:
+            await self.reg.open("conv-other", [])
+        message = str(caught.exception)
+        self.assertIn("1", message)
+        self.assertIn("chat_max_sessions", message)
+        self.assertTrue(busy.alive(), "the refusal killed the answer anyway")
+        # Nothing half-opened: a refused switch leaves the listing alone.
+        self.assertIsNone(self.reg.get("conv-other"))
+        self.assertIs(self.reg.attached(), busy)
+
+    async def test_an_evicted_session_comes_back_without_losing_the_notice(self):
+        """Switching back is a start, not a replay — the notice explaining
+        the gap is the first thing you would want to still be there."""
+        self._cap(1)
+        first = await self._open("conv-one")
+        await self._open("conv-two")
+        self.assertFalse(first.alive())
+
+        out = await self.reg.open("conv-one", [])
+        self.assertTrue(out["spawned"])
+        self.assertTrue(first.alive())
+        self.assertIs(self.reg.attached(), first)
+        self.assertTrue([e for e in first.events if e["type"] == "notice"],
+                        "the reopened session forgot why it had stopped")
+
+    async def test_a_hand_edited_cap_out_of_range_reads_as_the_default(self):
+        """Two guards and they agree: the store refuses to load a number
+        outside the range, and max_sessions clamps whatever it is handed.
+        A settings file somebody typed 0 into must not leave the chat
+        unable to open a conversation."""
+        self._cap(5)
+        self.assertEqual(self.chat_session.max_sessions(), 5)
+        for stored in (0, -4, 99, "lots", None):
+            self.settings_store._write({**self.settings_store.load(),
+                                        "chat_max_sessions": stored})
+            self.assertEqual(
+                self.chat_session.max_sessions(),
+                self.chat_session.DEFAULT_MAX_SESSIONS, stored)
+        with self.assertRaises(ValueError):
+            self.settings_store.save({"chat_max_sessions": 99})
+
+    # -- transcripts -----------------------------------------------------
+
+    async def test_each_conversation_gets_its_own_transcript_file(self):
+        one = await self._open("conv-one", "the first thing")
+        two = await self._open("conv-two", "the second thing")
+        one._persist()
+        two._persist()
+        directory = Path(os.environ["BRAIN_CHAT_TRANSCRIPT_DIR"])
+        self.assertTrue((directory / "conv-one.json").is_file())
+        self.assertTrue((directory / "conv-two.json").is_file())
+        stored = json.loads((directory / "conv-one.json").read_text())
+        self.assertEqual(stored["session_id"], "conv-one")
+        self.assertIn("the first thing",
+                      [e.get("text") for e in stored["events"]])
+
+    async def test_the_old_single_transcript_is_migrated_exactly_once(self):
+        """An upgrade must not blank the pane somebody was reading."""
+        directory = Path(os.environ["BRAIN_CHAT_TRANSCRIPT_DIR"])
+        shutil.rmtree(directory, ignore_errors=True)
+        Path(os.environ["BRAIN_CHAT_TRANSCRIPT"]).write_text(json.dumps({
+            "session_id": "from-before",
+            "events": [{"type": "user", "text": "what it was reading"}]}))
+
+        registry = self.chat_session.SessionRegistry()
+        moved = directory / "from-before.json"
+        self.assertTrue(moved.is_file(), "the upgrade blanked the pane")
+        session = registry.attached()
+        self.assertEqual(session.session_id, "from-before")
+        self.assertIn("what it was reading",
+                      [e.get("text") for e in session.events])
+
+        # Once: the directory existing IS the guard, so a second pass
+        # cannot resurrect a file somebody has since deleted.
+        moved.unlink()
+        self.chat_session.SessionRegistry()
+        self.assertFalse(moved.exists(), "the migration ran a second time")
+
+    async def test_an_id_that_is_not_an_id_never_becomes_a_path(self):
+        with self.assertRaises(ValueError):
+            await self.reg.open("../../etc/passwd", [])
+        self.assertIsNone(self.chat_session.transcript_path("../x"))
+        self.assertIsNone(self.chat_session.transcript_path(".."))
+
+    # -- what the panel is told ------------------------------------------
+
+    async def test_a_background_approval_shows_and_says_so(self):
+        """A card in a conversation nobody is looking at times itself out.
+        The rail's badge is one half; a toast on the attached view is the
+        other, because the badge is not on screen on a phone."""
+        os.environ["FAKE_CHAT_MODE"] = "permission"
+        asking = await self._open("conv-asking")
+        await asking.send("delete that file")
+        self.assertTrue(await self._wait(lambda: asking.pending_permission))
+        os.environ["FAKE_CHAT_MODE"] = "ok"
+
+        # Switch away, and now the question is in the background.
+        attached = await self._open("conv-elsewhere")
+        seen = attached.subscribe()
+        asking._asked()
+        event = await asyncio.wait_for(seen.get(), 2)
+        self.assertEqual(event["type"], "session_asks")
+        self.assertEqual(event["session_id"], "conv-asking")
+        self.assertEqual(event["tool"], "Bash")
+
+        row = next(r for r in self.reg.live()
+                   if r["session_id"] == "conv-asking")
+        self.assertTrue(row["needs_ok"])
+        self.assertFalse(row["attached"])
+
+    async def test_the_listing_says_which_row_is_answering(self):
+        busy = await self._busy("conv-busy")
+        await self._open("conv-idle")
+        rows = {r["session_id"]: r for r in self.reg.live()}
+        self.assertTrue(rows["conv-busy"]["busy"])
+        self.assertTrue(rows["conv-busy"]["live"])
+        self.assertFalse(rows["conv-idle"]["busy"])
+        self.assertTrue(rows["conv-idle"]["attached"])
+        self.assertGreater(rows["conv-busy"]["busy_since"], 0)
+        del busy
+
+    async def test_the_stream_left_behind_is_told_it_was_switched(self):
+        """The panel reconnects on this, and the new stream's first frame
+        is the new session's snapshot — the contract the stream has had
+        since it was written."""
+        first = await self._open("conv-one")
+        watching = first.subscribe()
+        await self.reg.open("conv-two", [])
+        events = []
+        while not watching.empty():
+            events.append(watching.get_nowait())
+        switched = [e for e in events if e["type"] == "switched"]
+        self.assertEqual(len(switched), 1, [e["type"] for e in events])
+        self.assertEqual(switched[0]["session_id"], "conv-two")
+
+    async def test_closing_stops_the_process_and_keeps_the_conversation(self):
+        one = await self._open("conv-one", "something said")
+        await self._open("conv-two")
+        self.assertTrue(await self.reg.close("conv-one"))
+        self.assertFalse(one.alive())
+        self.assertIsNone(self.reg.get("conv-one"),
+                          "a closed session is still being held")
+        self.assertFalse(await self.reg.close("conv-one"))
+
+    async def test_a_new_chat_leaves_the_others_alone(self):
+        busy = await self._busy("conv-busy")
+        out = await self.reg.new()
+        self.assertTrue(out["ok"])
+        self.assertTrue(busy.alive(), "starting a new chat stopped another")
+        self.assertIsNot(self.reg.attached(), busy)
+
+    async def test_a_new_chat_on_an_empty_one_does_not_spend_a_slot(self):
+        """Pressing New twice on a chat nobody typed into is one process,
+        not two — a second empty session is a process for nothing."""
+        self._cap(4)
+        await self.reg.new()
+        first = self.reg.attached()
+        await self.reg.new()
+        self.assertIs(self.reg.attached(), first)
+        self.assertEqual(len(self.reg.sessions()), 1)
+
+
 class TestChatRoutes(unittest.IsolatedAsyncioTestCase):
     """The API the panel actually calls, including the SSE stream."""
 
@@ -1134,6 +1454,7 @@ class TestChatRoutes(unittest.IsolatedAsyncioTestCase):
         self.tmp = tempfile.TemporaryDirectory()
         for key, value in {
             "BRAIN_CHAT_TRANSCRIPT": os.path.join(self.tmp.name, "t.json"),
+            "BRAIN_CHAT_TRANSCRIPT_DIR": os.path.join(self.tmp.name, "chat"),
             "BRAIN_CHAT_WORKDIR": self.tmp.name,
             "BRAIN_CLAUDE_BIN": str(FAKE),
             "BRAIN_SETTINGS_FILE": os.path.join(self.tmp.name, "settings.json"),
@@ -1448,15 +1769,28 @@ class TestChatRoutes(unittest.IsolatedAsyncioTestCase):
         self.assertIn(current, [c["id"] for c in data["conversations"]])
         self.assertEqual(data["current"], current)
 
-    async def test_switching_conversations_mid_answer_is_refused_with_409(self):
+    async def test_switching_conversations_mid_answer_no_longer_refuses(self):
+        """The bug this whole arrangement exists to remove.
+
+        "I'm trying to switch conversations and it keeps giving me a 409
+        error that Claude is still responding" — and it did, because there
+        was one process and switching was a stop and a --resume. Now the
+        one you leave keeps its process and goes on answering, so the
+        switch is a change of attachment and nothing is refused.
+        """
         self._fake_conversation("other-one", "somewhere to go")
-        self.chat_session.session().state = "busy"
+        busy = self.chat_session.session()
+        busy.state = "busy"
         try:
             resp = await self.client.post(
                 "/api/chat/resume", json={"session_id": "other-one"})
-            self.assertEqual(resp.status, 409)
+            self.assertEqual(resp.status, 200, await resp.text())
+            self.assertEqual((await resp.json())["session_id"], "other-one")
+            # And the conversation left behind is untouched: still busy,
+            # still holding its own process.
+            self.assertEqual(busy.state, "busy")
         finally:
-            self.chat_session.session().state = "idle"
+            busy.state = "idle"
 
     async def test_a_full_page_of_machine_chats_still_returns_yours(self):
         """Filtering server-side is what makes the page size mean rows you
@@ -1697,6 +2031,187 @@ class TestChatRoutes(unittest.IsolatedAsyncioTestCase):
         resp = await self.client.post("/api/chat/conversations/delete",
                                       json={"ids": too_many})
         self.assertEqual(resp.status, 400)
+
+
+    # ---------------------------------------------------------------
+    # Several conversations open at once. The rail has to say which of
+    # them is holding a process, which is answering, and which is
+    # waiting on a person — and switching between them may not stop
+    # anything.
+    # ---------------------------------------------------------------
+
+    async def test_the_listing_marks_which_rows_are_live(self):
+        """The join happens here, once. Two surfaces each joining the
+        registry onto the CLI's store is two chances to disagree about
+        whether a row is answering."""
+        self._fake_conversation("live-one", "one I have open", age_s=60)
+        self._fake_conversation("cold-one", "one I have not")
+
+        resp = await self.client.post("/api/chat/resume",
+                                      json={"session_id": "live-one"})
+        self.assertEqual(resp.status, 200, await resp.text())
+        data = await (await self.client.get(
+            "/api/chat/conversations?source=all")).json()
+        rows = {c["id"]: c for c in data["conversations"]}
+        self.assertTrue(rows["live-one"]["live"])
+        self.assertFalse(rows["live-one"]["busy"])
+        self.assertFalse(rows["live-one"]["needs_ok"])
+        self.assertFalse(rows["cold-one"]["live"])
+        self.assertEqual(data["max_sessions"],
+                         self.chat_session.max_sessions())
+        self.assertIn("live-one",
+                      [s["session_id"] for s in data["sessions"]])
+
+    async def test_the_listing_marks_a_row_that_is_answering(self):
+        self._fake_conversation("busy-one", "ask it something long")
+        os.environ["FAKE_CHAT_MODE"] = "slow"
+        os.environ["FAKE_CHAT_DELAY"] = "2"
+        try:
+            await self.client.post("/api/chat/resume",
+                                   json={"session_id": "busy-one"})
+            await self.client.post("/api/chat/send", json={"text": "hello"})
+            deadline = asyncio.get_running_loop().time() + 6
+            row = {}
+            while asyncio.get_running_loop().time() < deadline:
+                data = await (await self.client.get(
+                    "/api/chat/conversations?source=all")).json()
+                row = next((c for c in data["conversations"]
+                            if c["id"] == "busy-one"), {})
+                if row.get("busy"):
+                    break
+                await asyncio.sleep(0.1)
+            self.assertTrue(row.get("busy"), "no row said it was answering")
+        finally:
+            os.environ["FAKE_CHAT_MODE"] = "ok"
+            os.environ.pop("FAKE_CHAT_DELAY", None)
+
+    async def test_switching_to_a_live_conversation_spawns_nothing(self):
+        """Instant when the process is already there — which is the whole
+        difference between this and a stop-and-resume."""
+        for name in ("one", "two"):
+            self._fake_conversation(f"conv-{name}", f"chat {name}")
+        first = await (await self.client.post(
+            "/api/chat/resume", json={"session_id": "conv-one"})).json()
+        self.assertTrue(first["spawned"])
+        await self.client.post("/api/chat/resume",
+                               json={"session_id": "conv-two"})
+        back = await (await self.client.post(
+            "/api/chat/resume", json={"session_id": "conv-one"})).json()
+        self.assertFalse(back["spawned"], "switching back respawned it")
+        self.assertTrue(back["attached"])
+        snap = await (await self.client.get("/api/chat/state")).json()
+        self.assertEqual(snap["session_id"], "conv-one")
+
+    async def test_the_old_stream_is_told_it_was_switched(self):
+        """The panel reconnects on this rather than on a second mechanism,
+        and the new stream's first frame is the new snapshot."""
+        self._fake_conversation("elsewhere", "somewhere to go")
+        resp = await self.client.get("/api/chat/stream")
+        await asyncio.wait_for(resp.content.readline(), 5)   # snapshot
+        await asyncio.wait_for(resp.content.readline(), 5)   # blank
+
+        await self.client.post("/api/chat/resume",
+                               json={"session_id": "elsewhere"})
+        switched = None
+        deadline = asyncio.get_running_loop().time() + 8
+        while asyncio.get_running_loop().time() < deadline:
+            line = (await asyncio.wait_for(resp.content.readline(), 5)).decode()
+            if not line.startswith("data: "):
+                continue
+            event = json.loads(line[6:])
+            if event.get("type") == "switched":
+                switched = event
+                break
+        resp.close()
+        self.assertIsNotNone(switched, "the old stream was never told")
+        self.assertEqual(switched["session_id"], "elsewhere")
+
+    async def test_deleting_any_live_conversation_is_refused(self):
+        """Not only the one on screen: several may be live now, and
+        deleting the ground any of them stands on either kills it or
+        quietly forks it. The refusal names the way out."""
+        for name in ("held", "shown"):
+            self._fake_conversation(f"conv-{name}", f"the {name} one")
+        await self.client.post("/api/chat/resume",
+                               json={"session_id": "conv-held"})
+        await self.client.post("/api/chat/resume",
+                               json={"session_id": "conv-shown"})
+
+        path = Path(self.tmp.name) / "projects" / re.sub(
+            r"[^A-Za-z0-9]", "-", self.tmp.name) / "conv-held.jsonl"
+        resp = await self.client.post("/api/chat/conversation/conv-held/delete")
+        self.assertEqual(resp.status, 409)
+        self.assertIn("close", resp.reason)
+        self.assertTrue(path.is_file(), "refused, but deleted it anyway")
+
+        # And closing it is the way out, not a dead end.
+        closed = await (await self.client.post(
+            "/api/chat/session/conv-held/close")).json()
+        self.assertTrue(closed["closed"])
+        resp = await self.client.post("/api/chat/conversation/conv-held/delete")
+        self.assertEqual(resp.status, 200)
+        self.assertFalse(path.is_file())
+
+    async def test_batch_delete_skips_a_live_conversation(self):
+        for name in ("held", "gone"):
+            self._fake_conversation(f"conv-{name}", f"the {name} one", age_s=60)
+        await self.client.post("/api/chat/resume",
+                               json={"session_id": "conv-held"})
+        out = await (await self.client.post(
+            "/api/chat/conversations/delete",
+            json={"ids": ["conv-held", "conv-gone"]})).json()
+        self.assertEqual(out["deleted"], ["conv-gone"])
+        self.assertEqual(out["skipped"], ["conv-held"])
+
+    async def test_diagnostics_can_tell_a_capped_session_from_a_crashed_one(self):
+        self._fake_conversation("conv-one", "hello")
+        await self.client.post("/api/chat/resume",
+                               json={"session_id": "conv-one"})
+        chat = (await (await self.client.get("/api/diagnostics")).json())["chat"]
+        self.assertGreaterEqual(chat["live"], 1)
+        self.assertEqual(chat["busy"], 0)
+        self.assertEqual(chat["max"], self.chat_session.max_sessions())
+        self.assertEqual(chat["evicted"], 0)
+
+    async def test_all_busy_at_the_cap_is_a_409_naming_the_setting(self):
+        """The one refusal left on a switch, and it is about the cap."""
+        self.settings_store.save({"chat_max_sessions": 1})
+        self._fake_conversation("busy-one", "a long one")
+        self._fake_conversation("other-one", "somewhere to go")
+        os.environ["FAKE_CHAT_MODE"] = "slow"
+        os.environ["FAKE_CHAT_DELAY"] = "3"
+        try:
+            await self.client.post("/api/chat/resume",
+                                   json={"session_id": "busy-one"})
+            await self.client.post("/api/chat/send", json={"text": "hello"})
+            await asyncio.sleep(0.5)
+            resp = await self.client.post("/api/chat/resume",
+                                          json={"session_id": "other-one"})
+            self.assertEqual(resp.status, 409)
+            self.assertIn("chat_max_sessions", resp.reason)
+            self.assertNotIn("still responding", resp.reason)
+        finally:
+            os.environ["FAKE_CHAT_MODE"] = "ok"
+            os.environ.pop("FAKE_CHAT_DELAY", None)
+
+    async def test_the_model_pick_still_refuses_mid_answer_and_says_why(self):
+        """The one refusal switching did not take away — a model change is
+        a restart, and a restart now would lose the answer being written.
+        The sentence says which conversation it is about and offers the
+        thing that does work, because there are other chats to be in now."""
+        self.chat_session.session().state = "busy"
+        try:
+            resp = await self.client.post("/api/chat/model",
+                                          json={"model": "claude-opus-5"})
+            self.assertEqual(resp.status, 409)
+            self.assertIn("this conversation", resp.reason)
+            self.assertIn("switch to another chat", resp.reason)
+            # Refused BEFORE anything is stored: a choice that half-applies
+            # — saved but not running — reads as a picker that lies.
+            snap = await (await self.client.get("/api/chat/state")).json()
+            self.assertEqual(snap["chat_model"], "")
+        finally:
+            self.chat_session.session().state = "idle"
 
     async def test_the_terminal_ui_setting_round_trips(self):
         resp = await self.client.get("/api/settings")

@@ -3691,6 +3691,10 @@ def _diagnostics_payload() -> dict:
             "coldest": _thermal_store.get("coldest"),
             "reason": _thermal_store.get("reason", ""),
         },
+        # How many conversations the chat is holding open, how many are
+        # answering, and what the cap is. A session the cap stopped and one
+        # that crashed leave the same silence otherwise.
+        "chat": chat_session.registry().summary(),
         "daemons": _daemon_rollcall(),
         "usage": {k: usage.get(k) for k in ("source", "used_percent", "limits")},
     }
@@ -5451,8 +5455,27 @@ async def h_health(request: web.Request) -> web.Response:
 # character grid. See chat_session.py.
 # ---------------------------------------------------------------------------
 
+def _chat_registry() -> "chat_session.SessionRegistry":
+    """The registry, told which model a session spawned now should run.
+
+    Same refresh as ``_chat``'s and for the same reason: a conversation
+    opened from the rail must run the model the chat is set to, not the one
+    the environment named at boot.
+    """
+    registry = chat_session.registry()
+    registry.model = eff_chat_model()
+    return registry
+
+
 def _chat() -> "chat_session.ChatSession":
-    session = chat_session.session()
+    """The attached session — the conversation the view is on.
+
+    There are several of them now (see chat_session.SessionRegistry), and
+    every route that acts on "the chat" acts on this one: send, stop, the
+    model picker, the handoff, the stream. Switching is what changes which
+    session that is, and it stops nothing.
+    """
+    session = _chat_registry().attached()
     # Resolved per call rather than at startup: the model is editable from
     # ⚙ Settings, from the Configuration tab and from the chat's own model
     # picker, and a chat session started before an edit should not keep the
@@ -5536,7 +5559,16 @@ async def h_chat_stop(request: web.Request) -> web.Response:
 
 
 async def h_chat_new(request: web.Request) -> web.Response:
-    return web.json_response(await _chat().reset())
+    """Start a conversation. Whatever else is open carries on.
+
+    On a chat nobody has typed into this reuses the session that is there
+    rather than spending a slot on a second empty process — see
+    ``SessionRegistry.new``.
+    """
+    try:
+        return web.json_response(await _chat_registry().new())
+    except RuntimeError as exc:
+        raise web.HTTPConflict(reason=_refusal(exc))
 
 
 async def h_chat_handoff(request: web.Request) -> web.Response:
@@ -5559,6 +5591,7 @@ async def h_chat_conversations(request: web.Request) -> web.Response:
     is, and ``?source=`` picks which to show; the default is yours, because
     the rail is a list of your conversations.
     """
+    registry = _chat_registry()
     session = _chat()
     wanted = request.query.get("source", "you")
     if wanted in ("", "all"):
@@ -5592,10 +5625,23 @@ async def h_chat_conversations(request: web.Request) -> web.Response:
                 engine_sources, "")
         ]
         rows.sort(key=lambda r: r["modified"], reverse=True)
+    rows = rows[:30]
+    # Which of these the panel is holding a process for, joined here and
+    # once: the listing is Claude Code's store and the marks are ours, and
+    # two surfaces each doing their own join is two chances to disagree
+    # about whether a row is answering.
+    marks = {row["session_id"]: row for row in registry.live()}
+    for row in rows:
+        mark = marks.get(row["id"])
+        row["live"] = bool(mark and mark["live"])
+        row["busy"] = bool(mark and mark["busy"])
+        row["needs_ok"] = bool(mark and mark["needs_ok"])
     return web.json_response({
-        "conversations": rows[:30],
+        "conversations": rows,
         "current": session.session_id,
         "sources": await asyncio.to_thread(_conversation_source_counts),
+        "sessions": registry.live(),
+        "max_sessions": chat_session.max_sessions(),
     })
 
 
@@ -5693,11 +5739,15 @@ async def h_chat_model(request: web.Request) -> web.Response:
     body = await request.json()
     if not isinstance(body, dict):
         raise web.HTTPBadRequest(text="expected an object")
-    session = chat_session.session()
+    session = _chat()
     if session.state == "busy":
         # Refused before anything is saved: a choice that half-applies —
-        # stored but not running — reads as a picker that lies.
-        raise web.HTTPConflict(reason="finish or stop the current answer first")
+        # stored but not running — reads as a picker that lies. The one
+        # refusal switching conversations did not take away, and it says
+        # which conversation it is about now that there can be several.
+        raise web.HTTPConflict(
+            reason="this conversation is still being answered — stop it, or "
+                   "switch to another chat and pick the model there")
     try:
         settings = settings_store.save({"chat_model": body.get("model")})
     except ValueError:
@@ -5707,10 +5757,10 @@ async def h_chat_model(request: web.Request) -> web.Response:
         raise web.HTTPBadRequest(text="chat_model must be a string or null")
     try:
         out = await session.set_model(eff_chat_model())
-    except RuntimeError:
+    except RuntimeError as exc:
         # Only raised when a turn started between the busy check above and
-        # here — the same refusal, in the same words.
-        raise web.HTTPConflict(reason="finish or stop the current answer first")
+        # here — the session's own sentence, which says the same thing.
+        raise web.HTTPConflict(reason=_refusal(exc))
     out["chat_model"] = settings.get("chat_model") or ""
     return web.json_response(out)
 
@@ -5758,16 +5808,19 @@ async def h_chat_conversation_delete(request: web.Request) -> web.Response:
     """Delete one conversation from the list — with an Undo, not a shrug.
 
     The file is moved into a trash directory rather than unlinked, so the
-    toast's Undo can put back exactly what was taken. The conversation that
-    is currently open is refused: deleting the ground the live session is
-    standing on either kills it or quietly forks it, and "start a new chat
-    first" is a better answer than either.
+    toast's Undo can put back exactly what was taken. A conversation that
+    something is holding open is refused — not only the attached one:
+    deleting the ground a live session stands on either kills it or quietly
+    forks it, and now that several may be live at once "the one on screen"
+    is no longer the same question as "the ones in use". The refusal names
+    the close route, because a refusal with no way to satisfy it is a dead
+    end.
     """
-    session = _chat()
+    registry = _chat_registry()
     session_id = request.match_info["id"]
-    if session.session_id == session_id:
+    if registry.get(session_id) is not None:
         raise web.HTTPConflict(
-            reason="that's the conversation that's open — start a new chat first")
+            reason="that conversation still has a live session — close it first")
     entry = await asyncio.to_thread(
         conversations.delete, chat_session.WORK_DIR, session_id)
     if entry is None:
@@ -5782,10 +5835,10 @@ async def h_chat_conversations_delete(request: web.Request) -> web.Response:
     """Delete several conversations in one press — one Undo for the lot.
 
     The single-delete's rules apply per row: each file moves to the trash,
-    and the conversation that is currently open is skipped rather than
-    failing the batch — a select-all that refuses outright because the open
-    chat was in it teaches people to deselect one row by trial and error.
-    What was skipped is reported, so the toast can say it.
+    and a conversation with a live session is skipped rather than failing
+    the batch — a select-all that refuses outright because one open chat
+    was in it teaches people to deselect one row by trial and error. What
+    was skipped is reported, so the toast can say it.
     """
     body = await request.json()
     if not isinstance(body, dict) or not isinstance(body.get("ids"), list):
@@ -5799,10 +5852,10 @@ async def h_chat_conversations_delete(request: web.Request) -> web.Response:
         # unrestorable while the toast still offers to restore it.
         raise web.HTTPBadRequest(
             text=f"at most {conversations.TRASH_MAX} at a time")
-    session = _chat()
+    registry = _chat_registry()
     deleted, entries, skipped = [], [], []
     for session_id in dict.fromkeys(ids):     # de-duped, order kept
-        if session.session_id == session_id:
+        if registry.get(session_id) is not None:
             skipped.append(session_id)
             continue
         entry = await asyncio.to_thread(
@@ -5838,21 +5891,47 @@ async def h_chat_conversation_view(request: web.Request) -> web.Response:
 
 
 async def h_chat_resume(request: web.Request) -> web.Response:
+    """Open a conversation: attach to it if it is live, resume it if not.
+
+    The route name and the body's shape are unchanged, and so is what
+    ``resumed: false`` means — Claude Code no longer holds this
+    conversation and a fresh session opened instead. What changed is that
+    this no longer stops anything: a conversation left mid-answer goes on
+    answering in its own session, and the only 409 left here is the cap
+    (every live chat busy, nothing idle to evict), which says so in those
+    words rather than blaming the answer you can still see.
+    """
     body = await request.json()
     if not isinstance(body, dict):
         raise web.HTTPBadRequest(text="expected an object")
     session_id = str(body.get("session_id") or "")
-    session = _chat()
-    replay = await asyncio.to_thread(
-        conversations.transcript, chat_session.WORK_DIR, session_id)
+    registry = _chat_registry()
+    replay = []
+    if registry.get(session_id) is None:
+        # Only for a conversation we are not already holding: reading a
+        # transcript off disk to replay over a session that has the live
+        # one in memory is a slower way to show the same thing, minus the
+        # notices that explain how it got here.
+        replay = await asyncio.to_thread(
+            conversations.transcript, chat_session.WORK_DIR, session_id)
     try:
-        return web.json_response(await session.resume(session_id, replay))
+        return web.json_response(await registry.open(session_id, replay))
     except ValueError as exc:
         raise web.HTTPBadRequest(reason=str(exc))
     except RuntimeError as exc:
-        # Mid-answer: switching would kill the answer being written, the
-        # same refusal adopt and the model picker already make.
         raise web.HTTPConflict(reason=_refusal(exc))
+
+
+async def h_chat_session_close(request: web.Request) -> web.Response:
+    """Stop one conversation's process, keeping the conversation.
+
+    The only thing this takes away is a live session; Claude Code still
+    holds the conversation and the rail still lists it. It exists because
+    deleting a conversation is refused while something is holding it open,
+    and a refusal with no way to satisfy it is a dead end.
+    """
+    closed = await _chat_registry().close(request.match_info["id"])
+    return web.json_response({"ok": True, "closed": closed})
 
 
 def _chat_snapshot(session: "chat_session.ChatSession") -> dict:
@@ -5874,7 +5953,12 @@ def _chat_snapshot(session: "chat_session.ChatSession") -> dict:
             "models": engine.MODEL_CHOICES,
             "chat_model": settings.get("chat_model") or "",
             "default_model": default,
-            "default_model_label": chat_session.pretty_model(default)}
+            "default_model_label": chat_session.pretty_model(default),
+            # Which conversations are live, so the rail's marks are right
+            # on the first paint rather than on the first thing that
+            # happens to move.
+            "sessions": chat_session.registry().live(),
+            "max_sessions": chat_session.max_sessions()}
 
 
 async def h_chat_state(request: web.Request) -> web.Response:
@@ -5991,6 +6075,7 @@ def make_app() -> web.Application:
                         h_chat_conversation_delete)
     app.router.add_get("/api/chat/conversation/{id}/view",
                        h_chat_conversation_view)
+    app.router.add_post("/api/chat/session/{id}/close", h_chat_session_close)
 
     # The terminal tab: /terminal/ is reverse-proxied through to ttyd
     # so the whole add-on lives behind one ingress port.
@@ -6044,7 +6129,7 @@ def make_app() -> web.Application:
         # The chat session is a child process of ours; leaving it running
         # after the panel goes down orphans a Claude that nothing will ever
         # read from again.
-        await chat_session.session().stop()
+        await chat_session.registry().stop_all()
 
     app.on_startup.append(on_startup)
     app.on_cleanup.append(on_cleanup)
