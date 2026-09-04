@@ -2,6 +2,28 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.43.1
+
+Three things that ran, quietly, and did the wrong thing.
+
+- **The morning brief never saw the health verdict.** `_send_brief` awaited
+  `_diagnostics_payload()` — a plain function returning a dict — so every
+  call raised, the `try` around it logged at *info* and carried on with an
+  empty verdict, and the "brAIn itself is degraded" reason in
+  `brief.worth_saying` could never fire. It runs on a thread now, and a test
+  drives a degraded verdict through to `worth_saying` rather than grepping
+  for the line.
+- **A habit with the best evidence in the ledger was the one dropped.**
+  `routines._best_shape` earns `every day` only when both halves of the
+  week hold up on their own — right — but when they did and the *merged*
+  set failed (07:00 on weekdays and 10:00 at weekends is two clean shapes
+  three hours apart), it returned that refusal instead of falling back to
+  the narrower true claim its own docstring promises. It falls back now.
+- **Switching the chat to the classic terminal froze the panel.** The
+  handoff ran `tmux new-window` with a blocking `subprocess.run` directly
+  on the event loop, so every request, SSE stream and the terminal bridge
+  stalled for up to ten seconds. It runs on a thread.
+
 ## 1.43.0
 
 Signing in, from the panel. brAIn could sign you in **once**, and after that

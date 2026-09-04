@@ -966,7 +966,7 @@ async def _send_brief(now: float) -> str:
     """Gather, decide, and only then ask. Returns what was sent, or ''."""
     verdict = {}
     try:
-        payload = await _diagnostics_payload()
+        payload = await asyncio.to_thread(_diagnostics_payload)
         verdict = payload.get("health") or {}
     except Exception as exc:  # noqa: BLE001 — the verdict is one reason of
         # several, and not having it is not a reason to skip the morning.

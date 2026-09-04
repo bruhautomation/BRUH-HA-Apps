@@ -305,7 +305,11 @@ def _best_shape(stamps: list, tz) -> dict | None:
     week = _grade(stamps, "weekdays", tz)
     end = _grade(stamps, "weekends", tz)
     if week and end:
-        return _grade(stamps, "every day", tz)
+        # Both halves hold up on their own, and yet the merged set can
+        # still fail: a habit at 07:00 on weekdays and 10:00 at weekends
+        # is two clean shapes whose union has a three-hour spread. That
+        # is not "no habit" — it is the narrower true statement, again.
+        return _grade(stamps, "every day", tz) or week or end
     return week or end
 
 

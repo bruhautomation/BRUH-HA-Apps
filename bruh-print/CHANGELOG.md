@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.2
+
+### Fixed
+
+- **The ruler print rendered on the event loop.** Every other render and
+  every USB write goes through `asyncio.to_thread`, as the server's own
+  docstring says; `h_printer_test` was the one call that did not, so
+  printing the ruler stalled the panel and the card's polling for the
+  length of a Pillow render. It runs on a thread now, like its sibling
+  `h_printer_calibrate` already did.
+
 ## 0.6.1
 
 ### Fixed

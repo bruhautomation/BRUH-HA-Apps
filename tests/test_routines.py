@@ -337,3 +337,18 @@ class TestTheLedger(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTwoCleanHalvesAtDifferentHours(unittest.TestCase):
+    def test_both_halves_holding_up_is_never_no_habit(self):
+        # 07:00 every weekday and 10:00 every weekend day: each half is a
+        # clean shape on its own, and the merged set has a three-hour
+        # spread `every day` refuses. `_best_shape` used to return that
+        # refusal, so a habit with the best evidence in the ledger was the
+        # one that was dropped. The fallback is the narrower true claim.
+        rows = [press(d, 7 if (MONDAY + dt.timedelta(days=d)).weekday() < 5
+                      else 10, 0)
+                for d in range(21)]
+        found = routines.mine(ledger(rows), UTC, after(rows))
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]["when_days"], "weekdays")

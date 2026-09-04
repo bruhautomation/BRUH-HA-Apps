@@ -2779,5 +2779,37 @@ class TestAuthVerdictIsReEarned(unittest.TestCase):
         self.assertTrue(self.server.AUTH_CHECK["running"])
 
 
+class TestBriefReadsTheHealthVerdict(unittest.TestCase):
+    """`_send_brief` awaited `_diagnostics_payload()` — a plain function
+    returning a dict — so every call raised inside a `try` that logged at
+    info and carried on with an empty verdict. The health trigger in
+    `brief.worth_saying` could therefore never fire. Driven, not grepped."""
+
+    def test_a_degraded_verdict_reaches_worth_saying(self):
+        server = importlib.import_module("server")
+        brief = importlib.import_module("brief")
+        seen = {}
+        saved = (server._diagnostics_payload, server._brief_overnight,
+                 server.findings_store.list_all, brief.worth_saying)
+        try:
+            server._diagnostics_payload = lambda: {
+                "health": {"state": "degraded", "reason": "listener down"}}
+
+            async def overnight(now):
+                return {}
+            server._brief_overnight = overnight
+            server.findings_store.list_all = lambda: []
+
+            def worth(state):
+                seen.update(state)
+                return []
+            brief.worth_saying = worth
+            asyncio.run(server._send_brief(1_800_000_000.0))
+        finally:
+            (server._diagnostics_payload, server._brief_overnight,
+             server.findings_store.list_all, brief.worth_saying) = saved
+        self.assertEqual(seen.get("health", {}).get("state"), "degraded")
+
+
 if __name__ == "__main__":
     unittest.main()
