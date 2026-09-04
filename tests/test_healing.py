@@ -62,6 +62,8 @@ def house(**over) -> dict:
     """A house with one stopped add-on, one dead node, one failed entry."""
     snap = {
         "now": NOW,
+        "available": {k: True for k in ("supervisor", "states", "registry",
+                                        "config_entries")},
         "supervisor": {"addons": [
             {"slug": "core_mosquitto", "name": "Mosquitto broker",
              "installed": True, "state": "stopped", "boot": "auto"},
@@ -256,6 +258,15 @@ class TestTheThreeRemedies(PlanCase):
             {"entry_id": "zw1", "domain": "zwave_js", "state": "loaded"}]
         self.assertEqual(self.plan([entry_finding()], snap)["attempts"], [])
 
+    def test_every_remedy_declares_what_it_had_to_read(self):
+        # A remedy added without a `NEEDS` row would act off a snapshot
+        # nobody checked, which is the failure the test above pins one
+        # case of. Asserted over the table so a fourth remedy cannot skip
+        # the gate by being written after it.
+        self.assertEqual(set(healing.REMEDIES), set(healing.NEEDS))
+        for source, keys in healing.NEEDS.items():
+            self.assertTrue(keys, source)
+
     def test_the_playbook_is_closed(self):
         # Anything not in REMEDIES heals nothing, and every other
         # producer in the add-on is in that set.
@@ -352,6 +363,21 @@ class TestTheRefusals(PlanCase):
             out = self.plan([row], patterns=["*"])
             self.assertEqual(out["attempts"], [], row["source"])
             self.assertIn("everything", self.reasons(out))
+
+    def test_a_snapshot_that_could_not_be_read_is_not_a_house_that_healed(self):
+        # The mutation: act on whatever the snapshot happens to hold. A
+        # Supervisor outage would then read as every add-on having come
+        # back — which is `clear_resolved`'s rule ("I could not look" is
+        # not "it went away") one layer over, in the half that acts.
+        for source, key, row in (
+                ("check:sys.addon_down", "supervisor", finding()),
+                ("check:dev.zwave_dead", "states", zwave_finding()),
+                ("check:sys.entry_failed", "config_entries", entry_finding())):
+            snap = house()
+            snap["available"][key] = False
+            out = self.plan([row], snap)
+            self.assertEqual(out["attempts"], [], source)
+            self.assertIn("could not read", self.reasons(out))
 
     def test_a_row_with_nothing_left_to_act_on_is_skipped(self):
         snap = house()
@@ -618,6 +644,24 @@ class TestThePassThroughTheServer(PerformCase):
             self.server.addon_options._options = {"self_healing": True}
             self.assertTrue(self.server._healing_enabled())
         finally:
+            self.server.addon_options._options = None
+
+    def test_the_diagnostics_carry_no_excuse_beside_a_working_pass(self):
+        # A "reason" next to a healer that is on and inside its window is
+        # noise — the same rule `budget_state` follows about an excuse
+        # beside a number that is fine.
+        self.server.addon_options._options = {"self_healing": True}
+        old = self.server._healing_window
+        self.server._healing_window = lambda now: (True, "inside quiet hours")
+        try:
+            self.assertEqual(self.server._healing_diagnostics()["reason"], "")
+            self.assertTrue(self.server._healing_diagnostics()["in_window"])
+            self.server._healing_window = lambda now: (False, "no quiet hours")
+            diag = self.server._healing_diagnostics()
+            self.assertEqual(diag["reason"], "no quiet hours")
+            self.assertFalse(diag["in_window"])
+        finally:
+            self.server._healing_window = old
             self.server.addon_options._options = None
 
     def test_the_diagnostics_say_why_it_is_quiet(self):

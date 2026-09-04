@@ -856,6 +856,98 @@ version that gets it wrong:
 The window reaches back at most 30 days, because the recorder's default purge is
 ten days and most houses leave it there.
 
+### The house acts
+
+Two things brAIn does that nothing else on this page does: it fixes a small,
+fixed set of problems while you are asleep, and it writes the automation you
+would want on a bad night. Both are off until you switch them on, and both are
+built around what they refuse to do.
+
+**Three things it may fix overnight** — and only three, and only with
+`self_healing` turned on:
+
+| What is wrong | What it does |
+| --- | --- |
+| An add-on set to start on boot is not running | Starts it |
+| A Z-Wave node the controller has marked dead | Pings it |
+| An integration that did not finish setting up | Reloads that entry |
+
+Each is a call you would have made yourself, and each fails into nothing. There
+is **no power-cycling of anything**, no restart of Home Assistant, no restart of
+brAIn, and **no Claude run anywhere on this path** — a model deciding what to
+restart in your house at 3am is a guess wearing a repair.
+
+It runs **once a night, inside your quiet hours**. With no quiet hours set it
+runs an hour after the time brAIn has *measured* your house going quiet; with
+neither, it does not run at all, and the ⚙ Diagnostics section says so — running
+at an hour nobody set would be acting on a guess about when nobody is looking.
+
+- **At most three repairs a night.** Nine broken things at once is not a house
+  to fix unattended.
+- **One try per problem per night**, written down as it goes, so restarting the
+  add-on at 3am does not start the same thing twice.
+- **Never anything on your protected entities** — the node's whole device is
+  checked, not just the sensor, because a ping reaches the box and the box might
+  be a lock. If brAIn cannot work out what a repair would touch, it skips it
+  rather than guessing.
+- **Never something you have already answered.** If you pressed *Fix it* or
+  *Wrong* on that finding, it is yours.
+
+**Nothing here checks its own work, and that is deliberate.** A call the
+Supervisor accepted is not a working add-on. What proves a repair is the next
+house-checks pass: the finding clears, or it does not — and the morning brief
+tells you which, with the time: *"started the Mosquitto broker add-on at 03:10;
+it is working now."*
+
+**Emergency playbooks** are the other half, and brAIn never runs one. It
+**writes** one and offers it on the Proposals tab; Home Assistant runs it if you
+accept it. Three, and each only when your house has the sensor for it:
+
+- **Smoke or CO** — every light to full brightness, heating and cooling off,
+  blinds and curtains open, and a notification naming the room the detector is
+  in.
+- **Water leak** — water valves closed, water switches off, water heaters off,
+  and a notification naming the room.
+- **Freeze with the heating stopped** — the coldest room brAIn has measured
+  falls below 5 °C *and* its thermostat has been doing nothing for half an hour.
+  **This one only tells you.** Nothing here turns a boiler on: brAIn cannot know
+  why the heating stopped.
+
+**No playbook unlocks a door or disarms an alarm.** Not as a setting, not ever.
+A smoke detector is the sensor in a house most likely to go off over burnt
+toast, and a false alarm that opens the house at three in the morning is a worse
+outcome than any it could prevent.
+
+**Every entity it would act on is on the card, by name**, grouped by what
+happens to it — and anything on your protected list is shown as *skipped:
+protected* rather than quietly left out, so you can see that brAIn knows it is
+there and knows it may not touch it. If protection leaves a playbook with
+nothing to do but send a message, it is not offered at all.
+
+Which valve, which lights, which thermostats: all of that is read straight from
+your registries. **No model chooses any of it** — a model picking which valve to
+close is a guess you could not check afterwards, because the automation would
+look exactly the same either way. Claude writes one thing, optionally: the
+paragraph on the card explaining it in plain English, and if that run fails the
+card still says what it does.
+
+**Rehearse it** shows every call it would make with each target's state right
+now — *"12 lights → on (3 already on), 1 valve → closed (open now)"* — and
+**changes nothing**. It deliberately does not use Home Assistant's
+`automation.trigger`, which would run the actions; that is not a rehearsal, it
+is the emergency. A real rehearsal is setting the detector off on purpose and
+reading the automation's trace afterwards.
+
+**There is no trial button on a playbook.** A trial replays the week you have
+just lived, and that week had no smoke alarm in it — a button that cannot answer
+the question is worse than a sentence saying why.
+
+Accepting one goes through the same path as any other proposal: written to
+`automations.yaml`, reloaded, verified, reverted if it did not take, and
+undoable from the toast. Declining one is remembered by the **change** rather
+than the sentence, so it comes back if you fit another detector — the automation
+is genuinely different then — and not because the wording moved.
+
 ### Answering without opening anything
 
 Two places show brAIn's work list, and both of them can end an item.
@@ -1144,6 +1236,7 @@ the Terminal tab itself), because it changes nothing about how the add-on runs.
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
 | `checks_interval_hours` | 0–168 | `6` | How often the deterministic house checks run. They read Home Assistant and the Supervisor directly and never call Claude, so they cost nothing. `0` means never on a timer; `brain check` and the tab's button still run them. |
+| `self_healing` | bool | `false` | Let brAIn make up to three repairs a night, inside your quiet hours: start an add-on that was set to run at boot, ping a dead Z-Wave node, reload an integration that failed to set up. Nothing else, never on a protected entity, and never on a finding you have already answered. See **The house acts**. |
 | `protected_entities` | list | `[]` | Entity ids (`lock.front_door`) or whole domains (`alarm_control_panel.*`) that brAIn may never act on, from any face. Enforced where every action passes through, so it covers the terminal, the chat, Fix it, voice and automations; a call aimed at an area or device containing one is refused too. They can still be looked at. |
 
 ### Undo and access
@@ -1196,6 +1289,14 @@ edges.
   Findings **Fix it** button, which runs only because you pressed it.
 - **It does not restart Home Assistant by itself**, and a fix never deletes anything
   it didn't create.
+- **Overnight self-healing does exactly three things and no more.** No
+  power-cycling a device through its plug, no restarting Home Assistant, no
+  restarting itself, and no Claude run on that path at all. It is off by
+  default, capped at three repairs a night, and never touches a protected entity
+  or a finding you have answered.
+- **No emergency playbook unlocks a door or disarms an alarm**, whatever the
+  emergency. And brAIn never runs a playbook itself — it writes one, you accept
+  it, and Home Assistant runs it.
 - **Voice is limited to Home Assistant by default.** Widening it to Bash and file
   editing is a setting you turn on deliberately.
 - **The registry services are admin-gated**, and destructive sweeps (orphan cleanup)

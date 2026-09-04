@@ -406,6 +406,82 @@ class TestNotifyTargets(unittest.TestCase):
         self.assertIn("area_name(trigger.entity_id)", step["data"]["message"])
 
 
+class TestTheOptionalClaudeRun(unittest.IsolatedAsyncioTestCase):
+    """The card's paragraph is the ONLY thing a model writes here, and a
+    run that fails leaves the deterministic sentence exactly where it was."""
+
+    async def asyncSetUp(self):
+        self.server = importlib.import_module("server")
+        self.runs: list[str] = []
+        self.added: list[dict] = []
+        self.known = False
+        self.result = {"ok": True, "text": "When a detector goes off, every "
+                                           "light comes on at full and the "
+                                           "heating stops."}
+
+        def run_claude(prompt, system, model, timeout, turns, source):
+            self.runs.append(prompt)
+            return self.result
+
+        self._old = (self.server.engine.run_claude,
+                     self.server.proposals.knows,
+                     self.server.proposals.add,
+                     self.server._findings_notify_target,
+                     self.server.automation_writer.protected_patterns)
+        self.server.engine.run_claude = run_claude
+        self.server.proposals.knows = lambda obj: self.known
+        self.server.proposals.add = lambda obj: (self.added.append(obj) or obj)
+        self.server._findings_notify_target = lambda: ("mobile_app_phone", "w")
+        self.server.automation_writer.protected_patterns = lambda *a, **k: []
+        self.addCleanup(self._restore)
+
+    def _restore(self):
+        (self.server.engine.run_claude, self.server.proposals.knows,
+         self.server.proposals.add, self.server._findings_notify_target,
+         self.server.automation_writer.protected_patterns) = self._old
+
+    async def test_a_known_playbook_costs_no_claude_run(self):
+        # The mutation: describe first, ask the store after. A house whose
+        # playbooks are all answered would pay for three Claude runs every
+        # six hours, forever.
+        self.known = True
+        self.assertEqual(await self.server._offer_playbooks(house(), NOW), 0)
+        self.assertEqual(self.runs, [])
+        self.assertEqual(self.added, [])
+
+    async def test_the_paragraph_replaces_the_deterministic_sentence(self):
+        offered = await self.server._offer_playbooks(house(), NOW)
+        self.assertEqual(offered, 3)
+        self.assertEqual(len(self.runs), 3)
+        smoke = by_class(self.added)["smoke"]
+        self.assertIn("every light comes on at full", smoke["why"])
+
+    async def test_a_failed_run_leaves_the_sentence_and_still_offers(self):
+        self.result = {"ok": False, "error": "not authenticated"}
+        self.assertEqual(await self.server._offer_playbooks(house(), NOW), 3)
+        smoke = by_class(self.added)["smoke"]
+        self.assertIn("Written from what this house has", smoke["why"])
+
+    async def test_a_run_that_raises_does_not_lose_the_playbook(self):
+        def boom(*a, **k):
+            raise RuntimeError("no CLI")
+
+        self.server.engine.run_claude = boom
+        self.assertEqual(await self.server._offer_playbooks(house(), NOW), 3)
+
+    async def test_a_four_word_answer_is_not_an_answer(self):
+        self.result = {"ok": True, "text": "It turns things on."}
+        await self.server._offer_playbooks(house(), NOW)
+        smoke = by_class(self.added)["smoke"]
+        self.assertIn("Written from what this house has", smoke["why"])
+
+    async def test_the_prompt_never_asks_the_model_to_choose(self):
+        await self.server._offer_playbooks(house(), NOW)
+        prompt = self.runs[0]
+        self.assertIn("Write the paragraph and nothing else.", prompt)
+        self.assertIn("Hall smoke", prompt)
+
+
 class TestRehearsal(unittest.IsolatedAsyncioTestCase):
     """It reports; it does not run. Measured, not described."""
 

@@ -408,6 +408,96 @@ else is refused in as many words, and refused **whole** — never replayed for
 just the part that can be read, because a plausible wrong number is worse than
 no number.
 
+## The house acts
+
+Two things brAIn does that nothing else here does: it fixes a small, fixed set
+of problems while you are asleep, and it writes the automation you would want on
+a bad night. Both are off until you turn them on, and both are built around what
+they refuse to do.
+
+### Three things it may fix overnight
+
+Only with **Fix three things overnight** switched on in the add-on's
+Configuration tab, and only these three:
+
+| What is wrong | What it does |
+| --- | --- |
+| An add-on set to start on boot is not running | Starts it |
+| A Z-Wave node the controller has marked dead | Pings it |
+| An integration that did not finish setting up | Reloads that entry |
+
+Each is a call you would have made yourself, and each fails into nothing. There
+is **no power-cycling anything**, no restart of Home Assistant, no restart of
+brAIn, and **no Claude run anywhere on this path** — a model deciding what to
+restart in your house at 3am is a guess wearing a repair.
+
+It runs **once a night, inside your quiet hours**. With no quiet hours set it
+runs an hour after the time brAIn has *measured* your house going quiet; with
+neither, it does not run at all, and ⚙ → Diagnostics says so.
+
+**At most three a night** — nine broken things at once is not a house to fix
+unattended. **One try per problem per night**, written down as it goes, so
+restarting the add-on at 3am does not start the same thing twice. **Never
+anything on your protected entities**: the dead node's whole device is checked,
+not just the sensor, because a ping reaches the box and the box might be a lock
+— and if brAIn cannot work out what a repair would touch, it skips it rather
+than guessing. **Never something you have already answered** with *Fix it* or
+*Wrong*.
+
+**Nothing checks its own work, deliberately.** A call the Supervisor accepted is
+not a working add-on. What proves a repair is the next house-checks pass: the
+finding clears, or it does not — and the morning brief says which, with the
+time: *"started the Mosquitto broker add-on at 03:10; it is working now."*
+
+### Emergency playbooks
+
+brAIn never runs one. It **writes** one and offers it on **Proposals**; Home
+Assistant runs it if you accept it. Three, each only when your house has the
+sensor:
+
+**Smoke or CO** — every light to full brightness, heating and cooling off,
+blinds and curtains open, a notification naming the room the detector is in.
+
+**Water leak** — water valves closed, water switches off, water heaters off, a
+notification naming the room.
+
+**Freeze with the heating stopped** — the coldest room brAIn has measured falls
+below 5 °C *and* its thermostat has been doing nothing for half an hour. **This
+one only tells you.** Nothing here turns a boiler on: brAIn cannot know why the
+heating stopped.
+
+**No playbook unlocks a door or disarms an alarm.** Not as a setting, not ever.
+A smoke detector is the sensor most likely in a house to go off over burnt
+toast, and a false alarm that opens the house at three in the morning is a worse
+outcome than any it could prevent.
+
+**Every entity it would act on is on the card, by name**, grouped by what
+happens to it — and anything protected is shown as *skipped: protected* rather
+than quietly left out, so you can see brAIn knows it is there and knows it may
+not touch it. If protection leaves a playbook with nothing to do but send a
+message, it is not offered at all.
+
+Which valve, which lights, which thermostats is read straight from your
+registries. **No model chooses any of it** — a model picking which valve to
+close is a guess you could not check afterwards, because the automation would
+look the same either way. Claude writes one thing, optionally: the paragraph on
+the card explaining it in plain English, and if that run fails the card still
+says what it does.
+
+**Rehearse it** shows every call it would make with each target's state right
+now — *12 lights → on (3 already on), 1 valve → closed (open now)* — and
+**changes nothing**. It deliberately does not use \`automation.trigger\`, which
+would run the actions; that is not a rehearsal, it is the emergency. A real
+rehearsal is setting the detector off on purpose and reading the automation's
+trace afterwards.
+
+**There is no trial button on a playbook**, and the card says why: a trial
+replays the week you have just lived, and that week had no emergency in it.
+
+Accepting one goes through the same path as any other proposal — written to
+\`automations.yaml\` with an id of \`brain_playbook_smoke\`, reloaded, verified,
+put back if it did not take, undoable from the toast.
+
 ## What counts as unusual
 
 brAIn measures your house overnight: for every numeric sensor, what it normally

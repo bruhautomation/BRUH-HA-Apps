@@ -1390,7 +1390,7 @@ async def _evening_loop():
 # refusal on top of it: this one is OFF unless somebody switched it on.
 HEAL_POLL_S = 5 * 60
 HEAL_FIRST_DELAY_S = 900
-HEAL_STATE: dict = {"last": None, "reason": "", "running": False}
+HEAL_STATE: dict = {"last": None, "running": False}
 
 
 def _healing_enabled() -> bool:
@@ -1500,12 +1500,13 @@ async def _heal_loop():
     await asyncio.sleep(HEAL_FIRST_DELAY_S)
     while True:
         try:
-            if not _healing_enabled():
-                HEAL_STATE["reason"] = "self_healing is off"
-            else:
+            if _healing_enabled():
                 now = time.time()
-                due, why = _healing_window(now)
-                HEAL_STATE["reason"] = "" if due else why
+                # The window is asked here and again in the diagnostics,
+                # rather than cached between them: a stale "why not" is
+                # the failure this whole file is built to avoid, and the
+                # question is arithmetic over two numbers.
+                due, _why = _healing_window(now)
                 if due:
                     night = healing.night_key(_local_now(now))
                     store = await asyncio.to_thread(healing.load)
@@ -1531,18 +1532,26 @@ def _healing_diagnostics() -> dict:
         store = HEAL_STATE["last"] or healing.load()
     except Exception as exc:  # noqa: BLE001 — a dev checkout has no /data
         return {"enabled": on, "error": str(exc)[:120]}
-    reason = HEAL_STATE["reason"]
-    if on and not reason:
+    # Asked fresh rather than read off the loop's last tick: the dialog is
+    # opened when somebody wants to know NOW, and the loop's answer is up
+    # to five minutes old and says nothing at all before its first pass.
+    reason, due = "", False
+    if on:
         try:
-            _due, reason = _healing_window(time.time())
-        except Exception as exc:  # noqa: BLE001
+            due, reason = _healing_window(time.time())
+        except Exception as exc:  # noqa: BLE001 — a dev checkout has no
+            # rhythm store, and "I could not work it out" is an answer.
             reason = str(exc)[:120]
     return {
         "enabled": on,
         "max_per_night": healing.MAX_PER_NIGHT,
         "remedies": sorted(healing.REMEDIES),
-        "window": "" if on else "self_healing is off",
-        "reason": "" if not on else reason,
+        "in_window": bool(due),
+        # Empty while it is on and inside its window: there is nothing
+        # stopping it, and a "reason" beside a working pass is noise —
+        # the same rule `budget_state` follows about an excuse next to a
+        # number that is fine.
+        "reason": "" if (not on or due) else reason,
         "night": store.get("night", ""),
         "last_run": int(store.get("started_at") or 0),
         "attempts": store.get("attempts") or [],

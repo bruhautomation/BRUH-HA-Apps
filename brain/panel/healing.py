@@ -378,10 +378,21 @@ def _entry_attempts(finding: dict, snap: dict, patterns: list[str]) -> list[dict
 
 # The closed playbook. A source that is not a key here is a finding
 # nothing may heal, which is every other producer in the add-on.
+#
+# `NEEDS` is the same claim `checks.run_all` makes about a check, in the
+# half that acts: a snapshot key that could not be fetched means **I
+# could not look**, which is a skip rather than "nothing matches this row
+# any more". Without it a Supervisor that did not answer would read as
+# every add-on having come back.
 REMEDIES = {
     "check:sys.addon_down": _addon_attempts,
     "check:dev.zwave_dead": _zwave_attempts,
     "check:sys.entry_failed": _entry_attempts,
+}
+NEEDS = {
+    "check:sys.addon_down": ("supervisor",),
+    "check:dev.zwave_dead": ("states", "registry"),
+    "check:sys.entry_failed": ("config_entries", "registry"),
 }
 
 
@@ -441,6 +452,14 @@ def plan(findings: list[dict], snap: dict, patterns: list[str],
         ts = int(row.get("ts") or 0)
         if ts in done:
             skip(row, "already tried tonight")
+            continue
+
+        missing = [k for k in NEEDS.get(row["source"], ())
+                   if not (snap.get("available") or {}).get(k)]
+        if missing:
+            # See `NEEDS`. This is not "the problem went away".
+            skip(row, "brAIn could not read " + ", ".join(missing)
+                 + " this pass, so it did not try")
             continue
 
         found = REMEDIES[row["source"]](row, snap, patterns)
@@ -539,7 +558,8 @@ def brief_lines(state: dict, open_ids: set[int], tz=None,
 
 __all__ = [
     "CALL_TIMEOUT_S", "MAX_PER_NIGHT", "OUTCOME_FAIL", "OUTCOME_OK",
-    "OUTCOME_SKIP", "REMEDIES", "SETTLE_GRACE_MIN", "SETTLE_OFFSET_MIN",
+    "NEEDS", "OUTCOME_SKIP", "REMEDIES", "SETTLE_GRACE_MIN",
+    "SETTLE_OFFSET_MIN",
     "STORE", "SUPERVISOR_API", "attempted_tonight", "brief_lines",
     "eligible", "load", "night_key", "perform", "plan", "save", "window",
 ]

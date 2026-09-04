@@ -2,6 +2,183 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.45.0
+
+**The two items on the ranked twelve that make the house act, and every
+line of both is about what they will not do.** #6 overnight self-healing
+and #3 emergency playbooks. Everything brAIn has ever done to a house has
+been a person's press on a specific card; these are the first two things
+that are not, and they are deliberately the narrowest shapes that still
+do the job.
+
+### Added
+
+- **`panel/healing.py` — three things brAIn may fix while you are
+  asleep.** A *closed* playbook, keyed to findings the house checks
+  already file: start an add-on that was set to run at boot and is not
+  running, ping a Z-Wave node the controller has marked dead, reload a
+  config entry that failed to set up. All three are calls a person would
+  have pressed and all three fail into nothing — a ping moves nothing, a
+  reload of something already broken cannot make it more broken, and an
+  add-on that was meant to be running is being started the way boot would
+  have started it.
+
+  **Verification is free, and it is the only kind worth having.** Nothing
+  here reads back whether the call worked, because a 200 from the
+  Supervisor is a request being *accepted* — the distinction BRight draws
+  between a `play_media` call and a speaker making a sound. What proves a
+  heal is the **next checks pass**: the row clears or it does not, and
+  the morning brief says which, by name and by the clock (*"started the
+  Mosquitto broker add-on at 03:10; it is working now"* / *"…it has not
+  cleared yet"*).
+
+  Six refusals, each with the mutation `tests/test_healing.py` catches:
+
+  - **Off by default.** `self_healing` ships `false`. A house does not
+    start healing itself because it was updated.
+  - **Only in the window.** Once a night, inside quiet hours. With none
+    set, an hour after the settle time `rhythm` has measured. With
+    neither, **not at all** — and `/api/diagnostics` says so in as many
+    words, because a self-healer that has never run looks exactly like
+    one with nothing to do, and running at an hour nobody set is acting
+    on a guess about when nobody is looking. A night is keyed around
+    local midnight, so 23:40 and 03:10 are the same night; a key that
+    changed at midnight would let two passes run twenty minutes apart.
+  - **One attempt per finding per night**, written to disk after *every*
+    attempt rather than at the end, so a restart at three in the morning
+    does not start the same add-on twice. The unit is the finding rather
+    than the target because the finding is what clears, and the clearing
+    is the verification.
+  - **Never more than three in a pass.** A house with nine broken things
+    at once is not a house to fix unattended; it is a house to look at.
+    The plan is ordered oldest-first so a night that hits the cap takes
+    the same three every time.
+  - **Never on a protected entity, area or device.** `call_service` in
+    the MCP server is the chokepoint every Claude path reaches the house
+    through, and neither a Supervisor request nor an unattended service
+    call from this loop is one of its callers — so the same patterns are
+    read here, exactly as `automation_writer` reads them. A target that
+    cannot be resolved to plain entities is **skipped, not guessed**: an
+    older Core carries no `config_entry_id` on its registry rows, and
+    reading "I could not tell" as "nothing is protected" is the bypass
+    the list exists to prevent. A ping reaches the *box*, so every entity
+    on the node's device is checked and not only the sensor named.
+  - **Never a row a person has touched.** `open` only — `fixing` is a
+    conversation somebody is already having with brAIn.
+  - **Never off a snapshot key that could not be fetched.** `NEEDS` is
+    the same claim `checks.run_all` makes about a check: a Supervisor
+    that did not answer would otherwise read as every add-on having come
+    back, which is `clear_resolved`'s "I could not look is not it went
+    away" in the half that acts.
+
+  What is deliberately **not** here: **no power-cycling of anything** (a
+  plug switched off and on again has a freezer behind it), **no restart
+  of Home Assistant or of brAIn**, and **no Claude run anywhere on this
+  path** — a model choosing what to restart is a guess wearing a
+  remediation. Every attempt is a `journal.record` line (`healed`,
+  `heal_failed`, `heal_skipped`), a row under `healing` in
+  `/api/diagnostics` with the skips and their reasons, and a line in the
+  next morning brief. A failed call is recorded and never retried the
+  same night, which needs no machinery: the attempt is written whatever
+  happened to it, and the store is what the next pass reads.
+
+- **`checks/system.py` gains `sys.entry_failed`**, which is the finding
+  the third remedy stands on. An integration that fails setup takes
+  everything it provides out of the house at once — there is no state to
+  look wrong, because there are no states — so nothing else on the
+  Findings tab can see it. `config_entries` joins the checks snapshot and
+  goes **unavailable rather than empty** when Core will not answer: "no
+  entry is failing" and "I could not ask" are different claims and only
+  the first may clear a row. A **disabled** entry is somebody's decision
+  and an **ignored** one is a discovery somebody waved off; reporting
+  either is how this check would fire on a healthy house.
+  `migration_error` is deliberately out — that is a restore or a
+  downgrade, and a reload cannot touch it.
+
+- **`panel/playbooks.py` — the automation brAIn would write for a bad
+  night, offered as a proposal.** Smoke or CO, a water leak, and a freeze
+  with the heating stopped. **brAIn never runs one**: it writes it,
+  offers it on the Proposals tab, and Home Assistant runs it if — and
+  only if — the person accepted it, through 1.44.0's write-reload-verify
+  path with every refusal that already carries.
+
+  **Nothing unlocks anything, ever.** The capability page lists doors
+  unlocked under smoke and it is wrong: a lock is the canonical protected
+  entity, a smoke detector is the sensor most likely in a house to fire
+  on burnt toast, and opening the house on a false alarm at three in the
+  morning is the worst outcome anything on that page could produce. The
+  rule is asserted over **every action of every generated config** rather
+  than over the branch that would have written one, because a rule
+  checked where the config is built is a rule that holds for the branches
+  somebody remembered.
+
+  **Composed deterministically from the registries.** No model picks
+  which valve closes — that is a guess wearing a config, and one nobody
+  can check afterwards because the automation looks the same either way.
+  Claude is used for exactly one optional thing, the paragraph on the
+  card, and a run that fails leaves the deterministic sentence in place.
+
+  **Every entity it would act on is listed on the card by name**, grouped
+  by what happens to it, and a protected one is rendered as *skipped:
+  protected* rather than silently dropped — seeing that brAIn knows the
+  valve is there and knows it may not touch it is the point of showing
+  it. A playbook with nothing left to do after protection is **not
+  proposed**: what remains is a notification, and brAIn already sends
+  those. `freeze` is the exception and says so, because nothing here may
+  turn a boiler on.
+
+  **A switch is a water shutoff when the word is the whole word.** The
+  match is on `water`, `valve`, `stopcock`, `mains` and `shutoff`, and
+  **not** on a bare `main` — `switch.main_bedroom_lamp` matches that, and
+  a leak playbook that turns the bedroom lamp off is one somebody
+  deletes. A shutoff called only "Main" is missed, which costs a line on
+  a card somebody can read; the other way round costs trust.
+
+  `proposals.key_for` hashes the config, so the key moves when the sensor
+  set moves and a declined playbook comes back when a detector is fitted
+  — and rewording the card does not re-offer it. The written automation
+  keeps the playbook's own id (`brain_playbook_smoke`), which says what
+  it is when somebody opens `automations.yaml` in six months;
+  `automation_writer` takes a config's id only when it carries the
+  `brain_` prefix, because the duplicate-id refusal is what makes a
+  stable id safe.
+
+- **Rehearsal: `GET /api/playbook/{ts}/rehearsal`.** Every call the
+  playbook would make, with each target's state right now — *"12 lights →
+  on (3 already on), 1 valve → closed (open now)"*. It **executes
+  nothing**, and it deliberately does not use `automation.trigger`, which
+  would run the actions: that is not a rehearsal, it is the emergency.
+  A real rehearsal is setting the detector off on purpose and reading the
+  trace afterwards, and the card says so.
+
+### Panel
+
+- The Proposals tab renders a **playbook card**: a Playbook pill, the
+  grouped list of what it would act on, the skipped-protected rows, the
+  rehearsal as a disclosure that fetches on open (it reads every state in
+  the house, and a tab of five playbooks would ask five times before
+  anybody looked at one), and the sentence saying it will not unlock a
+  door. **No trial button**, and the reason where the button would have
+  been: a trial replays the week you lived through, and that week had no
+  emergency in it — a button that cannot help is worse than a sentence
+  saying why.
+- The Diagnostics section under ⚙ shows the healing pass: whether it is
+  on, what it did last night, and — when it did nothing — which of the
+  three silences that was.
+
+### Notes
+
+- `checks/devices.py` grows `zwave_dead_nodes` beside the set the two
+  device checks already share, and `checks/system.py` exports the text of
+  the row `addon_down` files: that check writes two rows and only one of
+  them is startable, and a finding's text is the one stable id it has.
+- The config-entry reload goes through `homeassistant.reload_config_entry`
+  — the documented service — so it rides the `call_core_service` the
+  accept path already uses, where a domain and a service name are checked
+  against the shape one can have. Home Assistant's own frontend reloads
+  an entry over REST rather than the WebSocket API; read the call site,
+  never the first name that sounds right.
+
 ## 1.44.0
 
 **1.42.0's last two steps did nothing.** It shipped the proposal lifecycle —
