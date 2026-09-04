@@ -82,7 +82,13 @@ that does nothing.
 5. Check **Text direction** on the same row. A label much longer than it is
    wide reads along the roll automatically and the picker says so; anything
    else is one press, once, for that stock. Nothing asks again per print.
-6. Type something on the Quick tab and print it.
+6. If everything comes out shifted by the same amount every time — a wide
+   band at one edge and nothing at the other — press **Where the printing
+   starts**. It prints a calibration label drawn to the very edges of the
+   sheet with a 1mm scale at its own corner, you read off how far in the
+   printing really begins, and BRUH Print moves it. Once per roll, and
+   nothing to do at all unless a label looks wrong.
+7. Type something on the Quick tab and print it.
 
 ## From Home Assistant
 

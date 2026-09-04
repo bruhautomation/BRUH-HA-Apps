@@ -55,8 +55,11 @@ Quick tab and the designer both follow it and neither asks again — a
 direction that could be set in three places is three controls that can
 disagree about a property of the roll.
 
-**Edit** opens the rest: the two measurements, the swap, **Margin (mm)** and
-how many labels are on a full roll.
+**Edit** opens the rest: the two measurements, the swap, **the blank border
+kept clear of the edge** and how many labels are on a full roll. The border
+sits beside the two measurements because it is the third number that decides
+how big anything printed on this roll comes out, and the dialog says how much
+of the label the artwork actually gets once it is taken off.
 
 ### The margin
 
@@ -71,7 +74,52 @@ where the next letter would start rather than where this one ends.
 
 A stock you have added or corrected keeps whatever margin it was saved with,
 so raising the default does not undo your measurement. Change one roll's
-margin under **Edit**.
+margin under **Edit**. It is also shown on the stock row, next to the two
+measurements: a roll carrying a 5mm border prints artwork a centimetre
+smaller than the label, and that is worth being able to see without opening
+anything.
+
+### Where the printing starts
+
+A LabelWriter finds the top of a label by an infrared photocell looking for
+the sense hole punched between labels, and where that hole sits relative to
+the die cut is a property of the **roll**. So one printer and one roll can
+begin laying ink a few millimetres after the label's leading edge, every
+time, for good — with nothing wrong anywhere in the driver. On the roll this
+feature was built for, measured off a photograph against the printed ruler's
+own ticks, it was **4.7mm**: the top margin came out 9.9mm where it should
+have been 5.2, the bottom 0.3mm, and the last 4.7mm of the raster ran off the
+end of the label into the gap.
+
+Nothing in a container can see that, so you measure it and type it in, once
+per roll.
+
+1. Press **Where the printing starts** on the printer card.
+2. Press **Print the calibration label**. Unlike the ruler, it is drawn to
+   the very edges of the sheet — the border above is ignored, or there would
+   be nothing near the die cut to measure against. It carries two thick rules
+   meeting at the exact corner where the printing begins, and 1mm ticks
+   running along each of them.
+3. Hold it up. If there is a **gap** between the label's own edge and a thick
+   rule, that gap is how far in the printer is starting: type it into the
+   matching box **with a minus in front**. If a thick rule is missing because
+   the printing started before the edge, count the ticks that did survive and
+   type that as a plus.
+4. Save, and print the calibration label again. Saved offsets are applied to
+   it too, so the second one is the check.
+
+Both boxes default to `0.0` and stay there unless somebody measures. The
+offset moves the rendered sheet on its way to the printer and changes nothing
+about the label: the document, the preview and the design canvas are the
+same, because this is a correction to where the machine puts the paper. A
+shift that slides blank border off one edge costs nothing and is silent; one
+that would push real **ink** off the label still prints and comes back with a
+note saying how much, past which edge, and what to change. An offset in use
+is shown on the stock row.
+
+Anything past an inch is refused rather than clamped — a LabelWriter's
+registration is out by a millimetre or two, so a bigger number is a
+mistyped measurement or two boxes filled in the wrong way round.
 
 The two stocks this add-on ships knowing, read off the roll cores:
 
@@ -498,6 +546,19 @@ of every label, with nothing on this side able to see it. Sending it is how
 a job stops inheriting a stranger's margin. **Bare minimum** does not send
 it, along with everything else.
 
+`ESC f 1 n` (skip *n* lines) is documented, unambiguous, and deliberately not
+sent. It is the printer's own feed-direction print position and it only ever
+moves paper **forward**, so it cannot express the correction that
+*Where the printing starts* exists for — a printer beginning **late**, which
+needs the artwork moved toward the leading edge. Splitting the control
+between a skip for one sign and a raster shift for the other would also give
+it two behaviours at the edge of the sheet: a skip pushes the tail of the
+raster past the die cut into the gap, which the printer explicitly does not
+check, while a raster shift keeps the sheet exactly one label long — which is
+what lets BRUH Print see the ink it is about to lose and tell you. `ESC B n`
+(dot tab) is the same story on the across axis, in steps of eight dots, and
+it is already carrying the more important job above.
+
 ### How dark, and how slowly
 
 A LabelWriter that is told nothing prints at its own defaults — normal
@@ -575,9 +636,20 @@ that area as a dashed rectangle with the margin tinted, and clamps boxes to
 it, so this usually means the stock is wrong rather than the label.
 
 **The words sit too close to the edge.** They should not: text is fitted and
-placed by its ink, inside a 2mm margin and a little breathing room inside its
-own box. If a particular roll needs more, raise **Margin (mm)** under **Edit**
-on the Printer tab — it is per stock, so nothing else changes.
+placed by its ink, inside a 2mm border and a little breathing room inside its
+own box. If a particular roll needs more, raise **the blank border kept clear
+of the edge** under **Edit** on the Printer tab — it is per stock, so nothing
+else changes.
+
+**Everything is printed too far down the label (or too far to one side), the
+same amount every time.** That is top-of-form registration, and it is a
+property of the printer and the roll rather than of anything BRUH Print
+draws: the artwork is the right size and the right shape, it just starts in
+the wrong place. Press **Where the printing starts** on the printer card and
+work through it — see *Where the printing starts* above. If it is only *some*
+labels, or it gets worse down the roll, that is a different fault and it was
+fixed in 0.5.0 by sending a real top-of-form search budget; make sure you are
+not on an older version.
 
 **Nothing prints and there is no error.** Check the roll is seated and the
 lid is closed, then press **Check it** on the printer's card — a LabelWriter

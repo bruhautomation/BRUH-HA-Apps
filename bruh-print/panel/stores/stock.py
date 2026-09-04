@@ -58,6 +58,15 @@ MM_PER_IN = 25.4
 # Printer tab is where a roll that wants more or less says so.
 DEFAULT_MARGIN_MM = 2.0
 
+# How far the printing may be nudged, in millimetres, in either direction on
+# either axis. An inch. Registration on a LabelWriter wanders by fractions of
+# a millimetre and the worst real misregistration this add-on has been shown
+# measured 4.7mm; a number bigger than an inch is a typo, and a number bigger
+# than the label is a blank label with a note explaining why. It is a bound on
+# what the panel will SAVE rather than a clamp in the print path, because a
+# clamp would silently print something other than what the field says.
+MAX_OFFSET_MM = 25.4
+
 
 class UnknownStock(KeyError):
     """A stock id nothing in the catalog answers to.
@@ -95,6 +104,27 @@ class Stock:
     # is right for a stock nobody has corrected; a number is somebody having
     # corrected it, and survives.
     turn: int | None = None
+
+    # Where this printer actually starts laying ink on THIS roll, expressed
+    # as the correction that puts it right: how far the whole rendered sheet
+    # moves on its way to the printer, in millimetres. Both default to 0.0,
+    # which is the only honest default — nothing here can measure a printer's
+    # registration, and a guess would be a misalignment this add-on invented.
+    #
+    # **Signs, once, in words.** `offset_feed_mm` is negative toward the edge
+    # of the label that leaves the printer FIRST, and positive the other way.
+    # `offset_across_mm` is negative toward the left-hand edge as the label
+    # comes out, positive toward the right. The case this was built for is a
+    # printer that began laying ink 4.7mm after the leading edge, so its
+    # correction is `offset_feed_mm = -4.7`.
+    #
+    # It lives on the STOCK rather than on the printer or on the label,
+    # because registration on a die-cut roll is dominated by where the sense
+    # holes are punched relative to the die cut, which is a property of the
+    # roll. A house with two rolls in a Twin Turbo genuinely has two answers,
+    # and they are not each other's.
+    offset_across_mm: float = 0.0
+    offset_feed_mm: float = 0.0
 
     # -- derived -----------------------------------------------------------
     @property
@@ -156,6 +186,12 @@ class Stock:
         Editing rather than adding, because it is the same physical roll —
         a second row for the transposed version is two rows a person has to
         choose between with no way to tell which is right.
+
+        The two print offsets are carried across unchanged. They are in the
+        PRINTER's axes — one along the feed, one across the head — and
+        exchanging which of the catalog's two numbers is which does not move
+        either of those; and a swap is not a reason to throw away a
+        measurement somebody made with a ruler.
         """
         return Stock(**{**asdict(self), "across_in": self.feed_in,
                         "feed_in": self.across_in, "builtin": False,

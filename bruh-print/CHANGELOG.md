@@ -1,10 +1,95 @@
 # Changelog
 
-## 0.5.1
+## 0.6.1
 
 ### Fixed
 
 - A module-level logger that nothing logged through, removed. Not a bug — a module that arrived carrying another one's boilerplate, from before there was anything to say — and it is here because `tests/test_code_scanning.py` now fails on the shape. It had shipped three times, always the same way, and a sweep is a moment where a rule is a test. This module reports its failures to its caller rather than logging them, so the honest fix was no logger rather than a log line.
+
+## 0.6.0
+
+**The renderer was right, the wire bytes were right, and the labels were
+still landing 4.7mm too far down the roll.** That was measured before
+anything was changed, which is the only reason this release is a new feature
+and not a fourth guess.
+
+The same ruler label was printed through the real renderer locally and
+through the real printer. The rendered bitmap is 672 × 375 dots with its ink
+inset **exactly 24 dots — 2.03mm — on all four sides**: symmetric, correct,
+nothing to fix. The photograph of the printed label was then deskewed and
+measured against the printed ruler's own 5mm ticks, which is the one scale in
+the picture that cannot be wrong:
+
+- **Scale is right and isotropic.** 18.26 px/mm across the ticks and 18.36
+  px/mm down them, against 18.32 and 18.20 px/mm on the label's own die cut.
+  300 dpi across the head and the graphics-mode line doubling down the feed
+  are both landing. Nothing is stretched, squashed, doubled or halved.
+- **Nothing is clipped.** The printed box measures 46.6 × 21.4mm and carries
+  exactly ten across ticks and five down ones, which is what the ruler emits
+  for a drawable area of about 46.8 × 21.4mm. The whole artwork is on the
+  label.
+- **One defect, and it is vertical placement.** Left margin 5.2mm, right
+  5.5mm — horizontal registration is fine. Top 9.9mm, bottom 0.3mm — both
+  should have been 5.2mm. The printer begins laying ink **4.7mm (0.185",
+  about 55 dot lines at 300 dpi) after the leading edge**, and the bottom
+  4.7mm of the raster runs off the end of the label into the gap. It happens
+  to be blank margin there, which is why nothing looked cut off.
+
+That is top-of-form registration: a physical property of one printer and one
+roll, which this add-on has never had any way to express.
+
+**So a stock now carries a print offset**, signed, in millimetres, on both
+axes, defaulting to 0.0 so nothing changes for anyone who has not measured
+theirs. It is applied to the rendered sheet on its way to the printer and
+nowhere else: the label, the preview and the design canvas are untouched,
+because the offset is a correction to where the machine puts the paper and
+not a change to anybody's layout. A shift that slides blank margin off one
+edge costs nothing and says nothing; a shift that would push real **ink** off
+the label prints anyway and comes back with a note saying how much, past
+which edge, and which control to change — this add-on refuses a print for
+exactly one reason and this is not it.
+
+**The manual documents a feed-direction print-position command, and it is
+deliberately not what this uses.** `<esc> f 1 n` Skip "n" Lines is real,
+unambiguous and in the printer's own steps — and it only ever moves paper
+*forward*. The fault measured above is a printer starting **late**, whose
+correction is a negative skip, which is not a thing. Using `ESC f` for one
+sign and a raster shift for the other would also give one control two
+behaviours at the sheet's edge: a skip pushes the tail of the raster past the
+die cut into the gap, where the manual is explicit that the printer does not
+check, while a raster shift keeps the sheet exactly one label long — which is
+what lets the add-on see the ink it is about to lose and say so. The across
+axis had the same choice and the same answer: `ESC B n` moves in whole bytes
+of eight dots (0.68mm a step, against a fault measured in tenths), is
+likewise one-directional, and is already sent as `ESC B 0` in every preamble
+to clear whatever another driver left in the printer — which it could no
+longer do if it were also carrying a per-roll correction. One mechanism, both
+axes, both signs, rounded to whole dots exactly once.
+
+**And a number you have to guess is a number you guess wrong, so there is
+something to measure with.** The ruler could not do this job: it is drawn
+inside the stock's margin, so on the roll in question there was nothing
+within 5mm of the die cut to measure against. The new **calibration label**
+is drawn to the full sheet with the margin ignored, with two thick rules
+meeting at the exact corner where the raster begins and 1mm ticks running
+along each of them. You hold it up, read the gap between the label's own edge
+and the thick line, and type it in with a minus in front. The sign is spelled
+out in words on the label, in the dialog and under each box, because nobody
+knows which way "+" goes on a label printer. Saved offsets are applied to the
+calibration label too, so printing it again is how you check a correction
+worked. It lives beside **Print the ruler** on the Printer tab, as **Where
+the printing starts** — two questions, two labels, neither of them merged
+into one that answers both badly.
+
+**The margin is on screen now.** The roll in this report carried a 5.2mm
+border where the shipped default is 2.0 — almost certainly typed in by hand
+to compensate for the misregistration above, since the panel offered nothing
+else — and it was visible nowhere: the artwork simply came out small and
+floating in white. It rides on the stock row beside the two measurements, and
+the Edit dialog asks for it in words as *the blank border kept clear of the
+edge*, next to the two measurements rather than as a bare "Margin (mm)" at
+the bottom, and says how much of the label the artwork actually gets. Nobody's
+saved value was changed.
 
 ## 0.5.0
 

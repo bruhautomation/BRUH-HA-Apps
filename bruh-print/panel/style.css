@@ -446,9 +446,13 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
 .strow .dim { font-variant-numeric: tabular-nums; color: var(--ink-2);
   font-size: 13px; }
 .strow .sku { font-size: 12px; color: var(--ink-3); }
-.strow .pill.in { font-size: 12px; padding: 2px 8px; border-radius: 999px;
-  background: var(--ok-bg, var(--line-2)); color: var(--ink-2);
-  white-space: nowrap; }
+.strow .pill { font-size: 12px; padding: 2px 8px; border-radius: 999px;
+  background: var(--line-2); color: var(--ink-2); white-space: nowrap; }
+/* A print offset is a correction somebody made to this roll, so it reads as
+   one rather than as another fact about it: the `--warn` ink both themes
+   already define, on the same quiet ground. Not a colour of its own — a
+   fourth palette entry for one pill is a palette that drifts. */
+.strow .pill.moved { color: var(--warn); }
 /* Sized to its content and capped, never `width: auto` unbounded — a select
    lays out to its WIDEST option, which is how the design tab's stock picker
    once took the page width with it. */
