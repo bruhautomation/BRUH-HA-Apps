@@ -13,12 +13,17 @@ Three things that ran, quietly, and did the wrong thing.
   `brief.worth_saying` could never fire. It runs on a thread now, and a test
   drives a degraded verdict through to `worth_saying` rather than grepping
   for the line.
-- **A habit with the best evidence in the ledger was the one dropped.**
-  `routines._best_shape` earns `every day` only when both halves of the
-  week hold up on their own — right — but when they did and the *merged*
-  set failed (07:00 on weekdays and 10:00 at weekends is two clean shapes
-  three hours apart), it returned that refusal instead of falling back to
-  the narrower true claim its own docstring promises. It falls back now.
+- **`every day` was granted at the weekday hour for a house that sleeps
+  in at weekends.** `routines._best_shape` earns `every day` only when both
+  halves of the week hold up on their own — right — but it never asked
+  whether they hold up at the *same time*, and the merged set could not
+  tell it: the spread is a median deviation, so fifteen weekday presses at
+  07:00 hid six weekend ones at 10:00 completely and the union came out
+  as `every day at 07:00`, spread zero. That is the exact trigger the
+  function exists to refuse. The halves have to agree on the hour now, and
+  when they do not the answer is the narrower true claim rather than
+  nothing (the old code also dropped the habit outright whenever the
+  union was refused).
 - **Switching the chat to the classic terminal froze the panel.** The
   handoff ran `tmux new-window` with a blocking `subprocess.run` directly
   on the event loop, so every request, SSE stream and the terminal bridge
