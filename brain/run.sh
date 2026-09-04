@@ -354,6 +354,11 @@ MEMORYMD
     morning_brief_hour=$(bashio::config 'morning_brief_hour' '7')
     export BRAIN_MORNING_BRIEF="$morning_brief"
     export BRAIN_MORNING_BRIEF_HOUR="$morning_brief_hour"
+    local weekly_report weekly_report_day
+    weekly_report=$(bashio::config 'weekly_report' 'false')
+    weekly_report_day=$(bashio::config 'weekly_report_day' 'sunday')
+    export BRAIN_WEEKLY_REPORT="$weekly_report"
+    export BRAIN_WEEKLY_REPORT_DAY="$weekly_report_day"
 
     # Study sessions are where depth actually matters, and --max-turns
     # truncates rather than degrading — a session that hits the cap files

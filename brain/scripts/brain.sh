@@ -59,6 +59,8 @@ Usage:
   brain undo [n]                 Review and revert Claude's edits to /config
   brain check [list]             Run the house checks now — no Claude run,
                                  findings land on the Findings tab
+  brain weekly [send]            The week's report: energy, findings, what was
+                                 learned, and the one thing to do
   brain doctor [--json]          End-to-end diagnostic of brAIn itself
   brain report [--no-names]      Write a redacted diagnostics bundle to
                                  /share/brain/reports for a bug report
@@ -98,6 +100,7 @@ case "$action" in
     ask)        delegate brain-ask.sh "$@" ;;
     undo)       delegate brain-undo.sh "$@" ;;
     check)      delegate brain-check.sh "$@" ;;
+    weekly)     delegate brain-weekly.sh "$@" ;;
     doctor)     delegate ha-selftest.sh "$@" ;;
     report)     delegate brain-report.sh "$@" ;;
     help|--help|-h) usage ;;

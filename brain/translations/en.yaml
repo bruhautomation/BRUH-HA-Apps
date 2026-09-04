@@ -145,6 +145,23 @@ configuration:
       When to send it until brAIn has watched this home for a couple of
       weeks and knows your own hour. Also used if your days are too
       irregular for there to be a usual one.
+  weekly_report:
+    name: Send a weekly report
+    description: >-
+      One message a week to your notify service — what the house used
+      against the week before, what was found and answered, what brAIn
+      learned, and the one thing worth doing this week. It is the report
+      that goes to everyone, so a notify service that reaches every
+      phone (usually notify.notify) is the one to point it at. A week
+      with nothing in it sends nothing. Off by default because each one
+      sent costs a Claude turn.
+  weekly_report_day:
+    name: Weekly report day
+    description: >-
+      Which day it goes out. The hour is the morning brief's fallback
+      hour, or this home's own measured hour once brAIn knows it — and
+      unlike the brief, a report that missed its hour still goes out
+      later the same day rather than skipping the week.
   checks_interval_hours:
     name: House checks every (hours)
     description: >-

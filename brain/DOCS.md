@@ -515,6 +515,58 @@ Until brAIn has watched for a couple of weeks it uses the fallback hour you
 set. If it has been restarted and missed the window it waits for tomorrow
 rather than delivering breakfast at lunchtime.
 
+### One report a week
+
+Turn on **Send a weekly report** and brAIn sends one message a week — by
+default on a Sunday, at the same hour the brief would go. It is the report
+meant for everybody in the house, so the notify service to point it at is
+usually `notify.notify`.
+
+It carries four things: what you used against the week before, what was found
+and what was answered, what brAIn learned, and **one thing to do this week**.
+
+That last one is chosen *before* Claude sees anything — the worst open
+severity, then the one open longest. Asked to pick, a model picks the finding
+it can write the best sentence about, which is the one carrying the most
+detail rather than the most consequence.
+
+It is not the morning brief with a longer timer. The brief asks *is there
+anything*; the report asks *what happened*, and its failure is the opposite
+one — a report that lists everything is the pile of unread cards it replaced.
+So every section is gathered and capped before Claude runs, and Claude's job
+is to say those things rather than to choose them.
+
+A week with nothing in it — nothing found, nothing answered, nothing learned
+and no meter to read — sends nothing. And unlike the brief, a report that
+missed its hour still goes out later that day: a weekly report on Sunday
+afternoon is still that week's, and skipping a week to protect an hour is the
+wrong trade.
+
+`brain weekly` prints what this week holds without sending; `brain weekly
+send` sends one now — which **moves the week**, so the next scheduled report
+is a week from now rather than a week from Sunday.
+
+### What the house used
+
+The energy half needs one thing from you: **Home Assistant's own Energy
+configuration**. brAIn reads the grid sources you declared there and nothing
+else. It deliberately does not gather up every sensor with a device class of
+`energy` — a whole-home clamp, an inverter and every smart plug behind them
+all carry that class, so a house with six plugs would report roughly twice
+what it used and nothing on screen would say so. No energy configuration
+means no energy section, and a sentence saying which.
+
+Cost appears only where the Energy dashboard has a cost *statistic*. If you
+gave it a price to multiply instead, Home Assistant makes its own cost sensor
+under a name brAIn would have to guess at, and a guessed name quotes somebody
+else's number.
+
+Both weeks are seven complete days ending at last midnight — never a partial
+today, which would report a 45% fall that is nothing but the clock. If a meter
+was reset or replaced mid-week those days are dropped, and with them the
+comparison: you get the total it could measure and "no comparison to make"
+rather than a plausible-looking drop.
+
 ### It knows what changed, and what changed it
 
 A state does not carry a cause. Nothing in `light.kitchen` being on says
@@ -635,6 +687,7 @@ brain undo                         # review and revert Claude's edits
 brain check                        # run the house checks now (no Claude run)
 brain doctor                       # end-to-end diagnostic
 brain doctor --json                # the same verdict as one JSON object
+brain weekly [send]                # the week's report: what it holds, or send one
 brain report                       # redacted diagnostics bundle for a bug report
 
 ha log                             # tail the Home Assistant log
@@ -704,6 +757,8 @@ the Terminal tab itself), because it changes nothing about how the add-on runs.
 | `notify_quiet_end` | string | `7` | The hour held findings are delivered. A window that crosses midnight (22 to 7) is the normal case. Set both the same, or both empty, for no quiet hours. |
 | `morning_brief` | bool | `false` | One short message a day, at the hour your home actually starts moving, and only when there is something to say. Each one sent costs a Claude turn; a quiet morning costs nothing. Needs `findings_notify_service` set. |
 | `morning_brief_hour` | string | `7` | When to send it until brAIn has measured your home's own hour (about a fortnight), or if your days are too irregular for there to be one. |
+| `weekly_report` | bool | `false` | One message a week: what the house used against the week before, what was found and answered, what brAIn learned, and the one thing worth doing. Needs `findings_notify_service` set — point it at `notify.notify` and it reaches everybody. |
+| `weekly_report_day` | list | `sunday` | Which day it goes out. The hour is `morning_brief_hour`, or your home's own measured hour once brAIn knows it. |
 
 > **Why the study limits are generous.** A turn cap is not a safety valve — it
 > *truncates*. A study session that hits it stops mid-thought and produces no
