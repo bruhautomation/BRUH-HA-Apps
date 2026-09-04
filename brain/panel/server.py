@@ -131,10 +131,12 @@ import notify_router
 import override_ledger
 import onboarding
 import prompt_store
+import proposals
 import rhythm
 import run_sources
 import schedule_store
 import settings_store
+import shadow
 import terminal_proxy
 import thermal
 import undo_store
@@ -3381,6 +3383,106 @@ async def _end_finding(finding: dict, spec: dict, note: str) -> tuple[dict, str]
     return payload, fact
 
 
+# ---------------------------------------------------------------------------
+# Proposals, and the replay behind them
+# ---------------------------------------------------------------------------
+
+def _proposals_payload() -> dict:
+    rows = proposals.listing()
+    return {"proposals": rows, "counts": proposals.counts(rows),
+            "trial_days": proposals.TRIAL_DAYS}
+
+
+async def h_proposals(request: web.Request) -> web.Response:
+    return web.json_response(
+        await asyncio.to_thread(_proposals_payload))
+
+
+async def h_proposal_trial(request: web.Request) -> web.Response:
+    ts = int(request.match_info["ts"])
+    row = await asyncio.to_thread(proposals.start_trial, ts)
+    if row is None:
+        return web.json_response(
+            {"error": "that proposal is not waiting to be tried"}, status=409)
+    return web.json_response(
+        {"proposal": row, **await asyncio.to_thread(_proposals_payload)})
+
+
+async def h_proposal_decide(request: web.Request) -> web.Response:
+    """Accept or decline. The row leaves the list either way.
+
+    A decline's note goes to the memory inbox exactly as a finding's
+    "Wrong" does — one implementation of "what a person told us", so an
+    answer teaches the same thing whichever list it was given on.
+    """
+    ts = int(request.match_info["ts"])
+    verb = request.match_info["verb"]
+    status = {"accept": "accepted", "decline": "declined"}.get(verb)
+    if status is None:
+        return web.json_response({"error": "unknown verb"}, status=404)
+    body = await _json_body(request)
+    note = str(body.get("note") or "")[:proposals.NOTE_MAX]
+
+    row = await asyncio.to_thread(proposals.decide, ts, status, note)
+    if row is None:
+        return web.json_response(
+            {"error": "that proposal has already been answered"}, status=409)
+    fact = proposals.memory_line(row, status)
+    if fact:
+        await _submit_memory(fact, source="homeowner")
+    return web.json_response(
+        {"proposal": row, "learned": fact,
+         **await asyncio.to_thread(_proposals_payload)})
+
+
+async def h_replay(request: web.Request) -> web.Response:
+    """What an automation would have done over a window of recorded history.
+
+    Refusals come back as 422 with the reason in words rather than as an
+    empty result: "it would never have fired" and "brAIn cannot replay
+    this" are different answers, and only one of them is about the
+    automation.
+    """
+    body = await _json_body(request)
+    config = body.get("config")
+    if not isinstance(config, dict):
+        return web.json_response({"error": "no automation to replay"},
+                                 status=400)
+    days = max(1, min(int(body.get("days") or 30), shadow.MAX_WINDOW_DAYS))
+    now = time.time()
+    start = now - days * 86400
+
+    try:
+        watched = sorted(shadow.entities_watched(config))
+        shadow.check_replayable(config)
+    except shadow.Refused as exc:
+        return web.json_response({"error": str(exc), "refused": True},
+                                 status=422)
+    if len(watched) > shadow.MAX_ENTITIES:
+        return web.json_response(
+            {"error": f"this reads {len(watched)} entities, more than a "
+                      "replay can honestly rebuild", "refused": True},
+            status=422)
+
+    history = {}
+    if watched:
+        import aiohttp  # noqa: PLC0415 — the module has no other need of it
+
+        async with aiohttp.ClientSession() as session:
+            # shadow's own fetch, never ha_data.get_history: that one
+            # downsamples into hourly buckets, which throws away the very
+            # edges a replay counts.
+            history = await shadow.fetch_history(session, watched, start, now)
+    tz, _name = baselines.house_timezone()
+    try:
+        result = await asyncio.to_thread(
+            shadow.replay, config, history, start, now, tz)
+    except shadow.Refused as exc:
+        return web.json_response({"error": str(exc), "refused": True},
+                                 status=422)
+    return web.json_response(result)
+
+
 async def h_undo(request: web.Request) -> web.Response:
     """Put back what the last press took away.
 
@@ -5024,6 +5126,10 @@ def make_app() -> web.Application:
     app.router.add_post("/api/finding/{ts}/snooze", h_finding_snooze)
     app.router.add_post("/api/finding/{ts}/discuss", h_finding_discuss)
     # Before the {ts} pattern, which would otherwise swallow it.
+    app.router.add_get("/api/proposals", h_proposals)
+    app.router.add_post("/api/proposal/{ts}/trial", h_proposal_trial)
+    app.router.add_post("/api/proposal/{ts}/{verb}", h_proposal_decide)
+    app.router.add_post("/api/replay", h_replay)
     app.router.add_post("/api/findings/unsettle", h_finding_unsettle)
     app.router.add_post("/api/undo/{token}", h_undo)
     app.router.add_post("/api/finding/{ts}/{verb}", h_finding_verb)

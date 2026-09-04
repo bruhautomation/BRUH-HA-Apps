@@ -203,6 +203,45 @@ def _condition_entities(cond: dict) -> set[str]:
     return out
 
 
+async def fetch_history(session, entity_ids: list[str], start: float,
+                        end: float) -> dict:
+    """Raw state changes for a replay. NOT `ha_data.get_history`.
+
+    That one downsamples numeric series into hourly buckets, drops
+    `unavailable`/`unknown`, and caps how many changes it keeps — all
+    correct for handing a model a summary, and all fatal here. A replay
+    counts **edges**: an hourly bucket has thrown away the moment a
+    sensor crossed a threshold, so the count would come back plausible
+    and wrong, which is the one shape of answer this module exists to
+    refuse.
+
+    Attributes are requested rather than suppressed, because a template
+    may call `state_attr`. That costs bytes, and the bound on it is
+    `MAX_ENTITIES` plus the window cap — a replay is something a person
+    pressed, not a poll.
+    """
+    import ha_data  # noqa: PLC0415 — panel-local, and this module is
+                    # imported by the tests without it
+
+    if not entity_ids:
+        return {}
+    ids = entity_ids[:MAX_ENTITIES]
+    begin = dt.datetime.fromtimestamp(start, dt.timezone.utc)
+    finish = dt.datetime.fromtimestamp(end, dt.timezone.utc)
+    path = (f"/history/period/{begin.isoformat()}"
+            f"?end_time={finish.isoformat()}"
+            f"&filter_entity_id={','.join(ids)}")
+    raw = await ha_data._rest_get(session, path, timeout=90)
+    out: dict[str, list] = {}
+    for series in raw or []:
+        if not series:
+            continue
+        eid = series[0].get("entity_id") or ""
+        if eid:
+            out[eid] = [p for p in series if isinstance(p, dict)]
+    return out
+
+
 # ---------------------------------------------------------------------------
 # The timeline
 # ---------------------------------------------------------------------------
@@ -655,7 +694,8 @@ def replay(config: dict, history: dict, start: float, end: float,
 __all__ = [
     "MAX_ENTITIES", "MAX_FIRINGS", "MAX_WINDOW_DAYS", "REPLAYABLE",
     "TEMPLATE_ALLOWED", "Refused", "build_timeline", "check_replayable",
-    "check_template", "entities_watched", "kind_of", "passes",
+    "check_template", "entities_watched", "fetch_history", "kind_of",
+    "passes",
     "render_template", "replay", "state_at", "template_entities",
     "triggers_of", "would_do",
 ]
