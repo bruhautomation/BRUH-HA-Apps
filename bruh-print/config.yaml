@@ -1,7 +1,7 @@
 ---
 name: "BRUH Print"
 description: "Design and print labels on a USB DYMO LabelWriter from Home Assistant — a full label designer, fill-in-the-blank templates, Twin Turbo roll selection, and a Lovelace card"
-version: "0.5.0"
+version: "0.5.1"
 slug: "bruh-print"
 init: false
 

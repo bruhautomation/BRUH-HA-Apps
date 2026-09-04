@@ -5,6 +5,12 @@ All notable changes to the **BRight** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.22.2
+
+### Fixed
+
+- A module-level logger that nothing logged through, removed. Not a bug — a module that arrived carrying another one's boilerplate, from before there was anything to say — and it is here because `tests/test_code_scanning.py` now fails on the shape. It had shipped three times, always the same way, and a sweep is a moment where a rule is a test. This module reports its failures to its caller rather than logging them, so the honest fix was no logger rather than a log line.
+
 ## 0.22.1
 
 ### Fixed
