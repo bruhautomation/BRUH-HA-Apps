@@ -179,6 +179,87 @@ do the job.
   an entry over REST rather than the WebSocket API; read the call site,
   never the first name that sounds right.
 
+### The chat keeps every open conversation alive
+
+**"I'm trying to switch conversations and it keeps giving me a 409 error
+that Claude is still responding. I thought the whole point was like a hot
+swap between these conversations."** They were right, and the refusal was
+honest rather than lazy: `chat_session.session()` was a module singleton,
+one `ChatSession` holding one `claude` process, so switching conversations
+was a stop and a `--resume` — and refusing mid-answer was the only
+alternative to throwing an answer away. Native Claude Code has never
+worked that way. Three terminal tabs are three processes, each answering
+on its own, which is exactly the thing the chat was being asked for. The
+fix is not a better refusal. It is to stop having one process.
+
+- **`chat_session.SessionRegistry` — many sessions, one attached.**
+  `ChatSession` is unchanged in what it *is*: one process, one transcript,
+  its own subscribers. What is new is that there are several of them and
+  that `attach` — which changes which one the stream serves and which one
+  `send` goes to — **stops nothing**. Walk away from a conversation
+  mid-answer and it goes on answering: its events land in its own
+  transcript and reach its own subscribers, and it is finished and waiting
+  when you come back. `session()` still means "the attached one", so
+  every caller that only knows about one conversation kept working
+  unchanged.
+- **The cap is on processes, not on conversations** — `chat_max_sessions`,
+  a panel setting rather than a `config.yaml` option because it is the
+  sort of number somebody changes while looking at the chat. Three by
+  default, one to eight. You may have as many conversations as you like;
+  Claude Code keeps every one of them, and one with no process costs
+  nothing but a file.
+- **Eviction takes the least recently active IDLE session, never a busy
+  one.** An LRU that could take the busy one would break precisely the
+  thing this exists to protect. The evicted session keeps its transcript,
+  keeps its row, and gets a **notice** saying why its process went — so
+  switching back is instant and explains the gap instead of looking like
+  something that crashed, and the next message there resumes the
+  conversation exactly as it always could.
+- **One 409 is left, and it is about the cap.** Every live chat busy and
+  nothing idle to close: it names how many are open and the setting that
+  changes it, rather than blaming an answer you can still watch being
+  written. A model pick still refuses mid-answer — the model is an argv
+  flag and applying it is a restart that would lose the reply — but the
+  sentence now says which conversation is busy and offers the thing that
+  works, which is to go and talk in another one.
+- **One transcript file per conversation** (`/data/chat/<session id>.json`,
+  and `backup_exclude` names the directory). A single file was the shape
+  of a single session; two live ones writing it would each hold half a
+  scrollback. The old single file is migrated once, when the directory is
+  created, so an upgrade does not blank the pane somebody was reading. A
+  session the CLI has not named yet is deliberately not persisted at all:
+  everything worth keeping already has an id by the time it has anything
+  in it.
+- **The rail and the ⋯ dialog say what each session is doing.** Three
+  states and two of them draw anything — nothing at all for a row with no
+  process (which is most of them, and is not news), a quiet
+  **answering…** while a turn runs in the background, and **Needs your
+  OK** for one waiting on an approval. The join happens server-side, once:
+  the listing is Claude Code's store and the marks are ours, and two
+  surfaces each doing that join is two chances to disagree about whether a
+  row is answering. Marks are pushed down the stream rather than polled,
+  because the answer only changes when something already had an event to
+  send.
+- **A background approval reaches you.** A `can_use_tool` in a
+  conversation nobody is looking at declines itself after ten minutes, so
+  the badge on the row is only half an answer — there is no rail at all on
+  a phone. The attached chat gets a toast naming the conversation, with a
+  press that opens it.
+- **Deleting a conversation any session is holding is refused**, not only
+  the one on screen, and the ✕ offers the way out rather than leaving a
+  no: close the session, then delete. It asks first, because closing one
+  mid-answer loses what it was writing. `/api/diagnostics` carries the
+  registry — live, busy, held, the cap and how many the cap has stopped —
+  because a session closed to make room and one that crashed leave the
+  same silence otherwise.
+
+`tests/test_chat_terminal.py` gains `TestManySessions`, driving the real
+fake CLI through the real registry: the old failure reproduced first
+(`ChatSession.resume` during a busy answer still raises, because it is
+still the destructive path) and then the same moment through the registry,
+where it succeeds and the abandoned answer lands in *its* transcript and
+nowhere else. Every refusal above was verified by mutation.
+
 ## 1.44.0
 
 **1.42.0's last two steps did nothing.** It shipped the proposal lifecycle —

@@ -664,6 +664,26 @@ over with the full history. The terminal's own shell is never killed to make tha
 — it is your shell — so if you had one running, it is still sitting there where you left
 it.
 
+**Several conversations can be open at once, and switching between them stops nothing.**
+Each one holds its own Claude Code process, the same way a terminal tab does — so
+picking another conversation in the rail is instant, and the one you walked away from
+carries on writing its answer. Come back in a minute and it is finished and waiting for
+you. Ask a long question, go and deal with something else, come back: nothing is lost
+and nothing had to be interrupted.
+
+**brAIn keeps three of those processes alive at a time** (⚙ Settings, anywhere from one
+to eight). That is a count of *processes*, not of conversations — you can have as many
+conversations as you like, and Claude Code keeps every one of them. When you open a
+fourth, the one you have not touched for longest is closed to make room; it says so in
+its own transcript, so going back to it explains the gap rather than looking like
+something that died, and your next message there picks the conversation straight back
+up. The one thing that is never closed is a conversation that is mid-answer — surviving
+you looking somewhere else is the whole point.
+
+The only time a switch is refused is when *every* open chat is still answering and there
+is nothing idle to close. It says exactly that, with the count and the setting that
+changes it. Raise the number, stop one of them, or wait.
+
 **Chat** is the default. Claude Code's output rendered as a conversation: text that
 reflows to your screen, code blocks that scroll inside their own box, tool calls folded
 into one line each (tap for the arguments and the result), reasoning streamed live into
@@ -730,15 +750,26 @@ did with "turn off the kitchen lights". Switching back from the classic terminal
 ever picks up a conversation of yours.
 
 **Starting a new chat does not lose the old one.** Claude Code keeps it and it stays in
-the list. What a new chat costs is that the next thing you say belongs to a separate
-conversation, not that anything was forgotten.
+the list — and if it was mid-answer, it keeps answering. What a new chat costs is that
+the next thing you say belongs to a separate conversation, not that anything was
+forgotten.
+
+**A row says what its own session is doing.** A quiet **answering…** means that
+conversation is writing a reply right now, in the background, whether or not you are
+looking at it. **Needs your OK** means it has asked for a permission and is waiting —
+worth pressing, because an approval nobody answers is declined after ten minutes. When
+a background conversation asks, the chat you are in says so too, with a button that
+takes you there; the badge alone is not enough on a phone, where there is no rail. A row
+with no mark is the ordinary case and says nothing, because "this one has a process" is
+not news.
 
 **Deleting takes one press, or one pass.** The **✕** on a row deletes that conversation,
 with an Undo in the toast for a few minutes. To clear several at once, press the
 checklist icon above the list (in the rail or in **⋯ → Conversations**): rows grow
-checkboxes, **Select all** takes everything but the chat you are in, and **Delete**
-removes the lot with a single Undo that puts them all back. The open conversation is
-never deleted — start a new chat first if you really mean it.
+checkboxes, **Select all** takes everything that is not currently open, and **Delete**
+removes the lot with a single Undo that puts them all back. A conversation the chat is
+holding open is never deleted out from under itself — the ✕ offers to close it first,
+and says so, because closing one mid-answer loses what it was writing.
 
 **Under the box: which model is answering, and how full the conversation is** — say
 \`42k / 1000k context · 4%\`, going amber past 80%. The number is the CLI's own report of

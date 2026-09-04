@@ -5508,6 +5508,16 @@ async def h_chat_stream(request: web.Request) -> web.StreamResponse:
 
     try:
         await send(_chat_snapshot(session))
+        registry = chat_session.registry()
+        if registry.attached() is not session:
+            # Attached somewhere else between picking the session and
+            # subscribing to it. The `switched` event that would have said
+            # so went to the queue this stream does not hold, so it is
+            # re-sent here rather than leaving a viewer watching a
+            # conversation nobody is in — a narrow race, and the only one
+            # whose failure is permanent.
+            await send({"type": "switched",
+                        "session_id": registry.attached().session_id or ""})
         while True:
             try:
                 event = await asyncio.wait_for(queue.get(), timeout=20)

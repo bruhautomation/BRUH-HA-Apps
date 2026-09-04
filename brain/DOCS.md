@@ -328,16 +328,37 @@ same `/config`, with the same permissions — what differs is only how you see i
   terminal, not a column of them.
 - **The chat picks its own model.** Press the model name under the message box (or
   ⋯ → *Model*) and choose — the current conversation carries straight on under the
-  new model. It's the chat's own setting: insights and voice keep following the
+  new model. Refused while *that* conversation is being answered, because the model
+  is an argv flag and applying it is a restart that would lose the answer: stop it,
+  or switch to another chat and pick the model there. It's the chat's own setting: insights and voice keep following the
   model on the Configuration tab, so a heavyweight model chosen for one
   conversation never quietly raises what everything else costs. *Default* follows
   the Configuration tab again.
+- **Several conversations stay open at once, and switching stops nothing.** Each
+  one holds its own Claude Code process, the way a terminal tab does — so picking
+  another in the list is instant, and the one you left carries on writing its
+  answer into its own transcript. Ask a long question, go and deal with something
+  else, come back to it finished. A row says what its own session is doing:
+  **answering…** while a reply is being written, **Needs your OK** when it is
+  waiting on a permission (and the chat you *are* in says so too, with a button
+  that takes you there, because a phone has no room for the list). A row with no
+  mark is the ordinary case.
+- **brAIn keeps three of those processes alive** — ⚙ Settings, one to eight. That
+  is a count of processes, not of conversations: you may have as many
+  conversations as you like and Claude Code keeps every one. Open a fourth and the
+  one untouched for longest is closed to make room, with a note in its own
+  transcript so going back to it explains the gap; your next message there picks
+  the conversation straight up again. A conversation that is mid-answer is never
+  the one closed. The only switch that is refused is when every open chat is still
+  answering and there is nothing idle to close — it says exactly that, with the
+  count and the setting.
 - **Conversations can be deleted.** Every row in the list grows a **✕**, and the
-  toast grows an **Undo** for the few minutes a mis-tap needs. The conversation
-  you're in is refused — start a new chat first. (Old conversations that Claude
-  Code itself has pruned can no longer be picked up mid-thought: reopening one
-  shows its transcript and says plainly that the next message starts fresh,
-  instead of erroring on every send.)
+  toast grows an **Undo** for the few minutes a mis-tap needs. One the chat is
+  holding open is refused, and the ✕ offers to close it first rather than leaving
+  you with a no — closing one mid-answer loses what it was writing, so it asks.
+  (Old conversations that Claude Code itself has pruned can no longer be picked up
+  mid-thought: reopening one shows its transcript and says plainly that the next
+  message starts fresh, instead of erroring on every send.)
 - **Yours, and everyone else's.** brAIn runs Claude in `/config` for voice, automation
   tasks and filing memory, so those conversations live beside yours. The list shows
   **Chats** by default — everything you started yourself, in the chat or the
@@ -1373,7 +1394,7 @@ That is the point of it, and it is worth knowing where the edges are.
 | `/config/.brain/memory/inbox/` | Candidate facts awaiting consolidation. |
 | `/config/.brain/findings/inbox/` | Problems study sessions found, awaiting filing. |
 | `/config/CLAUDE.md` | The generated description of your installation. |
-| `/data/chat_transcript.json` | The chat terminal's scrollback. Losing it costs a scrollback, never context — Claude Code keeps the conversation itself. |
+| `/data/chat/<session id>.json` | One chat conversation's scrollback each. Losing one costs a scrollback, never context — Claude Code keeps the conversation itself. (`/data/chat_transcript.json` is the single file this used to be, read once on upgrade.) |
 | `/config/custom_components/brain/` | The Home Assistant integration, deployed at startup. |
 | `/data/findings.json` | The findings list and its history. |
 | `/data/.brain/edits/` | The edit journal `brain undo` restores from. |

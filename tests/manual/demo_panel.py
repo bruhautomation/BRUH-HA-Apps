@@ -56,6 +56,7 @@ env = {
     "BRAIN_SHARED_DIR": str(DEMO / "shared"),
     "BRAIN_HOME": str(DEMO / "home"),
     "BRAIN_CHAT_TRANSCRIPT": str(DEMO / "chat_transcript.json"),
+    "BRAIN_CHAT_TRANSCRIPT_DIR": str(DEMO / "chat"),
     "BRAIN_CHAT_WORKDIR": str(DEMO / "config"),
     "BRAIN_CONTEXT_FILE": str(DEMO / "CLAUDE.md"),
     "BRAIN_ENABLE_TERMINAL": "true",

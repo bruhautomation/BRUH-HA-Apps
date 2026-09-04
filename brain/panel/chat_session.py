@@ -118,20 +118,24 @@ def transcript_path(session_id: str):
     Two checks, and they are not redundant. ``safe_id`` is the rule: a
     session id is a UUID, and anything that is not one names no
     conversation the CLI could resume either, so it is refused rather than
-    sanitised. The resolve-and-compare underneath is the same rule written
-    where a reader can see it — the ids reaching here come off the wire
-    (``/api/chat/resume`` takes one from a request body), and a boolean
-    regex test several call frames away is not something a person or an
-    analyser can follow to the ``open()`` at the end. Anything that
-    resolves outside the transcript directory is not a transcript.
+    sanitised. The normalise-and-prefix check underneath is the same rule
+    written where it can be followed — the ids reaching here come off the
+    wire (``/api/chat/resume`` takes one from a request body), and a
+    boolean regex test several call frames away is not something a person
+    or a scanner can trace to the ``open()`` at the end of it. Anything
+    that normalises to a path outside the transcript directory is not a
+    transcript. It is spelled with ``os.path`` and a string prefix rather
+    than with ``Path`` parts because that is the form a static analyser
+    reads as a barrier, and a guard nothing can see is a guard somebody
+    deletes.
     """
     if not safe_id(session_id):
         return None
-    base = Path(TRANSCRIPT_DIR).resolve()
-    candidate = (base / f"{session_id}.json").resolve()
-    if candidate.parent != base:
+    base = os.path.normpath(os.path.abspath(TRANSCRIPT_DIR))
+    candidate = os.path.normpath(os.path.join(base, f"{session_id}.json"))
+    if not candidate.startswith(base + os.sep):
         return None
-    return candidate
+    return Path(candidate)
 
 
 def _migrate_legacy() -> None:
