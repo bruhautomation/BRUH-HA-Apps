@@ -229,10 +229,14 @@ async def fetch_history(session, entity_ids: list[str], start: float,
     ids = entity_ids[:MAX_ENTITIES]
     begin = dt.datetime.fromtimestamp(start, dt.timezone.utc)
     finish = dt.datetime.fromtimestamp(end, dt.timezone.utc)
-    path = (f"/history/period/{begin.isoformat()}"
-            f"?end_time={finish.isoformat()}"
-            f"&filter_entity_id={','.join(ids)}")
-    raw = await ha_data._rest_get(session, path, timeout=90)
+    # The ids came out of an automation config that arrived in an HTTP
+    # body, so they may not be ids at all. `ha_data.history_params`
+    # checks them and hands the query to aiohttp to encode; pasting them
+    # into the URL after a `?` is what made this a partial SSRF, and
+    # `_rest_get`'s own docstring had already said so.
+    raw = await ha_data._rest_get(
+        session, ha_data.history_path(begin), timeout=90,
+        params=ha_data.history_params(ids, finish))
     out: dict[str, list] = {}
     for series in raw or []:
         if not series:

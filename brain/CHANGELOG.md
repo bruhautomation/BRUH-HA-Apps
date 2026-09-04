@@ -130,6 +130,30 @@ one thing brAIn could not do: try a change without committing the house to it.
   crossing. A state that is not a *finite* number is not a number a replay can
   answer with.
 
+- **The history query was built by pasting entity ids into a URL, in three
+  places.** `ha_data.get_history`, `closures.fetch_history` and
+  `shadow.fetch_history` each wrote `?filter_entity_id={','.join(ids)}` — and
+  `_rest_get`'s own docstring already said not to, and said why: *"nothing a
+  caller passes can steer the request into being a different request… equally
+  how an ordinary entity id with an odd character in it would silently corrupt
+  the call."* All three were written past it.
+
+  On the replay path the ids come out of an automation config that arrived in
+  an HTTP body, so an id carrying `&` is a **second parameter** rather than a
+  value — a partial SSRF (`py/partial-ssrf`), and CodeQL was right to call it
+  critical. Off that path the ids come from the registry and the same
+  character corrupts the call quietly instead, which is the failure nobody
+  would ever have traced.
+
+  One `history_params` builds it now, out of ids checked against
+  `ENTITY_ID_RE`, handed to aiohttp as `params` so it does the encoding; a bad
+  id is **dropped, not escaped**, because an id that is not an id names
+  nothing and would spend a request asking Core about a made-up string. The
+  shapes are asserted against a real aiohttp server rather than against a
+  string the test wrote — the valueless flags Core wants are exactly the
+  detail a hand-written expectation gets wrong the same way the code does —
+  and a grep-level test fails a fourth copy, the way `atomic_write`'s does.
+
 - **The template allow-list moved onto the render path.** `render_template`
   renders a Jinja string that arrived in an HTTP body, and the allow-list that
   makes that safe ran only in `check_replayable` — an earlier and separate
