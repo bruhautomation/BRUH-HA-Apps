@@ -17,13 +17,11 @@ from a stack trace.
 """
 from __future__ import annotations
 
-import logging
 import threading
 from typing import Any
 
 from . import printers, protocol
 
-log = logging.getLogger("bruh_print.usb")
 
 # Bulk transfers are chunked. A full 4" label is ~100 KB after compression
 # and libusb will happily take it in one call, but a single huge transfer

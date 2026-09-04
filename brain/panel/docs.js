@@ -272,6 +272,65 @@ it** (an empty machine and a full one draw the same power), so the chore ends
 the way any finding does: tick it off, press the notification button, or press
 it here. It clears itself if the machine runs again.
 
+## How your house holds its heat
+
+Pre-heating so a room is warm *when you get up*, telling a window open from a
+cold day, warning that pipes will freeze by morning — each is the same two
+numbers about a room, and a threshold that is right in one house is wrong in
+the next. So brAIn measures them, per room, overnight, from a month of hourly
+history: **how fast the room falls towards outside** (its reciprocal is the
+number people have an intuition for — *this room holds its heat for about
+eight hours*) and **how fast anything puts the heat back**.
+
+You need one outdoor temperature sensor and at least one indoor one in an
+area. With no outdoor reference there is no model at all, and ⚙ Diagnostics
+says so: every number here is a *difference* from outside. The measurement is
+taken **at night** on purpose — a south-facing room warms with the heating
+off, and a fit that includes an afternoon reports a room that gains heat as it
+gets colder outside.
+
+Two findings come out of it. **A room that never reaches what it is set to**:
+nothing errors, the thermostat calls and the room sits two degrees short all
+winter. brAIn only says so when the arithmetic *and* the evidence agree — the
+room must never once have been seen at the temperature it is asked for — 
+because a thermostat that switches off at its setpoint never lets a room show
+what it could have done. And **a room that empties much faster than the rest
+of the house**: a draught, a loft hatch, an open flue. That one needs four
+measured rooms before it will compare one against the others, and says nothing
+at all if half the house fires at once, because that is the measurement rather
+than a room.
+
+Neither is ever urgent, so quiet hours can hold both.
+
+## When the heating is late, and when something is open
+
+The same two numbers answer three more questions.
+
+**Your heating starts too late.** A schedule set to a fixed hour warms the
+bedroom to its setpoint at 07:40 in a house that is up at 07:00 — every
+weekday, with nothing recording a fault, because the automation ran and the
+room did get warm. brAIn needs three of its own measurements to agree before
+saying so: when this house *actually* gets up, what the room reads at that
+hour of an ordinary week, and how long the climb takes. Then it names the time
+the heating would have to start. Weekday mornings only, and never until the
+wake time is measured — a preheat time pinned to a typed-in 07:00 is a guess
+wearing a number.
+
+**A window is open.** A room falling more than twice as fast as its own
+insulation allows is losing heat by a route the walls do not have. Only
+sayable because the model exists: the same half-degree in ten minutes is a
+draught in one room and an ordinary evening in another.
+
+**The pipes are at risk.** When does this room reach 5 °C — where water in an
+outside wall starts to be at risk, well before the room's thermometer reads
+freezing. Only for a room already *falling*, because nothing in Home Assistant
+says the heating is off, so the fall is the evidence.
+
+The last two read five-minute history: an hourly average cannot see a window
+opened forty minutes ago, because it is still inside the hour that has not
+finished. Both break quiet hours. The preheat one does not — a schedule that
+starts late will start late again tomorrow.
+
 ## What counts as unusual
 
 brAIn measures your house overnight: for every numeric sensor, what it normally

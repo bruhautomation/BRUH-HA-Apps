@@ -72,6 +72,18 @@ PRODUCER_URGENCY = {
     # `whenever` is what lets quiet hours hold it, which is the whole
     # reason urgency is declared per producer.
     "check:chore.waiting": "whenever",
+    # Pipes. This is the one climate finding that is about the next few
+    # hours rather than about the building, and the hours it fires in are
+    # exactly the ones quiet hours would hold it through.
+    "check:climate.freeze": "now",
+    # A window open on a cold night is costing money for as long as it
+    # stays open, and it is a thing somebody can go and close.
+    "check:climate.window": "now",
+    # Everything else here was measured over a month of nights and is
+    # about the building: a room that has been two degrees short all
+    # winter is not two degrees shorter at 3am, and a heating schedule
+    # that starts late starts late again tomorrow.
+    "check:climate.": "whenever",
     # A trend, a forecast, a tidy-up. None of these change overnight.
     "check:forecast.": "whenever",
     "check:base.": "whenever",

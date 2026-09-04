@@ -28,13 +28,11 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import os
 from typing import Any
 
 import aiohttp
 
-log = logging.getLogger("bright.ha_ws")
 
 HA_BASE_URL = os.environ.get("HA_BASE_URL", "http://supervisor/core/api")
 SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")

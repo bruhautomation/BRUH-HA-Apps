@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.1
+
+### Fixed
+
+- A module-level logger that nothing logged through, removed. Not a bug — a module that arrived carrying another one's boilerplate, from before there was anything to say — and it is here because `tests/test_code_scanning.py` now fails on the shape. It had shipped three times, always the same way, and a sweep is a moment where a rule is a test. This module reports its failures to its caller rather than logging them, so the honest fix was no logger rather than a log line.
+
 ## 0.6.0
 
 **The renderer was right, the wire bytes were right, and the labels were

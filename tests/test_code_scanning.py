@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""The two CodeQL families that keep coming back, kept out at the source.
+"""The CodeQL families that keep coming back, kept out at the source.
 
 The repo's workflow runs `security-and-quality` over Python and JavaScript,
 and its findings arrive in the Security tab — which is a page nobody opens
-between releases. Both families below have been swept before (`bbeefd1`,
-"Close the CodeQL alerts, and say why the quiet handlers are quiet") and both
-came back the moment new code was written, because a sweep is a moment and a
-rule is a test.
+between releases. The first two below were swept before (`bbeefd1`, "Close
+the CodeQL alerts, and say why the quiet handlers are quiet") and both came
+back the moment new code was written, because a sweep is a moment and a rule
+is a test.
 
-Neither is a security bug. They are here because of what the alerts *mean*
-in this codebase:
+None of them is a security bug. They are here because of what the alerts
+*mean* in this codebase:
 
 * **An empty handler with no comment.** The query is "this `except` does
   nothing but `pass` and there is no explanatory comment" — and in a
@@ -22,10 +22,25 @@ in this codebase:
   comma looks like — and a missing comma in a list of prompt lines is a
   message that silently loses a sentence, which nothing else here would
   catch. Where the concatenation is intended, `+` says so.
+* **A module-level logger nothing logs through.** This one has shipped
+  three times, always the same way: a new module starts from the shape of
+  an existing one, and the logger arrives with the boilerplate before there
+  is anything to say. It is not a bug — it is a module whose author has not
+  yet decided what it reports, and the honest answer is either a log line or
+  no logger. It is here rather than in a review comment on the third pull
+  request in a row.
 
-Both checks read the real files with `ast`, so they measure the code rather
-than a description of it, and both name the file and line so a failure is
-actionable without opening the query.
+Every check here reads the real files with `ast`, so it measures the code
+rather than a description of it, and each names the file and line so a
+failure is actionable without opening the query.
+
+What is deliberately **not** here is `py/import-and-import-from`, which
+CodeQL raised on `tests/test_thermal.py` and which was fixed in place. A
+repo-wide sweep found eighteen more, and nearly every one is `import
+unittest` beside `from unittest.mock import patch` — which is how Python
+is written. A rule the repo does not believe is a rule somebody turns off,
+and the alerts arrive on a pull request anyway, which is where that one
+was caught.
 """
 
 from __future__ import annotations
@@ -128,6 +143,53 @@ class TestNoListLooksLikeItIsMissingAComma(unittest.TestCase):
             "string, which is what a missing comma looks like — join them "
             "with `+` where the concatenation is meant: " + ", ".join(offenders),
         )
+
+
+class TestNoLoggerNothingLogsThrough(unittest.TestCase):
+    """py/unused-global-variable, on the one shape that keeps coming back.
+
+    A `log = logging.getLogger(...)` that nothing ever calls is a module
+    that arrived carrying another one's boilerplate. The fix is a log line
+    or no logger, and either beats a name the next reader has to check the
+    whole file for uses of.
+    """
+
+    def test_every_module_logger_is_logged_through(self):
+        offenders = []
+        for path in python_files():
+            got = parsed(path)
+            if got is None:
+                continue
+            tree, _lines = got
+            made: dict[str, int] = {}
+            for node in tree.body:            # module level only
+                if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+                    continue
+                target, call = node.targets[0], node.value
+                if not isinstance(target, ast.Name):
+                    continue
+                if not isinstance(call, ast.Call):
+                    continue
+                fn = call.func
+                if isinstance(fn, ast.Attribute) and fn.attr == "getLogger":
+                    made[target.id] = node.lineno
+            if not made:
+                continue
+            # Any load of the name anywhere below — including inside a
+            # nested function, which is where nearly every real use is.
+            used = {n.id for n in ast.walk(tree)
+                    if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)}
+            for name, line in made.items():
+                if name not in used:
+                    offenders.append(
+                        f"{path.relative_to(REPO_ROOT)}:{line} ({name})")
+        self.assertEqual(
+            offenders, [],
+            "a module-level logger that nothing logs through is a module "
+            "carrying another one's boilerplate — write the log line or drop "
+            "the logger: " + ", ".join(offenders),
+        )
+
 
 
 if __name__ == "__main__":

@@ -2,6 +2,187 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.41.0
+
+### Added
+
+The rest of the capability map's **#11**. 1.40.0 measured how each room holds
+its heat; this is what the measurement is *for* — three findings, each
+answering a question no single state in Home Assistant can.
+
+- **`climate.preheat` — the heating starts too late.** A schedule set to a
+  fixed hour warms the bedroom to its setpoint at 07:40 in a house that is up
+  at 07:00, every weekday, and nothing anywhere records a fault: the
+  automation ran, the thermostat called, the room got warm. Three of brAIn's
+  own measurements have to agree before it will say so — `rhythm` for when
+  this house actually gets up, `baselines` for what the room reads at that
+  hour of an ordinary week, and the thermal model for how long the climb takes
+  — and then it names the time the call would have to come.
+
+  It reports **weekday mornings only**, because that is where a schedule
+  exists and where `rhythm` has the days behind it (a weekend accrues two days
+  a week and takes about five weeks to measure). And it says nothing at all
+  until the wake time is measured rather than guessed: a preheat time pinned
+  to a typed-in 07:00 is a guess wearing a number. **The proof that the
+  heating *does* arrive is required**, not optional — a room still short two
+  hours later is `climate.underheated`'s finding, and "start earlier" is
+  advice that cannot work on one.
+
+- **`climate.window` — a room losing heat faster than it can.** More than
+  twice what its own `k` allows is a route the walls do not have. This check
+  is only *sayable* because the model exists: the same half-degree in ten
+  minutes is a draught in one room and an ordinary evening in another, and no
+  fixed threshold can tell them apart. The room's allowance is read where the
+  fall **started** rather than where it ended — a room's allowed loss shrinks
+  as it cools, so the end sets a lower bar, and the start is the reading that
+  gives the model the benefit of the doubt.
+
+- **`climate.freeze` — the pipes.** From the current reading and the current
+  outdoor temperature, when this room reaches 5 °C: where water in an outside
+  wall starts to be at risk, well before the room's own thermometer reads
+  freezing. It only reports a room that is **already falling**, rather than
+  assuming nothing heats it — `coast` describes an unheated room and no state
+  anywhere says the heating is off, so the fall is the evidence.
+
+- **`thermal.recent`** is the live half of the snapshot key, the way
+  `appliances` already does it: the nightly store says how a room behaves, and
+  the checks pass fetches what it is doing now — the modelled rooms and their
+  outdoor reference, over four hours. **Five-minute statistics, not hourly**,
+  because an hourly mean cannot see a window opened forty minutes ago: it is
+  still inside the hour that has not closed. One fetch, two checks.
+
+- `climate.freeze` and `climate.window` ride at **`now`** urgency and may
+  break quiet hours — a freeze warning at 3am is exactly when it is wanted,
+  and an open window costs money for as long as it stays open. `climate.preheat`
+  stays `whenever`: a schedule that starts late will start late again tomorrow.
+
+- Both live checks **stand down for the room the other claims**, freeze first.
+  A room freezing because a window is open is one problem, and the sentence
+  that names the freezing is the one worth waking somebody for — the same
+  arrangement `climate.underheated` and `climate.heat_loss` already keep.
+
+### Tests
+
+- 26 more cases in `tests/test_thermal.py` (83 total), and each new guard is
+  verified against the failure it exists for rather than only against the fix:
+  dropping freeze's "already falling" evidence makes it forecast a heated
+  room; dropping preheat's "it does get there later" proof makes it advise an
+  earlier start on a room that never arrives; removing `recent_fall`'s span
+  floor turns a thermometer's own 0.1 step into a rate; and reading the window
+  allowance at the end of the fall instead of the start reports a room the
+  model can account for.
+- The clean fixture in `tests/test_house_checks.py` gained live readings — a
+  cold evening with every room easing down well inside what its insulation
+  allows — so both live checks run their whole loop over four rooms and are
+  asserted silent, rather than silent for want of data.
+
+## 1.40.0
+
+### Added
+
+- **A thermal model of the house** (`panel/thermal.py`), roadmap item **#11**'s
+  larger half. Every climate capability people actually want — start the
+  heating so the bedroom is warm *when we get up*, tell me a window is open
+  rather than that it is cold, warn me the pipes will freeze by morning, say
+  what a 17°C setback would cost — is the same two numbers about a room, and
+  brAIn held neither. Without them each of those is a threshold somebody
+  guesses at, and a threshold that is right in one house is wrong in the next:
+  a stone cottage and a new flat lose heat an order of magnitude apart, and so
+  do two rooms of one house.
+
+  The two numbers are Newton's. **`k`**, the loss coefficient, is how fast a
+  room falls towards outside; its reciprocal is the time constant, which is
+  the number people have an intuition for ("this room holds its heat for about
+  eight hours"). **`h`**, the gain, is how fast anything puts the heat back.
+  Both are measured per room, nightly, from a month of hourly statistics,
+  against one outdoor reference — and the reference brAIn chose is recorded in
+  the payload, because every `k` in the house is measured against that one
+  choice and a reference nobody can check is a reference nobody can correct.
+
+  Five rules keep it honest, and each answers a way it would otherwise be
+  confidently wrong:
+
+  - **The sun is the confounder, and night is the gate.** A south-facing room
+    warms with the heating off, so a fit that includes an afternoon reports a
+    room that gains heat as it gets colder outside. `k` is measured only in
+    the deep-night hours — the same shape of gate as the `state_class` one on
+    `baselines.trend`: a measurement that would be wrong in every house
+    belongs in the build, not in the check that reads it.
+  - **A fit is not a measurement until it is graded.** A month whose outdoor
+    temperature barely moved has no leverage — every point sits at the same x
+    and the line through them is whatever the noise says, which looks exactly
+    like a real answer. The delta has to span something, the fit is graded
+    against the scatter about its own line, and a slope that does not clear
+    that scatter is no slope.
+  - **A number outside physics is not a room.** A time constant of twenty
+    minutes is a thermometer in a draught and one of a fortnight is a
+    thermometer inside a wall; both are reported unmeasured rather than
+    measured badly.
+  - **Indoors and outdoors have to agree about what a degree is.** `k` is
+    unit-free only while both halves of the difference are in the same
+    degrees, so a Fahrenheit reference against a Celsius room is a loss rate
+    wrong by 1.8 with nothing downstream able to tell. That room gets no
+    model.
+  - **A freezer carries `device_class: temperature` too**, and so does a hot
+    water tank. A room is a reading that spends the month inside a band people
+    live in.
+
+  And, as with `baselines.py` and `closures.py`, **nothing here decides
+  anything**. It answers how fast a room loses heat, how fast it can gain, and
+  what those imply for a given night; whether any of that is worth telling
+  somebody is the check's.
+
+- **Two findings that read it** (`panel/checks/thermal.py`). Both are
+  invisible from any single state, which is why nothing could report them
+  before.
+
+  - **`climate.underheated`** — a room asked for a temperature it never
+    reaches. Nothing errors: the thermostat calls, the valve opens, the boiler
+    runs, and the room sits two degrees under its setpoint all winter. It
+    requires the arithmetic **and** the evidence — the room must never once
+    have been seen at the temperature it is asked for, over a month of hours —
+    because a thermostat that switches off at its setpoint never lets a room
+    show what it could have done, so a well-heated room's measured ceiling
+    understates it and a check reading the ceiling alone would fire on the
+    healthiest houses first. It also stands down entirely when the month held
+    no cold night, rather than extrapolating a January answer out of an
+    August.
+  - **`climate.heat_loss`** — a room that empties much faster than the rest of
+    the house. It needs four measured rooms before one can be unusual against
+    the others, and the room has to be fast in absolute terms as well as
+    relatively, because twice the loss rate of a very well insulated house is
+    still a good room. Past two rows it says nothing, because a cold snap or a
+    purged recorder moves every room at once.
+
+  The two share `underheated_rooms`, so a draughty room that also never
+  reaches its setpoint is one card with one fix rather than two — the same
+  arrangement `dev.unavailable` and `dev.zwave_dead` keep.
+
+- Both ride at `whenever` urgency (`check:climate.` in
+  `notify_router.PRODUCER_URGENCY`): a room that has been two degrees short all
+  winter is not two degrees shorter at three in the morning, so quiet hours may
+  hold them.
+
+- `⚙ Diagnostics` and `/api/diagnostics` carry the store's summary, including
+  the one field that is not a count: with no outdoor sensor there is no model
+  at all, and that is a **sentence** rather than a zero. "No climate findings"
+  and "no room could be measured against anything" look identical from every
+  other surface, and only one of them is a house that is fine.
+
+### Tests
+
+- `tests/test_thermal.py` (57 cases) builds rooms whose physics is *known* and
+  checks the number that comes back is the one that went in — 0.10 per hour
+  recovered as 0.10, a 1.5°C/h gain as 1.5 — rather than asserting that a
+  number came back. The night gate, the evidence half of `climate.underheated`
+  and the shared standing-down are each verified against the failure they
+  exist for: removing the gate moves the recovered loss rate off the physics,
+  and removing the evidence makes the check fire on a room that has been at
+  its setpoint all month.
+- The clean fixture in `tests/test_house_checks.py` gained a four-room thermal
+  store and a thermostat, so both checks are asserted silent on a healthy
+  house before they are asserted to find a planted one.
+
 ## 1.39.0
 
 ### Added
