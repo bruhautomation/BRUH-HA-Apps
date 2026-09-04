@@ -130,6 +130,14 @@ one thing brAIn could not do: try a change without committing the house to it.
   crossing. A state that is not a *finite* number is not a number a replay can
   answer with.
 
+- **The template allow-list moved onto the render path.** `render_template`
+  renders a Jinja string that arrived in an HTTP body, and the allow-list that
+  makes that safe ran only in `check_replayable` — an earlier and separate
+  pass, so the sandbox was reached safely only while every caller remembered
+  to validate first. That is the same shape as asking `protected_entities`
+  anywhere but the chokepoint. It validates for itself now; validating twice
+  on the replay path costs one regex sweep of a short string.
+
 - **The sandbox renders with `autoescape=True`.** Its output never reaches a
   browser and cannot change the verdict — the result is compared against a
   fixed set of words — so the safe setting is free, and the day somebody puts
@@ -148,7 +156,7 @@ one thing brAIn could not do: try a change without committing the house to it.
 
 ### Tests
 
-- `tests/test_shadow.py` (38), `tests/test_proposals.py` (30) and
+- `tests/test_shadow.py` (41), `tests/test_proposals.py` (30) and
   `tests/test_routines.py` (30), with every guard verified by **mutation** —
   break it, watch the test fail, restore it. That caught one test whose name
   claimed something it did not measure: the numeric-crossing fixture never had

@@ -349,6 +349,37 @@ class TestWhatItWouldHaveDone(unittest.TestCase):
                          ["binary_sensor.door", "person.ben"])
 
 
+class TestTheSandboxIsAskedAtTheChokepoint(unittest.TestCase):
+    """`render_template` validates for itself, not because a caller did.
+
+    This renders a Jinja string that arrived in an HTTP body. The
+    allow-list used to run only in `check_replayable`, an earlier and
+    separate pass — so the sandbox was reached safely only while every
+    caller remembered to validate first, which is the same shape as
+    asking `protected_entities` anywhere but the chokepoint.
+    """
+
+    def timeline(self):
+        return shadow.build_timeline(
+            {"sensor.t": [{"state": "21", "last_changed": iso(0)}]})
+
+    def test_a_template_outside_the_allow_list_is_refused_here(self):
+        with self.assertRaises(shadow.Refused) as caught:
+            shadow.render_template(
+                "{{ states('sensor.t') | urlencode }}", self.timeline(),
+                T0 + 60)
+        self.assertIn("urlencode", str(caught.exception))
+
+    def test_a_template_naming_no_entity_is_refused_here(self):
+        with self.assertRaises(shadow.Refused):
+            shadow.render_template("{{ 1 + 1 }}", self.timeline(), T0 + 60)
+
+    def test_an_allowed_template_still_renders(self):
+        self.assertTrue(shadow.render_template(
+            "{{ states('sensor.t') | float > 20 }}", self.timeline(),
+            T0 + 60))
+
+
 class TestTheDependencyNothingWasAsserting(unittest.TestCase):
     """A comment claimed the image shipped Jinja. The image did not.
 

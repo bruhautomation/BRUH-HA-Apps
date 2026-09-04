@@ -451,12 +451,22 @@ def _time_firings(block: dict, start: float, end: float, tz) -> list[float]:
 def render_template(text: str, timeline: dict, when: float) -> bool:
     """Whether a template was truthy at `when`, over the rebuilt world.
 
+    `Refused` when the template reaches past `TEMPLATE_ALLOWED`, and
     `Refused` when any entity it names has no history before that
     instant: a template asking about an entity the recorder cannot place
     is a template this would be answering from a blank, and a blank reads
     as `unknown`, which reads as `false`, which is a confident no.
     """
     body = str(text or "")
+    # The allow-list runs HERE, not only in `check_replayable`. It was a
+    # separate earlier pass, which means a template only ever reached the
+    # sandbox because a caller had remembered to validate it first — the
+    # same shape as asking `protected_entities` anywhere but the
+    # chokepoint. This function renders a Jinja string that arrived in an
+    # HTTP body, so the check belongs on the path that renders it, and a
+    # second caller cannot be added without it. Validating twice on the
+    # replay path costs one regex sweep of a short string.
+    check_template(body)
     names = template_entities(body)
     world = {}
     for eid in sorted(names):
