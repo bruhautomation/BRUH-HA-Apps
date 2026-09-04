@@ -384,7 +384,238 @@ def revert(snapshot_entry: dict, *, config_dir: str | None = None) -> dict:
     return {"ok": True, "path": str(target), "removed": False}
 
 
+# ---------------------------------------------------------------------------
+# Editing ONE entry, leaving every other byte where it was
+# ---------------------------------------------------------------------------
+#
+# `apply` appends and never re-serialises, for the reason its docstring
+# gives: the file is somebody's, with their ordering, their comments and
+# their quoting. Two producers need to change one entry that is already in
+# it — a condition added to an automation somebody keeps undoing, and an
+# intent removed once it has fired — and re-serialising the list to do
+# that would hand back a diff nobody asked for on every one.
+#
+# So the edit is a **byte splice**. `yaml.compose` builds the node tree
+# without constructing any of it, and every node carries `start_mark` and
+# `end_mark` — character offsets into the very text that was parsed. That
+# is enough to find where one sequence item begins and ends and to replace
+# exactly those bytes, which is why `test_entry_edit.py`'s load-bearing
+# assertion is that every byte outside the span is identical before and
+# after rather than that the file still parses.
+#
+# Three things make the span honest, and each of them is a refusal:
+#
+# *The container's `end_mark` overshoots.* PyYAML ends a **block**
+# collection at the start of the token that ended it, so the last item of
+# a file swallows a trailing comment and an item followed by blank lines
+# swallows those too — splicing over either would delete somebody's text
+# from outside the entry. A **flow** collection ends at its closing brace,
+# tightly. So the content end is the deepest scalar's for a block node and
+# the node's own for a flow one, and only then is the line finished.
+#
+# *The leading `- ` is not in the node.* An item's `start_mark` is at its
+# first key, so the dash has to be walked back to — across a newline,
+# because `-\n  id: x` is the same item written differently — and what
+# sits before the dash on its line has to be whitespace, which is also
+# where the indent to re-emit with comes from.
+#
+# *Anything that cannot be delimited on a line boundary is refused.* Two
+# entries under one id, a document that is not a top-level sequence, an
+# item sharing a line with something else: each returns `None` rather than
+# a span that is nearly right. A splice is bytes, and nearly right bytes
+# are somebody's file with a hole in it.
+
+
+def _content_end(node) -> int:
+    """The last character that really belongs to this node.
+
+    See the block above: a block collection's own `end_mark` runs on to
+    whatever ended it, so the answer for one is the furthest of its
+    children's. A flow collection closes with a brace and is its own.
+    """
+    import yaml  # noqa: PLC0415 — see `_dump`
+
+    if isinstance(node, yaml.ScalarNode) or node.flow_style:
+        return node.end_mark.index
+    ends = [node.start_mark.index]
+    if isinstance(node, yaml.MappingNode):
+        for key, value in node.value:
+            ends.append(_content_end(key))
+            ends.append(_content_end(value))
+    else:
+        for value in node.value:
+            ends.append(_content_end(value))
+    return max(ends)
+
+
+def _line_start(text: str, index: int) -> int:
+    return text.rfind("\n", 0, index) + 1
+
+
+def _item_span(text: str, node) -> tuple[int, int, str] | None:
+    """`(start, end, indent)` for one sequence item, or None.
+
+    `start` is the beginning of the line the item's `- ` sits on and `end`
+    is one past the newline that ends it, so the span is whole lines and
+    the splice cannot leave half of one behind.
+    """
+    dash = node.start_mark.index - 1
+    while dash >= 0 and text[dash] in " \t\n\r":
+        dash -= 1
+    if dash < 0 or text[dash] != "-":
+        return None
+    start = _line_start(text, dash)
+    indent = text[start:dash]
+    if indent.strip():
+        return None                  # something else shares the dash's line
+
+    end = _content_end(node)
+    while end < len(text) and text[end] in " \t":
+        end += 1
+    if end < len(text):
+        if text[end] == "\r":
+            end += 1
+        if end < len(text):
+            if text[end] != "\n":
+                return None          # something else shares the last line
+            end += 1
+    return start, end, indent
+
+
+def locate(text: str, entry_id: str) -> tuple[int, int] | None:
+    """The byte span of the top-level item whose `id` is `entry_id`.
+
+    Includes the leading `- ` and ends on a line boundary. `None` for a
+    document that is not a top-level sequence, an id that is not there,
+    an id that is there twice (which of them was meant is not a question
+    this may guess at), or a span that cannot be cut on line boundaries.
+    """
+    import yaml  # noqa: PLC0415 — see `_dump`
+
+    wanted = str(entry_id or "")
+    if not wanted:
+        return None
+    try:
+        root = yaml.compose(text)
+    except yaml.YAMLError:
+        return None
+    if not isinstance(root, yaml.SequenceNode):
+        return None
+
+    found = None
+    for item in root.value:
+        if not isinstance(item, yaml.MappingNode):
+            continue
+        for key, value in item.value:
+            if (isinstance(key, yaml.ScalarNode) and key.value == "id"
+                    and isinstance(value, yaml.ScalarNode)
+                    and value.value == wanted):
+                if found is not None:
+                    return None      # two entries under one id
+                found = item
+                break
+    if found is None:
+        return None
+    span = _item_span(text, found)
+    if span is None:
+        return None
+    start, end, _indent = span
+    return start, end
+
+
+def _reindent(block: str, indent: str) -> str:
+    if not indent:
+        return block
+    return "".join(indent + line if line.strip() else line
+                   for line in block.splitlines(keepends=True))
+
+
+def _splice(path: Path, entry_id: str, new_entry: dict | None,
+            now: float | None) -> dict:
+    """Replace or remove one entry, snapshotting first. The shared half."""
+    now = time.time() if now is None else now
+    text = _read_text(path)
+    if text is None:
+        return _fail(f"brAIn could not read {path.name}")
+
+    import yaml  # noqa: PLC0415 — see `_dump`
+
+    try:
+        root = yaml.compose(text)
+    except yaml.YAMLError as exc:
+        return _fail(f"{path.name} could not be parsed, so brAIn will not "
+                     f"edit it: {exc}")
+    if not isinstance(root, yaml.SequenceNode):
+        return _fail(f"{path.name} is not a list of entries, so this install "
+                     "keeps them somewhere else — brAIn will not guess where")
+    located = locate(text, entry_id)
+    if located is None:
+        return _fail(
+            f"brAIn could not find exactly one entry with the id "
+            f"{entry_id} in {path.name} that it could edit without "
+            "reformatting the rest of the file")
+    start, end = located
+    line = text[start:end]
+    indent = line[:len(line) - len(line.lstrip(" \t"))]
+
+    block = ""
+    if new_entry is not None:
+        try:
+            block = _reindent(_dump(new_entry), indent)
+        except Exception as exc:  # noqa: BLE001 — a config that will not
+            # serialise is a refusal, not a crash on somebody's press.
+            return _fail(f"this entry could not be written as YAML: {exc}")
+
+    try:
+        journalled = snapshot(path, now)
+    except OSError as exc:
+        return _fail(f"brAIn could not snapshot {path.name} first, so it did "
+                     f"not write to it: {exc}")
+    try:
+        atomic_write.write_text(path, text[:start] + block + text[end:])
+    except OSError as exc:
+        return _fail(f"brAIn could not write {path.name}: {exc}")
+    return {
+        "ok": True,
+        "automation_id": entry_id,
+        "path": str(path),
+        "span": [start, end],
+        "snapshot": journalled["snapshot"],
+        "journal_ts": journalled["ts"],
+        "existed": journalled["existed"],
+    }
+
+
+def replace_entry(row_path, entry_id: str, new_entry: dict, *,
+                  now: float | None = None, protected=None) -> dict:
+    """Swap one entry for another, leaving every other byte alone.
+
+    The protected-entity question is asked of the **new** config, for the
+    same reason `apply` asks it of an appended one: a file the panel
+    writes is not one of `call_service`'s callers, so this is the only
+    place the answer can be given.
+    """
+    path = Path(row_path)
+    if not isinstance(new_entry, dict):
+        return _fail("there is no entry to write in place of that one")
+    refusal = _protected_refusal(new_entry, protected_patterns(protected))
+    if refusal:
+        return _fail(refusal)
+    out = _splice(path, entry_id, new_entry, now)
+    if out.get("ok"):
+        alias = str(new_entry.get("alias") or "")
+        out["alias"] = alias
+        out["entity_id"] = f"automation.{slugify(alias)}" if alias else ""
+    return out
+
+
+def remove_entry(row_path, entry_id: str, *,
+                 now: float | None = None) -> dict:
+    """Take one entry out. Nothing replaces it and nothing else moves."""
+    return _splice(Path(row_path), entry_id, None, now)
+
+
 __all__ = ["AUTOMATIONS_FILE", "CONFIGURATION_FILE", "ID_PREFIX", "INCLUDE_RE",
            "INDEX", "JOURNAL_DIR", "SNAP_DIR", "TOOL", "apply", "entry_for",
-           "is_protected", "protected_patterns", "revert", "slugify",
-           "snapshot"]
+           "is_protected", "locate", "protected_patterns", "remove_entry",
+           "replace_entry", "revert", "slugify", "snapshot"]
