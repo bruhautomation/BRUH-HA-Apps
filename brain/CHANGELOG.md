@@ -122,6 +122,14 @@ one thing brAIn could not do: try a change without committing the house to it.
   either goes; a second test renders a template through `shadow`'s own path
   rather than asking whether `jinja2` imports.
 
+- **`_num` guards on `math.isfinite`, not on the `f != f` NaN idiom.** CodeQL
+  reads that idiom as a comparison of identical values and it was right to ask
+  — and the wider guard it named catches the case the idiom missed:
+  `float("inf")` parses happily and satisfies `above:` for ever, so a sensor
+  reporting it would fire the trigger and then hold it against every later
+  crossing. A state that is not a *finite* number is not a number a replay can
+  answer with.
+
 - **The sandbox renders with `autoescape=True`.** Its output never reaches a
   browser and cannot change the verdict — the result is compared against a
   fixed set of words — so the safe setting is free, and the day somebody puts
@@ -140,7 +148,7 @@ one thing brAIn could not do: try a change without committing the house to it.
 
 ### Tests
 
-- `tests/test_shadow.py` (37), `tests/test_proposals.py` (30) and
+- `tests/test_shadow.py` (38), `tests/test_proposals.py` (30) and
   `tests/test_routines.py` (30), with every guard verified by **mutation** —
   break it, watch the test fail, restore it. That caught one test whose name
   claimed something it did not measure: the numeric-crossing fixture never had

@@ -104,6 +104,22 @@ class TestTheCountsAreRight(unittest.TestCase):
                        above=25), climbing)
         self.assertEqual(got["triggered"], 1)
 
+    def test_a_reading_that_is_not_a_FINITE_number_is_not_a_number(self):
+        """`nan` and `inf` both parse, and neither is a temperature.
+
+        The NaN half was already guarded by the `f != f` idiom, which
+        CodeQL reads as a comparison of identical values — it was right
+        to ask, and the wider guard it named catches the case the idiom
+        missed: `float("inf")` parses happily and satisfies `above:` for
+        ever, so a sensor that reports it would fire the trigger and go
+        on holding it against every later crossing.
+        """
+        odd = {"sensor.temp": rows([(1, "18"), (2, "nan"), (3, "inf"),
+                                    (4, "19"), (5, "26")])}
+        got = run(trig(trigger="numeric_state", entity_id="sensor.temp",
+                       above=25), odd)
+        self.assertEqual(got["triggered"], 1)
+
     def test_a_band_is_re_entered_and_that_counts_twice(self):
         """18 -> 22 -> 26 -> 21 enters 20..24, leaves it, and comes back.
 

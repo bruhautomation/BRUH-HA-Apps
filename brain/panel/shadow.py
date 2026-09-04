@@ -50,6 +50,7 @@ split `baselines.py` keeps from the checks that read it.
 from __future__ import annotations
 
 import datetime as dt
+import math
 import re
 
 # The four the recorder can answer for. Everything else is refused whole.
@@ -290,11 +291,19 @@ def state_at(timeline: dict, entity_id: str, when: float) -> tuple[str, dict]:
 
 
 def _num(value) -> float | None:
+    """A state as a number, or `None` when it is not one.
+
+    `math.isfinite` rather than the `f != f` NaN idiom CodeQL reads as a
+    comparison of identical values — it was right to ask, and the wider
+    guard is the more correct one anyway: `float("inf")` parses happily,
+    and a reading of infinity satisfies `above:` for ever. A state that
+    is not a finite number is not a number this can replay against.
+    """
     try:
         f = float(value)
     except (TypeError, ValueError):
         return None
-    return None if f != f else f  # NaN reads as no number
+    return f if math.isfinite(f) else None
 
 
 # ---------------------------------------------------------------------------
