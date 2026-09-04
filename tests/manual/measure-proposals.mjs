@@ -27,6 +27,12 @@
 //     card, so what you are explaining stays on screen while you write.
 //   * the badge counts what is waiting — a trial whose week is over is
 //     still waiting on you — and disappears when nothing is.
+//   * an emergency playbook shows what it would ACT ON, because there is no
+//     replay to show: grouped by what happens, with anything protected
+//     rendered as skipped rather than silently dropped, and the sentence
+//     saying it will never unlock a door. It offers no trial button and
+//     says why instead of leaving one that cannot help.
+//   * its rehearsal opens on demand and reports each target's state now.
 //   * the empty state does not congratulate anybody. An empty Findings list
 //     means the house is well; an empty Proposals list means brAIn has not
 //     spotted a habit yet, and those are different sentences.
@@ -130,6 +136,39 @@ const PROPOSALS = [
     },
     replay: { days: 30, would_run: 21, blocked_by_conditions: 0, triggered: 21 },
   },
+  {
+    // An emergency playbook. No replay, no trial, and the evidence is the
+    // list of what it would touch — including the one thing it refuses to.
+    ts: NOW * 1000 - 6000, key: 'ggg', kind: 'playbook',
+    title: 'Emergency playbook: smoke or carbon monoxide',
+    why: 'Written from what this house has: 2 detectors in Hall, Landing. '
+       + 'Every light to full brightness (12). Heating and cooling off (3). '
+       + 'Blinds and curtains open (4). Then it tells you, naming the room.',
+    source: 'playbook', status: 'proposed',
+    playbook: {
+      class: 'smoke', card_max: 12,
+      sensors: [
+        { entity_id: 'binary_sensor.hall_smoke', name: 'Hall smoke', area: 'Hall' },
+        { entity_id: 'binary_sensor.landing_smoke', name: 'Landing smoke', area: 'Landing' },
+      ],
+      groups: [
+        { verb: 'Every light to full brightness', service: 'light.turn_on', to: 'on',
+          targets: [
+            { entity_id: 'light.kitchen', name: 'Kitchen', area: 'Kitchen' },
+            { entity_id: 'light.hall', name: 'Hall', area: 'Hall' },
+          ] },
+        { verb: 'Heating and cooling off', service: 'climate.set_hvac_mode', to: 'off',
+          targets: [{ entity_id: 'climate.hall', name: 'Hall thermostat', area: 'Hall' }] },
+      ],
+      skipped: [{ entity_id: 'light.nursery', name: 'Nursery', reason: 'protected' }],
+      notify: ['notify.mobile_app_phone'],
+      note: 'This will not unlock any door and will not disarm the alarm '
+          + '— a false smoke alarm at 3am must not open the house.',
+      no_trial: 'There is no week to try this against: a trial replays the '
+          + 'days you have already lived, and those days had no emergency in '
+          + 'them. Rehearse it instead.',
+    },
+  },
 ];
 
 const OPEN = PROPOSALS.length;
@@ -141,7 +180,7 @@ const REFUSAL = 'automations.yaml already has one called "Close the blinds '
 const STUB = `
 window.__proposals = {
   proposals: ${JSON.stringify(PROPOSALS)},
-  counts: { proposed: 3, trialling: 3, accepted: 0, declined: 0, open: ${OPEN} },
+  counts: { proposed: 4, trialling: 3, accepted: 0, declined: 0, open: ${OPEN} },
   trial_days: 7, routine_min_days: 6,
 };
 window.__empty = false;
@@ -162,6 +201,20 @@ window.fetch = async (url, opts) => {
     window.__undone = p.split('api/undo/')[1];
     return answer({ undone: true, reverted: true, reloaded: true,
                     restored_proposal: true, ...window.__proposals });
+  }
+  if (p.includes('api/playbook/')) {
+    return answer({
+      class: 'smoke', executes_nothing: true,
+      note: 'Rehearsing runs nothing.',
+      groups: [
+        { verb: 'Every light to full brightness', service: 'light.turn_on',
+          to: 'on', count: 2, already: 1, targets: [
+            { entity_id: 'light.kitchen', name: 'Kitchen', state: 'off', already: false },
+            { entity_id: 'light.hall', name: 'Hall', state: 'on', already: true },
+          ] },
+      ],
+      notify: ['notify.mobile_app_phone'], skipped: [],
+    });
   }
   if (p.includes('api/proposal/')) {
     const ts = Number(p.split('api/proposal/')[1].split('/')[0]);
@@ -252,6 +305,16 @@ for (const width of WIDTHS) {
         trial: (c.querySelector('.proptrial') || {}).textContent || '',
         error: (c.querySelector('.properror') || {}).textContent || '',
         pill: (c.querySelector('.pilltrial') || {}).textContent || '',
+        book: (c.querySelector('.pillbook') || {}).textContent || '',
+        groups: [...c.querySelectorAll('.propgroup')].map((g) => ({
+          verb: (g.querySelector('.propverb') || {}).textContent || '',
+          names: (g.querySelector('.propnames') || {}).textContent || '',
+          skipped: g.classList.contains('skipped'),
+          wrapped: g.getBoundingClientRect().height > 90,
+        })),
+        note: (c.querySelector('.propbooknote') || {}).textContent || '',
+        notrial: (c.querySelector('.propnotrial') || {}).textContent || '',
+        rehearse: !!c.querySelector('.propreh > summary'),
         buttons: [...c.querySelectorAll('.propbtns button')].map((b) => ({
           label: b.textContent.trim(),
           primary: b.classList.contains('primary'),
@@ -375,6 +438,70 @@ for (const width of WIDTHS) {
   if (!/not replayable/i.test(m.cards[2].replay)) {
     note(where, `a refused replay must say so, got "${m.cards[2].replay}"`);
   }
+
+  // --- the emergency playbook. Its evidence is the list of what it would
+  // act on, because there is no week with a smoke alarm in it to replay.
+  const book = m.cards[6];
+  if (!book.book.trim()) note(where, 'the playbook card has no Playbook pill');
+  if (!book.groups.length) {
+    note(where, 'the playbook card lists nothing it would act on — which is '
+              + 'the only evidence a playbook has');
+  }
+  if (!book.groups.some((g) => /full brightness/i.test(g.verb))) {
+    note(where, 'the playbook does not say what happens to the lights');
+  }
+  if (!book.groups.some((g) => /Kitchen/.test(g.names))) {
+    note(where, 'the playbook does not name the entities it would act on');
+  }
+  // Protected entities are SHOWN as skipped, never silently dropped:
+  // seeing that brAIn knows the nursery light is there and knows it may
+  // not touch it is the point of showing it.
+  const skipped = book.groups.filter((g) => g.skipped);
+  if (skipped.length !== 1 || !/Nursery/.test(skipped[0].names)) {
+    note(where, 'a protected entity is not shown as skipped on the card');
+  }
+  if (!/protected/i.test((skipped[0] || {}).verb || '')) {
+    note(where, `a skipped row does not say why: "${(skipped[0] || {}).verb}"`);
+  }
+  // The sentence somebody reads before arming their house.
+  if (!/unlock/i.test(book.note)) {
+    note(where, `the playbook does not say it will not unlock: "${book.note}"`);
+  }
+  // No trial button, and the reason where the button would have been.
+  if (book.buttons.some((b) => /try it/i.test(b.label))) {
+    note(where, 'a playbook offers a trial — a replay of a week with no '
+              + 'emergency in it answers nothing');
+  }
+  if (!/no week to try this against/i.test(book.notrial)) {
+    note(where, `a playbook does not say why there is no trial: `
+              + `"${book.notrial}"`);
+  }
+  if (!book.rehearse) note(where, 'the playbook offers no rehearsal');
+  if (book.groups.some((g) => g.wrapped)) {
+    note(where, 'a playbook action row is taller than three lines — the verb '
+              + 'has wrapped away from the names it labels');
+  }
+
+  // --- and the rehearsal, which opens on demand and calls nothing.
+  await page.click('.propcard:nth-child(7) .propreh > summary');
+  const opened = await waitOr(
+    page.waitForSelector('.propreh[open] .propbookrows .propgroup'),
+    'the rehearsal never reported what it would do');
+  if (opened) {
+    const reh = await page.evaluate(() => {
+      const rows = [...document.querySelectorAll(
+        '.propreh[open] .propbookrows .propgroup')];
+      return rows.map((r) => r.textContent);
+    });
+    if (!reh.some((r) => /already/i.test(r))) {
+      note(where, `the rehearsal does not say what is already there: `
+                + `${JSON.stringify(reh)}`);
+    }
+    if (!reh.some((r) => /Kitchen/.test(r) && /off/.test(r))) {
+      note(where, 'the rehearsal does not report each target\'s state now');
+    }
+  }
+  await page.click('.propcard:nth-child(7) .propreh > summary');
 
   // --- an accept Home Assistant will not honour. The card stays put and
   // the sentence lands on it, because a toast is gone before somebody has

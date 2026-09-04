@@ -138,6 +138,7 @@ import knowledge_store
 import notify_router
 import override_ledger
 import onboarding
+import playbooks
 import prompt_store
 import proposals
 import rhythm
@@ -2934,6 +2935,56 @@ async def _offer_routines(now: float) -> int:
     return offered
 
 
+async def _offer_playbooks(snapshot: dict, now: float) -> int:
+    """Offer the emergency playbooks this house can have. Returns how many.
+
+    Deterministic all the way through: the registries in the snapshot the
+    checks already collected say which detectors exist and which lights,
+    thermostats, blinds, valves and water heaters they would act on. No
+    model chooses any of that — a model picking which valve closes is a
+    guess wearing a config, and one nobody can check afterwards because
+    the automation looks the same either way.
+
+    The one optional Claude run is the **paragraph on the card**, and a
+    run that fails leaves the deterministic sentence exactly where it
+    was. It happens at most once per class per sensor set, because
+    `proposals.knows` is asked first — a house whose playbooks are all
+    answered costs nothing on every later pass.
+    """
+    service, _sev = _findings_notify_target()
+    try:
+        protected = automation_writer.protected_patterns()
+        found = await asyncio.to_thread(
+            playbooks.build, snapshot, protected, service)
+    except Exception as exc:  # noqa: BLE001 — an offer is optional; the
+        # pass that would have made it is not.
+        log.warning("could not compose playbooks: %s", exc)
+        return 0
+
+    offered = 0
+    for obj in found:
+        if await asyncio.to_thread(proposals.knows, obj):
+            continue
+        try:
+            result = await asyncio.to_thread(
+                engine.run_claude, playbooks.describe_prompt(obj),
+                playbooks.SYSTEM, eff_model(),
+                playbooks.DESCRIBE_TIMEOUT_S, playbooks.DESCRIBE_MAX_TURNS,
+                "playbook")
+            obj["why"] = playbooks.tidy_description(
+                result.get("text") or result.get("raw") or "", obj["why"])
+        except Exception as exc:  # noqa: BLE001 — the card renders from the
+            # deterministic sentence, which is why there is one.
+            log.info("could not describe the %s playbook: %s",
+                     (obj.get("playbook") or {}).get("class"), exc)
+        if await asyncio.to_thread(proposals.add, obj):
+            offered += 1
+    if offered:
+        log.info("proposed %d emergency playbook%s",
+                 offered, "" if offered == 1 else "s")
+    return offered
+
+
 async def _evaluate_trials(now: float) -> int:
     """Re-grade every running trial against the week so far. Returns how many.
 
@@ -3062,6 +3113,13 @@ async def run_checks(reason: str = "schedule") -> dict:
         except Exception as exc:  # noqa: BLE001
             log.warning("could not offer routines: %s", exc)
             offered = 0
+        # And the other producer: the automation brAIn would write for a
+        # night nobody wants. Same store, same tab, same refusal to
+        # enable anything on its own.
+        try:
+            offered += await _offer_playbooks(snapshot, started)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("could not offer playbooks: %s", exc)
         # And the other half of the same lifecycle: a trial that nothing
         # evaluates is a status with no report behind it.
         try:
@@ -3826,6 +3884,38 @@ def _proposals_payload() -> dict:
 async def h_proposals(request: web.Request) -> web.Response:
     return web.json_response(
         await asyncio.to_thread(_proposals_payload))
+
+
+async def h_playbook_rehearsal(request: web.Request) -> web.Response:
+    """What this playbook would do, against what is true right now.
+
+    It **calls nothing**. Home Assistant's `automation.trigger` would run
+    the actions, which is not a rehearsal — it is the emergency — so this
+    reads `/states` once and reports each target's state beside the state
+    the call would produce.
+    """
+    ts = int(request.match_info["ts"])
+    row = await asyncio.to_thread(proposals.get, ts)
+    if row is None or not row.get("playbook"):
+        return web.json_response(
+            {"error": "that is not a playbook"}, status=404)
+
+    import aiohttp  # noqa: PLC0415 — as `_offer_routines` does
+
+    import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
+    try:
+        async with aiohttp.ClientSession() as session:
+            raw = await ha_data._rest_get(session, "/states", timeout=30)
+    except Exception as exc:  # noqa: BLE001 — "I could not ask" and "every
+        # light is already on" are different answers, and only one of them
+        # is about the house.
+        return web.json_response(
+            {"error": f"brAIn could not read the current states: {exc}"},
+            status=502)
+    states = {s["entity_id"]: s for s in (raw or [])
+              if isinstance(s, dict) and s.get("entity_id")}
+    return web.json_response(
+        await asyncio.to_thread(playbooks.rehearsal, row, states))
 
 
 async def h_proposal_trial(request: web.Request) -> web.Response:
@@ -5824,6 +5914,7 @@ def make_app() -> web.Application:
     app.router.add_post("/api/finding/{ts}/discuss", h_finding_discuss)
     # Before the {ts} pattern, which would otherwise swallow it.
     app.router.add_get("/api/proposals", h_proposals)
+    app.router.add_get("/api/playbook/{ts}/rehearsal", h_playbook_rehearsal)
     app.router.add_post("/api/proposal/{ts}/trial", h_proposal_trial)
     app.router.add_post("/api/proposal/{ts}/{verb}", h_proposal_decide)
     app.router.add_post("/api/replay", h_replay)

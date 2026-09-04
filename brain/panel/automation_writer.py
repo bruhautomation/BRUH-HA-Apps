@@ -231,8 +231,16 @@ def entry_for(row: dict, now: float | None = None) -> dict:
     """
     now = time.time() if now is None else now
     config = row.get("config") or {}
+    # A config may name its own id, and an emergency playbook does:
+    # `brain_playbook_smoke` says what it is when somebody opens the file
+    # in six months, where `brain_1757000000000` says when it was
+    # accepted. It must carry the prefix — an id off the wire that could
+    # be anything is an id that could collide with somebody else's, and
+    # the duplicate-id refusal is what makes a stable one safe.
+    named = str(config.get("id") or "").strip()
     entry = {
-        "id": f"{ID_PREFIX}{int(row.get('ts') or 0)}",
+        "id": named if named.startswith(ID_PREFIX) and len(named) <= 64
+              else f"{ID_PREFIX}{int(row.get('ts') or 0)}",
         "alias": str(row.get("title") or "brAIn automation")[:255],
         "description": (
             "Proposed by brAIn from what you do by hand; accepted on "

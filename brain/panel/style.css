@@ -3170,6 +3170,53 @@ body.term-classic #termMode .ico-out { display: block; }
   color: var(--accent);
 }
 .propwhy { margin: 0 0 8px; color: var(--ink-2); line-height: 1.5; }
+/* An emergency playbook. The pill is the same shape as the trial one and
+   a different colour, because it marks a different KIND of card rather
+   than a stage of the same lifecycle: this one has no trial and never
+   will. */
+.pillbook {
+  flex: none; font-size: 12px; padding: 2px 8px; border-radius: 999px;
+  background: color-mix(in srgb, var(--warning) 18%, transparent);
+  color: var(--warning);
+}
+/* What it would act on, grouped by what happens to it. This IS the
+   evidence on a playbook card — there is no replay to show — so it is
+   laid out to be read down rather than squeezed into a sentence. */
+.propbook { margin: 0 0 10px; }
+.propbookset { margin: 0 0 8px; font-size: 13px; color: var(--ink-2); }
+.propbookrows { display: flex; flex-direction: column; gap: 6px; }
+.propgroup {
+  display: flex; gap: 10px; flex-wrap: wrap;
+  font-size: 13px; line-height: 1.45; padding: 4px 0;
+  border-top: 1px solid var(--hairline);
+}
+/* The verb never shrinks and the names are what give way, because "Every
+   light to full brightness (12)" is the half that has to survive a
+   390px card — a row whose verb has wrapped to three words is a row
+   nobody can scan. */
+.propverb { flex: none; color: var(--ink); font-weight: 600; }
+.propnames { flex: 1 1 160px; min-width: 0; color: var(--ink-2); }
+.propgroup.skipped .propverb { color: var(--warning); }
+.propbooknote {
+  margin: 10px 0 0; font-size: 12.5px; line-height: 1.5; color: var(--ink-3);
+}
+/* Rehearsal. A disclosure rather than a button, because it reads every
+   state in the house and a tab of five playbooks would ask five times
+   before anybody looked at one. */
+/* Why there is no trial button, said where the button would have been.
+   Its own class rather than `.prophint`, which is the trial hint and is
+   deliberately rendered once for the whole list. */
+.propnotrial {
+  margin: 0 0 8px; font-size: 12.5px; line-height: 1.45; color: var(--ink-3);
+}
+.propreh { margin: 0 0 10px; }
+.propreh > summary {
+  cursor: pointer; font-size: 13px; color: var(--accent);
+  padding: 6px 0; list-style: none;
+}
+.propreh > summary::-webkit-details-marker { display: none; }
+.propreh > summary::before { content: "▸ "; }
+.propreh[open] > summary::before { content: "▾ "; }
 /* The evidence rows. Monospace numerals so a column of them lines up when
    several proposals are open at once. */
 .propreplay, .proptrial {
@@ -3207,6 +3254,9 @@ body.term-classic #termMode .ico-out { display: block; }
    density it was designed at — the same split the 16px text floor uses. */
 @media (pointer: coarse) {
   .propbtns .btn { min-height: 44px; padding-inline: 14px; }
+  /* The rehearsal disclosure is a control, and on a phone it is the one
+     somebody presses before deciding whether to arm their house. */
+  .propreh > summary { min-height: 44px; display: flex; align-items: center; }
   /* Same argument, same scope. One of these signs somebody out and another
      writes a credential to a volume that goes into Home Assistant backups,
      so they are not places to miss by four pixels — and this is the section

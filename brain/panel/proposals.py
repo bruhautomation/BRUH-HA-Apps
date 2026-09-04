@@ -217,6 +217,12 @@ def add(obj: dict) -> dict | None:
         "source": str(obj.get("source") or "")[:60],
         "config": obj.get("config"),
         "replay": obj.get("replay"),
+        # An emergency playbook's evidence is the LIST of what it would
+        # act on, exactly as a routine's is its replay — so it rides on
+        # the row for the same reason. `key_for` hashes the config and
+        # never this, so a card that renders differently is still the
+        # same change.
+        "playbook": obj.get("playbook"),
         "status": "proposed",
         "note": "",
     }

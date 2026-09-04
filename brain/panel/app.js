@@ -2045,6 +2045,36 @@ function renderDiagnostics(d) {
     rows.push(diagRow("Notifications",
       `at ${esc(n.min_severity || "serious")} and up — ${window_}${held}`));
   }
+  // Overnight self-healing. Three silences look identical from outside —
+  // it is off, it is not the window yet, and it does not know when the
+  // house is quiet — and only the last one needs anything doing.
+  const heal = d.healing || {};
+  if (!heal.enabled) {
+    rows.push(diagRow("Overnight repairs", "off"));
+  } else {
+    const tried = heal.attempts || [];
+    const worked = tried.filter((a) => a.ok).length;
+    let line = tried.length
+      ? `${tried.length} tried last night, ${worked} accepted`
+        + (heal.last_run
+          ? ` — ${timeAgo(new Date(heal.last_run * 1000).toISOString())}`
+          : "")
+      : "on, nothing repaired yet";
+    if ((heal.skips || []).length) line += `, ${heal.skips.length} skipped`;
+    rows.push(diagRow("Overnight repairs", esc(line)));
+    // The reason it will not run is the row worth having: a self-healer
+    // that has never run reads exactly like one with nothing to do.
+    if (heal.reason) {
+      rows.push(diagRow("Not running because", esc(heal.reason),
+        /has not been measured/.test(heal.reason)));
+    }
+    const bad = tried.filter((a) => !a.ok).slice(0, 3).map((a) =>
+      `<li>${esc(a.sentence || a.remedy || "a repair")} — `
+      + `${esc(String(a.error || "failed").slice(0, 120))}</li>`);
+    if (bad.length) {
+      rows.push(diagRow("Repairs that failed", `<ul>${bad.join("")}</ul>`, true));
+    }
+  }
   if (failures.length) {
     const items = failures.slice(0, 5).map((f) =>
       `<li><b>${esc(f.source || "?")}</b> · ${esc(f.outcome || "?")}`
@@ -3902,18 +3932,137 @@ async function propAct(ts, path, body) {
   }
 }
 
+// ---- playbooks -----------------------------------------------------------
+//
+// An emergency playbook's evidence is not a replay — there is no week
+// with a smoke alarm in it — it is the LIST of what the automation would
+// act on. So the card renders that list, grouped by what happens to each
+// group, with anything protected shown as skipped rather than silently
+// dropped: seeing that brAIn knows the valve is there and knows it may
+// not touch it is the whole point of showing it.
+
+// The config is never capped and this list is, so an over-long group says
+// what it is not showing rather than disagreeing with the count quietly —
+// the same rule the memory queue's list and count follow.
+function propTargetLine(group, cap) {
+  const targets = group.targets || [];
+  const names = targets.slice(0, cap).map((t) => t.name || t.entity_id);
+  const rest = targets.length - names.length;
+  return names.join(", ") + (rest > 0 ? `, and ${rest} more` : "");
+}
+
+function propPlaybookBlock(row) {
+  const book = row.playbook;
+  if (!book) return null;
+  const wrap = el("div", "propbook");
+  const cap = book.card_max || 12;
+
+  const sensors = book.sensors || [];
+  if (sensors.length) {
+    const where = [...new Set(sensors.map((s) => s.area).filter(Boolean))];
+    wrap.appendChild(el("p", "propbookset",
+      `Runs when any of ${sensors.length} sensor`
+      + `${sensors.length === 1 ? "" : "s"} goes off`
+      + (where.length ? ` — ${where.slice(0, 4).join(", ")}` : "") + "."));
+  }
+
+  (book.groups || []).forEach((group) => {
+    const line = el("div", "propgroup");
+    line.appendChild(el("span", "propverb",
+      `${group.verb} (${(group.targets || []).length})`));
+    line.appendChild(el("span", "propnames", propTargetLine(group, cap)));
+    wrap.appendChild(line);
+  });
+
+  if ((book.notify || []).length) {
+    const line = el("div", "propgroup");
+    line.appendChild(el("span", "propverb", "Tells you"));
+    line.appendChild(el("span", "propnames",
+      `${book.notify.join(", ")} — naming the room it happened in`));
+    wrap.appendChild(line);
+  }
+
+  (book.skipped || []).slice(0, cap).forEach((skip) => {
+    const line = el("div", "propgroup skipped");
+    line.appendChild(el("span", "propverb", "Skipped: protected"));
+    line.appendChild(el("span", "propnames", skip.name || skip.entity_id));
+    wrap.appendChild(line);
+  });
+
+  // The sentence that says what this will never do. It is on the card
+  // rather than only in the docs because this is where somebody decides.
+  if (book.note) wrap.appendChild(el("p", "propbooknote", book.note));
+  return wrap;
+}
+
+// The rehearsal is fetched when the disclosure opens, never with the
+// card: it reads every state in the house, and a tab of five playbooks
+// would ask for that five times before anybody looked at one.
+async function propRehearse(ts, body) {
+  body.textContent = "";
+  body.appendChild(el("p", "propbookset", "Reading the house…"));
+  let data = null;
+  try {
+    data = await api(`api/playbook/${ts}/rehearsal`);
+  } catch (err) {
+    body.textContent = "";
+    body.appendChild(el("p", "propbookset",
+      `Could not read the current states: ${err && err.message ? err.message : err}`));
+    return;
+  }
+  body.textContent = "";
+  (data.groups || []).forEach((group) => {
+    const line = el("div", "propgroup");
+    const already = group.already
+      ? ` (${group.already} already ${group.to || "there"})` : "";
+    line.appendChild(el("span", "propverb",
+      `${group.count} → ${group.to || "changed"}${already}`));
+    line.appendChild(el("span", "propnames",
+      (group.targets || []).map((t) => `${t.name || t.entity_id} — ${t.state}`)
+        .join(", ")));
+    body.appendChild(line);
+  });
+  if (!(data.groups || []).length) {
+    body.appendChild(el("p", "propbookset",
+      "This one only sends a notification."));
+  }
+  body.appendChild(el("p", "propbooknote", data.note || ""));
+}
+
+function propRehearsal(row) {
+  const box = el("details", "propreh");
+  const sum = el("summary", null, "Rehearse it — show me what it would do");
+  box.appendChild(sum);
+  const body = el("div", "propbookrows");
+  box.appendChild(body);
+  let loaded = false;
+  box.addEventListener("toggle", () => {
+    if (!box.open || loaded) return;
+    loaded = true;
+    propRehearse(row.ts, body);
+  });
+  return box;
+}
+
 function propCard(row, withHint) {
   const card = el("div", "propcard");
+  const playbook = !!row.playbook;
   const head = el("div", "prophead-row");
   head.appendChild(el("h3", "proptitle", row.title || "A proposal"));
   const over = row.status === "trialling" && propTrialOver(row);
+  if (playbook) head.appendChild(el("span", "pillbook", "Playbook"));
   if (row.status === "trialling") {
     head.appendChild(el("span", "pilltrial", over ? "Trial over" : "On trial"));
   }
   card.appendChild(head);
 
   if (row.why) card.appendChild(el("p", "propwhy", row.why));
-  const replay = propReplayLine(row);
+  if (playbook) {
+    const block = propPlaybookBlock(row);
+    if (block) card.appendChild(block);
+    card.appendChild(propRehearsal(row));
+  }
+  const replay = playbook ? "" : propReplayLine(row);
   if (replay) card.appendChild(el("p", "propreplay", replay));
   if (row.status === "trialling") {
     card.appendChild(el("p", "proptrial", propTrialLine(row)));
@@ -3968,9 +4117,16 @@ function propCard(row, withHint) {
     return card;
   }
 
+  // A playbook has no trial, and the card says why rather than offering a
+  // button that cannot help: a trial replays the week you lived through,
+  // and that week had no smoke alarm in it.
+  if (playbook && row.playbook.no_trial) {
+    card.appendChild(el("p", "propnotrial", row.playbook.no_trial));
+  }
+
   const btns = el("div", "propbtns");
   const busy = !!propState.busy;
-  if (row.status === "proposed") {
+  if (row.status === "proposed" && !playbook) {
     const trial = el("button", "btn small", "Try it for a week");
     trial.dataset.tip = "Runs in shadow — it logs what it would have done and changes nothing";
     trial.addEventListener("click", () => propAct(row.ts, "trial"));
