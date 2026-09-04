@@ -116,6 +116,7 @@ import closures
 import checks
 import cli_commands
 import conversations
+import energy
 import engine
 import feedback_store
 import findings_store
@@ -130,11 +131,13 @@ import onboarding
 import prompt_store
 import rhythm
 import run_sources
+import schedule_store
 import settings_store
 import terminal_proxy
 import undo_store
 import usage_store
 import user_categories
+import weekly
 from categories import (ANALYST_SYSTEM, CATEGORIES, SYSTEM_PROMPT, build_orientation_prompt,
                         build_prompt, get_category)
 
@@ -877,7 +880,14 @@ def _notify_diagnostics() -> dict:
 # already in memory. Nothing asks Claude until both have said yes.
 BRIEF_POLL_S = 5 * 60
 BRIEF_FIRST_DELAY_S = 300
-BRIEF_STATE: dict = {"last_sent": 0.0, "last_reasons": [], "last_error": ""}
+# `last_sent` is read back from disk at import: it lived in memory only,
+# so a restart set it to zero and the next window sent a second brief on
+# the same morning — and restarting is the first thing anybody does after
+# changing an option. Same for the weekly, where the duplicate is a whole
+# week's material reported twice.
+BRIEF_SENT_KEY = "brief_last_sent"
+BRIEF_STATE: dict = {"last_sent": schedule_store.get(BRIEF_SENT_KEY),
+                     "last_reasons": [], "last_error": ""}
 # What "overnight" means for the summary that rides in the prompt.
 BRIEF_NIGHT_HOURS = 12
 
@@ -995,6 +1005,7 @@ async def _brief_loop():
                     # second one, and a failed brief is still this
                     # morning's — retrying it all morning is worse.
                     BRIEF_STATE["last_sent"] = now
+                    schedule_store.set(BRIEF_SENT_KEY, now)
                     sent = await _send_brief(now)
                     log.info("morning brief %s",
                              "sent" if sent else "skipped")
@@ -1021,6 +1032,147 @@ def _rhythm_diagnostics() -> dict:
         "brief_last_sent": int(BRIEF_STATE["last_sent"]),
         "brief_last_reasons": len(BRIEF_STATE["last_reasons"]),
         "brief_last_error": BRIEF_STATE["last_error"],
+    }
+
+
+# The weekly report. The same poll as the brief's and a different gate:
+# the day decides whether it goes at all, and the hour only ever opens
+# the window — see `weekly.due`.
+WEEKLY_POLL_S = 15 * 60
+WEEKLY_FIRST_DELAY_S = 600
+WEEKLY_SENT_KEY = "weekly_last_sent"
+WEEKLY_STATE: dict = {"last_sent": schedule_store.get(WEEKLY_SENT_KEY),
+                      "last_text": "", "last_error": "", "last_state": {}}
+
+
+def _weekly_enabled() -> tuple[bool, int]:
+    """`(on, day index)`. The hour is the brief's, deliberately.
+
+    A third time-of-day option would be a third box saying the same
+    thing: `morning_brief_hour` is when brAIn speaks in the morning, and
+    the weekly is a morning message. What is genuinely per-report is
+    which day.
+    """
+    opts = addon_options.snapshot() or {}
+    on = opts.get("weekly_report")
+    if on is None:
+        on = os.environ.get("BRAIN_WEEKLY_REPORT", "").lower() in (
+            "true", "1", "yes")
+    day = opts.get("weekly_report_day")
+    if day is None:
+        day = os.environ.get("BRAIN_WEEKLY_REPORT_DAY", "")
+    return bool(on), weekly.day_index(day or weekly.DEFAULT_DAY)
+
+
+async def _weekly_energy(now: float) -> dict:
+    """The week's meters, or the sentence saying why there are none."""
+    import aiohttp
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            return await energy.week(session, now)
+    except Exception as exc:  # noqa: BLE001 — a report without the meters
+        # is still a report; one that failed because of them is not.
+        log.info("weekly report could not read the meters: %s", exc)
+        return {"available": False, "reason": "the meters could not be read"}
+
+
+async def _weekly_state(now: float) -> dict:
+    """Everything the decision and the prompt read. No model."""
+    # A week, never longer: an add-on that was off for a fortnight must
+    # not send a report headed "this week" about three of them, and a
+    # finding still open from before it is already in `open_now` and in
+    # the one thing to do.
+    since = max(WEEKLY_STATE["last_sent"], now - weekly.WEEK_S)
+    power = await _weekly_energy(now)
+    rows = await asyncio.to_thread(findings_store.list_all)
+    settled = await asyncio.to_thread(findings_store.settled_listing)
+    return weekly.gather(rows, settled, power, since, now=now)
+
+
+async def _send_weekly(now: float) -> str:
+    """Gather, decide, and only then ask. Returns what was sent, or ''."""
+    state = await _weekly_state(now)
+    # Numbers, not the content: `last_state` rides into /api/diagnostics
+    # and so into the bundle `brain report` attaches to an issue, and a
+    # memory line is a fact about somebody's home rather than a
+    # diagnostic. Same rule the closures summary carries.
+    lore = dict(state.get("learned") or {})
+    lore.pop("added", None)
+    WEEKLY_STATE["last_state"] = {
+        "energy": state.get("energy") or {},
+        "findings": state.get("findings") or {},
+        "learned": lore,
+        "since": state.get("since"),
+    }
+    if not weekly.worth_reporting(state):
+        # Not an error: a quiet week is the design. Clearing it matters
+        # because a stale `last_error` beside a report that never went is
+        # read as the reason it never went.
+        WEEKLY_STATE["last_error"] = ""
+        log.info("weekly report: nothing to report, not sent")
+        return ""
+
+    result = await asyncio.to_thread(
+        engine.run_analyst, weekly.frame(state), weekly.SYSTEM,
+        eff_model(), weekly.TIMEOUT_S, weekly.MAX_TURNS, "weekly")
+    if not result.get("ok"):
+        WEEKLY_STATE["last_error"] = str(result.get("error") or "no reply")
+        log.warning("weekly report failed: %s", WEEKLY_STATE["last_error"])
+        return ""
+
+    body = weekly.tidy(result.get("text") or result.get("raw") or "")
+    if not body:
+        WEEKLY_STATE["last_error"] = "the reply was too short to send"
+        log.warning("weekly report: %s", WEEKLY_STATE["last_error"])
+        return ""
+
+    WEEKLY_STATE["last_error"] = ""
+    WEEKLY_STATE["last_text"] = body
+    await _send_notification([{"text": body, "severity": "info"}])
+    return body
+
+
+async def _weekly_loop():
+    """Once a week, on the day, at or after the hour this house is up."""
+    await asyncio.sleep(WEEKLY_FIRST_DELAY_S)
+    while True:
+        try:
+            on, want_day = _weekly_enabled()
+            service, _sev = _findings_notify_target()
+            if on and service:
+                now = time.time()
+                local = _local_now(now)
+                _brief_on, fallback = _brief_enabled()
+                if weekly.due(now, local.weekday(),
+                              local.hour * 60 + local.minute,
+                              rhythm.wake_minute(rhythm.profile(), local),
+                              fallback, WEEKLY_STATE["last_sent"], want_day):
+                    # Stamped before the run, for the brief's reason: a
+                    # pass that takes minutes must not let the next tick
+                    # start a second one, and a failed report is still
+                    # this week's.
+                    WEEKLY_STATE["last_sent"] = now
+                    schedule_store.set(WEEKLY_SENT_KEY, now)
+                    sent = await _send_weekly(now)
+                    log.info("weekly report %s", "sent" if sent else "skipped")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — the loop outlives a pass
+            log.warning("weekly report pass failed: %s", exc)
+        await asyncio.sleep(WEEKLY_POLL_S)
+
+
+def _weekly_diagnostics() -> dict:
+    """Whether the report is on, when it last went, and what it last held."""
+    on, want_day = _weekly_enabled()
+    return {
+        "enabled": on,
+        "day": weekly.DAYS[want_day],
+        "last_sent": int(WEEKLY_STATE["last_sent"]),
+        "last_error": WEEKLY_STATE["last_error"],
+        "last_chars": len(WEEKLY_STATE["last_text"]),
+        "last_state": WEEKLY_STATE["last_state"],
     }
 
 
@@ -2563,6 +2715,60 @@ async def h_baselines_run(request: web.Request) -> web.Response:
     return web.json_response(summary, status=status)
 
 
+async def h_weekly(request: web.Request) -> web.Response:
+    """The week's own numbers, and the last report that went out.
+
+    A weekly report delivered once to a phone and then gone is a report
+    nobody can re-read, quote or check — so what was sent stays here,
+    beside the numbers it was written from.
+    """
+    now = time.time()
+    on, want_day = _weekly_enabled()
+    service, _sev = _findings_notify_target()
+    state = await _weekly_state(now)
+    return web.json_response({
+        "enabled": on,
+        "day": weekly.DAYS[want_day],
+        "notify_service": service,
+        "last_sent": int(WEEKLY_STATE["last_sent"]),
+        "last_error": WEEKLY_STATE["last_error"],
+        "last_text": WEEKLY_STATE["last_text"],
+        "worth_reporting": weekly.worth_reporting(state),
+        "energy": state.get("energy") or {},
+        "findings": state.get("findings") or {},
+        "learned": state.get("learned") or {},
+        "one_thing": state.get("one_thing"),
+    })
+
+
+async def h_weekly_run(request: web.Request) -> web.Response:
+    """Send this week's report now.
+
+    A report that goes out moves the week rather than adding to it — two
+    reports about overlapping weeks is how the numbers in them stop
+    meaning anything — while one that found nothing leaves the schedule
+    alone.
+    """
+    service, _sev = _findings_notify_target()
+    if not service:
+        return web.json_response(
+            {"error": "no notification service is configured"}, status=409)
+    now = time.time()
+    # Stamped before the run so a second press cannot start a second
+    # pass, and put back when nothing was sent: asking by hand on a
+    # Saturday and finding the week empty must not silently cancel the
+    # Sunday report that would have had another day's material.
+    before = WEEKLY_STATE["last_sent"]
+    WEEKLY_STATE["last_sent"] = now
+    body = await _send_weekly(now)
+    WEEKLY_STATE["last_sent"] = now if body else before
+    schedule_store.set(WEEKLY_SENT_KEY, WEEKLY_STATE["last_sent"])
+    return web.json_response({
+        "sent": bool(body), "text": body,
+        "error": WEEKLY_STATE["last_error"],
+    })
+
+
 async def h_checks(request: web.Request) -> web.Response:
     return web.json_response({
         "catalog": [{"id": c["id"], "title": c["title"],
@@ -2802,6 +3008,11 @@ def _diagnostics_payload() -> dict:
         # both are invisible from outside: a rhythm that never gathered
         # enough days looks exactly like one that did and chose 07:00.
         "rhythm": _rhythm_diagnostics(),
+        # The week's own report: whether it is on, which day it goes, and
+        # what the last gather actually held. A report that has never
+        # sent because nothing was worth reporting reads, from outside,
+        # exactly like one whose loop died in March.
+        "weekly": _weekly_diagnostics(),
         # Numbers, not the buckets: a bug report needs to know whether
         # the house has been watched and when, not 168 fractions for
         # sixty doors.
@@ -4618,6 +4829,8 @@ def make_app() -> web.Application:
     app.router.add_get("/api/diagnostics", h_diagnostics)
     app.router.add_get("/api/baselines", h_baselines)
     app.router.add_post("/api/baselines/run", h_baselines_run)
+    app.router.add_get("/api/weekly", h_weekly)
+    app.router.add_post("/api/weekly/run", h_weekly_run)
     app.router.add_get("/api/activity", h_activity)
     app.router.add_get("/api/activity/entity/{entity_id}", h_activity_entity)
     app.router.add_post("/api/finding/{ts}/fix", h_finding_fix)
@@ -4725,6 +4938,7 @@ def make_app() -> web.Application:
         app["notify_flush"] = asyncio.create_task(_notify_flush_loop())
         app["brief"] = asyncio.create_task(_brief_loop())
         app["evening"] = asyncio.create_task(_evening_loop())
+        app["weekly"] = asyncio.create_task(_weekly_loop())
         if addon_options.available():
             app["options"] = asyncio.create_task(_options_poller())
         if engine.get_auth():

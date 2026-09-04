@@ -2,6 +2,93 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.37.0
+
+### Added
+
+- **The weekly report** (`panel/weekly.py`), the last piece of the roadmap's
+  #10. One message a week: what the house used against the week before, what
+  was found and answered, what brAIn learned, and the one thing worth doing
+  this week. Off by default (`weekly_report`), on the day you choose
+  (`weekly_report_day`, Sundays), to whatever notify service the findings
+  already use — so pointing that at `notify.notify` is what makes it the
+  report that goes to everyone.
+
+  **It is not the morning brief with a longer timer**, and building it as one
+  is how weekly reports end up unread. The brief asks *is there anything* and
+  its whole design is a refusal; a report asks *what happened*, and its
+  failure mode is the opposite one — a report that lists everything is the
+  dozen unread cards with the covers off. So every section is gathered
+  deterministically and **capped** before any model runs, and the model's job
+  is to say four things rather than to choose which four.
+
+  **"One thing to do this week" is chosen before the model, not by it.** Asked
+  to pick, a model picks the row it can write the best sentence about, which
+  is the one carrying the most detail rather than the most consequence. It is
+  the worst open severity, then the longest open, and the prompt says which
+  one it is writing about.
+
+  **"Still open" is not "filed".** A finding raised and settled inside the same
+  week has left the store, so nothing can count what was filed without
+  counting it twice or not at all — the number is named for what it actually
+  is rather than dressed up as the one nobody can compute.
+
+  **The day is the gate and the hour is only a preference.** Unlike the brief,
+  whose window shuts 45 minutes after the house gets up because a brief at
+  lunchtime is not a morning brief, a weekly report delivered on Sunday
+  afternoon is still that week's — so the window only ever opens, and
+  skipping a week to protect an hour is the trade this deliberately does not
+  make.
+
+- **What the house used, week over week** (`panel/energy.py`). The arithmetic
+  is the easy half; **which meters** is the half that produces a number nobody
+  can tell is wrong. Summing "every sensor with `device_class: energy`"
+  double-counts by construction — a whole-home clamp, the inverter and every
+  smart plug behind them all carry that class — so a house with six plugs
+  would report roughly twice what it used, silently. The set is **Home
+  Assistant's own** (`energy/get_prefs`, the grid sources somebody actually
+  declared), and a house with no energy configuration gets a sentence saying
+  so rather than a plausible group picked here.
+
+  Three more rules, each against a total that looks right: **cost only where a
+  cost statistic exists** (a price to multiply means HA made its own sensor
+  under an id we would have to guess, and a guessed id quotes somebody else's
+  number); **both windows are seven complete local days**, ending at midnight
+  and never at `now`, because half of today against seven full days is a 45%
+  fall that is nothing but the clock; and **a negative day is a meter reset**,
+  dropped rather than added, which shortens the window and stands the
+  comparison down instead of reporting a plausible fall. Where the recorder
+  can answer consumption itself (`types: ["change"]`) it is asked; the
+  cumulative `sum` is the fallback, and deriving from it is why the fetch
+  reaches one day further back than the report does.
+
+- **`brain weekly`** — the week's numbers and the last report sent, and
+  `brain weekly send` to write one now. `GET /api/weekly` and
+  `POST /api/weekly/run` are the same answers for the panel. Sending by hand
+  **moves the week** rather than adding to it: two reports about overlapping
+  weeks make the numbers in both meaningless.
+
+### Fixed
+
+- **A restart is not a new morning, and it was** (`panel/schedule_store.py`).
+  Both scheduled messages are guarded by a "once a day" / "once a week" stamp
+  and both kept it in memory only, so restarting the add-on set it back to
+  zero and the next time the window came round the message went out again — a
+  second brief on the same morning, and (had it existed) a second weekly
+  report about the same week. Restarting is the first thing anybody does
+  after changing an option, which makes that the ordinary case rather than
+  the unlucky one. Both stamps now live in `/data/schedule.json`, and every
+  way of failing to read one reads as "never sent": a lost stamp costs one
+  duplicate message, where a stamp wrongly read as *sent* would silence a
+  real report.
+
+### Added
+
+- ⚙ **Diagnostics** carries the report's own state — whether it is on, which
+  day, when it last went, and what the last gather held. A report that has
+  never sent because no week was worth reporting reads, from outside, exactly
+  like one whose loop died in March.
+
 ## 1.36.0
 
 ### Added

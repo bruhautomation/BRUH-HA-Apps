@@ -315,6 +315,23 @@ an odd night). A quiet morning costs nothing and sends nothing, because "all
 quiet" every day is the message people mute and each one that *is* sent costs
 a Claude turn.
 
+**Send a weekly report** is one message a week — by default on a Sunday, at the
+same hour. What the house used against the week before, what was found and
+answered, what brAIn learned, and **one thing to do this week**. That last one
+is picked before Claude sees anything (worst open severity, then longest open):
+asked to choose, a model picks the finding it can write the best sentence about
+rather than the one that matters. A week with nothing in it sends nothing — and
+unlike the brief, one that missed its hour still goes out later that day,
+because a report on Sunday afternoon is still that week's.
+
+The energy half reads **Home Assistant's own Energy configuration** and nothing
+else. Summing every sensor with a device class of \`energy\` would count a
+whole-home clamp, an inverter and every plug behind them, so a house with six
+plugs would report about twice what it used with nothing on screen to say so.
+No energy configuration means no energy section. Cost appears only where the
+Energy dashboard has a cost *statistic*, never from a price brAIn would have to
+guess a sensor name for.
+
 Everything else is **held rather than dropped**, and arrives as one message when
 the quiet ends. Anything you fixed or dismissed overnight is dropped from that
 queue rather than announced — being told at seven about a problem that went away
