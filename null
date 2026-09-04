@@ -1,0 +1,13 @@
+# My automations. Do not reformat.
+- id: '1699999999999'
+  alias: Porch light at dusk
+  description: ""
+  trigger:
+    - platform: sun
+      event: sunset
+  condition: []
+  action:
+    - service: light.turn_on
+      target:
+        entity_id: light.porch
+  mode: single
