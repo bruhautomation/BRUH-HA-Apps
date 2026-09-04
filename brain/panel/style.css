@@ -3082,3 +3082,70 @@ body.term-classic #termMode .ico-out { display: block; }
   .actrow .cause { width: 100%; max-width: none; padding-left: 62px; }
   .actwhy { margin-left: 12px; }
 }
+
+/* ------------------------------------------------------------ proposals
+   The fifth kind of knowledge, and the only list here that is not about
+   something being wrong. It reads like the findings list on purpose --
+   same card rhythm, same button sizes -- because it is the same *job*:
+   a decision only the person living here can make. What differs is the
+   vocabulary, and that is deliberate: nothing on this tab is broken. */
+.propwrap { max-width: 860px; margin: 0 auto; }
+.prophead { margin-bottom: 18px; }
+.proplist { display: flex; flex-direction: column; gap: 14px; }
+
+.propcard {
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  padding: 16px;
+  background: var(--plane);
+}
+.prophead-row {
+  display: flex; align-items: baseline; gap: 10px;
+  flex-wrap: wrap; margin-bottom: 6px;
+}
+/* The title takes the row and wraps rather than truncating -- the same
+   rule the insight card head follows, for the same reason: a proposal
+   you cannot read the whole of is one you cannot answer. */
+.proptitle { margin: 0; font-size: 15px; line-height: 1.35; flex: 1 1 240px; }
+.pilltrial {
+  flex: none; font-size: 12px; padding: 2px 8px; border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+}
+.propwhy { margin: 0 0 8px; color: var(--ink-2); line-height: 1.5; }
+/* The evidence rows. Monospace numerals so a column of them lines up when
+   several proposals are open at once. */
+.propreplay, .proptrial {
+  margin: 0 0 8px; font-size: 13px; color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.proptrial { color: var(--ink); }
+
+.propbtns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+/* These are the primary actions of the tab and one of them enables an
+   automation in somebody's house, so they get the touch floor even though
+   `.btn.small` is 28px everywhere else in the panel. Scoped rather than
+   raised globally: this is a pull request about the shadow runner, not a
+   restyle, and the rest of the panel's small buttons are a separate
+   (real) problem. Asked for on touch only, so a pointer device keeps the
+   density it was designed at — the same split the 16px text floor uses. */
+@media (pointer: coarse) {
+  .propbtns .btn { min-height: 44px; padding-inline: 14px; }
+}
+/* The reason box replaces the buttons INSIDE the card, so what you are
+   explaining stays on screen while you write about it. */
+.propnote { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+/* `font-family: inherit`, never `font: inherit` with a size under 16px.
+   The touch floor is a bare `textarea` selector in a `pointer: coarse`
+   block, and any class-qualified rule here outranks it -- so a size set
+   on this line would win on touch, iOS would zoom the page in on focus
+   and never zoom back, and the panel would be stranded at an arbitrary
+   scale inside the ingress iframe. 16px is the floor, so 16px it is.
+   (`.edit-body textarea` and `.chatbar textarea` both predate this and
+   both currently lose that fight -- reported, not fixed here.) */
+.propnote textarea {
+  width: 100%; resize: vertical; padding: 8px 10px;
+  border: 1px solid var(--hairline); border-radius: 8px;
+  background: var(--plane); color: var(--ink);
+  font-family: inherit; font-size: 16px; line-height: 1.45;
+}

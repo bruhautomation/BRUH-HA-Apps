@@ -45,6 +45,14 @@
       <span>Findings</span>
       <span id="findBadge" class="badge hidden"></span>
     </button>
+    <button class="viewtab" data-view="proposals" role="tab" data-tip="Proposals">
+      <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 3v4M12 21v-2M5.6 5.6l2.8 2.8M18.4 5.6l-2.8 2.8M9 17h6a4 4 0 0 0-1.2-6.4 3.6 3.6 0 0 0-3.6 0A4 4 0 0 0 9 17z"/></svg>
+      <span>Proposals</span>
+      <!-- A badge, unlike Activity's: these ARE waiting on somebody. It
+           counts proposed + trialling, which is what "how much is waiting
+           on me" means on this list. -->
+      <span id="propBadge" class="badge hidden"></span>
+    </button>
     <button class="viewtab" data-view="activity" role="tab" data-tip="Activity">
       <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M3 12h4l2.5-7 5 14L17 12h4"/></svg>
       <!-- No badge either. This is a record, not a queue: nothing on it is
@@ -296,6 +304,22 @@
      way, so "unattributed" is the honest answer for both, and a timeline
      that guessed between them would be a timeline nobody could use as
      evidence. -->
+<div id="viewProposals" class="view">
+  <section class="propwrap">
+    <div class="prophead">
+      <div>
+        <h2>What could be better</h2>
+        <p class="sub">Changes brAIn thinks would suit this house, each with the
+          evidence behind it and what it would have done over the last month of
+          your own history. Nothing here is enabled — a proposal runs in shadow
+          for a week before it becomes a real automation, and saying no teaches
+          it more than saying nothing.</p>
+      </div>
+    </div>
+    <div id="propList" class="proplist"></div>
+  </section>
+</div>
+
 <div id="viewActivity" class="view">
   <section class="actwrap">
     <div class="acthead">
