@@ -48,6 +48,7 @@ OUTCOMES = (
     "no_cli",        # the claude binary is missing
     "crash",         # the process exited non-zero with no envelope
     "fallback",      # a quieter path was taken instead of the one asked for
+    "applied",       # a change was written to the house and verified there
     "error",         # anything else
 )
 

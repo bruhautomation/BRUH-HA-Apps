@@ -290,6 +290,30 @@ def compose(rows: list[dict], held: bool = False) -> tuple[str, str]:
 
 
 
+# An accepted proposal is the one message here that is not about a
+# finding, and it is `whenever` — nothing is wrong, nothing is waiting.
+# It is nonetheless **sent rather than held**, and that is not the quiet
+# window being ignored: this message answers a button somebody pressed
+# seconds ago, so unlike every producer above it there is a person awake
+# and looking by construction. What quiet hours protect against is an
+# unattended producer, and this is the only sender that is not one.
+ACCEPTED_URGENCY = "whenever"
+
+
+def compose_accepted(title: str, entity_id: str) -> tuple[str, str]:
+    """The one message an accepted proposal sends.
+
+    Composed here rather than in the panel so both messages this module
+    can send are written in one place — and deliberately NOT shaped like
+    a finding, because a change you asked for arriving under "brAIn found
+    a problem" is how a notification stops being read.
+    """
+    body = str(title or "a change you accepted").strip()[:MESSAGE_MAX]
+    if entity_id:
+        body = f"{body}\n\nIt is now {entity_id}."
+    return "brAIn made a change you accepted", body[:MESSAGE_MAX]
+
+
 # ---------------------------------------------------------------------------
 # Buttons on the message
 # ---------------------------------------------------------------------------
@@ -359,8 +383,9 @@ def parse_action(identifier: str) -> tuple[str, int] | None:
 
 
 __all__ = [
-    "ACTION_LABELS", "ACTION_PREFIX", "DEFAULT_URGENCY", "PRODUCER_URGENCY",
-    "QUEUE_FILE", "URGENCY", "actions_for", "can_answer", "compose", "hold",
+    "ACCEPTED_URGENCY", "ACTION_LABELS", "ACTION_PREFIX", "DEFAULT_URGENCY",
+    "PRODUCER_URGENCY", "QUEUE_FILE", "URGENCY", "actions_for", "can_answer",
+    "compose", "compose_accepted", "hold",
     "in_quiet_hours", "load_queue", "parse_action", "parse_hour",
     "quiet_ends_at", "save_queue", "take_queue", "urgency_of",
     "worth_sending",

@@ -180,6 +180,55 @@ async def call_service(service: str, data: dict, timeout: int = 15) -> Any:
             return await resp.json()
 
 
+async def call_core_service(domain: str, service: str,
+                            data: dict | None = None,
+                            timeout: int = 30) -> Any:
+    """Call any `<domain>.<service>` on Core. Raises on anything but 2xx.
+
+    `call_service` above is `brain.*`-only by construction — it exists to
+    reach the integration and hardcodes the domain, which is what keeps a
+    caller from turning a request for brAIn's own service into a request
+    for anybody's. This is the general one, and it has exactly one caller
+    on purpose: the accept path's `automation.reload`. Both halves of the
+    path are in the URL rather than in a body, so both are checked here
+    against the shape a domain and a service can have — an add-on that
+    pasted a name off the wire into a path is how `history_params` became
+    a partial SSRF.
+    """
+    for part in (domain, service):
+        if not re.fullmatch(r"[a-z0-9_]+", str(part or "")):
+            raise ValueError(f"{part!r} is not a service name")
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            f"{CORE_API}/services/{domain}/{service}", headers=_headers(),
+            json=data or {}, timeout=aiohttp.ClientTimeout(total=timeout),
+        ) as resp:
+            resp.raise_for_status()
+            return await resp.json()
+
+
+async def entity_exists(entity_id: str, timeout: int = 15) -> bool:
+    """Whether Core currently has a state for this entity.
+
+    The half that separates "the file was written" from "the automation
+    exists" — the distinction BRight's `playback_check` draws between a
+    service call being accepted and a speaker making a sound. A 404 is
+    the answer, not an error; anything else raises, because "Core did not
+    answer" and "Core says it is not there" are different claims.
+    """
+    if not is_entity_id(str(entity_id or "")):
+        return False
+    async with aiohttp.ClientSession() as session:
+        async with session.get(
+            f"{CORE_API}/states/{entity_id}", headers=_headers(),
+            timeout=aiohttp.ClientTimeout(total=timeout),
+        ) as resp:
+            if resp.status == 404:
+                return False
+            resp.raise_for_status()
+            return True
+
+
 async def send_notification(service: str, title: str, message: str,
                             timeout: int = 15, data: dict | None = None) -> None:
     """Deliver one notification through a notify.<service> HA service.

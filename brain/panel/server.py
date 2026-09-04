@@ -109,6 +109,7 @@ import actions
 import addon_options
 import appliances
 import atomic_write
+import automation_writer
 import baselines
 import brief
 import card_tags
@@ -2704,7 +2705,13 @@ async def _offer_routines(now: float) -> int:
 
     try:
         tz, _name = await asyncio.to_thread(baselines.house_timezone)
-        found = await asyncio.to_thread(routines.mine, None, tz, now)
+        # The option is read here rather than in the miner, which stays
+        # pure — and it is applied at the producer as well as at the
+        # writer, because a card offering something brAIn will refuse to
+        # write is a wasted no.
+        protected = automation_writer.protected_patterns()
+        found = await asyncio.to_thread(routines.mine, None, tz, now, None,
+                                        protected)
     except Exception as exc:  # noqa: BLE001 — an offer is optional; the
         # pass that would have made it is not.
         log.warning("could not mine routines: %s", exc)
@@ -3635,12 +3642,124 @@ async def h_proposal_trial(request: web.Request) -> web.Response:
         {"proposal": row, **await asyncio.to_thread(_proposals_payload)})
 
 
+# How long an accepted automation gets to appear in Home Assistant, and
+# how often to ask. A reload is a config re-read rather than a restart —
+# it lands in well under a second on a healthy house — so this is a
+# ceiling on a failure, not a budget for a success.
+ACCEPT_VERIFY_S = 12.0
+ACCEPT_POLL_S = 0.4
+
+
+async def _wait_for_entity(entity_id: str) -> bool:
+    """Whether this entity turns up in Core within the ceiling."""
+    import ha_data  # noqa: PLC0415 — deferred, so the module still loads
+                    # without aiohttp in the tests that do not need it
+
+    deadline = time.monotonic() + ACCEPT_VERIFY_S
+    while True:
+        if await ha_data.entity_exists(entity_id):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        await asyncio.sleep(ACCEPT_POLL_S)
+
+
+async def _apply_accepted(row: dict) -> tuple[dict | None, str]:
+    """Write it, reload, and check it is really there. Or put it back.
+
+    Three claims, and they are not the same one. *The file was written*
+    is `automation_writer.apply`. *Home Assistant read it* is the reload.
+    *The automation exists* is a state in Core — and that last step is
+    what separates this from BRight reporting a `play_media` call that
+    was accepted as a speaker making a sound. A `mode:` Core does not
+    recognise, a trigger a custom integration owns and has not loaded, a
+    read-only `/config`: each of those leaves a file on disk, a reload
+    that returns 200, and no automation.
+
+    Any of the three failing puts the file back and reloads again, so a
+    yes that could not be honoured leaves nothing behind — neither in
+    `automations.yaml` nor on the proposal, which the caller only settles
+    once this has come back with something.
+    """
+    import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
+
+    written = await asyncio.to_thread(automation_writer.apply, row)
+    if not written.get("ok"):
+        return None, str(written.get("error")
+                         or "brAIn could not write the automation")
+
+    failure = ""
+    try:
+        await ha_data.call_core_service("automation", "reload")
+    except Exception as exc:  # noqa: BLE001 — every way this fails is the
+        # same answer to the person waiting: it did not take.
+        failure = f"Home Assistant would not reload its automations: {exc}"
+    if not failure:
+        try:
+            if not await _wait_for_entity(written["entity_id"]):
+                failure = (
+                    f"the automation was written but {written['entity_id']} "
+                    "never appeared in Home Assistant, so it is not running "
+                    "— check the add-on log and Home Assistant's own")
+        except Exception as exc:  # noqa: BLE001
+            failure = (f"brAIn could not check whether "
+                       f"{written['entity_id']} appeared: {exc}")
+    if not failure:
+        return written, ""
+
+    reverted = await asyncio.to_thread(automation_writer.revert, written)
+    try:
+        await ha_data.call_core_service("automation", "reload")
+    except Exception as exc:  # noqa: BLE001 — the file is already back;
+        # a second failed reload is a log line, not a second error.
+        log.warning("could not reload after putting automations.yaml back: %s",
+                    exc)
+    if not reverted.get("ok"):
+        failure += (" — and putting automations.yaml back failed: "
+                    f"{reverted.get('error')}")
+    log.warning("accepting proposal %s failed: %s", row.get("ts"), failure)
+    return None, failure
+
+
+async def _announce_accepted(row: dict, applied: dict) -> None:
+    """Say out loud that the house now behaves differently.
+
+    A sibling of `_announce_findings` rather than a finding dressed up as
+    one: nothing is wrong, there is no severity to floor it against and
+    no button on it that could end anything. A change nobody has read is
+    not settled, which is the same argument that keeps a finished fix on
+    the Findings list until somebody presses Got it.
+
+    It is sent rather than held — see `notify_router.ACCEPTED_URGENCY`:
+    this answers a press made seconds ago, so it is the one message here
+    with somebody awake and looking by construction.
+    """
+    import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
+
+    service, _sev = _findings_notify_target()
+    if not service:
+        return
+    title, body = notify_router.compose_accepted(
+        str(row.get("title") or ""), str(applied.get("entity_id") or ""))
+    try:
+        await ha_data.send_notification(service, title, body)
+    except Exception as exc:  # noqa: BLE001 — the automation is already
+        # running; the notification is the courtesy copy.
+        log.warning("accepted-change notification via %s failed: %s",
+                    service, exc)
+
+
 async def h_proposal_decide(request: web.Request) -> web.Response:
     """Accept or decline. The row leaves the list either way.
 
     A decline's note goes to the memory inbox exactly as a finding's
     "Wrong" does — one implementation of "what a person told us", so an
     answer teaches the same thing whichever list it was given on.
+
+    An accept writes the automation **first** and settles the row only
+    once Home Assistant is running it. A yes that could not be honoured
+    is not a yes that was recorded: the refusal comes back as a 409 with
+    the sentence, and the proposal is exactly where it was.
     """
     ts = int(request.match_info["ts"])
     verb = request.match_info["verb"]
@@ -3650,16 +3769,47 @@ async def h_proposal_decide(request: web.Request) -> web.Response:
     body = await _json_body(request)
     note = str(body.get("note") or "")[:proposals.NOTE_MAX]
 
-    row = await asyncio.to_thread(proposals.decide, ts, status, note)
+    applied = None
+    if status == "accepted":
+        pending = await asyncio.to_thread(proposals.get, ts)
+        if pending is None or pending.get("status") not in \
+                proposals.OPEN_STATUSES:
+            return web.json_response(
+                {"error": "that proposal has already been answered"},
+                status=409)
+        started = time.time()
+        applied, why = await _apply_accepted(pending)
+        journal.record("proposal", "applied" if applied else "error",
+                       ok=bool(applied), error="" if applied else why,
+                       duration_s=time.time() - started,
+                       extra={"ts": ts})
+        if applied is None:
+            return web.json_response(
+                {"error": why,
+                 **await asyncio.to_thread(_proposals_payload)}, status=409)
+
+    row = await asyncio.to_thread(proposals.decide, ts, status, note,
+                                  None, applied)
     if row is None:
         return web.json_response(
             {"error": "that proposal has already been answered"}, status=409)
     fact = proposals.memory_line(row, status)
     if fact:
         await _submit_memory(fact, source="homeowner")
-    return web.json_response(
-        {"proposal": row, "learned": fact,
-         **await asyncio.to_thread(_proposals_payload)})
+
+    payload = {"proposal": row, "learned": fact,
+               **await asyncio.to_thread(_proposals_payload)}
+    if applied:
+        payload["automation"] = applied["automation_id"]
+        payload["entity_id"] = applied["entity_id"]
+        # The one press in the panel that changes /config, so the one
+        # press that owes a way back. Same contract as a finding's
+        # ending: a token on the response, and the toast grows an Undo.
+        payload["undo"] = undo_store.record(
+            "automation", proposal=row, written=applied,
+            fact=fact, fact_source="homeowner")
+        await _announce_accepted(row, applied)
+    return web.json_response(payload)
 
 
 async def _replay_config(session, config: dict, start: float, end: float,
@@ -3745,6 +3895,48 @@ async def h_undo(request: web.Request) -> web.Response:
             conversations.restore_deleted, entry)
         return web.json_response({"undone": restored,
                                   "restored_conversation": entry["id"]})
+
+    if entry["kind"] == "automation":
+        # An accepted proposal is the only undo that reaches outside the
+        # panel's own stores, so it reverses in the same order it was
+        # made and in reverse: the file first, then the reload, then the
+        # row. Putting the proposal back while the automation is still
+        # running would offer somebody a change their house is already
+        # making.
+        import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
+
+        written = entry.get("written") or {}
+        reverted = await asyncio.to_thread(automation_writer.revert, written)
+        reloaded = True
+        try:
+            await ha_data.call_core_service("automation", "reload")
+        except Exception as exc:  # noqa: BLE001 — the file is back either
+            # way, and saying which half failed is the point.
+            reloaded = False
+            log.warning("could not reload after undoing an accept: %s", exc)
+
+        def put_back() -> tuple[bool, dict]:
+            restored = proposals.reopen(entry["proposal"]) is not None
+            if entry.get("fact"):
+                _drop_from_inbox(
+                    _inbox_id(entry["fact_source"], entry["fact"]))
+            return restored, _proposals_payload()
+
+        restored, payload = await asyncio.to_thread(put_back)
+        payload["undone"] = bool(restored and reverted.get("ok") and reloaded)
+        payload["reverted"] = bool(reverted.get("ok"))
+        payload["reloaded"] = reloaded
+        payload["restored_proposal"] = restored
+        if not reverted.get("ok"):
+            payload["error"] = reverted.get("error")
+        elif not reloaded:
+            payload["error"] = ("automations.yaml is back as it was, but "
+                                "Home Assistant would not reload it — the "
+                                "automation is still running until it does")
+        elif not restored:
+            payload["error"] = ("the automation is gone, but the proposal "
+                                "could not be put back on the list")
+        return web.json_response(payload)
 
     if entry["kind"] == "conversations":
         # A batch delete's Undo: every row goes back, each by the same move

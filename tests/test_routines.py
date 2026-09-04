@@ -164,6 +164,41 @@ class TestTheFloorsThatKeepItQuiet(unittest.TestCase):
                          [r["entity_id"] for r in again])
 
 
+class TestProtectedEntitiesStandTheProducerDown(unittest.TestCase):
+    """A card offering something brAIn will refuse to write is a wasted no.
+
+    `automation_writer.apply` refuses a protected entity too and has to —
+    it is the last gate before /config — but the offer should never have
+    been made. The option is read by the caller; the miner only obeys the
+    patterns it is handed, so it stays pure.
+
+    Mutation this catches: drop the filter and the habit is offered, so
+    the first press on the card is a refusal.
+    """
+
+    def setUp(self):
+        self.rows = weekdays(10)
+        self.now = after(self.rows)
+
+    def mine(self, protected=None):
+        return routines.mine(ledger(self.rows), UTC, self.now, None, protected)
+
+    def test_without_the_list_the_habit_is_found(self):
+        self.assertEqual(len(self.mine()), 1)
+
+    def test_an_exact_id_stands_it_down(self):
+        self.assertEqual(self.mine(["light.hall"]), [])
+
+    def test_a_domain_wildcard_stands_it_down(self):
+        self.assertEqual(self.mine(["light.*"]), [])
+
+    def test_somebody_else_s_entity_does_not(self):
+        self.assertEqual(len(self.mine(["lock.front", "light.kitchen"])), 1)
+
+    def test_an_empty_list_is_not_a_wildcard(self):
+        self.assertEqual(len(self.mine([])), 1)
+
+
 class TestWhichDaysItClaims(unittest.TestCase):
     def test_weekdays_only(self):
         rows = weekdays(10)

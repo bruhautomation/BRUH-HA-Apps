@@ -276,9 +276,9 @@ def record_trial(ts: int, result: dict) -> dict | None:
     return None
 
 
-def _settle(row: dict, status: str, note: str, now: float) -> None:
-    ledger = _read(SETTLED_FILE, "settled")
-    ledger.append({
+def _settle(row: dict, status: str, note: str, now: float,
+            applied: dict | None = None) -> None:
+    entry = {
         "key": row.get("key"),
         "kind": row.get("kind"),
         "title": row.get("title"),
@@ -286,12 +286,22 @@ def _settle(row: dict, status: str, note: str, now: float) -> None:
         "note": note,
         "source": row.get("source"),
         "settled_at": int(now),
-    })
+    }
+    if applied:
+        # What an accept actually produced, on the one record that
+        # outlives the row. "Accepted" and "accepted, and here is the
+        # automation it became" are different claims, and only the second
+        # one can be checked against the house six months later.
+        entry["automation_id"] = applied.get("automation_id")
+        entry["entity_id"] = applied.get("entity_id")
+    ledger = _read(SETTLED_FILE, "settled")
+    ledger.append(entry)
     _write_settled(ledger)
 
 
 def decide(ts: int, status: str, note: str = "",
-           now: float | None = None) -> dict | None:
+           now: float | None = None,
+           applied: dict | None = None) -> dict | None:
     """Accept or decline. The row leaves the list and the key is remembered.
 
     `note` is optional by design — "not for me" needs no essay, and a
@@ -310,11 +320,57 @@ def decide(ts: int, status: str, note: str = "",
         row["status"] = status
         row["note"] = note
         row["decided_at"] = int(now)
-        _settle(row, status, note, now)
+        if applied:
+            row["automation_id"] = applied.get("automation_id")
+            row["entity_id"] = applied.get("entity_id")
+        _settle(row, status, note, now, applied)
         rows.pop(i)
         _write(rows)
         return row
     return None
+
+
+def reopen(row: dict) -> dict | None:
+    """Put an answered proposal back on the list — the undo half.
+
+    Keyed on the original ``ts``, exactly as ``findings_store.restore``
+    is and for the same reason: that id is what every pending token and
+    open dialog holds, and a proposal that came back under a new one
+    would be a different row to everything referring to it. It refuses
+    over an occupied id rather than overwriting.
+
+    It also drops the settled key, which is ``unsettle``'s job on the
+    findings side: leaving it would put the row back on a list that the
+    next producer is forbidden from ever offering again.
+    """
+    ts = int(row.get("ts") or 0)
+    if not ts or not str(row.get("title") or "").strip():
+        return None
+    rows = listing()
+    if any(int(r.get("ts") or 0) == ts for r in rows):
+        return None
+
+    back = {k: v for k, v in row.items()
+            if k not in ("decided_at", "automation_id", "entity_id")}
+    back["status"] = "proposed"
+    back["note"] = ""
+    # A trial that was running when it was accepted comes back as a
+    # proposal rather than as a trial with a week that has since passed:
+    # "try it for a week" is a promise about the next seven days, and
+    # restoring one whose window closed while the automation was live
+    # would show a report about a week the house was not in.
+    for key in ("trial_started_at", "trial_ends_at", "trial_result"):
+        back.pop(key, None)
+    rows.append(back)
+    _write(rows)
+
+    key = str(row.get("key") or "")
+    if key:
+        ledger = _read(SETTLED_FILE, "settled")
+        kept = [e for e in ledger if e.get("key") != key]
+        if len(kept) != len(ledger):
+            _write_settled(kept)
+    return back
 
 
 def memory_line(row: dict, status: str) -> str:
@@ -348,5 +404,5 @@ __all__ = [
     "MAX_OPEN", "MAX_ROWS", "OPEN_STATUSES", "SETTLED_FILE", "SHARED",
     "STATUSES", "STORE", "TRIAL_DAYS", "add", "counts", "decide", "get",
     "key_for", "knows", "listing", "memory_line", "publish_state",
-    "record_trial", "settled_keys", "start_trial", "trial_due",
+    "record_trial", "reopen", "settled_keys", "start_trial", "trial_due",
 ]
