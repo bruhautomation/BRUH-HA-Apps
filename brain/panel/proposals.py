@@ -17,13 +17,16 @@ is a second inbox:
     proposed ──"Try it"──▶ trialling ──▶ accepted   it is a real automation now
              └──"No"──────────────────▶ declined    with a note that teaches
 
-**Nothing brAIn writes is ever enabled without a trial**, and that is the
-whole point of the store existing. A trial runs the proposed automation in
-shadow — evaluating against live events and logging what it *would* have
-done, calling nothing — and reports at the end: *it would have fired six
-times; on five of those you did the same thing by hand within three
-minutes; on one you did not.* An automation you accepted after watching it
-be right five times out of six is a different object from one you accepted
+**Nothing brAIn writes is enabled on its own**, and that is the whole
+point of the store existing. A person may accept a proposal straight from
+`proposed` — it is their house and their yes — or try it for a week first.
+A trial is a replay of the week as they live it (`trials.py`): every checks
+pass replays the proposed automation over the days since it started and
+grades each firing against the record of their own presses — *it would
+have fired six times; on four of those you did the same thing by hand
+within fifteen minutes; on one nothing happened; on one you did the
+opposite.* An automation accepted after watching it be right four times
+out of six is a different object from one accepted
 because it sounded reasonable.
 
 **A decline carries a note, and the note is the half that teaches.** "No"

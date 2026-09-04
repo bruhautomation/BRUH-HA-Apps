@@ -361,8 +361,9 @@ The **Proposals** tab is the only list here that is not about something being
 wrong. It has its own tab rather than a row on Findings, because a list of
 things you might want beside a list of things that are broken makes both worse.
 
-**Nothing brAIn writes is enabled without a trial.** Press *Try it for a week*
-and brAIn replays the automation, every few hours, over the days since you
+**Nothing brAIn writes is enabled on its own.** You can accept a proposal
+straight away, or press *Try it for a week* first — what the trial buys you is
+evidence. brAIn replays the automation, every few hours, over the days since you
 started — grading each firing against what you actually did, from the record of
 your own presses it already keeps. Nothing is called and nothing is enabled,
 and the card fills in as the week goes on rather than staying blank until

@@ -749,8 +749,10 @@ proposed  ──"Try it for a week"──▶  trialling  ──▶  accepted
           └──"No thanks"──────────────────────────▶  declined
 ```
 
-**Nothing brAIn writes is ever enabled without a trial.** A trial is a replay
-of the week as you live it: every few hours brAIn replays the proposed
+**Nothing brAIn writes is enabled on its own.** You can accept a proposal
+straight away — it is your house and your yes — or press *Try it for a week*
+first, and what you give up by skipping the trial is the evidence: a trial is
+a replay of the week as you live it: every few hours brAIn replays the proposed
 automation over the days since you started it and grades each firing against
 what you *actually did*, from the record of your own presses it already keeps.
 Nothing is called and nothing is enabled. The card fills in as the week goes

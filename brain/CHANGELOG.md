@@ -173,6 +173,17 @@ is broken, and both of these read from the tab as the second.
 
 ### Fixed
 
+- **"Nothing brAIn writes is ever enabled without a trial" was not true, and the
+  docs said it in four places.** The panel has always offered Accept on a
+  `proposed` row and `decide` takes any open status, so a person could skip
+  the week — which is right: it is their house and their yes, and a
+  mandatory trial would be the same paternalism as a required reason box.
+  What must never happen is enabling *on its own*, and every doc now says
+  exactly that and what skipping the trial costs (the evidence). The store's
+  own docstring also still described the 1.42.0 trial that never ran —
+  "evaluating against live events… within three minutes" — and now describes
+  the one that does.
+
 - **A protected entity is dropped at the producer as well as at the writer.**
   `routines.mine` now takes the patterns (read by the caller — the miner stays
   pure) and skips a habit on an entity `automation_writer.apply` would refuse.
