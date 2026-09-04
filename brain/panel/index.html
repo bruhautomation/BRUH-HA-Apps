@@ -782,6 +782,24 @@
         anything that draws its own screen — a TUI, <code>htop</code>, an installer — or for
         running shell commands yourself. You can switch at any time from the Terminal tab.</p>
 
+      <label for="setChatSessions">Conversations kept open at once</label>
+      <select id="setChatSessions" class="selin">
+        <option value="1">1 — one at a time</option>
+        <option value="2">2</option>
+        <option value="3">3 (default)</option>
+        <option value="4">4</option>
+        <option value="5">5</option>
+        <option value="6">6</option>
+        <option value="8">8</option>
+      </select>
+      <p class="hint">Each open conversation holds its own Claude Code process, the
+        same way a terminal tab does — so switching between them is instant and the
+        one you leave carries on answering. This is how many of those processes brAIn
+        keeps running, not how many conversations you may have: past it, the one you
+        have not touched for longest is closed (never one that is mid-answer) and
+        reopens where it left off the next time you go back to it. Raise it if you
+        keep several going; lower it on a small box.</p>
+
       <label for="setGatherMode">How a card gets its data</label>
       <select id="setGatherMode" class="selin">
         <option value="search">Search — fetch only what the card needs</option>

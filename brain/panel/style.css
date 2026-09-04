@@ -1655,6 +1655,45 @@ body.modal-open {
   text-transform: uppercase;
 }
 
+/* What a conversation's own Claude session is doing, on its row in both
+   surfaces. Only two of the three states draw anything — a row with no
+   process is the ordinary case and is not news — and the two that do are
+   deliberately different weights: "answering…" is a background fact and
+   stays quiet, while "Needs your OK" is a thing waiting on a person and
+   carries the warning colour, because the card behind it declines itself
+   if nobody ever comes. Both `flex: none`, so a long title gives way
+   first: a mark that wraps to its own line is a row that changes height
+   whenever a turn starts. */
+.crbusy, .crask {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+.crbusy {
+  border: 1px solid var(--hairline);
+  background: var(--surface-2);
+  color: var(--ink-3);
+  animation: crpulse 1.6s ease-in-out infinite;
+}
+.crask {
+  border: 1px solid var(--warning);
+  background: transparent;
+  color: var(--warning);
+  text-transform: uppercase;
+}
+@keyframes crpulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+/* A pulse is decoration; the word is the information. */
+@media (prefers-reduced-motion: reduce) {
+  .crbusy { animation: none; }
+}
+
 /* The filter row, in the rail and in the ⋯ dialog. Wraps rather than
    scrolls: four chips must never end up with the fourth off the edge of a
    248px column where nothing suggests it is there. */

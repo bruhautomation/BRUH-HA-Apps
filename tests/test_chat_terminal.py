@@ -1364,10 +1364,26 @@ class TestManySessions(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(moved.exists(), "the migration ran a second time")
 
     async def test_an_id_that_is_not_an_id_never_becomes_a_path(self):
+        """A session id arrives in a request body and ends as a filename.
+
+        The regex is the rule — an id that is not a UUID names no
+        conversation the CLI could resume — and the resolved-parent check
+        is the same rule written where it can be followed from the
+        ``open()`` at the end of it. Deliberately redundant, and only the
+        first is reachable by mutation: with the regex gone this still
+        refuses everything below, which is the point of having it.
+        """
         with self.assertRaises(ValueError):
             await self.reg.open("../../etc/passwd", [])
-        self.assertIsNone(self.chat_session.transcript_path("../x"))
-        self.assertIsNone(self.chat_session.transcript_path(".."))
+        for bad in ("../x", "..", ".", "a/b", "/etc/passwd", "x\x00.json",
+                    "", "  "):
+            self.assertIsNone(self.chat_session.transcript_path(bad), bad)
+        good = self.chat_session.transcript_path(
+            "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+        self.assertIsNotNone(good)
+        self.assertEqual(
+            good.parent,
+            Path(os.environ["BRAIN_CHAT_TRANSCRIPT_DIR"]).resolve())
 
     # -- what the panel is told ------------------------------------------
 
@@ -1396,7 +1412,7 @@ class TestManySessions(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(row["attached"])
 
     async def test_the_listing_says_which_row_is_answering(self):
-        busy = await self._busy("conv-busy")
+        await self._busy("conv-busy")
         await self._open("conv-idle")
         rows = {r["session_id"]: r for r in self.reg.live()}
         self.assertTrue(rows["conv-busy"]["busy"])
@@ -1404,7 +1420,6 @@ class TestManySessions(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(rows["conv-idle"]["busy"])
         self.assertTrue(rows["conv-idle"]["attached"])
         self.assertGreater(rows["conv-busy"]["busy_since"], 0)
-        del busy
 
     async def test_the_stream_left_behind_is_told_it_was_switched(self):
         """The panel reconnects on this, and the new stream's first frame

@@ -200,14 +200,26 @@ const TOAST_UNDO_MS = 8000;
 // button. Every ending on the Findings tab deletes its row — that is what
 // makes the list a list — so a mis-tap has nothing to put back by hand, and
 // the two endings sit beside each other meaning opposite things.
-function toast(msg, undo) {
+// `action` is the other kind of button a toast can carry: a label and
+// something to do, for a message that is not about undoing anything —
+// "that chat needs your OK", whose whole point is being one press from the
+// conversation asking. Same lifetime as Undo's, for the same reason.
+function toast(msg, undo, action) {
   const t = $("#toast");
   t.textContent = "";
   t.appendChild(el("span", null, msg));
   // Only while the toast is up: the button is the offer, and the offer
   // expires with it. The token expires server-side too, so a stale one is
   // refused rather than acting on a decision made five minutes ago.
-  t.classList.toggle("undoable", !!undo);
+  t.classList.toggle("undoable", !!undo || !!action);
+  if (action && !undo) {
+    const btn = el("button", "toastundo", action.label);
+    btn.addEventListener("click", () => {
+      t.classList.remove("show");
+      action.run();
+    });
+    t.appendChild(btn);
+  }
   if (undo) {
     const btn = el("button", "toastundo", "Undo");
     btn.addEventListener("click", async () => {
@@ -1864,6 +1876,7 @@ function renderModelField(data) {
 function renderSettingsForm(data) {
   $("#setEnabled").checked = data.settings.auto_enabled !== false;
   $("#setTerminalUi").value = data.settings.terminal_ui || "chat";
+  $("#setChatSessions").value = String(data.settings.chat_max_sessions || 3);
   $("#setGatherMode").value = data.settings.gather_mode || "search";
   $("#setPlan").value = data.settings.plan || "pro";
   $("#setBudget").value = data.settings.budget_percent;
@@ -2316,6 +2329,11 @@ $("#setPlan").addEventListener("change", () =>
   saveSettings({ plan: $("#setPlan").value }));
 $("#setGatherMode").addEventListener("change", () =>
   saveSettings({ gather_mode: $("#setGatherMode").value }));
+// Applies to the next switch rather than immediately: lowering it does not
+// go round shutting conversations down, it means the next one you open
+// closes the oldest idle one to make room.
+$("#setChatSessions").addEventListener("change", () =>
+  saveSettings({ chat_max_sessions: Number($("#setChatSessions").value) }));
 // Applied straight away rather than on the next status poll, so the Terminal
 // tab has already changed by the time the dialog is closed — and through the
 // same path as the tab's own switch, so changing it here carries the
@@ -4584,6 +4602,8 @@ const chatState = {
   defaultModel: "",  // the global model the chat defers to when unset
   defaultModelLabel: "",  // …written out, for the picker's Default row
   convs: [],       // past conversations, for the wide-screen sidebar
+  live: {},          // session id -> {live, busy, needs_ok} for the rail's marks
+  maxSessions: 0,    // how many may hold a process at once (chat_max_sessions)
   commands: [],      // its slash commands, as it advertises them
   cli: [],           // the brain/ha dispatchers, parsed from their own help
   cmdIndex: 0,       // highlighted row in the command palette
@@ -5056,6 +5076,35 @@ function chatRender(ev) {
     case "cleared":
       chatReset();
       break;
+    case "sessions":
+      // Which conversations are holding a process, and which of those are
+      // answering or waiting on somebody. Pushed rather than polled: it
+      // only ever changes when something else already had an event to send.
+      chatState.live = {};
+      (ev.sessions || []).forEach((s) => { chatState.live[s.session_id] = s; });
+      renderChatRail();
+      renderConvModal();
+      break;
+    case "switched":
+      // The view moved to another conversation. Reconnect rather than
+      // patching this stream: the first frame of the new one is the new
+      // session's snapshot, which is the contract the stream has always
+      // had — no client has to stitch "what it was" onto "what happened
+      // next".
+      chatDisconnect();
+      chatConnect();
+      break;
+    case "session_asks": {
+      // A conversation nobody is looking at is waiting on an approval, and
+      // its card times itself out. The rail's badge is the other half of
+      // this and it is not enough on a phone, where there is no rail.
+      const who = ev.title ? `“${ev.title}”` : "Another chat";
+      toast(`${who} needs your OK${ev.tool ? " — " + ev.tool : ""}`, null,
+            { label: "Open it",
+              run: () => resumeConversation({ id: ev.session_id }) });
+      refreshChatRail();
+      break;
+    }
     case "state":
       chatSetState(ev.state, ev.error);
       break;
@@ -5174,6 +5223,11 @@ function chatConnect() {
       chatState.chatModel = ev.chat_model || "";
       chatState.defaultModel = ev.default_model || "";
       chatState.defaultModelLabel = ev.default_model_label || "";
+      // The rail's marks are right on the first paint rather than on the
+      // first thing that happens to move.
+      chatState.live = {};
+      (ev.sessions || []).forEach((s) => { chatState.live[s.session_id] = s; });
+      chatState.maxSessions = ev.max_sessions || chatState.maxSessions;
       chatMeta();
       chatState.cli = ev.cli || chatState.cli;
       (ev.events || []).forEach(chatRender);
@@ -5483,6 +5537,25 @@ function setConvFilter(source) {
   if ($("#convModal").classList.contains("open")) openConversations();
 }
 
+// Whether this conversation is holding a live Claude Code process, and
+// what that process is doing. Three states and only two of them draw
+// anything: nothing at all (no process, which is most rows and is not
+// news), a quiet "answering…" while a turn it is writing runs on in the
+// background, and a badge when it is waiting on a person — which is the
+// one that has to be visible, because the approval card behind it declines
+// itself if nobody ever comes.
+//
+// The stream's listing wins over the fetched row: it is refreshed the
+// moment anything moves, where the row is as old as the last request.
+function convMark(row) {
+  const live = chatState.live[row.id]
+    || (row.live ? { busy: row.busy, needs_ok: row.needs_ok } : null);
+  if (!live) return null;
+  if (live.needs_ok) return el("span", "crask", "Needs your OK");
+  if (live.busy) return el("span", "crbusy", "answering…");
+  return null;
+}
+
 // One row's "who ran this", as a chip. Yours get none: a label on every
 // row for the ordinary case is just noise with extra steps.
 function sourceChip(row) {
@@ -5530,13 +5603,13 @@ function convSelFlip(id) {
   else convSel.ids.add(id);
 }
 
-// A row can be selected unless it is the open conversation — the server
-// refuses to delete that one, and offering a checkbox that always answers
-// "skipped" teaches nothing. Card and fix runs are records in the engine's
-// own store, not files this list's delete can reach, so they are not
-// selectable either.
+// A row can be selected unless the chat is holding a session for it — the
+// server refuses to delete any of those, not only the one on screen, and
+// offering a checkbox that always answers "skipped" teaches nothing. Card
+// and fix runs are records in the engine's own store, not files this
+// list's delete can reach, so they are not selectable either.
 function convSelectable(rows) {
-  return rows.filter((c) => !c.view_only
+  return rows.filter((c) => !c.view_only && !chatState.live[c.id]
     && !(chatState.sessionId && c.id === chatState.sessionId));
 }
 
@@ -5583,7 +5656,8 @@ async function deleteSelectedConvs(btn) {
     const skipped = (out.skipped || []).length;
     convSelToggle(false);
     toast(`${n} conversation${n === 1 ? "" : "s"} deleted`
-      + (skipped ? ` — ${skipped} skipped` : ""), out.undo);
+      + (skipped ? ` — ${skipped} skipped (still open, or already gone)` : ""),
+      out.undo);
     refreshConversationLists();
   } catch (e) {
     btn.disabled = false;
@@ -5636,6 +5710,8 @@ function renderConvModal() {
     btn.appendChild(el("span", "ctitle", c.title));
     const chip = sourceChip(c);
     if (chip) btn.appendChild(chip);
+    const mark = convMark(c);
+    if (mark) btn.appendChild(mark);
     btn.appendChild(el("span", "cwhen", c.age));
     if (here) btn.setAttribute("aria-current", "true");
     if (convSel.on) {
@@ -5666,10 +5742,31 @@ function deleteConvButton(c) {
   del.addEventListener("click", async (ev) => {
     ev.stopPropagation();
     del.disabled = true;
+    const remove = () => api(
+      `api/chat/conversation/${encodeURIComponent(c.id)}/delete`,
+      { method: "POST" });
     try {
-      const out = await api(
-        `api/chat/conversation/${encodeURIComponent(c.id)}/delete`,
-        { method: "POST" });
+      let out;
+      try {
+        out = await remove();
+      } catch (e) {
+        // The server refuses to delete a conversation something is
+        // holding open — deleting the ground a live session stands on
+        // either kills it or quietly forks it. A refusal with no way to
+        // satisfy it is a dead end, so this offers the way: close the
+        // session, then delete. Never silently, because closing one that
+        // is mid-answer loses the answer.
+        if (!/close it first/.test(e.message)) throw e;
+        if (!window.confirm(
+          "That conversation still has a live Claude session. Close it and "
+          + "delete? Anything it is still writing is lost.")) {
+          del.disabled = false;
+          return;
+        }
+        await api(`api/chat/session/${encodeURIComponent(c.id)}/close`,
+                  { method: "POST" });
+        out = await remove();
+      }
       toast("Conversation deleted", out.undo);
       refreshConversationLists();
     } catch (e) {
@@ -5738,6 +5835,8 @@ function renderChatRail() {
     const foot = el("div", "crfoot");
     const chip = sourceChip(c);
     if (chip) foot.appendChild(chip);
+    const mark = convMark(c);
+    if (mark) foot.appendChild(mark);
     foot.appendChild(el("span", "cwhen", c.age));
     btn.appendChild(foot);
     if (here) btn.setAttribute("aria-current", "true");
@@ -5768,7 +5867,11 @@ $("#convSel").addEventListener("click", () => convSelToggle());
 
 async function resumeConversation(conv) {
   closeBox("#convModal");
-  toast("Opening that conversation…");
+  // Nothing to wait for when the process is already there — the switch is
+  // a change of attachment. A "one moment" toast over something instant is
+  // a toast that teaches people to expect a wait.
+  const held = chatState.live[conv.id];
+  if (!held) toast("Opening that conversation…");
   try {
     const out = await api("api/chat/resume", {
       method: "POST", body: JSON.stringify({ session_id: conv.id }) });
