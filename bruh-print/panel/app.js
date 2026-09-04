@@ -1562,7 +1562,19 @@ function renderPrinter() {
       try { const data = await post('/api/printer/test', {}); toast(`Ruler printed on the ${data.side} roll.`, 'good'); }
       catch (error) { fail(error); }
     };
-    foot.append(use, status, ruler, usb);
+    /* The other half of "print one and look at it". The ruler answers which
+     * measurement is which; this answers where the printing starts, which
+     * the ruler structurally cannot — it is drawn inside the stock's margin,
+     * so on a roll with a 5mm margin there is nothing within 5mm of the die
+     * cut to measure against. Two questions, two labels. */
+    const offset = el('button', 'btn tiny', 'Where the printing starts');
+    offset.id = 'printOffset';
+    offset.setAttribute('data-tip',
+      'Print a label with a scale at its own corner, measure how far in the '
+      + 'printing really begins, and tell BRUH Print to move it. Once per '
+      + 'roll.');
+    offset.onclick = () => offsetDialog();
+    foot.append(use, status, ruler, offset, usb);
     card.append(foot);
     cards.append(card);
   }
@@ -1658,10 +1670,33 @@ function renderPrinter() {
      * says nothing about which one the head covers — which is the single
      * most common way a label comes out sideways, and it was written here in
      * the one notation that cannot answer it. */
+    /* The margin rides with the two measurements, because it is the third
+     * number that decides how big the artwork comes out and it was visible
+     * nowhere on this screen — a roll somebody had given a 5mm border to
+     * printed small labels floating in white with nothing on the panel
+     * saying why. */
     row.append(el('span', 'dim',
       `${stock.across_in}\u2033 across \u00b7 ${stock.feed_in || '\u2014'}`
-      + `${stock.feed_in ? '\u2033 along the roll' : ' (continuous)'}`));
+      + `${stock.feed_in ? '\u2033 along the roll' : ' (continuous)'}`
+      + ` \u00b7 ${stock.margin_mm}mm border`));
     if (stock.sku) row.append(el('span', 'sku', stock.sku));
+    /* A print offset is a correction somebody measured, so it says so on the
+     * row: an offset nobody can see is an offset that gets blamed on the
+     * renderer the next time a label looks wrong. */
+    if (stock.offset_feed_mm || stock.offset_across_mm) {
+      const moved = [];
+      if (stock.offset_feed_mm)
+        moved.push(`${stock.offset_feed_mm > 0 ? '+' : '\u2212'}`
+          + `${Math.abs(stock.offset_feed_mm)}mm along`);
+      if (stock.offset_across_mm)
+        moved.push(`${stock.offset_across_mm > 0 ? '+' : '\u2212'}`
+          + `${Math.abs(stock.offset_across_mm)}mm across`);
+      const pill = el('span', 'pill moved', `printing moved ${moved.join(', ')}`);
+      pill.setAttribute('data-tip',
+        'Where this roll needs the printing put. Press "Where the printing '
+        + 'starts" on the printer card above to measure or clear it.');
+      row.append(pill);
+    }
     if (stock.loaded)
       row.append(el('span', 'pill in', `in the ${stock.loaded_side} roll`));
     row.append(el('span', 'spacer'));
@@ -1823,6 +1858,126 @@ function renderPrinter() {
   }
 }
 
+/* Where the printing starts, measured rather than guessed.
+ *
+ * A number a person has to guess is a number they guess wrong, and the only
+ * instrument that can answer this is a printed label: nothing in a container
+ * can see where a print head laid its first dot. So this dialog is a label
+ * and two boxes, and the label is the ruler for the boxes.
+ *
+ * The sign is spelled out in words in three places — the lede, each hint,
+ * and the label on the calibration print itself — because nobody knows which
+ * way "+" goes on a label printer, and a control that needs its convention
+ * looked up is a control people set once, backwards, and never touch again.
+ *
+ * It is per stock because it is the die cut that decides it, and a Twin
+ * Turbo with two rolls genuinely has two answers.
+ */
+function offsetDialog(stockId) {
+  const rows = loadedStocks();
+  const start = rows.find((row) => row.id === stockId)
+    || rows.find((row) => row.id === S.settings.default_stock) || rows[0];
+  if (!start) return toast('There is no label stock to calibrate.', 'bad');
+
+  const body = $('modalBody');
+  body.innerHTML = '';
+  body.append(el('h2', null, 'Where the printing starts'));
+  body.append(el('p', 'lede',
+    'Print the calibration label. It has two thick lines meeting at the '
+    + 'corner where the printing begins, and 1mm ticks along each of them.'));
+  body.append(el('p', 'lede',
+    'Hold it up. If there is a gap between the label\u2019s own edge and the '
+    + 'thick line, that gap is how far in the printer is starting \u2014 '
+    + 'type it below with a minus in front. If a thick line is missing '
+    + 'because the printing started before the edge, count the ticks that '
+    + 'did survive and type that as a plus.'));
+
+  const pick = el('label', 'field');
+  pick.append(el('span', null, 'Which roll'));
+  const select = el('select');
+  select.id = 'offsetStock';
+  for (const row of rows) {
+    const option = el('option', null, `${row.name} \u2014 ${row.label}`);
+    option.value = row.id;
+    select.append(option);
+  }
+  select.value = start.id;
+  pick.append(select);
+  body.append(pick);
+
+  /* Signed, so no `min`. The server refuses anything past an inch with a
+   * sentence rather than clamping it, because a clamp would print something
+   * other than what this box says. */
+  const fields = {};
+  const field = (key, id, label, hint) => {
+    const wrap = el('label', 'field');
+    wrap.append(el('span', null, label));
+    const input = el('input');
+    input.type = 'number';
+    input.step = '0.1';
+    input.id = id;
+    wrap.append(input);
+    wrap.append(el('span', 'muted', hint));
+    fields[key] = input;
+    return wrap;
+  };
+
+  const boxes = el('div', 'row');
+  boxes.append(field('feed', 'offsetFeed',
+    'Move the printing along the roll (mm)',
+    'Minus moves it back toward the edge that comes out of the printer '
+    + 'first. Printing starting 4.7mm in is \u22124.7.'));
+  boxes.append(field('across', 'offsetAcross',
+    'Move the printing across the head (mm)',
+    'Minus moves it toward the left-hand edge as the label comes out.'));
+  body.append(boxes);
+
+  const fill = () => {
+    const row = rows.find((r) => r.id === select.value) || start;
+    fields.feed.value = row.offset_feed_mm || 0;
+    fields.across.value = row.offset_across_mm || 0;
+  };
+  fill();
+  select.onchange = fill;
+
+  const print = el('button', 'btn', 'Print the calibration label');
+  print.id = 'offsetCalibrate';
+  print.type = 'button';
+  print.setAttribute('data-tip',
+    'One label, drawn to the very edges of the sheet \u2014 the stock\u2019s '
+    + 'margin is ignored, or there would be nothing near the die cut to '
+    + 'measure against. Saved offsets are applied to it, so printing it '
+    + 'again is how you check a correction worked.');
+  print.onclick = async () => {
+    try {
+      const data = await post('/api/printer/calibrate', { stock: select.value });
+      toast(`Calibration label printed on the ${data.side} roll.`, 'good');
+    } catch (error) { fail(error); }
+  };
+  body.append(print);
+
+  const actions = el('div', 'actions');
+  const save = el('button', 'btn primary', 'Save');
+  save.id = 'offsetSave';
+  save.onclick = async () => {
+    try {
+      await post(`/api/stock/${select.value}/offset`, {
+        offset_feed_mm: Number(fields.feed.value) || 0,
+        offset_across_mm: Number(fields.across.value) || 0,
+      });
+      $('modal').close();
+      await loadState(); renderPrinter(); fillPickers();
+      toast('Saved. Print the calibration label again to check.', 'good');
+    } catch (error) { fail(error); }
+  };
+  const cancel = el('button', 'btn', 'Cancel');
+  cancel.onclick = () => $('modal').close();
+  actions.append(save, cancel);
+  body.append(actions);
+  $('modal').showModal();
+}
+
+
 /* One roll, edited in one place.
  *
  * The two measurements are the whole reason this dialog exists, and they are
@@ -1867,6 +2022,16 @@ function editStockDialog(stock) {
   sizes.append(field('across', 'Across the print head (in)', stock.across_in, '0.01'));
   sizes.append(field('feed', 'Along the roll (in)', stock.feed_in, '0.01',
                      '0 for continuous stock'));
+  /* Beside the two measurements, because it is the third number that decides
+   * how big anything printed on this roll comes out — and it was a bare
+   * "Margin (mm)" at the bottom of the dialog, which is a noun with no
+   * consequence attached. A roll carrying a 5mm border prints artwork a
+   * centimetre smaller than the label and nothing said so. */
+  sizes.append(field('margin', 'Blank border kept clear of the edge (mm)',
+                     stock.margin_mm, '0.1',
+                     `Artwork gets ${stock.drawable_mm[0]} \u00d7 `
+                     + `${stock.drawable_mm[1]}mm of this label. Two is the `
+                     + 'default; more is a smaller label.'));
   body.append(sizes);
 
   const swap = el('button', 'btn', 'These are the wrong way round');
@@ -1885,10 +2050,19 @@ function editStockDialog(stock) {
   body.append(swap);
 
   const rest = el('div', 'row');
-  rest.append(field('margin', 'Margin (mm)', stock.margin_mm, '0.1',
-                    'The band BRUH Print keeps clear of the edge'));
   rest.append(field('count', 'Labels per roll', stock.per_roll, '1'));
   body.append(rest);
+
+  /* Where the printing starts is measured, not typed, so it is a button to
+   * the dialog that prints the thing you measure with rather than two more
+   * boxes here. Closing this one first: they share `#modal`. */
+  const where = el('button', 'btn', 'Where the printing starts on this roll');
+  where.type = 'button';
+  where.setAttribute('data-tip',
+    'Prints a label with a scale at its own corner, so you can see how far '
+    + 'in the printer really begins and move it.');
+  where.onclick = () => { $('modal').close(); offsetDialog(stock.id); };
+  body.append(where);
 
   const actions = el('div', 'actions');
   const save = el('button', 'btn primary', 'Save');

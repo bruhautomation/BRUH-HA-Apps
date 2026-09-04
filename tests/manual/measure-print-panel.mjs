@@ -393,6 +393,25 @@ await run(PHONE.w, PHONE.h, 'phone-printer', true, async (p) => {
   await p.click('[data-view="printer"]');
   await p.waitForTimeout(700);
   await phoneBudget(p, 'phone-printer');
+  /* "Where the printing starts" is the fourth button on the printer card,
+   * and the card's foot is the narrowest row on this tab. A control added
+   * to it is a control nobody has measured at 390px until it is measured
+   * here — which is exactly how a 413px page in a 390px window survived a
+   * release. Its dialog is where the two offsets are typed, so the boxes
+   * and the calibration print are checked in the same open. */
+  await reachable(p, 'phone-printer', async () => {}, ['printOffset']);
+  await reachable(p, 'phone-printer', () => p.click('#printOffset'),
+    ['offsetStock', 'offsetFeed', 'offsetAcross', 'offsetCalibrate',
+     'offsetSave']);
+  /* Signed, so it must not carry a `min` that the browser will refuse a
+   * minus against — the whole measured case is a negative feed offset. */
+  const signed = await p.evaluate(() => ['offsetFeed', 'offsetAcross']
+    .filter((id) => document.getElementById(id).min !== ''));
+  for (const id of signed)
+    problems.push(`phone-printer: #${id} has a min, so the negative offset `
+      + 'this control exists for cannot be typed into it');
+  await p.keyboard.press('Escape');
+  await p.waitForTimeout(300);
 });
 await run(PHONE.w, PHONE.h, 'phone-quick', true, async (p) => {
   await p.fill('#quickText', 'Spare keys');

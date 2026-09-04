@@ -73,6 +73,16 @@ commands whose meaning is unambiguous are here, deliberately:
                     copies; the last copy always gets the long feed.
     ESC A           Status request. The printer answers with a status block
                     (see `Status`).
+    ESC f 1 n       Skip "n" lines. Documented, unambiguous, and deliberately
+                    NOT sent: it is the printer's own feed-direction print
+                    position, and it only moves paper forward. The
+                    misregistration this add-on was actually shown is a
+                    printer starting LATE, whose correction is a negative
+                    skip. See `render.image.offset_raster` for the whole of
+                    that reasoning, and for why the across axis does not use
+                    `ESC B` for the same job either. Named here so nobody has
+                    to rediscover it in the manual and wonder whether it was
+                    missed.
 
     SYN (0x16)      One raster line follows, `bytes_per_line` bytes of it.
     ETB (0x17)      Repeat the previous line. Every label this add-on prints
