@@ -51,7 +51,6 @@ log = logging.getLogger("brain.closures")
 STORE = os.environ.get("BRAIN_CLOSURE_FILE", "/data/closures.json")
 
 HISTORY_DAYS = 28
-HOURS_PER_WEEK = 168
 SECONDS_PER_HOUR = 3600.0
 
 # What counts as a closure. A motion sensor is not one, and neither is a
