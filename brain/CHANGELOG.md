@@ -2,6 +2,28 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.41.1
+
+### Fixed
+
+- `thermal.RECENT_BUCKET_S`, a constant assigned and read nowhere, removed —
+  CodeQL's finding on the 1.41.0 pull request, and a correct one. The number
+  was written as documentation of the five-minute bucket, but the resolution
+  is already stated in prose one line above it and expressed as
+  `"period": "5minute"` in the query three lines below, so it recorded a fact
+  nothing needed it for.
+
+  It is the same query `TestNoLoggerNothingLogsThrough` is a narrow slice of,
+  so the obvious move was to widen that guard — measured, and it does not
+  hold. File-local it reports 163, nearly all of them `const.py` names that
+  exist precisely to be imported somewhere else; repo-wide it reports 11, and
+  three of those are `CONFIG_SCHEMA`, which Home Assistant reads off an
+  integration module *by name* at setup, so nothing here refers to it and
+  deleting it would break all three integrations. A rule with exceptions no
+  test can tell from real dead code is a rule that needs a hand-maintained
+  allow-list, and that is a guard that rots. The reasoning is recorded in
+  `tests/test_code_scanning.py`'s docstring instead.
+
 ## 1.41.0
 
 ### Added

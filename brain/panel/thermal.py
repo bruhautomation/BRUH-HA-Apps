@@ -316,7 +316,6 @@ def hours_to_warm(entry: dict, indoor: float, outdoor: float,
 # was opened forty minutes ago — it is still inside the hour that has not
 # closed. Home Assistant keeps this resolution for ten days.
 RECENT_HOURS = 4
-RECENT_BUCKET_S = 300.0
 # A rate measured over less than this is measuring the sensor's own quantum:
 # a thermometer that reports in tenths moves 0.1 at a time, and two readings
 # a few minutes apart put that step over a tiny window.

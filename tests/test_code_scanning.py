@@ -34,7 +34,23 @@ Every check here reads the real files with `ast`, so it measures the code
 rather than a description of it, and each names the file and line so a
 failure is actionable without opening the query.
 
-What is deliberately **not** here is `py/import-and-import-from`, which
+Two neighbouring families are deliberately **not** enforced, and the
+reason is the same in both: the rule has exceptions a test cannot tell
+from real dead code, and a guard with a hand-maintained allow-list beside
+it is a guard that rots.
+
+`py/unused-global-variable` in its *general* form — an unused module-level
+constant, rather than the logger slice above — caught a real one here
+(`thermal.RECENT_BUCKET_S`, a number written as documentation and read by
+nothing), and it was removed. But a repo-wide sweep finds eleven, and
+three of them are `CONFIG_SCHEMA`: Home Assistant reads that name off an
+integration module at setup, so nothing in this repo refers to it and
+deleting it would break all three integrations. A file-local version is
+worse still — it reports 163, nearly all of them `const.py` names that
+exist precisely to be imported somewhere else, which is `const.py` doing
+its job.
+
+What is also **not** here is `py/import-and-import-from`, which
 CodeQL raised on `tests/test_thermal.py` and which was fixed in place. A
 repo-wide sweep found eighteen more, and nearly every one is `import
 unittest` beside `from unittest.mock import patch` — which is how Python
