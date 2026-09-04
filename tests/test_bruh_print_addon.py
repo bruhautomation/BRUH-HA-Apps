@@ -413,13 +413,101 @@ class TestPanelUI(unittest.TestCase):
         self.assertIn('class="fontpick" id="quickFont"', page)
 
     def test_the_designer_can_snap_and_can_turn_a_box(self):
-        """Both are in the bar rather than buried in the props pane: they
-        are about the thing you are holding, and you are holding it with the
-        other hand."""
+        """Both still exist; neither is in the design bar any more.
+
+        Snapping is a mode you set once, not an action, and "⌗ Snap" was a
+        hash and a verb with no object — the person using it asked what it
+        did. It is a named tick-box in the ⋯ sheet. Rotate acts on the
+        SELECTED box, and every other per-box control already lives in the
+        props pane, so it is built there with the align and nudge tools.
+        """
         page = (PANEL / "index.html").read_text()
-        for control in ('id="designSnap"', 'id="designRotateEl"'):
+        app = (PANEL / "app.js").read_text()
+        self.assertIn('id="designSnap"', page)
+        self.assertIn("rotate.id = 'designRotateEl'", app)
+        self.assertNotIn('id="designRotateEl"', page,
+                         "Rotate is back in the design bar, where it spends "
+                         "its life disabled")
+
+    def test_the_design_bar_is_the_add_strip_and_one_button(self):
+        """269px in five rows on a phone put the label being designed at
+        y=590 of a 780px screen. Everything that is not "put something on
+        the label" is one press away in the sheet."""
+        page = re.sub(r"<!--.*?-->", "",
+                      (PANEL / "index.html").read_text(), flags=re.S)
+        bar = page.split('<div class="design-bar">')[1].split("</div>\n\n")[0]
+        self.assertIn('id="addBar"', bar)
+        self.assertIn('id="designMore"', bar)
+        for gone in ("designStock", "designName", "designTurnLine",
+                     "designSnap"):
+            with self.subTest(control=gone):
+                self.assertNotIn(gone, bar)
+
+    def test_the_sheet_is_static_markup(self):
+        """#designStock and #designName are read and written from a dozen
+        places, so a control that only exists while a dialog is open is a
+        control every one of them has to check for. A closed <dialog> lays
+        nothing out, which is the whole saving."""
+        page = (PANEL / "index.html").read_text()
+        sheet = page.split('<dialog class="modal" id="designSheet">')[1]
+        sheet = sheet.split("</dialog>")[0]
+        for control in ('id="designStock"', 'id="designName"',
+                        'id="designTurnLine"', 'id="designSnap"'):
             with self.subTest(control=control):
-                self.assertIn(control, page)
+                self.assertIn(control, sheet)
+
+    def test_the_wordmark_is_in_the_markup_and_hidden_on_a_phone(self):
+        """Home Assistant's own header says "BRUH Print" one row above this
+        panel, so on a phone the wordmark is a row spent saying it twice —
+        but a fix that deleted it would take the wide bar with it."""
+        page = (PANEL / "index.html").read_text()
+        css = (PANEL / "style.css").read_text()
+        self.assertIn('class="wordmark"', page)
+        self.assertIn("@media (max-width: 700px) { .wordmark { display: none; } }",
+                      css)
+
+    def test_the_status_is_one_chip_on_a_phone_and_three_on_a_desktop(self):
+        """All three press through to the Printer tab, so they are one
+        control drawn as three — and three of them was 497px of content in a
+        362px row. Which one renders is a width, so both are in the markup
+        and the stylesheet settles it."""
+        page = (PANEL / "index.html").read_text()
+        css = (PANEL / "style.css").read_text()
+        self.assertIn('class="chip chip-one" id="statusChip"', page)
+        for chip in ("printerChip", "rollLeft", "rollRight"):
+            with self.subTest(chip=chip):
+                self.assertRegex(page, rf'chip-many[^>]*id="{chip}"')
+        self.assertIn(".chip-one { display: none; }", css)
+        self.assertIn(".chip-many { display: none; }", css)
+
+    def test_the_quick_tab_puts_the_picture_between_typing_and_printing(self):
+        """A phone stacks these in DOM order, which is the whole reorder: the
+        preview used to be a second pane after 510px of form, at y=899 of a
+        780px screen."""
+        page = (PANEL / "index.html").read_text()
+        view = page.split('id="viewQuick"')[1].split("</section>")[0]
+        order = [view.index(f'class="{cls}"') for cls in (
+            "pane quick-say", "pane preview-pane quick-see", "quick-do")]
+        self.assertEqual(order, sorted(order),
+                         "the Quick tab is not say, see, print in DOM order")
+
+    def test_the_ledes_that_said_nothing_are_gone(self):
+        """Each of these described what the control beside it already did.
+        What is kept is elsewhere in this class and in the panel: the
+        Printer tab's "a LabelWriter cannot tell what stock is in it", the
+        canvas legend, and the two measurements — the last shortened to one
+        line with the rest behind a disclosure."""
+        page = (PANEL / "index.html").read_text()
+        # Comments stripped before looking: each deletion left a comment
+        # SAYING what went and why, and a test that reads the prose would
+        # fail on the explanation for the change it is checking.
+        visible = re.sub(r"<!--.*?-->", "", page, flags=re.S)
+        for gone in ("picks the biggest arrangement",
+                     "Reprint puts out exactly the same one"):
+            with self.subTest(sentence=gone):
+                self.assertNotIn(gone, visible)
+        self.assertIn("A LabelWriter cannot tell what stock is in it", visible)
+        self.assertIn("Which measurement is which?", visible)
 
     def test_nothing_is_declared_after_the_touch_floor(self):
         """The sibling of the `.btn.tiny` check above, asked the other way

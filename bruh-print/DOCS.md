@@ -199,12 +199,12 @@ outside it, and, on a stock wider than the head (2.25″ on a 672-dot head), a
 hatched strip marking the columns the printer cannot reach. It is drawn wide
 enough to see; it is really about a hundredth of an inch.
 
-**Boxes snap.** While you drag or resize, edges and centres stick to the
-printable area's edges and centre lines, to the other boxes' edges and
-centres, and to a 1mm grid — and a thin line is drawn at whatever it caught,
-because a box that jumps with no line reads as the editor moving things on
-its own. The grid never wins over a real alignment one millimetre away. **⌗
-Snap** in the design bar turns it off; the choice is remembered.
+**Boxes line up as you drag.** Edges and centres catch on the printable
+area's edges and centre lines, on the other boxes' edges and centres, and on
+a 1mm grid — and a thin line is drawn at whatever it caught, because a box
+that jumps with no line reads as the editor moving things on its own. The
+grid never wins over a real alignment one millimetre away. **Line boxes up
+as I drag** under **⋯ Label setup** turns it off; the choice is remembered.
 
 **Text re-fits while you drag.** The size of the glyphs is the thing being
 chosen when you drag a text box's corner, so the preview re-renders during
@@ -223,13 +223,19 @@ renderer, because a list of family names shows the one thing a font choice is
 not about — and a CSS preview would show your browser's idea of "Monospace"
 beside a label that prints in DejaVu Sans Mono.
 
-**⟳ Rotate** turns the selected box a quarter at a time, and the box turns
-with it so the words still have room. Text and barcodes only.
+**Align, nudge and rotate.** The buttons under the geometry fields put a box
+against an edge, centre it, or fill the width or the height of the printable
+area; the arrows move it half a millimetre, which is a thumb-sized way to do
+something a number field asks for a keyboard; and **⟳ Rotate** turns the box
+a quarter at a time, taking the box with it so the words still have room.
+Text and barcodes only — a QR code, a box and a rule look the same whichever
+way up they are, so the button is there and greyed out rather than missing.
 
-**Align and nudge.** The buttons under the geometry fields put a box against
-an edge, centre it, or fill the width or the height of the printable area;
-the arrows move it half a millimetre, which is a thumb-sized way to do
-something a number field asks for a keyboard.
+**The bar is the add strip and one button.** Everything about the label
+rather than about a box on it — which stock it is on, what it is called,
+which way its text runs, and whether boxes line up as you drag — is behind
+**⋯ Label setup**. On a phone the bar used to be five rows and the label
+being designed started below the fold.
 
 ## Templates
 
@@ -310,6 +316,27 @@ If the integration is set up before the add-on has finished copying the card
 in — a first install, or an add-on update while Home Assistant was already
 running — it keeps looking for about twenty minutes rather than waiting for
 the next Core restart.
+
+### The card shows "Custom element doesn't exist"
+
+Restart Home Assistant once. This happens on a house that had no
+`/config/www` folder before installing BRUH Print, which is most houses —
+you only have one already if you have installed a custom card or HACS.
+
+Home Assistant decides whether to serve `/local` **while it is starting**,
+and only if `/config/www` is already there. BRUH Print creates it when the
+**add-on** starts, which is after Home Assistant started, so on that first
+run `/local` is not being served at all: every request for the card is a 404,
+and what the dashboard shows in its place is Home Assistant's own message
+about the card's element. Restarting the add-on cannot change it — the
+decision was made before the add-on existed on that boot — and after one
+restart of Home Assistant it never happens again.
+
+The integration checks this itself and raises a repair in **Settings >
+System > Repairs** saying exactly that, so it is not something you have to
+work out from an empty dashboard. The repair clears itself once Home
+Assistant is serving the folder. The card is registered either way: the URL
+it is registered at starts working the moment Home Assistant restarts.
 
 ## How the printing works
 

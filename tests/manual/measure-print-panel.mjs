@@ -175,7 +175,13 @@ const dragToTheEdge = async (p, name) => {
  * code (both the overlay and the image are "right", in different frames)
  * and obvious from a screenshot. */
 const checkTurnedCanvas = async (p, name) => {
+  /* The stock picker lives in the ⋯ sheet now — the design bar is the add
+   * strip and one button, because five rows of bar put the label being
+   * designed at y=590 of a 780px phone. */
+  await p.click('#designMore');
+  await p.waitForTimeout(300);
   await p.selectOption('#designStock', 'ed1f-060wh');
+  await p.click('#designSheetDone');
   await p.waitForTimeout(900);
   const shape = await p.evaluate(() => {
     const s = window.__bruhPrintState;
@@ -191,6 +197,79 @@ const checkTurnedCanvas = async (p, name) => {
       + `sheet (${shape.imgW}×${shape.imgH}), not the strip the overlay describes`);
   if (!(shape.w > shape.h))
     problems.push(`${name}: the design canvas of a turned label is taller than wide`);
+};
+
+/* ── The phone budget ──────────────────────────────────────────────────
+ *
+ * Every number below was MEASURED on this demo at 390 x 780 — an iPhone
+ * once Home Assistant's own header has taken its ~56px — and each is the
+ * value that was actually reached plus a little room, never a target
+ * somebody liked the look of. What they replaced, measured the same way:
+ *
+ *   persistent chrome 247px (32% of the screen before any content),
+ *   the design canvas starting at y=590 with 166px of height left,
+ *   the Quick preview at y=899 — off the bottom of a 780px screen, on the
+ *   one tab whose whole point is that you see what you are about to print.
+ *
+ * Now: 96 / 254 / 379. The budgets are the headroom above those. */
+const PHONE = { w: 390, h: 780 };
+/* The tab strip alone, once the status row has scrolled away. */
+const CHROME_PINNED_MAX = 110;
+/* Everything above the first content, unscrolled. */
+const CHROME_TOP_MAX = 165;
+/* Where the design workspace starts. */
+const CANVAS_TOP_MAX = 280;
+
+/* A control behind a disclosure is fine; a control behind nothing is a
+ * control that is gone. Every secondary thing moved on a phone is opened
+ * here and asked whether it is really there and really hittable. */
+const reachable = async (p, name, open, ids) => {
+  await open();
+  await p.waitForTimeout(350);
+  const found = await p.evaluate((wanted) => wanted.map((id) => {
+    const node = document.getElementById(id);
+    if (!node) return `#${id} is not in the page at all`;
+    const box = node.getBoundingClientRect();
+    if (!box.width || !box.height) return `#${id} is not rendered`;
+    /* A checkbox is 22px by the touch floor's own rule; its label is the
+     * target, so it is measured on the row it sits in. */
+    const target = node.type === 'checkbox'
+      ? (node.closest('.check') || node).getBoundingClientRect() : box;
+    if (target.height < 40) return `#${id} is ${target.height.toFixed(0)}px tall`;
+    return null;
+  }), ids);
+  for (const bad of found.filter(Boolean)) problems.push(`${name}: ${bad}`);
+};
+
+const phoneBudget = async (p, name) => {
+  /* Persistent chrome is measured SCROLLED, because that is the only state
+   * in which "persistent" means anything: the bar is sticky with a negative
+   * top, so what is left pinned is the tab strip and nothing else. */
+  await p.evaluate(() => scrollTo(0, 4000));
+  await p.waitForTimeout(400);
+  const pinned = await p.evaluate(() => {
+    const tabs = document.querySelector('.tabs').getBoundingClientRect();
+    const bar = document.querySelector('.topbar').getBoundingClientRect();
+    return { bottom: tabs.bottom, top: tabs.top, barTop: bar.top,
+             scrolled: window.scrollY };
+  });
+  if (pinned.scrolled > 4) {
+    if (pinned.bottom > CHROME_PINNED_MAX)
+      problems.push(`${name}: ${pinned.bottom.toFixed(0)}px of chrome stays `
+        + `pinned (budget ${CHROME_PINNED_MAX})`);
+    /* The tabs must still BE there. A bar that scrolled the navigation away
+     * with the status row would pass a height budget by disappearing. */
+    if (pinned.top < -1 || pinned.bottom < 40)
+      problems.push(`${name}: the tab strip scrolled off the top with the `
+        + 'status row — navigation is the half that stays');
+  }
+  await p.evaluate(() => scrollTo(0, 0));
+  await p.waitForTimeout(300);
+  const top = await p.evaluate(() =>
+    document.querySelector('.topbar').getBoundingClientRect().height);
+  if (top > CHROME_TOP_MAX)
+    problems.push(`${name}: ${top.toFixed(0)}px of chrome above the first `
+      + `content (budget ${CHROME_TOP_MAX})`);
 };
 
 const run = async (w, h, name, touch, steps) => {
@@ -228,9 +307,72 @@ const run = async (w, h, name, touch, steps) => {
   await ctx.close();
 };
 
+/* The Quick tab's whole point is type it, LOOK at it, print it, so the
+ * picture has to be on the screen you are typing on. It was at y=899 of a
+ * 780px phone, under 510px of form. */
+const previewIsOnScreen = async (p, name, height) => {
+  const seen = await p.evaluate(() => {
+    const image = document.getElementById('quickPreview');
+    const box = image.getBoundingClientRect();
+    return { on: image.classList.contains('on'), drawn: image.naturalWidth > 0,
+             top: box.top, bottom: box.bottom, height: box.height };
+  });
+  if (!seen.on || !seen.drawn)
+    return problems.push(`${name}: no preview rendered, so there is nothing `
+      + 'to say is on screen');
+  if (seen.bottom > height)
+    problems.push(`${name}: the preview ends at y=${seen.bottom.toFixed(0)} of `
+      + `${height} — the label you are typing is off the bottom of the screen`);
+};
+
+/* Where the design workspace starts, and whether the label got the room the
+ * pane can give it. The label's own aspect ratio decides how tall it is
+ * drawn — a 2.25 x 1.25 label in a 328px pane is 166px and nothing here can
+ * make it taller — so what is asked is that it is WIDTH-limited: nothing
+ * above it is taking size away from it. */
+const canvasBudget = async (p, name, height) => {
+  const seen = await p.evaluate(() => {
+    const pane = document.querySelector('.canvas-scroll');
+    const canvas = document.getElementById('canvas');
+    const paneBox = pane.getBoundingClientRect();
+    const box = canvas.getBoundingClientRect();
+    return { paneTop: paneBox.top, paneH: paneBox.height, bottom: box.bottom,
+             width: box.width, avail: pane.clientWidth - 28 };
+  });
+  if (seen.paneTop > CANVAS_TOP_MAX)
+    problems.push(`${name}: the design canvas starts at y=`
+      + `${seen.paneTop.toFixed(0)} (budget ${CANVAS_TOP_MAX})`);
+  if (seen.bottom > height)
+    problems.push(`${name}: the label being designed ends at y=`
+      + `${seen.bottom.toFixed(0)} of ${height} — off the first screen`);
+  if (seen.width < seen.avail - 2)
+    problems.push(`${name}: the canvas is ${seen.width.toFixed(0)}px wide in a `
+      + `pane that offers ${seen.avail.toFixed(0)}px`);
+};
+
 await run(1440, 900, 'wide-quick', false, async (p) => {
   await p.fill('#quickText', 'Chest freezer — chili');
   await p.waitForTimeout(600);
+  /* The desktop keeps its own shapes. The phone drops the wordmark because
+   * Home Assistant's header says the same words one row above it, and folds
+   * three status chips into one because they are one control drawn as
+   * three — neither is an improvement at 1440px, where the room is not the
+   * scarce thing, and a fix that quietly took the wide layout with it would
+   * be a phone-only panel. */
+  const wide = await p.evaluate(() => {
+    const shown = (id) => {
+      const node = document.getElementById(id) || document.querySelector(id);
+      return !!node && node.getBoundingClientRect().height > 0;
+    };
+    return { wordmark: shown('.wordmark'), one: shown('statusChip'),
+             printer: shown('printerChip'), left: shown('rollLeft') };
+  });
+  if (!wide.wordmark) problems.push('wide-quick: the wordmark is gone at 1440px');
+  if (!wide.printer || !wide.left)
+    problems.push('wide-quick: the three status chips are gone at 1440px');
+  if (wide.one)
+    problems.push('wide-quick: the phone’s one-chip status is rendered at '
+      + '1440px as well — that is four chips answering one question');
   await checkFontPicker(p, 'wide-quick');
 });
 await run(1100, 820, 'laptop-design-dark', false, async (p) => {
@@ -241,15 +383,47 @@ await run(1100, 820, 'laptop-design-dark', false, async (p) => {
   await checkTurnedCanvas(p, 'laptop-design-dark');
 });
 await run(820, 900, 'tablet-printer', true, (p) => p.click('[data-view="printer"]'));
-await run(390, 780, 'phone-quick', true, async (p) => {
-  await p.fill('#quickText', 'Spare keys');
-  await p.waitForTimeout(600);
-  await checkFontPicker(p, 'phone-quick');
+/* The Printer tab at a phone's width, which nothing measured until now — and
+ * it was scrolling sideways there (413px of page in a 390px window) because
+ * a <select> laid out to its widest option set the min-content of the row
+ * holding it, so the row's own `max-width: 100%` resolved against a width
+ * the select had caused. The same bug the design bar's stock picker had, on
+ * the one tab no run visited narrow. */
+await run(PHONE.w, PHONE.h, 'phone-printer', true, async (p) => {
+  await p.click('[data-view="printer"]');
+  await p.waitForTimeout(700);
+  await phoneBudget(p, 'phone-printer');
 });
-await run(390, 780, 'phone-design', true, async (p) => {
+await run(PHONE.w, PHONE.h, 'phone-quick', true, async (p) => {
+  await p.fill('#quickText', 'Spare keys');
+  await p.waitForTimeout(900);
+  await previewIsOnScreen(p, 'phone-quick', PHONE.h);
+  await phoneBudget(p, 'phone-quick');
+  /* Everything the reorder moved below the preview. A disclosure is one
+   * press; a control that is not in the page is gone. */
+  await reachable(p, 'phone-quick', () => p.click('#quickMore summary'),
+    ['quickStock', 'quickCopies', 'quickFont', 'quickUpper',
+     'quickToDesign', 'quickToTemplate']);
+  /* Still open from the check above, which is where the font picker lives
+   * on a phone. */
+  await checkFontPicker(p, 'phone-quick');
+  await p.click('#quickMore summary');
+  await p.waitForTimeout(200);
+});
+await run(PHONE.w, PHONE.h, 'phone-design', true, async (p) => {
   await p.click('[data-view="design"]'); await p.waitForTimeout(500);
   await p.click('#addBar button:nth-child(3)');
-  await p.waitForTimeout(700);
+  await p.waitForTimeout(900);
+  await canvasBudget(p, 'phone-design', PHONE.h);
+  await phoneBudget(p, 'phone-design');
+  /* Stock, name, the text-direction sentence and the snap toggle all left
+   * the design bar for the ⋯ sheet, and Rotate went to the props pane where
+   * every other per-box control already lives. */
+  await reachable(p, 'phone-design', () => p.click('#designMore'),
+    ['designStock', 'designName', 'designSnap']);
+  await p.click('#designSheetDone');
+  await p.waitForTimeout(300);
+  await reachable(p, 'phone-design', async () => {}, ['designRotateEl']);
   await dragToTheEdge(p, 'phone-design');
 });
 await b.close();

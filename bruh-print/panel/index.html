@@ -15,12 +15,23 @@
       <span class="wm-ink">BRUH</span><span class="wm-accent">PRINT</span>
     </div>
     <div class="bar-status">
-      <button class="chip" id="printerChip" data-tip="Which printer BRUH Print will use">
+      <!-- Three chips that all press through to the Printer tab is one
+           control drawn as three, and on a phone they were 497px of content
+           in a 362px row — two wrapped lines of permanent bar. Below 700px
+           the one chip carries what you check at a glance standing at the
+           printer (is it there, and what is in the bays); above it, the
+           three keep their own names and their own tooltips. Both are in
+           the markup because which one is rendered is a width, and a width
+           is a stylesheet's question. -->
+      <button class="chip chip-one" id="statusChip">
+        <span class="dot" id="statusDot"></span><span id="statusText">Looking…</span>
+      </button>
+      <button class="chip chip-many" id="printerChip" data-tip="Which printer BRUH Print will use">
         <span class="dot" id="printerDot"></span><span id="printerName">Looking…</span>
       </button>
-      <button class="chip roll-chip" id="rollLeft" data-side="left"
+      <button class="chip chip-many roll-chip" id="rollLeft" data-side="left"
               data-tip="What is in the left roll. Press to change it."></button>
-      <button class="chip roll-chip" id="rollRight" data-side="right"
+      <button class="chip chip-many roll-chip" id="rollRight" data-side="right"
               data-tip="What is in the right roll. Press to change it."></button>
     </div>
   </div>
@@ -36,103 +47,108 @@
 <main class="wrap">
 
 <!-- ── Quick ─────────────────────────────────────────────────────────── -->
+<!-- The order is the job: say it, LOOK at it, print it. It used to be the
+     whole form and then the picture, which put the preview 899px down a
+     780px phone — the one tab whose point is that you can see what you are
+     about to print, with the seeing off the bottom of the screen. The
+     three blocks are separate grid items so a phone can stack them in that
+     order and a wide screen can still put the picture beside the form. -->
 <section class="view is-on" id="viewQuick">
-  <div class="split">
-    <div class="pane">
+  <div class="quick-split">
+    <div class="pane quick-say">
       <h2>Type it. Print it.</h2>
-      <p class="lede">BRUH Print picks the biggest arrangement that fits the
-        label, so you only have to say the words.</p>
-
+      <!-- No lede. It said BRUH Print picks the biggest arrangement that
+           fits — which the heading says, the placeholder shows, and the fit
+           line under the preview reports for the label actually in front of
+           you. Three sayings of one thing, and the one with no fact in it
+           is the one that cost 63px above the box you type in. -->
       <label class="field">
         <span>What should it say?</span>
         <textarea id="quickText" rows="2" placeholder="Chest freezer — chili"
                   autocomplete="off" spellcheck="false"></textarea>
       </label>
-
-      <!-- No roll picker anywhere but the Printer tab. Which bay a label
-           prints on is not a decision anybody wants to make per print — the
-           add-on knows which roll holds which stock, so picking the stock
-           has already picked the roll. -->
-      <div class="row">
-        <label class="field grow">
-          <span>Label</span>
-          <select id="quickStock"></select>
-        </label>
-      </div>
-      <!-- Which way the text sits is the STOCK's answer and it is asked in
-           one place, on the Printer tab. This line is not a control: it says
-           what is about to happen, because a direction you cannot check
-           without printing one is a direction people override blindly. -->
-      <p class="turnline muted" id="quickTurnLine"></p>
-
-      <div class="row">
-        <label class="field">
-          <span>Copies</span>
-          <input type="number" id="quickCopies" value="1" min="1" max="500">
-        </label>
-        <div class="field grow">
-          <span>Font</span>
-          <!-- A button rather than a select, because the thing being chosen
-               is what the words will LOOK like and a list of family names
-               does not show that. Its label and its sample are both drawn
-               from the same renderer the printer gets. -->
-          <button type="button" class="fontpick" id="quickFont"
-                  data-tip="Pick a font — each one is shown as the printer
-                    will draw it"></button>
-        </div>
-      </div>
-
-      <label class="check">
-        <input type="checkbox" id="quickUpper"><span>UPPERCASE</span>
-      </label>
-
-      <div class="actions">
-        <button class="btn primary big" id="quickPrint">Print</button>
-        <button class="btn" id="quickToDesign"
-                data-tip="Open this exact label in the designer">Open in designer</button>
-        <button class="btn" id="quickToTemplate"
-                data-tip="Save it as a template you can fill in later">Save as template</button>
-      </div>
-      <p class="fitline" id="quickFit"></p>
     </div>
 
-    <div class="pane preview-pane">
+    <div class="pane preview-pane quick-see">
       <div class="preview-frame" id="quickPreviewFrame">
         <img id="quickPreview" alt="Label preview">
         <p class="placeholder" id="quickPlaceholder">Your label appears here.</p>
       </div>
+      <p class="fitline" id="quickFit"></p>
       <ul class="notes" id="quickNotes"></ul>
+    </div>
+
+    <div class="quick-do">
+      <button class="btn primary big wide" id="quickPrint">Print</button>
+      <!-- One disclosure, and its summary carries the current answers, so
+           the things behind it can be CHECKED without opening it — a
+           disclosure you have to open to find out what is inside it is a
+           control people open every time. -->
+      <details class="quick-more" id="quickMore">
+        <summary><span id="quickMoreSummary">Label, copies, font</span></summary>
+        <!-- No roll picker anywhere but the Printer tab. Which bay a label
+             prints on is not a decision anybody wants to make per print —
+             the add-on knows which roll holds which stock, so picking the
+             stock has already picked the roll. -->
+        <div class="row">
+          <label class="field grow">
+            <span>Label</span>
+            <select id="quickStock"></select>
+          </label>
+        </div>
+        <!-- Which way the text sits is the STOCK's answer and it is asked in
+             one place, on the Printer tab. This line is not a control: it
+             says what is about to happen, and it says where to change it,
+             which is the half you cannot get from the preview. -->
+        <p class="turnline muted" id="quickTurnLine"></p>
+
+        <div class="row">
+          <label class="field">
+            <span>Copies</span>
+            <input type="number" id="quickCopies" value="1" min="1" max="500">
+          </label>
+          <div class="field grow">
+            <span>Font</span>
+            <!-- A button rather than a select, because the thing being chosen
+                 is what the words will LOOK like and a list of family names
+                 does not show that. Its label and its sample are both drawn
+                 from the same renderer the printer gets. -->
+            <button type="button" class="fontpick" id="quickFont"
+                    data-tip="Pick a font — each one is shown as the printer
+                      will draw it"></button>
+          </div>
+        </div>
+
+        <label class="check">
+          <input type="checkbox" id="quickUpper"><span>UPPERCASE</span>
+        </label>
+
+        <div class="actions">
+          <button class="btn" id="quickToDesign"
+                  data-tip="Open this exact label in the designer">Open in designer</button>
+          <button class="btn" id="quickToTemplate"
+                  data-tip="Save it as a template you can fill in later">Save as template</button>
+        </div>
+      </details>
     </div>
   </div>
 </section>
 
 <!-- ── Design ────────────────────────────────────────────────────────── -->
 <section class="view" id="viewDesign">
+  <!-- One row, and it is the add strip. The bar used to carry Stock, Name,
+       the text-direction sentence, Snap and Rotate as well — 269px in five
+       rows on a phone, which pushed the label being designed to y=590 of a
+       780px screen and left it 166px to be drawn in. Everything that is not
+       "put something on the label" is one press away in the sheet, and
+       Rotate went to the props pane because it acts on the box you have
+       hold of and every other per-box control is already there. -->
   <div class="design-bar">
-    <label class="field inline">
-      <span>Stock</span><select id="designStock"></select>
-    </label>
-    <label class="field inline">
-      <span>Name</span><input id="designName" placeholder="Pantry jar">
-    </label>
-    <!-- Same sentence as the Quick tab, for the same reason: one setting,
-         said where you are working, changed on the Printer tab. -->
-    <span class="turnline muted" id="designTurnLine"></span>
-    <span class="spacer"></span>
-    <!-- One group, so the row wrapping cannot leave Snap at the end of one
-         line and Rotate at the start of the next: they are the two controls
-         that act on what you are holding. -->
-    <div class="bargroup">
-    <button type="button" class="btn" id="designSnap" aria-pressed="true"
-            data-tip="Boxes stick to the label's edges and centre, to each
-              other, and to a 1mm grid. Turn it off to place something by
-              eye.">⌗ Snap</button>
-    <button type="button" class="btn" id="designRotateEl"
-            data-tip="Turn the selected box a quarter at a time. Text and
-              barcodes only — a QR code, a box and a rule look the same
-              whichever way up they are.">⟳ Rotate</button>
-    </div>
     <div class="addbar" id="addBar"></div>
+    <button type="button" class="btn designmore" id="designMore"
+            data-tip="Which stock this label is on, what it is called, which
+              way its text runs, and whether boxes line up as you drag.">⋯
+      Label setup</button>
   </div>
 
   <div class="split design-split">
@@ -143,20 +159,22 @@
           <div class="overlay" id="overlay"></div>
         </div>
       </div>
-      <!-- A caption rather than a tooltip: the dashed rectangle and the
-           tinted band cover the whole label and cannot take a pointer, so
-           there is nothing to hover. -->
-      <p class="canvaslegend">Everything inside the dashed line prints. The
-         tinted band outside it is the printer’s own margin — a LabelWriter
-         cannot reach the edge of the liner.</p>
+      <!-- Survives, shortened. A caption rather than a tooltip because the
+           dashed rectangle and the tinted band cover the whole label and
+           take no pointer, so there is nothing to hover — and what they
+           mean is available nowhere else on the screen. -->
+      <p class="canvaslegend">Inside the dashed line prints. The band outside
+         it is the printer’s own margin.</p>
       <ul class="notes" id="designNotes"></ul>
     </div>
 
     <div class="pane props-pane">
+      <!-- One sentence. It was two paragraphs saying the same thing, and
+           this pane sits under the label on a phone, where every line of it
+           is a line of scrolling between you and the box you just tapped. -->
       <div id="propsEmpty" class="empty">
-        <p>Nothing selected.</p>
-        <p class="muted">Add something with the buttons above, or tap a box on
-           the label.</p>
+        <p class="muted">Nothing selected — tap a box on the label, or add
+           one above.</p>
       </div>
       <div id="props" hidden></div>
       <div class="layers" id="layers"></div>
@@ -177,8 +195,11 @@
   <div class="split">
     <div class="pane">
       <h2>Templates</h2>
-      <p class="lede">A saved label with holes in it. Fill the holes, press
-        print. Automations and the Lovelace card use these by name.</p>
+      <!-- Shortened, not deleted: "automations and the card use these by
+           name" is a fact available nowhere else on the screen. That you
+           fill the holes and press print is what the form beside it does. -->
+      <p class="lede">A saved label with holes in it. Automations and the
+        Lovelace card print these by name.</p>
       <div class="cards" id="templateCards"></div>
     </div>
     <div class="pane preview-pane">
@@ -204,19 +225,29 @@
   <div class="bays" id="bays"></div>
 
   <h2>Label stock</h2>
-  <p class="lede">Every label is two measurements, and they are not
-     interchangeable. <strong>Across the print head</strong> is the width the
-     head covers in one pass; <strong>along the roll</strong> is how far the
-     paper travels for one label. Nothing can work out which is which for
-     you — a LabelWriter feeds to the next die-cut gap and has no idea what
-     shape the label was — so if a label comes out sideways, press
-     <strong>Edit</strong> and then "These are the wrong way round".</p>
-  <p class="lede">A label much longer than it is wide is a wrap-around label,
-     so its text runs <em>along the roll</em> automatically. <strong>Text
-     direction</strong> is where you correct that for one stock, once —
-     nothing asks again per print. <strong>Print the ruler</strong> on the
-     card above is how you check any of it: it comes out with millimetre
-     ticks on both edges, and you hold it against a real label.</p>
+  <!-- Every fact here is real and none of it is read twice, so none of it
+       is deleted — but two paragraphs of it was ten lines of permanent
+       block on a phone above the table they are about. One line stays out
+       (it is the one that tells you a label came out sideways is fixable)
+       and the rest is one press away. -->
+  <p class="lede">If a label comes out sideways, press <strong>Edit</strong>
+     and then "These are the wrong way round".</p>
+  <details class="stockhelp">
+    <summary>Which measurement is which?</summary>
+    <p class="lede">Every label is two measurements, and they are not
+       interchangeable. <strong>Across the print head</strong> is the width
+       the head covers in one pass; <strong>along the roll</strong> is how
+       far the paper travels for one label. Nothing can work out which is
+       which for you — a LabelWriter feeds to the next die-cut gap and has no
+       idea what shape the label was.</p>
+    <p class="lede">A label much longer than it is wide is a wrap-around
+       label, so its text runs <em>along the roll</em> automatically.
+       <strong>Text direction</strong> is where you correct that for one
+       stock, once — nothing asks again per print. <strong>Print the
+       ruler</strong> on the card above is how you check any of it: it comes
+       out with millimetre ticks on both edges, and you hold it against a
+       real label.</p>
+  </details>
   <div class="stocktable" id="stockTable"></div>
   <details class="addstock">
     <summary>Add a stock</summary>
@@ -240,8 +271,9 @@
 <!-- ── History ───────────────────────────────────────────────────────── -->
 <section class="view" id="viewHistory">
   <h2>Printed</h2>
-  <p class="lede">Every label, with the fields already filled in. Reprint puts
-     out exactly the same one.</p>
+  <!-- No lede. It described what the two buttons on every row do, which is
+       what a tooltip on those buttons is for — and it is a caption above a
+       list that is empty until there is something in it. -->
   <div class="hlist" id="historyList"></div>
   <button class="btn danger" id="clearHistory">Clear the history</button>
 </section>
@@ -252,6 +284,42 @@
   <button class="btn tiny" id="toastAction" hidden></button></div>
 <div class="tipbox" id="tipbox" hidden></div>
 <dialog class="modal" id="modal"><div id="modalBody"></div></dialog>
+
+<!-- The design bar's sheet. Static markup rather than something app.js
+     builds on open, because #designStock and #designName are read and
+     written from a dozen places and a control that only exists while a
+     dialog is open is a control every one of them has to check for. A
+     closed <dialog> lays nothing out, so the sheet costs the design tab
+     nothing until it is asked for. -->
+<dialog class="modal" id="designSheet">
+  <div>
+    <h2>This label</h2>
+    <label class="field">
+      <span>Stock</span><select id="designStock"></select>
+    </label>
+    <!-- Which way the text sits is the STOCK's answer and it is set on the
+         Printer tab. Kept because it is the one fact here you cannot read
+         off the picture — where to change it. -->
+    <p class="turnline muted" id="designTurnLine"></p>
+    <label class="field">
+      <span>Name</span><input id="designName" placeholder="Pantry jar">
+    </label>
+    <!-- "⌗ Snap" was a hash and a verb with no object, and the person using
+         it asked what it did. It is also a mode you set once rather than an
+         action, so it does not earn a permanent slot on a phone's primary
+         row. Named for what it does to what, with the sentence under it. -->
+    <label class="check">
+      <input type="checkbox" id="designSnap">
+      <span>Line boxes up as I drag</span>
+    </label>
+    <p class="lede">Boxes catch on the label’s edges and centre, on each
+      other, and on a 1mm grid, with a line drawn at whatever they caught.
+      Turn it off to place something by eye.</p>
+    <div class="actions">
+      <button type="button" class="btn primary" id="designSheetDone">Done</button>
+    </div>
+  </div>
+</dialog>
 
 <script src="app.js"></script>
 </body>
