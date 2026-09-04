@@ -30,8 +30,13 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR / "brain" / "panel"))
 
+import checks  # noqa: E402
 import thermal  # noqa: E402
-from checks import thermal as thermal_check  # noqa: E402
+
+# `checks.thermal` rather than `from checks import thermal`: this module
+# already imports the package for the catalog, and CodeQL is right that
+# one module reached two ways is one name that can mean two things.
+thermal_check = checks.thermal
 
 NOW = 1_800_000_000.0
 UTC = dt.timezone.utc
@@ -590,8 +595,6 @@ class TestHeatLoss(unittest.TestCase):
 class TestTheChecksAreRegistered(unittest.TestCase):
 
     def test_both_are_in_the_catalog_under_a_named_group(self):
-        import checks
-
         ids = {c["id"] for c in checks.CHECKS}
         self.assertIn("climate.underheated", ids)
         self.assertIn("climate.heat_loss", ids)
@@ -599,8 +602,6 @@ class TestTheChecksAreRegistered(unittest.TestCase):
                          "Climate check")
 
     def test_neither_runs_without_the_store(self):
-        import checks
-
         house = snap(four())
         house["available"]["thermal"] = False
         result = checks.run_all(house, NOW, only=["climate.underheated",

@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""The two CodeQL families that keep coming back, kept out at the source.
+"""The CodeQL families that keep coming back, kept out at the source.
 
 The repo's workflow runs `security-and-quality` over Python and JavaScript,
 and its findings arrive in the Security tab — which is a page nobody opens
-between releases. Both families below have been swept before (`bbeefd1`,
-"Close the CodeQL alerts, and say why the quiet handlers are quiet") and both
-came back the moment new code was written, because a sweep is a moment and a
-rule is a test.
+between releases. The first two below were swept before (`bbeefd1`, "Close
+the CodeQL alerts, and say why the quiet handlers are quiet") and both came
+back the moment new code was written, because a sweep is a moment and a rule
+is a test.
 
-Neither is a security bug. They are here because of what the alerts *mean*
-in this codebase:
+None of them is a security bug. They are here because of what the alerts
+*mean* in this codebase:
 
 * **An empty handler with no comment.** The query is "this `except` does
   nothing but `pass` and there is no explanatory comment" — and in a
@@ -30,9 +30,17 @@ in this codebase:
   no logger. It is here rather than in a review comment on the third pull
   request in a row.
 
-Both checks read the real files with `ast`, so they measure the code rather
-than a description of it, and both name the file and line so a failure is
-actionable without opening the query.
+Every check here reads the real files with `ast`, so it measures the code
+rather than a description of it, and each names the file and line so a
+failure is actionable without opening the query.
+
+What is deliberately **not** here is `py/import-and-import-from`, which
+CodeQL raised on `tests/test_thermal.py` and which was fixed in place. A
+repo-wide sweep found eighteen more, and nearly every one is `import
+unittest` beside `from unittest.mock import patch` — which is how Python
+is written. A rule the repo does not believe is a rule somebody turns off,
+and the alerts arrive on a pull request anyway, which is where that one
+was caught.
 """
 
 from __future__ import annotations
