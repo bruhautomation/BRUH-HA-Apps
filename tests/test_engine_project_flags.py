@@ -11,7 +11,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
+import unittest.mock
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "brain" / "panel"))
@@ -32,11 +32,11 @@ class TestProjectFlags(unittest.TestCase):
         shim = Path(self.tmp.name) / "claude"
         shim.write_text(f"#!/bin/sh\nexec {sys.executable} {FAKE} \"$@\"\n")
         shim.chmod(0o755)
-        self.env = mock.patch.dict(os.environ, {
+        self.env = unittest.mock.patch.dict(os.environ, {
             "BRAIN_CLAUDE_BIN": str(shim), "FAKE_CLAUDE_LOG": str(self.log),
             "CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-" + "x" * 30})
         self.env.start()
-        self.proj = mock.patch.object(engine, "HA_PROJECT", str(self.project))
+        self.proj = unittest.mock.patch.object(engine, "HA_PROJECT", str(self.project))
         self.proj.start()
 
     def tearDown(self):
@@ -77,7 +77,7 @@ class TestProjectFlags(unittest.TestCase):
         self.assertNotIn("--mcp-config", self._argv())
 
     def test_a_missing_project_adds_no_flag_at_all(self):
-        with mock.patch.object(engine, "HA_PROJECT",
+        with unittest.mock.patch.object(engine, "HA_PROJECT",
                                str(Path(self.tmp.name) / "nowhere")):
             engine.run_agent("p", "s", timeout=30, max_turns=1)
         argv = self._argv()
