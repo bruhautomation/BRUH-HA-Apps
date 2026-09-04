@@ -33,6 +33,7 @@ import ast
 import importlib
 import importlib.util
 import json
+import re
 import sys
 import types
 import unittest
@@ -419,6 +420,9 @@ class TestTheIssueStrings(unittest.TestCase):
         self.assertEqual(bruh_print.DOCS_URL, manifest["documentation"])
 
 
+CARD_FILE = BASE_DIR / "bruh-print" / "lovelace" / "bruh-print-card.js"
+
+
 class TestTheCardSaysWhatIsMissing(unittest.TestCase):
     """Source-level, and only in addition to
     `tests/manual/measure-print-card.mjs`, which loads this file into a real
@@ -427,8 +431,7 @@ class TestTheCardSaysWhatIsMissing(unittest.TestCase):
     """
 
     def setUp(self):
-        self.card = (BASE_DIR / "bruh-print" / "lovelace"
-                     / "bruh-print-card.js").read_text()
+        self.card = CARD_FILE.read_text()
 
     def test_the_block_names_both_halves_of_the_setup(self):
         for owed in ("add-on", "Devices & services"):
@@ -445,6 +448,104 @@ class TestTheCardSaysWhatIsMissing(unittest.TestCase):
         """It was the only thing the card could say about a missing
         integration, and `show_rolls: false` deleted it."""
         self.assertNotIn("No BRUH Print sensors found", self.card)
+
+    def test_the_block_names_the_entity_options(self):
+        """The half 0.4.0's block could not say.
+
+        Entities are matched by suffix, so a renamed device, a renamed
+        entity or a second config entry leaves a working printer with a card
+        that cannot describe it — and `<suffix>_entity` is the way out. The
+        card has accepted those keys since it was written and nothing had
+        ever told anybody they exist. `_find` builds the key from a template
+        literal, so these strings appear here only because the block names
+        them.
+        """
+        for suffix in _find_suffixes(self.card):
+            with self.subTest(option=f"{suffix}_entity"):
+                self.assertIn(f"{suffix}_entity", self.card)
+
+    def test_a_print_is_not_announced_from_the_request(self):
+        """A grep, and only as a guard against the shape coming back — the
+        measure is what proves the card reports what it was told.
+
+        `Printed ${answer.printed || data.copies || 1}` announced a label
+        off the request whenever the response carried nothing, so a call
+        that resolved with no response data at all reported a print the card
+        had never been told about. That is indistinguishable, from the other
+        side, from a card that does not print.
+        """
+        self.assertNotIn("data.copies || 1", self.card)
+
+
+def _find_suffixes(card):
+    """Every entity this card looks for, read off its own `_find` calls."""
+    found = set(re.findall(r"_find\('([a-z_]+)'\)", card))
+    assert found, "no _find calls in the card — has it been renamed?"
+    return sorted(found)
+
+
+class TestTheCardAndTheIntegrationAgreeOnTheServices(unittest.TestCase):
+    """Cross-file, which is the one thing the browser drive cannot see.
+
+    `measure-print-card.mjs` drives the card against a `hass` whose service
+    map the measure writes itself, so it can only ever agree with the card.
+    What services actually get registered is in the integration, and the two
+    drift silently in the worst possible direction: a renamed service leaves
+    a card that both disables Print on every house — because the service it
+    asks about is not there — and calls a service that is not there either.
+    """
+
+    def setUp(self):
+        self.card = CARD_FILE.read_text()
+
+    def test_every_service_the_card_calls_is_one_the_integration_registers(self):
+        called = set(re.findall(r"_call\('([a-z_]+)'", self.card))
+        self.assertTrue(called, "the card calls no service at all")
+        self.assertLessEqual(called, set(bruh_print.SERVICES))
+
+    def test_the_service_the_card_gates_print_on_is_one_it_calls(self):
+        """Print is disabled on exactly one question — is the service there —
+        so the name asked about has to be the name called. Asking about a
+        service the card never calls is a gate on something else."""
+        gated = set(re.findall(r"'(print_[a-z_]+)'", self.card))
+        called = set(re.findall(r"_call\('([a-z_]+)'", self.card))
+        self.assertTrue(gated)
+        self.assertLessEqual(gated, called | set(bruh_print.SERVICES))
+
+    def test_the_card_uses_the_integrations_domain(self):
+        self.assertIn(f"const DOMAIN = '{bruh_print.DOMAIN}'", self.card)
+
+
+class TestTheEntityOptionsAreDocumented(unittest.TestCase):
+    """A card option nothing documents is a card option nobody can use.
+
+    This is the answer the card's own block now points at, and the docs are
+    where somebody looks after reading it — so a suffix `_find` learns about
+    has to reach both, or the block names a key the reference does not.
+    """
+
+    def setUp(self):
+        self.suffixes = _find_suffixes(CARD_FILE.read_text())
+        self.docs = (BASE_DIR / "bruh-print" / "DOCS.md").read_text()
+        self.readme = (BASE_DIR / "bruh-print" / "README.md").read_text()
+
+    def test_the_reference_names_every_one_of_them(self):
+        for suffix in self.suffixes:
+            with self.subTest(option=f"{suffix}_entity"):
+                self.assertIn(f"{suffix}_entity", self.docs)
+
+    def test_the_readme_says_they_exist(self):
+        """Not all four — the README is the overview — but somebody whose
+        card says "no status" has to find out from it that there is
+        something to set."""
+        self.assertIn("printer_entity", self.readme)
+
+    def test_the_docs_say_the_sensors_do_not_gate_printing(self):
+        """The regression in as many words, because the next person to add a
+        readout to this card will reach for the same gate."""
+        self.assertIn("printer_entity", self.docs)
+        window = self.docs[self.docs.index("printer_entity") - 2000:]
+        self.assertRegex(window, r"(?s)print.{0,400}service")
 
 
 if __name__ == "__main__":

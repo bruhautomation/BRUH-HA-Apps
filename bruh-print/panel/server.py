@@ -469,7 +469,8 @@ def _render(state: Panel, document: dict, *, dpi: int | None = None,
     )
 
 
-async def _send(state: Panel, rendered, *, side: str, copies: int) -> dict:
+async def _send(state: Panel, rendered, *, stock, side: str,
+                copies: int) -> dict:
     """Pack, send, and turn any USB failure into a sentence."""
     printer = state.chosen()
     model = printer.model if printer else dymo_printers.UNKNOWN
@@ -480,15 +481,24 @@ async def _send(state: Panel, rendered, *, side: str, copies: int) -> dict:
     # to whichever bay the printer last used, which is a real cost and the
     # reason it is the last mode to try rather than a safe default.
     mode = str(state.settings.get("print_mode", "standard"))
-    # `bare` is the one mode that sends neither darkness nor speed, leaving
-    # the printer at its own defaults — which is the whole point of it: it
-    # is what somebody tries when a firmware will not take a command, and a
-    # mode that still sent two of them would not answer that question.
+    # `bare` is the one mode that sends neither darkness nor speed nor the
+    # dot-tab reset, leaving the printer at its own defaults — which is the
+    # whole point of it: it is what somebody tries when a firmware will not
+    # take a command, and a mode that still sent three of them would not
+    # answer that question.
     bare = mode == "bare"
     payload = protocol.job(
         lines, bytes_per_line=model.bytes_per_line,
         roll=None if bare else roll_code,
-        copies=copies, label_length_dots=rendered.feed_dots,
+        copies=copies,
+        # The STOCK's own feed length, not the raster's, and the two differ
+        # exactly where it matters: on continuous paper the raster is as
+        # long as the artwork and there is no label length at all. The
+        # protocol turns a die-cut length into the top-of-form search budget
+        # (`search_length`), which is a longer number than either.
+        label_feed_dots=rendered.feed_dots,
+        continuous=stock.continuous,
+        dot_tab=not bare,
         compress=(mode == "compact"),
         density=None if bare else str(state.settings.get("density", "dark")),
         quality=None if bare else str(
@@ -607,7 +617,8 @@ async def h_printer_test(request: web.Request) -> web.Response:
     side, notes = state.resolve_side(stock.id, side)
     document = _ruler_label(stock)
     parsed, stock, rendered = _render(state, document)
-    result = await _send(state, rendered, side=side, copies=1)
+    result = await _send(state, rendered, stock=stock, side=side,
+                         copies=1)
     state.consume(side, 1)
     state.mirror_state()
     return ok(printed=1, side=side, notes=notes + rendered.notes, **result)
@@ -846,7 +857,8 @@ async def h_print(request: web.Request) -> web.Response:
 
     parsed, entry, rendered = await asyncio.to_thread(_render, state, document)
     side, notes = state.resolve_side(entry.id, side_wanted)
-    result = await _send(state, rendered, side=side, copies=copies)
+    result = await _send(state, rendered, stock=entry, side=side,
+                         copies=copies)
 
     state.consume(side, copies)
     record = state.history.add(
@@ -916,7 +928,8 @@ async def h_quick(request: web.Request) -> web.Response:
 
     copies = max(1, min(500, int(payload.get("copies", 1) or 1)))
     side, notes = state.resolve_side(entry.id, str(payload.get("side", "") or ""))
-    result = await _send(state, rendered, side=side, copies=copies)
+    result = await _send(state, rendered, stock=entry, side=side,
+                         copies=copies)
     state.consume(side, copies)
     record = state.history.add(
         stock=entry.id, side=side, copies=copies, title=" ".join(fitted.lines),
@@ -1034,7 +1047,8 @@ async def h_template_print(request: web.Request) -> web.Response:
     copies = max(1, min(500, int(payload.get("copies", template.copies) or 1)))
     parsed, entry, rendered = await asyncio.to_thread(_render, state, document)
     side, notes = state.resolve_side(entry.id, str(payload.get("side", "") or ""))
-    result = await _send(state, rendered, side=side, copies=copies)
+    result = await _send(state, rendered, stock=entry, side=side,
+                         copies=copies)
 
     state.consume(side, copies)
     state.templates.used(template.id)
@@ -1067,7 +1081,8 @@ async def h_reprint(request: web.Request) -> web.Response:
         _render, state, entry.label)
     side, notes = state.resolve_side(
         stock_entry.id, str(payload.get("side", "") or entry.side))
-    result = await _send(state, rendered, side=side, copies=copies)
+    result = await _send(state, rendered, stock=stock_entry, side=side,
+                         copies=copies)
 
     state.consume(side, copies)
     record = state.history.add(

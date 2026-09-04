@@ -124,6 +124,26 @@ class TestRollRouting(PanelCase):
         self.assertTrue(self.sent[-1].startswith(
             protocol.select_roll(protocol.ROLL_RIGHT)))
 
+    async def test_the_byte_on_the_wire_is_the_manuals_ASCII_digit(self):
+        """`ESC q` takes ASCII '1'/'2', which is what the reference spells
+        out for this one command; the add-on sent `0x01`/`0x02` from memory.
+        A printer that does not take those ignores the command and prints on
+        whichever bay it used last — which, on this machine, means a 2.25"
+        raster on a 0.56" wrap. Asserted as the literal byte rather than
+        through `select_roll`, because a helper compared against itself
+        would agree either way."""
+        for side, wire, stale in (("left", 0x31, protocol.ROLL_LEFT),
+                                  ("right", 0x32, protocol.ROLL_RIGHT)):
+            with self.subTest(side=side):
+                await self.post(f"/api/roll/{side}", {"stock": "edcc-082wh"})
+                await self.post("/api/print",
+                                {"label": self.label(), "side": side})
+                payload = self.sent[-1]
+                self.assertTrue(
+                    payload.startswith(bytes([0x1B, ord("q"), wire])),
+                    payload[:6])
+                self.assertNotIn(bytes([0x1B, ord("q"), stale]), payload)
+
     async def test_a_mismatched_roll_is_refused_with_both_names_in_it(self):
         """The refusal is the feature: without it a run of fifty prints a
         2.25" raster across a 0.56" liner fifty times, with no error
@@ -907,6 +927,92 @@ class TestDarkByDefault(PanelCase):
         await self.post("/api/settings", {"quality": "photo"})
         _, body = await self.get("/api/settings")
         self.assertEqual("graphics", body["settings"]["quality"])
+
+
+class TestTheBytesThatDecideAlignment(PanelCase):
+    """"The alignment is off on the labels" — including on a printed ruler,
+    whose artwork measures symmetric to the dot.
+
+    Nothing above the wire could be wrong, so the two things asserted here
+    are the two the wire got wrong: what `ESC L` meant, and the dot tab that
+    was never sent. Both are invisible from the response — the panel says
+    "Printed 1 on the left roll" either way — so they are asserted on the
+    payload that would have reached the printer.
+    """
+
+    # The cryo stock this house prints on: 2.25" x 1.25" at 300 dpi is 375
+    # dot lines of label, and the default quality is the 300x600 graphics
+    # mode, so the raster is 750 lines and the budget is counted in those
+    # same steps.
+    LABEL_LINES = 375
+
+    def _length(self, payload: bytes) -> int:
+        marker = bytes([protocol.ESC, ord("L")])
+        index = payload.index(marker)
+        return (payload[index + 2] << 8) | payload[index + 3]
+
+    async def _print(self, stock="edcc-082wh", **settings):
+        await self.post("/api/roll/left", {"stock": stock})
+        if settings:
+            await self.post("/api/settings", settings)
+        status, body = await self.post(
+            "/api/print", {"label": self.label(stock=stock)})
+        self.assertEqual(200, status, body)
+        return self.sent[-1]
+
+    async def test_the_length_sent_is_the_search_budget_not_the_raster(self):
+        """The old value was the rendered raster's own height, so the
+        top-of-form search ran out at the exact line the artwork ended on —
+        before the sense hole, which is in the gap after the label. Every
+        label then starts a fraction further along than the last, which is
+        a misalignment that grows down a roll rather than a constant one."""
+        payload = await self._print()
+        repeat = protocol.LINE_REPEAT["graphics"]
+        printed = self.LABEL_LINES * repeat
+        sent = self._length(payload)
+        self.assertEqual(
+            protocol.search_length(self.LABEL_LINES) * repeat, sent)
+        self.assertEqual(938, sent)
+        self.assertGreater(sent, printed)
+        self.assertNotEqual(printed, sent)
+
+    async def test_the_dot_tab_is_stated_rather_than_inherited(self):
+        """It is state inside the printer, kept until something changes it
+        — so a preamble that omits it starts wherever DYMO Connect or
+        another driver left it, on every line of every label."""
+        payload = await self._print()
+        self.assertIn(bytes([protocol.ESC, ord("B"), 0]), payload)
+
+    async def test_bare_still_sends_the_geometry_and_nothing_else(self):
+        payload = await self._print(print_mode="bare")
+        self.assertNotIn(bytes([protocol.ESC, ord("B")]), payload)
+        self.assertIn(protocol.set_bytes_per_line(84), payload)
+        self.assertEqual(
+            protocol.search_length(self.LABEL_LINES), self._length(payload))
+
+    async def test_the_fast_mode_sends_the_unscaled_budget(self):
+        """The budget is counted in the printer's own steps, so it scales
+        with the raster and not with the label."""
+        payload = await self._print(quality="text")
+        self.assertEqual(
+            protocol.search_length(self.LABEL_LINES), self._length(payload))
+
+    async def test_continuous_stock_goes_into_continuous_feed_mode(self):
+        """A stock with no die cut has no sense holes, so a positive length
+        sends the printer looking for something that is not on the paper.
+        The catalog has shipped `continuous-2-25` since the first release
+        and this command has never gone with it."""
+        payload = await self._print(stock="continuous-2-25")
+        self.assertIn(protocol.continuous_form(), payload)
+        self.assertGreaterEqual(self._length(payload), 0x8000)
+
+    async def test_a_die_cut_stock_never_takes_that_value(self):
+        payload = await self._print(stock="ed1f-060wh")
+        self.assertLess(self._length(payload), 0x8000)
+        # 3.44" of label at 300 dpi, doubled by the graphics mode, plus the
+        # headroom that reaches the hole.
+        self.assertEqual(protocol.search_length(1032) * 2,
+                         self._length(payload))
 
 
 class TestMirror(unittest.TestCase):

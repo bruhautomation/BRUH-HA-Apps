@@ -42,8 +42,10 @@ DEFAULTS: dict[str, Any] = {
     #   standard — recommended, and what everything is tested against
     #   compact  — adds ETB run-compression; a fraction of the bytes, and
     #              the opcode this add-on is least sure of
-    #   bare     — drops roll select too, which costs the Twin Turbo its
-    #              second bay and is the last thing to try
+    #   bare     — drops roll select and the dot-tab reset too, which
+    #              costs the Twin Turbo its second bay and leaves the left
+    #              margin wherever the last driver to touch this printer
+    #              set it; the last thing to try
     "print_mode": "standard",
     # How dark, and how slowly. Both are commands the printer takes in the
     # standard and compact modes and neither is sent in `bare`.

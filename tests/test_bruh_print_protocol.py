@@ -25,14 +25,48 @@ ESC = 0x1B
 
 
 class TestCommands(unittest.TestCase):
-    def test_roll_select_is_the_twin_turbos_whole_point(self):
-        self.assertEqual(bytes([ESC, ord("q"), 1]), protocol.select_roll(1))
-        self.assertEqual(bytes([ESC, ord("q"), 2]), protocol.select_roll(2))
+    def test_the_roll_byte_is_an_ASCII_DIGIT_not_the_number(self):
+        """The manual, verbatim: "31 (ASCII '1') = Left roll", "32 (ASCII
+        '2') = Right roll" — and it spells ASCII out for this one command
+        where every other parameter it documents is plainly binary.
+
+        This add-on sent `0x01`/`0x02`, written from memory. A firmware that
+        does not read those as roll selectors ignores the command, and every
+        label then goes to whichever bay was used last: on a Twin Turbo with
+        two different stocks loaded, that is a label printed on the wrong
+        size of liner.
+        """
+        self.assertEqual(bytes([ESC, ord("q"), 0x31]),
+                         protocol.select_roll(protocol.ROLL_LEFT))
+        self.assertEqual(bytes([ESC, ord("q"), 0x32]),
+                         protocol.select_roll(protocol.ROLL_RIGHT))
+        self.assertEqual(b"\x1bq1", protocol.select_roll(protocol.ROLL_LEFT))
+
+    def test_the_binary_values_that_shipped_are_gone(self):
+        """Pinned as their own assertion because the panel's own names for
+        the bays are still 1 and 2 — the translation happens at the wire,
+        so a regression here is one character in one dict and nothing above
+        `protocol.py` would notice."""
+        for roll in (protocol.ROLL_LEFT, protocol.ROLL_RIGHT):
+            with self.subTest(roll=roll):
+                self.assertNotIn(bytes([ESC, ord("q"), roll]),
+                                 protocol.select_roll(roll))
+
+    def test_automatic_selection_is_documented_and_unwired(self):
+        """The manual's third value, ASCII '0': "the printer assumes that
+        both rolls have the same media, and it will toggle back and forth as
+        rolls become empty" — which on this machine would print a 2.25"
+        raster onto a 0.56" roll. It is a named constant so nobody has to
+        rediscover it, and nothing may reach it through the panel's own
+        vocabulary."""
+        self.assertEqual(0x30, protocol.ROLL_WIRE_AUTO)
+        self.assertNotIn(protocol.ROLL_WIRE_AUTO, protocol.ROLL_WIRE.values())
+        self.assertNotIn(protocol.ROLL_WIRE_AUTO, protocol.ROLL_NAMES)
 
     def test_a_roll_that_does_not_exist_is_refused(self):
         """Silently clamping a bad roll to 1 would print the label on the
         left roll and report success about the right one."""
-        for bad in (0, 3, -1, "left"):
+        for bad in (0, 3, -1, "left", 0x31):
             with self.subTest(roll=bad), self.assertRaises(protocol.ProtocolError):
                 protocol.select_roll(bad)
 
@@ -40,12 +74,32 @@ class TestCommands(unittest.TestCase):
         self.assertEqual(bytes([ESC, ord("L"), 0x01, 0x77]),
                          protocol.set_label_length(375))
 
-    def test_an_absurd_length_clamps_rather_than_refusing(self):
-        """The length is advisory — the printer feeds to the die-cut gap
-        anyway — so refusing prints nothing where clamping prints the
-        label."""
-        self.assertEqual(bytes([ESC, ord("L"), 0xFF, 0xFF]),
+    def test_an_absurd_length_clamps_to_the_longest_LABEL(self):
+        """It clamps at 0x7FFF and not at 0xFFFF, which is what it used to
+        do — and 0xFFFF is not a very long label, it is the continuous-form
+        flag. A stock with a mistyped feed measurement would have put the
+        printer into a different mode, where a form feed stops meaning
+        "find the next hole"."""
+        self.assertEqual(bytes([ESC, ord("L"), 0x7F, 0xFF]),
                          protocol.set_label_length(999_999))
+        self.assertNotEqual(protocol.continuous_form(),
+                            protocol.set_label_length(999_999))
+
+    def test_the_continuous_flag_is_a_negative_two_byte_value(self):
+        """The manual's own mechanism for paper with no sense holes: "any
+        negative 2 byte integer value (0x8000-0xFFFF)"."""
+        self.assertEqual(bytes([ESC, ord("L"), 0xFF, 0xFF]),
+                         protocol.continuous_form())
+        self.assertGreaterEqual(protocol.CONTINUOUS_LENGTH, 0x8000)
+
+    def test_the_dot_tab_is_refused_outside_the_head(self):
+        """0-83 is the manual's range for an 84-byte head. Masking a bad
+        value with & 0xFF would turn a mistake into a left margin."""
+        self.assertEqual(bytes([ESC, ord("B"), 0]), protocol.set_dot_tab(0))
+        for bad in (-1, 84, 300):
+            with self.subTest(tab=bad), \
+                    self.assertRaises(protocol.ProtocolError):
+                protocol.set_dot_tab(bad)
 
     def test_bytes_per_line_must_fit_in_one_byte(self):
         with self.assertRaises(protocol.ProtocolError):
@@ -147,7 +201,7 @@ class TestAJobAPrinterCanActuallyRead(unittest.TestCase):
     def test_the_default_job_decodes_to_exactly_the_rows_it_was_given(self):
         rows = [bytes([i % 256]) * 84 for i in range(40)]
         payload = protocol.job(rows, bytes_per_line=84, roll=1,
-                               label_length_dots=40)
+                               label_feed_dots=40)
         self.assertEqual(rows, self._decode(payload, 84))
 
     def test_a_mostly_blank_label_still_sends_every_row(self):
@@ -155,24 +209,27 @@ class TestAJobAPrinterCanActuallyRead(unittest.TestCase):
         are exactly the ones compression replaced."""
         rows = [b"\x00" * 84] * 300 + [b"\xf0" * 84] * 75
         payload = protocol.job(rows, bytes_per_line=84, roll=1,
-                               label_length_dots=375)
+                               label_feed_dots=375)
         self.assertEqual(rows, self._decode(payload, 84))
         self.assertNotIn(protocol.ETB, payload)
 
     def test_the_compact_mode_is_the_one_that_needs_ETB(self):
         rows = [b"\x00" * 84] * 50
         payload = protocol.job(rows, bytes_per_line=84, compress=True,
-                               label_length_dots=50)
+                               label_feed_dots=50)
         with self.assertRaises(AssertionError):
             self._decode(payload, 84)
 
-    def test_nothing_no_op_rides_in_the_preamble(self):
-        """`ESC B 0` is a dot tab of zero — it cannot change the output, and
-        a firmware that does not take the command may swallow the byte after
-        it and desync the whole job. A no-op in a preamble is pure risk."""
+    def test_the_dot_tab_rides_in_the_preamble_and_still_decodes(self):
+        """`ESC B 0` is now sent — see TestTheDotTabIsPrinterState for why —
+        and the reason it was left out was that a firmware which does not
+        take the command may swallow the byte after it. That risk is real
+        and it is what `bare` answers; what this asserts is the other half,
+        that a job carrying it is still a job a printer can walk."""
         payload = protocol.job([b"\x00" * 84], bytes_per_line=84, roll=1,
-                               label_length_dots=1)
-        self.assertNotIn(bytes([protocol.ESC, ord("B")]), payload)
+                               label_feed_dots=1)
+        self.assertIn(bytes([protocol.ESC, ord("B"), 0]), payload)
+        self.assertEqual([b"\x00" * 84], self._decode(payload, 84))
 
 
 class TestJob(unittest.TestCase):
@@ -199,6 +256,18 @@ class TestJob(unittest.TestCase):
                            roll=protocol.ROLL_RIGHT, copies=4)
         self.assertEqual(4, job.count(protocol.select_roll(2)))
 
+    def test_the_roll_byte_a_job_carries_is_the_ASCII_digit(self):
+        """Asserted on a finished job as well as on the helper, because the
+        helper is not what a printer reads."""
+        for roll, wire in ((protocol.ROLL_LEFT, 0x31),
+                           (protocol.ROLL_RIGHT, 0x32)):
+            with self.subTest(roll=roll):
+                job = protocol.job([self.line()], bytes_per_line=84,
+                                   roll=roll, label_feed_dots=375)
+                self.assertTrue(job.startswith(bytes([ESC, ord("q"), wire])),
+                                job[:6])
+                self.assertNotIn(bytes([ESC, ord("q"), roll]), job)
+
     def test_no_roll_byte_is_sent_when_there_is_no_roll_to_choose(self):
         job = protocol.job([self.line()], bytes_per_line=84, roll=None)
         self.assertNotIn(bytes([ESC, ord("q")]), job)
@@ -206,6 +275,178 @@ class TestJob(unittest.TestCase):
     def test_an_empty_label_is_refused(self):
         with self.assertRaises(protocol.ProtocolError):
             protocol.job([], bytes_per_line=84)
+
+
+class TestTheLengthIsASearchBudget(unittest.TestCase):
+    """`ESC L` is not the height of the raster, and sending it as one is
+    what "the alignment is off on the labels" was.
+
+    The 450 series technical reference, on this command: n1/n2 are the
+    "number of dot lines from sense hole to sense hole"; the command
+    "indicates the maximum distance the printer should travel while
+    searching for the top-of-form hole or mark"; and — the sentence that
+    matters — "print lines and lines fed both count towards this total".
+    The printer "does not compare the label length variables sent by the
+    host with the actual length of the currently loaded label stock", it
+    only uses them "to maintain the logical position counter".
+
+    So a job that declares 375 and then prints 375 lines has spent its
+    entire allowance on its own artwork. The search stops at the instant
+    the label ends; the sense hole is in the gap after that, so it is never
+    reached, the counter is never re-synced, and every label starts a
+    little further along the roll than the last. That is a drift down a
+    roll rather than a one-off, which is exactly what a printed ruler held
+    against the stock shows.
+    """
+
+    LABEL = 375           # a 2.25" x 1.25" cryo label, at 300 dpi
+    LINE = b"\xf0" * 84
+
+    def _length(self, payload: bytes) -> int:
+        """The ESC L value out of a finished job, read off the wire.
+
+        Read rather than recomputed: the point of every assertion here is
+        the number the printer receives, and a helper that re-derived it
+        would only ever agree with the code that wrote it.
+        """
+        marker = bytes([protocol.ESC, ord("L")])
+        index = payload.index(marker)
+        return (payload[index + 2] << 8) | payload[index + 3]
+
+    def test_the_budget_is_larger_than_the_raster_it_has_to_pay_for(self):
+        payload = protocol.job([self.LINE] * self.LABEL, bytes_per_line=84,
+                               label_feed_dots=self.LABEL)
+        printed = len(TestAJobAPrinterCanActuallyRead._decode(payload, 84))
+        self.assertEqual(self.LABEL, printed)
+        sent = self._length(payload)
+        self.assertGreater(sent, printed)
+        self.assertGreaterEqual(sent - printed, protocol.MIN_HEADROOM_DOTS)
+        # Pinned as a number so a change to the headroom is a change
+        # somebody made on purpose: 375 + 25% is 469 dot lines, 1.56", and
+        # the gap between two die-cut labels is nothing like that wide.
+        self.assertEqual(469, sent)
+
+    def test_the_value_that_shipped_left_nothing_to_reach_the_hole_with(self):
+        """The old line was `label_length_dots=rendered.feed_dots`, which
+        on this stock is 375 — the exact number of dot lines the job goes
+        on to print. Reproduced as the arithmetic rather than described,
+        because "it was slightly short" and "it was short by the whole of
+        it" are different bugs and only the second explains a drift that
+        grows down a roll."""
+        payload = protocol.job([self.LINE] * self.LABEL, bytes_per_line=84,
+                               label_feed_dots=self.LABEL)
+        printed = len(TestAJobAPrinterCanActuallyRead._decode(payload, 84))
+        # The old recipe, rebuilt out of the job it was taken from: the
+        # ESC L value WAS the height of the raster being sent.
+        was = protocol.set_label_length(printed)
+        self.assertEqual(printed, (was[2] << 8) | was[3])
+        self.assertEqual(0, ((was[2] << 8) | was[3]) - printed,
+                         "the whole budget went on the artwork")
+        self.assertEqual(94, self._length(payload) - printed)
+
+    def test_a_short_stock_gets_the_floor_and_a_long_one_the_fraction(self):
+        """A quarter of a 0.5" library label is 37 dot lines, which is
+        about one die-cut gap and no headroom at all; a quarter of a 4"
+        shipping label is 300, which is plenty. Both directions are the
+        same rule with a floor under it."""
+        self.assertEqual(150 + protocol.MIN_HEADROOM_DOTS,
+                         protocol.search_length(150))
+        self.assertEqual(1200 + 300, protocol.search_length(1200))
+
+    def test_it_scales_with_graphics_mode_exactly_as_the_line_count_does(self):
+        """The 300x600 mode steps the paper twice per rendered row, so the
+        raster doubles — and the budget is counted in those same steps. The
+        two are one fact: a budget that did not double would be short by
+        half a label in the mode this add-on prints in by default."""
+        rows = [self.LINE] * self.LABEL
+        text = self._length(protocol.job(rows, bytes_per_line=84,
+                                         label_feed_dots=self.LABEL,
+                                         quality="text"))
+        payload = protocol.job(rows, bytes_per_line=84,
+                               label_feed_dots=self.LABEL,
+                               quality="graphics")
+        graphics = self._length(payload)
+        self.assertEqual(text * protocol.LINE_REPEAT["graphics"], graphics)
+        printed = len(TestAJobAPrinterCanActuallyRead._decode(payload, 84))
+        self.assertEqual(self.LABEL * 2, printed)
+        self.assertGreater(graphics, printed)
+
+    def test_continuous_stock_takes_the_negative_continuous_form_value(self):
+        """There are no sense holes on continuous paper, so a search budget
+        is meaningless and a positive one sends the printer hunting for
+        something that is not there. The manual gives the mode its own
+        mechanism, and this add-on shipped a continuous stock in the
+        catalog without ever sending it."""
+        payload = protocol.job([self.LINE] * 40, bytes_per_line=84,
+                               continuous=True, label_feed_dots=self.LABEL)
+        self.assertIn(protocol.continuous_form(), payload)
+        self.assertEqual(protocol.CONTINUOUS_LENGTH, self._length(payload))
+        self.assertGreaterEqual(self._length(payload), 0x8000)
+
+    def test_a_die_cut_label_is_never_put_into_continuous_mode(self):
+        """Including the one that used to do it by accident: the old clamp
+        was 0xFFFF, so a mistyped feed measurement reached the printer as
+        the continuous-form flag."""
+        for feed in (1, 40, self.LABEL, 1200, 99_999):
+            with self.subTest(feed=feed):
+                payload = protocol.job([self.LINE], bytes_per_line=84,
+                                       label_feed_dots=feed)
+                self.assertLess(self._length(payload), 0x8000)
+
+    def test_the_length_is_sent_once_per_copy_like_the_rest(self):
+        payload = protocol.job([self.LINE], bytes_per_line=84, copies=3,
+                               label_feed_dots=self.LABEL)
+        self.assertEqual(3, payload.count(
+            protocol.set_label_length(protocol.search_length(self.LABEL))))
+
+
+class TestTheDotTabIsPrinterState(unittest.TestCase):
+    """`ESC B 0` was left out as "a no-op by construction", and it is not.
+
+    The manual: "both the dot tab variable and the bytes-per-line variable
+    are held by the control electronics until they are changed by a new
+    command sequence or are reset to default values by a power-on reset or
+    a software reset command." The variable lives in the printer, not in
+    our renderer — so omitting the command does not mean zero, it means
+    whatever DYMO Connect, another driver or an earlier job last set. Each
+    unit is a byte, eight dots, 1/37th of an inch of left margin, applied
+    to every line of every label and visible from here as nothing at all.
+    """
+
+    LINE = b"\xf0" * 84
+
+    def test_the_preamble_states_the_dot_tab_rather_than_inheriting_it(self):
+        payload = protocol.job([self.LINE], bytes_per_line=84,
+                               label_feed_dots=375)
+        self.assertIn(bytes([protocol.ESC, ord("B"), 0]), payload)
+
+    def test_it_sits_with_the_bytes_per_line_it_has_to_agree_with(self):
+        """The manual pairs them — "if the host computer modifies the
+        starting byte, the number of bytes per line must be adjusted
+        downward by a corresponding amount" — so 0 and 84 are one statement
+        about the head, and they are sent together rather than a preamble
+        apart."""
+        payload = protocol.job([self.LINE], bytes_per_line=84,
+                               label_feed_dots=375)
+        tab = payload.index(bytes([protocol.ESC, ord("B"), 0]))
+        per_line = payload.index(protocol.set_bytes_per_line(84))
+        self.assertEqual(tab + 3, per_line)
+
+    def test_it_is_re_sent_for_every_copy(self):
+        """Same reasoning as the roll byte and the density: three bytes to
+        start each label from a known state rather than trusting that
+        nothing came between them."""
+        payload = protocol.job([self.LINE], bytes_per_line=84, copies=4,
+                               label_feed_dots=375)
+        self.assertEqual(4, payload.count(bytes([protocol.ESC, ord("B"), 0])))
+
+    def test_bare_leaves_it_alone(self):
+        """`bare` exists for a firmware that will not take a command in the
+        preamble, and that has to include this one — otherwise the mode
+        somebody falls back to is not the minimum it claims to be."""
+        payload = protocol.job([self.LINE], bytes_per_line=84,
+                               label_feed_dots=375, dot_tab=False)
+        self.assertNotIn(bytes([protocol.ESC, ord("B")]), payload)
 
 
 class TestHowDarkAndHowSlow(unittest.TestCase):
@@ -227,7 +468,7 @@ class TestHowDarkAndHowSlow(unittest.TestCase):
         and then a mode change is a printer asked to measure in one unit
         and print in another."""
         payload = protocol.job([self.LINE], bytes_per_line=84,
-                               label_length_dots=1,
+                               label_feed_dots=1,
                                density="dark", quality="graphics")
         self.assertTrue(payload.startswith(b"\x1bg\x1bi"), payload[:8])
         self.assertLess(payload.index(b"\x1bi"),
@@ -235,7 +476,7 @@ class TestHowDarkAndHowSlow(unittest.TestCase):
 
     def test_the_roll_still_comes_first(self):
         payload = protocol.job([self.LINE], bytes_per_line=84, roll=1,
-                               label_length_dots=1,
+                               label_feed_dots=1,
                                density="dark", quality="graphics")
         self.assertTrue(payload.startswith(
             protocol.select_roll(1) + b"\x1bg\x1bi"))
@@ -244,7 +485,7 @@ class TestHowDarkAndHowSlow(unittest.TestCase):
         """Same reasoning as the roll byte: four bytes to start each label
         from a known state rather than inheriting the last job's."""
         payload = protocol.job([self.LINE], bytes_per_line=84, copies=3,
-                               label_length_dots=1,
+                               label_feed_dots=1,
                                density="dark", quality="graphics")
         self.assertEqual(3, payload.count(b"\x1bg"))
         self.assertEqual(3, payload.count(b"\x1bi"))
@@ -255,45 +496,51 @@ class TestHowDarkAndHowSlow(unittest.TestCase):
         out half its length, with everything on it squashed."""
         rows = [bytes([i]) * 84 for i in range(10)]
         payload = protocol.job(rows, bytes_per_line=84,
-                               label_length_dots=10,
+                               label_feed_dots=10,
                                density="dark", quality="graphics")
         decoded = TestAJobAPrinterCanActuallyRead._decode(payload, 84)
         self.assertEqual([row for row in rows for _ in (0, 1)], decoded)
 
     def test_graphics_mode_doubles_the_label_length(self):
         """`ESC L` is counted in the same 600-per-inch steps, so a length
-        left at 375 would tell the printer the label is half as long as the
-        raster it is about to receive."""
+        left at its 300 dpi value would tell the printer the label is half
+        as long as the raster it is about to receive."""
         payload = protocol.job([self.LINE] * 375, bytes_per_line=84,
-                               label_length_dots=375,
+                               label_feed_dots=375,
                                density="dark", quality="graphics")
-        self.assertIn(protocol.set_label_length(750), payload)
-        self.assertNotIn(protocol.set_label_length(375), payload)
+        budget = protocol.search_length(375)
+        self.assertIn(protocol.set_label_length(budget * 2), payload)
+        self.assertNotIn(protocol.set_label_length(budget), payload)
 
-    def test_text_mode_sends_each_line_once_and_the_plain_length(self):
+    def test_text_mode_sends_each_line_once_and_the_unscaled_length(self):
         rows = [bytes([i]) * 84 for i in range(10)]
         payload = protocol.job(rows, bytes_per_line=84,
-                               label_length_dots=10,
+                               label_feed_dots=10,
                                density="normal", quality="text")
         self.assertEqual(rows,
                          TestAJobAPrinterCanActuallyRead._decode(payload, 84))
-        self.assertIn(protocol.set_label_length(10), payload)
+        self.assertIn(protocol.set_label_length(protocol.search_length(10)),
+                      payload)
         self.assertIn(b"\x1bh", payload)
 
-    def test_bare_sends_neither_byte_and_is_the_job_that_always_shipped(self):
-        """`bare` is the escape route: the printer at its own defaults, and
-        byte-for-byte what this add-on sent before darkness existed. If the
-        two ever differ, the mode somebody falls back to is not the one
-        that used to work."""
+    def test_bare_sends_nothing_but_the_geometry(self):
+        """`bare` is the escape route from a firmware that will not take one
+        of these commands, so it has to be the minimum: roll, length, bytes
+        per line, the rows, the feed. Written out as the literal preamble
+        rather than as a list of things it must not contain, because a
+        command added later would pass the second and fail the first — and
+        the whole value of this mode is knowing exactly what it sends."""
         rows = [bytes([i]) * 84 for i in range(20)]
-        bare = protocol.job(rows, bytes_per_line=84, roll=1, copies=2,
-                            label_length_dots=20,
-                            density=None, quality=None)
-        before = protocol.job(rows, bytes_per_line=84, roll=1, copies=2,
-                              label_length_dots=20)
-        self.assertEqual(before, bare)
+        bare = protocol.job(rows, bytes_per_line=84, roll=1, copies=1,
+                            label_feed_dots=20,
+                            density=None, quality=None, dot_tab=False)
+        self.assertTrue(bare.startswith(
+            protocol.select_roll(1)
+            + protocol.set_label_length(protocol.search_length(20))
+            + protocol.set_bytes_per_line(84)
+            + bytes([protocol.SYN])), bare[:16])
         for command in (b"\x1bc", b"\x1bd", b"\x1be", b"\x1bg",
-                        b"\x1bh", b"\x1bi"):
+                        b"\x1bh", b"\x1bi", b"\x1bB"):
             self.assertNotIn(command, bare, command)
 
     def test_an_unknown_density_or_quality_is_refused(self):

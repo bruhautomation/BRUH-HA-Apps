@@ -134,6 +134,14 @@ the integration's sensors and calls its services — it never talks to the
 add-on directly, so it works from a phone on mobile data through Nabu Casa
 exactly as it does on the LAN.
 
+Printing is a service call, so it works whatever your entities are named.
+The status pill and the roll boxes are the sensors, which the card finds by
+the end of their entity id — if yours are named something else (a renamed
+device, or a second BRUH Print) it says so and keeps printing, and
+`printer_entity`, `left_roll_entity`, `right_roll_entity` and
+`problem_entity` are how you point it at them. [DOCS.md](DOCS.md#what-the-card-needs-and-what-it-only-shows)
+has the whole of it.
+
 Home Assistant serves the card with a month-long cache header, so it is
 registered under a URL that changes whenever the file does. An update reaches
 your dashboard on the next page load, with nothing to clear. If a dashboard
