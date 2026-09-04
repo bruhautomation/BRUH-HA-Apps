@@ -1601,11 +1601,18 @@ start_study_watcher() {
 
 start_memory_consolidator() {
     # One-line hint (independent of the learning toggle): logged in, but the
-    # login isn't shared with other BRUH add-ons yet — ha-share-login makes
-    # that a one-command fix.
+    # login isn't shared with other BRUH add-ons yet.
+    #
+    # It named `ha-share-login`, which is the SCRIPT's filename and has never
+    # been a command: only `brain` and `ha` are copied onto PATH (see
+    # install_cli_tools), and the script is reached through them. So the one
+    # log line anybody would act on named something that answers "command not
+    # found" — the same failure as `--status` telling people to run it. The
+    # command is `ha login --share`, and the panel does it with a button.
     if [ ! -f /config/.brain/secrets/claude_auth.json ]; then
-        if [ -f /data/home/.claude/.credentials.json ] || [ -f /data/.config/claude/.credentials.json ]; then
-            bashio::log.info "Tip: run 'ha-share-login' in the terminal to share this Claude login with other BRUH add-ons (like brAIn)."
+        if [ -f /data/home/.claude/.credentials.json ] || [ -f /data/.config/claude/.credentials.json ] \
+            || [ -f /data/secrets/claude_auth.json ]; then
+            bashio::log.info "Tip: run 'ha login --share' in the Terminal tab (or use the panel's Settings -> Claude account) to share this Claude login with other BRUH add-ons."
         fi
     fi
 

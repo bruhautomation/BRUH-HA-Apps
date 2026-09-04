@@ -95,7 +95,10 @@
        answer all of them with the same dialog. Now: the usage pill opens the
        reset times where it stands, the paused chip undoes the thing it is
        reporting, and ⚙ is the one route to Settings. -->
-  <span id="authChip" class="chip hidden"><span class="dot"></span><span id="authChipText">Checking…</span></span>
+  <!-- A button, like the two clickable chips beside it: it renders only for
+       trouble, and trouble is exactly when there is something to press. A
+       span would also have been unreachable from a keyboard. -->
+  <button id="authChip" class="chip clickable hidden"><span class="dot"></span><span id="authChipText">Checking…</span></button>
   <button id="usageChip" class="chip clickable hidden" aria-expanded="false"><span class="dot"></span><span class="uwin"><span class="ulab">Session</span><span id="usageChipPct"></span></span><span id="usageChipWeek" class="uwin hidden"><span class="ulab">Week</span><span id="usageChipWeekPct"></span></span></button>
   <button id="pausedChip" class="chip clickable warn hidden"><span class="dot"></span><span id="pausedChipText"></span></button>
 
@@ -120,12 +123,23 @@
 
   <!-- Connect / setup screen (shown when no credential is stored) -->
   <section id="setup" class="setup hidden">
-    <h2>Connect your Claude account&nbsp;✨</h2>
+    <!-- Shown as the first-run gate when there is no credential, AND on
+         demand when there is one — from the auth chip and from
+         ⚙ Settings → Claude account. It used to be gated on `authenticated`
+         alone, so the moment a credential existed there was no route back to
+         it: a token that died on a Tuesday left the chip saying "Claude auth
+         failed" and the panel offering nothing to press. -->
+    <div class="row setup-head">
+      <h2 id="setupTitle">Connect your Claude account&nbsp;✨</h2>
+      <div class="spacer"></div>
+      <button id="setupBack" class="btn ghost hidden">Back</button>
+    </div>
     <p class="sub">brAIn uses your Claude subscription (Pro or Max) to analyze your home and
       generate live interactive visualizations. Connect once — the credential is stored only inside
       this add-on.</p>
     <p class="hint">Tip: you can also sign in from the <b>Terminal</b> tab — run
-      <code>claude</code> there once and brAIn picks the login up automatically.</p>
+      <code>ha login</code> (or just <code>claude</code>) there once and brAIn picks the login
+      up automatically.</p>
 
     <div class="tabs">
       <button class="btn small tab active" data-pane="guided">Guided sign-in</button>
@@ -709,6 +723,43 @@
       <button id="setClose" class="btn icon" data-tip="Close" aria-label="Close">✕</button>
     </header>
     <div class="edit-body">
+      <!-- First section on purpose. Everything else in this dialog is a
+           preference; this is the one that decides whether the add-on works
+           at all, and until now the only surface for it was a chip that
+           hides itself whenever the login is fine. -->
+      <h4 class="sethead first">Claude account</h4>
+      <div id="authBody" class="authbox">Loading…</div>
+      <div class="row authbtns">
+        <button id="authSignin" class="btn">Sign in again</button>
+        <button id="authRecheck" class="btn">Check it now</button>
+        <button id="authSignout" class="btn danger">Sign out</button>
+      </div>
+      <p class="hint tight">brAIn re-checks a stored credential every few hours while the
+        panel is open, so a login that dies is noticed without a restart. <b>Check it now</b>
+        asks Claude straight away — it costs one tiny run, which is why it is a button and
+        not a timer.</p>
+
+      <div class="sharebox">
+        <div class="row">
+          <b>Share this login with other BRUH add-ons</b>
+          <div class="spacer"></div>
+          <span id="authShareState" class="chip"><span class="dot"></span><span>—</span></span>
+        </div>
+        <p class="hint tight" id="authShareNote"></p>
+        <div class="row authbtns">
+          <button id="authShare" class="btn">Share it</button>
+          <button id="authUnshare" class="btn hidden">Stop sharing</button>
+        </div>
+        <p class="hint tight">Writes the credential to
+          <code>/config/.brain/secrets/claude_auth.json</code> (0600), which is the one place
+          outside this add-on's own storage that other BRUH add-ons can read. The same thing
+          <code>ha login --share</code> does in the Terminal tab.
+          <b>Note:</b> <code>/config</code> is included in Home Assistant backups, and those
+          are not encrypted unless you turn that on — so a shared login travels with your
+          backups. Sharing is off unless you turn it on for exactly that reason.</p>
+      </div>
+
+      <h4 class="sethead">Insights</h4>
       <label class="check bigcheck"><input id="setEnabled" type="checkbox">
         <span><b>Automatic insights</b><br>
         <span class="subtext">Generate cards on their intervals and schedules. Turn off to pause

@@ -12,6 +12,7 @@
 #   brain learn [topic]            Run a study session on the home
 #   brain ask "<question>"         One-shot question, same engine as the Ask card
 #   brain undo [n]                 Review and revert Claude's file edits
+#   brain login                    Sign in to Claude (same as `ha login`)
 #   brain check                    Run the house checks now (no Claude run)
 #   brain doctor [--json]          End-to-end diagnostic
 #   brain report                   Redacted diagnostics bundle for a bug report
@@ -64,6 +65,12 @@ Usage:
   brain doctor [--json]          End-to-end diagnostic of brAIn itself
   brain report [--no-names]      Write a redacted diagnostics bundle to
                                  /share/brain/reports for a bug report
+  brain login [--status|--share] Sign in to Claude, and share that login with
+                                 other BRUH add-ons. Same command as `ha login`
+                                 — it is listed here because the credential is
+                                 brAIn's, not Home Assistant's, and this is
+                                 where people look for it. Also on the panel:
+                                 ⚙ Settings → Claude account.
   brain help                     This help
 
 Home Assistant operations live under `ha` (ha log, ha reload, ha entity, ...).
@@ -103,6 +110,7 @@ case "$action" in
     weekly)     delegate brain-weekly.sh "$@" ;;
     doctor)     delegate ha-selftest.sh "$@" ;;
     report)     delegate brain-report.sh "$@" ;;
+    login)      delegate ha-share-login.sh "$@" ;;
     help|--help|-h) usage ;;
     *)
         echo -e "${RED}Unknown subcommand: ${action}${NC}" >&2
