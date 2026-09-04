@@ -41,6 +41,19 @@ SCAN_INTERVAL_SECONDS = 5
 CARD_URL = "/local/bruh_print/bruh-print-card.js"
 CARD_FILE = Path("/config/www/bruh_print/bruh-print-card.js")
 
+# The route Core serves /config/www at, and the repair raised when it is not
+# serving it at all. See `_local_is_served` in __init__.py for why that
+# happens on a house that had no /config/www before BRUH Print made one.
+LOCAL_PATH = "/local"
+ISSUE_LOCAL_NOT_SERVED = "local_not_served"
+
+# The same URL as manifest.json's `documentation`, which the repair issue
+# hands the person as its "learn more" link. Here rather than read back out
+# of the manifest because this module is what the integration imports, and a
+# link that has to be looked up in a JSON file at runtime is a link that can
+# fail to be there.
+DOCS_URL = "https://github.com/bruhautomation/BRUH-HA-Apps/tree/main/bruh-print"
+
 # How long the integration keeps looking for a card that is not there yet,
 # and how often. Home Assistant may well set this entry up before the add-on
 # has finished starting — a first install, or an add-on update while Core was

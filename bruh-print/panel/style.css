@@ -34,6 +34,11 @@
   --shadow: 0 1px 2px rgba(16, 24, 40, .06), 0 4px 14px rgba(16, 24, 40, .06);
   --radius: 12px;
   --bar-h: 56px;
+  /* Remeasured at runtime by `syncBarHeight` — this is the value for the
+   * shape the phone renders (one chip, one row) so the bar is right before
+   * app.js has said anything. It is what the sticky bar's negative top is
+   * set from, so an over-estimate takes the tab strip off the screen. */
+  --barmain-h: 56px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -80,10 +85,19 @@ p { margin: 0 0 12px; }
 .spacer { flex: 1 1 auto; }
 
 /* ── Top bar ─────────────────────────────────────────────────────────── */
+/* Sticky, and below 1100px sticky with a NEGATIVE top of exactly the status
+ * row's height: the bar scrolls up until the tab strip is against the top of
+ * the window and then pins there. 247px of permanent chrome on a 780px phone
+ * was 32% of the screen spent before any content, and only one row of it is
+ * navigation — a status readout does not deserve to be permanent, and the
+ * tabs do. Measured before and after: 247px → 56px persistent. */
 .topbar {
   position: sticky; top: 0; z-index: 30;
   background: var(--panel);
   border-bottom: 1px solid var(--line);
+}
+@media (max-width: 1099px) {
+  .topbar { top: calc(-1 * var(--barmain-h)); }
 }
 /* Wrapping is how the bar gives way. Nothing in it shrinks and nothing hides
  * its own words to fit, so on a narrow screen the status chips take a row of
@@ -99,7 +113,11 @@ p { margin: 0 0 12px; }
  * into an unreadable width. What gives way is the row. */
 .chip { flex: none; }
 
+/* Home Assistant's own header says "BRUH Print" in the row directly above
+ * this panel, so on a phone the wordmark is a row spent saying it twice. It
+ * stays at every width where the room is not the scarce thing. */
 .wordmark { font-weight: 800; letter-spacing: -.02em; font-size: 17px; }
+@media (max-width: 700px) { .wordmark { display: none; } }
 .wm-ink { color: var(--ink); }
 .wm-accent { color: var(--accent); }
 
@@ -126,6 +144,22 @@ p { margin: 0 0 12px; }
 .roll-chip .side { color: var(--ink-3); font-weight: 700; }
 .chip span:last-child { font-variant-numeric: tabular-nums; }
 .roll-chip.empty { color: var(--ink-3); border-style: dashed; }
+/* One chip or three, never both. All three press through to the Printer
+ * tab, so on a phone they are one control drawn as three — and three of
+ * them was 497px of content in a 362px row, which is two wrapped lines of
+ * permanent bar. Which one renders is a width, so it is settled here. */
+.chip-one { display: none; }
+@media (max-width: 700px) {
+  .chip-one { display: inline-flex; }
+  .chip-many { display: none; }
+  /* With the wordmark gone this is the only thing in the row, and a lone
+   * chip pushed to the right edge of an empty bar reads as something that
+   * lost its label. */
+  .bar-status { justify-content: flex-start; margin-left: 0; }
+  /* 6px rather than 8: the row is a 44px chip and its padding, and the two
+   * pixels either side are two pixels of permanent chrome. */
+  .bar-main { padding: 6px 14px; min-height: 0; }
+}
 
 /* Tabs wrap onto a second row rather than shrinking, and they keep their
  * words at every width — no width gets a strip of bare glyphs, because a
@@ -157,6 +191,9 @@ p { margin: 0 0 12px; }
 
 /* ── Layout ──────────────────────────────────────────────────────────── */
 .wrap { max-width: 1280px; margin: 0 auto; padding: 18px 14px 60px; }
+/* Six pixels off the top on a phone. Small on its own; it is the last of
+ * the chrome between the tab you pressed and the thing you came to do. */
+@media (max-width: 700px) { .wrap { padding-top: 12px; } }
 .view { display: none; }
 .view.is-on { display: block; }
 
@@ -263,23 +300,35 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
 }
 
 /* ── Designer ────────────────────────────────────────────────────────── */
+/* One row: the add strip and ⋯. Everything else about the label is in the
+ * sheet, so this cannot wrap into the five rows it used to and cannot push
+ * the label off the bottom of a phone. */
 .design-bar {
-  display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
-  padding: 12px 14px; margin-bottom: 14px;
+  display: flex; gap: 10px; align-items: center; flex-wrap: nowrap;
+  padding: 8px 10px; margin-bottom: 10px;
   background: var(--panel); border: 1px solid var(--line);
   border-radius: var(--radius); box-shadow: var(--shadow);
 }
 /* `width: auto` sizes a <select> to its WIDEST OPTION, and the stock names
  * are long ("Chemical-Resistant Cryo Labels — 2.25" × 1.25""), so the
  * picker laid out 431px wide inside a 390px window and took the page with
- * it. The cap is on the control, and `min-width: 0` on the label is what
- * lets the cap bite — a flex item's floor is otherwise its max-content. */
-.design-bar > * { min-width: 0; max-width: 100%; }
-.design-bar select, .design-bar input { min-width: 120px; max-width: 100%;
-  width: auto; }
-.addbar { display: flex; gap: 6px; flex-wrap: wrap; }
-.bargroup { display: flex; gap: 6px; flex: none; }
-.addbar .btn { padding: 0 11px; }
+ * it. The stock picker lives in the sheet now, where the same cap applies
+ * for the same reason — a dialog is `max-width: min(560px, 94vw)` and a
+ * select sized to its widest option ignores it. */
+.modal select, .modal input { max-width: 100%; }
+/* The strip is what gives way: it scrolls inside itself rather than taking
+ * the page sideways, and its buttons keep their words (a row of bare glyphs
+ * is the shape nobody can learn) and their 44px targets. */
+.addbar { display: flex; gap: 6px; flex: 1 1 auto; min-width: 0;
+  flex-wrap: nowrap; overflow-x: auto;
+  scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.addbar::-webkit-scrollbar { display: none; }
+.addbar .btn { padding: 0 11px; flex: none; }
+/* The last button under the fade is how a strip says it scrolls. Clipped
+ * square at the container's edge reads as a button overlapping the one
+ * beside it, which is what it looked like at 390px. */
+.addbar { mask-image: linear-gradient(90deg, #000 calc(100% - 20px), transparent);
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 20px), transparent); }
 
 .canvas-pane { display: flex; flex-direction: column; gap: 10px; }
 /* 24px at the top rather than 14: an element's name tag sits 19px above its
@@ -288,9 +337,16 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
  * identical rectangles you have hold of. */
 .canvaslegend { font-size: 12px; color: var(--ink-3); margin: 0; }
 .canvas-scroll { overflow: auto; display: flex; justify-content: center;
+  align-items: flex-start;
   padding: 24px 14px 14px; border-radius: 10px; border: 1px solid var(--line);
   background: repeating-conic-gradient(var(--line-2) 0% 25%, transparent 0% 50%)
     50% / 16px 16px; }
+/* A floor on the WORKSPACE, not on the label. How big the label is drawn is
+ * its own aspect ratio against the pane's width — a 2.25 × 1.25 label in a
+ * 328px pane is 166px tall and nothing here can make it taller. What this
+ * buys is that the area does not collapse around a 0.56" wrap-around strip,
+ * and that switching stock does not move everything under it. */
+@media (max-width: 700px) { .canvas-scroll { min-height: 200px; } }
 .canvas { position: relative; background: #fff; box-shadow: 0 2px 12px rgba(0,0,0,.25);
   flex: none; }
 .canvas img { display: block; image-rendering: pixelated; }
@@ -373,8 +429,16 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
 .remaining:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .stocktable { display: grid; gap: 6px; margin-bottom: 12px; }
+/* `min-width: 0` is what makes the cap on the select below bite. A grid
+ * item's floor is its min-content, and this row's min-content is its widest
+ * flex item — the Text direction picker, which a browser lays out at its
+ * WIDEST OPTION (373px). So the row was 399px wide inside a 362px column and
+ * the Printer tab scrolled sideways on a phone, while `max-width: 100%` on
+ * the select resolved against the width the select had itself caused.
+ * Measured: 413px of page in a 390px window. */
 .strow {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  min-width: 0;
   padding: 10px 12px; background: var(--panel); border: 1px solid var(--line);
   border-radius: 10px;
 }
@@ -388,7 +452,22 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
 /* Sized to its content and capped, never `width: auto` unbounded — a select
    lays out to its WIDEST option, which is how the design tab's stock picker
    once took the page width with it. */
-.strow .turnpick { flex: 0 0 auto; width: auto; max-width: 100%; }
+.strow .turnpick { flex: 0 1 auto; width: auto; min-width: 0; max-width: 100%; }
+/* The picker and its name are one item, so a row that wraps cannot leave
+   "Text direction" at the end of one line and the answer at the start of the
+   next. It sets no font-size: a smaller one here would beat the touch floor
+   on specificity, which is the `.btn.tiny` bug one selector over. */
+.strow .turnfield { flex: 0 1 auto; min-width: 0; max-width: 100%; }
+/* On a phone the picker takes the row and its name goes above it. Beside
+   it, the name and the answer share 338px and the browser cuts the END of
+   the option — which is the half that says what "automatic" decided, and
+   the whole reason that answer is written into the option at all. */
+@media (max-width: 700px) {
+  .strow .turnfield { flex: 1 1 100%; flex-direction: column;
+    align-items: stretch; gap: 5px; }
+  .strow .turnfield > span { font-size: 12px; }
+  .strow .turnpick { width: 100%; }
+}
 .addstock { background: var(--panel); border: 1px solid var(--line);
   border-radius: var(--radius); padding: 12px 14px; }
 .addstock summary { cursor: pointer; font-weight: 600; min-height: 30px; }
@@ -442,24 +521,6 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
   max-width: min(560px, 94vw); width: 100%; }
 .modal::backdrop { background: rgba(0,0,0,.45); }
 .modal > div { padding: 18px; }
-
-/* ── The design bar on a phone ───────────────────────────────────────── */
-/* Six add buttons, two fields and two toggles wrapped to 389px of controls
- * above the canvas on a 390px screen — which put the label itself off the
- * bottom of the window, under the sticky Print bar, before you had touched
- * anything. The add buttons become one swipeable strip: they keep their
- * words (a row of bare glyphs is the shape nobody can learn), they keep
- * their 44px targets, and the strip scrolls inside itself rather than taking
- * the page sideways with it. */
-@media (max-width: 700px) {
-  .design-bar { gap: 8px; padding: 10px 12px; }
-  .addbar {
-    flex-wrap: nowrap; overflow-x: auto; width: 100%;
-    scrollbar-width: none; -webkit-overflow-scrolling: touch;
-  }
-  .addbar::-webkit-scrollbar { display: none; }
-  .addbar .btn { flex: none; }
-}
 
 /* ── Font picker ─────────────────────────────────────────────────────── */
 /* The samples are 1-bit PNGs of black ink on a transparent ground, drawn by
@@ -552,9 +613,70 @@ input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; }
 
 /* The direction line under a stock picker: a sentence, not a control. */
 .turnline { font-size: 13px; margin: -6px 0 12px; }
-.design-bar .turnline { margin: 0; }
-.design-bar .btn.on { border-color: var(--accent); color: var(--accent);
-  background: var(--accent-soft); }
+
+/* ── The Quick tab's order ───────────────────────────────────────────── */
+/* Say it, look at it, print it. Three grid items rather than the old two
+ * panes, because the picture has to come BETWEEN the box you type in and
+ * everything else — and on a phone "everything else" was 510px of form that
+ * put the preview at y=899 of a 780px screen. A phone stacks them in DOM
+ * order; a wide screen puts the picture in a second column beside both. */
+.quick-split { display: grid; gap: 18px; grid-template-columns: minmax(0, 1fr); }
+.quick-do { display: grid; gap: 12px; }
+.btn.wide { width: 100%; }
+
+/* The secondary controls, behind one press. Nothing is unreachable — the
+ * summary line says what is set and opening it is only for changing it. */
+.quick-more { border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--panel); box-shadow: var(--shadow); }
+.quick-more > summary { min-height: 44px; display: flex; align-items: center;
+  gap: 8px; padding: 0 14px; cursor: pointer; font-size: 14px;
+  color: var(--ink-2); }
+/* A summary laid out as a flex box loses the browser's own disclosure
+ * triangle, and what is left reads as a line of text rather than as
+ * something to press — which on the Quick tab is the line hiding every
+ * secondary control. The marker is drawn back, on both disclosures. */
+.quick-more > summary, .stockhelp > summary { list-style: none; }
+.quick-more > summary::-webkit-details-marker,
+.stockhelp > summary::-webkit-details-marker { display: none; }
+.quick-more > summary::before, .stockhelp > summary::before {
+  content: "\25b8"; flex: none; font-size: 13px; color: var(--ink-3);
+  transition: transform .12s ease;
+}
+.quick-more[open] > summary::before, .stockhelp[open] > summary::before {
+  transform: rotate(90deg);
+}
+.quick-more[open] > summary { border-bottom: 1px solid var(--line-2); }
+.quick-more > *:not(summary) { margin-left: 14px; margin-right: 14px; }
+.quick-more > .row:first-of-type { margin-top: 12px; }
+.quick-more > .actions:last-child { padding-bottom: 14px; }
+
+@media (min-width: 900px) {
+  .quick-split { grid-template-columns: minmax(0, 1fr) minmax(320px, 42%);
+    align-items: start; }
+  .quick-say { grid-column: 1; grid-row: 1; }
+  .quick-do { grid-column: 1; grid-row: 2; }
+  /* The picture spans both rows on the right, which is where it was before
+   * the reorder — a wide screen never had this problem and does not get a
+   * new shape to solve it. */
+  .quick-see { grid-column: 2; grid-row: 1 / span 2; }
+  /* Full width is a phone's shape. A 700px Print button is not a bigger
+   * target, it is a button that has lost its edges. And the order flips:
+   * on a phone Print comes before the secondary controls because it is what
+   * you do next after looking at the preview, but on a wide screen the
+   * whole form is open beside the picture and an action above the settings
+   * it acts on reads as a step out of sequence. */
+  .quick-do > .btn.wide { width: auto; justify-self: start; order: 2; }
+  .quick-more { order: 1; }
+}
+
+/* ── The design bar's sheet ──────────────────────────────────────────── */
+/* ⋯ is named, because a control that needs a tooltip to have a purpose gets
+ * a name instead — and it is `flex: none` so the add strip, not the button,
+ * is what gives way as the row narrows. */
+.designmore { flex: none; }
+.stockhelp { margin-bottom: 12px; }
+.stockhelp > summary { min-height: 40px; display: flex; align-items: center;
+  gap: 8px; cursor: pointer; font-size: 14px; color: var(--ink-2); }
 
 /* ── The touch floor ─────────────────────────────────────────────────
  * LAST in the file, and that is load-bearing rather than tidy. These rules

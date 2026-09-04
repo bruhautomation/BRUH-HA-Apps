@@ -172,6 +172,23 @@ async function loadState() {
 
 const stockById = (id) => S.stocks.find((s) => s.id === id) || null;
 
+/* How tall the status row is, published to the stylesheet.
+ *
+ * Below 1100px the bar is `position: sticky` with a NEGATIVE top of exactly
+ * this height, which is what lets the wordmark-and-status row scroll away
+ * while the tab strip pins: navigation deserves to be permanent and a status
+ * readout does not. It has to be measured rather than assumed, because
+ * whether the chips wrapped is a function of the width and of what is in
+ * them — and a value larger than the row's real height would take the tabs
+ * off the top of the screen with it, which is the one failure mode here. */
+function syncBarHeight() {
+  const bar = document.querySelector('.bar-main');
+  if (!bar) return;
+  document.documentElement.style.setProperty(
+    '--barmain-h', Math.round(bar.getBoundingClientRect().height) + 'px');
+}
+addEventListener('resize', syncBarHeight);
+
 function renderBar() {
   const dot = $('printerDot'), name = $('printerName');
   if (S.printer) {
@@ -204,6 +221,44 @@ function renderBar() {
      * does not exist is a control that lies. */
     chip.hidden = roll.side === 'right' && !!S.printer && !S.printer.twin;
   }
+  renderOneChip();
+  syncBarHeight();
+}
+
+/* The phone's status chip: one control, because all three were one control
+ * drawn as three — every one of them presses through to the Printer tab.
+ * What it carries is what you check standing at the printer: is it there,
+ * and what is in the bays. The names are in the tooltip and on the Printer
+ * tab, so this is a shorter COMPLETE label rather than a truncated long
+ * one — the same trade the three chips already made by showing sizes. */
+function renderOneChip() {
+  const dot = $('statusDot'), text = $('statusText'), chip = $('statusChip');
+  if (!chip) return;
+  const twin = !S.printer || S.printer.twin;
+  const bays = S.rolls
+    .filter((roll) => !(roll.side === 'right' && !twin))
+    .map((roll) => {
+      const stock = stockById(roll.stock);
+      return `${roll.side === 'left' ? 'L' : 'R'} ${stock ? stock.label : 'empty'}`;
+    });
+  if (S.printer) {
+    dot.className = 'dot good';
+    text.textContent = bays.join(' \u00b7 ') || S.printer.name;
+  } else if (S.ambiguous) {
+    dot.className = 'dot warn';
+    text.textContent = `${S.printers.length} printers — pick one`;
+  } else {
+    dot.className = 'dot bad';
+    text.textContent = 'No printer';
+  }
+  const loaded = S.rolls
+    .filter((roll) => roll.loaded && stockById(roll.stock))
+    .map((roll) => `the ${roll.side} roll holds ${stockById(roll.stock).name} `
+      + `${stockById(roll.stock).label}`);
+  chip.setAttribute('data-tip',
+    (S.printer ? S.printer.name : 'No printer found')
+    + (loaded.length ? ` \u2014 ${loaded.join(', ')}` : '')
+    + '. Press for the Printer tab.');
 }
 
 /* What you can print on: the stock that is actually in the printer.
@@ -247,6 +302,7 @@ function fillPickers() {
   setFontButton(quickFont,
     S.fonts.some((f) => f.key === keptFont) ? keptFont : (S.fonts[0] || {}).key);
   updateTurnLines();
+  quickSummary();
 
   if (!$('addBar').childElementCount) buildAddBar();
 }
@@ -264,17 +320,17 @@ const turnWords = (turn) => (Number(turn) === 90 || Number(turn) === 270
   ? 'Text runs along the roll' : 'Text runs across the label');
 
 function updateTurnLines() {
+  /* One clause shorter than it was: the preview beside it SHOWS which way
+   * the text runs, so the half of this sentence worth keeping is the half
+   * that says where to change it. */
   const quick = stockById($('quickStock').value);
   const quickLine = $('quickTurnLine');
   quickLine.textContent = quick
-    ? `${turnWords(quick.turn)} (change it on the Printer tab)` : '';
+    ? `${turnWords(quick.turn)} — change it on the Printer tab` : '';
   const designLine = $('designTurnLine');
-  if (S.label) {
-    designLine.textContent =
-      `${turnWords(S.label.rotate)} (change it on the Printer tab)`;
-  } else {
-    designLine.textContent = '';
-  }
+  designLine.textContent = S.label
+    ? `${turnWords(S.label.rotate)} — change it on the Printer tab` : '';
+  quickSummary();
 }
 
 /* ── Font picker ────────────────────────────────────────────────────────
@@ -355,11 +411,30 @@ function openFontPicker(current, onPick) {
 $('quickFont').addEventListener('click', () => {
   openFontPicker(quickFontValue(), (key) => {
     setFontButton($('quickFont'), key);
+    quickSummary();
     quickPreview();
   });
 });
 
 /* ── Quick ──────────────────────────────────────────────────────────── */
+/* What is behind the disclosure, said on its own summary line.
+ *
+ * It keeps the NOUNS, because a closed row reading "2.25" × 1.25" · Sans
+ * Bold" answers a question nobody asked and not the one they did, which is
+ * where the label picker went. And it carries the two answers the preview
+ * above it cannot show: which stock this is going to — that names the roll,
+ * so it is the thing you check every time — and how many. The font, the
+ * capitals and the direction are all in the picture. */
+function quickSummary() {
+  const line = $('quickMoreSummary');
+  if (!line) return;
+  const stock = stockById($('quickStock').value);
+  const copies = Number($('quickCopies').value) || 1;
+  let text = `Label, copies, font \u2014 ${stock ? stock.label : 'none picked'}`;
+  if (copies > 1) text += ` \u00b7 ${copies} copies`;
+  line.textContent = text;
+}
+
 let quickTimer = 0;
 let quickSeq = 0;
 function quickPayload(printIt) {
@@ -419,8 +494,13 @@ const debouncedQuick = () => { clearTimeout(quickTimer); quickTimer = setTimeout
       prefSet('bruhprint.stock', $('quickStock').value);
       updateTurnLines();
     }
+    quickSummary();
     debouncedQuick();
   }));
+/* Copies changes nothing about the picture, so it does not redraw one — but
+ * it does change the summary, which is the only place the number shows once
+ * the disclosure is shut. */
+$('quickCopies').addEventListener('input', quickSummary);
 
 $('quickPrint').addEventListener('click', async () => {
   const button = $('quickPrint');
@@ -978,6 +1058,23 @@ function alignTools(element, mm) {
     };
     nudges.append(button);
   }
+  /* Rotate lives here, with the align and nudge tools, because it acts on
+   * the SELECTED box and so does every other control in this pane. It was
+   * in the design bar, where it was permanently on screen and disabled for
+   * most of what you can select — a control that spends its life greyed out
+   * teaches people it is not for them. It keeps the id the design bar gave
+   * it because that is the name every handler and test already uses. */
+  const rotate = el('button', 'btn', '⟳ Rotate');
+  rotate.type = 'button';
+  rotate.id = 'designRotateEl';
+  rotate.disabled = !canTurn(element);
+  rotate.setAttribute('data-tip', canTurn(element)
+    ? 'Turn this box a quarter — the box turns with it, so the words still '
+      + 'have room.'
+    : `A ${S.catalog.elements[element.type]?.name || element.type} looks the `
+      + 'same whichever way up it is, so there is nothing to turn.');
+  rotate.onclick = rotateSelected;
+  nudges.append(rotate);
   holder.append(nudges);
   return holder;
 }
@@ -1008,24 +1105,14 @@ function rotateSelected() {
   markDirty(); drawOverlay(); drawProps();
 }
 
-function syncDesignBar() {
-  const rotate = $('designRotateEl');
-  const element = S.label ? S.label.elements[S.selected] : null;
-  rotate.disabled = !canTurn(element);
-  rotate.setAttribute('data-tip', canTurn(element)
-    ? 'Turn this box a quarter — the box turns with it, so the words still '
-      + 'have room.'
-    : element
-      ? `A ${S.catalog.elements[element.type]?.name || element.type} looks the `
-        + 'same whichever way up it is, so there is nothing to turn.'
-      : 'Pick a box on the label first.');
-  const snapButton = $('designSnap');
-  snapButton.setAttribute('aria-pressed', String(snapOn()));
-  snapButton.classList.toggle('on', snapOn());
+/* The sheet reads the stored answer rather than remembering one of its own:
+ * it is opened and closed, and a tick-box that keeps its own state is a
+ * second answer to a question `snapOn()` already has. */
+function syncDesignSheet() {
+  $('designSnap').checked = snapOn();
 }
 
 function drawProps() {
-  syncDesignBar();
   const holder = $('props'), empty = $('propsEmpty');
   const element = S.label.elements[S.selected];
   holder.hidden = !element;
@@ -1179,11 +1266,13 @@ $('designStock').addEventListener('change', () => {
   updateTurnLines();
   markDirty(); drawOverlay(); drawProps();
 });
-$('designRotateEl').addEventListener('click', rotateSelected);
-$('designSnap').addEventListener('click', () => {
-  prefSet('bruhprint.snap', snapOn() ? '0' : '1');
-  syncDesignBar();
-  toast(snapOn() ? 'Snapping on.' : 'Snapping off.');
+$('designMore').addEventListener('click', () => {
+  syncDesignSheet();
+  $('designSheet').showModal();
+});
+$('designSheetDone').addEventListener('click', () => $('designSheet').close());
+$('designSnap').addEventListener('change', () => {
+  prefSet('bruhprint.snap', $('designSnap').checked ? '1' : '0');
 });
 $('designName').addEventListener('input', () => { S.label.name = $('designName').value; });
 $('overlay').addEventListener('pointerdown', (event) => {
@@ -1584,16 +1673,23 @@ function renderPrinter() {
      * property of the roll. `turn_set` is the difference between a shape
      * BRUH Print guessed from and an answer somebody gave; they diverge the
      * moment the measurements are swapped. */
+    /* The name is a LABEL beside the picker rather than the first three
+     * words of every option. A <select> lays out to its widest option, so
+     * "Text direction: automatic — along the roll" made a 373px control in
+     * a 338px row on a phone — and what the browser cut off was the end,
+     * which is the half that says what automatic decided. The label is once,
+     * the answer is in the option, and both are readable. */
+    const turnWrap = el('label', 'field inline turnfield');
+    turnWrap.append(el('span', null, 'Text direction'));
     const turn = el('select', 'turnpick');
-    turn.setAttribute('aria-label', 'Text direction');
     /* "Automatic" that does not say what it decided is a setting you cannot
      * check without printing one, so the derived answer rides in the
      * option's own text and the closed select reads as the answer. */
-    const derived = stock.turn === 90 ? 'along the roll' : 'across';
+    const derived = stock.turn === 90 ? 'along the roll' : 'across the label';
     for (const [value, text] of [
-      ['', `Text direction: automatic \u2014 ${derived}`],
-      ['0', 'Text direction: across the label'],
-      ['90', 'Text direction: along the roll'],
+      ['', `Automatic \u2014 ${derived}`],
+      ['0', 'Across the label'],
+      ['90', 'Along the roll'],
     ]) {
       const option = el('option', null, text);
       option.value = value;
@@ -1613,7 +1709,8 @@ function renderPrinter() {
         toast('Saved.', 'good');
       } catch (error) { fail(error); }
     };
-    row.append(turn);
+    turnWrap.append(turn);
+    row.append(turnWrap);
 
     const edit = el('button', 'btn tiny', 'Edit');
     edit.setAttribute('data-tip',
@@ -1846,6 +1943,7 @@ $('addStock').addEventListener('click', async () => {
 document.querySelectorAll('.roll-chip').forEach((chip) =>
   chip.addEventListener('click', () => { show('printer'); }));
 $('printerChip').addEventListener('click', () => show('printer'));
+$('statusChip').addEventListener('click', () => show('printer'));
 
 /* ── History ────────────────────────────────────────────────────────── */
 function renderHistory() {
@@ -1866,6 +1964,10 @@ function renderHistory() {
       + (entry.template ? ` · ${entry.template}` : '')));
     row.append(el('span', 'spacer'));
     const again = el('button', 'btn tiny', 'Print again');
+    /* The Printed tab's lede used to say this and nothing else. A sentence
+     * that describes a button belongs on the button. */
+    again.setAttribute('data-tip',
+      'Prints exactly this label again — same words, same stock, same roll.');
     again.onclick = async () => {
       try {
         const data = await post(`/api/history/${entry.id}/reprint`, {});
@@ -1874,6 +1976,8 @@ function renderHistory() {
       } catch (error) { fail(error); }
     };
     const open = el('button', 'btn tiny', 'Open');
+    open.setAttribute('data-tip',
+      'Opens this label in the designer with every field already filled in.');
     open.onclick = () => { loadLabel(structuredClone(entry.label)); show('design'); };
     row.append(again, open);
     list.append(row);
@@ -1891,7 +1995,13 @@ $('clearHistory').addEventListener('click', async () => {
   try {
     await loadState();
     loadLabel(null);
+    /* The disclosure is a phone's answer to a phone's problem. On a wide
+     * screen the whole form fits beside the picture and always did, so it
+     * opens once at boot — and only at boot, because a person who shut it
+     * meant to shut it and a resize is not an instruction. */
+    $('quickMore').open = matchMedia('(min-width: 900px)').matches;
     show(prefGet('bruhprint.view', 'quick'));
+    syncBarHeight();
     $('quickText').focus();
   } catch (error) {
     toast(`BRUH Print could not load: ${error.message}`, 'bad');

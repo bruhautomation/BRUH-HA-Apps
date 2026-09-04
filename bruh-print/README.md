@@ -13,7 +13,10 @@ a dashboard.
 the largest arrangement that fits — every way of breaking the words across
 lines is rendered and the biggest wins. `Spare keys` comes out on two
 lines because that is bigger than one; `Attic` comes out on one because
-that is.
+that is. The tab reads in that order too: what to say, the picture, then
+**Print** — on a phone the preview is on the same screen you are typing on,
+and the label, copies, font and the rest sit under one line that says what
+they are currently set to.
 
 **A real designer.** Text, Code 128 barcodes, QR codes, boxes, rules and
 uploaded images, dragged and resized on the label itself. Everything is in
@@ -23,7 +26,10 @@ centre lines, to each other and to a 1mm grid, with a line drawn at whatever
 they caught; the printable area and the printer's own margin are drawn on the
 canvas, so you can see what you are aiming at; nothing can be dragged, typed
 or nudged off the label; and text re-fits as you resize its box rather than
-after you let go. The font picker shows each font *drawn by the label
+after you let go. The bar above the label is the add strip and one **⋯ Label
+setup** button — which stock, what it is called, which way its text runs and
+whether boxes line up as you drag are all one press away, so the label itself
+gets the screen. The font picker shows each font *drawn by the label
 renderer*, because a list of family names shows the one thing a font choice
 is not about.
 
@@ -134,6 +140,14 @@ your dashboard on the next page load, with nothing to clear. If a dashboard
 still shows the old card straight after this update, refresh it once (or
 close and reopen the app) — the *old* URL is the one your browser cached, and
 that is the last time it will need doing.
+
+**The card shows "Custom element doesn't exist":** restart Home Assistant
+once. Home Assistant only serves the `/config/www` folder if that folder was
+already there when it started, and BRUH Print has just created it — so on a
+house that never had one (most houses, unless you already run a custom card
+or HACS) the card cannot be fetched until Home Assistant restarts. BRUH Print
+raises a repair in **Settings > System > Repairs** that says so, and it clears
+itself afterwards. You will not have to do it again.
 
 ## Documentation
 

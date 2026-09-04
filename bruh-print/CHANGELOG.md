@@ -1,5 +1,71 @@
 # Changelog
 
+## 0.4.0
+
+**The card was not being served at all, and nothing could have said so.**
+Home Assistant registers the `/local` folder only if `/config/www` already
+existed when Home Assistant *started* — it is one `os.path.isdir` in core's
+frontend setup. The add-on creates `/config/www/bruh_print` when the **add-on**
+starts, which on any ordinary install is afterwards. So on a house that never
+had a `/config/www` — and you only have one if you already installed a custom
+card or HACS — `/local` is not a route on that run, **every** request for the
+card is a 404, and the dashboard shows Home Assistant's own "Custom element
+doesn't exist: bruh-print-card". Restarting the add-on cannot fix it. Only
+restarting Home Assistant can, and only once.
+
+Hashing the card's URL in 0.3.0 could not have helped: the whole prefix was
+missing. And the integration checked that the *file* existed — which passes
+happily — so it registered a URL it had no reason to believe was reachable,
+the one thing that function's own comment claimed to prevent.
+
+BRUH Print now asks the running server whether `/local` is served and raises
+a **repair** naming the single restart that ends it, clearing itself once the
+check passes. It fails open everywhere: a diagnosis may never become a gate
+that stops a working card from registering.
+
+**And the card can now say when it has nothing to work with.** With no
+integration, or the add-on stopped, it drew a text box, a Print button that
+failed with a service-call error, and a status pill reading *ready* — the one
+sentence it had lived inside the rolls block, so turning the rolls off turned
+off the only explanation. It names what it went looking for whatever
+`show_rolls` says, carries its own version so a screenshot answers "which card
+is this", and stops offering a button that cannot work.
+
+**Nothing in this repository had ever executed the card**, which is why that
+shipped twice. `measure-print-card.mjs` loads the real card into a browser and
+fails on a missing explanation, an enabled Print with nothing behind it, a
+`side` reaching a service call, or a target under 44px. It runs in CI.
+
+**The panel was built for a laptop and used on a phone.** Measured at
+390 x 780 — an iPhone once Home Assistant's own header has taken its share —
+the top bar was **247px, a third of the screen, before any content**: a
+wordmark duplicating the header directly above it, three status chips totalling
+497px in a 362px row so they wrapped, and tabs on a second row. The design bar
+was another 269px in five rows, so the canvas began at y=590 and got 166px. On
+the Quick tab the preview began at **y=899 — entirely below the fold**, on the
+one screen whose whole purpose is type, look, print.
+
+Now: the wordmark goes on a phone (the host header already says it), the three
+chips become the one control they always were — all three opened the Printer
+tab — the status row scrolls away while the **tabs stay pinned**, and the
+design bar is a single row. Chrome above content **247 -> 153px**, pinned
+chrome **247 -> 96px**, the design bar **269 -> 62px**, the canvas top
+**590 -> 279**, and the Quick preview **899 -> 362**, with Print on the same
+screen. The Printer tab also stopped scrolling sideways at 390px: a `<select>`
+sized to its widest option was setting a 413px floor for a 390px window.
+
+**"What is snap?" was a fair question.** A `#` glyph and a verb with no object.
+It is a mode you set once, not an action, so it has left the phone's primary
+row for the label-setup sheet as **"Line boxes up as I drag"**, with a sentence
+saying what it does. **Rotate** moved into the properties pane beside align and
+nudge, where every other per-element control already lives.
+
+**And the prose that cost a row every time you looked at it is gone.** Each
+lede was judged on its own: deleted where the control beside it already said
+the same thing, shortened where it carried one fact, and kept where the fact is
+available nowhere else — the Printer tab still says a LabelWriter cannot tell
+what stock is in it, because that is why the feature exists.
+
 ## 0.3.0
 
 **The Lovelace card never updated, and the card you were looking at was the

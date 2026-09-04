@@ -21,7 +21,7 @@
  * reloaded it.
  */
 
-const CARD_VERSION = '0.3.0';
+const CARD_VERSION = '0.4.0';
 
 /* eslint-disable no-console */
 console.info(
@@ -115,6 +115,17 @@ const css = `
   .msg.err { background: color-mix(in srgb, var(--error-color, #c0392b) 14%, transparent);
     color: var(--error-color, #c0392b); }
   .empty { color: var(--secondary-text-color); font-size: 14px; }
+
+  /* The card cannot work. Not styled as an error — nothing has gone
+     wrong at the printer — but it has to be read before the form under
+     it, which is why it sits directly under the title. */
+  .trouble { margin-bottom: 14px; padding: 11px 13px; border-radius: 10px;
+    background: var(--secondary-background-color);
+    border-left: 4px solid var(--warning-color, #e0a30c); }
+  .trouble p { margin: 0 0 6px; font-size: 13.5px; line-height: 1.45; }
+  .trouble p:last-child { margin-bottom: 0; }
+  .trouble .what { font-weight: 600; }
+  .trouble .who { font-size: 11.5px; color: var(--secondary-text-color); }
 `;
 
 class BruhPrintCard extends HTMLElement {
@@ -204,6 +215,13 @@ class BruhPrintCard extends HTMLElement {
     const problem = this._find('problem');
     const printer = this._find('printer');
 
+    /* Worked out once per render and read by every Print button: a
+     * button that cannot work is worse than no button, because pressing
+     * it produces a failure about a service call rather than the sentence
+     * above it. */
+    const missing = this._missing();
+    this._blocked = missing.length > 0;
+
     const root = document.createElement('div');
     const style = document.createElement('style');
     style.textContent = css;
@@ -218,12 +236,17 @@ class BruhPrintCard extends HTMLElement {
 
     if (config.show_status) {
       const pill = document.createElement('span');
-      const trouble = problem?.state === 'on';
+      /* `ready` is what an absent printer sensor falls back to, so a card
+       * that found nothing at all used to say ready in the same breath as
+       * the block below it says it cannot find anything. The pill reports
+       * the missing setup first, because that is what is wrong. */
+      const trouble = this._blocked || problem?.state === 'on';
       pill.className = 'pill' + (trouble ? ' bad' : '');
       const dot = document.createElement('span');
       dot.className = 'dot';
       const text = document.createElement('span');
-      text.textContent = trouble
+      if (this._blocked) text.textContent = 'not set up';
+      else text.textContent = trouble
         ? (problem?.attributes?.reason || 'not ready')
         : (printer?.state || 'ready');
       pill.append(dot, text);
@@ -231,6 +254,12 @@ class BruhPrintCard extends HTMLElement {
       head.append(pill);
     }
     card.append(head);
+
+    /* Shown whatever `show_rolls` and `show_status` say. The one line
+     * the card used to have about this lived inside the rolls block, so
+     * turning the rolls off turned off the only thing that could explain
+     * an empty card. */
+    if (this._blocked) card.append(this._trouble(missing));
 
     if (config.show_rolls) card.append(this._rolls());
     if (config.quick.length) card.append(this._quickRow());
@@ -245,6 +274,44 @@ class BruhPrintCard extends HTMLElement {
 
     root.append(style, card);
     this.shadowRoot.replaceChildren(root);
+  }
+
+  /* ── When there is nothing to print with ────────────────────────────
+   * Two things reach this card as an empty screen and neither is about
+   * the printer: the integration is not set up, or the add-on is stopped
+   * and has never published a sensor. A text box and a Print button
+   * cannot say either, and pressing Print says only that a service call
+   * failed — so the card names what it went looking for and what to do
+   * about it, and stops offering the button.
+   *
+   * The version rides along because a screenshot of a broken dashboard
+   * should answer "which card is this" without anybody having to ask —
+   * and a browser holding a month-old cached copy is one of the answers.
+   */
+  _missing() {
+    const out = [];
+    if (!this._find('printer')) out.push('the printer sensor');
+    if (!this._find('left_roll') && !this._find('right_roll'))
+      out.push('the roll sensors');
+    return out;
+  }
+
+  _trouble(missing) {
+    const box = document.createElement('div');
+    box.className = 'trouble';
+    const what = document.createElement('p');
+    what.className = 'what';
+    what.textContent = `This card cannot find ${missing.join(' or ')}.`;
+    const todo = document.createElement('p');
+    todo.textContent = 'Check that the BRUH Print add-on is running, and that '
+      + 'BRUH Print is set up under Settings \u2192 Devices & services. The '
+      + 'add-on is what talks to the printer; the integration is what puts it '
+      + 'in here.';
+    const who = document.createElement('p');
+    who.className = 'who';
+    who.textContent = `BRUH Print card ${CARD_VERSION}`;
+    box.append(what, todo, who);
+    return box;
   }
 
   /* The loaded rolls ARE the label picker.
@@ -335,12 +402,9 @@ class BruhPrintCard extends HTMLElement {
       }
       wrap.append(box);
     }
-    if (!wrap.childElementCount) {
-      const empty = document.createElement('p');
-      empty.className = 'empty';
-      empty.textContent = 'No BRUH Print sensors found. Is the integration set up?';
-      wrap.append(empty);
-    }
+    /* Nothing to draw is not explained here: `_trouble` above has
+     * already said what is missing, and it says it whether or not the
+     * rolls are switched on. */
     return wrap;
   }
 
@@ -350,7 +414,7 @@ class BruhPrintCard extends HTMLElement {
     for (const item of this._config.quick) {
       const button = document.createElement('button');
       button.textContent = item.label || item.text || item.template || 'Print';
-      button.disabled = this._busy;
+      button.disabled = this._busy || this._blocked;
       button.addEventListener('click', () => this._quickPrint(item));
       wrap.append(button);
     }
@@ -386,7 +450,7 @@ class BruhPrintCard extends HTMLElement {
     const print = document.createElement('button');
     print.className = 'primary';
     print.textContent = this._busy ? 'Printing…' : 'Print';
-    print.disabled = this._busy;
+    print.disabled = this._busy || this._blocked;
     print.addEventListener('click', () => this._print());
     actions.append(print);
     wrap.append(actions);
@@ -395,7 +459,6 @@ class BruhPrintCard extends HTMLElement {
 
   _templateForm() {
     const wrap = document.createElement('div');
-    const printer = this._find('printer');
     const template = this._config.template;
 
     const fields = this._config.fields || [];
@@ -433,16 +496,13 @@ class BruhPrintCard extends HTMLElement {
     const print = document.createElement('button');
     print.className = 'primary';
     print.textContent = this._busy ? 'Printing…' : `Print ${template}`;
-    print.disabled = this._busy;
+    print.disabled = this._busy || this._blocked;
     print.addEventListener('click', () => this._print());
     actions.append(print);
-    if (printer) wrap.append(actions);
-    else {
-      const note = document.createElement('p');
-      note.className = 'empty';
-      note.textContent = 'Waiting for the BRUH Print integration.';
-      wrap.append(note);
-    }
+    /* Appended whether or not the sensors are there, disabled when they
+     * are not: a form that loses its button reads as a card still
+     * loading, and `_trouble` above has already said which it is. */
+    wrap.append(actions);
     return wrap;
   }
 
@@ -524,7 +584,9 @@ class BruhPrintCard extends HTMLElement {
   }
 
   _print() {
-    if (this._busy) return;
+    /* Enter in the text box prints, so the guard cannot live on the
+     * button alone. */
+    if (this._busy || this._blocked) return;
     if (this._config.mode === 'template') {
       const fields = { ...this._form.fields };
       for (const field of this._config.fields || []) {
@@ -547,7 +609,7 @@ class BruhPrintCard extends HTMLElement {
   }
 
   _quickPrint(item) {
-    if (this._busy) return;
+    if (this._busy || this._blocked) return;
     if (item.template) {
       this._call('print_template', {
         template: item.template, fields: item.fields || {},
