@@ -291,7 +291,10 @@ class TestPanelBranding(unittest.TestCase):
             self.assertNotIn(stale, self.html, f"panel references {stale}")
 
     def test_every_view_tab_has_a_pane(self):
-        for view in ("insights", "findings", "terminal", "memory", "docs"):
+        # Named, not counted: a count says nothing about whether the tab
+        # added last kept its label.
+        for view in ("insights", "findings", "proposals", "activity",
+                     "terminal", "memory", "docs"):
             self.assertIn(f'data-view="{view}"', self.html)
             self.assertIn(f'id="view{view.capitalize()}"', self.html)
 

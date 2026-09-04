@@ -69,6 +69,79 @@ def _headers() -> dict[str, str]:
 
 
 # ---------------------------------------------------------------------------
+# Asking Core for history, once
+# ---------------------------------------------------------------------------
+#
+# Three callers built this query by hand — `get_history` here,
+# `closures.fetch_history` and `shadow.fetch_history` — each pasting
+# `','.join(ids)` into the URL after the `?`. `_rest_get`'s own docstring
+# says not to, and says why, and all three were written past it.
+#
+# It is not only a style rule. On the replay path the ids come out of an
+# automation config that arrived in an HTTP body, so an id carrying `&`
+# or `#` is a second parameter or a fragment rather than a value — which
+# is what CodeQL reported as a partial SSRF, correctly. Off that path the
+# ids come from the registry and the same character corrupts the call
+# quietly instead, which is the failure nobody would ever trace.
+#
+# So the query is built in one place, out of ids that have been checked
+# against what an entity id may contain, and handed to aiohttp as
+# `params` so it does the encoding. `tests/test_ha_history_query.py`
+# greps for the old shape, because the thing to stop is a fourth copy.
+
+ENTITY_ID_RE = re.compile(r"^[a-z0-9_]+\.[a-z0-9_]+$")
+
+
+def is_entity_id(value: str) -> bool:
+    """Whether this is an entity id, by the only characters Core makes."""
+    return bool(ENTITY_ID_RE.match(str(value or "")))
+
+
+def safe_entity_ids(ids) -> list[str]:
+    """The ids that are ids, in order, deduped.
+
+    Dropped rather than escaped: an id that is not an id names nothing,
+    so encoding it would spend a request asking Core about a string
+    somebody made up. `actions._logbook` already refuses this way.
+    """
+    seen, out = set(), []
+    for raw in ids or []:
+        eid = str(raw or "")
+        if is_entity_id(eid) and eid not in seen:
+            seen.add(eid)
+            out.append(eid)
+    return out
+
+
+def history_params(ids, end: dt.datetime | None = None, *,
+                   minimal: bool = False,
+                   no_attributes: bool = False) -> dict[str, str]:
+    """Core's `/history/period` query, as params rather than as a string.
+
+    The flags are valueless in Core's API, and aiohttp will not send a
+    bare key — `""` is what reaches the wire as `&minimal_response=`,
+    which Core reads as present. That is the one detail that makes this
+    a drop-in for the strings it replaces.
+    """
+    params: dict[str, str] = {}
+    kept = safe_entity_ids(ids)
+    if kept:
+        params["filter_entity_id"] = ",".join(kept)
+    if end is not None:
+        params["end_time"] = end.isoformat()
+    if minimal:
+        params["minimal_response"] = ""
+    if no_attributes:
+        params["no_attributes"] = ""
+    return params
+
+
+def history_path(start: dt.datetime) -> str:
+    """The path half, which holds a timestamp and nothing a caller typed."""
+    return f"/history/period/{start.isoformat()}"
+
+
+# ---------------------------------------------------------------------------
 # Raw fetchers
 # ---------------------------------------------------------------------------
 
@@ -417,11 +490,9 @@ async def get_history(
     if not entity_ids:
         return {}
     ids = entity_ids[:MAX_HISTORY_ENTITIES]
-    path = (
-        f"/history/period/{start.isoformat()}"
-        f"?filter_entity_id={','.join(ids)}&minimal_response&no_attributes"
-    )
-    raw = await _rest_get(session, path, timeout=90)
+    raw = await _rest_get(
+        session, history_path(start), timeout=90,
+        params=history_params(ids, minimal=True, no_attributes=True))
     out: dict[str, list] = {}
     for series in raw or []:
         if not series:

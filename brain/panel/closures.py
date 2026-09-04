@@ -249,11 +249,11 @@ async def fetch_history(session, ids: list[str], start: dt.datetime) -> dict:
     out: dict[str, list] = {}
     for i in range(0, len(ids), BATCH):
         batch = ids[i:i + BATCH]
-        path = (f"/history/period/{start.isoformat()}"
-                f"?filter_entity_id={','.join(batch)}"
-                "&minimal_response&no_attributes")
         try:
-            raw = await ha_data._rest_get(session, path, timeout=90)
+            raw = await ha_data._rest_get(
+                session, ha_data.history_path(start), timeout=90,
+                params=ha_data.history_params(
+                    batch, minimal=True, no_attributes=True))
         except Exception as exc:  # noqa: BLE001 — a batch that failed is a
             # batch that failed; the rest of the house still gets measured.
             log.info("closure history batch failed: %s", exc)

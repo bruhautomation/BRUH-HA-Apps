@@ -3466,6 +3466,155 @@ $("#obRetry").addEventListener("click", async (ev) => {
   await refreshOnboarding();
 });
 
+// ------------------------------------------------------------- proposals
+//
+// The fifth kind of knowledge, and the only list in the panel that is not
+// about something being wrong. It gets its own tab rather than a row on
+// Findings for the reason the store's own header gives: a list of things
+// you might want beside a list of things that are broken makes both
+// worse.
+
+const propState = { data: null, busy: 0, noteFor: 0 };
+
+async function refreshProposals() {
+  try {
+    propState.data = await api("api/proposals");
+  } catch (err) {
+    propState.data = { proposals: [], counts: { open: 0 }, error: String(err) };
+  }
+  renderProposals();
+}
+
+function propBadge() {
+  const badge = $("#propBadge");
+  if (!badge) return;
+  const open = propState.data?.counts?.open || 0;
+  badge.textContent = open;
+  badge.classList.toggle("hidden", !open);
+}
+
+function propTrialLine(row) {
+  const result = row.trial_result;
+  if (!result) {
+    const ends = row.trial_ends_at ? new Date(row.trial_ends_at * 1000) : null;
+    return ends
+      ? `Running in shadow — nothing is enabled. Reports ${ends.toLocaleDateString()}.`
+      : "Running in shadow — nothing is enabled.";
+  }
+  // The whole point of the week: not "it would have fired", but "and you
+  // agreed with it that many times".
+  const fired = result.would_fire ?? 0;
+  const agreed = result.agreed ?? 0;
+  return `It would have fired ${fired} ${fired === 1 ? "time" : "times"}`
+    + `. On ${agreed} of those you did the same thing by hand.`;
+}
+
+function propReplayLine(row) {
+  const r = row.replay;
+  if (!r) return "";
+  if (r.refused || r.error) return `Not replayable: ${r.error || "unknown"}`;
+  const ran = r.would_run ?? 0;
+  const blocked = r.blocked_by_conditions ?? 0;
+  let line = `Over the last ${r.days ?? 30} days it would have run `
+    + `${ran} ${ran === 1 ? "time" : "times"}`;
+  if (blocked) line += `, with ${blocked} blocked by its conditions`;
+  return line + ".";
+}
+
+async function propAct(ts, path, body) {
+  if (propState.busy) return;
+  propState.busy = ts;
+  renderProposals();
+  try {
+    const out = await api(`api/proposal/${ts}/${path}`, {
+      method: "POST", body: JSON.stringify(body || {}),
+    });
+    propState.data = out;
+    if (out.learned) toast("Noted — brAIn has written that down.");
+  } catch (err) {
+    toast(String(err && err.message ? err.message : err));
+    await refreshProposals();
+  } finally {
+    propState.busy = 0;
+    propState.noteFor = 0;
+    renderProposals();
+  }
+}
+
+function propCard(row) {
+  const card = el("div", "propcard");
+  const head = el("div", "prophead-row");
+  head.appendChild(el("h3", "proptitle", row.title || "A proposal"));
+  if (row.status === "trialling") head.appendChild(el("span", "pilltrial", "On trial"));
+  card.appendChild(head);
+
+  if (row.why) card.appendChild(el("p", "propwhy", row.why));
+  const replay = propReplayLine(row);
+  if (replay) card.appendChild(el("p", "propreplay", replay));
+  if (row.status === "trialling") {
+    card.appendChild(el("p", "proptrial", propTrialLine(row)));
+  }
+
+  // The reason box opens IN PLACE of the buttons, inside the card: you are
+  // explaining something and it has to stay on screen while you write
+  // about it. Same arrangement the findings' "Wrong" box uses.
+  if (propState.noteFor === row.ts) {
+    const box = el("div", "propnote");
+    const area = el("textarea");
+    area.placeholder = "Why not? (optional — it teaches brAIn about your home)";
+    area.rows = 2;
+    box.appendChild(area);
+    const row2 = el("div", "propbtns");
+    const send = el("button", "btn small", "No thanks");
+    send.addEventListener("click", () =>
+      propAct(row.ts, "decline", { note: area.value }));
+    const back = el("button", "btn small ghost", "Cancel");
+    back.addEventListener("click", () => { propState.noteFor = 0; renderProposals(); });
+    row2.append(send, back);
+    box.appendChild(row2);
+    card.appendChild(box);
+    return card;
+  }
+
+  const btns = el("div", "propbtns");
+  if (row.status === "proposed") {
+    const trial = el("button", "btn small", "Try it for a week");
+    trial.dataset.tip = "Runs in shadow — it logs what it would have done and changes nothing";
+    trial.addEventListener("click", () => propAct(row.ts, "trial"));
+    btns.appendChild(trial);
+  }
+  const yes = el("button", "btn small",
+    row.status === "trialling" ? "Keep it" : "Enable it");
+  yes.addEventListener("click", () => propAct(row.ts, "accept"));
+  const no = el("button", "btn small ghost", "✕ No thanks");
+  no.addEventListener("click", () => { propState.noteFor = row.ts; renderProposals(); });
+  btns.append(yes, no);
+  card.appendChild(btns);
+  return card;
+}
+
+function renderProposals() {
+  propBadge();
+  const list = $("#propList");
+  if (!list) return;
+  list.textContent = "";
+  const rows = propState.data?.proposals || [];
+  if (!rows.length) {
+    // Deliberately not phrased as an achievement. An empty Findings list
+    // means the house is well; an empty Proposals list means brAIn has
+    // not spotted a habit worth automating yet, which is not the same.
+    const days = propState.data?.routine_min_days || 6;
+    list.appendChild(el("p", "empty",
+      "Nothing to suggest yet. brAIn proposes a change once it has watched "
+      + `you do the same thing by hand, at about the same time, on ${days} `
+      + "separate days — and only while nothing in Home Assistant already "
+      + "does it for you."));
+    return;
+  }
+  rows.forEach((row) => list.appendChild(propCard(row)));
+}
+
+
 // ------------------------------------------------------------- activity
 // What changed, and what changed it.
 //
@@ -3766,6 +3915,9 @@ function switchView(name) {
   // a timeline showing the state of the house when you last looked is the
   // one thing a timeline may not do.
   if (name === "activity") { actState.end = null; actState.open = ""; refreshActivity(); }
+  // Rendered from what we have, then again once the fetch lands — the same
+  // shape Findings uses, so opening the tab is never a blank frame.
+  if (name === "proposals") { renderProposals(); refreshProposals(); }
 }
 
 document.querySelectorAll(".viewtab").forEach((b) =>
@@ -5663,6 +5815,9 @@ document.addEventListener("visibilitychange", () => {
   render();
   fastPoll();
   refreshFindings();
+  // At boot too, not only when the tab is opened: the badge is how anybody
+  // learns there is something waiting on this list at all.
+  refreshProposals();
   // resume a guided sign-in if one is mid-flight (page reload)
   try {
     const st = await api("api/auth/setup/status");

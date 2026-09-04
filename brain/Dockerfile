@@ -17,6 +17,7 @@ RUN apk add --no-cache \
     py3-requests \
     py3-aiohttp \
     py3-yaml \
+    py3-jinja2 \
     py3-beautifulsoup4 \
     py3-pillow \
     tzdata \

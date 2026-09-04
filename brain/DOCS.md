@@ -700,6 +700,110 @@ hour that has not finished. Both are urgent enough to break quiet hours; the
 preheat one is not, because a schedule that starts late will start late again
 tomorrow.
 
+### Where a proposal comes from
+
+The first thing brAIn proposes is **what you already do by hand.** Somebody
+walks over and turns the hall lamp on at about twenty to seven every weekday.
+No check can report that — the light works, the switch works, nobody has
+complained — and it is nonetheless the most useful thing a house knows about
+itself.
+
+So the checks pass keeps the changes a **person** caused, and only those: an
+automation moving a light says nothing about a habit, and a wall switch reaches
+Home Assistant with no record of who pressed it, which brAIn reports as
+`unattributed` rather than guessing. Two months are kept, in the domains a
+timer can sensibly act on.
+
+Five things have to hold before any of it is offered, and each one answers
+"would this fire on a house with no habit in it":
+
+- **Six separate days**, not six presses. Twelve presses on one Monday is one
+  Monday.
+- **A share of the days it could have happened on.** Six times in a fortnight
+  is a habit; six times in two months is a coincidence, and a count with no
+  denominator reports both identically. Weekdays and weekends are counted
+  apart, so a weekday habit is graded against weekdays.
+- **A time, not a stretch of evening.** The times are averaged *around the
+  clock* — half past eleven and half past midnight are forty minutes apart, and
+  a plain average of them is noon — and anything more scattered than about
+  three quarters of an hour is not a time of day.
+- **It has to still be happening.** A habit you dropped in the spring has a
+  beautiful spring in the record.
+- **Nothing must already do it.** A second automation moving the same thing to
+  the same state is not a helpful duplicate; it is two rules that will disagree
+  the first time their triggers land in the wrong order.
+
+What it writes is a plain time trigger, with a weekday or weekend condition
+when the habit has one — never a condition it did not measure. A pass offers at
+most three, strongest first; the rest are still there next time.
+
+### It suggests things, and proves them first
+
+The **Proposals** tab is the only list in the panel that is not about something
+being wrong. It gets its own tab rather than a row on Findings: a list of things
+you might want, sitting beside a list of things that are broken, makes both
+worse — the broken things stop looking urgent and the nice-to-haves start to.
+
+```
+proposed  ──"Try it for a week"──▶  trialling  ──▶  accepted
+          └──"No thanks"──────────────────────────▶  declined
+```
+
+**Nothing brAIn writes is ever enabled without a trial.** A trial runs the
+proposed automation in shadow — it watches live events and logs what it *would*
+have done, calling nothing — and reports at the end: *it would have fired six
+times; on five of those you did the same thing by hand.* An automation you
+accepted after watching it be right five times out of six is a different object
+from one you accepted because it sounded reasonable.
+
+**Every proposal carries its evidence**, because a suggestion from nowhere
+deserves a no. That is the reason it was raised, plus a **replay** — brAIn runs
+the automation against the last month of your own recorded history and tells you
+what it would have done. Answered in seconds, before anything is enabled.
+
+**Saying no teaches it more than saying nothing.** The reason box is optional
+(a required field turns a one-press dismissal into a chore and fills up with
+"no"), but a sentence like *"the hall light stays on because my partner works
+nights"* is a fact brAIn did not have, and it stops the same suggestion coming
+back in different words next month. It goes into memory exactly as a finding's
+**Wrong** does.
+
+A declined proposal is remembered by the **change** it described, not by the
+sentence describing it — so a miner that rewords its own explanation is still
+offering something you already answered, and it will not be offered again.
+
+### What a replay can and cannot answer
+
+`POST /api/replay` takes an automation and a window and reports when it would
+have fired.
+
+It covers **`time`, `state`, `numeric_state` and `template`** triggers — the
+four Home Assistant's recorder can reconstruct. Anything else is refused **in as
+many words**, and refused *whole*: an automation with a state trigger *and* a
+webhook trigger is not replayed for the half that can be read, because
+reporting "this would have fired twice" about something whose webhook fires
+forty times a day is a confident wrong number that looks exactly like a right
+one.
+
+A template is replayed only when every entity it names has recorded history, and
+only using a named set of Home Assistant's own helpers. Rendering against a
+half-built world gives a blank; a blank reads as `unknown`, which reads as
+`false`, which is a confident *no*.
+
+Three details decide whether a number is right, and each is tested against the
+version that gets it wrong:
+
+- **`for:` is a promise about a stretch of time.** A three-minute door blip does
+  not clear a ten-minute hold.
+- **`numeric_state` is a crossing, never a level.** Home Assistant fires on the
+  way in, not for every sample spent inside the range.
+- **An area or device target is recorded and not resolved.** Expanding one needs
+  the entity registry as it was at the time, and a wrong expansion would tell you
+  a proposal touches lights it does not.
+
+The window reaches back at most 30 days, because the recorder's default purge is
+ten days and most houses leave it there.
+
 ### Answering without opening anything
 
 Two places show brAIn's work list, and both of them can end an item.

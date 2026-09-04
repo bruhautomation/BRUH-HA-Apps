@@ -2,6 +2,196 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.42.0
+
+The capability map's **shadow runner**, and the fifth kind of knowledge it
+exists to serve. Everything ranked above the forecasts on that map stands on
+one thing brAIn could not do: try a change without committing the house to it.
+
+### Added
+
+- **`panel/shadow.py` — what an automation would have done.** Takes an
+  automation, evaluates its triggers and conditions against the **recorded
+  past**, and reports when it would have fired and what it would have done. It
+  calls no service and touches nothing. *"Over the last 30 days this would have
+  fired 26 times; on 4 a condition would have blocked it."*
+
+  **The scope is four trigger kinds and the refusal is the feature.** `time`,
+  `state`, `numeric_state` and `template` are what the recorder can
+  reconstruct. Anything else is refused **whole**, naming the kind — never
+  trimmed to the replayable subset, because reporting "this would have fired
+  twice" about an automation whose webhook fires forty times a day is a
+  confident wrong number that reads exactly like a right one, and it is the
+  number somebody would decide on.
+
+  A template is replayed only when every entity it names is in the timeline,
+  and only a named set of Home Assistant's own helpers is allowed. Rendering
+  against a half-built world gives a blank; a blank reads as `unknown`, which
+  reads as `false`, which is a confident *no*.
+
+  The details that decide whether a number is right: `for:` is a promise about
+  a stretch, answered from the **next** sample rather than this one;
+  `numeric_state` is a **crossing**, never a level; a template fires on the
+  **edge**, not on every moment it stays true; and an area or device target is
+  recorded and deliberately **not** resolved, because expanding one needs the
+  registry as it was at the time.
+
+- **`panel/proposals.py` — what could be better.** The fifth kind of knowledge,
+  with its own store and its own tab: a list of things you might want sitting
+  beside a list of things that are broken makes both worse. The lifecycle is
+  `proposed → trialling → accepted | declined`, and **nothing brAIn writes is
+  ever enabled without a trial**.
+
+  Its decisions are refusals: the key is the **change** and not the sentence,
+  so a miner that rewords its explanation is still offering what you declined;
+  a declined key is remembered forever while the row is prunable; past
+  `MAX_OPEN` the tab **refuses** a new proposal rather than pushing an
+  unanswered one out; `record_trial` does not end the trial, because a store
+  that ended one by writing its own result would be deciding the thing it is
+  reporting on; and a decline **with** a reason is a fact about the house while
+  one without is a preference about a suggestion, which memory has no use for.
+
+- **`panel/routines.py` — what you already do by hand, and the offer it earns.**
+  A store with a surface and nothing filling it is a feature that does nothing,
+  which is indistinguishable from a broken one, so the first producer ships
+  with it. The checks pass keeps the changes a **person** caused — the second
+  deliberate exception to `actions.py` persisting nothing, and the same
+  narrower claim `override_ledger` makes: tens of rows a day, not the timeline.
+  An automated move is kept as **one timestamp per key**, because the only
+  question asked of it is *does something already do this*.
+
+  Five floors, each asserted in `tests/test_routines.py` against the case it
+  must NOT fire on before the case it must find. **Six separate days**, not six
+  presses — twelve presses on one Monday is one Monday. **A share of the days
+  it could have happened on**, which is the denominator `auto.overridden`
+  shipped without: six times in a fortnight is a habit and six times in two
+  months is a coincidence, and a count reports both identically. **A time
+  rather than a stretch of evening**, on `rhythm.py`'s own circular arithmetic,
+  because a straight median of times either side of midnight is noon. **It has
+  to still be happening.** And **nothing may already do it**, or the proposal
+  is `auto.conflict` written on purpose.
+
+  `every day` has to be earned **twice**, once on each half of the week: a
+  habit on ten weekdays and one Sunday clears the whole-window share
+  comfortably, and calling it daily builds a trigger that fires on two mornings
+  nobody wanted it. The cost is that a genuinely daily habit reads as
+  `weekdays` for three weeks, which is the cheaper mistake and is asserted
+  rather than described.
+
+  What it writes is a plain time trigger and a weekday condition when the habit
+  has one — never a condition it did not measure. The config carries **no
+  `alias`**, because `proposals.key_for` hashes it and a title carries both the
+  entity's name, which a rename moves, and the time, which the median moves by
+  a minute: either would re-offer at 18:41 what was declined at 18:40. The
+  trigger time is rounded to five minutes for the same reason, and because it
+  then reads like a time somebody would have chosen.
+
+- **The API**: `GET /api/proposals`, `POST /api/proposal/{ts}/trial`,
+  `POST /api/proposal/{ts}/{accept,decline}` and `POST /api/replay`. A decline's
+  note goes through the same `_submit_memory` path a finding's "Wrong" uses, so
+  an answer teaches the same thing whichever list it was given on. A replay
+  refusal is a **422 with the reason in words**, because "it would never have
+  fired" and "brAIn cannot replay this" are different answers.
+
+  Both doors — the Replay button and the habit miner offering a proposal — go
+  through one `_replay_config`, because "how often would this have fired" asked
+  two ways is two answers waiting to disagree.
+
+- **`/api/diagnostics` carries the miner and the store.** A tab with nothing on
+  it reads the same whether the miner found no habit or the ledger has been
+  empty since March, and "I could not look" versus "there was nothing" is the
+  distinction every check in this add-on carries. The empty state names the
+  floor rather than leaving somebody to wonder whether it is broken.
+
+  **The replay does not use `ha_data.get_history`.** That helper downsamples
+  numeric series into hourly buckets, drops `unavailable`/`unknown` and caps how
+  many changes it keeps — correct for handing a model a summary, fatal here. A
+  replay counts **edges**, and an hourly bucket has already thrown away the
+  moment a sensor crossed its threshold.
+
+### Fixed
+
+- **The image did not ship Jinja, and only a comment said it did.** The
+  template branch of the replay carried `# pragma: no cover — the image ships
+  jinja2` and `brain/Dockerfile` installed no such package, so **every
+  template trigger refused on every real install** while three tests passed on
+  machines that happened to have Jinja from somewhere else. A comment cannot
+  fail — the same shape as a grep for a line standing in for a test of what
+  the line does. `py3-jinja2` is in the image, `jinja2` is in the test
+  requirements, and `test_the_image_ships_what_a_template_needs` fails if
+  either goes; a second test renders a template through `shadow`'s own path
+  rather than asking whether `jinja2` imports.
+
+- **`_num` guards on `math.isfinite`, not on the `f != f` NaN idiom.** CodeQL
+  reads that idiom as a comparison of identical values and it was right to ask
+  — and the wider guard it named catches the case the idiom missed:
+  `float("inf")` parses happily and satisfies `above:` for ever, so a sensor
+  reporting it would fire the trigger and then hold it against every later
+  crossing. A state that is not a *finite* number is not a number a replay can
+  answer with.
+
+- **The history query was built by pasting entity ids into a URL, in three
+  places.** `ha_data.get_history`, `closures.fetch_history` and
+  `shadow.fetch_history` each wrote `?filter_entity_id={','.join(ids)}` — and
+  `_rest_get`'s own docstring already said not to, and said why: *"nothing a
+  caller passes can steer the request into being a different request… equally
+  how an ordinary entity id with an odd character in it would silently corrupt
+  the call."* All three were written past it.
+
+  On the replay path the ids come out of an automation config that arrived in
+  an HTTP body, so an id carrying `&` is a **second parameter** rather than a
+  value — a partial SSRF (`py/partial-ssrf`), and CodeQL was right to call it
+  critical. Off that path the ids come from the registry and the same
+  character corrupts the call quietly instead, which is the failure nobody
+  would ever have traced.
+
+  One `history_params` builds it now, out of ids checked against
+  `ENTITY_ID_RE`, handed to aiohttp as `params` so it does the encoding; a bad
+  id is **dropped, not escaped**, because an id that is not an id names
+  nothing and would spend a request asking Core about a made-up string. The
+  shapes are asserted against a real aiohttp server rather than against a
+  string the test wrote — the valueless flags Core wants are exactly the
+  detail a hand-written expectation gets wrong the same way the code does —
+  and a grep-level test fails a fourth copy, the way `atomic_write`'s does.
+
+- **The template allow-list moved onto the render path.** `render_template`
+  renders a Jinja string that arrived in an HTTP body, and the allow-list that
+  makes that safe ran only in `check_replayable` — an earlier and separate
+  pass, so the sandbox was reached safely only while every caller remembered
+  to validate first. That is the same shape as asking `protected_entities`
+  anywhere but the chokepoint. It validates for itself now; validating twice
+  on the replay path costs one regex sweep of a short string.
+
+- **The sandbox renders with `autoescape=True`.** Its output never reaches a
+  browser and cannot change the verdict — the result is compared against a
+  fixed set of words — so the safe setting is free, and the day somebody puts
+  that output on a page is the day the missing escape matters.
+
+- **The seventh tab moved the top bar's breakpoint, and broke its touch floor
+  at 320px.** A tab is ~90px of row, so the single-row shape stopped fitting
+  the two trouble states (1302px paused, 1328px on a failed login): the band
+  moves from 1240 to **1340**, taken from what `measure-topbar.mjs` reports
+  rather than guessed. And seven 44px tabs plus their gaps need 320px exactly,
+  leaving nothing for the bar's own padding — every tab came out 42px on the
+  narrowest phone. The strip **wraps** now, with `min-width` on the tab making
+  the fit binary, so the row gives way at whatever width stops holding it and
+  the labels and the targets both survive; only 320px pays for it, and the
+  panel remeasures `--bar-h` to match.
+
+### Tests
+
+- `tests/test_shadow.py` (41), `tests/test_proposals.py` (30) and
+  `tests/test_routines.py` (30), with every guard verified by **mutation** —
+  break it, watch the test fail, restore it. That caught one test whose name
+  claimed something it did not measure: the numeric-crossing fixture never had
+  two consecutive samples above the bar, so "fires on the crossing" and "fires
+  on the level" gave the same answer.
+
+- `tests/manual/measure-proposals.mjs` joins the `layout` job, and
+  `test_no_width_gets_a_row_of_bare_glyphs` now names its tabs instead of
+  counting them — a count says nothing about whether the tab added last kept
+  its label.
+
 ## 1.41.1
 
 ### Fixed

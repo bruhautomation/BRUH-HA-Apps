@@ -97,6 +97,9 @@ jobs:
       - name: Measure the activity tab
         run: node tests/manual/measure-activity.mjs
 
+      - name: Measure the proposals tab
+        run: node tests/manual/measure-proposals.mjs
+
       - name: Measure BRight's light map
         run: node tests/manual/measure-lightmap.mjs
 

@@ -331,6 +331,55 @@ opened forty minutes ago, because it is still inside the hour that has not
 finished. Both break quiet hours. The preheat one does not — a schedule that
 starts late will start late again tomorrow.
 
+## Where a proposal comes from
+
+The first thing brAIn proposes is **what you already do by hand** — somebody
+turning the hall lamp on at about twenty to seven every weekday. No check can
+report that: the light works, the switch works, nobody has complained.
+
+So the checks pass keeps the changes a **person** caused, and only those. An
+automation moving a light says nothing about a habit, and a wall switch reaches
+Home Assistant with no record of who pressed it — brAIn calls that
+*unattributed* rather than guessing.
+
+Five things have to hold before anything is offered, and each answers "would
+this fire on a house with no habit in it": **six separate days** (twelve
+presses on one Monday is one Monday); **a share of the days it could have
+happened on**, weekdays and weekends counted apart, because six times in a
+fortnight is a habit and six times in two months is a coincidence; **a time
+rather than a stretch of evening**, averaged around the clock so a bedtime
+either side of midnight is not reported as noon; **it has to still be
+happening**; and **nothing must already do it**, because a second rule moving
+the same thing is two rules that will disagree.
+
+What it writes is a plain time trigger with a weekday condition when the habit
+has one — never a condition it did not measure. A pass offers at most three.
+
+## Proposals, and the trial before them
+
+The **Proposals** tab is the only list here that is not about something being
+wrong. It has its own tab rather than a row on Findings, because a list of
+things you might want beside a list of things that are broken makes both worse.
+
+**Nothing brAIn writes is enabled without a trial.** Press *Try it for a week*
+and the automation runs in **shadow** — it watches live events and logs what it
+*would* have done, calling nothing. At the end: *it would have fired six times;
+on five of those you did the same thing by hand.*
+
+Every proposal shows its evidence and a **replay** — what the automation would
+have done over the last month of your own history, answered in seconds. A
+suggestion from nowhere deserves a no.
+
+**Saying no teaches more than saying nothing.** The reason box is optional, but
+*"the hall light stays on because my partner works nights"* is a fact brAIn did
+not have. A declined proposal is remembered by the **change** it described, not
+the sentence — so rewording it will not get it offered again.
+
+Replay covers \`time\`, \`state\`, \`numeric_state\` and \`template\` triggers. Anything
+else is refused in as many words, and refused **whole** — never replayed for
+just the part that can be read, because a plausible wrong number is worse than
+no number.
+
 ## What counts as unusual
 
 brAIn measures your house overnight: for every numeric sensor, what it normally
