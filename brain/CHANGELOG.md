@@ -51,12 +51,57 @@ one thing brAIn could not do: try a change without committing the house to it.
   reporting on; and a decline **with** a reason is a fact about the house while
   one without is a preference about a suggestion, which memory has no use for.
 
+- **`panel/routines.py` — what you already do by hand, and the offer it earns.**
+  A store with a surface and nothing filling it is a feature that does nothing,
+  which is indistinguishable from a broken one, so the first producer ships
+  with it. The checks pass keeps the changes a **person** caused — the second
+  deliberate exception to `actions.py` persisting nothing, and the same
+  narrower claim `override_ledger` makes: tens of rows a day, not the timeline.
+  An automated move is kept as **one timestamp per key**, because the only
+  question asked of it is *does something already do this*.
+
+  Five floors, each asserted in `tests/test_routines.py` against the case it
+  must NOT fire on before the case it must find. **Six separate days**, not six
+  presses — twelve presses on one Monday is one Monday. **A share of the days
+  it could have happened on**, which is the denominator `auto.overridden`
+  shipped without: six times in a fortnight is a habit and six times in two
+  months is a coincidence, and a count reports both identically. **A time
+  rather than a stretch of evening**, on `rhythm.py`'s own circular arithmetic,
+  because a straight median of times either side of midnight is noon. **It has
+  to still be happening.** And **nothing may already do it**, or the proposal
+  is `auto.conflict` written on purpose.
+
+  `every day` has to be earned **twice**, once on each half of the week: a
+  habit on ten weekdays and one Sunday clears the whole-window share
+  comfortably, and calling it daily builds a trigger that fires on two mornings
+  nobody wanted it. The cost is that a genuinely daily habit reads as
+  `weekdays` for three weeks, which is the cheaper mistake and is asserted
+  rather than described.
+
+  What it writes is a plain time trigger and a weekday condition when the habit
+  has one — never a condition it did not measure. The config carries **no
+  `alias`**, because `proposals.key_for` hashes it and a title carries both the
+  entity's name, which a rename moves, and the time, which the median moves by
+  a minute: either would re-offer at 18:41 what was declined at 18:40. The
+  trigger time is rounded to five minutes for the same reason, and because it
+  then reads like a time somebody would have chosen.
+
 - **The API**: `GET /api/proposals`, `POST /api/proposal/{ts}/trial`,
   `POST /api/proposal/{ts}/{accept,decline}` and `POST /api/replay`. A decline's
   note goes through the same `_submit_memory` path a finding's "Wrong" uses, so
   an answer teaches the same thing whichever list it was given on. A replay
   refusal is a **422 with the reason in words**, because "it would never have
   fired" and "brAIn cannot replay this" are different answers.
+
+  Both doors — the Replay button and the habit miner offering a proposal — go
+  through one `_replay_config`, because "how often would this have fired" asked
+  two ways is two answers waiting to disagree.
+
+- **`/api/diagnostics` carries the miner and the store.** A tab with nothing on
+  it reads the same whether the miner found no habit or the ledger has been
+  empty since March, and "I could not look" versus "there was nothing" is the
+  distinction every check in this add-on carries. The empty state names the
+  floor rather than leaving somebody to wonder whether it is broken.
 
   **The replay does not use `ha_data.get_history`.** That helper downsamples
   numeric series into hourly buckets, drops `unavailable`/`unknown` and caps how

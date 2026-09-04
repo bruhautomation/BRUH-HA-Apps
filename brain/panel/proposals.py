@@ -173,6 +173,21 @@ def publish_state(rows: list[dict] | None = None) -> None:
 # Offering one
 # ---------------------------------------------------------------------------
 
+def _knows(key: str, rows: list[dict]) -> bool:
+    return any(r.get("key") == key for r in rows) or key in settled_keys()
+
+
+def knows(obj: dict) -> bool:
+    """Has this change already been offered, or already been answered?
+
+    The same predicate `add` uses, so a producer that asks before doing
+    expensive work cannot get a different answer from the store that
+    will refuse it — and a producer that does not ask is refused all the
+    same.
+    """
+    return _knows(key_for(obj), listing())
+
+
 def add(obj: dict) -> dict | None:
     """Offer a proposal, or `None` if it is already known or the tab is full.
 
@@ -182,9 +197,7 @@ def add(obj: dict) -> dict | None:
     """
     key = key_for(obj)
     rows = listing()
-    if any(r.get("key") == key for r in rows):
-        return None
-    if key in settled_keys():
+    if _knows(key, rows):
         return None
     if sum(1 for r in rows if r.get("status") in OPEN_STATUSES) >= MAX_OPEN:
         # Refused rather than pushing an unanswered one out: a list that
@@ -334,6 +347,6 @@ def counts(rows: list[dict] | None = None) -> dict:
 __all__ = [
     "MAX_OPEN", "MAX_ROWS", "OPEN_STATUSES", "SETTLED_FILE", "SHARED",
     "STATUSES", "STORE", "TRIAL_DAYS", "add", "counts", "decide", "get",
-    "key_for", "listing", "memory_line", "publish_state", "record_trial",
-    "settled_keys", "start_trial", "trial_due",
+    "key_for", "knows", "listing", "memory_line", "publish_state",
+    "record_trial", "settled_keys", "start_trial", "trial_due",
 ]

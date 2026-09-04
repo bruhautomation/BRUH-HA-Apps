@@ -3603,9 +3603,12 @@ function renderProposals() {
     // Deliberately not phrased as an achievement. An empty Findings list
     // means the house is well; an empty Proposals list means brAIn has
     // not spotted a habit worth automating yet, which is not the same.
+    const days = propState.data?.routine_min_days || 6;
     list.appendChild(el("p", "empty",
       "Nothing to suggest yet. brAIn proposes a change once it has watched "
-      + "you do the same thing by hand enough times to be sure it is a habit."));
+      + `you do the same thing by hand, at about the same time, on ${days} `
+      + "separate days — and only while nothing in Home Assistant already "
+      + "does it for you."));
     return;
   }
   rows.forEach((row) => list.appendChild(propCard(row)));

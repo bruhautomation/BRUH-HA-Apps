@@ -95,6 +95,28 @@ class TestOfferingOne(ProposalCase):
         self.assertEqual(self.p.counts()["open"], self.p.MAX_OPEN)
 
 
+class TestAskingBeforeOffering(ProposalCase):
+    """`knows` and `add` are one predicate, or a producer gets two answers."""
+
+    def test_it_agrees_with_add_about_a_duplicate(self):
+        self.assertFalse(self.p.knows(offer()))
+        self.assertIsNotNone(self.p.add(offer()))
+        self.assertTrue(self.p.knows(offer()))
+        self.assertIsNone(self.p.add(offer()))
+
+    def test_it_agrees_with_add_about_something_declined(self):
+        row = self.p.add(offer())
+        self.p.decide(row["ts"], "declined", "we like it on")
+        self.assertTrue(self.p.knows(offer()))
+        self.assertIsNone(self.p.add(offer()))
+
+    def test_it_is_about_the_change_and_not_the_sentence(self):
+        self.p.add(offer())
+        self.assertTrue(self.p.knows(offer(title="Kitchen off, late")))
+        self.assertFalse(
+            self.p.knows(offer(config=automation(at="23:30:00"))))
+
+
 class TestTheTrial(ProposalCase):
 
     def test_a_trial_runs_a_whole_week(self):

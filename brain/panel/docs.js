@@ -331,6 +331,30 @@ opened forty minutes ago, because it is still inside the hour that has not
 finished. Both break quiet hours. The preheat one does not — a schedule that
 starts late will start late again tomorrow.
 
+## Where a proposal comes from
+
+The first thing brAIn proposes is **what you already do by hand** — somebody
+turning the hall lamp on at about twenty to seven every weekday. No check can
+report that: the light works, the switch works, nobody has complained.
+
+So the checks pass keeps the changes a **person** caused, and only those. An
+automation moving a light says nothing about a habit, and a wall switch reaches
+Home Assistant with no record of who pressed it — brAIn calls that
+*unattributed* rather than guessing.
+
+Five things have to hold before anything is offered, and each answers "would
+this fire on a house with no habit in it": **six separate days** (twelve
+presses on one Monday is one Monday); **a share of the days it could have
+happened on**, weekdays and weekends counted apart, because six times in a
+fortnight is a habit and six times in two months is a coincidence; **a time
+rather than a stretch of evening**, averaged around the clock so a bedtime
+either side of midnight is not reported as noon; **it has to still be
+happening**; and **nothing must already do it**, because a second rule moving
+the same thing is two rules that will disagree.
+
+What it writes is a plain time trigger with a weekday condition when the habit
+has one — never a condition it did not measure. A pass offers at most three.
+
 ## Proposals, and the trial before them
 
 The **Proposals** tab is the only list here that is not about something being

@@ -133,6 +133,7 @@ import onboarding
 import prompt_store
 import proposals
 import rhythm
+import routines
 import run_sources
 import schedule_store
 import settings_store
@@ -472,6 +473,11 @@ QUEUE: asyncio.Queue[str] = asyncio.Queue()
 CHECKS_STATE: dict = {"running": False, "last": None}
 CHECKS_FIRST_DELAY_S = 120
 CHECKS_TICK_S = 300
+# How far back a replay reaches by default. A month is what the recorder
+# keeps on a default install, so asking for more usually answers with a
+# shorter window and no way to tell; `shadow.MAX_WINDOW_DAYS` is the
+# ceiling somebody may ask for by hand.
+REPLAY_DAYS = 30
 # The diagnostics mirror, for the integration's Download-diagnostics button.
 # /data is invisible to Home Assistant, so the panel publishes to the shared
 # volume — same reasoning as the findings mirror, same skip rule for a dev
@@ -1043,6 +1049,44 @@ def _rhythm_diagnostics() -> dict:
         "brief_last_reasons": len(BRIEF_STATE["last_reasons"]),
         "brief_last_error": BRIEF_STATE["last_error"],
     }
+
+
+def _routines_diagnostics() -> dict:
+    """What the habit miner has to work with, and what it makes of it.
+
+    A tab with nothing on it looks the same whether the miner found no
+    habit or the ledger has been empty since March because the listener
+    that fills it stopped — and "I could not look" versus "there was
+    nothing" is the distinction every check in this add-on carries.
+    """
+    try:
+        payload = routines.load()
+    except Exception as exc:  # noqa: BLE001 — a dev checkout has no store
+        return {"error": str(exc)[:120]}
+    rows = payload.get("rows") or []
+    try:
+        tz, _name = baselines.house_timezone()
+        found = len(routines.mine(payload, tz))
+    except Exception as exc:  # noqa: BLE001
+        return {"presses": len(rows), "error": str(exc)[:120]}
+    return {
+        "presses": len(rows),
+        "entities": len({r.get("entity_id") for r in rows if r.get("entity_id")}),
+        "automated_keys": len(payload.get("automated") or {}),
+        "oldest": min((r.get("ts") or 0) for r in rows) if rows else 0,
+        "newest": max((r.get("ts") or 0) for r in rows) if rows else 0,
+        "would_propose": found,
+        "min_days": routines.MIN_DAYS,
+        "min_share": routines.MIN_SHARE,
+    }
+
+
+def _proposals_diagnostics() -> dict:
+    try:
+        rows = proposals.listing()
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc)[:120]}
+    return {**proposals.counts(rows), "settled": len(proposals.settled_keys())}
 
 
 # The weekly report. The same poll as the brief's and a different gate:
@@ -2613,6 +2657,77 @@ def _record_rhythm(snapshot: dict, now: float) -> int:
         return 0
 
 
+def _record_routines(snapshot: dict, now: float) -> int:
+    """File the person-caused moves this pass saw, for the habit miner.
+
+    The third and last of these, and the narrowest: only changes a
+    *person* caused, only in the domains a time trigger can act on, and
+    an automated move kept as one timestamp per key rather than as a row.
+    See `routines.py` for why that is not the timeline `actions.py`
+    refuses to keep.
+    """
+    mined = snapshot.get("actions") or {}
+    if not mined.get("available"):
+        return 0
+    try:
+        return routines.record(mined.get("actions") or [], now)
+    except Exception as exc:  # noqa: BLE001 — accounting must not fail the
+        # pass it is accounting for; same rule as `journal.record`.
+        log.warning("could not file this pass's routines: %s", exc)
+        return 0
+
+
+async def _offer_routines(now: float) -> int:
+    """Turn what the ledger can prove into proposals. Returns how many landed.
+
+    Deliberately after the checks have been applied and deliberately not
+    part of them: a proposal is not a finding, it goes to a different
+    store and a different tab, and a habit miner that could fail a checks
+    pass would be an offer costing a house its list of what is broken.
+
+    Each one is replayed over the same history before it is offered,
+    because a suggestion arrives with its evidence or it deserves a no —
+    and a replay that refuses is not a reason to withhold the proposal,
+    only to show what could not be answered. `proposals.add` dedupes
+    against the live rows and the settled ledger, so a habit that is
+    still a habit is not offered again every six hours.
+    """
+    import aiohttp
+
+    try:
+        tz, _name = await asyncio.to_thread(baselines.house_timezone)
+        found = await asyncio.to_thread(routines.mine, None, tz, now)
+    except Exception as exc:  # noqa: BLE001 — an offer is optional; the
+        # pass that would have made it is not.
+        log.warning("could not mine routines: %s", exc)
+        return 0
+    if not found:
+        return 0
+
+    offered = 0
+    async with aiohttp.ClientSession() as session:
+        for routine in found:
+            obj = routines.as_proposal(routine)
+            if not obj:
+                continue
+            # Asked before the replay rather than after: a habit that is
+            # still a habit is mined every six hours, and the store would
+            # refuse it anyway — this is what stops a producer whose
+            # config watches entities paying for a month of history to be
+            # told so.
+            if await asyncio.to_thread(proposals.knows, obj):
+                continue
+            obj["replay"] = await _replay_config(
+                session, obj["config"], now - REPLAY_DAYS * 86400, now, tz)
+            row = await asyncio.to_thread(proposals.add, obj)
+            if row:
+                offered += 1
+    if offered:
+        log.info("proposed %d change%s from what you do by hand",
+                 offered, "" if offered == 1 else "s")
+    return offered
+
+
 async def run_checks(reason: str = "schedule") -> dict:
     """One pass of every house check, applied to the findings store.
 
@@ -2642,6 +2757,7 @@ async def run_checks(reason: str = "schedule") -> dict:
         # offered four or five times and only the first one lands.
         await asyncio.to_thread(_record_overrides, snapshot, started)
         await asyncio.to_thread(_record_rhythm, snapshot, started)
+        await asyncio.to_thread(_record_routines, snapshot, started)
         result = checks.run_all(snapshot, started)
 
         def apply() -> tuple[list[dict], int, list[dict]]:
@@ -2654,6 +2770,15 @@ async def run_checks(reason: str = "schedule") -> dict:
 
         created, refreshed, cleared = await asyncio.to_thread(apply)
         await _announce_findings(created)
+        # After the findings, and outside them. A proposal is not a
+        # finding: different store, different tab, and a habit miner
+        # that could fail this pass would cost a house its list of what
+        # is broken to make an offer nobody asked for.
+        try:
+            offered = await _offer_routines(started)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("could not offer routines: %s", exc)
+            offered = 0
         summary = {
             "reason": reason,
             "started_at": int(started),
@@ -2667,6 +2792,7 @@ async def run_checks(reason: str = "schedule") -> dict:
             "created": created,
             "refreshed": refreshed,
             "cleared": cleared,
+            "proposed": offered,
             "snapshot_errors": snapshot.get("errors") or {},
         }
         journal.record(
@@ -3170,6 +3296,11 @@ def _diagnostics_payload() -> dict:
         # Answers given in the To-do app or on a notification, on
         # their way back to the one store that owns them.
         "finding_requests": _requests_diagnostics(),
+        # What you do by hand, and what has been offered because of it.
+        # An empty Proposals tab reads the same whether the miner found
+        # no habit or the ledger has been empty for a month.
+        "routines": _routines_diagnostics(),
+        "proposals": _proposals_diagnostics(),
         # Numbers, not the buckets: a bug report needs to know whether
         # the house has been watched and when, not 168 fractions for
         # sixty doors.
@@ -3390,7 +3521,10 @@ async def _end_finding(finding: dict, spec: dict, note: str) -> tuple[dict, str]
 def _proposals_payload() -> dict:
     rows = proposals.listing()
     return {"proposals": rows, "counts": proposals.counts(rows),
-            "trial_days": proposals.TRIAL_DAYS}
+            "trial_days": proposals.TRIAL_DAYS,
+            # So an empty tab can say what "enough times" means rather
+            # than leaving somebody to wonder whether it is broken.
+            "routine_min_days": routines.MIN_DAYS}
 
 
 async def h_proposals(request: web.Request) -> web.Response:
@@ -3435,52 +3569,61 @@ async def h_proposal_decide(request: web.Request) -> web.Response:
          **await asyncio.to_thread(_proposals_payload)})
 
 
-async def h_replay(request: web.Request) -> web.Response:
-    """What an automation would have done over a window of recorded history.
+async def _replay_config(session, config: dict, start: float, end: float,
+                         tz) -> dict:
+    """Replay one automation over recorded history. One implementation.
 
-    Refusals come back as 422 with the reason in words rather than as an
-    empty result: "it would never have fired" and "brAIn cannot replay
-    this" are different answers, and only one of them is about the
+    Both doors read this — the Replay button and the habit miner offering
+    a proposal — because "how often would this have fired" asked two ways
+    is two answers waiting to disagree, exactly as `brain findings` goes
+    through the API rather than the store files.
+
+    A refusal comes back as a payload (`refused`, and the reason in
+    words), never as an exception to the caller and never as an empty
+    result: *"it would never have fired"* and *"brAIn cannot replay
+    this"* are different answers, and only one of them is about the
     automation.
     """
+    try:
+        watched = sorted(shadow.entities_watched(config))
+        shadow.check_replayable(config)
+    except shadow.Refused as exc:
+        return {"error": str(exc), "refused": True}
+    if len(watched) > shadow.MAX_ENTITIES:
+        return {"error": f"this reads {len(watched)} entities, more than a "
+                         "replay can honestly rebuild", "refused": True}
+
+    history = {}
+    if watched:
+        # shadow's own fetch, never ha_data.get_history: that one
+        # downsamples into hourly buckets, which throws away the very
+        # edges a replay counts.
+        history = await shadow.fetch_history(session, watched, start, end)
+    try:
+        return await asyncio.to_thread(
+            shadow.replay, config, history, start, end, tz)
+    except shadow.Refused as exc:
+        return {"error": str(exc), "refused": True}
+
+
+async def h_replay(request: web.Request) -> web.Response:
+    """What an automation would have done over a window of recorded history."""
+    import aiohttp  # noqa: PLC0415 — the module has no other need of it
+
     body = await _json_body(request)
     config = body.get("config")
     if not isinstance(config, dict):
         return web.json_response({"error": "no automation to replay"},
                                  status=400)
-    days = max(1, min(int(body.get("days") or 30), shadow.MAX_WINDOW_DAYS))
+    days = max(1, min(int(body.get("days") or REPLAY_DAYS),
+                      shadow.MAX_WINDOW_DAYS))
     now = time.time()
-    start = now - days * 86400
-
-    try:
-        watched = sorted(shadow.entities_watched(config))
-        shadow.check_replayable(config)
-    except shadow.Refused as exc:
-        return web.json_response({"error": str(exc), "refused": True},
-                                 status=422)
-    if len(watched) > shadow.MAX_ENTITIES:
-        return web.json_response(
-            {"error": f"this reads {len(watched)} entities, more than a "
-                      "replay can honestly rebuild", "refused": True},
-            status=422)
-
-    history = {}
-    if watched:
-        import aiohttp  # noqa: PLC0415 — the module has no other need of it
-
-        async with aiohttp.ClientSession() as session:
-            # shadow's own fetch, never ha_data.get_history: that one
-            # downsamples into hourly buckets, which throws away the very
-            # edges a replay counts.
-            history = await shadow.fetch_history(session, watched, start, now)
     tz, _name = baselines.house_timezone()
-    try:
-        result = await asyncio.to_thread(
-            shadow.replay, config, history, start, now, tz)
-    except shadow.Refused as exc:
-        return web.json_response({"error": str(exc), "refused": True},
-                                 status=422)
-    return web.json_response(result)
+    async with aiohttp.ClientSession() as session:
+        result = await _replay_config(
+            session, config, now - days * 86400, now, tz)
+    return web.json_response(
+        result, status=422 if result.get("refused") else 200)
 
 
 async def h_undo(request: web.Request) -> web.Response:

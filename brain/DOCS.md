@@ -700,6 +700,43 @@ hour that has not finished. Both are urgent enough to break quiet hours; the
 preheat one is not, because a schedule that starts late will start late again
 tomorrow.
 
+### Where a proposal comes from
+
+The first thing brAIn proposes is **what you already do by hand.** Somebody
+walks over and turns the hall lamp on at about twenty to seven every weekday.
+No check can report that — the light works, the switch works, nobody has
+complained — and it is nonetheless the most useful thing a house knows about
+itself.
+
+So the checks pass keeps the changes a **person** caused, and only those: an
+automation moving a light says nothing about a habit, and a wall switch reaches
+Home Assistant with no record of who pressed it, which brAIn reports as
+`unattributed` rather than guessing. Two months are kept, in the domains a
+timer can sensibly act on.
+
+Five things have to hold before any of it is offered, and each one answers
+"would this fire on a house with no habit in it":
+
+- **Six separate days**, not six presses. Twelve presses on one Monday is one
+  Monday.
+- **A share of the days it could have happened on.** Six times in a fortnight
+  is a habit; six times in two months is a coincidence, and a count with no
+  denominator reports both identically. Weekdays and weekends are counted
+  apart, so a weekday habit is graded against weekdays.
+- **A time, not a stretch of evening.** The times are averaged *around the
+  clock* — half past eleven and half past midnight are forty minutes apart, and
+  a plain average of them is noon — and anything more scattered than about
+  three quarters of an hour is not a time of day.
+- **It has to still be happening.** A habit you dropped in the spring has a
+  beautiful spring in the record.
+- **Nothing must already do it.** A second automation moving the same thing to
+  the same state is not a helpful duplicate; it is two rules that will disagree
+  the first time their triggers land in the wrong order.
+
+What it writes is a plain time trigger, with a weekday or weekend condition
+when the habit has one — never a condition it did not measure. A pass offers at
+most three, strongest first; the rest are still there next time.
+
 ### It suggests things, and proves them first
 
 The **Proposals** tab is the only list in the panel that is not about something
