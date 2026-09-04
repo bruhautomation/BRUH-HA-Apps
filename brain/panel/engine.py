@@ -258,20 +258,185 @@ def save_auth(value: str, cred_type: str | None = None) -> dict:
     return data
 
 
-def clear_auth() -> None:
+def clear_auth(include_shared: bool = False) -> None:
     """Forget the locally stored credential and the CLI's own login.
 
-    NEVER touches SHARED_AUTH_FILE — that file belongs to the brAIn
-    add-on. (The /config mount is writable for the memory file, but this
-    module never writes anything under it.)
+    `include_shared` is a caller's decision and never a default, but it is
+    NOT optional in the sense the old docstring meant. That comment ("never
+    touches SHARED_AUTH_FILE — that file belongs to the brAIn add-on") was
+    written when the panel and the terminal were two add-ons; merged, this
+    module writes that file itself (`share_auth`), and leaving it behind is
+    not caution — `get_auth` reads it two branches below, so a sign-out that
+    spares it hands the very next call the credential it just removed. From
+    the panel that reads as a Sign out button that does nothing at all.
+
+    So the *choice* is surfaced (the dialog says a shared copy exists and
+    ticks the box) rather than made here, because the file may equally have
+    been published from the terminal by somebody else — and it is the one
+    credential of the three that other add-ons read.
     """
-    for path in (AUTH_FILE, _credentials_path()):
+    paths = [AUTH_FILE, _credentials_path()]
+    if include_shared:
+        paths.append(SHARED_AUTH_FILE)
+    for path in paths:
         try:
             os.remove(path)
         except OSError:
             # Signing out removes what is there; a store that is already empty
             # needs nothing done to it.
             pass
+
+
+# ---------------------------------------------------------------------------
+# Sharing a login with the other BRUH add-ons
+# ---------------------------------------------------------------------------
+# The shared file is the only one of the three credential stores on /config,
+# which is why it is the one anything outside this container can read — and
+# for the whole life of the panel the only way to write it was `ha login` in
+# a terminal. So somebody who signed in through the panel had the sharing
+# half of the feature available to them only through a command they had to
+# know about, and `ha login --status` answered them "not set up".
+
+def share_auth() -> dict:
+    """Publish the panel's credential to the file other add-ons read.
+
+    Returns {"shared": bool, "reason": str} — a refusal is a sentence rather
+    than an exception, because every reason it can refuse is a state the
+    dialog has to render anyway.
+
+    Two things may NOT be published, and the second is the one worth
+    spelling out:
+
+    * an API key is publishable and an OAuth token is publishable; anything
+      else is not the shape `_read_shared_auth` documents.
+    * Claude Code's OWN `.credentials.json` is never publishable, however
+      live it is. Its `accessToken` is a *session* token the CLI refreshes
+      for itself; the shared file records no refresh token and no reader
+      knows how to use one, so a copy of it works for a few hours and then
+      breaks every add-on reading it, silently, with nothing to say why.
+      `get_auth` reports that store as `cli_login` with an empty `value`,
+      which is exactly the case this refuses.
+    """
+    auth = get_auth()
+    if not auth:
+        return {"shared": False, "reason": "not_signed_in"}
+    if auth.get("source") == "shared":
+        # Already the shared file — republishing it to itself is a no-op
+        # dressed up as an action.
+        return {"shared": True, "reason": "already_shared"}
+    value = (auth.get("value") or "").strip()
+    if auth["type"] == "cli_login" or not value:
+        return {"shared": False, "reason": "cli_login_cannot_be_shared"}
+
+    directory = os.path.dirname(SHARED_AUTH_FILE)
+    try:
+        os.makedirs(directory, exist_ok=True)
+        os.chmod(directory, 0o700)
+    except OSError as exc:
+        log.warning("could not prepare the shared secrets directory: %s", exc)
+        return {"shared": False, "reason": "unwritable"}
+
+    data = {"type": auth["type"], "value": value, "saved_at": int(time.time())}
+    try:
+        # Same write shape as save_auth: 0600 from the open, never a chmod
+        # after the bytes are already on disk under whatever the umask said.
+        fd = os.open(SHARED_AUTH_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+    except OSError as exc:
+        log.warning("could not write the shared credential: %s", exc)
+        return {"shared": False, "reason": "unwritable"}
+
+    # The consolidator, the study watcher and the listeners all read this
+    # file as the `claude` user, and the panel is root. Root can write a
+    # claude-owned file; the reverse is what fails, and it fails silently.
+    _chown_claude(SHARED_AUTH_FILE)
+    _chown_claude(directory)
+    return {"shared": True, "reason": "ok"}
+
+
+def unshare_auth() -> bool:
+    """Withdraw the shared copy. True when a file was actually removed.
+
+    Withdrawing the file is all this does — the token itself stays valid at
+    Anthropic, which is why the dialog says so rather than letting somebody
+    believe a press here revoked a credential.
+    """
+    try:
+        os.remove(SHARED_AUTH_FILE)
+        return True
+    except OSError:
+        return False
+
+
+def _chown_claude(path: str) -> None:
+    """Hand a file to the `claude` user when we are root, quietly otherwise."""
+    try:
+        import pwd
+        uid = pwd.getpwnam("claude").pw_uid
+        gid = pwd.getpwnam("claude").pw_gid
+    except (ImportError, KeyError):
+        # A dev checkout has no `claude` user, and the panel is the only
+        # reader there.
+        return
+    try:
+        os.chown(path, uid, gid)
+    except OSError:
+        # Not root, or a filesystem that will not take it: the file is
+        # already written, and this is the recoverable half.
+        pass
+
+
+def auth_overview() -> dict:
+    """Every credential store, and which one is actually in use.
+
+    One payload rather than three questions, for the same reason
+    `ha login --status` reports all three: "signed in" and "signed in AND
+    shared" are different states, and a surface that can only see its own
+    store answers the second one with the first one's words. Nothing here
+    returns a credential — only its type, where it came from, and when it
+    was saved.
+    """
+    auth = get_auth()
+    shared = _read_shared_auth()
+    cli_live = _cli_credentials_present()
+
+    def _saved_at(path: str) -> int | None:
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                stamp = json.load(f).get("saved_at")
+        except (OSError, ValueError, AttributeError):
+            return None
+        return int(stamp) if isinstance(stamp, (int, float)) else None
+
+    return {
+        "authenticated": bool(auth),
+        "type": auth["type"] if auth else None,
+        # Which of the three stores answered — the field that makes a
+        # "sign out did nothing" report diagnosable rather than a mystery.
+        "source": auth.get("source") if auth else None,
+        "saved_at": _saved_at(AUTH_FILE) if auth and auth.get("source") == "local"
+        else (_saved_at(SHARED_AUTH_FILE) if auth and auth.get("source") == "shared" else None),
+        "stores": {
+            "local": {"present": os.path.exists(AUTH_FILE),
+                      "saved_at": _saved_at(AUTH_FILE)},
+            # `present` is deliberately liveness and not existence for this
+            # one store: it is the only file of the three that records an
+            # expiry, so it is the only one where "there is a credential
+            # here" and "there is a working credential here" are separable
+            # questions — and reporting a dead token as a login is what sent
+            # people to fix a sign-in that had already been redone.
+            "cli": {"present": cli_live},
+            "shared": {"present": bool(shared),
+                       "type": shared["type"] if shared else None,
+                       "saved_at": _saved_at(SHARED_AUTH_FILE)},
+        },
+        # Can this login be published to the other add-ons? A `cli_login` has
+        # no shareable value at all (see share_auth), so the button is absent
+        # rather than present-and-failing.
+        "can_share": bool(auth) and auth["type"] != "cli_login" and bool(auth.get("value")),
+        "shared_path": SHARED_AUTH_FILE,
+    }
 
 
 # ---------------------------------------------------------------------------

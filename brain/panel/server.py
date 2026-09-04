@@ -16,8 +16,14 @@ PUT  /api/settings           — update {auto_enabled, plan, budget_percent,
 GET  /api/insights           — all stored insights (with rendered HTML)
 POST /api/generate           — queue generation {category} or {question}
 POST /api/generate_all       — queue every standard category
+GET  /api/auth               — every credential store, which one is in use,
+                               and the last verdict (the ⚙ Claude account
+                               section; not polled — read when it opens)
 POST /api/auth/token         — save a pasted token / API key
-POST /api/auth/logout        — forget the stored credential
+POST /api/auth/logout        — forget the stored credential {shared: bool}
+POST /api/auth/share         — publish it to /config for the other add-ons
+POST /api/auth/unshare       — withdraw that copy
+POST /api/auth/recheck       — verify the credential now, not at the next ageing
 POST /api/auth/setup/start   — begin guided `claude setup-token` OAuth flow
 POST /api/auth/setup/code    — submit the pasted one-time code
 GET  /api/auth/setup/status  — poll the guided flow
@@ -4682,10 +4688,79 @@ async def h_auth_token(request: web.Request) -> web.Response:
 
 
 async def h_auth_logout(request: web.Request) -> web.Response:
-    engine.clear_auth()
+    """Sign out.
+
+    `shared` is read off the body rather than assumed, and the dialog ticks
+    it: leaving the shared copy makes this button a no-op, because
+    `engine.get_auth` finds that file on the very next request and reports
+    the panel authenticated again — but the file may equally have been
+    published from the terminal, and it is the one other add-ons read. So
+    the choice is the person's and the consequence of each is on screen.
+    """
+    body = {}
+    if request.can_read_body:
+        try:
+            body = await request.json()
+        except (ValueError, TypeError):
+            # A logout with no body is the old shape and still means logout;
+            # it must not fail on the parse.
+            body = {}
+    engine.clear_auth(include_shared=bool(body.get("shared")))
     engine.SETUP_FLOW.cancel()
     AUTH_CHECK.update(state="unchecked", error="", checked_at=0)
     return web.json_response({"cleared": True})
+
+
+async def h_auth(request: web.Request) -> web.Response:
+    """The whole credential picture, for the Claude account section.
+
+    Separate from /api/status because that is polled on a timer by every
+    open panel and this is read when a dialog opens: three `os.path.exists`
+    and a couple of small reads is nothing once, and something on a poll.
+    """
+    return web.json_response({
+        **engine.auth_overview(),
+        "auth_check": AUTH_CHECK,
+        "recheck_seconds": AUTH_RECHECK_S,
+    })
+
+
+async def h_auth_share(request: web.Request) -> web.Response:
+    """Publish this login to the file the other BRUH add-ons read."""
+    result = await asyncio.to_thread(engine.share_auth)
+    if not result["shared"]:
+        raise web.HTTPConflict(text={
+            "not_signed_in": "There is no credential to share — sign in first.",
+            "cli_login_cannot_be_shared":
+                "Claude Code's own login is a short-lived session token it "
+                "refreshes for itself. The shared file has nowhere to record a "
+                "refresh, so a copy would stop working within hours and every "
+                "add-on reading it would fail with nothing to say why. Sign in "
+                "here (or run `ha login` in the Terminal tab) to mint a "
+                "long-lived token that can be shared.",
+            "unwritable":
+                "Could not write to /config/.brain/secrets — check the add-on "
+                "log for the reason.",
+        }.get(result["reason"], result["reason"]))
+    return web.json_response(engine.auth_overview())
+
+
+async def h_auth_unshare(request: web.Request) -> web.Response:
+    removed = await asyncio.to_thread(engine.unshare_auth)
+    return web.json_response({**engine.auth_overview(), "removed": removed})
+
+
+async def h_auth_recheck(request: web.Request) -> web.Response:
+    """Verify the stored credential now, rather than at the next 6h ageing.
+
+    The verdict is otherwise only ever re-earned lazily off /api/status, on
+    `AUTH_RECHECK_S` — right for an unattended poll and useless to somebody
+    who has just fixed their login in the terminal and is looking at a chip
+    that still says it failed. This is the one press that costs a real
+    `claude -p` turn on purpose, and it is announced because a person asked.
+    """
+    started = start_auth_check()
+    return web.json_response({"started": started, "auth_check": AUTH_CHECK})
 
 
 async def h_setup_start(request: web.Request) -> web.Response:
@@ -5309,8 +5384,12 @@ def make_app() -> web.Application:
     app.router.add_post("/api/knowledge/question/{ts}/answer", h_knowledge_answer)
     app.router.add_post("/api/knowledge/question/{ts}/dismiss", h_knowledge_dismiss)
     app.router.add_delete("/api/knowledge/question/{ts}", h_knowledge_question_delete)
+    app.router.add_get("/api/auth", h_auth)
     app.router.add_post("/api/auth/token", h_auth_token)
     app.router.add_post("/api/auth/logout", h_auth_logout)
+    app.router.add_post("/api/auth/share", h_auth_share)
+    app.router.add_post("/api/auth/unshare", h_auth_unshare)
+    app.router.add_post("/api/auth/recheck", h_auth_recheck)
     app.router.add_post("/api/auth/setup/start", h_setup_start)
     app.router.add_post("/api/auth/setup/code", h_setup_code)
     app.router.add_get("/api/auth/setup/status", h_setup_status)

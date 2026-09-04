@@ -14,6 +14,7 @@ inherited:
 
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -478,9 +479,37 @@ class TestTopbarLayout(unittest.TestCase):
         """"Claude · subscription" was a permanent green label for a state
         that never changes, and it cost 165px of the widest band. The chip is
         now only rendered when there is trouble — checking, failed, or not
-        connected — so nothing has to make room for the settled case."""
-        self.assertIn('id="authChip" class="chip hidden"', self.html)
+        connected — so nothing has to make room for the settled case.
+
+        Asserted as two properties rather than as one literal attribute
+        string: it used to be `'id="authChip" class="chip hidden"' in html`,
+        which pins the class list's spelling and ORDER, so adding
+        `clickable` to a chip that still starts hidden failed a test whose
+        own docstring is about width. What matters is that the element ships
+        hidden and that `settled` is what decides.
+        """
+        chip = re.search(r"<(\w+)\s[^>]*id=\"authChip\"[^>]*>", self.html)
+        self.assertIsNotNone(chip, "the auth chip is gone from the top bar")
+        self.assertIn("hidden", chip.group(0), "the auth chip must ship hidden")
         self.assertIn('chip.classList.toggle("hidden", settled)', self.js)
+
+    def test_the_auth_chip_is_a_button_that_reaches_the_sign_in_screen(self):
+        """The chip renders only for trouble, and trouble is exactly when
+        there is something to press.
+
+        It was a `<span>` with no handler, so a panel reporting "Claude auth
+        failed" offered nothing to answer it with — and the sign-in screen
+        was hidden behind `authenticated`, which a dead-but-present
+        credential satisfies. A span is also unreachable from a keyboard,
+        which is why this asserts the tag and not just the listener.
+        """
+        chip = re.search(r"<(\w+)\s[^>]*id=\"authChip\"", self.html)
+        self.assertEqual(chip.group(1), "button",
+                         "the auth chip must be a button — it is a control")
+        self.assertIn('$("#authChip").addEventListener("click", openSignIn)', self.js)
+        # The screen has to be reachable with a credential stored, or the
+        # chip presses through to nothing in the exact case it renders for.
+        self.assertIn("state.showSignIn", self.js)
 
     # The staged bands, widest first. Sliced out of the CSS rather than
     # listed here: the widths move whenever anything joins the bar, and a

@@ -1123,6 +1123,38 @@ body.modal-open {
   gap: 4px 16px;
 }
 .setgrid input[type="number"] { max-width: 110px; }
+
+/* Claude account — the first section of the ⚙ dialog. No text inputs live
+   here on purpose: the sign-in screen owns the boxes you type a token into,
+   and duplicating them would be a second place to paste a credential. */
+.sethead.first { margin-top: 0; padding-top: 0; border-top: 0; }
+.authbox { margin: 10px 0 12px; font-size: 13px; }
+.authbox p { margin: 0 0 8px; }
+.authbox .subtext { color: var(--ink-2); }
+.authbox .authbad { color: var(--critical); }
+/* The verdict of a real `claude -p` turn, which is the only liveness signal
+   a pasted token has — so it is coloured like a state, not like prose. */
+.authverdict { color: var(--ink-2); }
+.authverdict.ok { color: var(--good); }
+.authverdict.bad { color: var(--critical); }
+.authverdict.busy { color: var(--warning); }
+/* All three stores, always — the panel used to be able to see only its own,
+   which is how it reported somebody's working terminal login as nothing. */
+.authstores { margin: 8px 0 0; padding: 0; list-style: none; font-size: 12.5px; }
+.authstores li { padding: 2px 0; color: var(--ink-2); }
+.authstores li.on { color: var(--ink); }
+.sharebox {
+  margin: 12px 0 4px;
+  padding: 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--plane);
+}
+.sharebox .row { align-items: center; gap: 8px; }
+/* The sign-in screen's heading row, so Back sits beside the title rather
+   than under the three sign-in tabs where it would read as one of them. */
+.setup-head { align-items: baseline; gap: 8px; }
+.setup-head h2 { margin: 0; }
 /* model picker: dropdown of known models + the "Custom model id…" box it
    reveals, which sits directly under it */
 #setModelCustom { margin-top: 6px; }
@@ -3149,6 +3181,13 @@ body.term-classic #termMode .ico-out { display: block; }
    density it was designed at — the same split the 16px text floor uses. */
 @media (pointer: coarse) {
   .propbtns .btn { min-height: 44px; padding-inline: 14px; }
+  /* Same argument, same scope. One of these signs somebody out and another
+     writes a credential to a volume that goes into Home Assistant backups,
+     so they are not places to miss by four pixels — and this is the section
+     somebody reaches for on a phone precisely when the panel has stopped
+     working. Scoped rather than raised globally for the reason above: the
+     rest of the panel's buttons are a separate, real problem. */
+  .authbtns .btn { min-height: 44px; padding-inline: 14px; }
 }
 /* The reason box replaces the buttons INSIDE the card, so what you are
    explaining stays on screen while you write about it. */

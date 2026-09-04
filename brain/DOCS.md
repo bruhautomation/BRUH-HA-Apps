@@ -898,6 +898,12 @@ duplicate them (see [What it will not do](#what-it-will-not-do)).
    picks that login up. The panel also offers a guided sign-in and a paste-a-token
    box. This is the **only** login; terminal, insights, voice, findings and memory all
    share it.
+
+   Afterwards, everything about that login lives in **⚙ Settings → Claude account**:
+   which credential is in use and where it came from, whether Claude still accepts
+   it, **Sign in again**, **Sign out**, and whether to share it with the other BRUH
+   add-ons. Come back here when the top bar says *Claude auth failed* — pressing
+   that chip goes straight to the sign-in screen.
 3. **Accept the integration.** Home Assistant offers to set up **brAIn** via
    discovery. That's what provides the services, the sensors and the voice assistant.
 4. **Press Start learning.** brAIn studies your home for a few minutes in the
@@ -909,6 +915,39 @@ plan you already pay for rather than API credits. An API key works too.
 
 > **If your home is too sparse to learn from**, brAIn says what's missing rather than
 > inventing generic cards. Add entities, let some history accumulate, run it again.
+
+### Signing in, and sharing that login
+
+A Claude credential can live in three places, and everything that authenticates
+reads all three:
+
+| Where | Written by | Notes |
+| --- | --- | --- |
+| Claude Code's own store | `claude` / `claude /login` in the Terminal tab | The only one that records an expiry — and a **session** token, which the CLI refreshes for itself |
+| The panel's store | the ✨ Connect screen, ⚙ Settings → Claude account | Lives in the add-on's own storage |
+| The shared file | **Share it**, or `ha login --share` | On `/config`, so it is the one other BRUH add-ons can read |
+
+Sharing is **off unless you turn it on**. `/config` is included in Home Assistant
+backups, and those are not encrypted unless you turned that on — so a shared login
+travels with your backups. Claude Code's own session token is deliberately **not**
+shareable: the shared file records no refresh token, so a copy would work for a few
+hours and then break every add-on reading it with nothing to say why. Sign in from
+the panel (or run `ha login`) to mint a long-lived token that can be shared.
+
+From a terminal, `ha login` and `brain login` are the same command:
+
+```bash
+ha login              # sign in — needs a real terminal (it is an OAuth round trip)
+ha login --status     # all three stores, and which one is in use
+ha login --share      # publish a login you already have
+ha login --token …    # paste a token minted elsewhere
+ha login --revoke     # withdraw the shared copy
+```
+
+The interactive flow needs a terminal, so run it in the panel's **Terminal** tab —
+not the separate *Terminal & SSH* add-on, which is a different container whose `ha`
+is the Supervisor CLI, an unrelated tool. Without a terminal at all, use `--share`,
+`--token`, or the panel.
 
 ## The panel
 

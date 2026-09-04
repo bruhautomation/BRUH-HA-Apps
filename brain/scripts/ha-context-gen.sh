@@ -308,7 +308,9 @@ for the full list.
 - \`ha addon <action> <slug>\` - Manage add-ons (list, info, restart, stop, start, logs, options)
 - \`ha notify "msg"\` - Send notifications (persistent or mobile push)
 - \`ha share <action>\` - Cross-addon file sync via /share (push, pull, ls)
-- \`ha login\` - Share this Claude login with other BRUH add-ons (--status, --revoke)
+- \`ha login\` - Sign in to Claude / share that login (--status, --share, --revoke).
+  Needs a real terminal for the interactive flow; without one use --share or
+  --token. Same command as \`brain login\`.
 
 **\`brain\` — brAIn's own faculties**
 - \`brain memory <action>\` - Home memory (add, list, edit, forget, log, undo, hypotheses, confirm, reject)
@@ -316,6 +318,7 @@ for the full list.
 - \`brain ask "<question>"\` - One-shot question about the home
 - \`brain undo [n]\` - Review and revert your edits to /config
 - \`brain doctor\` - End-to-end diagnostic (MCP, auth, listeners, CLI smoke tests)
+- \`brain login\` - Same as \`ha login\` (sign in, --status, --share)
 
 **Other**
 - \`persist-install apk|pip <packages>\` - Install persistent packages
