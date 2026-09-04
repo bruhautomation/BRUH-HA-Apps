@@ -118,6 +118,7 @@ options:
   weekly_report: false
   weekly_report_day: sunday
   checks_interval_hours: 6
+  self_healing: false
   protected_entities: []
   edit_journal_days: 14
   auto_refresh_hours: 24
@@ -163,6 +164,7 @@ schema:
   weekly_report: bool?
   weekly_report_day: "list(monday|tuesday|wednesday|thursday|friday|saturday|sunday)?"
   checks_interval_hours: "int(0,168)?"
+  self_healing: bool?
   protected_entities:
     - str
   edit_journal_days: "int(0,365)?"

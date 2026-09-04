@@ -130,6 +130,7 @@ import feedback_store
 import finding_requests
 import findings_store
 import fixer
+import healing
 import health
 import hypotheses
 import journal
@@ -977,7 +978,8 @@ async def _send_brief(now: float) -> str:
     night = await _brief_overnight(now)
     state = brief.state_from(
         await asyncio.to_thread(findings_store.list_all),
-        verdict, night, BRIEF_STATE["last_sent"] or (now - 86400))
+        verdict, night, BRIEF_STATE["last_sent"] or (now - 86400),
+        await asyncio.to_thread(_healing_brief_lines))
 
     reasons = brief.worth_saying(state)
     BRIEF_STATE["last_reasons"] = reasons
@@ -1380,6 +1382,189 @@ async def _evening_loop():
         except Exception as exc:  # noqa: BLE001 — the loop outlives a pass
             log.warning("bedtime pass failed: %s", exc)
         await asyncio.sleep(EVENING_POLL_S)
+
+
+# Overnight self-healing. Same shape as the bedtime pass — a cheap poll and
+# a window derived from what this house actually does — and one more
+# refusal on top of it: this one is OFF unless somebody switched it on.
+HEAL_POLL_S = 5 * 60
+HEAL_FIRST_DELAY_S = 900
+HEAL_STATE: dict = {"last": None, "reason": "", "running": False}
+
+
+def _healing_enabled() -> bool:
+    """The `self_healing` option, live, with run.sh's export as fallback.
+
+    Read exactly the way `findings_notify_service` is, so a Configuration-tab
+    edit lands without a restart and an unreachable Supervisor still gets
+    the answer somebody set at boot.
+    """
+    opts = addon_options.snapshot() or {}
+    on = opts.get("self_healing")
+    if on is None:
+        on = os.environ.get("BRAIN_SELF_HEALING", "").lower() in (
+            "true", "1", "yes")
+    return bool(on)
+
+
+def _healing_window(now: float) -> tuple[bool, str]:
+    """Whether tonight's pass is due, and the sentence for why not."""
+    local = _local_now(now)
+    start, end = _quiet_hours()
+    settles = rhythm.settle_minute(rhythm.profile(), local)
+    return healing.window(local, start, end, settles)
+
+
+async def run_healing(reason: str = "schedule") -> dict:
+    """One night's pass: plan against the house, make at most three calls.
+
+    The snapshot is `checks.snapshot.collect` — the same one the checks
+    read — because a second fetcher would be a second answer to "what is
+    broken here", and the finding this is acting on came out of the
+    first one.
+
+    Nothing verifies itself. The next checks pass clears the row or it
+    does not, and the morning brief says which: a call returning 200 is
+    the Supervisor accepting a request, which is not the same claim.
+    """
+    if HEAL_STATE["running"]:
+        return {"error": "a healing pass is already running"}
+    HEAL_STATE["running"] = True
+    started = time.time()
+    night = healing.night_key(_local_now(started))
+    try:
+        store = await asyncio.to_thread(healing.load)
+        done = healing.attempted_tonight(store, night)
+        snapshot = await checks.snapshot.collect(started)
+        rows = await asyncio.to_thread(findings_store.list_all, "open")
+        patterns = automation_writer.protected_patterns()
+        planned = await asyncio.to_thread(
+            healing.plan, rows, snapshot, patterns, done,
+            healing.MAX_PER_NIGHT, started)
+
+        attempts = list(store["attempts"]) if store.get("night") == night else []
+        skips = list(store["skips"]) if store.get("night") == night else []
+        for skipped in planned["skips"]:
+            skips.append(skipped)
+            journal.record("healing", healing.OUTCOME_SKIP, ok=False,
+                           error=str(skipped.get("reason") or "")[:200],
+                           extra={"ts": skipped.get("ts"),
+                                  "source": skipped.get("source")})
+
+        import aiohttp  # noqa: PLC0415 — as `_offer_routines` does
+
+        async with aiohttp.ClientSession() as session:
+            for attempt in planned["attempts"]:
+                ok, why = await healing.perform(session, attempt)
+                row = {k: attempt.get(k) for k in
+                       ("ts", "source", "remedy", "target", "label",
+                        "sentence", "text")}
+                row.update({"ok": ok, "error": why, "at": int(time.time())})
+                attempts.append(row)
+                # Written after EVERY attempt, not at the end: a restart
+                # at three in the morning must not find a pass that made
+                # two calls and recorded none of them.
+                await asyncio.to_thread(
+                    healing.save, {"night": night,
+                                   "started_at": int(started),
+                                   "attempts": attempts, "skips": skips})
+                journal.record(
+                    "healing",
+                    healing.OUTCOME_OK if ok else healing.OUTCOME_FAIL,
+                    ok=ok, error="" if ok else why,
+                    extra={"ts": attempt.get("ts"),
+                           "remedy": attempt.get("remedy"),
+                           "target": str(attempt.get("target") or "")[:60]})
+                log.info("healing: %s — %s", attempt.get("sentence"),
+                         "done" if ok else f"failed: {why}")
+
+        state = {"night": night, "started_at": int(started),
+                 "finished_at": int(time.time()), "reason": reason,
+                 "attempts": attempts, "skips": skips}
+        await asyncio.to_thread(healing.save, state)
+        HEAL_STATE["last"] = state
+        log.info("healing pass (%s): %d attempted, %d skipped",
+                 reason, len(planned["attempts"]), len(planned["skips"]))
+        return state
+    except Exception as exc:  # noqa: BLE001 — a bad pass must not take the loop down
+        log.warning("healing pass failed: %s", exc)
+        journal.record("healing", "error", error=str(exc))
+        return {"error": str(exc)[:300], "night": night}
+    finally:
+        HEAL_STATE["running"] = False
+
+
+async def _heal_loop():
+    """Once a night, inside the window, and only when it is switched on."""
+    await asyncio.sleep(HEAL_FIRST_DELAY_S)
+    while True:
+        try:
+            if not _healing_enabled():
+                HEAL_STATE["reason"] = "self_healing is off"
+            else:
+                now = time.time()
+                due, why = _healing_window(now)
+                HEAL_STATE["reason"] = "" if due else why
+                if due:
+                    night = healing.night_key(_local_now(now))
+                    store = await asyncio.to_thread(healing.load)
+                    if store.get("night") != night:
+                        await run_healing("schedule")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — the loop outlives a pass
+            log.warning("healing loop failed: %s", exc)
+        await asyncio.sleep(HEAL_POLL_S)
+
+
+def _healing_diagnostics() -> dict:
+    """Whether it is on, when it would run, and what last night did.
+
+    A self-healer that has never run looks exactly like one with nothing
+    to fix, so the *reason* rides here — including the one refusal
+    nothing else could report: no quiet hours and no measured settle
+    time, which means brAIn does not know when nobody is looking.
+    """
+    on = _healing_enabled()
+    try:
+        store = HEAL_STATE["last"] or healing.load()
+    except Exception as exc:  # noqa: BLE001 — a dev checkout has no /data
+        return {"enabled": on, "error": str(exc)[:120]}
+    reason = HEAL_STATE["reason"]
+    if on and not reason:
+        try:
+            _due, reason = _healing_window(time.time())
+        except Exception as exc:  # noqa: BLE001
+            reason = str(exc)[:120]
+    return {
+        "enabled": on,
+        "max_per_night": healing.MAX_PER_NIGHT,
+        "remedies": sorted(healing.REMEDIES),
+        "window": "" if on else "self_healing is off",
+        "reason": "" if not on else reason,
+        "night": store.get("night", ""),
+        "last_run": int(store.get("started_at") or 0),
+        "attempts": store.get("attempts") or [],
+        "skips": store.get("skips") or [],
+    }
+
+
+def _healing_brief_lines() -> list[str]:
+    """Last night's healing, as sentences, or nothing at all."""
+    if not _healing_enabled():
+        return []
+    try:
+        store = healing.load()
+        if not store.get("attempts"):
+            return []
+        open_ids = {int(f.get("ts") or 0)
+                    for f in findings_store.list_all("open")}
+        tz, _name = baselines.house_timezone()
+        return healing.brief_lines(store, open_ids, tz)
+    except Exception as exc:  # noqa: BLE001 — a brief without this is still
+        # a brief; one that failed because of it is not.
+        log.info("brief could not read the healing store: %s", exc)
+        return []
 
 
 async def _notify_flush_loop():
@@ -3390,6 +3575,11 @@ def _diagnostics_payload() -> dict:
         # findings since Tuesday" — which is the failure this file exists
         # to make visible from outside.
         "notify": _notify_diagnostics(),
+        # What was mended while the house slept, and — when nothing was —
+        # why not. "It is off", "it is not the window yet" and "this house
+        # has no measured settle time and no quiet hours" are three
+        # different silences, and only the last one needs anything doing.
+        "healing": _healing_diagnostics(),
         # The two things that decide when a person hears from brAIn, and
         # both are invisible from outside: a rhythm that never gathered
         # enough days looks exactly like one that did and chose 07:00.
@@ -5742,6 +5932,7 @@ def make_app() -> web.Application:
         app["notify_flush"] = asyncio.create_task(_notify_flush_loop())
         app["brief"] = asyncio.create_task(_brief_loop())
         app["evening"] = asyncio.create_task(_evening_loop())
+        app["healing"] = asyncio.create_task(_heal_loop())
         app["weekly"] = asyncio.create_task(_weekly_loop())
         app["requests"] = asyncio.create_task(_requests_loop())
         if addon_options.available():

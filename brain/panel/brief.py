@@ -87,6 +87,14 @@ def worth_saying(state: dict) -> list[str]:
             reasons.append(f"also: [{f.get('severity', 'warning')}] "
                            f"{f.get('text', '')}")
 
+    # Something was mended while the house was asleep, and the one place
+    # anybody would find out is here. The sentences are composed by
+    # `healing.brief_lines` rather than here: they need the house's own
+    # clock and the healer's vocabulary, and this module holds neither.
+    for line in (state.get("healing") or [])[:3]:
+        if str(line or "").strip():
+            reasons.append(str(line).strip())
+
     night = state.get("overnight") or {}
     if night.get("unattributed_spike"):
         reasons.append(
@@ -148,7 +156,7 @@ def due(now: float, minute_now: int, wake_minute: float | None,
 
 
 def state_from(findings: list[dict], health: dict, overnight: dict,
-               since: float) -> dict:
+               since: float, healing: list[str] | None = None) -> dict:
     """Everything `worth_saying` reads, gathered from what is already known."""
     fresh = [f for f in findings or []
              if float(f.get("ts") or 0) > since]
@@ -159,6 +167,7 @@ def state_from(findings: list[dict], health: dict, overnight: dict,
         "new_findings": fresh,
         "health": health or {},
         "overnight": overnight or {},
+        "healing": list(healing or []),
         "since": since,
         "now": time.time(),
     }

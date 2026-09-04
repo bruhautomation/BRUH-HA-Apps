@@ -49,6 +49,9 @@ OUTCOMES = (
     "crash",         # the process exited non-zero with no envelope
     "fallback",      # a quieter path was taken instead of the one asked for
     "applied",       # a change was written to the house and verified there
+    "healed",        # an overnight remediation made its one call
+    "heal_failed",   # it made it and the call came back a failure
+    "heal_skipped",  # it was refused before any call was made
     "error",         # anything else
 )
 

@@ -1,16 +1,24 @@
 """Checks on the machine Home Assistant is running on.
 
-These are the four failures that take a house down without anything in it
+These are the failures that take a house down without anything in it
 looking wrong: nothing has been backed up, an add-on that is meant to run
-is not running, the disk is nearly full, and the recorder database has
-grown past what the disk can hold a copy of. Every one of them is quiet
-right up until it is not recoverable.
+is not running, the disk is nearly full, the recorder database has grown
+past what the disk can hold a copy of, and an integration that never
+finished setting itself up. Every one of them is quiet right up until it
+is not recoverable.
 
 They read the Supervisor's own answers (``/backups``, ``/addons``,
-``/host/info``) and one ``stat`` of the recorder database — nothing here
-asks Core anything. A Supervisor that did not answer leaves the key
-unavailable, so these checks do not run, and so cannot clear a row they
-could not look at.
+``/host/info``), one ``stat`` of the recorder database, and Core's own
+list of config entries. A source that did not answer leaves its key
+unavailable, so the checks that need it do not run, and so cannot clear a
+row they could not look at.
+
+``ADDON_STOPPED_TEXT`` is exported because ``panel/healing.py`` has to
+tell this check's two rows apart, and a finding's text is the only stable
+id it has — the store dedupes on it. Comparing against the constant the
+check itself writes is an identity test; matching a pattern against the
+prose would be a guess that goes wrong the first time the sentence is
+reworded.
 """
 from __future__ import annotations
 
@@ -27,6 +35,21 @@ DISK_FREE_MIN_PCT = 8.0
 DB_LARGE_GB = 1.0
 # Home Assistant's own default when `recorder:` does not set one.
 DEFAULT_PURGE_DAYS = 10
+
+# The two rows `addon_down` can file, named so nothing has to match a
+# pattern against them. See the module docstring.
+ADDON_ERROR_TEXT = "An add-on is in an error state"
+ADDON_STOPPED_TEXT = "An add-on set to start on boot is not running"
+
+# A config entry in one of these never finished loading, so everything it
+# provides is missing from the house. `setup_retry` is included on
+# purpose: Home Assistant is retrying it on a backoff, and a retry that
+# has been going since Tuesday is exactly as broken as an outright error
+# — the difference is only whether Core has given up saying so.
+# `migration_error` is deliberately NOT here: it is a different fix (a
+# restore or a downgrade), and a reload cannot touch it.
+ENTRY_FAILED_STATES = ("setup_error", "setup_retry")
+ENTRY_FAILED_TEXT = "An integration did not finish setting up"
 
 
 def _sup(snap: dict) -> dict:
@@ -100,7 +123,7 @@ def addon_down(snap: dict, now: float) -> list[dict]:
     if errored:
         errored.sort()
         out.append({
-            "text": "An add-on is in an error state",
+            "text": ADDON_ERROR_TEXT,
             "detail": join_names(errored)
                       + ". The Supervisor could not start it, or it exited "
                         "and kept exiting.",
@@ -113,7 +136,7 @@ def addon_down(snap: dict, now: float) -> list[dict]:
     if stopped:
         stopped.sort()
         out.append({
-            "text": "An add-on set to start on boot is not running",
+            "text": ADDON_STOPPED_TEXT,
             "detail": ("These have boot set to automatic and are "
                        "stopped: " + join_names(stopped)
                        + f" ({len(stopped)})."),
@@ -195,6 +218,71 @@ def recorder_size(snap: dict, now: float) -> list[dict]:
     }]
 
 
+# ---------------------------------------------------------------------------
+# sys.entry_failed — an integration that never finished setting up
+# ---------------------------------------------------------------------------
+
+def failed_entries(snap: dict) -> list[dict]:
+    """The config entries that did not load, oldest id first.
+
+    Shared with ``panel/healing.py`` rather than recomputed there, for the
+    reason ``dev.unavailable`` and ``dev.zwave_dead`` share
+    ``_zwave_dead_devices``: two answers to "which integrations are
+    broken" is one too many, and the healer would be acting on a set the
+    finding is not about.
+
+    A **disabled** entry is somebody's decision, and an **ignored** one is
+    a discovery somebody waved off — neither is a fault, and reporting
+    them is how this check would fire on a healthy house.
+    """
+    out = []
+    for entry in snap.get("config_entries") or []:
+        if not isinstance(entry, dict) or not entry.get("entry_id"):
+            continue
+        if entry.get("disabled_by") or entry.get("source") == "ignore":
+            continue
+        if str(entry.get("state") or "") not in ENTRY_FAILED_STATES:
+            continue
+        out.append(entry)
+    return sorted(out, key=lambda e: str(e.get("entry_id")))
+
+
+def entry_name(entry: dict) -> str:
+    title = str(entry.get("title") or "").strip()
+    domain = str(entry.get("domain") or "an integration")
+    return f"{title} ({domain})" if title and title != domain else domain
+
+
+def entry_failed(snap: dict, now: float) -> list[dict]:
+    """Nothing errors and no entity is unavailable — the entities are gone.
+
+    An integration that fails setup takes everything it provides out of
+    the house at once. There is no state to look wrong because there are
+    no states, which is why nothing else on this page can see it.
+    """
+    rows = failed_entries(snap)
+    if not rows:
+        return []
+    names = sorted(entry_name(e) for e in rows)
+    reasons = sorted({str(e.get("reason") or "").strip()
+                      for e in rows if e.get("reason")})
+    detail = (f"{len(names)}: " + join_names(names)
+              + ". Everything they provide — entities, services, devices — "
+                "is missing from Home Assistant until they load.")
+    if reasons:
+        detail += " Home Assistant says: " + "; ".join(reasons[:3])[:200]
+    return [{
+        "text": ENTRY_FAILED_TEXT,
+        "detail": detail,
+        "fix": "Settings > Devices & services — the entry shows the error. "
+               "Reload it once whatever it needs is back (a hub powered on, "
+               "a network share mounted, a password re-entered).",
+        "severity": "serious",
+        "fixable": False,
+        "entity_id": "",
+    }]
+
+
 CHECKS = [
     {"id": "sys.backup_stale", "title": "Backups missing or stale",
      "needs": ("supervisor",), "run": backup_stale},
@@ -204,4 +292,6 @@ CHECKS = [
      "needs": ("supervisor",), "run": disk_space},
     {"id": "sys.recorder_size", "title": "Recorder database size",
      "needs": ("recorder",), "run": recorder_size},
+    {"id": "sys.entry_failed", "title": "Integrations that did not load",
+     "needs": ("config_entries",), "run": entry_failed},
 ]

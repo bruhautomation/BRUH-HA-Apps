@@ -176,6 +176,19 @@ configuration:
       never call Claude, so they cost nothing; what they find lands on the
       Findings tab. 0 turns the schedule off (`brain check` still runs them
       by hand).
+  self_healing:
+    name: Fix three things overnight
+    description: >-
+      Off by default. Once a night, inside your quiet hours, brAIn may make
+      up to three repairs on its own — start an add-on that was set to run
+      at boot and is not running, ping a Z-Wave node the controller has
+      marked dead, and reload an integration that failed to set up. Nothing
+      else: no power-cycling, no restarts of Home Assistant, and never
+      anything on your protected entities. Each is tried once per night,
+      only for a problem you have not already answered on the Findings tab,
+      and the morning brief says what it did and whether it worked. With no
+      quiet hours set it runs an hour after the time brAIn has measured your
+      house going quiet; with neither, it does not run.
   protected_entities:
     name: Protected entities
     description: >-

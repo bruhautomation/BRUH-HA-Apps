@@ -29,6 +29,10 @@ and so cannot clear anything):
                     list endpoint does not say whether it was meant to run
     zha_devices    [{name, ieee, available, last_seen}] — absent unless ZHA
                     is installed, which is what makes the key unavailable
+    config_entries [{entry_id, domain, title, state, source, disabled_by,
+                    reason}] — every integration entry and whether it set
+                    itself up. Unavailable when Core would not answer, which
+                    is a different claim from a house with nothing failing
     recorder       {db_bytes, db_path, purge_keep_days}
     closures       how much of each hour of the week each door, window,
                     lock and cover is normally open, as `panel/closures.py`
@@ -309,6 +313,21 @@ async def collect(now: float | None = None) -> dict:
         except Exception as exc:  # noqa: BLE001
             snap["zha_devices"] = []
             _mark("zha_devices", False, str(exc))
+
+        # Every integration entry and whether it loaded. A Core that
+        # would not answer leaves the key UNAVAILABLE rather than empty:
+        # "no entry is failing" and "I could not ask" are different
+        # claims, and only the first may clear a row.
+        try:
+            entries = (await ha_data._ws_commands(
+                session, [{"type": "config_entries/get"}]))[0]
+            snap["config_entries"] = entries if isinstance(entries, list) else []
+            _mark("config_entries", isinstance(entries, list),
+                  "" if isinstance(entries, list)
+                  else "Home Assistant did not list its config entries")
+        except Exception as exc:  # noqa: BLE001
+            snap["config_entries"] = []
+            _mark("config_entries", False, str(exc))
 
         sup = await _supervisor(session)
         snap["supervisor"] = sup
