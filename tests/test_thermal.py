@@ -430,7 +430,8 @@ def room(k: float = 0.08, gain: float = 1.8, warmest: float = 22.4,
 
 
 def snap(rooms: dict, coldest: float = 1.0, target: float | None = 21.0,
-         hvac: str = "heat", unit: str = "°C") -> dict:
+         hvac: str = "heat", unit: str = "°C", recent: dict | None = None,
+         baselines: dict | None = None) -> dict:
     states: dict = {}
     entities = []
     areas = []
@@ -451,12 +452,16 @@ def snap(rooms: dict, coldest: float = 1.0, target: float | None = 21.0,
         entities.append({"entity_id": eid, "area_id": aid})
     return {
         "now": NOW,
-        "available": {"states": True, "registry": True, "thermal": True},
+        "available": {"states": True, "registry": True, "thermal": True,
+                      "baselines": True},
         "states": states, "entities": entities, "devices": [], "areas": areas,
         "services": set(),
+        "baselines": {"built_at": int(NOW - 86400), "tz": "UTC",
+                      "entities": dict(baselines or {})},
         "thermal": {"built_at": int(NOW - 86400), "tz": "UTC", "days": 28,
                     "outdoor": "sensor.garden", "unit": unit,
-                    "coldest": coldest, "asked": len(rooms), "rooms": rooms},
+                    "coldest": coldest, "asked": len(rooms), "rooms": rooms,
+                    "recent": dict(recent or {})},
     }
 
 
@@ -592,22 +597,265 @@ class TestHeatLoss(unittest.TestCase):
         self.assertEqual(len(thermal_check.heat_loss(alone, NOW)), 1)
 
 
+# ---------------------------------------------------------------------------
+# The three that read the model against now, or against every morning
+# ---------------------------------------------------------------------------
+
+def falling(start: float, end: float, minutes: float = 45.0,
+            eid: str = "sensor.study_temp") -> dict:
+    """Five-minute rows for one room easing from `start` to `end`."""
+    n = int(minutes / 5) + 1
+    step = (end - start) / (n - 1)
+    return {eid: [{"start": NOW - (minutes - i * 5) * 60,
+                   "mean": round(start + step * i, 3)} for i in range(n)]}
+
+
+def steady(value: float, eid: str, minutes: float = 45.0) -> dict:
+    return falling(value, value, minutes, eid)
+
+
+class TestARateIsNotAReadingApart(unittest.TestCase):
+    """`recent_fall` — the floors that keep a thermometer's own step out."""
+
+    def test_a_span_too_short_to_measure_answers_nothing(self):
+        rows = falling(21.0, 20.0, minutes=15.0)["sensor.study_temp"]
+        self.assertIsNone(thermal.recent_fall(rows, NOW))
+
+    def test_a_room_that_is_steady_has_no_fall(self):
+        rows = steady(21.0, "sensor.study_temp")["sensor.study_temp"]
+        self.assertIsNone(thermal.recent_fall(rows, NOW))
+
+    def test_a_room_that_is_rising_has_no_fall(self):
+        rows = falling(19.0, 21.0)["sensor.study_temp"]
+        self.assertIsNone(thermal.recent_fall(rows, NOW))
+
+    def test_the_rate_is_the_whole_span(self):
+        rows = falling(21.0, 19.5)["sensor.study_temp"]
+        got = thermal.recent_fall(rows, NOW)
+        self.assertAlmostEqual(got["rate"], 1.5 / 0.75, places=2)
+        self.assertAlmostEqual(got["from"], 21.0, places=2)
+        self.assertAlmostEqual(got["to"], 19.5, places=2)
+
+    def test_a_reading_that_is_hours_old_says_how_old(self):
+        rows = [{"start": NOW - 5 * 3600 + i * 300, "mean": 21.0 - i * 0.1}
+                for i in range(10)]
+        got = thermal.recent_fall(rows, NOW)
+        self.assertGreater(got["age_min"], 200)
+
+
+class TestWindow(unittest.TestCase):
+
+    def house(self, rows: dict, outdoor: float = 2.0) -> dict:
+        recent = dict(rows)
+        recent["sensor.garden"] = [
+            {"start": NOW - (45 - i * 5) * 60, "mean": outdoor}
+            for i in range(10)]
+        return snap(four(), recent=recent)
+
+    def test_a_house_holding_its_heat_says_nothing(self):
+        # 0.6 an hour, where the study's own k allows about 1.6.
+        self.assertEqual(
+            thermal_check.window(self.house(falling(21.4, 20.95)), NOW), [])
+
+    def test_a_room_falling_faster_than_physics_allows_is_reported(self):
+        found = thermal_check.window(self.house(falling(21.4, 18.4)), NOW)
+        self.assertEqual(len(found), 1)
+        self.assertIn("Study", found[0]["text"])
+        self.assertIn("faster than it can", found[0]["text"])
+        self.assertEqual(found[0]["entity_id"], "sensor.study_temp")
+
+    def test_mild_weather_gives_a_window_nothing_to_do(self):
+        # The same fall, with only three degrees between in and out: the
+        # model's own error is largest here and an open window changes
+        # almost nothing.
+        self.assertEqual(
+            thermal_check.window(self.house(falling(21.4, 18.4), outdoor=19.0),
+                                 NOW), [])
+
+    def test_a_stale_reading_is_not_now(self):
+        old = {"sensor.study_temp": [
+            {"start": NOW - 6 * 3600 + i * 300, "mean": 21.4 - i * 0.35}
+            for i in range(10)]}
+        self.assertEqual(thermal_check.window(self.house(old), NOW), [])
+
+    def test_a_whole_house_airing_out_is_the_weather_not_a_draught(self):
+        rows: dict = {}
+        for eid in four():
+            rows.update(falling(21.4, 18.4, eid=eid))
+        self.assertEqual(thermal_check.window(self.house(rows), NOW), [])
+
+    def test_the_allowance_is_read_where_the_fall_STARTED(self):
+        """The model is given the benefit of the doubt, deliberately.
+
+        A room's allowed loss shrinks as it cools, so reading it at the
+        end of the span sets a lower bar than reading it at the start —
+        and this fall clears the lower bar and not the higher one. Taking
+        the end would report a room the model can account for.
+        """
+        rows = falling(21.4, 18.9)
+        fall = thermal.recent_fall(rows["sensor.study_temp"], NOW)
+        entry = four()["sensor.study_temp"]
+        at_start = thermal.expected_fall(entry, fall["from"], 2.0)
+        at_end = thermal.expected_fall(entry, fall["to"], 2.0)
+        self.assertLess(at_end, at_start)
+        self.assertLess(fall["rate"], at_start * thermal_check.WINDOW_FACTOR)
+        self.assertGreater(fall["rate"], at_end * thermal_check.WINDOW_FACTOR)
+        self.assertEqual(thermal_check.window(self.house(rows), NOW), [])
+
+    def test_a_room_with_no_model_is_not_measured_against_one(self):
+        rooms = four()
+        rooms["sensor.study_temp"] = {"name": "Study Temperature",
+                                      "area": "Study", "unit": "°C",
+                                      "warmest": 22.0}
+        recent = dict(falling(21.4, 18.4))
+        recent["sensor.garden"] = [
+            {"start": NOW - (45 - i * 5) * 60, "mean": 2.0} for i in range(10)]
+        self.assertEqual(
+            thermal_check.window(snap(rooms, recent=recent), NOW), [])
+
+
+class TestFreeze(unittest.TestCase):
+
+    def house(self, rows: dict, outdoor: float = -4.0) -> dict:
+        recent = dict(rows)
+        recent["sensor.garden"] = [
+            {"start": NOW - (45 - i * 5) * 60, "mean": outdoor}
+            for i in range(10)]
+        return snap(four(), recent=recent)
+
+    def test_a_warm_house_on_a_cold_night_says_nothing(self):
+        # 21 °C against −1 outside is fifteen hours from the floor, which
+        # is past the horizon — the check is about tonight.
+        self.assertEqual(
+            thermal_check.freeze(self.house(falling(21.4, 20.95),
+                                            outdoor=-1.0), NOW), [])
+
+    def test_a_cold_room_falling_towards_the_floor_is_reported(self):
+        found = thermal_check.freeze(self.house(falling(8.6, 8.0)), NOW)
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]["severity"], "critical")
+        self.assertIn("Study", found[0]["text"])
+
+    def test_a_room_that_is_not_falling_is_never_forecast(self):
+        """`coast` describes an unheated room, and no state says the
+        heating is off — so the check requires the fall as evidence."""
+        self.assertEqual(
+            thermal_check.freeze(self.house(steady(8.6, "sensor.study_temp")),
+                                 NOW), [])
+
+    def test_a_mild_night_cannot_freeze_anything(self):
+        self.assertEqual(
+            thermal_check.freeze(self.house(falling(8.6, 8.0), outdoor=9.0),
+                                 NOW), [])
+
+    def test_a_room_never_falls_below_what_is_outside_it(self):
+        # Outside is above the floor, so the room cannot reach it however
+        # long it coasts — that is arithmetic, not a threshold.
+        self.assertEqual(
+            thermal_check.freeze(self.house(falling(8.6, 8.0), outdoor=5.5),
+                                 NOW), [])
+
+    def test_the_window_check_stands_down_for_a_room_freeze_claims(self):
+        """One room, one fix — freeze first, because it is the sentence
+        worth waking somebody for."""
+        rows = falling(8.6, 6.4)
+        house = self.house(rows)
+        froze = thermal_check.freeze(house, NOW)
+        self.assertEqual(len(froze), 1)
+        self.assertEqual(thermal_check.window(house, NOW), [])
+
+
+class TestPreheat(unittest.TestCase):
+
+    def buckets(self, at_wake: float, later: float, hour: int = 7,
+                outside: float = 8.0) -> dict:
+        """Weekday baselines: the room at the wake hour and two on."""
+        def five(value: float, h: int) -> dict:
+            return {str(d * 24 + h): {"median": value, "spread": 0.4, "n": 4}
+                    for d in range(5)}
+        return {
+            "sensor.study_temp": {"buckets": {**five(at_wake, hour),
+                                              **five(later, hour + 2)}},
+            "sensor.garden": {"buckets": {**five(outside, hour),
+                                          **five(outside, hour + 2)}},
+        }
+
+    def house(self, at_wake: float, later: float, **over) -> dict:
+        return snap(four(), baselines=self.buckets(at_wake, later, **over))
+
+    def run_at(self, house: dict, wake: float | None = 7 * 60):
+        """Drive the check with the house's wake time measured or not."""
+        original = thermal_check._weekday_wake
+        thermal_check._weekday_wake = lambda now: (wake, "UTC")
+        try:
+            return thermal_check.preheat(house, NOW)
+        finally:
+            thermal_check._weekday_wake = original
+
+    def test_a_room_that_is_warm_when_you_get_up_says_nothing(self):
+        self.assertEqual(self.run_at(self.house(20.8, 21.2)), [])
+
+    def test_a_room_still_climbing_is_reported_with_the_lead(self):
+        found = self.run_at(self.house(19.5, 21.3))
+        self.assertEqual(len(found), 1)
+        self.assertIn("Study", found[0]["text"])
+        self.assertIn("still warming up", found[0]["text"])
+        self.assertIn("07:00", found[0]["detail"])
+        self.assertEqual(found[0]["entity_id"], "sensor.study_temp")
+
+    def test_an_unmeasured_wake_time_is_never_a_guessed_one(self):
+        """A preheat time pinned to a typed-in 07:00 is a guess wearing a
+        number, so the check says nothing until `rhythm` has answered."""
+        self.assertEqual(self.run_at(self.house(19.5, 21.3), wake=None), [])
+
+    def test_a_room_that_never_gets_there_is_the_other_check(self):
+        # Short at the wake hour AND short two hours later: nothing about
+        # the schedule would fix this, and `climate.underheated` owns it.
+        self.assertEqual(self.run_at(self.house(19.5, 19.9)), [])
+
+    def test_a_room_nothing_asks_anything_of_is_not_preheated(self):
+        house = snap(four(), target=None,
+                     baselines=self.buckets(19.5, 21.3))
+        self.assertEqual(self.run_at(house), [])
+
+    def test_a_wake_hour_too_late_to_have_a_morning_after_it(self):
+        self.assertEqual(
+            self.run_at(self.house(19.5, 21.3, hour=22), wake=22 * 60), [])
+
+    def test_a_bucket_nobody_has_watched_answers_nothing(self):
+        thin = self.buckets(19.5, 21.3)
+        room = thin["sensor.study_temp"]["buckets"]
+        for dow in range(3, 5):
+            room.pop(str(dow * 24 + 7), None)
+        # Three of five is the floor, and this leaves three — then two.
+        self.assertEqual(len(self.run_at(snap(four(), baselines=thin))), 1)
+        room.pop(str(2 * 24 + 7))
+        self.assertEqual(self.run_at(snap(four(), baselines=thin)), [])
+
+    def test_the_whole_house_being_slow_is_the_schedule_not_a_room(self):
+        wide = self.buckets(19.5, 21.3)
+        for eid in four():
+            wide[eid] = wide["sensor.study_temp"]
+        self.assertEqual(self.run_at(snap(four(), baselines=wide)), [])
+
+
 class TestTheChecksAreRegistered(unittest.TestCase):
 
     def test_both_are_in_the_catalog_under_a_named_group(self):
         ids = {c["id"] for c in checks.CHECKS}
-        self.assertIn("climate.underheated", ids)
-        self.assertIn("climate.heat_loss", ids)
+        for cid in ("climate.underheated", "climate.heat_loss",
+                    "climate.preheat", "climate.freeze", "climate.window"):
+            self.assertIn(cid, ids)
         self.assertEqual(checks.title_for("climate.underheated"),
                          "Climate check")
 
     def test_neither_runs_without_the_store(self):
         house = snap(four())
         house["available"]["thermal"] = False
-        result = checks.run_all(house, NOW, only=["climate.underheated",
-                                                  "climate.heat_loss"])
+        result = checks.run_all(house, NOW, only=[
+            c["id"] for c in checks.CHECKS if c["id"].startswith("climate.")])
         self.assertEqual(result["ran"], [])
-        self.assertEqual(len(result["skipped"]), 2)
+        self.assertEqual(len(result["skipped"]), 5)
 
 
 if __name__ == "__main__":

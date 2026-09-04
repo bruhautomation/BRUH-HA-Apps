@@ -302,6 +302,35 @@ than a room.
 
 Neither is ever urgent, so quiet hours can hold both.
 
+## When the heating is late, and when something is open
+
+The same two numbers answer three more questions.
+
+**Your heating starts too late.** A schedule set to a fixed hour warms the
+bedroom to its setpoint at 07:40 in a house that is up at 07:00 — every
+weekday, with nothing recording a fault, because the automation ran and the
+room did get warm. brAIn needs three of its own measurements to agree before
+saying so: when this house *actually* gets up, what the room reads at that
+hour of an ordinary week, and how long the climb takes. Then it names the time
+the heating would have to start. Weekday mornings only, and never until the
+wake time is measured — a preheat time pinned to a typed-in 07:00 is a guess
+wearing a number.
+
+**A window is open.** A room falling more than twice as fast as its own
+insulation allows is losing heat by a route the walls do not have. Only
+sayable because the model exists: the same half-degree in ten minutes is a
+draught in one room and an ordinary evening in another.
+
+**The pipes are at risk.** When does this room reach 5 °C — where water in an
+outside wall starts to be at risk, well before the room's thermometer reads
+freezing. Only for a room already *falling*, because nothing in Home Assistant
+says the heating is off, so the fall is the evidence.
+
+The last two read five-minute history: an hourly average cannot see a window
+opened forty minutes ago, because it is still inside the hour that has not
+finished. Both break quiet hours. The preheat one does not — a schedule that
+starts late will start late again tomorrow.
+
 ## What counts as unusual
 
 brAIn measures your house overnight: for every numeric sensor, what it normally

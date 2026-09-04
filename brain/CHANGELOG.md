@@ -2,6 +2,80 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.41.0
+
+### Added
+
+The rest of the capability map's **#11**. 1.40.0 measured how each room holds
+its heat; this is what the measurement is *for* — three findings, each
+answering a question no single state in Home Assistant can.
+
+- **`climate.preheat` — the heating starts too late.** A schedule set to a
+  fixed hour warms the bedroom to its setpoint at 07:40 in a house that is up
+  at 07:00, every weekday, and nothing anywhere records a fault: the
+  automation ran, the thermostat called, the room got warm. Three of brAIn's
+  own measurements have to agree before it will say so — `rhythm` for when
+  this house actually gets up, `baselines` for what the room reads at that
+  hour of an ordinary week, and the thermal model for how long the climb takes
+  — and then it names the time the call would have to come.
+
+  It reports **weekday mornings only**, because that is where a schedule
+  exists and where `rhythm` has the days behind it (a weekend accrues two days
+  a week and takes about five weeks to measure). And it says nothing at all
+  until the wake time is measured rather than guessed: a preheat time pinned
+  to a typed-in 07:00 is a guess wearing a number. **The proof that the
+  heating *does* arrive is required**, not optional — a room still short two
+  hours later is `climate.underheated`'s finding, and "start earlier" is
+  advice that cannot work on one.
+
+- **`climate.window` — a room losing heat faster than it can.** More than
+  twice what its own `k` allows is a route the walls do not have. This check
+  is only *sayable* because the model exists: the same half-degree in ten
+  minutes is a draught in one room and an ordinary evening in another, and no
+  fixed threshold can tell them apart. The room's allowance is read where the
+  fall **started** rather than where it ended — a room's allowed loss shrinks
+  as it cools, so the end sets a lower bar, and the start is the reading that
+  gives the model the benefit of the doubt.
+
+- **`climate.freeze` — the pipes.** From the current reading and the current
+  outdoor temperature, when this room reaches 5 °C: where water in an outside
+  wall starts to be at risk, well before the room's own thermometer reads
+  freezing. It only reports a room that is **already falling**, rather than
+  assuming nothing heats it — `coast` describes an unheated room and no state
+  anywhere says the heating is off, so the fall is the evidence.
+
+- **`thermal.recent`** is the live half of the snapshot key, the way
+  `appliances` already does it: the nightly store says how a room behaves, and
+  the checks pass fetches what it is doing now — the modelled rooms and their
+  outdoor reference, over four hours. **Five-minute statistics, not hourly**,
+  because an hourly mean cannot see a window opened forty minutes ago: it is
+  still inside the hour that has not closed. One fetch, two checks.
+
+- `climate.freeze` and `climate.window` ride at **`now`** urgency and may
+  break quiet hours — a freeze warning at 3am is exactly when it is wanted,
+  and an open window costs money for as long as it stays open. `climate.preheat`
+  stays `whenever`: a schedule that starts late will start late again tomorrow.
+
+- Both live checks **stand down for the room the other claims**, freeze first.
+  A room freezing because a window is open is one problem, and the sentence
+  that names the freezing is the one worth waking somebody for — the same
+  arrangement `climate.underheated` and `climate.heat_loss` already keep.
+
+### Tests
+
+- 26 more cases in `tests/test_thermal.py` (83 total), and each new guard is
+  verified against the failure it exists for rather than only against the fix:
+  dropping freeze's "already falling" evidence makes it forecast a heated
+  room; dropping preheat's "it does get there later" proof makes it advise an
+  earlier start on a room that never arrives; removing `recent_fall`'s span
+  floor turns a thermometer's own 0.1 step into a rate; and reading the window
+  allowance at the end of the fall instead of the start reports a room the
+  model can account for.
+- The clean fixture in `tests/test_house_checks.py` gained live readings — a
+  cold evening with every room easing down well inside what its insulation
+  allows — so both live checks run their whole loop over four rooms and are
+  asserted silent, rather than silent for want of data.
+
 ## 1.40.0
 
 ### Added

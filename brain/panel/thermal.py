@@ -303,6 +303,113 @@ def hours_to_warm(entry: dict, indoor: float, outdoor: float,
 
 
 # ---------------------------------------------------------------------------
+# What a room is doing NOW
+# ---------------------------------------------------------------------------
+#
+# The model is a month old by construction and answers how a room *behaves*;
+# whether one is cooling faster than it can right now is a live question, and
+# the checks pass fetches it for itself — the same split `appliances` keeps,
+# and cheap for the same reason: a handful of modelled rooms over a few
+# hours, never the house over a month.
+
+# Five-minute statistics, because an hourly mean cannot see a window that
+# was opened forty minutes ago — it is still inside the hour that has not
+# closed. Home Assistant keeps this resolution for ten days.
+RECENT_HOURS = 4
+RECENT_BUCKET_S = 300.0
+# A rate measured over less than this is measuring the sensor's own quantum:
+# a thermometer that reports in tenths moves 0.1 at a time, and two readings
+# a few minutes apart put that step over a tiny window.
+MIN_SPAN_MIN = 25.0
+# And a fall has to be big enough to be a fall. Degrees, in the room's unit.
+MIN_FALL = 0.4
+
+
+async def fetch_recent(session, ids: list[str], start: dt.datetime,
+                       end: dt.datetime | None = None) -> dict:
+    """Five-minute means per entity, or {} when nothing answered."""
+    import ha_data  # noqa: PLC0415
+
+    out: dict[str, list] = {}
+    base: dict = {
+        "type": "recorder/statistics_during_period",
+        "start_time": start.isoformat(),
+        "statistic_ids": [],
+        "period": "5minute",
+        "types": ["mean"],
+    }
+    if end is not None:
+        base["end_time"] = end.isoformat()
+    for i in range(0, len(ids), 10):
+        command = {**base, "statistic_ids": ids[i:i + 10]}
+        try:
+            results = await ha_data._ws_commands(session, [command])
+        except Exception as exc:  # noqa: BLE001 — a batch that failed is a
+            # batch that failed; the rest of the rooms still get a reading.
+            log.info("thermal recent batch failed: %s", exc)
+            continue
+        for sid, rows in (results[0] or {}).items():
+            out[sid] = rows or []
+    return out
+
+
+def recent_fall(rows: list, now: float) -> dict | None:
+    """How fast a room has been falling, and over what.
+
+    ``None`` unless the readings span `MIN_SPAN_MIN` and actually fall by
+    `MIN_FALL` — a room that is steady, rising, or only just observed has
+    no rate worth quoting, and quoting one anyway is how a check about a
+    draught starts firing on a thermometer's own rounding.
+
+    The rate is the **whole span**, first reading to last, rather than a
+    fitted line: a window is a step change and a line through one reports
+    half of it, which is exactly the half that decides whether this is
+    reported at all.
+    """
+    points = sorted(_hourly_map(rows).items())
+    if len(points) < 2:
+        return None
+    first_ts, first = points[0]
+    last_ts, last = points[-1]
+    span_min = (last_ts - first_ts) / 60.0
+    if span_min < MIN_SPAN_MIN:
+        return None
+    fall = first - last
+    if fall < MIN_FALL:
+        return None
+    return {
+        "rate": fall / (span_min / 60.0),   # degrees per hour, positive down
+        "from": round(first, 2),
+        "to": round(last, 2),
+        "span_min": round(span_min, 1),
+        "age_min": round(max(0.0, (now - last_ts) / 60.0), 1),
+        "n": len(points),
+    }
+
+
+def latest(rows: list) -> tuple[float, float] | None:
+    """`(when, reading)` of the newest five-minute mean, or None."""
+    points = sorted(_hourly_map(rows).items())
+    if not points:
+        return None
+    ts, value = points[-1]
+    return float(ts), value
+
+
+def expected_fall(entry: dict, indoor: float, outdoor: float) -> float | None:
+    """Degrees per hour this room loses at this difference, with no heating.
+
+    The model's own prediction, and the thing an observed fall is measured
+    against. A room warmer than outside falls; one that is not cannot, and
+    a negative expectation would make any fall look enormous against it.
+    """
+    k = (entry or {}).get("k")
+    if not k or indoor <= outdoor:
+        return None
+    return k * (indoor - outdoor)
+
+
+# ---------------------------------------------------------------------------
 # The store
 # ---------------------------------------------------------------------------
 
@@ -624,8 +731,9 @@ async def build(session, states: dict, registries: dict | None = None,
 __all__ = [
     "GAIN_PCT", "HISTORY_DAYS", "MAX_ROOMS", "MAX_TAU_H", "MIN_DELTA_SPAN",
     "MIN_FIT_RATIO", "MIN_POINTS", "MIN_TAU_H", "NIGHT_FROM", "NIGHT_TO",
-    "STORE", "area_map", "build", "build_room", "ceiling", "coast", "fit_gain",
-    "fit_loss", "fetch_hourly", "hours_to_fall", "hours_to_warm",
+    "MIN_FALL", "MIN_SPAN_MIN", "RECENT_HOURS", "STORE", "area_map", "build",
+    "build_room", "ceiling", "coast", "expected_fall", "fetch_recent", "fit_gain",
+    "fit_loss", "fetch_hourly", "hours_to_fall", "hours_to_warm", "latest",
     "in_room_band", "is_night", "is_stale", "load", "normalise_unit",
-    "percentile", "pick_outdoor", "room_candidates", "save",
+    "percentile", "pick_outdoor", "recent_fall", "room_candidates", "save",
 ]

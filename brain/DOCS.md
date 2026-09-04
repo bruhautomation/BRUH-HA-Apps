@@ -663,6 +663,43 @@ and not a room.
 Neither is ever urgent. A room that has been two degrees short all winter is
 not two degrees shorter at three in the morning, so quiet hours hold both.
 
+### What the thermal model is for
+
+Three more findings come out of the same two numbers, and each answers a
+question no single state can.
+
+**Your heating starts too late.** A schedule set to a fixed hour warms the
+bedroom to its setpoint at 07:40 in a house that is up at 07:00 — every
+weekday, with nothing anywhere recording a fault, because the automation ran
+and the room did get warm. brAIn needs three of its own measurements to agree
+before it will say so: when this house *actually* gets up, what the room reads
+at that hour of an ordinary week, and how long the climb takes. Then it names
+the time the heating would have to start.
+
+It reports weekday mornings only — that is where a schedule exists, and where
+the wake time has enough days behind it — and it says nothing at all until
+that wake time is measured rather than assumed. A preheat time pinned to a
+typed-in 07:00 is a guess wearing a number.
+
+**A window is open.** A room falling more than twice as fast as its own
+insulation allows is losing heat by a route the walls do not have. This one is
+only sayable *because* the model exists: the same half-degree in ten minutes is
+a draught in one room and an ordinary evening in another, and no fixed
+threshold can tell them apart.
+
+**The pipes are at risk.** From the current reading and the current outdoor
+temperature, when does this room reach 5 °C — the point water in an outside
+wall starts to be at risk, well before the room's own thermometer reads
+freezing. It only reports a room that is *already falling*, rather than
+assuming nothing is heating it: no state in Home Assistant says the heating is
+off, so the fall is the evidence.
+
+The last two read five-minute history rather than hourly, because an hourly
+average cannot see a window opened forty minutes ago — it is still inside the
+hour that has not finished. Both are urgent enough to break quiet hours; the
+preheat one is not, because a schedule that starts late will start late again
+tomorrow.
+
 ### Answering without opening anything
 
 Two places show brAIn's work list, and both of them can end an item.

@@ -218,6 +218,21 @@ def house(**over) -> dict:
                     "warmest": 22.0, "coolest": 17.5, "hours": 660,
                     "points": 100, "fit": 8.5},
             },
+            # And what they are doing now: a cold evening (2 °C outside)
+            # with every room easing down at well under what its own
+            # insulation allows. That is a house holding its heat, and it
+            # is what `climate.window` and `climate.freeze` have to stay
+            # silent about — both run their whole loop over these rows
+            # rather than skipping for want of data.
+            "recent": {
+                eid: [{"start": NOW - (45 - i * 5) * 60,
+                       "mean": round(21.4 - i * 0.05, 3)}
+                      for i in range(10)]
+                for eid in ("sensor.hall_temp", "sensor.lounge_temp",
+                            "sensor.kitchen_temp", "sensor.study_temp")
+            } | {"sensor.garden_temp": [
+                {"start": NOW - (45 - i * 5) * 60, "mean": 2.0}
+                for i in range(10)]},
         },
         # A day of the house behaving: an automation acted, a person acted,
         # and nobody undid anybody.

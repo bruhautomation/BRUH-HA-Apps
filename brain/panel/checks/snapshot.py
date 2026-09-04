@@ -39,9 +39,11 @@ and so cannot clear anything):
                     until the first nightly pass has run, which is a real
                     state on a fresh install and not an unusual house
     thermal        how fast each room loses heat and how fast it gains it,
-                    as `panel/thermal.py` last measured it. Unavailable
-                    with no outdoor temperature sensor, which is not a
-                    fault: every number in it is a difference from outside
+                    as `panel/thermal.py` last measured it, plus `recent`:
+                    the last few hours of five-minute readings for those
+                    rooms and their outdoor reference. Unavailable with no
+                    outdoor temperature sensor, which is not a fault: every
+                    number in it is a difference from outside
     actions        {actions, overrides, counts} — the last LOGBOOK_HOURS of
                     the logbook, with every state change filed under what
                     caused it. Unavailable when the logbook integration is
@@ -78,6 +80,7 @@ STATS_DAYS = 7
 # enough that a wash finished before breakfast is still visible at
 # lunchtime, short enough to be a handful of rows per sensor.
 APPLIANCE_HOURS = 14
+THERMAL_HOURS = 4
 BATTERY_DAYS = 60
 # Statistics are one WebSocket call per batch; keep a batch to what the
 # recorder answers comfortably on a Pi.
@@ -342,6 +345,31 @@ async def collect(now: float | None = None) -> dict:
             snap["appliances"] = {"entities": {}, "built_at": 0, "recent": {}}
             _mark("appliances", False, str(exc))
 
+        # The nightly store says how each room behaves; whether one is
+        # cooling faster than it can is a live question, so this is the
+        # second measurement the checks pass fetches for itself. Cheap
+        # by the same construction as the appliance one: the rooms that
+        # already have a model, over a few hours.
+        try:
+            model = thermal.load()
+            rooms = sorted(model.get("rooms") or {})
+            recent = {}
+            if rooms and model.get("outdoor"):
+                start = dt.datetime.fromtimestamp(
+                    now - THERMAL_HOURS * 3600, tz=dt.timezone.utc)
+                recent = await thermal.fetch_recent(
+                    session, rooms + [model["outdoor"]], start)
+            model["recent"] = recent
+            snap["thermal"] = model
+            _mark("thermal", bool(rooms),
+                  "" if rooms else
+                  (model.get("reason")
+                   or "brAIn has not measured how this house holds its "
+                      "heat yet — the first pass runs overnight"))
+        except Exception as exc:  # noqa: BLE001
+            snap["thermal"] = {"rooms": {}, "recent": {}, "built_at": 0}
+            _mark("thermal", False, str(exc))
+
         try:
             mined = await actions.collect(
                 session, now - LOGBOOK_HOURS * 3600, now,
@@ -371,12 +399,6 @@ async def collect(now: float | None = None) -> dict:
           "brAIn has not measured what is normal here yet — the first "
           "pass runs overnight")
 
-    snap["thermal"] = thermal.load()
-    _mark("thermal", bool(snap["thermal"].get("rooms")),
-          "" if snap["thermal"].get("rooms") else
-          (snap["thermal"].get("reason")
-           or "brAIn has not measured how this house holds its heat yet — "
-              "the first pass runs overnight"))
 
     recorder = load_recorder()
     snap["recorder"] = recorder or {}
