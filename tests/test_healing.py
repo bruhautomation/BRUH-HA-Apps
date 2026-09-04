@@ -576,8 +576,8 @@ class TestThePassThroughTheServer(PerformCase):
         path = os.environ["BRAIN_JOURNAL_FILE"]
         if not os.path.exists(path):
             return []
-        return [json.loads(line) for line in
-                open(path, encoding="utf-8").read().splitlines() if line]
+        with open(path, encoding="utf-8") as fh:
+            return [json.loads(line) for line in fh.read().splitlines() if line]
 
     async def test_a_pass_acts_records_and_journals(self):
         state = await self.server.run_healing("test")
