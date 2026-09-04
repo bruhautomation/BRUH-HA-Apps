@@ -2,6 +2,66 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.36.0
+
+### Added
+
+- **What is normally open here** (`panel/closures.py`). `baselines.py` answers
+  "is this reading unusual" and cannot answer it for a door, because it
+  measures medians and spreads over numbers and a door has neither. So the
+  one thing people most want a house to notice at bedtime — *is anything open,
+  unlocked or ajar that usually is not* — had no measurement behind it at all,
+  and any rule for it would have been a threshold somebody guessed.
+
+  What a binary entity has instead of a median is **how much of the time it is
+  open**: for each hour of the week, the seconds it spent open over the
+  seconds it was observed. A back door open at 23:40 is news in a house that
+  has it shut then on 49 nights out of 50, and is nothing in one where it
+  stands open all summer.
+
+  Four things keep it bounded and honest. **Only closures** — doors, windows,
+  locks, covers and garages, by device class and domain; a hall motion sensor
+  being on at midnight is not something anybody wants told about, and
+  including it would bury the row that matters. **Time-weighted, never
+  sampled**: a door open for ten minutes and one open for ten hours look
+  identical to a sampler that catches each once. **A bucket has to have been
+  watched** — below an hour of observation it says nothing rather than
+  reporting a fraction of a fraction, and `usual_open` returns `None` for it,
+  which is a different answer from "never open then". **And it decides
+  nothing**, the same split `baselines.py` keeps.
+
+  The interval walk is the part that had to be right: a door shut on Friday
+  and opened on Monday is *one* interval across sixty buckets, so it walks the
+  hour boundaries rather than charging the whole span to the hour it started
+  in — which is how a rarely-changing entity would otherwise report almost
+  every hour as unwatched. It advances even across a daylight-saving boundary,
+  where a clock that does not move is an infinite loop.
+
+- **`evening.left_open` — open at bedtime, and usually shut.** Every other
+  check reads a state and knows whether it is wrong; a door being open is not
+  wrong, and this is the first check whose entire answer is a measurement of
+  this particular house.
+
+  It only speaks at bedtime, and bedtime comes from `panel/rhythm.py` — when
+  this house actually settles, weekdays and weekends apart — falling back to a
+  late hour until there is a measurement, exactly as the morning brief does.
+  It only speaks about an hour it has watched. And past a handful of rows it
+  says nothing, because a house being aired out moves every closure at once.
+
+  Four open doors are **one row**, not four: this is a single thing to do
+  before bed, and four rows to dismiss one at a time is a chore.
+
+- **A bedtime pass.** The scheduled checks run every `checks_interval_hours`
+  from whenever the add-on started, so on most houses they would simply never
+  be awake in the evening window — the check would have been unreachable. The
+  panel now runs one pass around the measured settle time, using the same
+  `brief.due` window logic rather than a second copy of "is this the moment".
+
+  Its notification urgency is `now`, and that is load-bearing: this check
+  fires *inside* quiet hours by construction, since bedtime is when the quiet
+  window opens. Anything else holds it until morning, which is the one
+  delivery that makes the check pointless.
+
 ## 1.35.0
 
 ### Added

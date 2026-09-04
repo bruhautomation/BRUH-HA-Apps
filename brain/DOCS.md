@@ -451,6 +451,33 @@ one room that is doing something the others are not.
 Claude can read it too: ask *"is the utility room damp?"* and it looks up
 what damp normally is in your utility room rather than picking a number.
 
+### It knows what is normally open
+
+A door being open is not wrong. It is wrong at half past eleven in a home that
+always has it shut then, and it is nothing at all in one that leaves it open
+all summer — and until brAIn measured that, the difference was a threshold
+somebody would have had to guess.
+
+So it measures: for every door, window, lock, cover and garage, how much of
+each hour of the week it is normally open, from a month of your own history.
+Time-weighted, not sampled — a door open for ten minutes and one open for ten
+hours look identical to anything that just checks now and then.
+
+Then **at your own bedtime** (the hour brAIn measured you settle, or a late
+fallback until it has), it files one finding if something is open that usually
+is not. One row, not one per door: it is a single thing to do before bed.
+
+It stays quiet in the cases that would make it noise. Not in the afternoon —
+a door open at four is a door somebody is using. Not about an hour it has
+never watched, which is a different thing from an hour it has never seen the
+door open in. Not about a door that is *usually* open then. And not at all
+when half the house is open at once, because that is you airing the place out
+rather than a door left ajar.
+
+Only closures are measured — a motion sensor being on at midnight is not
+something anybody wants told about, and including it would bury the row that
+matters.
+
 ### It knows when your house gets up
 
 Everything scheduled used to happen at a time somebody typed into a box,

@@ -62,6 +62,11 @@ PRODUCER_URGENCY = {
     "check:dev.implausible": "now",
     "check:sys.addon_down": "now",
     "check:sys.disk_low": "now",
+    # This one fires INSIDE quiet hours by construction — it only speaks
+    # around the hour this house goes to bed, which is the hour the
+    # window starts. Anything but `now` holds it until morning, which is
+    # the one delivery that makes the check pointless.
+    "check:evening.left_open": "now",
     # A trend, a forecast, a tidy-up. None of these change overnight.
     "check:forecast.": "whenever",
     "check:base.": "whenever",

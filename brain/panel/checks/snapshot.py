@@ -30,6 +30,10 @@ and so cannot clear anything):
     zha_devices    [{name, ieee, available, last_seen}] — absent unless ZHA
                     is installed, which is what makes the key unavailable
     recorder       {db_bytes, db_path, purge_keep_days}
+    closures       how much of each hour of the week each door, window,
+                    lock and cover is normally open, as `panel/closures.py`
+                    last measured it. Unavailable until the first nightly
+                    pass, the same real state a fresh install has
     baselines      what is normal here, per entity per hour of the week,
                     as `panel/baselines.py` last measured it. Unavailable
                     until the first nightly pass has run, which is a real
@@ -193,6 +197,7 @@ async def collect(now: float | None = None) -> dict:
 
     import actions
     import baselines
+    import closures
     import ha_data
 
     now = time.time() if now is None else now
@@ -317,6 +322,14 @@ async def collect(now: float | None = None) -> dict:
     # and this only picks up what it left. A checks pass that rebuilt them
     # would spend minutes of statistics queries every six hours to answer
     # a question whose answer changes over weeks.
+    # Read, never built — same rule as the baselines below: the nightly
+    # pass measures and a checks pass only picks up what it left.
+    snap["closures"] = closures.load()
+    _mark("closures", bool(snap["closures"].get("entities")),
+          "" if snap["closures"].get("entities") else
+          "brAIn has not measured what is normally open here yet — the "
+          "first pass runs overnight")
+
     snap["baselines"] = baselines.load()
     _mark("baselines", bool(snap["baselines"].get("entities")),
           "" if snap["baselines"].get("entities") else

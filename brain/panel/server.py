@@ -112,6 +112,7 @@ import baselines
 import brief
 import card_tags
 import chat_session
+import closures
 import checks
 import cli_commands
 import conversations
@@ -1021,6 +1022,44 @@ def _rhythm_diagnostics() -> dict:
         "brief_last_reasons": len(BRIEF_STATE["last_reasons"]),
         "brief_last_error": BRIEF_STATE["last_error"],
     }
+
+
+# The bedtime pass. Same shape as the brief's: a cheap poll, a window
+# derived from what this house actually does, and at most one a day.
+EVENING_POLL_S = 5 * 60
+EVENING_FIRST_DELAY_S = 420
+EVENING_STATE: dict = {"last_run": 0.0}
+
+
+async def _evening_loop():
+    """Run the checks once around this house's own bedtime.
+
+    `evening.left_open` can only speak while it is late here, and the
+    scheduled pass runs every `checks_interval_hours` from whenever the
+    add-on started — so on most houses it would simply never be awake in
+    the window. This is what makes the check reachable; it runs the whole
+    pass rather than that one check, because the checks are cheap and a
+    second route into the store is a second thing to keep true.
+    """
+    await asyncio.sleep(EVENING_FIRST_DELAY_S)
+    while True:
+        try:
+            now = time.time()
+            local = _local_now(now)
+            settles = rhythm.settle_minute(rhythm.profile(), local)
+            if brief.due(now, local.hour * 60 + local.minute, settles,
+                         checks.evening.FALLBACK_HOUR,
+                         EVENING_STATE["last_run"], grace_min=30):
+                EVENING_STATE["last_run"] = now
+                summary = await run_checks("bedtime")
+                log.info("bedtime pass: %s ran, %s filed",
+                         len(summary.get("ran") or []),
+                         summary.get("created", 0))
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — the loop outlives a pass
+            log.warning("bedtime pass failed: %s", exc)
+        await asyncio.sleep(EVENING_POLL_S)
 
 
 async def _notify_flush_loop():
@@ -2453,11 +2492,16 @@ async def build_baselines(reason: str = "schedule") -> dict:
             by_id = {s["entity_id"]: s for s in (states or [])
                      if isinstance(s, dict) and s.get("entity_id")}
             payload = await baselines.build(session, by_id, started)
+            # The same pass, because it is the same claim about the same
+            # house over the same month — and it has already paid for the
+            # one /states fetch both halves need.
+            shut = await closures.build(session, by_id, started)
         summary = {"reason": reason, "started_at": int(started),
                    "finished_at": int(time.time()),
                    "duration_s": round(time.time() - started, 1),
                    "measured": len(payload.get("entities") or {}),
                    "asked": payload.get("asked", 0),
+                   "closures": len(shut.get("entities") or {}),
                    "tz": payload.get("tz", ""), "error": ""}
         journal.record("baselines", "ok", duration_s=summary["duration_s"],
                        extra={"measured": summary["measured"],
@@ -2467,7 +2511,7 @@ async def build_baselines(reason: str = "schedule") -> dict:
         journal.record("baselines", "error", error=str(exc))
         summary = {"reason": reason, "started_at": int(started),
                    "finished_at": int(time.time()), "measured": 0, "asked": 0,
-                   "tz": "", "error": str(exc)[:300]}
+                   "closures": 0, "tz": "", "error": str(exc)[:300]}
     finally:
         BASELINE_STATE["running"] = False
     BASELINE_STATE["last"] = summary
@@ -2705,6 +2749,7 @@ def _diagnostics_payload() -> dict:
     except Exception:  # noqa: BLE001 — a diagnostics payload must not fail on one reader
         usage = {}
     _baseline_store = baselines.load()
+    _closure_store = closures.load()
     payload = {
         "generated_at": int(time.time()),
         "versions": {
@@ -2757,6 +2802,14 @@ def _diagnostics_payload() -> dict:
         # both are invisible from outside: a rhythm that never gathered
         # enough days looks exactly like one that did and chose 07:00.
         "rhythm": _rhythm_diagnostics(),
+        # Numbers, not the buckets: a bug report needs to know whether
+        # the house has been watched and when, not 168 fractions for
+        # sixty doors.
+        "closures": {
+            "built_at": _closure_store.get("built_at", 0),
+            "measured": len(_closure_store.get("entities") or {}),
+            "asked": _closure_store.get("asked", 0),
+        },
         "daemons": _daemon_rollcall(),
         "usage": {k: usage.get(k) for k in ("source", "used_percent", "limits")},
     }
@@ -4671,6 +4724,7 @@ def make_app() -> web.Application:
         app["baselines"] = asyncio.create_task(_baseline_loop())
         app["notify_flush"] = asyncio.create_task(_notify_flush_loop())
         app["brief"] = asyncio.create_task(_brief_loop())
+        app["evening"] = asyncio.create_task(_evening_loop())
         if addon_options.available():
             app["options"] = asyncio.create_task(_options_poller())
         if engine.get_auth():
