@@ -810,7 +810,13 @@ async function pollSetup() {
     $("#setupCodeRow").classList.remove("hidden"); // keep Cancel reachable
     $("#setupSubmit").disabled = true;
   }
+  const was = pollSetup.lastPhase;
   pollSetup.lastPhase = st.phase;
+  // "done" is a state the server keeps reporting for as long as the
+  // credential lives, so the toast is for ARRIVING there — from a phase
+  // this page watched — never for finding it there on a tab switch.
+  if (st.phase === "done"
+      && !["starting", "awaiting_code", "working"].includes(was)) return;
   if (st.phase === "done") {
     phaseChip.classList.remove("busy");
     phaseChip.classList.add("ok");
@@ -6019,7 +6025,7 @@ document.addEventListener("visibilitychange", () => {
     renderIfChanged();
   }).catch(() => {});
   api("api/auth/setup/status").then((st) => {
-    if (["starting", "awaiting_code", "working", "done"].includes(st.phase)) pollSetup();
+    if (["starting", "awaiting_code", "working"].includes(st.phase)) pollSetup();
   }).catch(() => {});
 });
 

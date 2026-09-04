@@ -2,6 +2,59 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.43.1
+
+Three things that ran, quietly, and did the wrong thing.
+
+- **The morning brief never saw the health verdict.** `_send_brief` awaited
+  `_diagnostics_payload()` — a plain function returning a dict — so every
+  call raised, the `try` around it logged at *info* and carried on with an
+  empty verdict, and the "brAIn itself is degraded" reason in
+  `brief.worth_saying` could never fire. It runs on a thread now, and a test
+  drives a degraded verdict through to `worth_saying` rather than grepping
+  for the line.
+- **`every day` was granted at the weekday hour for a house that sleeps
+  in at weekends.** `routines._best_shape` earns `every day` only when both
+  halves of the week hold up on their own — right — but it never asked
+  whether they hold up at the *same time*, and the merged set could not
+  tell it: the spread is a median deviation, so fifteen weekday presses at
+  07:00 hid six weekend ones at 10:00 completely and the union came out
+  as `every day at 07:00`, spread zero. That is the exact trigger the
+  function exists to refuse. The halves have to agree on the hour now, and
+  when they do not the answer is the narrower true claim rather than
+  nothing (the old code also dropped the habit outright whenever the
+  union was refused).
+- **The fixer had no Home Assistant.** Every other Claude path runs from
+  `/config` and inherits `.mcp.json` and `settings.local.json` for free;
+  the engine runs card and fix runs from CLAUDE_HOME on purpose (so their
+  transcripts stay out of the Chats rail) and inherited neither. So the
+  analyst had no tools, and "Fix it" answered — accurately — *I have no
+  working Home Assistant connection … this session is confined to
+  /data/home*. The project is lent by flag now: `--mcp-config` for both,
+  `--add-dir` and `--settings` for the fixer alone, because the analyst's
+  allow-list is asserted from both ends and a file pre-approving Bash and
+  Write would widen it.
+- **A finding's title was sliced at 200 characters, mid-word.** The model
+  wrote the whole argument into `text`, the store kept the first 200
+  characters and threw the rest away, so the card read *"something you
+  int"* and the sentence saying what to do was gone. An over-long title is
+  cut at its last sentence end and the remainder leads the detail; the
+  contract now says the title is one sentence and where the argument goes.
+- **"Claude account connected 🎉" on every return to the tab.** The
+  sign-in poll toasted whenever the server reported `done`, which it does
+  for as long as the credential lives, and the tab-visibility handler
+  re-ran the poll for that phase. The toast is for *arriving* at done from
+  a phase this page watched, and a return to the tab no longer polls a
+  finished sign-in at all.
+- **Discuss opens its own conversation.** Handing a finding to the chat
+  appended it to whatever conversation was open — the garage lights under
+  a half-finished question about the heating. It starts a fresh one; the
+  old chat stays in the list.
+- **Switching the chat to the classic terminal froze the panel.** The
+  handoff ran `tmux new-window` with a blocking `subprocess.run` directly
+  on the event loop, so every request, SSE stream and the terminal bridge
+  stalled for up to ten seconds. It runs on a thread.
+
 ## 1.43.0
 
 Signing in, from the panel. brAIn could sign you in **once**, and after that

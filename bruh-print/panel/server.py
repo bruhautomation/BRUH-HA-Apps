@@ -638,7 +638,7 @@ async def h_printer_test(request: web.Request) -> web.Response:
 
     side, notes = state.resolve_side(stock.id, side)
     document = _ruler_label(stock)
-    parsed, stock, rendered = _render(state, document)
+    parsed, stock, rendered = await asyncio.to_thread(_render, state, document)
     result = await _send(state, rendered, stock=stock, side=side,
                          copies=1)
     state.consume(side, 1)

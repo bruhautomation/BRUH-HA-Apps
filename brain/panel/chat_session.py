@@ -1091,7 +1091,8 @@ class ChatSession:
             session_id = self.session_id
             cwd = self.info.get("cwd") or WORK_DIR
             await self.stop()
-        opened = _open_in_terminal(session_id) if session_id else False
+        opened = (await asyncio.to_thread(_open_in_terminal, session_id)
+                  if session_id else False)
         return {
             "ok": True,
             "session_id": session_id,

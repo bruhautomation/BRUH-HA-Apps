@@ -305,7 +305,21 @@ def _best_shape(stamps: list, tz) -> dict | None:
     week = _grade(stamps, "weekdays", tz)
     end = _grade(stamps, "weekends", tz)
     if week and end:
-        return _grade(stamps, "every day", tz)
+        # Both halves hold up on their own — at the SAME time. A habit at
+        # 07:00 on weekdays and 10:00 at weekends is two clean shapes,
+        # and the merged set does not refuse it: the spread is a median
+        # deviation, so fifteen weekday presses hide six weekend ones
+        # completely and `every day at 07:00` comes out with a spread of
+        # zero. That is the trigger this function exists to refuse — a
+        # daily 07:00 in a house that sleeps until ten on Sundays — so
+        # the halves have to agree on the hour before the union is asked,
+        # and a refusal either way falls back to the narrower true claim.
+        apart = rhythm.circular_spread([end["minute"]], week["minute"])
+        if apart <= MAX_SPREAD_MIN:
+            daily = _grade(stamps, "every day", tz)
+            if daily:
+                return daily
+        return week if week["days"] >= end["days"] else end
     return week or end
 
 
