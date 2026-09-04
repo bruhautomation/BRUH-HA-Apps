@@ -3795,7 +3795,11 @@ async def h_finding_discuss(request: web.Request) -> web.Response:
         severity=finding["severity"],
     )
     session = _chat()
+    # A finding is its own conversation. Landing it in whichever chat
+    # happens to be open put "the garage lights" under a half-finished
+    # question about the heating, and the reply answered both at once.
     try:
+        await session.reset()
         await session.send(prompt)
     except RuntimeError as exc:
         raise web.HTTPConflict(reason=str(exc))

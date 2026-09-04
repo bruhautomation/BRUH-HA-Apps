@@ -24,6 +24,32 @@ Three things that ran, quietly, and did the wrong thing.
   when they do not the answer is the narrower true claim rather than
   nothing (the old code also dropped the habit outright whenever the
   union was refused).
+- **The fixer had no Home Assistant.** Every other Claude path runs from
+  `/config` and inherits `.mcp.json` and `settings.local.json` for free;
+  the engine runs card and fix runs from CLAUDE_HOME on purpose (so their
+  transcripts stay out of the Chats rail) and inherited neither. So the
+  analyst had no tools, and "Fix it" answered — accurately — *I have no
+  working Home Assistant connection … this session is confined to
+  /data/home*. The project is lent by flag now: `--mcp-config` for both,
+  `--add-dir` and `--settings` for the fixer alone, because the analyst's
+  allow-list is asserted from both ends and a file pre-approving Bash and
+  Write would widen it.
+- **A finding's title was sliced at 200 characters, mid-word.** The model
+  wrote the whole argument into `text`, the store kept the first 200
+  characters and threw the rest away, so the card read *"something you
+  int"* and the sentence saying what to do was gone. An over-long title is
+  cut at its last sentence end and the remainder leads the detail; the
+  contract now says the title is one sentence and where the argument goes.
+- **"Claude account connected 🎉" on every return to the tab.** The
+  sign-in poll toasted whenever the server reported `done`, which it does
+  for as long as the credential lives, and the tab-visibility handler
+  re-ran the poll for that phase. The toast is for *arriving* at done from
+  a phase this page watched, and a return to the tab no longer polls a
+  finished sign-in at all.
+- **Discuss opens its own conversation.** Handing a finding to the chat
+  appended it to whatever conversation was open — the garage lights under
+  a half-finished question about the heating. It starts a fresh one; the
+  old chat stays in the list.
 - **Switching the chat to the classic terminal froze the panel.** The
   handoff ran `tmux new-window` with a blocking `subprocess.run` directly
   on the event loop, so every request, SSE stream and the terminal bridge

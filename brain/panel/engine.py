@@ -543,6 +543,40 @@ def run_claude(
 #   get_error_log       — a log tail, not a fact about the home
 #   dashboards, services, supervisor info — not analysis inputs
 MCP = "mcp__home-assistant__"
+
+# The Home Assistant project: where `.mcp.json` names the MCP server and
+# `.claude/settings.local.json` pre-approves its tools. Every other Claude
+# path — the chat, the listeners, the worker pool — runs FROM this
+# directory and inherits both for free. The engine deliberately does not
+# (its transcripts are filed under CLAUDE_HOME so card and fix runs stay
+# out of the Chats rail), and for as long as that was the whole story the
+# analyst ran without a single Home Assistant tool and the fixer answered
+# "I have no working Home Assistant connection ... this session is
+# confined to /data/home" — accurately. The project is handed over by
+# flag instead: `--mcp-config` for the server, `--add-dir` for the files,
+# and `--settings` only where the project's own permission file is the
+# intended answer to "what may run unprompted". The analyst never takes
+# the settings file: its allow-list is asserted from both ends on
+# purpose, and a file pre-approving Bash and Write would widen it.
+HA_PROJECT = os.environ.get("BRAIN_CHAT_WORKDIR", "/config")
+
+
+def project_flags(*, settings: bool, files: bool) -> list[str]:
+    """Flags that lend a CLAUDE_HOME run the Home Assistant project.
+
+    Each is added only when its target exists: `--mcp-config` on a missing
+    file is a refused run, and a dev checkout has no /config at all.
+    """
+    flags: list[str] = []
+    mcp = os.path.join(HA_PROJECT, ".mcp.json")
+    if os.path.isfile(mcp):
+        flags += ["--mcp-config", mcp]
+    if files and os.path.isdir(HA_PROJECT):
+        flags += ["--add-dir", HA_PROJECT]
+    local = os.path.join(HA_PROJECT, ".claude", "settings.local.json")
+    if settings and os.path.isfile(local):
+        flags += ["--settings", local]
+    return flags
 ANALYST_TOOLS = [
     f"{MCP}get_all_states",       # the search: by domain, by name substring
     f"{MCP}get_entity_state",     # one entity, in full
@@ -606,7 +640,8 @@ def run_analyst(
         prompt,
         ["--append-system-prompt", system_prompt,
          "--allowedTools", ",".join(ANALYST_TOOLS),
-         "--disallowedTools", ",".join(ANALYST_DENIED)],
+         "--disallowedTools", ",".join(ANALYST_DENIED)]
+        + project_flags(settings=False, files=False),
         model, timeout, max_turns,
         f"the analysis passed its {timeout}s limit and was stopped", source)
 
@@ -634,7 +669,8 @@ def run_agent(
       tools, which is precisely what this run needs.
     """
     return _run_cli(
-        prompt, ["--append-system-prompt", system_prompt],
+        prompt, ["--append-system-prompt", system_prompt]
+        + project_flags(settings=True, files=True),
         model, timeout, max_turns,
         f"the fix run passed its {timeout}s limit and was stopped", source)
 
