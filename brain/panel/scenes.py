@@ -461,6 +461,15 @@ def read_names(text: str) -> dict[str, str]:
             lines.append(line[:40])
     if len(lines) != len(MOODS):
         return {}
+    # And they have to be four DIFFERENT names. Home Assistant derives a
+    # scene's entity id from its name, so two moods called the same thing
+    # are one `scene.wind_down` with two definitions fighting over it —
+    # `apply`'s duplicate check reads the file rather than the batch, the
+    # accept path waits for an id it finds, and the schedule walks the
+    # room through three moods and a repeat. Same "all four or none" this
+    # function already keeps: the plain names are a good answer.
+    if len({_slug(line) for line in lines}) != len(MOODS):
+        return {}
     return dict(zip(MOODS, lines))
 
 

@@ -416,6 +416,21 @@ def apply(row: dict, *, config_dir: str | None = None,
     # `alias` for an automation, `name` for a scene: the same claim about
     # the same file, spelled the way each schema spells it.
     label = "alias" if target == "automations" else "name"
+    # A scene proposal is a list of four, so the batch has to be checked
+    # against ITSELF as well as against the file: Home Assistant derives a
+    # scene's entity id from its name, and two entries called the same
+    # thing are one entity with two definitions — which the file check
+    # cannot see, the reload will not complain about, and the accept
+    # path's verification passes because the id it waits for does exist.
+    for i, entry in enumerate(entries):
+        for other in entries[:i]:
+            for key in ("id", label):
+                if entry[key] == other[key]:
+                    return _fail(
+                        f"two of these {spec['what']} have the same {key} "
+                        f"(\"{entry[key]}\"), and Home Assistant would give "
+                        "them one entity between them — brAIn will not "
+                        "write that")
     for entry in entries:
         for existing in rows:
             if str(existing.get("id") or "") == entry["id"]:

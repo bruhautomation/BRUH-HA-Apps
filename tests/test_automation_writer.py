@@ -362,6 +362,57 @@ class TestTheRefusals(WriterCase):
         self.assertIsInstance(out["error"], str)
 
 
+class TestABatchAgainstItself(WriterCase):
+    """A scene proposal is a LIST, and `apply` checked it against the file.
+
+    Four moods are one press, so `target="scenes"` writes four entries in
+    one go — and the duplicate-name refusal compared each of them with
+    what was already in `scenes.yaml` and never with the other three. Home
+    Assistant derives a scene's entity id from its name, so two entries
+    called the same thing are one `scene.wind_down` with two definitions:
+    the file takes both, the reload returns 200, `_wait_for_entity` finds
+    the id it was told to wait for, and the room ends up with three moods
+    and a repeat. `read_names` refuses that set now; this is the same
+    question asked at the writer, for the reason every producer-side ask
+    in this add-on is asked twice.
+    """
+
+    def scenes_house(self):
+        (self.config / "configuration.yaml").write_text(
+            "scene: !include scenes.yaml\n", encoding="utf-8")
+
+    def row(self, *names):
+        return {"ts": 1_700_000_000_123, "kind": "scene",
+                "title": "Four moods for the Lounge",
+                "config": [{"name": n, "entities": {"light.a": {"state": "on"}}}
+                           for n in names]}
+
+    def test_two_entries_under_one_name_are_refused(self):
+        self.scenes_house()
+        out = self.w.apply(self.row("Morning", "Bright", "Morning", "Night"),
+                           config_dir=str(self.config), target="scenes")
+        self.assertFalse(out["ok"])
+        self.assertIn("Morning", out["error"])
+        self.assertFalse((self.config / "scenes.yaml").exists(),
+                         "a refused batch may not leave half a file behind")
+
+    def test_two_entries_under_one_id_are_refused(self):
+        self.scenes_house()
+        row = self.row("Morning", "Bright")
+        for entry in row["config"]:
+            entry["id"] = "brain_scene_lounge_morning"
+        out = self.w.apply(row, config_dir=str(self.config), target="scenes")
+        self.assertFalse(out["ok"])
+
+    def test_four_different_names_still_write(self):
+        self.scenes_house()
+        out = self.w.apply(self.row("Morning", "Bright", "Dusk", "Night"),
+                           config_dir=str(self.config), target="scenes")
+        self.assertTrue(out["ok"], out.get("error"))
+        self.assertEqual(len(out["entity_ids"]), 4)
+        self.assertEqual(len(set(out["entity_ids"])), 4)
+
+
 class TestRevert(WriterCase):
 
     def test_it_restores_the_file_byte_for_byte(self):

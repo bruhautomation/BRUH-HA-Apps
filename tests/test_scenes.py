@@ -307,6 +307,26 @@ class TestNamingThem(unittest.TestCase):
         self.assertEqual(out["morning"], "Sunrise")
         self.assertEqual(out["night"], "Night owl")
 
+    def test_two_moods_with_one_name_is_no_set_at_all(self):
+        """Home Assistant derives a scene's entity id from its NAME.
+
+        Two scenes called the same thing are one `scene.wind_down` with
+        two definitions fighting over it: `apply` writes both (its
+        duplicate check reads the file, not the batch it is adding), the
+        accept path waits for one entity and finds it, and the schedule
+        then walks the room through three moods and a repeat. "All four
+        or none" is already this function's contract — a set with two of
+        the same name is a set with a hole in it exactly as a missing
+        fourth line is.
+        """
+        self.assertEqual(
+            scenes.read_names("Wind down\nBright\nWind down\nSmall hours"),
+            {})
+        # Case and spacing are the same name to `_slug`, which is what
+        # decides the entity id.
+        self.assertEqual(
+            scenes.read_names("Sunrise\nBright\nwind  down\nWind down"), {})
+
     def test_all_four_or_none(self):
         """Three good names and a fourth that came back as "4." is a set
         with a hole in it, and the plain names are a good answer."""
