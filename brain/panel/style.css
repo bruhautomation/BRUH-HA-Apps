@@ -3208,6 +3208,14 @@ body.term-classic #termMode .ico-out { display: block; }
   background: color-mix(in srgb, var(--accent) 16%, transparent);
   color: var(--accent);
 }
+/* A proposal that CHANGES a rule somebody wrote rather than adding one
+   beside it. Same shape again, and the neutral ink rather than a colour:
+   it is a fact about what the yes does, not a warning and not a stage. */
+.pilledit {
+  flex: none; font-size: 12px; padding: 2px 8px; border-radius: 999px;
+  background: var(--bg-2); color: var(--ink-2);
+  border: 1px solid var(--hairline);
+}
 .propwhy { margin: 0 0 8px; color: var(--ink-2); line-height: 1.5; }
 /* An emergency playbook. The pill is the same shape as the trial one and
    a different colour, because it marks a different KIND of card rather

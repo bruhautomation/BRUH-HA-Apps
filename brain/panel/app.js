@@ -3872,6 +3872,28 @@ function propReplayLine(row) {
   const r = row.replay;
   if (!r) return "";
   if (r.refused || r.error) return `Not replayable: ${r.error || "unknown"}`;
+  // A proposal that EDITS an automation has two numbers and its whole
+  // case is the pair: what the rule does today, and what it would do with
+  // the condition on it. One of those on its own is a fact about an
+  // automation rather than an argument for changing it.
+  const was = row.replay_before;
+  if (was && !was.refused && !was.error) {
+    const before = was.would_run ?? 0;
+    const after = r.would_run ?? 0;
+    const days = Math.round(r.days ?? was.days ?? 30);
+    const head = `Over the last ${days} days it ran ${before} `
+      + `${before === 1 ? "time" : "times"}. With this condition it would `
+      + `have run ${after}`;
+    if (after === before) {
+      // Worth saying out loud rather than dressing up: over the window
+      // the recorder can answer for, the change would have made no
+      // difference, and that is something to know before saying yes.
+      return head + " — the same. Nothing it did in that window fell "
+        + "inside those hours.";
+    }
+    const fewer = before - after;
+    return head + ` — ${fewer} fewer, in the hours you keep putting it back.`;
+  }
   const ran = r.would_run ?? 0;
   const blocked = r.blocked_by_conditions ?? 0;
   let line = `Over the last ${r.days ?? 30} days it would have run `
@@ -3935,7 +3957,11 @@ async function propAct(ts, path, body) {
       // writes it as the alias — so the toast names what somebody will
       // now find in their automations list.
       const alias = data.alias || data.proposal?.title || "the automation";
-      toast(`Added “${alias}” to your automations`, data.undo);
+      // An edit did not add anything, and a toast saying it did would
+      // send somebody looking for a second automation that is not there.
+      toast(data.proposal?.edits
+        ? `Changed “${alias}” in your automations`
+        : `Added “${alias}” to your automations`, data.undo);
     } else if (data.learned) {
       toast("Noted — brAIn has written that down.");
     }
@@ -4069,6 +4095,10 @@ function propCard(row, withHint) {
   head.appendChild(el("h3", "proptitle", row.title || "A proposal"));
   const over = row.status === "trialling" && propTrialOver(row);
   if (playbook) head.appendChild(el("span", "pillbook", "Playbook"));
+  // An edit is a different promise from an addition, and the card has to
+  // say which before somebody says yes: this one changes a rule they
+  // wrote, in their own file, rather than adding one beside it.
+  if (row.edits) head.appendChild(el("span", "pilledit", "Edits your rule"));
   if (row.status === "trialling") {
     head.appendChild(el("span", "pilltrial", over ? "Trial over" : "On trial"));
   }

@@ -617,13 +617,29 @@ def passes(cond: dict, timeline: dict, when: float, tz) -> bool:
         local = dt.datetime.fromtimestamp(when, tz)
         after, before = cond.get("after"), cond.get("before")
         minute = local.hour * 60 + local.minute
-        if after is not None:
-            parts = str(after).split(":")
-            if minute < int(parts[0]) * 60 + int(parts[1]):
+
+        def _minutes(spec) -> int:
+            parts = str(spec).split(":")
+            return int(parts[0]) * 60 + int(parts[1] if len(parts) > 1 else 0)
+
+        # **A time condition wraps midnight**, and this one did not.
+        # Home Assistant's own `condition.time` reads `after > before` as
+        # "from tonight until tomorrow morning" — 22:00 to 01:00 is a real
+        # bedtime and the commonest window anybody writes one for. Testing
+        # the two bounds separately answers `False` at every instant of
+        # such a window, which is not a slightly wrong replay: a
+        # `not`-wrapped one then passes at every instant instead, so a
+        # proposal that stands an automation down between ten and one
+        # would report having changed nothing at all.
+        start = None if after is None else _minutes(after)
+        end = None if before is None else _minutes(before)
+        if start is not None and end is not None and start > end:
+            if not (minute >= start or minute < end):
                 return False
-        if before is not None:
-            parts = str(before).split(":")
-            if minute >= int(parts[0]) * 60 + int(parts[1]):
+        else:
+            if start is not None and minute < start:
+                return False
+            if end is not None and minute >= end:
                 return False
         weekdays = cond.get("weekday")
         if weekdays:

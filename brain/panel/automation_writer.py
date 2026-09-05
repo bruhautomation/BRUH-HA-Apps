@@ -615,7 +615,68 @@ def remove_entry(row_path, entry_id: str, *,
     return _splice(Path(row_path), entry_id, None, now)
 
 
+def apply_edit(row: dict, *, config_dir: str | None = None,
+               now: float | None = None, protected=None) -> dict:
+    """Accept a proposal that CHANGES an entry rather than adding one.
+
+    `apply`'s sibling, and deliberately not a branch inside it: an append
+    invents an id, an alias and a description, where this one writes
+    somebody's own automation back with one thing different — so nothing
+    from `entry_for` may touch it, and the config that goes down is the
+    config the card showed.
+
+    The include line is checked here too. An automation that is running
+    came from a file Core reads, so a missing line means the entry this
+    is about is not the one in the house, and editing the other copy
+    would be a change that silently does nothing.
+    """
+    now = time.time() if now is None else now
+    root = Path(config_dir or CONFIG_DIR)
+    entry_id = str(row.get("edits") or "")
+    config = row.get("config")
+    if not entry_id or not isinstance(config, dict):
+        return _fail("this proposal does not say which automation it changes")
+    if str(config.get("id") or "") != entry_id:
+        return _fail("this proposal's automation does not carry the id it "
+                     "says it edits, so brAIn will not write it")
+
+    configuration = _read_text(root / CONFIGURATION_FILE)
+    if configuration is None or not INCLUDE_RE.search(configuration):
+        return _fail(
+            "brAIn looked in configuration.yaml for the line "
+            "`automation: !include automations.yaml` and did not find it, so "
+            "it cannot tell where this house keeps its automations. Change "
+            "the automation yourself from the proposal's YAML")
+
+    out = replace_entry(root / AUTOMATIONS_FILE, entry_id, config,
+                        now=now, protected=protected)
+    if out.get("ok"):
+        # The entity Home Assistant actually registered, which is what the
+        # accept path waits for. A slug of the alias is a guess that a
+        # rename has already moved.
+        known = str((row.get("automation") or {}).get("entity_id") or "")
+        if known:
+            out["entity_id"] = known
+        out["alias"] = str((row.get("automation") or {}).get("alias")
+                           or config.get("alias") or out.get("alias") or "")
+    return out
+
+
+def remove(entry_id: str, *, config_dir: str | None = None,
+           now: float | None = None) -> dict:
+    """Take one automation back out of `automations.yaml`.
+
+    The intent card's Remove press. Nothing removes an automation on its
+    own — an intent that has fired stays on the list saying so until
+    somebody asks for it to go — so this has exactly one caller and it is
+    a button.
+    """
+    root = Path(config_dir or CONFIG_DIR)
+    return remove_entry(root / AUTOMATIONS_FILE, entry_id, now=now)
+
+
 __all__ = ["AUTOMATIONS_FILE", "CONFIGURATION_FILE", "ID_PREFIX", "INCLUDE_RE",
-           "INDEX", "JOURNAL_DIR", "SNAP_DIR", "TOOL", "apply", "entry_for",
-           "is_protected", "locate", "protected_patterns", "remove_entry",
+           "INDEX", "JOURNAL_DIR", "SNAP_DIR", "TOOL", "apply", "apply_edit", "entry_for",
+           "is_protected", "locate", "protected_patterns", "remove",
+           "remove_entry",
            "replace_entry", "revert", "slugify", "snapshot"]

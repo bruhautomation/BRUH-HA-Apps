@@ -169,6 +169,27 @@ const PROPOSALS = [
           + 'them. Rehearse it instead.',
     },
   },
+  {
+    // A condition proposal: it EDITS an automation somebody wrote rather
+    // than adding one beside it, and its whole case is a PAIR of replay
+    // numbers — what the rule does today, and what it would do with the
+    // condition on it. One of those alone is a fact about an automation
+    // rather than an argument for changing it.
+    ts: NOW * 1000 - 7000, key: 'hhh', kind: 'condition',
+    title: 'Stand Evening lights down between 21:00 and 23:00 on weekdays',
+    why: 'You have put Evening lights back 11 times, on 8 separate weekdays '
+       + 'in the last 14 days — almost always between 21:00 and 23:00. '
+       + 'Nothing about that shows up in Home Assistant: the automation ran, '
+       + 'nothing errored, and you undid it.',
+    source: 'condition', status: 'proposed',
+    edits: 'evening_lights',
+    automation: { entity_id: 'automation.evening_lights',
+                  alias: 'Evening lights', id: 'evening_lights' },
+    replay_before: { days: 30, would_run: 30, blocked_by_conditions: 0,
+                     triggered: 30 },
+    replay: { days: 30, would_run: 22, blocked_by_conditions: 8,
+              triggered: 30 },
+  },
 ];
 
 const OPEN = PROPOSALS.length;
@@ -180,7 +201,7 @@ const REFUSAL = 'automations.yaml already has one called "Close the blinds '
 const STUB = `
 window.__proposals = {
   proposals: ${JSON.stringify(PROPOSALS)},
-  counts: { proposed: 4, trialling: 3, accepted: 0, declined: 0, open: ${OPEN} },
+  counts: { proposed: 5, trialling: 3, accepted: 0, declined: 0, open: ${OPEN} },
   trial_days: 7, routine_min_days: 6,
 };
 window.__empty = false;
@@ -306,6 +327,7 @@ for (const width of WIDTHS) {
         error: (c.querySelector('.properror') || {}).textContent || '',
         pill: (c.querySelector('.pilltrial') || {}).textContent || '',
         book: (c.querySelector('.pillbook') || {}).textContent || '',
+        edit: (c.querySelector('.pilledit') || {}).textContent || '',
         groups: [...c.querySelectorAll('.propgroup')].map((g) => ({
           verb: (g.querySelector('.propverb') || {}).textContent || '',
           names: (g.querySelector('.propnames') || {}).textContent || '',
@@ -480,6 +502,31 @@ for (const width of WIDTHS) {
   if (book.groups.some((g) => g.wrapped)) {
     note(where, 'a playbook action row is taller than three lines — the verb '
               + 'has wrapped away from the names it labels');
+  }
+
+  // --- the condition proposal. It changes a rule somebody wrote, so the
+  // card has to say that before they say yes, and its evidence is a pair
+  // of numbers rather than one.
+  const cond = m.cards[7];
+  if (!cond.edit.trim()) {
+    note(where, 'a proposal that EDITS an automation does not say so — a '
+              + 'card that reads as an addition sends somebody looking for '
+              + 'a second automation that is not there');
+  }
+  if (!/it ran 30 times/i.test(cond.replay)) {
+    note(where, `the condition card does not say what the rule does today: `
+              + `"${cond.replay}"`);
+  }
+  if (!/would have run 22/i.test(cond.replay)) {
+    note(where, `the condition card does not say what would change: `
+              + `"${cond.replay}"`);
+  }
+  if (!/8 fewer/i.test(cond.replay)) {
+    note(where, `the condition card leaves the difference to be worked out: `
+              + `"${cond.replay}"`);
+  }
+  if (cond.buttons.length < 2) {
+    note(where, 'the condition card cannot be answered');
   }
 
   // --- and the rehearsal, which opens on demand and calls nothing.

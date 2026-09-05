@@ -545,5 +545,125 @@ class TestTheChecksPassEvaluatesTrials(AcceptCase):
         self.assertEqual(await self.server._evaluate_trials(1_800_000_000), 0)
 
 
+# The condition miner's proposal: the person's own automation, with one
+# condition added, addressed by the id it already has.
+EDIT_ID = "1699999999999"
+EDIT_ENTITY = "automation.porch_light_at_dusk"
+
+
+def edit_obj(entity_id: str = EDIT_ID) -> dict:
+    import yaml
+    config = yaml.safe_load(EXISTING)[0]
+    config["condition"] = [{
+        "condition": "not",
+        "conditions": [{"condition": "time", "after": "21:00:00",
+                        "before": "23:00:00",
+                        "weekday": ["mon", "tue", "wed", "thu", "fri"]}],
+    }]
+    config["id"] = entity_id
+    return {
+        "kind": "condition",
+        "title": "Stand Porch light at dusk down between 21:00 and 23:00",
+        "why": "You have put it back 11 times on 8 separate weekdays.",
+        "source": "condition",
+        "config": config,
+        "edits": entity_id,
+        "automation": {"entity_id": EDIT_ENTITY,
+                       "alias": "Porch light at dusk", "id": entity_id},
+    }
+
+
+class TestAcceptingAnEditRatherThanAnAddition(AcceptCase):
+    """A `condition` proposal changes an entry that is already there.
+
+    The mutation each test catches:
+
+      route it through `apply`   -> a second automation is appended under
+                                 a `brain_` id and the person's own one
+                                 goes on doing what they keep undoing
+      verify the slugged name    -> the accept waits for an entity Home
+                                 Assistant never registered under that
+                                 name and reverts a change that worked
+      undo puts back the row     -> the condition stays in their file
+    """
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        # It is already running: an edit is about an automation the house
+        # has, so the verification is that it is STILL there.
+        self.live.add(EDIT_ENTITY)
+
+    def offer_edit(self, **kw) -> dict:
+        row = self.proposals.add(edit_obj(**kw))
+        self.assertIsNotNone(row)
+        return row
+
+    async def test_it_splices_the_entry_rather_than_appending_one(self):
+        row = self.offer_edit()
+        status, out = await self.accept(row["ts"])
+        self.assertEqual(status, 200, out)
+        rows = self.rows()
+        self.assertEqual(len(rows), 1, "an edit appended a second automation")
+        self.assertEqual(rows[0]["id"], EDIT_ID)
+        self.assertEqual(rows[0]["condition"][0]["condition"], "not")
+        # Their file, above the entry, byte for byte.
+        self.assertTrue(self.automations().startswith(
+            "# Mine. Do not reformat.\n"))
+
+    async def test_it_verifies_the_entity_home_assistant_registered(self):
+        row = self.offer_edit()
+        _status, out = await self.accept(row["ts"])
+        self.assertEqual(out["entity_id"], EDIT_ENTITY)
+        self.assertIn(f"/states/{EDIT_ENTITY}", self.calls)
+
+    async def test_the_toast_names_the_automation_that_changed(self):
+        row = self.offer_edit()
+        _status, out = await self.accept(row["ts"])
+        self.assertEqual(out["proposal"]["edits"], EDIT_ID)
+        self.assertEqual(out["automation"], EDIT_ID)
+
+    async def test_undo_puts_the_file_back_byte_for_byte(self):
+        row = self.offer_edit()
+        _status, out = await self.accept(row["ts"])
+        resp = await self.client.post(f"/api/undo/{out['undo']}")
+        self.assertEqual(resp.status, 200)
+        undone = await resp.json()
+        self.assertTrue(undone["undone"], undone)
+        self.assertEqual(self.automations(), EXISTING)
+        self.assertEqual(len(self.proposals.listing()), 1)
+
+    async def test_an_id_that_is_not_in_the_file_is_refused_and_kept(self):
+        row = self.offer_edit(entity_id="not_in_the_file")
+        status, out = await self.accept(row["ts"])
+        self.assertEqual(status, 409, out)
+        self.assertIn("not_in_the_file", out["error"])
+        self.assertEqual(self.automations(), EXISTING)
+        self.assertEqual(len(self.proposals.listing()), 1)
+
+    async def test_a_missing_include_line_is_refused(self):
+        (self.config / "configuration.yaml").write_text("default_config:\n")
+        row = self.offer_edit()
+        status, out = await self.accept(row["ts"])
+        self.assertEqual(status, 409, out)
+        self.assertIn("!include automations.yaml", out["error"])
+        self.assertEqual(self.automations(), EXISTING)
+
+    async def test_a_protected_target_is_refused_at_the_writer_too(self):
+        os.environ["BRAIN_PROTECTED_ENTITIES"] = "light.porch"
+        row = self.offer_edit()
+        status, out = await self.accept(row["ts"])
+        self.assertEqual(status, 409, out)
+        self.assertIn("protected", out["error"])
+        self.assertEqual(self.automations(), EXISTING)
+
+    async def test_a_reload_failure_puts_the_entry_back(self):
+        self.reload_status = 500
+        row = self.offer_edit()
+        status, out = await self.accept(row["ts"])
+        self.assertEqual(status, 409, out)
+        self.assertEqual(self.automations(), EXISTING)
+        self.assertEqual(len(self.proposals.listing()), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

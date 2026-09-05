@@ -123,6 +123,7 @@ import chat_session
 import closures
 import checks
 import cli_commands
+import conditions
 import conversations
 import energy
 import engine
@@ -1104,7 +1105,10 @@ def _proposals_diagnostics() -> dict:
             # result" is the shape of that failure and is unreadable from
             # a single count.
             "trial_results": sum(1 for r in rows if r.get("trial_result")),
-            "trials_due": sum(1 for r in rows if proposals.trial_due(r))}
+            "trials_due": sum(1 for r in rows if proposals.trial_due(r)),
+            # See CONDITIONS_STATE: a pattern brAIn will not act on is
+            # reported here rather than as a card nobody can answer.
+            "conditions": dict(CONDITIONS_STATE)}
 
 
 # The weekly report. The same poll as the brief's and a different gate:
@@ -2944,6 +2948,68 @@ async def _offer_routines(now: float) -> int:
     return offered
 
 
+# What the condition miner saw and would not act on, kept for the
+# diagnostics bundle. A pattern brAIn can see and will not touch — an
+# automation with no id, one that already stands down over those hours —
+# is not a card, because every card on the Proposals tab can be answered
+# and that one cannot; but "brAIn found nothing" and "brAIn found this and
+# named the thing to change" are different reports, and an empty tab reads
+# the same either way.
+CONDITIONS_STATE: dict = {"refused": [], "seen": 0, "at": 0}
+
+
+async def _offer_conditions(snapshot: dict, now: float) -> int:
+    """Offer the condition each overridden automation lacks. Returns how many.
+
+    The evidence is `override_ledger.pattern`'s and is never re-derived
+    here — every floor that makes a band mean something already lives in
+    the ledger, and a second answer to "is this a pattern" is the one
+    nobody can see.
+
+    Both replays are run, and that pair is the whole case on the card:
+    what the automation does over the last thirty days, and what it would
+    do with the condition on it. One number on its own is a fact about an
+    automation rather than an argument for changing it.
+    """
+    import aiohttp  # noqa: PLC0415 — as `_offer_routines` does
+
+    try:
+        tz, _name = await asyncio.to_thread(baselines.house_timezone)
+        protected = automation_writer.protected_patterns()
+        found = await asyncio.to_thread(
+            conditions.build, snapshot, None, tz, now, protected)
+    except Exception as exc:  # noqa: BLE001 — an offer is optional; the
+        # pass that would have made it is not.
+        log.warning("could not read the overrides for conditions: %s", exc)
+        return 0
+    CONDITIONS_STATE["seen"] = len(found)
+    CONDITIONS_STATE["at"] = int(now)
+    CONDITIONS_STATE["refused"] = [
+        {"automation": (r.get("automation") or {}).get("alias") or "",
+         "why": r["refused"]} for r in found if r.get("refused")]
+
+    offered = 0
+    async with aiohttp.ClientSession() as session:
+        for obj in found:
+            if obj.get("refused") or not obj.get("config"):
+                continue
+            if await asyncio.to_thread(proposals.knows, obj):
+                continue
+            before = obj.pop("before_config", None)
+            window = (now - REPLAY_DAYS * 86400, now)
+            if before:
+                obj["replay_before"] = await _replay_config(
+                    session, before, window[0], window[1], tz)
+            obj["replay"] = await _replay_config(
+                session, obj["config"], window[0], window[1], tz)
+            if await asyncio.to_thread(proposals.add, obj):
+                offered += 1
+    if offered:
+        log.info("proposed %d condition%s from what you keep undoing",
+                 offered, "" if offered == 1 else "s")
+    return offered
+
+
 async def _offer_playbooks(snapshot: dict, now: float) -> int:
     """Offer the emergency playbooks this house can have. Returns how many.
 
@@ -3129,6 +3195,13 @@ async def run_checks(reason: str = "schedule") -> dict:
             offered += await _offer_playbooks(snapshot, started)
         except Exception as exc:  # noqa: BLE001
             log.warning("could not offer playbooks: %s", exc)
+        # And the third: the condition an automation somebody keeps
+        # undoing does not have. The finding already reports the fight;
+        # this is the change that ends it.
+        try:
+            offered += await _offer_conditions(snapshot, started)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("could not offer conditions: %s", exc)
         # And the other half of the same lifecycle: a trial that nothing
         # evaluates is a status with no report behind it.
         try:
@@ -3982,7 +4055,15 @@ async def _apply_accepted(row: dict) -> tuple[dict | None, str]:
     """
     import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
 
-    written = await asyncio.to_thread(automation_writer.apply, row)
+    # A proposal that names `edits` changes an automation somebody already
+    # has, so it goes through the splice rather than the append: their
+    # entry comes back with one thing different and every other byte of
+    # the file where it was. Everything after this point is identical,
+    # because the three claims are the same three.
+    if row.get("edits"):
+        written = await asyncio.to_thread(automation_writer.apply_edit, row)
+    else:
+        written = await asyncio.to_thread(automation_writer.apply, row)
     if not written.get("ok"):
         return None, str(written.get("error")
                          or "brAIn could not write the automation")
@@ -4233,8 +4314,9 @@ async def h_undo(request: web.Request) -> web.Response:
                                 "Home Assistant would not reload it — the "
                                 "automation is still running until it does")
         elif not restored:
-            payload["error"] = ("the automation is gone, but the proposal "
-                                "could not be put back on the list")
+            payload["error"] = ("automations.yaml is back as it was, but "
+                                "the proposal could not be put back on the "
+                                "list")
         return web.json_response(payload)
 
     if entry["kind"] == "conversations":
