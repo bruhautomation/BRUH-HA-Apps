@@ -770,6 +770,27 @@ class TestOneOffIntents(AcceptCase):
         self.assertEqual(out["intent"], SENTENCE)
         self.assertEqual(self.intents.pending(), 1)
 
+    async def test_a_scene_sentence_survives_whatever_whitespace_it_arrives_in(self):
+        """`h_generate` collapses the question before any pattern sees it,
+        which is what lets `SCENE_RE` use literal spaces — and what stops
+        a room's name arriving as two lines. Driven through the real
+        route, because a copy of the collapse in the test would only ever
+        agree with itself."""
+        seen = []
+
+        async def design(area):
+            seen.append(area)
+            return {"scenes": area, "lights": 4}
+
+        self.server._design_scenes = design
+        self.addCleanup(setattr, self.server, "_design_scenes",
+                        self.server._design_scenes)
+        status, out = await self.ask("design  my   evening \n for the "
+                                     "living  room")
+        self.assertEqual(status, 200, out)
+        self.assertEqual(seen, ["living room"])
+        self.assertEqual(out["queued"], [])
+
     async def test_an_ordinary_question_is_still_a_card(self):
         status, out = await self.ask("what is using the most power?")
         self.assertEqual(status, 200, out)
@@ -1067,6 +1088,121 @@ class TestAcceptingFourScenes(AcceptCase):
         self.assertTrue(undone["undone"], undone)
         self.assertEqual(self.scenes.read_text(), "# My scenes.\n")
         self.assertIn("/services/scene/reload", self.calls)
+
+
+class TestWhatComesOffTheWire(unittest.TestCase):
+    """The ask bar's two patterns and the log line, against a caller who is
+    not being kind.
+
+    Each test names the mutation it catches:
+
+      adjacent whitespace runs   -> two pieces of SCENE_RE that can both
+                                 consume the same run of spaces backtrack
+                                 polynomially, and 500 spaces is a
+                                 question somebody can send
+      collapse the question      -> drop it and every literal space in
+                                 the pattern stops matching a real
+                                 sentence, and a room name arrives as two
+                                 lines
+      the log barrier            -> a newline in a room name writes a
+                                 second line that looks like brAIn's own,
+                                 which is how a log stops being evidence
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.server = importlib.import_module("server")
+
+    def match(self, text):
+        # Exactly what `h_generate` feeds it.
+        return self.server.SCENE_RE.match(" ".join(str(text).split()))
+
+    def timed(self, pattern, text) -> float:
+        start = time.perf_counter()
+        pattern.match(text)
+        return time.perf_counter() - start
+
+    def test_the_sentences_it_is_for_still_match(self):
+        for text, area in (
+                ("design my evening for the living room", "living room"),
+                ("scenes for the kitchen", "kitchen"),
+                ("Design scenes for the hall.", "hall"),
+                ("make scenes for the office", "office"),
+                ("design  some   lighting scenes\nfor my bedroom", "bedroom")):
+            got = self.match(text)
+            self.assertIsNotNone(got, text)
+            self.assertEqual(got.group("area"), area, text)
+
+    def test_the_sentences_it_is_not_for_do_not(self):
+        for text in ("what is using the most power?",
+                     "what is the best temperature for the bedroom?",
+                     "when the guests leave, turn the porch light off",
+                     "learn about the boiler"):
+            self.assertIsNone(self.match(text), text)
+
+    def test_no_piece_of_the_scene_pattern_can_eat_a_run_of_spaces(self):
+        """The actual fix, and the one a future edit can undo.
+
+        A polynomial backtrack needs two adjacent pieces that can both
+        consume the same run of whitespace. `h_generate` collapses the
+        question first, so every space in this pattern is a single
+        literal one and there is nothing to fight over — which is a
+        property of the source, and so is what is asserted. A wall-clock
+        test cannot stand in for it: at the route's own 500-character cap
+        Python's engine does not reach the blow-up the shape allows, so a
+        timing bound would pass over the broken pattern too (it was
+        measured doing exactly that) and prove nothing.
+        """
+        self.assertNotIn("\\s", self.server.SCENE_RE.pattern)
+
+    def test_neither_pattern_takes_long_over_a_line_of_spaces(self):
+        """A ceiling rather than a reproduction — see the test above for
+        why. It is here because the route accepts 500 characters from
+        anybody, and something has to fail if that ever stops being
+        cheap."""
+        for pattern, name in ((self.server.SCENE_RE, "SCENE_RE"),
+                              (self.server.INTENT_RE, "INTENT_RE")):
+            for text in (" " * 500,
+                         "design " + " " * 490 + "scenes for the x",
+                         "scenes " + " " * 480 + "for the x",
+                         "tell me" + " " * 490 + "when"):
+                self.assertLess(self.timed(pattern, text), 0.05,
+                                f"{name} is slow on {len(text)} chars")
+
+    def test_the_intent_pattern_has_no_ambiguous_whitespace_either(self):
+        """It had the same shape: `^\\s*` beside `(?:please\\s+)?` is two
+        adjacent pieces that can both eat one run of spaces. Both are
+        literal now, for the same reason and behind the same collapse."""
+        self.assertNotIn("\\s", self.server.INTENT_RE.pattern)
+
+    def test_the_intent_sentences_still_match(self):
+        for text in ("when the guests leave, turn the porch light off",
+                     "Once the door has been shut ten minutes, lock it",
+                     "tell me when the dryer finishes",
+                     "the next time it rains, shut the skylight",
+                     "please remind me when the bins go out"):
+            self.assertIsNotNone(
+                self.server.INTENT_RE.match(" ".join(text.split())), text)
+        for text in ("what happens when the freezer warms up?",
+                     "design scenes for the kitchen"):
+            self.assertIsNone(
+                self.server.INTENT_RE.match(" ".join(text.split())), text)
+
+    def test_the_area_never_reaches_a_log_line_with_a_newline_in_it(self):
+        safe = self.server.log_safe("Living\nroom\r\nWARNING brAIn: all clear")
+        self.assertNotIn("\n", safe)
+        self.assertNotIn("\r", safe)
+        self.assertIn("Living room", safe)
+
+    def test_it_drops_the_control_characters_a_terminal_would_act_on(self):
+        self.assertEqual(self.server.log_safe("a\x1b[31mb\x00c"), "a[31mbc")
+
+    def test_it_is_capped_because_a_log_line_is_a_sentence(self):
+        self.assertEqual(len(self.server.log_safe("x" * 500)), 60)
+
+    def test_it_answers_for_anything_at_all(self):
+        for value in (None, 0, 12345, {"a": 1}):
+            self.assertIsInstance(self.server.log_safe(value), str)
 
 
 if __name__ == "__main__":

@@ -2,6 +2,147 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 1.46.0
+
+**The last two items on the ranked twelve, and the change #9 named and
+deferred.** #1 one-off intents, the scene-designer half of #11, and the
+condition an automation you keep undoing does not have. With this the
+twelve is complete: #12 and #4 in 1.29.0, #5 in 1.32–1.33, #9 in 1.34.0,
+#10 across 1.35 and 1.37, #7 in 1.38–1.39, #11's thermal half in
+1.40–1.41, #8 and #2's first half in 1.42.0, #2's lifecycle in 1.44.0, #6
+and #3 in 1.45.0 — and #1 plus #11's scenes here.
+
+All three are new **producers** feeding the proposal lifecycle 1.44.0 made
+real, and two of them need brAIn to *edit* somebody's YAML rather than
+append to it, which is the new mechanism and the part that had to be right
+first.
+
+### Added
+
+- **Changing one entry without touching a byte of the rest of the file**
+  (`automation_writer.locate` / `replace_entry` / `remove_entry`).
+  1.44.0's writer appends and never re-serialises, because
+  `automations.yaml` is somebody's file with their ordering, their
+  comments and their quoting in it. Two producers here have to change an
+  entry that is already in it, and re-serialising the list to do that
+  would hand back a diff nobody asked for on every press.
+
+  So an edit is a **byte splice**: `yaml.compose` builds the node tree
+  without constructing any of it and every node carries offsets into the
+  text that was parsed. The load-bearing test is therefore not "the file
+  still parses" — a writer that round-tripped through PyYAML would pass
+  that, keep every value, and quietly delete the comments — but that
+  **every byte outside the span is identical** before and after.
+
+  Three things make the span honest, and each is a refusal. A **block**
+  collection's `end_mark` runs on to whatever token ended it, so the last
+  entry in a file swallows the comment after it and an entry followed by a
+  blank line swallows that; a **flow** one closes at its brace. The
+  leading `- ` is not in the node, so it is walked back to — across a
+  newline, because `-\n  id: x` is the same item written differently. And
+  anything that cannot be cut on a line boundary — two entries under one
+  id, a document that is not a top-level sequence, an item sharing its
+  last line — answers `None`, because nearly-right bytes are somebody's
+  file with a hole in it.
+
+- **The condition an automation you keep undoing does not have**
+  (`panel/conditions.py`). `auto.overridden` already reports the fight —
+  *"you have put Evening lights back 11 times, on 8 separate weekdays"* —
+  and leaves somebody to open the automation editor and work out what to
+  write. This is the change that answers it, with the ledger's numbers on
+  the card.
+
+  **One condition, and it is negated.** The obvious shape — add
+  `condition: time` with the band's hours and the pattern's weekdays — is
+  wrong in the direction that breaks a working house: a `time` condition
+  is a **conjunction**, so an automation carrying one stands down every
+  Saturday and Sunday as well, at every hour. What the evidence supports
+  is far narrower, so it is one `time` inside a `not`.
+
+  The band is `override_ledger.pattern`'s and is never re-derived — every
+  floor that makes one mean something already lives there. Four refusals,
+  each carried rather than dropped and none of them a card: an automation
+  with no `id` (Home Assistant's own editor cannot change it either, so
+  the card says that rather than pretending brAIn is what is in the way),
+  one that already stands down over those hours, one whose existing time
+  condition names an entity instead of a clock (*"I could not tell"* may
+  not be read as *"there is nothing there"*), and a protected target.
+
+  The case on the card is a **pair** of numbers, because one alone is a
+  fact about an automation rather than an argument for changing it: *"it
+  ran 30 times; with this condition it would have run 22 — 8 fewer, in the
+  hours you keep putting it back."*
+
+- **A sentence that happens once** (`panel/intents.py`, `INTENT_RE`, and
+  the new `brain.intent` service). *"Turn the porch light off when the
+  guests leave."* What gets written is an ordinary automation with
+  `mode: single` and one extra action nobody asked the model for —
+  `automation.turn_off` on itself — so Home Assistant does the running and
+  there is nothing left doing anything afterwards. What is left is a card
+  saying it fired, with a **Remove** on it: nothing removes it on its own,
+  because an automation that vanished from somebody's file while they were
+  not looking is a file they cannot trust. One that has waited a fortnight
+  is *labelled*, not deleted.
+
+  Claude writes the config once with reading tools only, and what comes
+  back is checked before it becomes anything. The trigger has to be
+  replayable — not because a one-off needs a shadow week, but because the
+  replay is the only sanity check there is on a trigger that has never
+  fired. It has to act once, and `once: false` is a refusal **with the
+  restatement shown**, because *"every evening at sunset"* is a good thing
+  to want and belongs on the path that gives it a trial. It has to name
+  something. And it may not touch a protected entity.
+
+  A refusal is a row on the tab rather than a log line: somebody typed a
+  sentence and is waiting for an answer. The ask bar and the service write
+  the same request file, so the expensive half has one implementation, and
+  the test drives the integration's writer straight into the add-on's
+  parser.
+
+- **Four moods for a room** (`panel/scenes.py`). Composed from the
+  registries: colour temperature where a bulb takes one, colour where it
+  cannot, brightness where there is neither, on and off where there is not
+  even that — and a bulb whose modes cannot be read gets the last of those
+  rather than being dropped. Night is the only mood that turns most of the
+  room off, and which light stays on is matched on its name.
+
+  The card's evidence is the **picture**, because there is no replay and no
+  week: a swatch per light per mood, an off light drawn as an empty
+  outline rather than a dark square, the lights named in text under the
+  strip because a phone has no hover, and a protected light shown as
+  skipped. Accepting writes to `scenes.yaml` through the same
+  snapshot-append-reload-verify-revert path, and the writer takes a
+  **target** rather than growing a twin. Once the four scenes really
+  exist, a second proposal offers the schedule that moves between them —
+  an ordinary automation, so it gets a replay and a trial week.
+
+  Claude is used for exactly one thing and it is the naming. This is not
+  BRight and the docs do not compare the two.
+
+### Fixed
+
+- **`shadow.would_do` did not look inside a `choose`.** It skipped one
+  along with the delays and the waits, so `_protected_refusal` — whose
+  whole job is to read what an automation would *do* — saw nothing at all
+  in one and passed it vacuously. It walks `choose`, `if`/`then`/`else`,
+  `repeat`, `parallel` and `sequence` now, to a bounded depth.
+
+- **`shadow.passes` did not wrap midnight on a `time` condition.** Core
+  reads `after > before` as "from tonight until tomorrow morning", and
+  22:00–01:00 is the commonest window anybody writes one for; testing the
+  two bounds separately answers `False` at every instant of such a window,
+  so a `not`-wrapped one passes at every instant instead.
+
+- **A YAML file holding nothing but a comment was read as unreadable**
+  and refused. Home Assistant's own loader answers `None` to both an empty
+  document and a broken one, so the distinction is drawn in the writer —
+  and a `scenes.yaml` with one header line is the ordinary case on a house
+  that has never saved a scene.
+
+- CI pins Playwright. An unpinned `npm install` in the layout job is a
+  dependency on whatever was published a minute ago, and a tarball the
+  registry could not serve yet failed the job before a single measure ran.
+
 ## 1.45.0
 
 **The two items on the ranked twelve that make the house act, and every

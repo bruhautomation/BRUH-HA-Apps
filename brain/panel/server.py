@@ -433,6 +433,22 @@ logging.basicConfig(
 log = logging.getLogger("brain")
 
 
+def log_safe(text) -> str:
+    """A string off the wire, safe to put in a log line.
+
+    A sentence somebody typed reaches the log in three places now — the
+    room a scene set is for, the one-off's own title — and a log line is
+    read by a person scanning for what went wrong. A newline in it writes
+    a second line that looks like brAIn's own, which is how a log stops
+    being evidence; the two `replace` calls are literal because that is
+    the barrier a scanner can follow, and the printable filter takes the
+    control characters a terminal would act on. Capped, because a log
+    line is a sentence rather than a payload.
+    """
+    flat = str(text or "").replace("\r", " ").replace("\n", " ")
+    return "".join(ch for ch in flat if ch.isprintable())[:60]
+
+
 class QuietAccessLogger(AbstractAccessLogger):
     """The add-on log is where you look when something is wrong.
 
@@ -1406,7 +1422,7 @@ async def _one_intent(req: dict, now: float) -> dict | None:
                                "already offered this exact automation. "
                                "Answer what is on it and ask again.")}, now)
     log.info("one-off intent proposed from %s: %s",
-             req.get("via") or "the panel", obj["title"])
+             log_safe(req.get("via") or "the panel"), log_safe(obj["title"]))
     return row
 
 
@@ -2477,10 +2493,13 @@ LEARN_RE = re.compile(
 # switches itself off. Anchored at the start, because "tell me when the
 # freezer is unusual" is an intent and "what happens when the freezer
 # warms up" is a question, and the difference is which word opens it.
+# Literal spaces, like `SCENE_RE`'s and for its reason: `h_generate`
+# collapses the question first, and `^\s*` beside `(?:please\s+)?` is two
+# adjacent pieces that can both eat the same run of them.
 INTENT_RE = re.compile(
-    r"^\s*(?:please\s+)?(?:when(?:ever)?|once|as\s+soon\s+as|"
-    r"the\s+next\s+time|next\s+time|tell\s+me\s+when|let\s+me\s+know\s+when|"
-    r"remind\s+me\s+when)\b",
+    r"^(?:please )?(?:when(?:ever)?|once|as soon as|"
+    r"the next time|next time|tell me when|let me know when|"
+    r"remind me when)\b",
     re.IGNORECASE)
 
 
@@ -2490,16 +2509,26 @@ INTENT_RE = re.compile(
 # is matched on the shape of the sentence rather than on a leading word:
 # the area is the whole of what this needs, and anything that does not
 # name one falls through to the ordinary path.
+# Matched against a question whose whitespace `h_generate` has already
+# collapsed to single spaces, which is what lets every space in here be a
+# literal one. Two adjacent pieces that can both consume the same run of
+# spaces is a regex that backtracks polynomially over a line of them —
+# CodeQL reads that as a denial of service and it is right: the first cut
+# had `(?:\w+\s+){0,2}?` against `[^.?!]*?` against a trailing `\s*`, and
+# a question of five hundred spaces is a question somebody can send.
 SCENE_RE = re.compile(
-    r"^\s*(?:please\s+)?"
-    r"(?:design|set\s+up|(?:\w+\s+){0,2}?scenes?)\b"
-    r"[^.?!]*?\bfor\s+(?:the\s+|my\s+)?(?P<area>[^,.?!]{2,40})\s*[.?!]?\s*$",
+    r"^(?:please )?"
+    r"(?:design|set up|(?:\w+ ){0,2}?scenes?)\b"
+    r"[^.?!]*?\bfor (?:the |my )?(?P<area>[^,.?!]{2,40}?)[.?!]?$",
     re.IGNORECASE)
 
 
 async def h_generate(request: web.Request) -> web.Response:
     body = await request.json()
-    question = (body.get("question") or "").strip() or None
+    # Collapsed before any pattern sees it: it is what makes every space
+    # in `SCENE_RE` a single literal one (see the note there), and it is
+    # also what stops a room's name arriving as two lines.
+    question = " ".join((body.get("question") or "").split()) or None
     if question:
         if len(question) > 500:
             raise web.HTTPBadRequest(text="question too long")
@@ -3203,7 +3232,8 @@ async def _name_and_offer(obj: dict, area: str) -> None:
                                   or result.get("raw") or "")
     except Exception as exc:  # noqa: BLE001 — the card renders from the
         # deterministic names, which is why there are some.
-        log.info("could not name the %s scenes: %s", area, exc)
+        log.info("could not name the %s scenes: %s",
+                 log_safe(area), exc)
         names = {}
     if names:
         # Re-composed rather than renamed in place: the name is inside the
@@ -3219,7 +3249,7 @@ async def _name_and_offer(obj: dict, area: str) -> None:
         obj.pop("_snapshot", None)
     if await asyncio.to_thread(proposals.add, obj):
         SCENES_STATE["designed"] += 1
-        log.info("proposed four scenes for the %s", area)
+        log.info("proposed four scenes for the %s", log_safe(area))
 
 
 async def _design_scenes(area: str) -> dict:
@@ -3386,7 +3416,8 @@ async def _poll_intents(now: float) -> int:
         when = intents.fired_from_state(row, state)
         if when and await asyncio.to_thread(intents.mark_fired, row["ts"], when):
             moved += 1
-            log.info("the one-off %r fired", row.get("title") or row["ts"])
+            log.info("the one-off %s fired",
+                     log_safe(row.get("title") or row["ts"]))
     return moved
 
 

@@ -498,6 +498,101 @@ Accepting one goes through the same path as any other proposal — written to
 \`automations.yaml\` with an id of \`brain_playbook_smoke\`, reloaded, verified,
 put back if it did not take, undoable from the toast.
 
+### The condition it is missing
+
+When brAIn has watched you put the same automation back, at about the same
+time, on enough separate days, it can say more than *"you keep undoing this"*.
+It offers the **condition the automation does not have**: *"Stand Evening
+lights down between 21:00 and 23:00 on weekdays."*
+
+The card carries two numbers, because one on its own is a fact about an
+automation rather than a reason to change it — *"over the last 30 days it ran
+30 times; with this condition it would have run 22, 8 fewer, in the hours you
+keep putting it back."*
+
+Accepting this one **changes your automation** rather than adding another, and
+the card says so with a pill. brAIn edits exactly the bytes of that one entry:
+your ordering, your comments, your quoting and every other automation in the
+file are untouched, byte for byte. Undo puts the file back exactly as it was.
+
+What it writes is one \`time\` condition inside a \`not\`. A plain \`time\`
+condition passes only when the clock is in its window **and** the day is in its
+weekday list, so adding one directly would stand the automation down every
+Saturday and Sunday too, at every hour — which is not what you have been
+telling brAIn by undoing it on weekday evenings.
+
+Four things stop it being offered, each with the reason: the automation has no
+\`id\` (Home Assistant's own editor cannot change one either — open it in the
+editor and save it once), it already stands down over those hours, its existing
+time condition names an \`input_datetime\` rather than a clock so brAIn cannot
+read what it already forbids, or it acts on a protected entity.
+
+### Something that happens once
+
+*"Turn the porch light off when the guests leave."* *"Tell me when the tumble
+dryer finishes."* These are the sentences people already try to say to their
+house, and no automation fits them: an automation is a standing rule, and this
+is a thing to do next time.
+
+Type one into the ask bar — anything beginning *when…*, *once…*, *the next
+time…*, *tell me when…* — or call \`brain.intent\` with a \`sentence\`, which is
+how a voice command reaches it. Claude reads your house (searching only; it
+cannot act) and works out the automation. It arrives on **Proposals** with your
+sentence, what brAIn understood, and a replay saying how often that trigger
+would have fired last month — which is a sanity check that brAIn read the right
+thing, not evidence that you want it.
+
+Accepting writes an ordinary automation with one extra action brAIn adds
+itself: it switches itself off after it runs. The card then says **armed**; when
+it fires it says so and the time, and offers **Remove**. Nothing removes it for
+you — an automation that vanished from your file while you were not looking is
+a file you cannot trust — and one that has waited a fortnight without firing is
+offered the same Remove with *"it has never fired"*.
+
+brAIn will not arm a sentence it cannot do properly, and says so on a card
+rather than in a log: it sounds like a **standing rule** (which is a good thing
+to want — ask for it as an ordinary change and it gets a trial week; the card
+shows what brAIn understood so you can see which half it misread), the
+**trigger cannot be replayed**, the sentence **named nothing** brAIn could act
+on, it touches a **protected entity**, or you already have six waiting.
+
+### Four scenes for a room
+
+*"Design my evening for the living room"*, or pick a room from **Design scenes
+for** at the top of the Proposals tab. brAIn composes four — morning, day,
+evening, night — from the lights that room actually has.
+
+What each bulb gets is read from what it can be told: a colour temperature
+where it takes one, the nearest colour where it cannot, a level where it only
+dims, on or off where it only switches — and the card says which. A bulb whose
+capabilities cannot be read is included as on/off rather than left out.
+
+Morning is cool and bright, day neutral and full, evening warm and dimmed.
+**Night turns the room off except anything named like a nightlight** — a bedside
+lamp, a hall light. There is no attribute for "this is the one I leave on", so
+the name is what brAIn goes on; a room with nothing named that way goes fully
+dark, which is what night means in a room without one.
+
+The card shows the four as **swatches**, one per light per mood, so you see the
+moods before saying yes; a light that is off in a scene is an empty outline
+rather than a dark square, and anything protected is listed as skipped. There
+is no trial button — nothing in the last month set these scenes, so there is no
+week to replay.
+
+Accepting writes them to \`scenes.yaml\`, appended with your file above them
+untouched, reloads scenes, checks all four really appeared, and puts the file
+back if any of that did not happen. Once they are really there, brAIn offers a
+**second** proposal: the schedule that moves between them. That one is an
+ordinary automation, so it gets a replay and a trial week — morning and night
+from the times brAIn has measured for when this house gets up and settles, the
+middle two fixed guesses the card names as such.
+
+A room with fewer than two lights brAIn can set is refused (four scenes over
+one bulb is four ways of saying the same thing), and so is one with more than
+forty (that is a floor, not a room). Claude is used for exactly one thing here:
+naming the four. If that run fails you get *Morning*, *Day*, *Evening*,
+*Night*, which work fine.
+
 ## What counts as unusual
 
 brAIn measures your house overnight: for every numeric sensor, what it normally
